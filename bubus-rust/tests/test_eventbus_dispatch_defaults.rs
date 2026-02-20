@@ -33,7 +33,7 @@ fn test_bus_default_handler_settings_are_applied() {
         inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
         inner.event_handler_completion = Some(EventHandlerCompletionMode::All);
     }
-    let event = bus.emit_existing(event);
+    let event = bus.emit(event);
     block_on(event.wait_completed());
 
     assert_eq!(event.inner.inner.lock().event_results.len(), 1);

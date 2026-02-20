@@ -51,7 +51,12 @@ impl<E: EventSpec> TypedEvent<E> {
     pub fn first_result(&self) -> Option<E::Result> {
         let results: HashMap<String, crate::event_result::EventResult> =
             self.inner.inner.lock().event_results.clone();
-        for result in results.values() {
+        let mut ordered_handler_ids: Vec<String> = results.keys().cloned().collect();
+        ordered_handler_ids.sort();
+        for handler_id in ordered_handler_ids {
+            let Some(result) = results.get(&handler_id) else {
+                continue;
+            };
             if result.error.is_none() {
                 if let Some(value) = &result.result {
                     let decoded: E::Result =
@@ -65,28 +70,12 @@ impl<E: EventSpec> TypedEvent<E> {
 }
 
 impl EventBus {
-    pub fn emit<E: EventSpec>(&self, payload: E::Payload) -> TypedEvent<E> {
-        let typed_event = TypedEvent::<E>::new(payload);
-        let emitted = self.enqueue_base(typed_event.inner.clone());
-        TypedEvent::from_base_event(emitted)
-    }
-
-    pub fn emit_with_options<E: EventSpec>(
-        &self,
-        payload: E::Payload,
-        queue_jump: bool,
-    ) -> TypedEvent<E> {
-        let typed_event = TypedEvent::<E>::new(payload);
-        let emitted = self.enqueue_base_with_options(typed_event.inner.clone(), queue_jump);
-        TypedEvent::from_base_event(emitted)
-    }
-
-    pub fn emit_existing<E: EventSpec>(&self, event: TypedEvent<E>) -> TypedEvent<E> {
+    pub fn emit<E: EventSpec>(&self, event: TypedEvent<E>) -> TypedEvent<E> {
         let emitted = self.enqueue_base(event.inner.clone());
         TypedEvent::from_base_event(emitted)
     }
 
-    pub fn emit_existing_with_options<E: EventSpec>(
+    pub fn emit_with_options<E: EventSpec>(
         &self,
         event: TypedEvent<E>,
         queue_jump: bool,
@@ -94,6 +83,7 @@ impl EventBus {
         let emitted = self.enqueue_base_with_options(event.inner.clone(), queue_jump);
         TypedEvent::from_base_event(emitted)
     }
+
     pub fn on_typed<E, F, Fut>(
         &self,
         handler_name: &str,

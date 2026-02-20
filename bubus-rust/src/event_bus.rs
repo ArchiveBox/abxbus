@@ -205,9 +205,41 @@ impl EventBus {
             inner
                 .event_path
                 .push(format!("{}#{}", self.name, &self.id[0..4]));
-            CURRENT_EVENT_ID.with(|id| inner.event_parent_id = id.borrow().clone());
-            CURRENT_HANDLER_ID.with(|id| inner.event_emitted_by_handler_id = id.borrow().clone());
+            if inner.event_parent_id.is_none() {
+                CURRENT_EVENT_ID.with(|id| {
+                    let current_parent = id.borrow().clone();
+                    if current_parent.as_deref() != Some(inner.event_id.as_str()) {
+                        inner.event_parent_id = current_parent;
+                    }
+                });
+            }
+            if inner.event_emitted_by_handler_id.is_none() {
+                CURRENT_HANDLER_ID.with(|id| {
+                    inner.event_emitted_by_handler_id = id.borrow().clone();
+                });
+            }
         }
+
+        let emitted_child_id = event.inner.lock().event_id.clone();
+        CURRENT_EVENT_ID.with(|current_event_id| {
+            CURRENT_HANDLER_ID.with(|current_handler_id| {
+                let Some(parent_id) = current_event_id.borrow().clone() else {
+                    return;
+                };
+                let Some(handler_id) = current_handler_id.borrow().clone() else {
+                    return;
+                };
+                let Some(parent_event) = self.runtime.events.lock().get(&parent_id).cloned() else {
+                    return;
+                };
+                let mut parent_inner = parent_event.inner.lock();
+                if let Some(result) = parent_inner.event_results.get_mut(&handler_id) {
+                    if !result.event_children.contains(&emitted_child_id) {
+                        result.event_children.push(emitted_child_id.clone());
+                    }
+                }
+            });
+        });
 
         {
             let mut queue = self.runtime.queue.lock();
@@ -227,25 +259,48 @@ impl EventBus {
         let event_id = event.inner.lock().event_id.clone();
 
         if let Some(max_size) = self.runtime.max_history_size {
-            let current_size = self.runtime.history_order.lock().len();
-            if current_size >= max_size {
-                if self.runtime.max_history_drop {
-                    while self.runtime.history_order.lock().len() >= max_size {
-                        if let Some(oldest) = self.runtime.history_order.lock().pop_front() {
-                            self.runtime.events.lock().remove(&oldest);
-                        } else {
-                            break;
-                        }
-                    }
-                } else {
+            if max_size > 0 {
+                let current_size = self.runtime.history_order.lock().len();
+                if current_size >= max_size && !self.runtime.max_history_drop {
                     return false;
                 }
+                self.trim_history_to_capacity(max_size, true);
             }
         }
 
         self.runtime.events.lock().insert(event_id.clone(), event);
         self.runtime.history_order.lock().push_back(event_id);
         true
+    }
+
+    fn trim_history_to_capacity(&self, max_size: usize, include_equal: bool) {
+        if max_size == 0 {
+            return;
+        }
+        loop {
+            let current_len = self.runtime.history_order.lock().len();
+            if current_len < max_size || (!include_equal && current_len == max_size) {
+                break;
+            }
+            let Some(oldest) = self.runtime.history_order.lock().front().cloned() else {
+                break;
+            };
+            let is_active = self
+                .runtime
+                .events
+                .lock()
+                .get(&oldest)
+                .map(|event| {
+                    let status = event.inner.lock().event_status;
+                    status == EventStatus::Pending || status == EventStatus::Started
+                })
+                .unwrap_or(false);
+            if is_active {
+                break;
+            }
+            self.runtime.history_order.lock().pop_front();
+            self.runtime.events.lock().remove(&oldest);
+        }
     }
 
     pub async fn find(
@@ -255,35 +310,53 @@ impl EventBus {
         future: Option<f64>,
         child_of: Option<Arc<BaseEvent>>,
     ) -> Option<Arc<BaseEvent>> {
-        if past {
-            let child_of_event_id = child_of
-                .as_ref()
-                .map(|event| event.inner.lock().event_id.clone());
-            if let Some(matched) = self.find_in_history(pattern, child_of_event_id.as_deref()) {
-                return Some(matched);
+        let child_of_event_id = child_of
+            .as_ref()
+            .map(|event| event.inner.lock().event_id.clone());
+
+        let mut waiter_id: Option<u64> = None;
+        let mut waiter_rx: Option<std_mpsc::Receiver<Arc<BaseEvent>>> = None;
+
+        if future.is_some() {
+            let (tx, rx) = std_mpsc::channel();
+            let id = {
+                let mut next = self.runtime.next_waiter_id.lock();
+                *next += 1;
+                *next
+            };
+            self.runtime.find_waiters.lock().push(FindWaiter {
+                id,
+                pattern: pattern.to_string(),
+                child_of_event_id: child_of_event_id.clone(),
+                sender: tx,
+            });
+            waiter_id = Some(id);
+            waiter_rx = Some(rx);
+
+            if past {
+                if let Some(matched) = self.find_in_history(pattern, child_of_event_id.as_deref()) {
+                    self.runtime
+                        .find_waiters
+                        .lock()
+                        .retain(|waiter| waiter.id != id);
+                    return Some(matched);
+                }
             }
+        } else if past {
+            return self.find_in_history(pattern, child_of_event_id.as_deref());
         }
 
-        let future = future?;
-        let (tx, rx) = std_mpsc::channel();
-        let waiter_id = {
-            let mut next = self.runtime.next_waiter_id.lock();
-            *next += 1;
-            *next
-        };
+        let timeout = future?;
+        let result =
+            waiter_rx.and_then(|rx| rx.recv_timeout(Duration::from_secs_f64(timeout)).ok());
 
-        self.runtime.find_waiters.lock().push(FindWaiter {
-            id: waiter_id,
-            pattern: pattern.to_string(),
-            child_of_event_id: child_of.map(|event| event.inner.lock().event_id.clone()),
-            sender: tx,
-        });
+        if let Some(id) = waiter_id {
+            self.runtime
+                .find_waiters
+                .lock()
+                .retain(|waiter| waiter.id != id);
+        }
 
-        let result = rx.recv_timeout(Duration::from_secs_f64(future)).ok();
-        self.runtime
-            .find_waiters
-            .lock()
-            .retain(|waiter| waiter.id != waiter_id);
         result
     }
 
@@ -294,7 +367,9 @@ impl EventBus {
     ) -> Option<Arc<BaseEvent>> {
         let history = self.runtime.history_order.lock().clone();
         for event_id in history.iter().rev() {
-            let event = self.runtime.events.lock().get(event_id).cloned()?;
+            let Some(event) = self.runtime.events.lock().get(event_id).cloned() else {
+                continue;
+            };
             if !self.matches_pattern(&event, pattern) {
                 continue;
             }
@@ -488,11 +563,6 @@ impl EventBus {
                 }
                 for handle in join_handles {
                     let _ = handle.join();
-                    if handler_completion == EventHandlerCompletionMode::First
-                        && self.has_winner(&event)
-                    {
-                        break;
-                    }
                 }
             }
         }
@@ -518,14 +588,18 @@ impl EventBus {
             }
         }
 
-        {
+        let should_complete = {
             let mut inner = event.inner.lock();
             inner.event_pending_bus_count = inner.event_pending_bus_count.saturating_sub(1);
-            if inner.event_status != EventStatus::Completed {
+            let done = inner.event_pending_bus_count == 0;
+            if done && inner.event_status != EventStatus::Completed {
                 inner.event_completed_at = Some(now_iso());
             }
+            done
+        };
+        if should_complete {
+            event.mark_completed();
         }
-        event.mark_completed();
 
         if self.runtime.max_history_size == Some(0) {
             let event_id = event.inner.lock().event_id.clone();
@@ -534,6 +608,8 @@ impl EventBus {
                 .history_order
                 .lock()
                 .retain(|id| id != &event_id);
+        } else if let Some(max_size) = self.runtime.max_history_size {
+            self.trim_history_to_capacity(max_size, false);
         }
     }
 

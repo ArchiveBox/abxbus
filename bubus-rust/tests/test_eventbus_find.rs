@@ -1,6 +1,9 @@
 use std::{thread, time::Duration};
 
-use bubus_rust::{event_bus::EventBus, typed::EventSpec};
+use bubus_rust::{
+    event_bus::EventBus,
+    typed::{EventSpec, TypedEvent},
+};
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -27,7 +30,7 @@ fn test_find_past_match_returns_event() {
     let bus = EventBus::new(Some("FindBus".to_string()));
     bus.on("work", "h1", |_event| async move { Ok(json!("ok")) });
 
-    let event = bus.emit::<WorkEvent>(EmptyPayload {});
+    let event = bus.emit::<WorkEvent>(TypedEvent::<WorkEvent>::new(EmptyPayload {}));
     block_on(event.wait_completed());
 
     let found = block_on(bus.find("work", true, None, None));
@@ -44,7 +47,7 @@ fn test_find_future_waits_for_new_event() {
 
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(30));
-        bus_for_emit.emit::<FutureEvent>(EmptyPayload {});
+        bus_for_emit.emit::<FutureEvent>(TypedEvent::<FutureEvent>::new(EmptyPayload {}));
     });
 
     let found = block_on(bus.find("future_event", false, Some(0.5), None));

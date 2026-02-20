@@ -44,8 +44,9 @@ fn test_queue_jump() {
         Ok(value)
     });
 
-    let event1 = bus.emit::<QEvent>(QPayload { idx: 1 });
-    let event2 = bus.emit_with_options::<QEvent>(QPayload { idx: 2 }, true);
+    let event1 = bus.emit::<QEvent>(TypedEvent::<QEvent>::new(QPayload { idx: 1 }));
+    let event2 =
+        bus.emit_with_options::<QEvent>(TypedEvent::<QEvent>::new(QPayload { idx: 2 }), true);
 
     block_on(async {
         event1.wait_completed().await;
@@ -83,8 +84,8 @@ fn test_bus_serial_processes_in_order() {
     let event2 = TypedEvent::<WorkEvent>::new(EmptyPayload {});
     event1.inner.inner.lock().event_concurrency = Some(EventConcurrencyMode::BusSerial);
     event2.inner.inner.lock().event_concurrency = Some(EventConcurrencyMode::BusSerial);
-    let event1 = bus.emit_existing(event1);
-    let event2 = bus.emit_existing(event2);
+    let event1 = bus.emit(event1);
+    let event2 = bus.emit(event2);
 
     block_on(async {
         event1.wait_completed().await;

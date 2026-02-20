@@ -22,7 +22,7 @@ fn test_max_history_drop_true_keeps_recent_entries() {
     let bus = EventBus::new_with_history(Some("HistoryDropBus".to_string()), Some(2), true);
 
     for _ in 0..3 {
-        let event = bus.emit::<HistoryEvent>(EmptyPayload {});
+        let event = bus.emit::<HistoryEvent>(TypedEvent::<HistoryEvent>::new(EmptyPayload {}));
         block_on(event.wait_completed());
     }
 
@@ -36,11 +36,11 @@ fn test_max_history_drop_true_keeps_recent_entries() {
 fn test_max_history_drop_false_rejects_new_emit_when_full() {
     let bus = EventBus::new_with_history(Some("HistoryRejectBus".to_string()), Some(1), false);
 
-    let first = bus.emit::<HistoryEvent>(EmptyPayload {});
+    let first = bus.emit::<HistoryEvent>(TypedEvent::<HistoryEvent>::new(EmptyPayload {}));
     block_on(first.wait_completed());
 
     let second = TypedEvent::<HistoryEvent>::new(EmptyPayload {});
-    let second = bus.emit_existing(second);
+    let second = bus.emit(second);
     block_on(second.wait_completed());
 
     assert_eq!(second.inner.inner.lock().event_path.len(), 0);

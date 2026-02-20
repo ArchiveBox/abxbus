@@ -55,7 +55,7 @@ fn test_event_timeout_aborts_in_flight_handler_result() {
     let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
     event.inner.inner.lock().event_timeout = Some(0.01);
 
-    let event = bus.emit_existing(event);
+    let event = bus.emit(event);
     block_on(event.wait_completed());
 
     let result = event
@@ -91,7 +91,7 @@ fn test_parent_timeout_cancels_pending_or_started_children() {
         async move {
             let child = TypedEvent::<ChildEvent>::new(EmptyPayload {});
             child.inner.inner.lock().event_timeout = Some(1.0);
-            bus_local.emit_existing(child);
+            bus_local.emit(child);
             thread::sleep(Duration::from_millis(80));
             Ok(json!("parent"))
         }
@@ -100,7 +100,7 @@ fn test_parent_timeout_cancels_pending_or_started_children() {
     let parent = TypedEvent::<ParentEvent>::new(EmptyPayload {});
     parent.inner.inner.lock().event_timeout = Some(0.01);
 
-    let parent = bus.emit_existing(parent);
+    let parent = bus.emit(parent);
     wait_until_completed(&parent, 1000);
     thread::sleep(Duration::from_millis(120));
 
