@@ -67,10 +67,33 @@ impl<E: EventSpec> TypedEvent<E> {
 impl EventBus {
     pub fn emit<E: EventSpec>(&self, payload: E::Payload) -> TypedEvent<E> {
         let typed_event = TypedEvent::<E>::new(payload);
-        let emitted = self.emit_raw(typed_event.inner.clone());
+        let emitted = self.enqueue_base(typed_event.inner.clone());
         TypedEvent::from_base_event(emitted)
     }
 
+    pub fn emit_with_options<E: EventSpec>(
+        &self,
+        payload: E::Payload,
+        queue_jump: bool,
+    ) -> TypedEvent<E> {
+        let typed_event = TypedEvent::<E>::new(payload);
+        let emitted = self.enqueue_base_with_options(typed_event.inner.clone(), queue_jump);
+        TypedEvent::from_base_event(emitted)
+    }
+
+    pub fn emit_existing<E: EventSpec>(&self, event: TypedEvent<E>) -> TypedEvent<E> {
+        let emitted = self.enqueue_base(event.inner.clone());
+        TypedEvent::from_base_event(emitted)
+    }
+
+    pub fn emit_existing_with_options<E: EventSpec>(
+        &self,
+        event: TypedEvent<E>,
+        queue_jump: bool,
+    ) -> TypedEvent<E> {
+        let emitted = self.enqueue_base_with_options(event.inner.clone(), queue_jump);
+        TypedEvent::from_base_event(emitted)
+    }
     pub fn on_typed<E, F, Fut>(
         &self,
         handler_name: &str,

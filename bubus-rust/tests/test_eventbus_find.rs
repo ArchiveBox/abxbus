@@ -1,16 +1,33 @@
 use std::{thread, time::Duration};
 
-use bubus_rust::{base_event::BaseEvent, event_bus::EventBus};
+use bubus_rust::{event_bus::EventBus, typed::EventSpec};
 use futures::executor::block_on;
-use serde_json::{json, Map};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+#[derive(Clone, Serialize, Deserialize)]
+struct EmptyPayload {}
+#[derive(Clone, Serialize, Deserialize)]
+struct EmptyResult {}
+struct WorkEvent;
+impl EventSpec for WorkEvent {
+    type Payload = EmptyPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "work";
+}
+struct FutureEvent;
+impl EventSpec for FutureEvent {
+    type Payload = EmptyPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "future_event";
+}
 
 #[test]
 fn test_find_past_match_returns_event() {
     let bus = EventBus::new(Some("FindBus".to_string()));
     bus.on("work", "h1", |_event| async move { Ok(json!("ok")) });
 
-    let event = BaseEvent::new("work", Map::new());
-    bus.emit_raw(event.clone());
+    let event = bus.emit::<WorkEvent>(EmptyPayload {});
     block_on(event.wait_completed());
 
     let found = block_on(bus.find("work", true, None, None));
@@ -27,8 +44,7 @@ fn test_find_future_waits_for_new_event() {
 
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(30));
-        let event = BaseEvent::new("future_event", Map::new());
-        bus_for_emit.emit_raw(event);
+        bus_for_emit.emit::<FutureEvent>(EmptyPayload {});
     });
 
     let found = block_on(bus.find("future_event", false, Some(0.5), None));

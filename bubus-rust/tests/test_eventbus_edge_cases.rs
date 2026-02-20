@@ -1,16 +1,40 @@
-use bubus_rust::{base_event::BaseEvent, event_bus::EventBus, event_result::EventResultStatus};
+use bubus_rust::{event_bus::EventBus, event_result::EventResultStatus, typed::EventSpec};
 use futures::executor::block_on;
-use serde_json::{json, Map};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+#[derive(Clone, Serialize, Deserialize)]
+struct EmptyPayload {}
+#[derive(Clone, Serialize, Deserialize)]
+struct EmptyResult {}
+
+struct NothingEvent;
+impl EventSpec for NothingEvent {
+    type Payload = EmptyPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "nothing";
+}
+struct SpecificEvent;
+impl EventSpec for SpecificEvent {
+    type Payload = EmptyPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "specific_event";
+}
+struct WorkEvent;
+impl EventSpec for WorkEvent {
+    type Payload = EmptyPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "work";
+}
 
 #[test]
 fn test_emit_with_no_handlers_completes_event() {
     let bus = EventBus::new(Some("NoHandlers".to_string()));
-    let event = BaseEvent::new("nothing", Map::new());
+    let event = bus.emit::<NothingEvent>(EmptyPayload {});
 
-    bus.emit_raw(event.clone());
     block_on(event.wait_completed());
 
-    let inner = event.inner.lock();
+    let inner = event.inner.inner.lock();
     assert_eq!(inner.event_results.len(), 0);
     assert_eq!(inner.event_pending_bus_count, 0);
     assert!(inner.event_started_at.is_some());
@@ -23,12 +47,11 @@ fn test_emit_with_no_handlers_completes_event() {
 fn test_wildcard_handler_runs_for_any_event_type() {
     let bus = EventBus::new(Some("WildcardBus".to_string()));
     bus.on("*", "catch_all", |_event| async move { Ok(json!("all")) });
-    let event = BaseEvent::new("specific_event", Map::new());
+    let event = bus.emit::<SpecificEvent>(EmptyPayload {});
 
-    bus.emit_raw(event.clone());
     block_on(event.wait_completed());
 
-    let results = event.inner.lock().event_results.clone();
+    let results = event.inner.inner.lock().event_results.clone();
     assert_eq!(results.len(), 1);
     let only = results.values().next().expect("missing result");
     assert_eq!(only.result, Some(json!("all")));
@@ -43,12 +66,11 @@ fn test_handler_error_populates_error_status() {
         "bad",
         |_event| async move { Err("boom".to_string()) },
     );
-    let event = BaseEvent::new("work", Map::new());
+    let event = bus.emit::<WorkEvent>(EmptyPayload {});
 
-    bus.emit_raw(event.clone());
     block_on(event.wait_completed());
 
-    let results = event.inner.lock().event_results.clone();
+    let results = event.inner.inner.lock().event_results.clone();
     assert_eq!(results.len(), 1);
     let only = results.values().next().expect("missing result");
     assert_eq!(only.status, EventResultStatus::Error);

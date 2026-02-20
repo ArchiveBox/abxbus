@@ -1,8 +1,34 @@
 use std::{thread, time::Duration};
 
-use bubus_rust::{base_event::BaseEvent, event_bus::EventBus, types::EventConcurrencyMode};
+use bubus_rust::{
+    event_bus::EventBus,
+    typed::{EventSpec, TypedEvent},
+    types::EventConcurrencyMode,
+};
 use futures::executor::block_on;
-use serde_json::{json, Map, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+#[derive(Clone, Serialize, Deserialize)]
+struct QPayload {
+    idx: i64,
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct EmptyPayload {}
+#[derive(Clone, Serialize, Deserialize)]
+struct EmptyResult {}
+struct QEvent;
+impl EventSpec for QEvent {
+    type Payload = QPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "q";
+}
+struct WorkEvent;
+impl EventSpec for WorkEvent {
+    type Payload = EmptyPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "work";
+}
 
 #[test]
 fn test_queue_jump() {
@@ -14,19 +40,12 @@ fn test_queue_jump() {
             .payload
             .get("idx")
             .cloned()
-            .unwrap_or(Value::Null);
+            .unwrap_or(serde_json::Value::Null);
         Ok(value)
     });
 
-    let mut p1 = Map::new();
-    p1.insert("idx".into(), json!(1));
-    let event1 = BaseEvent::new("q", p1);
-    let mut p2 = Map::new();
-    p2.insert("idx".into(), json!(2));
-    let event2 = BaseEvent::new("q", p2);
-
-    bus.emit_raw(event1.clone());
-    bus.emit_raw_with_options(event2.clone(), true);
+    let event1 = bus.emit::<QEvent>(QPayload { idx: 1 });
+    let event2 = bus.emit_with_options::<QEvent>(QPayload { idx: 2 }, true);
 
     block_on(async {
         event1.wait_completed().await;
@@ -35,11 +54,13 @@ fn test_queue_jump() {
 
     let event1_started = event1
         .inner
+        .inner
         .lock()
         .event_started_at
         .clone()
         .unwrap_or_default();
     let event2_started = event2
+        .inner
         .inner
         .lock()
         .event_started_at
@@ -58,12 +79,12 @@ fn test_bus_serial_processes_in_order() {
         Ok(json!(1))
     });
 
-    let event1 = BaseEvent::new("work", Map::new());
-    let event2 = BaseEvent::new("work", Map::new());
-    event1.inner.lock().event_concurrency = Some(EventConcurrencyMode::BusSerial);
-    event2.inner.lock().event_concurrency = Some(EventConcurrencyMode::BusSerial);
-    bus.emit_raw(event1.clone());
-    bus.emit_raw(event2.clone());
+    let event1 = TypedEvent::<WorkEvent>::new(EmptyPayload {});
+    let event2 = TypedEvent::<WorkEvent>::new(EmptyPayload {});
+    event1.inner.inner.lock().event_concurrency = Some(EventConcurrencyMode::BusSerial);
+    event2.inner.inner.lock().event_concurrency = Some(EventConcurrencyMode::BusSerial);
+    let event1 = bus.emit_existing(event1);
+    let event2 = bus.emit_existing(event2);
 
     block_on(async {
         event1.wait_completed().await;
@@ -72,11 +93,13 @@ fn test_bus_serial_processes_in_order() {
 
     let event1_started = event1
         .inner
+        .inner
         .lock()
         .event_started_at
         .clone()
         .unwrap_or_default();
     let event2_started = event2
+        .inner
         .inner
         .lock()
         .event_started_at

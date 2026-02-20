@@ -1,28 +1,39 @@
-use std::{sync::Arc, thread, time::Duration};
+use std::{thread, time::Duration};
 
 use bubus_rust::{
-    base_event::BaseEvent,
     event_bus::EventBus,
+    typed::{EventSpec, TypedEvent},
     types::{EventConcurrencyMode, EventHandlerConcurrencyMode},
 };
 use futures::executor::block_on;
-use serde_json::{json, Map};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 
-fn mk_event(event_type: &str) -> Arc<BaseEvent> {
-    let mut payload = Map::new();
-    payload.insert("value".to_string(), json!(1));
-    BaseEvent::new(event_type.to_string(), payload)
+#[derive(Clone, Serialize, Deserialize)]
+struct WorkPayload {
+    value: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct WorkResult {
+    value: i64,
+}
+
+struct WorkEvent;
+impl EventSpec for WorkEvent {
+    type Payload = WorkPayload;
+    type Result = WorkResult;
+    const EVENT_TYPE: &'static str = "work";
 }
 
 #[test]
 fn test_emit_and_handler_result() {
     let bus = EventBus::new(Some("BusA".to_string()));
     bus.on("work", "h1", |_event| async move { Ok(json!("ok")) });
-    let event = mk_event("work");
-    bus.emit_raw(event.clone());
+    let event = bus.emit::<WorkEvent>(WorkPayload { value: 1 });
     block_on(event.wait_completed());
 
-    let results = event.inner.lock().event_results.clone();
+    let results = event.inner.inner.lock().event_results.clone();
     assert_eq!(results.len(), 1);
     let first = results.values().next().expect("missing first result");
     assert_eq!(first.result, Some(json!("ok")));
@@ -42,14 +53,14 @@ fn test_parallel_handler_concurrency() {
         Ok(json!(2))
     });
 
-    let event = mk_event("work");
+    let event = TypedEvent::<WorkEvent>::new(WorkPayload { value: 1 });
     {
-        let mut inner = event.inner.lock();
+        let mut inner = event.inner.inner.lock();
         inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
         inner.event_concurrency = Some(EventConcurrencyMode::Parallel);
     }
-    bus.emit_raw(event.clone());
-    block_on(event.wait_completed());
-    assert_eq!(event.inner.lock().event_results.len(), 2);
+    let emitted = bus.emit_existing(event);
+    block_on(emitted.wait_completed());
+    assert_eq!(emitted.inner.inner.lock().event_results.len(), 2);
     bus.stop();
 }
