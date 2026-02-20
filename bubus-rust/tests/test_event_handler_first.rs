@@ -28,7 +28,7 @@ fn test_event_handler_first_serial_stops_after_first_success() {
         inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
         inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
     }
-    bus.emit(event.clone());
+    bus.emit_raw(event.clone());
     block_on(event.wait_completed());
 
     let results = event.inner.lock().event_results.clone();

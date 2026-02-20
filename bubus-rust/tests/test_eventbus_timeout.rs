@@ -27,7 +27,7 @@ fn test_event_timeout_aborts_in_flight_handler_result() {
     let event = BaseEvent::new("timeout", Map::new());
     event.inner.lock().event_timeout = Some(0.01);
 
-    bus.emit(event.clone());
+    bus.emit_raw(event.clone());
     block_on(event.wait_completed());
 
     let result = event
@@ -62,7 +62,7 @@ fn test_parent_timeout_cancels_pending_or_started_children() {
         async move {
             let child = BaseEvent::new("child", Map::new());
             child.inner.lock().event_timeout = Some(1.0);
-            bus_local.emit(child);
+            bus_local.emit_raw(child);
             thread::sleep(Duration::from_millis(80));
             Ok(json!("parent"))
         }
@@ -71,7 +71,7 @@ fn test_parent_timeout_cancels_pending_or_started_children() {
     let parent = BaseEvent::new("parent", Map::new());
     parent.inner.lock().event_timeout = Some(0.01);
 
-    bus.emit(parent.clone());
+    bus.emit_raw(parent.clone());
     wait_until_completed(&parent, 1000);
     thread::sleep(Duration::from_millis(120));
 

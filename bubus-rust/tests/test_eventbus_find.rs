@@ -10,7 +10,7 @@ fn test_find_past_match_returns_event() {
     bus.on("work", "h1", |_event| async move { Ok(json!("ok")) });
 
     let event = BaseEvent::new("work", Map::new());
-    bus.emit(event.clone());
+    bus.emit_raw(event.clone());
     block_on(event.wait_completed());
 
     let found = block_on(bus.find("work", true, None, None));
@@ -28,7 +28,7 @@ fn test_find_future_waits_for_new_event() {
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(30));
         let event = BaseEvent::new("future_event", Map::new());
-        bus_for_emit.emit(event);
+        bus_for_emit.emit_raw(event);
     });
 
     let found = block_on(bus.find("future_event", false, Some(0.5), None));

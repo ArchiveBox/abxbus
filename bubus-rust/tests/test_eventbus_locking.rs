@@ -25,8 +25,8 @@ fn test_queue_jump() {
     p2.insert("idx".into(), json!(2));
     let event2 = BaseEvent::new("q", p2);
 
-    bus.emit(event1.clone());
-    bus.emit_with_options(event2.clone(), true);
+    bus.emit_raw(event1.clone());
+    bus.emit_raw_with_options(event2.clone(), true);
 
     block_on(async {
         event1.wait_completed().await;
@@ -62,8 +62,8 @@ fn test_bus_serial_processes_in_order() {
     let event2 = BaseEvent::new("work", Map::new());
     event1.inner.lock().event_concurrency = Some(EventConcurrencyMode::BusSerial);
     event2.inner.lock().event_concurrency = Some(EventConcurrencyMode::BusSerial);
-    bus.emit(event1.clone());
-    bus.emit(event2.clone());
+    bus.emit_raw(event1.clone());
+    bus.emit_raw(event2.clone());
 
     block_on(async {
         event1.wait_completed().await;

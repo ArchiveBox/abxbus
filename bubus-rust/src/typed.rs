@@ -65,9 +65,9 @@ impl<E: EventSpec> TypedEvent<E> {
 }
 
 impl EventBus {
-    pub fn emit_typed<E: EventSpec>(&self, payload: E::Payload) -> TypedEvent<E> {
+    pub fn emit<E: EventSpec>(&self, payload: E::Payload) -> TypedEvent<E> {
         let typed_event = TypedEvent::<E>::new(payload);
-        let emitted = self.emit(typed_event.inner.clone());
+        let emitted = self.emit_raw(typed_event.inner.clone());
         TypedEvent::from_base_event(emitted)
     }
 

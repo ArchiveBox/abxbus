@@ -185,11 +185,11 @@ impl EventBus {
         }
     }
 
-    pub fn emit(&self, event: Arc<BaseEvent>) -> Arc<BaseEvent> {
-        self.emit_with_options(event, false)
+    pub fn emit_raw(&self, event: Arc<BaseEvent>) -> Arc<BaseEvent> {
+        self.emit_raw_with_options(event, false)
     }
 
-    pub fn emit_with_options(&self, event: Arc<BaseEvent>, queue_jump: bool) -> Arc<BaseEvent> {
+    pub fn emit_raw_with_options(&self, event: Arc<BaseEvent>, queue_jump: bool) -> Arc<BaseEvent> {
         if !self.register_in_history(event.clone()) {
             event.mark_completed();
             return event;

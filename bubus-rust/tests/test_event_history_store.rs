@@ -8,7 +8,7 @@ fn test_max_history_drop_true_keeps_recent_entries() {
 
     for i in 0..3 {
         let event = BaseEvent::new(format!("evt_{i}"), Map::new());
-        bus.emit(event.clone());
+        bus.emit_raw(event.clone());
         block_on(event.wait_completed());
     }
 
@@ -23,11 +23,11 @@ fn test_max_history_drop_false_rejects_new_emit_when_full() {
     let bus = EventBus::new_with_history(Some("HistoryRejectBus".to_string()), Some(1), false);
 
     let first = BaseEvent::new("first", Map::new());
-    bus.emit(first.clone());
+    bus.emit_raw(first.clone());
     block_on(first.wait_completed());
 
     let second = BaseEvent::new("second", Map::new());
-    bus.emit(second.clone());
+    bus.emit_raw(second.clone());
     block_on(second.wait_completed());
 
     assert_eq!(second.inner.lock().event_path.len(), 0);

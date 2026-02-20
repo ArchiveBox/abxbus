@@ -7,7 +7,7 @@ fn test_emit_with_no_handlers_completes_event() {
     let bus = EventBus::new(Some("NoHandlers".to_string()));
     let event = BaseEvent::new("nothing", Map::new());
 
-    bus.emit(event.clone());
+    bus.emit_raw(event.clone());
     block_on(event.wait_completed());
 
     let inner = event.inner.lock();
@@ -25,7 +25,7 @@ fn test_wildcard_handler_runs_for_any_event_type() {
     bus.on("*", "catch_all", |_event| async move { Ok(json!("all")) });
     let event = BaseEvent::new("specific_event", Map::new());
 
-    bus.emit(event.clone());
+    bus.emit_raw(event.clone());
     block_on(event.wait_completed());
 
     let results = event.inner.lock().event_results.clone();
@@ -45,7 +45,7 @@ fn test_handler_error_populates_error_status() {
     );
     let event = BaseEvent::new("work", Map::new());
 
-    bus.emit(event.clone());
+    bus.emit_raw(event.clone());
     block_on(event.wait_completed());
 
     let results = event.inner.lock().event_results.clone();

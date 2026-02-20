@@ -36,7 +36,7 @@ fn test_on_typed_and_emit_typed_roundtrip() {
         })
     });
 
-    let event = bus.emit_typed::<AddEvent>(AddPayload { a: 4, b: 9 });
+    let event = bus.emit::<AddEvent>(AddPayload { a: 4, b: 9 });
     block_on(event.wait_completed());
 
     let first = event.first_result();
@@ -48,7 +48,7 @@ fn test_on_typed_and_emit_typed_roundtrip() {
 fn test_find_typed_returns_typed_payload() {
     let bus = EventBus::new(Some("TypedFindBus".to_string()));
 
-    let event = bus.emit_typed::<AddEvent>(AddPayload { a: 7, b: 1 });
+    let event = bus.emit::<AddEvent>(AddPayload { a: 7, b: 1 });
     block_on(event.wait_completed());
 
     let found = block_on(bus.find_typed::<AddEvent>(true, None)).expect("expected typed event");

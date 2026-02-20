@@ -25,7 +25,7 @@ fn test_bus_default_handler_settings_are_applied() {
         inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
         inner.event_handler_completion = Some(EventHandlerCompletionMode::All);
     }
-    bus.emit(event.clone());
+    bus.emit_raw(event.clone());
     block_on(event.wait_completed());
 
     assert_eq!(event.inner.lock().event_results.len(), 1);
