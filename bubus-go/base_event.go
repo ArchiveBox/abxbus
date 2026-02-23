@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"sync"
 	"time"
 )
@@ -58,6 +59,9 @@ func NewBaseEvent(event_type string, payload map[string]any) *BaseEvent {
 
 func (e *BaseEvent) MarshalJSON() ([]byte, error) {
 	record := map[string]any{}
+	for k, v := range e.Payload {
+		record[k] = v
+	}
 	record["event_id"] = e.EventID
 	record["event_created_at"] = e.EventCreatedAt
 	record["event_type"] = e.EventType
@@ -77,15 +81,8 @@ func (e *BaseEvent) MarshalJSON() ([]byte, error) {
 	record["event_concurrency"] = e.EventConcurrency
 	record["event_handler_concurrency"] = e.EventHandlerConcurrency
 	record["event_handler_completion"] = e.EventHandlerCompletion
-	for k, v := range e.Payload {
-		record[k] = v
-	}
 	if len(e.EventResults) > 0 {
-		event_results := make([]*EventResult, 0, len(e.EventResults))
-		for _, r := range e.EventResults {
-			event_results = append(event_results, r)
-		}
-		record["event_results"] = event_results
+		record["event_results"] = e.sortedEventResults()
 	}
 	return json.Marshal(record)
 }
@@ -203,6 +200,12 @@ func (e *BaseEvent) markCompleted() {
 	e.done_once.Do(func() { close(e.done_ch) })
 }
 
+func (e *BaseEvent) status() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.EventStatus
+}
+
 func (e *BaseEvent) EventCompleted(ctx context.Context) error {
 	select {
 	case <-e.done_ch:
@@ -227,7 +230,7 @@ func (e *BaseEvent) EventResult(ctx context.Context) (any, error) {
 	if _, err := e.Done(ctx); err != nil {
 		return nil, err
 	}
-	for _, result := range e.EventResults {
+	for _, result := range e.sortedEventResults() {
 		if result.Status == EventResultError {
 			return nil, errors.New(toErrorString(result.Error))
 		}
@@ -242,12 +245,12 @@ func (e *BaseEvent) First(ctx context.Context) (any, error) {
 	if _, err := e.Done(ctx); err != nil {
 		return nil, err
 	}
-	for _, result := range e.EventResults {
+	for _, result := range e.sortedEventResults() {
 		if result.Status == EventResultCompleted && result.Result != nil {
 			return result.Result, nil
 		}
 	}
-	for _, result := range e.EventResults {
+	for _, result := range e.sortedEventResults() {
 		if result.Status == EventResultError {
 			return nil, errors.New(toErrorString(result.Error))
 		}
@@ -280,7 +283,7 @@ func (e *BaseEvent) EventResultsList(ctx context.Context, include func(result an
 		}
 	}
 	out := make([]any, 0, len(e.EventResults))
-	for _, event_result := range e.EventResults {
+	for _, event_result := range e.sortedEventResults() {
 		if options.RaiseIfAny && event_result.Status == EventResultError {
 			return nil, errors.New(toErrorString(event_result.Error))
 		}
@@ -292,6 +295,21 @@ func (e *BaseEvent) EventResultsList(ctx context.Context, include func(result an
 		return nil, errors.New("no valid handler results")
 	}
 	return out, nil
+}
+
+func (e *BaseEvent) sortedEventResults() []*EventResult {
+	keys := make([]string, 0, len(e.EventResults))
+	for key := range e.EventResults {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	results := make([]*EventResult, 0, len(keys))
+	for _, key := range keys {
+		if result := e.EventResults[key]; result != nil {
+			results = append(results, result)
+		}
+	}
+	return results
 }
 
 func toErrorString(v any) string {

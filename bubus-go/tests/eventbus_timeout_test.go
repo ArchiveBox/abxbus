@@ -2,6 +2,7 @@ package bubus_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,9 +19,18 @@ func TestTimeoutPrecedenceEventOverBus(t *testing.T) {
 	}, nil)
 	e := bubus.NewBaseEvent("Evt", nil)
 	e.EventTimeout = &eventTimeout
+
+	started := time.Now()
 	_, err := bus.Emit(e).EventResult(context.Background())
+	elapsed := time.Since(started)
 	if err == nil {
 		t.Fatal("expected timeout")
+	}
+	if elapsed > time.Second {
+		t.Fatalf("expected event timeout (~10ms) to win over bus timeout (5s), elapsed=%s", elapsed)
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected timeout error message, got %v", err)
 	}
 }
 

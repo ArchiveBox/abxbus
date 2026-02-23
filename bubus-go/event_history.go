@@ -1,6 +1,7 @@
 package bubus
 
 import (
+	"reflect"
 	"sync"
 	"time"
 )
@@ -33,6 +34,7 @@ func (h *EventHistory) AddEvent(event *BaseEvent) {
 		h.order = append(h.order, event.EventID)
 	}
 	h.events[event.EventID] = event
+	h.trimLocked(nil)
 }
 
 func (h *EventHistory) GetEvent(event_id string) *BaseEvent {
@@ -66,6 +68,13 @@ func (h *EventHistory) Values() []*BaseEvent {
 	return out
 }
 
+func (h *EventHistory) Clear() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.events = map[string]*BaseEvent{}
+	h.order = []string{}
+}
+
 func (h *EventHistory) Find(event_pattern string, where func(event *BaseEvent) bool, options *EventHistoryFindOptions) *BaseEvent {
 	if event_pattern == "" {
 		event_pattern = "*"
@@ -91,16 +100,16 @@ func (h *EventHistory) Find(event_pattern string, where func(event *BaseEvent) b
 			for key, value := range options.Equals {
 				switch key {
 				case "event_status":
-					if event.EventStatus != value {
+					if !reflect.DeepEqual(event.EventStatus, value) {
 						return false
 					}
 				case "event_type":
-					if event.EventType != value {
+					if !reflect.DeepEqual(event.EventType, value) {
 						return false
 					}
 				default:
 					payload_v, ok := event.Payload[key]
-					if !ok || payload_v != value {
+					if !ok || !reflect.DeepEqual(payload_v, value) {
 						return false
 					}
 				}
@@ -133,10 +142,15 @@ func EventIsChildOfStatic(h *EventHistory, event *BaseEvent, ancestor *BaseEvent
 		return false
 	}
 	parentID := event.EventParentID
+	visited := map[string]bool{}
 	for parentID != nil {
 		if *parentID == ancestor.EventID {
 			return true
 		}
+		if visited[*parentID] {
+			return false
+		}
+		visited[*parentID] = true
 		parent := h.GetEvent(*parentID)
 		if parent == nil {
 			return false
@@ -165,6 +179,10 @@ func (h *EventHistory) RemoveEvent(event_id string) bool {
 func (h *EventHistory) TrimEventHistory(is_event_complete func(event *BaseEvent) bool) int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.trimLocked(is_event_complete)
+}
+
+func (h *EventHistory) trimLocked(is_event_complete func(event *BaseEvent) bool) int {
 	if h.MaxHistorySize == nil {
 		return 0
 	}
@@ -195,7 +213,7 @@ func (h *EventHistory) TrimEventHistory(is_event_complete func(event *BaseEvent)
 		if removed_any {
 			continue
 		}
-		if len(h.order) == 0 {
+		if !h.MaxHistoryDrop || len(h.order) == 0 {
 			break
 		}
 		eid := h.order[0]

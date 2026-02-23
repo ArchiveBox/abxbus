@@ -29,24 +29,39 @@ func TestEventCompletesWhenOneHandlerErrorsAndAnotherSucceeds(t *testing.T) {
 		return nil, errors.New("boom")
 	}, nil)
 	e := bus.Emit(bubus.NewBaseEvent("MixedEvent", nil))
-	_, _ = e.Done(context.Background())
+	if _, err := e.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if e.EventStatus != "completed" {
 		t.Fatalf("event should be completed despite handler error, got %s", e.EventStatus)
 	}
 	if len(e.EventResults) != 2 {
 		t.Fatalf("expected 2 event results, got %d", len(e.EventResults))
 	}
-	seen_error := false
-	seen_success := false
+
+	seenError := false
+	seenSuccess := false
 	for _, r := range e.EventResults {
-		if r.Status == bubus.EventResultError {
-			seen_error = true
-		}
-		if r.Status == bubus.EventResultCompleted {
-			seen_success = true
+		switch r.HandlerName {
+		case "boom":
+			seenError = true
+			if r.Status != bubus.EventResultError {
+				t.Fatalf("expected boom handler to error, got %s", r.Status)
+			}
+			if r.Error != "boom" {
+				t.Fatalf("expected boom error value, got %#v", r.Error)
+			}
+		case "ok":
+			seenSuccess = true
+			if r.Status != bubus.EventResultCompleted {
+				t.Fatalf("expected ok handler to complete, got %s", r.Status)
+			}
+			if r.Result != "ok" {
+				t.Fatalf("expected ok result value, got %#v", r.Result)
+			}
 		}
 	}
-	if !seen_error || !seen_success {
-		t.Fatalf("expected both success and error results, got success=%v error=%v", seen_success, seen_error)
+	if !seenError || !seenSuccess {
+		t.Fatalf("expected both success and error results, got success=%v error=%v", seenSuccess, seenError)
 	}
 }

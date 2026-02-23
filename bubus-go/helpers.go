@@ -8,6 +8,7 @@ import (
 
 var monotonic_mu sync.Mutex
 var monotonic_last = time.Now().UTC()
+var fixedRFC3339Nano = "2006-01-02T15:04:05.000000000Z07:00"
 
 func monotonicDatetime(isoString ...string) string {
 	if len(isoString) > 0 {
@@ -15,7 +16,7 @@ func monotonicDatetime(isoString ...string) string {
 		if err != nil {
 			panic(fmt.Errorf("invalid ISO datetime: %w", err))
 		}
-		return t.UTC().Format(time.RFC3339Nano)
+		return t.UTC().Format(fixedRFC3339Nano)
 	}
 	monotonic_mu.Lock()
 	defer monotonic_mu.Unlock()
@@ -24,7 +25,7 @@ func monotonicDatetime(isoString ...string) string {
 		now = monotonic_last.Add(time.Nanosecond)
 	}
 	monotonic_last = now
-	return now.Format(time.RFC3339Nano)
+	return now.Format(fixedRFC3339Nano)
 }
 
 func ptr[T any](v T) *T { return &v }

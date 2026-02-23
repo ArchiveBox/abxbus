@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -131,7 +132,14 @@ func NewEventBus(name string, options *EventBusOptions) *EventBus {
 	return bus
 }
 
-func (b *EventBus) Label() string { return fmt.Sprintf("%s#%s", b.Name, b.ID[len(b.ID)-4:]) }
+func suffix(value string, n int) string {
+	if len(value) <= n {
+		return value
+	}
+	return value[len(value)-n:]
+}
+
+func (b *EventBus) Label() string { return fmt.Sprintf("%s#%s", b.Name, suffix(b.ID, 4)) }
 
 func (b *EventBus) On(event_pattern string, handler_name string, handler EventHandlerCallable, options *EventHandler) *EventHandler {
 	if event_pattern == "" {
@@ -209,14 +217,14 @@ func (b *EventBus) Emit(event *BaseEvent) *BaseEvent {
 				handler_id := active.HandlerID
 				original_event.EventParentID = &parent_id
 				original_event.EventEmittedByHandlerID = &handler_id
-				active.EventChildren = append(active.EventChildren, original_event)
+				active.addChild(original_event)
 			}
 		}
 	}
-	b.EventHistory.AddEvent(original_event)
-	b.resolveFindWaiters(original_event)
-	original_event.EventPendingBusCount++
 	b.mu.Lock()
+	b.EventHistory.AddEvent(original_event)
+	b.resolveFindWaitersLocked(original_event)
+	original_event.EventPendingBusCount++
 	b.pendingEventQueue = append(b.pendingEventQueue, original_event)
 	b.mu.Unlock()
 	b.startRunloop()
@@ -253,6 +261,7 @@ func runWithTimeout(ctx context.Context, timeout_seconds *float64, on_timeout fu
 }
 
 func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_event_locks bool, pre_acquired_lock *AsyncLock) error {
+	defer func() { b.mu.Lock(); delete(b.inFlightEventIDs, event.EventID); b.mu.Unlock() }()
 	var event_lock *AsyncLock
 	if !bypass_event_locks {
 		event_lock = b.locks.getLockForEvent(event)
@@ -266,7 +275,6 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 		}
 		defer event_lock.Release()
 	}
-	defer func() { b.mu.Lock(); delete(b.inFlightEventIDs, event.EventID); b.mu.Unlock() }()
 	event.markStarted()
 	handlers := b.getHandlersForEvent(event)
 	pending_entries := make([]*EventResult, 0, len(handlers))
@@ -289,7 +297,7 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 	var slow_timer *time.Timer
 	if resolved_event_slow_timeout != nil {
 		slow_timer = time.AfterFunc(time.Duration(*resolved_event_slow_timeout*float64(time.Second)), func() {
-			if event.EventStatus != "completed" {
+			if event.status() != "completed" {
 				SlowWarningLogger(fmt.Sprintf("[bubus] Slow event processing: %s.on(%s) still running", b.Name, event.EventType))
 			}
 		})
@@ -307,18 +315,19 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 	}
 	if err != nil {
 		for _, r := range pending_entries {
+			status, _, _, startedAt := r.snapshot()
 			if _, is_timeout := err.(*EventTimeoutError); is_timeout {
-				if r.Status == EventResultCompleted {
+				if status == EventResultCompleted {
 					continue
 				}
-				if r.StartedAt != nil {
+				if startedAt != nil {
 					r.replaceError((&EventHandlerAbortedError{Message: "Aborted running handler due to event timeout"}).Error())
 				} else {
 					r.replaceError((&EventHandlerCancelledError{Message: "Cancelled pending handler due to event timeout"}).Error())
 				}
 				continue
 			}
-			if r.Status == EventResultCompleted || r.Status == EventResultError {
+			if status == EventResultCompleted || status == EventResultError {
 				continue
 			}
 			r.markError(err)
@@ -349,7 +358,14 @@ func (e *BaseEvent) runHandlers(ctx context.Context, bus *EventBus, handlers []*
 			if err := runSingleHandler(ctx, bus, e, h, results[i]); err != nil {
 				return err
 			}
-			if results[i].Status == EventResultCompleted && results[i].Result != nil {
+			status, result, _, _ := results[i].snapshot()
+			if status == EventResultCompleted && result != nil {
+				for j := i + 1; j < len(results); j++ {
+					nextStatus, _, _, _ := results[j].snapshot()
+					if nextStatus == EventResultPending {
+						results[j].replaceError((&EventHandlerCancelledError{Message: "Cancelled pending handler due to first-completion mode"}).Error())
+					}
+				}
 				return nil
 			}
 		}
@@ -381,34 +397,56 @@ func (e *BaseEvent) runHandlers(ctx context.Context, bus *EventBus, handlers []*
 		}(h, results[i])
 	}
 	if completion == EventHandlerCompletionFirst {
-		first_done := make(chan struct{})
-		go func() { wg.Wait(); close(first_done) }()
-		for {
-			for _, r := range results {
-				if r.Status == EventResultCompleted && r.Result != nil {
-					if cancel != nil {
-						cancel()
-					}
-					return nil
+		all_done := make(chan struct{})
+		go func() { wg.Wait(); close(all_done) }()
+		completionSignal := make(chan struct{}, len(results))
+		for _, result := range results {
+			go func(result *EventResult) {
+				<-result.done_ch
+				select {
+				case completionSignal <- struct{}{}:
+				default:
+				}
+			}(result)
+		}
+		hasSuccessfulResult := func() bool {
+			for _, result := range results {
+				status, value, _, _ := result.snapshot()
+				if status == EventResultCompleted && value != nil {
+					return true
 				}
 			}
-			select {
-			case err := <-err_ch:
-				// in first mode, continue waiting unless all done and no success
-				_ = err
-			case <-first_done:
-				for _, r := range results {
-					if r.Status == EventResultCompleted && r.Result != nil {
-						return nil
-					}
+			return false
+		}
+		firstResultError := func() error {
+			for _, result := range results {
+				status, _, errValue, _ := result.snapshot()
+				if status == EventResultError {
+					return errors.New(toErrorString(errValue))
 				}
-				for _, r := range results {
-					if r.Status == EventResultError {
-						return errors.New(toErrorString(r.Error))
-					}
+			}
+			return nil
+		}
+		for {
+			if hasSuccessfulResult() {
+				if cancel != nil {
+					cancel()
 				}
 				return nil
-			case <-time.After(time.Millisecond):
+			}
+			select {
+			case <-completionSignal:
+			case <-all_done:
+				if hasSuccessfulResult() {
+					return nil
+				}
+				if err := firstResultError(); err != nil {
+					return err
+				}
+				return nil
+			case <-run_ctx.Done():
+				return run_ctx.Err()
+			case <-err_ch:
 			}
 		}
 	}
@@ -454,7 +492,8 @@ func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, hand
 	var handler_slow_timer *time.Timer
 	if resolved_handler_slow_timeout != nil && (resolved_handler_timeout == nil || *resolved_handler_timeout > *resolved_handler_slow_timeout) {
 		handler_slow_timer = time.AfterFunc(time.Duration(*resolved_handler_slow_timeout*float64(time.Second)), func() {
-			if result.Status == EventResultStarted {
+			status, _, _, _ := result.snapshot()
+			if status == EventResultStarted {
 				SlowWarningLogger(fmt.Sprintf("[bubus] Slow event handler: %s.on(%s, %s) still running", bus.Name, event.EventType, handler.HandlerName))
 			}
 		})
@@ -488,7 +527,7 @@ func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, hand
 
 func (b *EventBus) processEventImmediately(ctx context.Context, event *BaseEvent, handler_result *EventResult) (*BaseEvent, error) {
 	original_event := event
-	if original_event.EventStatus == "completed" {
+	if original_event.status() == "completed" {
 		return original_event, nil
 	}
 	b.mu.Lock()
@@ -500,6 +539,9 @@ func (b *EventBus) processEventImmediately(ctx context.Context, event *BaseEvent
 	}
 	if b.inFlightEventIDs[original_event.EventID] {
 		b.mu.Unlock()
+		if err := original_event.EventCompleted(ctx); err != nil {
+			return nil, err
+		}
 		return original_event, nil
 	}
 	b.inFlightEventIDs[original_event.EventID] = true
@@ -555,7 +597,8 @@ func (b *EventBus) IsIdle() bool {
 			if result.EventBusID != b.ID {
 				continue
 			}
-			if result.Status == EventResultPending || result.Status == EventResultStarted {
+			status, _, _, _ := result.snapshot()
+			if status == EventResultPending || status == EventResultStarted {
 				return false
 			}
 		}
@@ -646,9 +689,7 @@ func EventBusFromJSON(data []byte) (*EventBus, error) {
 	return bus, nil
 }
 
-func (b *EventBus) resolveFindWaiters(event *BaseEvent) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+func (b *EventBus) resolveFindWaitersLocked(event *BaseEvent) {
 	remaining := make([]*findWaiter, 0, len(b.findWaiters))
 	for _, waiter := range b.findWaiters {
 		if waiter.EventPattern != "*" && waiter.EventPattern != event.EventType {
@@ -662,6 +703,12 @@ func (b *EventBus) resolveFindWaiters(event *BaseEvent) {
 		waiter.Resolve(event)
 	}
 	b.findWaiters = remaining
+}
+
+func (b *EventBus) resolveFindWaiters(event *BaseEvent) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.resolveFindWaitersLocked(event)
 }
 
 func (b *EventBus) eventIsChildOf(event *BaseEvent, ancestor *BaseEvent) bool {
@@ -745,16 +792,16 @@ func (b *EventBus) eventMatchesEquals(event *BaseEvent, equals map[string]any) b
 	for key, value := range equals {
 		switch key {
 		case "event_status":
-			if event.EventStatus != value {
+			if !reflect.DeepEqual(event.EventStatus, value) {
 				return false
 			}
 		case "event_type":
-			if event.EventType != value {
+			if !reflect.DeepEqual(event.EventType, value) {
 				return false
 			}
 		default:
 			payload_v, ok := event.Payload[key]
-			if !ok || payload_v != value {
+			if !ok || !reflect.DeepEqual(payload_v, value) {
 				return false
 			}
 		}
@@ -767,13 +814,6 @@ func (b *EventBus) Find(event_pattern string, where func(event *BaseEvent) bool,
 		options = &FindOptions{}
 	}
 	future_enabled, future_timeout := normalizeFuture(options.Future)
-	historyMatch := b.EventHistory.Find(event_pattern, where, &EventHistoryFindOptions{Past: options.Past, ChildOf: options.ChildOf, Equals: options.Equals})
-	if historyMatch != nil {
-		return historyMatch, nil
-	}
-	if !future_enabled {
-		return nil, nil
-	}
 	if event_pattern == "" {
 		event_pattern = "*"
 	}
@@ -792,9 +832,23 @@ func (b *EventBus) Find(event_pattern string, where func(event *BaseEvent) bool,
 		}
 		return where(event)
 	}
-	resolved := make(chan *BaseEvent, 1)
-	waiter := &findWaiter{EventPattern: event_pattern, Matches: matches, Resolve: func(event *BaseEvent) { resolved <- event }}
 	b.mu.Lock()
+	historyMatch := b.EventHistory.Find(event_pattern, where, &EventHistoryFindOptions{Past: options.Past, ChildOf: options.ChildOf, Equals: options.Equals})
+	if historyMatch != nil {
+		b.mu.Unlock()
+		return historyMatch, nil
+	}
+	if !future_enabled {
+		b.mu.Unlock()
+		return nil, nil
+	}
+	resolved := make(chan *BaseEvent, 1)
+	waiter := &findWaiter{EventPattern: event_pattern, Matches: matches, Resolve: func(event *BaseEvent) {
+		select {
+		case resolved <- event:
+		default:
+		}
+	}}
 	b.findWaiters = append(b.findWaiters, waiter)
 	b.mu.Unlock()
 	cleanup := func() {
@@ -810,11 +864,17 @@ func (b *EventBus) Find(event_pattern string, where func(event *BaseEvent) bool,
 	if future_timeout == nil {
 		event := <-resolved
 		cleanup()
+		if event == nil {
+			return nil, nil
+		}
 		return event, nil
 	}
 	select {
 	case event := <-resolved:
 		cleanup()
+		if event == nil {
+			return nil, nil
+		}
 		return event, nil
 	case <-time.After(time.Duration(*future_timeout * float64(time.Second))):
 		cleanup()
@@ -850,25 +910,27 @@ func (b *EventBus) logEventTree(event *BaseEvent, prefix string, isLast bool) []
 	if event.EventStartedAt != nil && event.EventCompletedAt != nil {
 		started_at, _ := time.Parse(time.RFC3339Nano, *event.EventStartedAt)
 		completed_at, _ := time.Parse(time.RFC3339Nano, *event.EventCompletedAt)
-		dur = fmt.Sprintf(" [%.3fs]", started_at.Sub(completed_at).Seconds())
+		dur = fmt.Sprintf(" [%.3fs]", completed_at.Sub(started_at).Seconds())
 	}
-	line := fmt.Sprintf("%s%s %s#%s%s", prefix, connector, event.EventType, event.EventID[len(event.EventID)-4:], dur)
+	line := fmt.Sprintf("%s%s %s#%s%s", prefix, connector, event.EventType, suffix(event.EventID, 4), dur)
 	out := []string{line}
 	for _, r := range event.EventResults {
+		status, resultValue, errorValue, _ := r.snapshot()
 		sym := "✅"
-		if r.Status == EventResultError {
+		if status == EventResultError {
 			sym = "❌"
 		}
-		rline := fmt.Sprintf("%s%s %s %s.%s#%s", nextPrefix, connector, sym, b.Label(), r.HandlerName, r.HandlerID[len(r.HandlerID)-4:])
-		if r.Result != nil {
-			rline += fmt.Sprintf(" => %v", r.Result)
+		rline := fmt.Sprintf("%s%s %s %s.%s#%s", nextPrefix, connector, sym, b.Label(), r.HandlerName, suffix(r.HandlerID, 4))
+		if resultValue != nil {
+			rline += fmt.Sprintf(" => %v", resultValue)
 		}
-		if r.Error != nil {
-			rline += fmt.Sprintf(" err=%v", r.Error)
+		if errorValue != nil {
+			rline += fmt.Sprintf(" err=%v", errorValue)
 		}
 		out = append(out, rline)
-		for i, c := range r.EventChildren {
-			out = append(out, b.logEventTree(c, nextPrefix, i == len(r.EventChildren)-1)...)
+		children := r.childEvents()
+		for i, child := range children {
+			out = append(out, b.logEventTree(child, nextPrefix, i == len(children)-1)...)
 		}
 	}
 	return out
@@ -876,12 +938,16 @@ func (b *EventBus) logEventTree(event *BaseEvent, prefix string, isLast bool) []
 
 func (b *EventBus) Destroy() {
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	waiters := append([]*findWaiter{}, b.findWaiters...)
+	b.findWaiters = []*findWaiter{}
 	b.handlers = map[string]*EventHandler{}
 	b.handlersByKey = map[string][]string{}
-	b.EventHistory = NewEventHistory(b.EventHistory.MaxHistorySize, b.EventHistory.MaxHistoryDrop)
+	b.EventHistory.Clear()
 	b.pendingEventQueue = []*BaseEvent{}
 	b.inFlightEventIDs = map[string]bool{}
-	b.findWaiters = []*findWaiter{}
 	b.runloopRunning = false
+	b.mu.Unlock()
+	for _, waiter := range waiters {
+		waiter.Resolve(nil)
+	}
 }

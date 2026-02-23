@@ -3,11 +3,7 @@ package bubus
 import "github.com/google/uuid"
 
 func newUUIDv7String() string {
-	id, err := uuid.NewV7()
-	if err != nil {
-		return uuid.NewString()
-	}
-	return id.String()
+	return uuid.Must(uuid.NewV7()).String()
 }
 
 func deterministicUUID(seed string) string {

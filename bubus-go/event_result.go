@@ -37,6 +37,21 @@ type EventResult struct {
 	once    sync.Once
 }
 
+type eventResultJSON struct {
+	ID            string            `json:"id"`
+	Status        EventResultStatus `json:"status"`
+	EventID       string            `json:"event_id"`
+	HandlerID     string            `json:"handler_id"`
+	HandlerName   string            `json:"handler_name"`
+	EventBusName  string            `json:"eventbus_name"`
+	EventBusID    string            `json:"eventbus_id"`
+	StartedAt     *string           `json:"started_at,omitempty"`
+	CompletedAt   *string           `json:"completed_at,omitempty"`
+	Result        any               `json:"result,omitempty"`
+	Error         any               `json:"error,omitempty"`
+	EventChildren []*BaseEvent      `json:"event_children,omitempty"`
+}
+
 func NewEventResult(event *BaseEvent, handler *EventHandler) *EventResult {
 	return &EventResult{
 		ID:           newUUIDv7String(),
@@ -105,6 +120,44 @@ func (r *EventResult) Wait(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (r *EventResult) snapshot() (status EventResultStatus, result any, err any, startedAt *string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.Status, r.Result, r.Error, r.StartedAt
+}
+
+func (r *EventResult) addChild(event *BaseEvent) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.EventChildren = append(r.EventChildren, event)
+}
+
+func (r *EventResult) childEvents() []*BaseEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]*BaseEvent{}, r.EventChildren...)
+}
+
+func (r *EventResult) MarshalJSON() ([]byte, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	payload := eventResultJSON{
+		ID:            r.ID,
+		Status:        r.Status,
+		EventID:       r.EventID,
+		HandlerID:     r.HandlerID,
+		HandlerName:   r.HandlerName,
+		EventBusName:  r.EventBusName,
+		EventBusID:    r.EventBusID,
+		StartedAt:     r.StartedAt,
+		CompletedAt:   r.CompletedAt,
+		Result:        r.Result,
+		Error:         r.Error,
+		EventChildren: append([]*BaseEvent{}, r.EventChildren...),
+	}
+	return json.Marshal(payload)
 }
 
 func (r *EventResult) ToJSON() ([]byte, error) { return json.Marshal(r) }
