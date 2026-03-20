@@ -6,8 +6,8 @@ For local debugging, this middleware-backed history is the most complete source 
 ## Quick start
 
 ```bash
-git clone https://github.com/pirate/bbus.git
-cd bbus
+git clone https://github.com/ArchiveBox/abx-bus.git
+cd abx-bus
 uv venv
 uv pip install fastapi 'uvicorn[standard]'
 ```

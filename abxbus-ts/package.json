@@ -69,13 +69,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/pirate/bbus.git",
+    "url": "git+https://github.com/ArchiveBox/abx-bus.git",
     "directory": "abxbus-ts"
   },
   "bugs": {
-    "url": "https://github.com/pirate/bbus/issues"
+    "url": "https://github.com/ArchiveBox/abx-bus/issues"
   },
-  "homepage": "https://abxbus.sweeting.me",
+  "homepage": "https://abxbus.archivebox.io",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"

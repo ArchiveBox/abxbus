@@ -1,7 +1,7 @@
 [project]
 name = "abx-bus"
 description = "Advanced Pydantic-powered event bus with async support"
-authors = [{ name = "Nick Sweeting" }]
+authors = [{ name = "Nick Sweeting" }, { name = "ArchiveBox" }]
 version = "2.4.1"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -35,12 +35,12 @@ bridges = [
 ]
 
 [project.urls]
-Homepage = "https://abxbus.sweeting.me"
-Repository = "https://github.com/pirate/bbus"
-"Issue Tracker" = "https://github.com/pirate/bbus/issues"
-Documentation = "https://abxbus.sweeting.me"
-DeepWiki = "https://deepwiki.com/pirate/bbus"
-PyPI = "https://pypi.org/project/abxbus/"
+Homepage = "https://abxbus.archivebox.io"
+Repository = "https://github.com/ArchiveBox/abx-bus"
+"Issue Tracker" = "https://github.com/ArchiveBox/abx-bus/issues"
+Documentation = "https://abxbus.archivebox.io"
+DeepWiki = "https://deepwiki.com/ArchiveBox/abx-bus"
+PyPI = "https://pypi.org/project/abx-bus/"
 NPM = "https://www.npmjs.com/package/abxbus"
 
 [dependency-groups]
@@ -80,7 +80,7 @@ source-exclude = [
 ]
 
 [tool.codespell]
-ignore-words-list = "bu,wit,dont,cant,wont,re-use,re-used,re-using,re-usable,thats,doesnt"
+ignore-words-list = "abx,abxbus,bu,wit,dont,cant,wont,re-use,re-used,re-using,re-usable,thats,doesnt"
 skip = "*.json"
 
 [tool.ruff]

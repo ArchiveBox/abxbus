@@ -2,9 +2,9 @@
 
 <img width="200" alt="image" src="https://github.com/user-attachments/assets/b3525c24-51ba-496c-b327-ccdfe46a7362" align="right" />
 
-[![DeepWiki: Python](https://img.shields.io/badge/DeepWiki-bbus%2FPython-yellow.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)](https://deepwiki.com/pirate/bbus) [![PyPI - Version](https://img.shields.io/pypi/v/abxbus)](https://pypi.org/project/abxbus/) [![PyPi Downloads/week](https://static.pepy.tech/badge/abxbus/week)](https://pepy.tech/projects/abxbus) ![GitHub last commit](https://img.shields.io/github/last-commit/pirate/bbus)
+[![DeepWiki: Python](https://img.shields.io/badge/DeepWiki-abxbus%2FPython-yellow.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)](https://deepwiki.com/ArchiveBox/abx-bus) [![PyPI - Version](https://img.shields.io/pypi/v/abxbus)](https://pypi.org/project/abxbus/) [![PyPi Downloads/week](https://static.pepy.tech/badge/abxbus/week)](https://pepy.tech/projects/abxbus) ![GitHub last commit](https://img.shields.io/github/last-commit/ArchiveBox/abx-bus)
 
-[![DeepWiki: TS](https://img.shields.io/badge/DeepWiki-bbus%2FTypescript-blue.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)](https://deepwiki.com/pirate/bbus/3-typescript-implementation) [![NPM Version](https://img.shields.io/npm/v/abxbus)](https://www.npmjs.com/package/abxbus) [![PyPi Downloads/month](https://static.pepy.tech/badge/abxbus/month)](https://pepy.tech/projects/abxbus) [![GitHub License](https://img.shields.io/github/license/pirate/bbus)](https://github.com/pirate/bbus)
+[![DeepWiki: TS](https://img.shields.io/badge/DeepWiki-abxbus%2FTypescript-blue.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)](https://deepwiki.com/ArchiveBox/abx-bus/3-typescript-implementation) [![NPM Version](https://img.shields.io/npm/v/abxbus)](https://www.npmjs.com/package/abxbus) [![PyPi Downloads/month](https://static.pepy.tech/badge/abxbus/month)](https://pepy.tech/projects/abxbus) [![GitHub License](https://img.shields.io/github/license/ArchiveBox/abx-bus)](https://github.com/ArchiveBox/abx-bus)
 
 AbxBus is an in-memory event bus library for async Python and TS (node/browser).
 
@@ -40,7 +40,6 @@ It's async native, has proper automatic nested event tracking, and powerful conc
 - handles thousands of events/sec/core in both languages; see the runtime matrix below for current measured numbers
 
 <br/>
-
 
 ## 🔢 Quickstart
 
@@ -86,7 +85,6 @@ print(await event.event_result())
 <details>
 <summary><strong>🔎 Event Pattern Matching</strong></summary>
 
-
 Subscribe to events using multiple patterns:
 
 ```python
@@ -106,7 +104,6 @@ bus.on('*', universal_handler)
 
 <details>
 <summary><strong>🔀 Async and Sync Handler Support</strong></summary>
-
 
 Register both synchronous and asynchronous handlers for maximum flexibility:
 
@@ -132,7 +129,7 @@ class SomeService:
 
     async def handlers_can_be_methods(self, event: SomeEvent) -> str:
         return self.some_value
-    
+
     @classmethod
     async def handler_can_be_classmethods(cls, event: SomeEvent) -> str:
         return cls.some_value
@@ -149,12 +146,10 @@ bus.on(SomeEvent, SomeService.handlers_can_be_staticmethods)
 
 <br/>
 
-
 </details>
 
 <details>
 <summary><strong>🔠 Type-Safe Events with Pydantic</strong></summary>
-
 
 Define events as Pydantic models with full type checking and validation:
 
@@ -171,7 +166,7 @@ class OrderCreatedEvent(BaseEvent):
 # Events are automatically validated
 event = OrderCreatedEvent(
     order_id="ORD-123",
-    customer_id="CUST-456", 
+    customer_id="CUST-456",
     total_amount=99.99,
     items=[{"sku": "ITEM-1", "quantity": 2}]
 )
@@ -182,13 +177,10 @@ event = OrderCreatedEvent(
 
 <br/>
 
-
-
 </details>
 
 <details>
 <summary><strong>⏩ Forward `Events` Between `EventBus`s</strong></summary>
-
 
 You can define separate `EventBus` instances in different "microservices" to separate different areas of concern.
 `EventBus`s can be set up to forward events between each other (with automatic loop prevention):
@@ -216,7 +208,6 @@ print(event.event_path)  # ['MainBus#ab12', 'AuthBus#cd34', 'DataBus#ef56']  # l
 
 <details>
 <summary><strong>🔱 Event Results Aggregation</strong></summary>
-
 
 Collect results from multiple handlers:
 
@@ -246,7 +237,6 @@ for handler_id, event_result in event.event_results.items():
 <details>
 <summary><strong>🚦 FIFO Event Processing</strong></summary>
 
-
 Events are processed in strict FIFO order, maintaining consistency:
 
 ```python
@@ -259,6 +249,7 @@ await bus.wait_until_idle(timeout=30.0)
 ```
 
 If a handler emits and awaits any child events during execution, those events will jump the FIFO queue and be processed immediately:
+
 ```python
 def child_handler(event: SomeOtherEvent) -> str:
     return 'xzy123'
@@ -266,7 +257,7 @@ def child_handler(event: SomeOtherEvent) -> str:
 def main_handler(event: MainEvent) -> str:
     # enqueue event for processing after main_handler exits
     child_event = bus.emit(SomeOtherEvent())
-    
+
     # can also await child events to process immediately instead of adding to FIFO queue
     completed_child_event = await child_event
     return f'result from awaiting child event: {await completed_child_event.event_result()}'  # 'xyz123'
@@ -284,7 +275,6 @@ await bus.emit(MainEvent()).event_result()
 
 <details>
 <summary><strong>🪆 Emit Nested Child Events From Handlers</strong></summary>
-
 
 Automatically track event relationships and causality tree:
 
@@ -324,14 +314,12 @@ if __name__ == '__main__':
 <img width="100%" alt="show the whole tree of events at any time using the logging helpers" src="https://github.com/user-attachments/assets/f94684a6-7694-4066-b948-46925f47b56c" /><br/>
 <img width="100%" alt="intelligent timeout handling to differentiate handler that timed out from handler that was interrupted" src="https://github.com/user-attachments/assets/8da341fd-6c26-4c68-8fec-aef1ca55c189" />
 
-
 <br/><br/>
 
 </details>
 
 <details>
 <summary><strong>🔎 Find Events in History or Wait for Future Events</strong></summary>
-
 
 `find()` is the single lookup API: search history, wait for future events, or combine both.
 
@@ -378,7 +366,7 @@ This solves race conditions where child events fire before you start waiting for
 See the `EventBus.find(...)` API section below for full parameter details.
 
 > [!IMPORTANT]
-> `find()` resolves when the event is first *emitted* to the `EventBus`, not when it completes.
+> `find()` resolves when the event is first _emitted_ to the `EventBus`, not when it completes.
 > Use `await event` for immediate-await semantics (queue-jumps when called inside a handler), or `await event.event_completed()` to always wait in normal queue order.
 > If no match is found (or future timeout elapses), `find()` returns `None`.
 
@@ -388,7 +376,6 @@ See the `EventBus.find(...)` API section below for full parameter details.
 
 <details>
 <summary><strong>🔁 Event Debouncing</strong></summary>
-
 
 Avoid re-running expensive work by reusing recent events. The `find()` method makes debouncing simple:
 
@@ -415,7 +402,6 @@ await event                                              # get completed event
 <details>
 <summary><strong>🎯 Event Handler Return Values</strong></summary>
 
-
 There are two ways to get return values from event handlers:
 
 **1. Have handlers return their values directly, which puts them in `event.event_results`:**
@@ -428,7 +414,7 @@ class DoSomeMathEvent(BaseEvent[int]):  # BaseEvent[int] = handlers are validate
     # int passed above gets saved to:
     # event_result_type = int
 
-def do_some_math(event: DoSomeMathEvent) -> int:                                                                                                                        
+def do_some_math(event: DoSomeMathEvent) -> int:
     return event.a + event.b
 
 event_bus.on(DoSomeMathEvent, do_some_math)
@@ -522,7 +508,6 @@ For pure Python usage, `event_result_type` can be any Python/Pydantic type you w
 <details>
 <summary><strong>🧵 ContextVar Propagation</strong></summary>
 
-
 ContextVars set before `emit()` are automatically propagated to event handlers. This is essential for request-scoped context like request IDs, user sessions, or tracing spans:
 
 ```python
@@ -589,7 +574,6 @@ await event_b  # Still sees 'req-B'
 <details>
 <summary><strong>🧹 Memory Management</strong></summary>
 
-
 EventBus includes automatic memory management to prevent unbounded growth in long-running applications:
 
 ```python
@@ -607,6 +591,7 @@ bus = EventBus(max_history_size=100, max_history_drop=False)
 ```
 
 **Automatic Cleanup:**
+
 - When `max_history_size` is set and `max_history_drop=True`, EventBus removes old events when the limit is exceeded
 - If `max_history_size=0`, history keeps only pending/started events and drops each event immediately after completion
 - If `max_history_drop=True`, the bus may drop oldest history entries even if they are uncompleted events
@@ -614,6 +599,7 @@ bus = EventBus(max_history_size=100, max_history_drop=False)
 - This ensures active events are preserved while cleaning up old completed events
 
 **Manual Memory Management:**
+
 ```python
 # For request-scoped buses (e.g. web servers), clear all memory after each request
 try:
@@ -625,6 +611,7 @@ finally:
 ```
 
 **Memory Monitoring:**
+
 - EventBus automatically monitors total memory usage across all instances
 - Warnings are logged when total memory exceeds 50MB
 - Use `bus.stop(clear=True)` to completely free memory for unused buses
@@ -637,12 +624,11 @@ finally:
 <details>
 <summary><strong>⛓️ Parallel Handler Execution</strong></summary>
 
-
 > [!CAUTION]
 > **Not Recommended.** Only for advanced users willing to implement their own concurrency control.
 
 Enable parallel processing of handlers for better performance.  
-The harsh tradeoff is less deterministic ordering as handler execution order will not be guaranteed when run in parallel. 
+The harsh tradeoff is less deterministic ordering as handler execution order will not be guaranteed when run in parallel.
 (It's very hard to write non-flaky/reliable applications when handler execution order is not guaranteed.)
 
 ```python
@@ -664,7 +650,6 @@ await bus.emit(DataEvent())
 
 <details>
 <summary><strong>🧩 Middlewares</strong></summary>
-
 
 Middlewares can observe or mutate the `EventResult` at each step, emit additional events, or trigger other side effects (metrics, retries, auth checks, etc.).
 
@@ -725,6 +710,7 @@ class AnalyticsMiddleware(EventBusMiddleware):
 <br/>
 
 ---
+
 ---
 
 <br/>
@@ -735,7 +721,6 @@ class AnalyticsMiddleware(EventBusMiddleware):
 
 <details>
 <summary><strong><code>EventBus</code></strong></summary>
-
 
 The main event bus class that manages event processing and handler execution.
 
@@ -768,6 +753,7 @@ EventBus(
 - `middlewares`: Optional list of `EventBusMiddleware` subclasses or instances that hook into handler execution for analytics, logging, retries, etc. (see [Middlewares](#middlewares) for more info)
 
 Timeout precedence matches TS:
+
 - Effective handler timeout = `min(resolved_handler_timeout, event_timeout)` where `resolved_handler_timeout` resolves in order: `handler.handler_timeout` -> `event.event_handler_timeout` -> `bus.event_timeout`.
 - Slow handler warning threshold resolves in order: `handler.handler_slow_timeout` -> `event.event_handler_slow_timeout` -> `event.event_slow_timeout` -> `bus.event_handler_slow_timeout` -> `bus.event_slow_timeout`.
 
@@ -893,7 +879,6 @@ await bus.stop(clear=True)   # Stop and clear all event history and handlers to 
 <details>
 <summary><strong><code>BaseEvent</code></strong></summary>
 
-
 Base class for all events. Subclass `BaseEvent` to define your own events.
 
 Make sure none of your own event data fields start with `event_` or `model_` to avoid clashing with `BaseEvent` or `pydantic` builtin attrs.
@@ -925,7 +910,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     event_results: dict[str, EventResult]   # Handler results {<handler uuid>: EventResult} (auto-set)
     event_children: list[BaseEvent] # getter property to list any child events emitted during handling
     event_bus: EventBus          # getter property to get the bus the event was emitted on
-    
+
     # payload fields
     # ... subclass BaseEvent to add your own event payload fields here ...
     # some_key: str
@@ -1051,7 +1036,7 @@ bus = EventBus()
 async def some_handler(event: MyEvent):
     # You can always emit directly to any bus you have a reference to
     child_event = bus.emit(ChildEvent())
-    
+
     # OR use the event.event_bus shortcut to get the current bus:
     child_event = await event.event_bus.emit(ChildEvent())
 ```
@@ -1062,7 +1047,6 @@ async def some_handler(event: MyEvent):
 
 <details>
 <summary><strong><code>EventResult</code></strong></summary>
-
 
 The placeholder object that represents the pending result from a single handler executing an event.  
 `Event.event_results` contains a `dict[PythonIdStr, EventResult]` in the shape of `{handler_id: EventResult()}`.
@@ -1078,11 +1062,11 @@ class EventResult(BaseModel):
     handler_name: str         # Handler function name
     eventbus_id: str          # Bus that executed this handler
     eventbus_name: str        # Bus name
-    
+
     status: str               # 'pending', 'started', 'completed', 'error'
     result: Any               # Handler return value
     error: BaseException | None  # Captured exception if the handler failed
-    
+
     started_at: str | None      # Canonical ISO timestamp when handler started
     completed_at: str | None    # Canonical ISO timestamp when handler completed
     timeout: float | None            # Handler timeout in seconds
@@ -1107,7 +1091,6 @@ value = await handler_result  # Returns result or raises an exception if handler
 
 <details>
 <summary><strong><code>EventHandler</code></strong></summary>
-
 
 Serializable metadata wrapper around a registered handler callable.
 
@@ -1147,13 +1130,14 @@ The raw callable is stored on `handler`, but is excluded from JSON serialization
 uv run tests/performance_runtime.py   # run the performance test suite in python
 ```
 
-| Runtime | 1 bus x 50k events x 1 handler | 500 buses x 100 events x 1 handler | 1 bus x 1 event x 50k parallel handlers | 1 bus x 50k events x 50k one-off handlers | Worst case (N buses x N events x N handlers) |
-| ------------------ | ------------------ | ------------------ | ------------------ | ------------------ | ------------------ |
-| Python | `0.179ms/event`, `0.235kb/event` | `0.191ms/event`, `0.191kb/event` | `0.035ms/handler`, `8.164kb/handler` | `0.255ms/event`, `0.185kb/event` | `0.351ms/event`, `5.867kb/event` |
+| Runtime | 1 bus x 50k events x 1 handler   | 500 buses x 100 events x 1 handler | 1 bus x 1 event x 50k parallel handlers | 1 bus x 50k events x 50k one-off handlers | Worst case (N buses x N events x N handlers) |
+| ------- | -------------------------------- | ---------------------------------- | --------------------------------------- | ----------------------------------------- | -------------------------------------------- |
+| Python  | `0.179ms/event`, `0.235kb/event` | `0.191ms/event`, `0.191kb/event`   | `0.035ms/handler`, `8.164kb/handler`    | `0.255ms/event`, `0.185kb/event`          | `0.351ms/event`, `5.867kb/event`             |
 
 <br/>
 
 ---
+
 ---
 
 <br/>
@@ -1163,7 +1147,7 @@ uv run tests/performance_runtime.py   # run the performance test suite in python
 Set up the python development environment using `uv`:
 
 ```bash
-git clone https://github.com/pirate/bbus && cd bbus
+git clone https://github.com/ArchiveBox/abx-bus && cd abx-bus
 
 # Create virtual environment with Python 3.12
 uv venv --python 3.12
@@ -1228,11 +1212,8 @@ uv run tests/performance_runtime.py
 
 ---
 
-
-> [🧠 DeepWiki Docs](https://deepwiki.com/pirate/bbus)  
+> [🧠 DeepWiki Docs](https://deepwiki.com/ArchiveBox/abx-bus)  
 > <img width="400" alt="image" src="https://github.com/user-attachments/assets/cedb5a2e-0643-4240-9a3d-5f27cb8b5741" /><img width="400" alt="image" src="https://github.com/user-attachments/assets/3ee0ee8c-8322-449f-979b-5c99ba6bd960" />
-
-
 
 ## 🏛️ License
 

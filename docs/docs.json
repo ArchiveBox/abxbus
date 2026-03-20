@@ -117,7 +117,7 @@
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/pirate/bbus",
+      "github": "https://github.com/ArchiveBox/abx-bus",
       "x": "https://x.com/theSquashSH"
     }
   },
@@ -125,7 +125,7 @@
     "links": [
       {
         "label": "Github",
-        "href": "https://github.com/pirate/bbus"
+        "href": "https://github.com/ArchiveBox/abx-bus"
       },
       {
         "label": "NPM",
