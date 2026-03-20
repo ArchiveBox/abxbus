@@ -2,7 +2,7 @@
 name = "bubus"
 description = "Advanced Pydantic-powered event bus with async support"
 authors = [{ name = "Nick Sweeting" }]
-version = "2.3.2"
+version = "2.3.3"
 readme = "README.md"
 requires-python = ">=3.11"
 classifiers = [
