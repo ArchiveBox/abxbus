@@ -5,7 +5,7 @@
 import asyncio
 from typing import Any
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 
 class ParentEvent(BaseEvent[str]):
@@ -171,7 +171,7 @@ async def test_comprehensive_patterns():
         if event.event_parent_id is None:
             print(f'  - {event}')
 
-    from bubus.logging import log_eventbus_tree
+    from abxbus.logging import log_eventbus_tree
 
     log_eventbus_tree(bus1)
     log_eventbus_tree(bus2)
@@ -285,7 +285,7 @@ async def test_race_condition_stress():
 
     # Print event history tree for the last run
     print('\nEvent history for the last test run:')
-    from bubus.logging import log_eventbus_tree
+    from abxbus.logging import log_eventbus_tree
 
     log_eventbus_tree(bus1)
     log_eventbus_tree(bus2)

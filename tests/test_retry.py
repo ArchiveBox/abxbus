@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 
-import bubus.retry as retry_helpers
-from bubus.retry import retry
+import abxbus.retry as retry_helpers
+from abxbus.retry import retry
 
 
 def worker_acquire_semaphore(

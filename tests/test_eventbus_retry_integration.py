@@ -1,8 +1,8 @@
 import asyncio
 import time
 
-from bubus import BaseEvent, EventBus
-from bubus.retry import retry
+from abxbus import BaseEvent, EventBus
+from abxbus.retry import retry
 
 
 class TestRetryWithEventBus:

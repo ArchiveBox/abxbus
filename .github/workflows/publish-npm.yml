@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: bubus-ts
+        working-directory: abxbus-ts
     steps:
       - uses: actions/checkout@v4
 
@@ -31,7 +31,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: bubus-ts/pnpm-lock.yaml
+          cache-dependency-path: abxbus-ts/pnpm-lock.yaml
           registry-url: https://registry.npmjs.org
 
       - name: Install bridge service binaries

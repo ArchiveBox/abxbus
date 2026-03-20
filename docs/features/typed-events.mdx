@@ -7,14 +7,14 @@ Events are strongly typed and validated in both runtimes.
 
 Repository example files:
 - [`examples/simple.py`](https://github.com/pirate/bbus/blob/main/examples/simple.py)
-- [`bubus-ts/examples/simple.ts`](https://github.com/pirate/bbus/blob/main/bubus-ts/examples/simple.ts)
+- [`abxbus-ts/examples/simple.ts`](https://github.com/pirate/bbus/blob/main/abxbus-ts/examples/simple.ts)
 
 <Tabs>
 <Tab title="Python">
 
 ```python
 from typing import Any
-from bubus import BaseEvent
+from abxbus import BaseEvent
 
 class OrderCreatedEvent(BaseEvent[dict[str, Any]]):
     order_id: str
@@ -26,7 +26,7 @@ class OrderCreatedEvent(BaseEvent[dict[str, Any]]):
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent } from 'bubus'
+import { BaseEvent } from 'abxbus'
 import { z } from 'zod'
 
 const OrderCreatedEvent = BaseEvent.extend('OrderCreatedEvent', {

@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: bubus-ts
+        working-directory: abxbus-ts
     steps:
       - uses: actions/checkout@v4
 
@@ -28,7 +28,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: bubus-ts/pnpm-lock.yaml
+          cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec prettier --check .
@@ -47,19 +47,19 @@ jobs:
       - id: lsgrep
         run: |
           TS_TEST_TASKS="$(
-            find bubus-ts/tests -maxdepth 1 -type f -name '*.test.ts' ! -name 'eventbus_performance.test.ts' \
+            find abxbus-ts/tests -maxdepth 1 -type f -name '*.test.ts' ! -name 'eventbus_performance.test.ts' \
               | sort \
-              | sed 's|^bubus-ts/tests/||' \
+              | sed 's|^abxbus-ts/tests/||' \
               | sed 's|\.test\.ts$||' \
               | jq -R -s -c 'split("\n")[:-1] | map({kind: "test", name: .})'
           )"
           TS_EXAMPLE_TASKS="$(
             (
-              if [[ -d bubus-ts/examples ]]; then
-                find bubus-ts/examples -maxdepth 1 -type f -name '*.ts' | sort
+              if [[ -d abxbus-ts/examples ]]; then
+                find abxbus-ts/examples -maxdepth 1 -type f -name '*.ts' | sort
               fi
             ) \
-              | sed 's|^bubus-ts/examples/||' \
+              | sed 's|^abxbus-ts/examples/||' \
               | sed 's|\.ts$||' \
               | jq -R -s -c 'split("\n")[:-1] | map({kind: "example", name: .})'
           )"
@@ -71,7 +71,7 @@ jobs:
       - name: Check that at least one test file is found
         run: |
           if [[ -z "${{ steps.lsgrep.outputs.TS_TEST_TASKS }}" || "${{ steps.lsgrep.outputs.TS_TEST_TASKS }}" == "[]" ]]; then
-            echo "Failed to find any *.test.ts files in bubus-ts/tests/ folder!" > /dev/stderr
+            echo "Failed to find any *.test.ts files in abxbus-ts/tests/ folder!" > /dev/stderr
             exit 1
           fi
 
@@ -83,14 +83,14 @@ jobs:
     strategy:
       matrix:
         task: ${{ fromJson(needs.find_ts_tests.outputs.TS_TASKS || '[{"kind":"error","name":"FAILED_TO_DISCOVER_TASKS"}]') }}
-        # autodiscovers all files in bubus-ts/tests/*.test.ts and bubus-ts/examples/*.ts
+        # autodiscovers all files in abxbus-ts/tests/*.test.ts and abxbus-ts/examples/*.ts
         # - { kind: "test", name: "eventbus_basics" }
         # - { kind: "example", name: "simple" }
         # ... and more
     name: ts-${{ matrix.task.kind }}-${{ matrix.task.name }}
     defaults:
       run:
-        working-directory: bubus-ts
+        working-directory: abxbus-ts
     steps:
       - uses: actions/checkout@v4
 
@@ -109,7 +109,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: bubus-ts/pnpm-lock.yaml
+          cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
       - name: Install bridge service binaries
         if: matrix.task.kind == 'test' && matrix.task.name == 'bridges'
@@ -171,7 +171,7 @@ jobs:
         with:
           name: ts-coverage-${{ matrix.task.kind }}-${{ matrix.task.name }}
           path: |
-            bubus-ts/.v8-coverage
+            abxbus-ts/.v8-coverage
             pyproject.toml
           retention-days: 7
           include-hidden-files: true
@@ -191,9 +191,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: bubus-ts/pnpm-lock.yaml
+          cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
-      - run: cd bubus-ts && pnpm install --frozen-lockfile
+      - run: cd abxbus-ts && pnpm install --frozen-lockfile
 
       - name: Download all coverage data
         uses: actions/download-artifact@v4
@@ -203,11 +203,11 @@ jobs:
 
       - name: Combine coverage data
         run: |
-          mkdir -p bubus-ts/.v8-coverage-merged
+          mkdir -p abxbus-ts/.v8-coverage-merged
 
           counter=1
           while IFS= read -r -d '' coverage_file; do
-            cp "$coverage_file" "bubus-ts/.v8-coverage-merged/$counter-$(basename "$coverage_file")"
+            cp "$coverage_file" "abxbus-ts/.v8-coverage-merged/$counter-$(basename "$coverage_file")"
             counter=$((counter + 1))
           done < <(find coverage-data -type f -name "*.json" -print0)
 
@@ -218,7 +218,7 @@ jobs:
 
       - name: Build merged coverage report
         run: |
-          cd bubus-ts
+          cd abxbus-ts
           set -o pipefail
           mkdir -p coverage
           pnpm dlx c8 report \
@@ -267,7 +267,7 @@ jobs:
 
       - name: Fail if TypeScript coverage is <50%
         run: |
-          cd bubus-ts
+          cd abxbus-ts
           pnpm dlx c8 report \
             --temp-directory .v8-coverage-merged \
             --reporter=text-summary \
@@ -284,7 +284,7 @@ jobs:
         with:
           name: ts-coverage-report
           path: |
-            bubus-ts/coverage/
+            abxbus-ts/coverage/
             pyproject.toml
           retention-days: 7
 
@@ -299,7 +299,7 @@ jobs:
       perf_stats: ${{ steps.export_perf.outputs.perf_stats }}
     defaults:
       run:
-        working-directory: bubus-ts
+        working-directory: abxbus-ts
     steps:
       - uses: actions/checkout@v4
 
@@ -311,7 +311,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: bubus-ts/pnpm-lock.yaml
+          cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
       - uses: oven-sh/setup-bun@v2
 

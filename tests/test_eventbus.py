@@ -22,8 +22,8 @@ from typing import Any
 import pytest
 from pydantic import Field
 
-from bubus import BaseEvent, EventBus
-from bubus.helpers import monotonic_datetime
+from abxbus import BaseEvent, EventBus
+from abxbus.helpers import monotonic_datetime
 
 
 class CreateAgentTaskEvent(BaseEvent):

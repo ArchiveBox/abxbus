@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 
 def test_eventbus_subclasses_isolate_registries_and_global_serial_locks() -> None:

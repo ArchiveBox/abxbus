@@ -17,7 +17,7 @@ Supported handler shapes:
 
 ```python
 import asyncio
-from bubus import EventBus, BaseEvent
+from abxbus import EventBus, BaseEvent
 
 class WorkEvent(BaseEvent[str]):
     task_id: str
@@ -75,7 +75,7 @@ bus.on(WorkEvent, handlers.instance_async)
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 import { z } from 'zod'
 
 const WorkEvent = BaseEvent.extend('WorkEvent', {

@@ -3,7 +3,7 @@
 
 import asyncio
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 
 class ForwardedEvent(BaseEvent[None]):

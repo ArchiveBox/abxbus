@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from bubus import BaseEvent, EventBus, EventStatus
+from abxbus import BaseEvent, EventBus, EventStatus
 
 
 class ResetCoverageEvent(BaseEvent[None]):

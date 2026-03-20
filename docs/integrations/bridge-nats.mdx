@@ -13,7 +13,7 @@ description: Forward events over NATS subjects.
 Install the NATS extra (recommended):
 
 ```bash
-pip install "bubus[nats]"
+pip install "abxbus[nats]"
 ```
 
 Equivalent direct dependency install:
@@ -28,7 +28,7 @@ pip install nats-py
 Install the NATS client package:
 
 ```bash
-npm install bubus nats
+npm install abxbus nats
 ```
 
 This bridge is Node.js-only.
@@ -46,11 +46,11 @@ This bridge is Node.js-only.
 <Tab title="Python">
 
 ```python
-from bubus import NATSEventBridge
+from abxbus import NATSEventBridge
 
 bridge = NATSEventBridge(
     'nats://localhost:4222',
-    'bubus_events',
+    'abxbus_events',
     name='NatsBridge',
 )
 ```
@@ -59,11 +59,11 @@ bridge = NATSEventBridge(
 <Tab title="TypeScript">
 
 ```ts
-import { NATSEventBridge } from 'bubus'
+import { NATSEventBridge } from 'abxbus'
 
 const bridge = new NATSEventBridge(
   'nats://localhost:4222',
-  'bubus_events',
+  'abxbus_events',
   'NatsBridge'
 )
 ```
@@ -77,10 +77,10 @@ const bridge = new NATSEventBridge(
 <Tab title="Python">
 
 ```python
-from bubus import EventBus, NATSEventBridge
+from abxbus import EventBus, NATSEventBridge
 
 bus = EventBus('AppBus')
-bridge = NATSEventBridge('nats://localhost:4222', 'bubus_events')
+bridge = NATSEventBridge('nats://localhost:4222', 'abxbus_events')
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)
@@ -90,10 +90,10 @@ bridge.on('*', bus.emit)
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus, NATSEventBridge } from 'bubus'
+import { EventBus, NATSEventBridge } from 'abxbus'
 
 const bus = new EventBus('AppBus')
-const bridge = new NATSEventBridge('nats://localhost:4222', 'bubus_events')
+const bridge = new NATSEventBridge('nats://localhost:4222', 'abxbus_events')
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)

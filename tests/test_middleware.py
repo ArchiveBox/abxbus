@@ -15,8 +15,8 @@ from typing import Any
 import pytest
 from pydantic import Field
 
-from bubus import BaseEvent, EventBus, SQLiteHistoryMirrorMiddleware
-from bubus.middlewares import (
+from abxbus import BaseEvent, EventBus, SQLiteHistoryMirrorMiddleware
+from abxbus.middlewares import (
     AutoErrorEventMiddleware,
     AutoHandlerChangeEventMiddleware,
     AutoReturnEventMiddleware,
@@ -531,22 +531,22 @@ class TestHandlerMiddleware:
             await bus.emit(RootEvent())
             await bus.wait_until_idle()
 
-            root_event_span = next(span for span in tracer.spans if span.attrs.get('bubus.event_type') == 'RootEvent')
+            root_event_span = next(span for span in tracer.spans if span.attrs.get('abxbus.event_type') == 'RootEvent')
             root_handler_span = next(
-                span for span in tracer.spans if str(span.attrs.get('bubus.handler_name', '')).endswith('root_handler')
+                span for span in tracer.spans if str(span.attrs.get('abxbus.handler_name', '')).endswith('root_handler')
             )
-            child_event_span = next(span for span in tracer.spans if span.attrs.get('bubus.event_type') == 'ChildEvent')
+            child_event_span = next(span for span in tracer.spans if span.attrs.get('abxbus.event_type') == 'ChildEvent')
             child_handler_span = next(
-                span for span in tracer.spans if str(span.attrs.get('bubus.handler_name', '')).endswith('child_handler')
+                span for span in tracer.spans if str(span.attrs.get('abxbus.handler_name', '')).endswith('child_handler')
             )
 
             assert root_handler_span.context['parent'] is root_event_span
             assert child_event_span.context['parent'] is root_handler_span
             assert child_handler_span.context['parent'] is child_event_span
-            assert root_event_span.attrs.get('bubus.bus_name') == bus.label
-            assert root_handler_span.attrs.get('bubus.bus_name') == bus.label
-            assert child_event_span.attrs.get('bubus.bus_name') == bus.label
-            assert child_handler_span.attrs.get('bubus.bus_name') == bus.label
+            assert root_event_span.attrs.get('abxbus.bus_name') == bus.label
+            assert root_handler_span.attrs.get('abxbus.bus_name') == bus.label
+            assert child_event_span.attrs.get('abxbus.bus_name') == bus.label
+            assert child_handler_span.attrs.get('abxbus.bus_name') == bus.label
             assert all(span.ended for span in tracer.spans)
         finally:
             await bus.stop()

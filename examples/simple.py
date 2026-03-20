@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 
 class RegisterUserResult(BaseModel):
@@ -61,7 +61,7 @@ async def main() -> None:
         bus.on('RegisterUserEvent', on_register_user_invalid)
 
         # Dispatch a simple event handled by string registration.
-        await bus.emit(AuditEvent(message='Starting simple bubus example'))
+        await bus.emit(AuditEvent(message='Starting simple abxbus example'))
 
         # Dispatch typed event; one handler is valid, one is invalid.
         register_event = bus.emit(

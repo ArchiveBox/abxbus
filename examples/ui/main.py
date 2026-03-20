@@ -9,12 +9,12 @@ try:
     from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
     from fastapi.responses import HTMLResponse, JSONResponse
 except ModuleNotFoundError as exc:  # pragma: no cover - optional UI dependency
-    raise ModuleNotFoundError("Install 'fastapi' to run the bubus UI module.") from exc
+    raise ModuleNotFoundError("Install 'fastapi' to run the abxbus UI module.") from exc
 
 from . import db
 from .config import resolve_db_path
 
-app = FastAPI(title='bubus event monitor', version='0.1.0')
+app = FastAPI(title='abxbus event monitor', version='0.1.0')
 
 
 def _format_timestamp(value: str | None) -> str | None:
@@ -58,7 +58,7 @@ async def index() -> str:
     <html lang="en">
     <head>
         <meta charset="utf-8" />
-        <title>bubus Event Monitor</title>
+        <title>abxbus Event Monitor</title>
         <style>
             :root {
                 color-scheme: dark;
@@ -128,7 +128,7 @@ async def index() -> str:
     </head>
     <body>
         <header>
-            <h1>bubus Event Monitor</h1>
+            <h1>abxbus Event Monitor</h1>
             <div class="meta">
                 <span>Database: <code id="db-path"></code></span>
                 <span class="status-indicator" id="ws-status">connecting…</span>

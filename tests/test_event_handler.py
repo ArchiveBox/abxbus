@@ -1,7 +1,7 @@
 import asyncio
 from typing import Any
 
-from bubus import BaseEvent, EventBus, EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventResult
+from abxbus import BaseEvent, EventBus, EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventResult
 
 
 class CompletionEvent(BaseEvent[str]):
@@ -405,7 +405,7 @@ async def test_event_first_returns_none_when_all_handlers_fail() -> None:
 # Consolidated from tests/test_event_handler_concurrency.py
 
 
-from bubus import BaseEvent
+from abxbus import BaseEvent
 
 
 class ConcurrencyEvent(BaseEvent[str]):

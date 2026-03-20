@@ -1,4 +1,4 @@
-# bubus Monitoring Dashboard UI
+# abxbus Monitoring Dashboard UI
 
 Minimal FastAPI Web UI application that reads the `events_log` and `event_results_log` tables produced by the `SQLiteHistoryMirrorMiddleware` and exposes them over HTTP/WebSocket for live monitoring by an administrator / developer.
 For local debugging, this middleware-backed history is the most complete source because it includes lifecycle snapshots and handler result metadata.

@@ -67,8 +67,8 @@ retry({
 <Tab title="Python">
 
 ```python
-from bubus import EventBus, BaseEvent
-from bubus.retry import retry
+from abxbus import EventBus, BaseEvent
+from abxbus.retry import retry
 
 class FetchEvent(BaseEvent[dict]):
     url: str
@@ -88,7 +88,7 @@ bus.on(
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus, retry } from 'bubus'
+import { BaseEvent, EventBus, retry } from 'abxbus'
 import { z } from 'zod'
 
 const FetchEvent = BaseEvent.extend('FetchEvent', {
@@ -115,7 +115,7 @@ bus.on(
 <Tab title="Python">
 
 ```python
-from bubus.retry import retry
+from abxbus.retry import retry
 
 class ApiService:
     @retry(max_attempts=4, retry_after=1, timeout=10, semaphore_limit=2, semaphore_scope='class')
@@ -127,7 +127,7 @@ class ApiService:
 <Tab title="TypeScript">
 
 ```ts
-import { retry } from 'bubus'
+import { retry } from 'abxbus'
 
 class ApiService {
   @retry({ max_attempts: 4, retry_after: 1, timeout: 10, semaphore_limit: 2, semaphore_scope: 'class' })

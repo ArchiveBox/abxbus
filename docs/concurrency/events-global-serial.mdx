@@ -8,7 +8,7 @@ Note: that global lock is scoped to the `EventBus` class; if you need separate g
 
 Companion runnable example:
 - [`examples/concurrency_options.py`](https://github.com/pirate/bbus/blob/main/examples/concurrency_options.py)
-- [`bubus-ts/examples/concurrency_options.ts`](https://github.com/pirate/bbus/blob/main/bubus-ts/examples/concurrency_options.ts)
+- [`abxbus-ts/examples/concurrency_options.ts`](https://github.com/pirate/bbus/blob/main/abxbus-ts/examples/concurrency_options.ts)
 
 ## Lifecycle impact
 
@@ -24,7 +24,7 @@ Companion runnable example:
 
 ```python
 import asyncio
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 class SerialEvent(BaseEvent):
     order: int
@@ -64,7 +64,7 @@ assert [s for s in starts if s.startswith('b:')] == ['b:0', 'b:1', 'b:2']
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 import { z } from 'zod'
 
 const SerialEvent = BaseEvent.extend('SerialEvent', {

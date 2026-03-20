@@ -4,7 +4,7 @@
 import asyncio
 from typing import Literal
 
-from bubus import BaseEvent, EventBus, EventConcurrencyMode
+from abxbus import BaseEvent, EventBus, EventConcurrencyMode
 
 
 class ParentEvent(BaseEvent[None]):

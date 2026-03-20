@@ -1,7 +1,7 @@
 import inspect
 from typing import Any
 
-from bubus import BaseEvent, EventBus, events_suck
+from abxbus import BaseEvent, EventBus, events_suck
 
 
 class CreateUserEvent(BaseEvent[str]):

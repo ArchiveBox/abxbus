@@ -8,9 +8,9 @@ from typing import Any, assert_type
 
 from pydantic import BaseModel
 
-from bubus.base_event import BaseEvent, EventResult
-from bubus.event_bus import EventBus
-from bubus.event_handler import EventHandler
+from abxbus.base_event import BaseEvent, EventResult
+from abxbus.event_bus import EventBus
+from abxbus.event_handler import EventHandler
 
 
 class TypeContractResult(BaseModel):
@@ -71,8 +71,8 @@ This file is for static type checking only (pyright/ty), not runtime pytest exec
 
 from typing import TYPE_CHECKING
 
-from bubus.base_event import BaseEvent
-from bubus.event_bus import EventBus
+from abxbus.base_event import BaseEvent
+from abxbus.event_bus import EventBus
 
 
 class _SomeEventClass(BaseEvent[str]):

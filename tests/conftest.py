@@ -6,5 +6,5 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def set_log_level():
-    os.environ['BUBUS_LOGGING_LEVEL'] = 'WARNING'
-    importlib.import_module('bubus')
+    os.environ['ABXBUS_LOGGING_LEVEL'] = 'WARNING'
+    importlib.import_module('abxbus')

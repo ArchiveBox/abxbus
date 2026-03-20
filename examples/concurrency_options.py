@@ -5,7 +5,7 @@ import asyncio
 import time
 from typing import Literal
 
-from bubus import BaseEvent, EventBus, EventConcurrencyMode, EventHandlerConcurrencyMode
+from abxbus import BaseEvent, EventBus, EventConcurrencyMode, EventHandlerConcurrencyMode
 
 
 class WorkEvent(BaseEvent[None]):

@@ -21,7 +21,7 @@ It is the canonical history backend in both runtimes and exposes mapping-style a
 <Tab title="Python">
 
 ```python
-from bubus import EventHistory
+from abxbus import EventHistory
 
 history = EventHistory(max_history_size=100, max_history_drop=True)
 history[event.event_id] = event
@@ -38,7 +38,7 @@ for event_id, item in history.items():
 <Tab title="TypeScript">
 
 ```ts
-import { EventHistory } from 'bubus'
+import { EventHistory } from 'abxbus'
 
 const history = new EventHistory({ max_history_size: 100, max_history_drop: true })
 history.set(event.event_id, event)

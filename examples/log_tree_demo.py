@@ -4,7 +4,7 @@
 import asyncio
 from typing import Any
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 
 class RootEvent(BaseEvent[str]):

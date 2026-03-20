@@ -11,9 +11,9 @@ Timeout controls operate at three levels:
 
 Repository example files:
 - [`examples/concurrency_options.py`](https://github.com/pirate/bbus/blob/main/examples/concurrency_options.py)
-- [`bubus-ts/examples/concurrency_options.ts`](https://github.com/pirate/bbus/blob/main/bubus-ts/examples/concurrency_options.ts)
+- [`abxbus-ts/examples/concurrency_options.ts`](https://github.com/pirate/bbus/blob/main/abxbus-ts/examples/concurrency_options.ts)
 - [`examples/log_tree_demo.py`](https://github.com/pirate/bbus/blob/main/examples/log_tree_demo.py)
-- [`bubus-ts/examples/log_tree_demo.ts`](https://github.com/pirate/bbus/blob/main/bubus-ts/examples/log_tree_demo.ts)
+- [`abxbus-ts/examples/log_tree_demo.ts`](https://github.com/pirate/bbus/blob/main/abxbus-ts/examples/log_tree_demo.ts)
 
 ## Timeout types
 
@@ -50,7 +50,7 @@ Set default budgets and warning thresholds once when creating a bus.
 <Tab title="Python">
 
 ```python
-from bubus import EventBus
+from abxbus import EventBus
 
 bus = EventBus(
     'TimeoutBus',
@@ -64,7 +64,7 @@ bus = EventBus(
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus } from 'bubus'
+import { EventBus } from 'abxbus'
 
 const bus = new EventBus('TimeoutBus', {
   event_timeout: 30,
@@ -84,7 +84,7 @@ Set per-event values when emitting an event instance.
 <Tab title="Python">
 
 ```python
-from bubus import BaseEvent
+from abxbus import BaseEvent
 
 class WorkEvent(BaseEvent):
     pass
@@ -103,7 +103,7 @@ event = bus.emit(
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent } from 'bubus'
+import { BaseEvent } from 'abxbus'
 
 const WorkEvent = BaseEvent.extend('WorkEvent', {})
 

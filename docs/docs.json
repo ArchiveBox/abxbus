@@ -1,6 +1,6 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "name": "bubus",
+  "name": "abxbus",
   "theme": "almond",
   "favicon": "/favicon.svg",
   "colors": {
@@ -129,11 +129,11 @@
       },
       {
         "label": "NPM",
-        "href": "https://www.npmjs.com/package/bubus"
+        "href": "https://www.npmjs.com/package/abxbus"
       },
       {
         "label": "PyPI",
-        "href": "https://pypi.org/project/bubus/"
+        "href": "https://pypi.org/project/abxbus/"
       }
     ]
   },

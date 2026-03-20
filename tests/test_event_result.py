@@ -9,7 +9,7 @@ from typing import Any, Literal, assert_type
 
 from pydantic import BaseModel
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 
 class ScreenshotEventResult(BaseModel):
@@ -246,7 +246,7 @@ async def test_run_handler_starts_slow_monitor_after_lock_wait(caplog: Any):
     slow_entry.handler_slow_timeout = 0.01
     event = SlowMonitorOrderEvent()
 
-    caplog.set_level(logging.WARNING, logger='bubus')
+    caplog.set_level(logging.WARNING, logger='abxbus')
 
     pending_event = bus.emit(event)
     await first_handler_started.wait()
@@ -473,8 +473,8 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_jsonable_python
 from typing_extensions import TypedDict
 
-from bubus.base_event import BaseEvent
-from bubus.helpers import extract_basemodel_generic_arg
+from abxbus.base_event import BaseEvent
+from abxbus.helpers import extract_basemodel_generic_arg
 
 
 def _to_plain(value: Any) -> Any:
@@ -737,7 +737,7 @@ def test_json_schema_list_of_dataclass_rehydrates_to_list_of_models():
 
 async def test_json_schema_nested_object_and_array_runtime_enforcement():
     """Nested object/array schemas reconstructed from JSON enforce handler return values."""
-    from bubus import EventBus
+    from abxbus import EventBus
 
     nested_schema = {
         'type': 'object',
@@ -853,7 +853,7 @@ def test_complex_module_level_generics():
 
 async def test_module_level_runtime_enforcement():
     """Test that module-level auto-detected types are enforced at runtime."""
-    from bubus import EventBus
+    from abxbus import EventBus
 
     class RuntimeEvent(BaseEvent[ModuleLevelResult]):
         operation: str = 'runtime_test'

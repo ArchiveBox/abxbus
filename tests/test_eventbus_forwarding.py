@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from bubus import BaseEvent, EventBus, EventHandlerConcurrencyMode
+from abxbus import BaseEvent, EventBus, EventHandlerConcurrencyMode
 
 
 class RelayEvent(BaseEvent[str]):

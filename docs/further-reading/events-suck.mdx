@@ -61,7 +61,7 @@ const updated = await client.update({ id: id ?? 'fallback-id', age: 46 }, { sour
 <Tab title="Python">
 
 ```python
-from bubus import BaseEvent, EventBus, events_suck
+from abxbus import BaseEvent, EventBus, events_suck
 
 class CreateUserEvent(BaseEvent[str]):
     name: str
@@ -107,7 +107,7 @@ updated = await client.update(id=user_id, age=46, source='sync')
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus, events_suck } from 'bubus'
+import { BaseEvent, EventBus, events_suck } from 'abxbus'
 import { z } from 'zod'
 
 const CreateUserEvent = BaseEvent.extend('CreateUserEvent', {
@@ -235,7 +235,7 @@ You can keep one source of truth for payload shapes and reuse it in implementati
 Use implementation function signatures as the source of truth, then generate event classes from them.
 
 ```python
-from bubus import EventBus, events_suck
+from abxbus import EventBus, events_suck
 from pydantic import validate_call
 
 @validate_call
@@ -264,7 +264,7 @@ client = UserClient(bus=bus)
 Keep the schema as the source of truth, infer implementation input types from it, and reuse the same shape in `BaseEvent.extend(...)`.
 
 ```ts
-import { BaseEvent, EventBus, events_suck } from 'bubus'
+import { BaseEvent, EventBus, events_suck } from 'abxbus'
 import { z } from 'zod'
 
 const CreateUserInputSchema = z.object({

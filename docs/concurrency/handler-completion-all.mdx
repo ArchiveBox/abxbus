@@ -19,7 +19,7 @@ description: Wait for every matching handler before an event completes.
 
 ```python
 import asyncio
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 class CompletionEvent(BaseEvent[str]):
     pass
@@ -57,7 +57,7 @@ assert set(results) == {'fast', 'slow'}
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 import { z } from 'zod'
 
 const CompletionEvent = BaseEvent.extend('CompletionEvent', { event_result_type: z.string() })

@@ -170,23 +170,23 @@ Lock policy:
 
 ## Broker Mapping (Required for NATS and Kafka Backends)
 
-EventBus dispatch must publish normal broker events that non-bubus consumers can consume directly.
+EventBus dispatch must publish normal broker events that non-abxbus consumers can consume directly.
 
 Public event lane (domain events):
 - topic/subject pattern: `events.{event_type}` (or single stream + `event_type` header)
 - payload: normal event JSON
 - headers: `event_id`, `bus_id`, `event_type`, `event_parent_id`, tracing/correlation ids
 
-Bubus control lane (runtime coordination):
-- `bubus.event_buses`
-- `bubus.event_handlers`
-- `bubus.events`
-- `bubus.event_results`
-- `bubus.locks`
+AbxBus control lane (runtime coordination):
+- `abxbus.event_buses`
+- `abxbus.event_handlers`
+- `abxbus.events`
+- `abxbus.event_results`
+- `abxbus.locks`
 
 Rules:
 - Public lane messages are first-class outputs of `bus.emit(...)`.
-- Bubus workers consume both public + control lanes as needed.
+- AbxBus workers consume both public + control lanes as needed.
 - External consumers can consume only public lane and still see standard event traffic.
 - Handler callable code stays local to each machine; only handler metadata/identity is distributed.
 
@@ -290,11 +290,11 @@ Model:
 Subjects/streams:
 - Public: `events.*`
 - Control:
-  - `bubus.event_buses.*`
-  - `bubus.event_handlers.*`
-  - `bubus.events.*`
-  - `bubus.event_results.*`
-  - `bubus.locks.*`
+  - `abxbus.event_buses.*`
+  - `abxbus.event_handlers.*`
+  - `abxbus.events.*`
+  - `abxbus.event_results.*`
+  - `abxbus.locks.*`
 
 Core primitives:
 - durable consumers for work distribution
@@ -318,11 +318,11 @@ Model:
 Topics:
 - Public: `events.<event_type>` (or shared `events` topic keyed by `event_type`)
 - Control:
-  - `bubus.event_buses`
-  - `bubus.event_handlers`
-  - `bubus.events`
-  - `bubus.event_results`
-  - `bubus.locks`
+  - `abxbus.event_buses`
+  - `abxbus.event_handlers`
+  - `abxbus.events`
+  - `abxbus.event_results`
+  - `abxbus.locks`
 
 Core primitives:
 - consumer groups for distributed processing
@@ -401,13 +401,13 @@ Risks:
 
 - Implement subject/topic mapping for public + control lanes.
 - Implement deterministic claim/lock consumer logic.
-- Validate interoperability with non-bubus NATS consumers on public lane.
+- Validate interoperability with non-abxbus NATS consumers on public lane.
 
 ## Phase 7: Kafka backend
 
 - Implement topic mapping for public + control lanes.
 - Implement compaction + idempotent producer strategy for control topics.
-- Validate interoperability with non-bubus Kafka consumers on public lane.
+- Validate interoperability with non-abxbus Kafka consumers on public lane.
 
 ## Phase 8: Performance + reliability hardening
 
@@ -442,7 +442,7 @@ Risks:
 - retention rules preserve expected history semantics and ordering.
 
 9. Broker interoperability:
-- events emitted by bubus are consumable by normal non-bubus Kafka/NATS consumers.
+- events emitted by abxbus are consumable by normal non-abxbus Kafka/NATS consumers.
 
 ## Open Questions
 

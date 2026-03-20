@@ -4,7 +4,7 @@ import gc
 import pytest
 from pydantic import ValidationError
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 
 @pytest.fixture(autouse=True)

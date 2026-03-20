@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-from bubus import BaseEvent, EventBus, EventConcurrencyMode
-from bubus.retry import retry
+from abxbus import BaseEvent, EventBus, EventConcurrencyMode
+from abxbus.retry import retry
 
 
 class GlobalSerialEvent(BaseEvent[str]):

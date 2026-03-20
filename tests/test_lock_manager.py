@@ -3,8 +3,8 @@ import asyncio
 # pyright: reportPrivateUsage=false
 import pytest
 
-from bubus import BaseEvent, EventBus, EventConcurrencyMode, EventHandlerConcurrencyMode
-from bubus.lock_manager import ReentrantLock
+from abxbus import BaseEvent, EventBus, EventConcurrencyMode, EventHandlerConcurrencyMode
+from abxbus.lock_manager import ReentrantLock
 
 
 async def test_reentrant_lock_nested_context_reuses_single_permit() -> None:

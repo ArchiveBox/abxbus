@@ -16,7 +16,7 @@ This is commonly used in:
 - Python uses `ContextVars` (`contextvars.ContextVar`).
 - TypeScript (Node/Bun) uses `AsyncLocalStorage`.
 
-Bubus captures ambient context at `emit(...)` time and restores it when handlers execute, so handler code sees the same request-local values.
+AbxBus captures ambient context at `emit(...)` time and restores it when handlers execute, so handler code sees the same request-local values.
 
 ## Why this matters
 
@@ -28,7 +28,7 @@ With propagation, event handlers can log/trace as if they were still running in 
 
 ```python
 from contextvars import ContextVar
-from bubus import EventBus, BaseEvent
+from abxbus import EventBus, BaseEvent
 
 request_id: ContextVar[str] = ContextVar('request_id', default='<unset>')
 
@@ -51,7 +51,7 @@ await bus.emit(RequestEvent())
 
 ```ts
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 
 const requestContext = new AsyncLocalStorage<{ requestId: string }>()
 const RequestEvent = BaseEvent.extend('RequestEvent', {})
@@ -103,7 +103,7 @@ await requestContext.run({ requestId: req.id }, async () => {
 
 In browsers:
 
-- Bubus still works normally for events.
+- AbxBus still works normally for events.
 - ambient async context propagation via `AsyncLocalStorage` is not available.
 - pass correlation/tracing fields explicitly in event payloads when you need that metadata.
 

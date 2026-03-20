@@ -59,7 +59,7 @@ def _print_markdown_matrix(runtime_name: str, results: list[dict[str, Any]]) -> 
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description='Run Python runtime performance scenarios for bubus')
+    parser = argparse.ArgumentParser(description='Run Python runtime performance scenarios for abxbus')
     parser.add_argument('--scenario', type=str, default=None, help=f'One scenario id: {", ".join(PERF_SCENARIO_IDS)}')
     parser.add_argument(
         '--no-json',
@@ -101,7 +101,7 @@ async def _run_scenario_in_subprocess(scenario_id: str) -> dict[str, Any]:
 
 async def _main_async() -> int:
     args = _build_parser().parse_args()
-    logging.getLogger('bubus').setLevel(logging.CRITICAL)
+    logging.getLogger('abxbus').setLevel(logging.CRITICAL)
 
     perf_input = PerfInput(runtime_name='python', log=(lambda _: None) if args.child_json else print)
 

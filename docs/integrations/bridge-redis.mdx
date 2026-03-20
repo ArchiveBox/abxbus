@@ -13,7 +13,7 @@ description: Forward events via Redis pub/sub channels.
 Install the Redis extra (recommended):
 
 ```bash
-pip install "bubus[redis]"
+pip install "abxbus[redis]"
 ```
 
 Equivalent direct dependency install:
@@ -28,7 +28,7 @@ pip install redis
 Install the Redis client package:
 
 ```bash
-npm install bubus ioredis
+npm install abxbus ioredis
 ```
 
 This bridge is Node.js-only.
@@ -39,17 +39,17 @@ This bridge is Node.js-only.
 ## Constructor params
 
 - `redis_url`: redis URL in the form `redis://user:pass@host:6379/<db>/<optional_channel>`
-- `channel`: optional channel override (defaults to URL channel segment or `bubus_events`)
+- `channel`: optional channel override (defaults to URL channel segment or `abxbus_events`)
 - `name`: optional bridge label
 
 <Tabs>
 <Tab title="Python">
 
 ```python
-from bubus import RedisEventBridge
+from abxbus import RedisEventBridge
 
 bridge = RedisEventBridge(
-    'redis://user:pass@localhost:6379/1/bubus_events',
+    'redis://user:pass@localhost:6379/1/abxbus_events',
     name='RedisBridge',
 )
 ```
@@ -58,10 +58,10 @@ bridge = RedisEventBridge(
 <Tab title="TypeScript">
 
 ```ts
-import { RedisEventBridge } from 'bubus'
+import { RedisEventBridge } from 'abxbus'
 
 const bridge = new RedisEventBridge(
-  'redis://user:pass@localhost:6379/1/bubus_events',
+  'redis://user:pass@localhost:6379/1/abxbus_events',
   undefined,
   'RedisBridge'
 )
@@ -76,10 +76,10 @@ const bridge = new RedisEventBridge(
 <Tab title="Python">
 
 ```python
-from bubus import EventBus, RedisEventBridge
+from abxbus import EventBus, RedisEventBridge
 
 bus = EventBus('AppBus')
-bridge = RedisEventBridge('redis://localhost:6379/0/bubus_events')
+bridge = RedisEventBridge('redis://localhost:6379/0/abxbus_events')
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)
@@ -89,10 +89,10 @@ bridge.on('*', bus.emit)
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus, RedisEventBridge } from 'bubus'
+import { EventBus, RedisEventBridge } from 'abxbus'
 
 const bus = new EventBus('AppBus')
-const bridge = new RedisEventBridge('redis://localhost:6379/0/bubus_events')
+const bridge = new RedisEventBridge('redis://localhost:6379/0/abxbus_events')
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)

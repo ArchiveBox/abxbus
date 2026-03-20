@@ -1,4 +1,4 @@
-"""Minimal FastAPI app for monitoring bubus SQLite event history."""
+"""Minimal FastAPI app for monitoring abxbus SQLite event history."""
 
 from __future__ import annotations
 

@@ -5,14 +5,14 @@ import logging
 
 import pytest
 
-from bubus import (
+from abxbus import (
     BaseEvent,
     EventBus,
     EventHandlerAbortedError,
     EventHandlerCancelledError,
     EventHandlerTimeoutError,
 )
-from bubus.retry import retry
+from abxbus.retry import retry
 
 
 # Event definitions
@@ -647,7 +647,7 @@ async def test_event_handler_detect_file_paths_toggle() -> None:
 
 @pytest.mark.asyncio
 async def test_handler_slow_warning_uses_event_handler_slow_timeout(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.WARNING, logger='bubus')
+    caplog.set_level(logging.WARNING, logger='abxbus')
     bus = EventBus(
         name='SlowHandlerWarnBus',
         event_timeout=0.5,
@@ -670,7 +670,7 @@ async def test_handler_slow_warning_uses_event_handler_slow_timeout(caplog: pyte
 
 @pytest.mark.asyncio
 async def test_event_slow_warning_uses_event_slow_timeout(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.WARNING, logger='bubus')
+    caplog.set_level(logging.WARNING, logger='abxbus')
     bus = EventBus(
         name='SlowEventWarnBus',
         event_timeout=0.5,

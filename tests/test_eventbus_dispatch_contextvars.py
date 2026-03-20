@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 # Test context variables (simulating user-defined context like request_id)
 request_id_var: ContextVar[str] = ContextVar('request_id', default='<unset>')
@@ -267,7 +267,7 @@ class TestContextPropagation:
         Critical: Internal context vars (event_parent_id tracking) must still work
         when we propagate dispatch-time context.
 
-        This ensures our context merging doesn't break the bubus internals.
+        This ensures our context merging doesn't break the abxbus internals.
         """
         bus = EventBus(name='ParentIdTrackingBus')
         parent_event_id: str | None = None

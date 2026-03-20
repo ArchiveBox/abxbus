@@ -13,8 +13,8 @@ description: Emit OpenTelemetry spans for events and handlers.
 ## Setup with EventBus
 
 ```python
-from bubus import EventBus
-from bubus.middlewares import OtelTracingMiddleware
+from abxbus import EventBus
+from abxbus.middlewares import OtelTracingMiddleware
 
 bus = EventBus(
     name='AppBus',
@@ -30,8 +30,8 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from sentry_sdk.integrations.opentelemetry import SentrySpanProcessor
 
-from bubus import EventBus
-from bubus.middlewares import OtelTracingMiddleware
+from abxbus import EventBus
+from abxbus.middlewares import OtelTracingMiddleware
 
 sentry_sdk.init(
     dsn='https://<public>@<host>/<project>',

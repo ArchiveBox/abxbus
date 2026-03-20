@@ -7,12 +7,12 @@ from typing import Any
 
 from anyio import Path as AnyPath
 
-from bubus import HTTPEventBridge, SocketEventBridge
-from bubus.bridge_jsonl import JSONLEventBridge
-from bubus.bridge_nats import NATSEventBridge
-from bubus.bridge_postgres import PostgresEventBridge
-from bubus.bridge_redis import RedisEventBridge
-from bubus.bridge_sqlite import SQLiteEventBridge
+from abxbus import HTTPEventBridge, SocketEventBridge
+from abxbus.bridge_jsonl import JSONLEventBridge
+from abxbus.bridge_nats import NATSEventBridge
+from abxbus.bridge_postgres import PostgresEventBridge
+from abxbus.bridge_redis import RedisEventBridge
+from abxbus.bridge_sqlite import SQLiteEventBridge
 
 
 def _make_listener_bridge(config: dict[str, Any]) -> Any:

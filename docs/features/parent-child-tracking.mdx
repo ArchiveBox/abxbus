@@ -3,13 +3,13 @@ title: Parent-Child Tracking
 description: Trace nested event flows with automatic parent-child lineage and tree logs.
 ---
 
-When a handler emits another event, Bubus automatically records lineage so you can understand call chains instead of guessing what triggered what.
+When a handler emits another event, AbxBus automatically records lineage so you can understand call chains instead of guessing what triggered what.
 
 Repository example files:
 - [`examples/parent_child_tracking.py`](https://github.com/pirate/bbus/blob/main/examples/parent_child_tracking.py)
-- [`bubus-ts/examples/parent_child_tracking.ts`](https://github.com/pirate/bbus/blob/main/bubus-ts/examples/parent_child_tracking.ts)
+- [`abxbus-ts/examples/parent_child_tracking.ts`](https://github.com/pirate/bbus/blob/main/abxbus-ts/examples/parent_child_tracking.ts)
 - [`examples/log_tree_demo.py`](https://github.com/pirate/bbus/blob/main/examples/log_tree_demo.py)
-- [`bubus-ts/examples/log_tree_demo.ts`](https://github.com/pirate/bbus/blob/main/bubus-ts/examples/log_tree_demo.ts)
+- [`abxbus-ts/examples/log_tree_demo.ts`](https://github.com/pirate/bbus/blob/main/abxbus-ts/examples/log_tree_demo.ts)
 
 ## What gets tracked
 
@@ -63,7 +63,7 @@ See [Immediate Execution (RPC-style)](../concurrency/immediate-execution) for qu
 <Tab title="Python">
 
 ```python
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 class CheckoutEvent(BaseEvent[str]):
     order_id: str
@@ -130,7 +130,7 @@ print(bus.log_tree())
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 import { z } from 'zod'
 
 const CheckoutEvent = BaseEvent.extend('CheckoutEvent', {

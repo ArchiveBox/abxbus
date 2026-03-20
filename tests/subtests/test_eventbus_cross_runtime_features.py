@@ -8,8 +8,8 @@ from contextvars import ContextVar
 
 import pytest
 
-from bubus import BaseEvent, EventBus
-from bubus.event_handler import EventHandlerAbortedError, EventHandlerCancelledError, EventHandlerTimeoutError
+from abxbus import BaseEvent, EventBus
+from abxbus.event_handler import EventHandlerAbortedError, EventHandlerCancelledError, EventHandlerTimeoutError
 
 request_id_var: ContextVar[str] = ContextVar('request_id', default='<unset>')
 

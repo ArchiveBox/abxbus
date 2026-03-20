@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 
 # Test event types

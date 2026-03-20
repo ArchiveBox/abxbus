@@ -54,7 +54,7 @@ Both runtimes follow this policy. Internally, trim timing is implementation-spec
 <Tab title="Python">
 
 ```python
-from bubus import EventBus
+from abxbus import EventBus
 
 bounded_drop = EventBus(max_history_size=100, max_history_drop=True)
 bounded_reject = EventBus(max_history_size=100, max_history_drop=False)
@@ -66,7 +66,7 @@ in_flight_only = EventBus(max_history_size=0)
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus } from 'bubus'
+import { EventBus } from 'abxbus'
 
 const boundedDrop = new EventBus('BoundedDropBus', { max_history_size: 100, max_history_drop: true })
 const boundedReject = new EventBus('BoundedRejectBus', { max_history_size: 100, max_history_drop: false })

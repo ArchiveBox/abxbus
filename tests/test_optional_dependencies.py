@@ -20,9 +20,9 @@ def _ast_import_roots(path: Path) -> set[str]:
 
 def test_bridge_modules_do_not_eager_import_optional_packages() -> None:
     bridge_modules = {
-        _ROOT / 'bubus' / 'bridge_postgres.py': {'asyncpg'},
-        _ROOT / 'bubus' / 'bridge_nats.py': {'nats'},
-        _ROOT / 'bubus' / 'bridge_redis.py': {'redis'},
+        _ROOT / 'abxbus' / 'bridge_postgres.py': {'asyncpg'},
+        _ROOT / 'abxbus' / 'bridge_nats.py': {'nats'},
+        _ROOT / 'abxbus' / 'bridge_redis.py': {'redis'},
     }
 
     for path, forbidden_roots in bridge_modules.items():

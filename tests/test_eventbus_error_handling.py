@@ -1,6 +1,6 @@
 import asyncio
 
-from bubus import (
+from abxbus import (
     BaseEvent,
     EventBus,
     EventHandlerAbortedError,

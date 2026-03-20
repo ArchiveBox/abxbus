@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 
 class ParentEvent(BaseEvent[str]):

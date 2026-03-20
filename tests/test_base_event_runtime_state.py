@@ -3,8 +3,8 @@
 import asyncio
 from contextlib import suppress
 
-from bubus import BaseEvent, EventBus
-from bubus.helpers import monotonic_datetime
+from abxbus import BaseEvent, EventBus
+from abxbus.helpers import monotonic_datetime
 
 
 class SampleEvent(BaseEvent[str]):

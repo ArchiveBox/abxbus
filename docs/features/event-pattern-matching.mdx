@@ -38,7 +38,7 @@ Use whichever operation you need, with the same pattern key:
 
 ```python
 from typing import Any
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 class UserActionEvent(BaseEvent[str]):
     action: str
@@ -73,7 +73,7 @@ wildcard_match = await bus.find('*', future=5)         # BaseEvent[Any] | None
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 import { z } from 'zod'
 
 const UserActionEvent = BaseEvent.extend('UserActionEvent', {

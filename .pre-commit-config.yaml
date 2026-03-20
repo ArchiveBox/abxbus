@@ -38,32 +38,32 @@ repos:
         name: ty-check
         entry: uv run ty check
         language: system
-        files: ^(bubus/|tests/|examples/)
+        files: ^(abxbus/|tests/|examples/)
         pass_filenames: false
       - id: pyright
         name: pyright
         entry: uv run pyright
         language: system
-        files: ^(bubus/|tests/|examples/)
+        files: ^(abxbus/|tests/|examples/)
         pass_filenames: false
       - id: ts-prettier
         name: ts-prettier
-        entry: pnpm --dir bubus-ts run prettier
+        entry: pnpm --dir abxbus-ts run prettier
         language: system
-        files: ^bubus-ts/
+        files: ^abxbus-ts/
         exclude: \.sh$
         pass_filenames: false
       - id: ts-eslint
         name: ts-eslint
-        entry: pnpm --dir bubus-ts run eslint
+        entry: pnpm --dir abxbus-ts run eslint
         language: system
-        files: ^bubus-ts/.*\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$
+        files: ^abxbus-ts/.*\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$
         pass_filenames: false
       - id: ts-typecheck
         name: ts-typecheck
-        entry: pnpm --dir bubus-ts run typecheck
+        entry: pnpm --dir abxbus-ts run typecheck
         language: system
-        files: ^bubus-ts/.*\.(ts|tsx|mts|cts)$
+        files: ^abxbus-ts/.*\.(ts|tsx|mts|cts)$
         pass_filenames: false
       # see pyproject.toml for more details on ruff config
 

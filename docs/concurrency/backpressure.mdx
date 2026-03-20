@@ -3,7 +3,7 @@ title: Backpressure
 description: How emit, queueing, and history limits interact under high event volume.
 ---
 
-Backpressure in `bubus` is history-policy based, not queue-capacity based.
+Backpressure in `abxbus` is history-policy based, not queue-capacity based.
 
 - `emit()` enqueues synchronously and returns immediately.
 - Pending queues are unbounded in both runtimes.
@@ -32,7 +32,7 @@ With `max_history_drop=true`, `emit()` does not reject on history size. Under su
 <Tab title="Python">
 
 ```python
-from bubus import EventBus
+from abxbus import EventBus
 
 # Reject new emits once history reaches N
 reject_bus = EventBus(max_history_size=10_000, max_history_drop=False)
@@ -45,7 +45,7 @@ drop_bus = EventBus(max_history_size=10_000, max_history_drop=True)
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus } from 'bubus'
+import { EventBus } from 'abxbus'
 
 const rejectBus = new EventBus('RejectBus', { max_history_size: 10_000, max_history_drop: false })
 const dropBus = new EventBus('DropBus', { max_history_size: 10_000, max_history_drop: true })

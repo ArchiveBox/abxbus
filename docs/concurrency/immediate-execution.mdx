@@ -9,7 +9,7 @@ When this happens inside a handler, the child event is processed immediately (qu
 
 Repository example files:
 - [`examples/immediate_event_processing.py`](https://github.com/pirate/bbus/blob/main/examples/immediate_event_processing.py)
-- [`bubus-ts/examples/immediate_event_processing.ts`](https://github.com/pirate/bbus/blob/main/bubus-ts/examples/immediate_event_processing.ts)
+- [`abxbus-ts/examples/immediate_event_processing.ts`](https://github.com/pirate/bbus/blob/main/abxbus-ts/examples/immediate_event_processing.ts)
 
 ## Core pattern
 
@@ -17,7 +17,7 @@ Repository example files:
 <Tab title="Python">
 
 ```python
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 class ParentEvent(BaseEvent[str]):
     pass
@@ -45,7 +45,7 @@ bus.on(ChildEvent, on_child)
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 import { z } from 'zod'
 
 const ParentEvent = BaseEvent.extend('ParentEvent', { event_result_type: z.string() })
@@ -73,7 +73,7 @@ In this pattern, sibling work can already be queued, but the awaited child still
 <Tab title="Python">
 
 ```python
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 class ParentEvent(BaseEvent):
     pass
@@ -116,7 +116,7 @@ assert order.index('parent_end') < order.index('sibling')
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 
 const ParentEvent = BaseEvent.extend('ParentEvent', {})
 const ChildEvent = BaseEvent.extend('ChildEvent', {})

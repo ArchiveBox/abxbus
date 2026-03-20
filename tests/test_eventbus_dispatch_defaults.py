@@ -1,4 +1,4 @@
-from bubus import (
+from abxbus import (
     BaseEvent,
     EventBus,
     EventConcurrencyMode,

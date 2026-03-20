@@ -12,8 +12,8 @@ description: Persist completed events to a JSONL write-ahead log.
 ## Setup with EventBus
 
 ```python
-from bubus import EventBus
-from bubus.middlewares import WALEventBusMiddleware
+from abxbus import EventBus
+from abxbus.middlewares import WALEventBusMiddleware
 
 bus = EventBus(
     name='AppBus',

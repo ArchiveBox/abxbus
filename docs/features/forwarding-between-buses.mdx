@@ -7,7 +7,7 @@ You can forward events across multiple buses while preserving event path metadat
 
 Repository example files:
 - [`examples/forwarding_between_busses.py`](https://github.com/pirate/bbus/blob/main/examples/forwarding_between_busses.py)
-- [`bubus-ts/examples/forwarding_between_busses.ts`](https://github.com/pirate/bbus/blob/main/bubus-ts/examples/forwarding_between_busses.ts)
+- [`abxbus-ts/examples/forwarding_between_busses.ts`](https://github.com/pirate/bbus/blob/main/abxbus-ts/examples/forwarding_between_busses.ts)
 
 ## Why multiple buses are useful
 
@@ -31,7 +31,7 @@ In this example:
 <Tab title="Python">
 
 ```python
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 class UserCreatedEvent(BaseEvent[str]):
     user_id: str
@@ -91,7 +91,7 @@ print(root.event_path)
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 import { z } from 'zod'
 
 const UserCreatedEvent = BaseEvent.extend('UserCreatedEvent', {
@@ -206,7 +206,7 @@ This means you can wire cyclic topologies without infinite forwarding loops.
 <Tab title="Python">
 
 ```python
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 class PingEvent(BaseEvent):
     message: str
@@ -231,7 +231,7 @@ print(event.event_path)
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 import { z } from 'zod'
 
 const PingEvent = BaseEvent.extend('PingEvent', {

@@ -15,11 +15,11 @@ description: Forward events over HTTP(S) endpoints.
 <Tab title="Python">
 
 ```python
-from bubus import HTTPEventBridge
+from abxbus import HTTPEventBridge
 
 bridge = HTTPEventBridge(
-    send_to='https://peer.example.com/bubus_events',
-    listen_on='http://0.0.0.0:8002/bubus_events',
+    send_to='https://peer.example.com/abxbus_events',
+    listen_on='http://0.0.0.0:8002/abxbus_events',
     name='HttpBridge',
 )
 ```
@@ -28,11 +28,11 @@ bridge = HTTPEventBridge(
 <Tab title="TypeScript">
 
 ```ts
-import { HTTPEventBridge } from 'bubus'
+import { HTTPEventBridge } from 'abxbus'
 
 const bridge = new HTTPEventBridge({
-  send_to: 'https://peer.example.com/bubus_events',
-  listen_on: 'http://0.0.0.0:8002/bubus_events',
+  send_to: 'https://peer.example.com/abxbus_events',
+  listen_on: 'http://0.0.0.0:8002/abxbus_events',
   name: 'HttpBridge',
 })
 ```
@@ -46,12 +46,12 @@ const bridge = new HTTPEventBridge({
 <Tab title="Python">
 
 ```python
-from bubus import EventBus, HTTPEventBridge
+from abxbus import EventBus, HTTPEventBridge
 
 bus = EventBus('AppBus')
 bridge = HTTPEventBridge(
-    send_to='https://peer.example.com/bubus_events',
-    listen_on='http://0.0.0.0:8002/bubus_events',
+    send_to='https://peer.example.com/abxbus_events',
+    listen_on='http://0.0.0.0:8002/abxbus_events',
 )
 
 bus.on('*', bridge.emit)
@@ -62,12 +62,12 @@ bridge.on('*', bus.emit)
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus, HTTPEventBridge } from 'bubus'
+import { EventBus, HTTPEventBridge } from 'abxbus'
 
 const bus = new EventBus('AppBus')
 const bridge = new HTTPEventBridge({
-  send_to: 'https://peer.example.com/bubus_events',
-  listen_on: 'http://0.0.0.0:8002/bubus_events',
+  send_to: 'https://peer.example.com/abxbus_events',
+  listen_on: 'http://0.0.0.0:8002/abxbus_events',
 })
 
 bus.on('*', bridge.emit)

@@ -4,9 +4,9 @@ from typing import TYPE_CHECKING, Any, assert_type
 
 import pytest
 
-from bubus.base_event import BaseEvent
-from bubus.event_bus import EventBus
-from bubus.event_handler import EventHandler, _normalize_handler_callable  # pyright: ignore[reportPrivateUsage]
+from abxbus.base_event import BaseEvent
+from abxbus.event_bus import EventBus
+from abxbus.event_handler import EventHandler, _normalize_handler_callable  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
 

@@ -11,8 +11,8 @@ Middlewares can observe event lifecycle transitions, react to handler registrati
 <Tab title="Python">
 
 ```python
-from bubus import EventBus
-from bubus.middlewares import LoggerEventBusMiddleware, WALEventBusMiddleware
+from abxbus import EventBus
+from abxbus.middlewares import LoggerEventBusMiddleware, WALEventBusMiddleware
 
 bus = EventBus(
     name='MyBus',
@@ -27,7 +27,7 @@ bus = EventBus(
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus, type EventBusMiddleware, type EventStatus } from 'bubus'
+import { BaseEvent, EventBus, type EventBusMiddleware, type EventStatus } from 'abxbus'
 
 class LoggingMiddleware implements EventBusMiddleware {
   async onEventChange(eventbus: EventBus, event: BaseEvent, status: EventStatus): Promise<void> {

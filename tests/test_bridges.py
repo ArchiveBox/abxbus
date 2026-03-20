@@ -20,12 +20,12 @@ from typing import Any
 import pytest
 from uuid_extensions import uuid7str
 
-from bubus import BaseEvent, HTTPEventBridge, SocketEventBridge
-from bubus.bridge_jsonl import JSONLEventBridge
-from bubus.bridge_nats import NATSEventBridge
-from bubus.bridge_postgres import PostgresEventBridge
-from bubus.bridge_redis import RedisEventBridge
-from bubus.bridge_sqlite import SQLiteEventBridge
+from abxbus import BaseEvent, HTTPEventBridge, SocketEventBridge
+from abxbus.bridge_jsonl import JSONLEventBridge
+from abxbus.bridge_nats import NATSEventBridge
+from abxbus.bridge_postgres import PostgresEventBridge
+from abxbus.bridge_redis import RedisEventBridge
+from abxbus.bridge_sqlite import SQLiteEventBridge
 
 
 class IPCPingEvent(BaseEvent):
@@ -239,7 +239,7 @@ async def _measure_warm_latency_ms(kind: str, config: dict[str, Any]) -> float:
 
 
 async def _assert_roundtrip(kind: str, config: dict[str, Any]) -> None:
-    temp_path = _make_temp_dir(f'bubus-bridge-{kind}')
+    temp_path = _make_temp_dir(f'abxbus-bridge-{kind}')
     try:
         worker_config_path = temp_path / 'worker_config.json'
         worker_ready_path = temp_path / 'worker_ready'
@@ -323,7 +323,7 @@ def test_socket_event_bridge_rejects_long_socket_paths() -> None:
 
 @pytest.mark.asyncio
 async def test_jsonl_event_bridge_roundtrip_between_processes() -> None:
-    temp_dir = _make_temp_dir('bubus-jsonl')
+    temp_dir = _make_temp_dir('abxbus-jsonl')
     try:
         jsonl_path = temp_dir / 'events.jsonl'
         await _assert_roundtrip('jsonl', {'path': str(jsonl_path)})
@@ -335,26 +335,26 @@ async def test_jsonl_event_bridge_roundtrip_between_processes() -> None:
 
 @pytest.mark.asyncio
 async def test_sqlite_event_bridge_roundtrip_between_processes() -> None:
-    temp_dir = _make_temp_dir('bubus-sqlite')
+    temp_dir = _make_temp_dir('abxbus-sqlite')
     try:
         sqlite_path = temp_dir / 'events.sqlite3'
-        await _assert_roundtrip('sqlite', {'path': str(sqlite_path), 'table': 'bubus_events'})
+        await _assert_roundtrip('sqlite', {'path': str(sqlite_path), 'table': 'abxbus_events'})
 
         with sqlite3.connect(sqlite_path) as conn:
-            columns = {str(row[1]) for row in conn.execute('PRAGMA table_info("bubus_events")').fetchall()}
+            columns = {str(row[1]) for row in conn.execute('PRAGMA table_info("abxbus_events")').fetchall()}
             assert 'event_payload' in columns
             assert 'label' not in columns
             assert all(column == 'event_payload' or column.startswith('event_') for column in columns)
 
             row = conn.execute(
-                'SELECT event_payload FROM "bubus_events" ORDER BY COALESCE("event_created_at", \'\') DESC LIMIT 1'
+                'SELECT event_payload FROM "abxbus_events" ORDER BY COALESCE("event_created_at", \'\') DESC LIMIT 1'
             ).fetchone()
             assert row is not None
             payload = json.loads(str(row[0]))
             assert payload.get('label') == 'sqlite_ok'
 
         measure_sqlite_path = temp_dir / 'events.measure.sqlite3'
-        latency_ms = await _measure_warm_latency_ms('sqlite', {'path': str(measure_sqlite_path), 'table': 'bubus_events'})
+        latency_ms = await _measure_warm_latency_ms('sqlite', {'path': str(measure_sqlite_path), 'table': 'abxbus_events'})
         print(f'LATENCY python sqlite {latency_ms:.3f}ms')
     finally:
         rmtree(temp_dir, ignore_errors=True)
@@ -362,7 +362,7 @@ async def test_sqlite_event_bridge_roundtrip_between_processes() -> None:
 
 @pytest.mark.asyncio
 async def test_redis_event_bridge_roundtrip_between_processes() -> None:
-    temp_dir = _make_temp_dir('bubus-redis')
+    temp_dir = _make_temp_dir('abxbus-redis')
     try:
         port = _free_tcp_port()
         command = [
@@ -380,8 +380,8 @@ async def test_redis_event_bridge_roundtrip_between_processes() -> None:
         ]
         async with _running_process(command) as redis_process:
             await _wait_for_port(port)
-            await _assert_roundtrip('redis', {'url': f'redis://127.0.0.1:{port}/1/bubus_events'})
-            latency_ms = await _measure_warm_latency_ms('redis', {'url': f'redis://127.0.0.1:{port}/1/bubus_events'})
+            await _assert_roundtrip('redis', {'url': f'redis://127.0.0.1:{port}/1/abxbus_events'})
+            latency_ms = await _measure_warm_latency_ms('redis', {'url': f'redis://127.0.0.1:{port}/1/abxbus_events'})
             print(f'LATENCY python redis {latency_ms:.3f}ms')
             assert redis_process.poll() is None
     finally:
@@ -394,15 +394,15 @@ async def test_nats_event_bridge_roundtrip_between_processes() -> None:
     command = ['nats-server', '-a', '127.0.0.1', '-p', str(port)]
     async with _running_process(command) as nats_process:
         await _wait_for_port(port)
-        await _assert_roundtrip('nats', {'server': f'nats://127.0.0.1:{port}', 'subject': 'bubus_events'})
-        latency_ms = await _measure_warm_latency_ms('nats', {'server': f'nats://127.0.0.1:{port}', 'subject': 'bubus_events'})
+        await _assert_roundtrip('nats', {'server': f'nats://127.0.0.1:{port}', 'subject': 'abxbus_events'})
+        latency_ms = await _measure_warm_latency_ms('nats', {'server': f'nats://127.0.0.1:{port}', 'subject': 'abxbus_events'})
         print(f'LATENCY python nats {latency_ms:.3f}ms')
         assert nats_process.poll() is None
 
 
 @pytest.mark.asyncio
 async def test_postgres_event_bridge_roundtrip_between_processes() -> None:
-    temp_dir = _make_temp_dir('bubus-postgres')
+    temp_dir = _make_temp_dir('abxbus-postgres')
     try:
         data_dir = temp_dir / 'pgdata'
         initdb = subprocess.run(
@@ -417,7 +417,7 @@ async def test_postgres_event_bridge_roundtrip_between_processes() -> None:
         command = ['postgres', '-D', str(data_dir), '-h', '127.0.0.1', '-p', str(port), '-k', '/tmp']
         async with _running_process(command) as postgres_process:
             await _wait_for_port(port)
-            await _assert_roundtrip('postgres', {'url': f'postgresql://postgres@127.0.0.1:{port}/postgres/bubus_events'})
+            await _assert_roundtrip('postgres', {'url': f'postgresql://postgres@127.0.0.1:{port}/postgres/abxbus_events'})
 
             asyncpg = __import__('asyncpg')
             conn = await asyncpg.connect(f'postgresql://postgres@127.0.0.1:{port}/postgres')
@@ -428,7 +428,7 @@ async def test_postgres_event_bridge_roundtrip_between_processes() -> None:
                     FROM information_schema.columns
                     WHERE table_schema = 'public' AND table_name = $1
                     """,
-                    'bubus_events',
+                    'abxbus_events',
                 )
                 columns = {str(row['column_name']) for row in rows}
                 assert 'event_payload' in columns
@@ -436,7 +436,7 @@ async def test_postgres_event_bridge_roundtrip_between_processes() -> None:
                 assert all(column == 'event_payload' or column.startswith('event_') for column in columns)
 
                 row = await conn.fetchrow(
-                    'SELECT event_payload FROM "bubus_events" ORDER BY COALESCE("event_created_at", \'\') DESC LIMIT 1'
+                    'SELECT event_payload FROM "abxbus_events" ORDER BY COALESCE("event_created_at", \'\') DESC LIMIT 1'
                 )
                 assert row is not None
                 payload = json.loads(str(row['event_payload']))
@@ -445,7 +445,7 @@ async def test_postgres_event_bridge_roundtrip_between_processes() -> None:
                 await conn.close()
 
             latency_ms = await _measure_warm_latency_ms(
-                'postgres', {'url': f'postgresql://postgres@127.0.0.1:{port}/postgres/bubus_events'}
+                'postgres', {'url': f'postgresql://postgres@127.0.0.1:{port}/postgres/abxbus_events'}
             )
             print(f'LATENCY python postgres {latency_ms:.3f}ms')
             assert postgres_process.poll() is None

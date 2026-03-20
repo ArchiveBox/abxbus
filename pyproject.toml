@@ -1,5 +1,5 @@
 [project]
-name = "bubus"
+name = "abx-bus"
 description = "Advanced Pydantic-powered event bus with async support"
 authors = [{ name = "Nick Sweeting" }]
 version = "2.3.3"
@@ -35,13 +35,13 @@ bridges = [
 ]
 
 [project.urls]
-Homepage = "https://bubus.sweeting.me"
+Homepage = "https://abxbus.sweeting.me"
 Repository = "https://github.com/pirate/bbus"
 "Issue Tracker" = "https://github.com/pirate/bbus/issues"
-Documentation = "https://bubus.sweeting.me"
+Documentation = "https://abxbus.sweeting.me"
 DeepWiki = "https://deepwiki.com/pirate/bbus"
-PyPI = "https://pypi.org/project/bubus/"
-NPM = "https://www.npmjs.com/package/bubus"
+PyPI = "https://pypi.org/project/abxbus/"
+NPM = "https://www.npmjs.com/package/abxbus"
 
 [dependency-groups]
 dev = [
@@ -66,12 +66,12 @@ requires = ["uv_build>=0.10.2,<0.11.0"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-name = "bubus"
+module-name = "abxbus"
 module-root = "."
 source-exclude = [
     "/examples",
     "/tests",
-    "/bubus-ts",
+    "/abxbus-ts",
     "/test.sh",
     "/.github",
     "/.pytest_cache",
@@ -105,7 +105,7 @@ docstring-code-line-length = 140
 skip-magic-trailing-comma = false
 
 [tool.pyright]
-stubPath = "bubus/typings"
+stubPath = "abxbus/typings"
 pythonVersion = "3.11"
 typeCheckingMode = "strict"
 reportMissingImports = "error"
@@ -113,13 +113,13 @@ reportMissingTypeStubs = "error"
 reportPrivateUsage = "error"
 venvPath = "."
 venv = ".venv"
-include = ["bubus", "examples", "tests"]
+include = ["abxbus", "examples", "tests"]
 executionEnvironments = [
     { root = "tests", extraPaths = ["."] },
 ]
 
 [tool.ty.src]
-include = ["bubus", "examples", "tests"]
+include = ["abxbus", "examples", "tests"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -139,7 +139,7 @@ filterwarnings = [
 log_level = "DEBUG"
 
 [tool.coverage.run]
-source = ["bubus"]
+source = ["abxbus"]
 omit = [
     "examples/ui/*",
     "*/tests/*",

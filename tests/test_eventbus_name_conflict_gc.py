@@ -12,7 +12,7 @@ import weakref
 
 import pytest
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 
 class TestNameConflictGC:

@@ -1,15 +1,15 @@
 ---
 title: Overview
-description: Unified docs for bubus Python and TypeScript implementations.
+description: Unified docs for abxbus Python and TypeScript implementations.
 ---
 
-## `bubus`: Production-ready multi-language event bus
+## `abxbus`: Production-ready multi-language event bus
 
-<img width="200" alt="bubus logo" src="https://github.com/user-attachments/assets/b3525c24-51ba-496c-b327-ccdfe46a7362" align="right" />
+<img width="200" alt="abxbus logo" src="https://github.com/user-attachments/assets/b3525c24-51ba-496c-b327-ccdfe46a7362" align="right" />
 
-[![DeepWiki: Python](https://img.shields.io/badge/DeepWiki-bbus%2FPython-yellow.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)](https://deepwiki.com/pirate/bbus) [![PyPI - Version](https://img.shields.io/pypi/v/bubus)](https://pypi.org/project/bubus/) [![NPM Version](https://img.shields.io/npm/v/bubus)](https://www.npmjs.com/package/bubus) [![GitHub License](https://img.shields.io/github/license/pirate/bbus)](https://github.com/pirate/bbus)
+[![DeepWiki: Python](https://img.shields.io/badge/DeepWiki-bbus%2FPython-yellow.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)](https://deepwiki.com/pirate/bbus) [![PyPI - Version](https://img.shields.io/pypi/v/abxbus)](https://pypi.org/project/abxbus/) [![NPM Version](https://img.shields.io/npm/v/abxbus)](https://www.npmjs.com/package/abxbus) [![GitHub License](https://img.shields.io/github/license/pirate/bbus)](https://github.com/pirate/bbus)
 
-Bubus is an in-memory event bus for async Python and TypeScript (Node and browser environments), built for predictable event-driven workflows with strong typing and consistent cross-language behavior.
+AbxBus is an in-memory event bus for async Python and TypeScript (Node and browser environments), built for predictable event-driven workflows with strong typing and consistent cross-language behavior.
 
 Core strengths:
 
@@ -24,7 +24,7 @@ Core strengths:
 <Tab title="Python">
 
 ```python
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 class SomeEvent(BaseEvent):
     some_data: int
@@ -43,7 +43,7 @@ await bus.emit(SomeEvent(some_data=132))
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 import { z } from 'zod'
 
 const SomeEvent = BaseEvent.extend('SomeEvent', {
@@ -69,19 +69,19 @@ Runnable end-to-end examples (Python + TypeScript) live in the repo:
 
 - Quickstart basics:
   - [`examples/simple.py`](https://github.com/pirate/bbus/blob/main/examples/simple.py)
-  - [`bubus-ts/examples/simple.ts`](https://github.com/pirate/bbus/blob/main/bubus-ts/examples/simple.ts)
+  - [`abxbus-ts/examples/simple.ts`](https://github.com/pirate/bbus/blob/main/abxbus-ts/examples/simple.ts)
 - Concurrency modes, overrides, and timeout behavior:
   - [`examples/concurrency_options.py`](https://github.com/pirate/bbus/blob/main/examples/concurrency_options.py)
-  - [`bubus-ts/examples/concurrency_options.ts`](https://github.com/pirate/bbus/blob/main/bubus-ts/examples/concurrency_options.ts)
+  - [`abxbus-ts/examples/concurrency_options.ts`](https://github.com/pirate/bbus/blob/main/abxbus-ts/examples/concurrency_options.ts)
 - Immediate execution (queue-jump) behavior:
   - [`examples/immediate_event_processing.py`](https://github.com/pirate/bbus/blob/main/examples/immediate_event_processing.py)
-  - [`bubus-ts/examples/immediate_event_processing.ts`](https://github.com/pirate/bbus/blob/main/bubus-ts/examples/immediate_event_processing.ts)
+  - [`abxbus-ts/examples/immediate_event_processing.ts`](https://github.com/pirate/bbus/blob/main/abxbus-ts/examples/immediate_event_processing.ts)
 - Forwarding between buses:
   - [`examples/forwarding_between_busses.py`](https://github.com/pirate/bbus/blob/main/examples/forwarding_between_busses.py)
-  - [`bubus-ts/examples/forwarding_between_busses.ts`](https://github.com/pirate/bbus/blob/main/bubus-ts/examples/forwarding_between_busses.ts)
+  - [`abxbus-ts/examples/forwarding_between_busses.ts`](https://github.com/pirate/bbus/blob/main/abxbus-ts/examples/forwarding_between_busses.ts)
 - Parent-child lineage tracking:
   - [`examples/parent_child_tracking.py`](https://github.com/pirate/bbus/blob/main/examples/parent_child_tracking.py)
-  - [`bubus-ts/examples/parent_child_tracking.ts`](https://github.com/pirate/bbus/blob/main/bubus-ts/examples/parent_child_tracking.ts)
+  - [`abxbus-ts/examples/parent_child_tracking.ts`](https://github.com/pirate/bbus/blob/main/abxbus-ts/examples/parent_child_tracking.ts)
 - Tree logs with nested timeout outcomes:
   - [`examples/log_tree_demo.py`](https://github.com/pirate/bbus/blob/main/examples/log_tree_demo.py)
-  - [`bubus-ts/examples/log_tree_demo.ts`](https://github.com/pirate/bbus/blob/main/bubus-ts/examples/log_tree_demo.ts)
+  - [`abxbus-ts/examples/log_tree_demo.ts`](https://github.com/pirate/bbus/blob/main/abxbus-ts/examples/log_tree_demo.ts)

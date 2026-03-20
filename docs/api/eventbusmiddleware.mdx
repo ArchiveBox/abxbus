@@ -12,7 +12,7 @@ description: Base middleware interface for EventBus lifecycle hooks.
 
 ```python
 from typing import Any
-from bubus import BaseEvent, EventBus, EventHandler, EventResult, EventStatus
+from abxbus import BaseEvent, EventBus, EventHandler, EventResult, EventStatus
 
 class EventBusMiddleware:
     async def on_event_change(self, eventbus: EventBus, event: BaseEvent[Any], status: EventStatus) -> None:
@@ -35,7 +35,7 @@ class EventBusMiddleware:
 <Tab title="TypeScript">
 
 ```ts
-import type { BaseEvent, EventBus, EventHandler, EventResult, EventStatus } from 'bubus'
+import type { BaseEvent, EventBus, EventHandler, EventResult, EventStatus } from 'abxbus'
 
 export interface EventBusMiddleware {
   onEventChange?(eventbus: EventBus, event: BaseEvent, status: EventStatus): void | Promise<void>
@@ -58,8 +58,8 @@ export interface EventBusMiddleware {
 <Tab title="Python">
 
 ```python
-from bubus import EventBus
-from bubus.middlewares import EventBusMiddleware
+from abxbus import EventBus
+from abxbus.middlewares import EventBusMiddleware
 
 class AnalyticsMiddleware(EventBusMiddleware):
     pass
@@ -71,7 +71,7 @@ bus = EventBus('AppBus', middlewares=[AnalyticsMiddleware])
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus, type EventBusMiddleware } from 'bubus'
+import { EventBus, type EventBusMiddleware } from 'abxbus'
 
 class AnalyticsMiddleware implements EventBusMiddleware {}
 
@@ -95,8 +95,8 @@ const bus = new EventBus('AppBus', { middlewares: [AnalyticsMiddleware] })
 <Tab title="Python">
 
 ```python
-from bubus import EventBus, EventStatus
-from bubus.middlewares import EventBusMiddleware
+from abxbus import EventBus, EventStatus
+from abxbus.middlewares import EventBusMiddleware
 
 class AnalyticsMiddleware(EventBusMiddleware):
     async def on_event_result_change(self, eventbus, event, event_result, status):
@@ -124,7 +124,7 @@ import {
   type EventBusMiddleware,
   type EventResult,
   type EventStatus,
-} from 'bubus'
+} from 'abxbus'
 
 class AnalyticsMiddleware implements EventBusMiddleware {
   async onEventResultChange(

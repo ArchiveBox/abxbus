@@ -1,7 +1,7 @@
 import asyncio
 from datetime import UTC, datetime
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 
 class ParentEvent(BaseEvent[str]):

@@ -13,7 +13,7 @@ Use subclassing (Python) or `BaseEvent.extend(...)` (TypeScript) to define event
 <Tab title="Python">
 
 ```python
-from bubus import BaseEvent
+from abxbus import BaseEvent
 
 class FooCreateEvent(BaseEvent[str]):
     id: str | None = None
@@ -25,7 +25,7 @@ class FooCreateEvent(BaseEvent[str]):
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent } from 'bubus'
+import { BaseEvent } from 'abxbus'
 import { z } from 'zod'
 
 const FooCreateEvent = BaseEvent.extend('FooCreateEvent', {
@@ -249,7 +249,7 @@ const restored = BaseEvent.fromJSON(payload)
 
 ```python
 from pydantic import ConfigDict
-from bubus import BaseEvent
+from abxbus import BaseEvent
 
 class AllowedEvent(BaseEvent[None]):
     event_timeout: float | None = 30  # allowed built-in event_* override
@@ -265,7 +265,7 @@ class InvalidEvent(BaseEvent[None]):
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent } from 'bubus'
+import { BaseEvent } from 'abxbus'
 import { z } from 'zod'
 
 const AllowedEvent = BaseEvent.extend('AllowedEvent', {

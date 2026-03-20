@@ -15,10 +15,10 @@ description: Forward events through newline-delimited JSON files.
 <Tab title="Python">
 
 ```python
-from bubus import JSONLEventBridge
+from abxbus import JSONLEventBridge
 
 bridge = JSONLEventBridge(
-    '/tmp/bubus_events.jsonl',
+    '/tmp/abxbus_events.jsonl',
     poll_interval=0.25,
     name='JsonlBridge',
 )
@@ -28,9 +28,9 @@ bridge = JSONLEventBridge(
 <Tab title="TypeScript">
 
 ```ts
-import { JSONLEventBridge } from 'bubus'
+import { JSONLEventBridge } from 'abxbus'
 
-const bridge = new JSONLEventBridge('/tmp/bubus_events.jsonl', 0.25, 'JsonlBridge')
+const bridge = new JSONLEventBridge('/tmp/abxbus_events.jsonl', 0.25, 'JsonlBridge')
 ```
 
 </Tab>
@@ -42,10 +42,10 @@ const bridge = new JSONLEventBridge('/tmp/bubus_events.jsonl', 0.25, 'JsonlBridg
 <Tab title="Python">
 
 ```python
-from bubus import EventBus, JSONLEventBridge
+from abxbus import EventBus, JSONLEventBridge
 
 bus = EventBus('AppBus')
-bridge = JSONLEventBridge('/tmp/bubus_events.jsonl')
+bridge = JSONLEventBridge('/tmp/abxbus_events.jsonl')
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)
@@ -55,10 +55,10 @@ bridge.on('*', bus.emit)
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus, JSONLEventBridge } from 'bubus'
+import { EventBus, JSONLEventBridge } from 'abxbus'
 
 const bus = new EventBus('AppBus')
-const bridge = new JSONLEventBridge('/tmp/bubus_events.jsonl')
+const bridge = new JSONLEventBridge('/tmp/abxbus_events.jsonl')
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)

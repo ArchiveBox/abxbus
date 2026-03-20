@@ -8,7 +8,7 @@ description: Forward events through a local SQLite table with polling.
 ## Constructor params
 
 - `path`: SQLite database file path
-- `table`: table name (default `bubus_events`)
+- `table`: table name (default `abxbus_events`)
 - `poll_interval`: polling interval in seconds (default `0.25`)
 - `name`: optional bridge label
 
@@ -16,11 +16,11 @@ description: Forward events through a local SQLite table with polling.
 <Tab title="Python">
 
 ```python
-from bubus import SQLiteEventBridge
+from abxbus import SQLiteEventBridge
 
 bridge = SQLiteEventBridge(
-    '/tmp/bubus_events.sqlite3',
-    table='bubus_events',
+    '/tmp/abxbus_events.sqlite3',
+    table='abxbus_events',
     poll_interval=0.25,
     name='SqliteBridge',
 )
@@ -30,9 +30,9 @@ bridge = SQLiteEventBridge(
 <Tab title="TypeScript">
 
 ```ts
-import { SQLiteEventBridge } from 'bubus'
+import { SQLiteEventBridge } from 'abxbus'
 
-const bridge = new SQLiteEventBridge('/tmp/bubus_events.sqlite3', 'bubus_events', 0.25, 'SqliteBridge')
+const bridge = new SQLiteEventBridge('/tmp/abxbus_events.sqlite3', 'abxbus_events', 0.25, 'SqliteBridge')
 ```
 
 </Tab>
@@ -44,10 +44,10 @@ const bridge = new SQLiteEventBridge('/tmp/bubus_events.sqlite3', 'bubus_events'
 <Tab title="Python">
 
 ```python
-from bubus import EventBus, SQLiteEventBridge
+from abxbus import EventBus, SQLiteEventBridge
 
 bus = EventBus('AppBus')
-bridge = SQLiteEventBridge('/tmp/bubus_events.sqlite3')
+bridge = SQLiteEventBridge('/tmp/abxbus_events.sqlite3')
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)
@@ -57,10 +57,10 @@ bridge.on('*', bus.emit)
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus, SQLiteEventBridge } from 'bubus'
+import { EventBus, SQLiteEventBridge } from 'abxbus'
 
 const bus = new EventBus('AppBus')
-const bridge = new SQLiteEventBridge('/tmp/bubus_events.sqlite3')
+const bridge = new SQLiteEventBridge('/tmp/abxbus_events.sqlite3')
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)

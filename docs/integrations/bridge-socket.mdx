@@ -14,18 +14,18 @@ description: Forward events through unix domain sockets.
 <Tab title="Python">
 
 ```python
-from bubus import SocketEventBridge
+from abxbus import SocketEventBridge
 
-bridge = SocketEventBridge('/tmp/bubus_events.sock', name='SocketBridge')
+bridge = SocketEventBridge('/tmp/abxbus_events.sock', name='SocketBridge')
 ```
 
 </Tab>
 <Tab title="TypeScript">
 
 ```ts
-import { SocketEventBridge } from 'bubus'
+import { SocketEventBridge } from 'abxbus'
 
-const bridge = new SocketEventBridge('/tmp/bubus_events.sock', 'SocketBridge')
+const bridge = new SocketEventBridge('/tmp/abxbus_events.sock', 'SocketBridge')
 ```
 
 </Tab>
@@ -37,10 +37,10 @@ const bridge = new SocketEventBridge('/tmp/bubus_events.sock', 'SocketBridge')
 <Tab title="Python">
 
 ```python
-from bubus import EventBus, SocketEventBridge
+from abxbus import EventBus, SocketEventBridge
 
 bus = EventBus('AppBus')
-bridge = SocketEventBridge('/tmp/bubus_events.sock')
+bridge = SocketEventBridge('/tmp/abxbus_events.sock')
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)
@@ -50,10 +50,10 @@ bridge.on('*', bus.emit)
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus, SocketEventBridge } from 'bubus'
+import { EventBus, SocketEventBridge } from 'abxbus'
 
 const bus = new EventBus('AppBus')
-const bridge = new SocketEventBridge('/tmp/bubus_events.sock')
+const bridge = new SocketEventBridge('/tmp/abxbus_events.sock')
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)

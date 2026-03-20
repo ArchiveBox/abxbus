@@ -7,7 +7,7 @@ description: Process one event at a time per bus, while allowing overlap across 
 
 Companion runnable example:
 - [`examples/concurrency_options.py`](https://github.com/pirate/bbus/blob/main/examples/concurrency_options.py)
-- [`bubus-ts/examples/concurrency_options.ts`](https://github.com/pirate/bbus/blob/main/bubus-ts/examples/concurrency_options.ts)
+- [`abxbus-ts/examples/concurrency_options.ts`](https://github.com/pirate/bbus/blob/main/abxbus-ts/examples/concurrency_options.ts)
 
 ## Lifecycle impact
 
@@ -23,7 +23,7 @@ Companion runnable example:
 
 ```python
 import asyncio
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 class WorkEvent(BaseEvent):
     order: int
@@ -72,7 +72,7 @@ assert max_in_flight_global >= 2
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 import { z } from 'zod'
 
 const WorkEvent = BaseEvent.extend('WorkEvent', {

@@ -17,10 +17,10 @@ All bridges expose the same minimal surface:
 <Tab title="Python">
 
 ```python
-from bubus import EventBus, RedisEventBridge
+from abxbus import EventBus, RedisEventBridge
 
 bus = EventBus('AppBus')
-bridge = RedisEventBridge('redis://localhost:6379/0/bubus_events')
+bridge = RedisEventBridge('redis://localhost:6379/0/abxbus_events')
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)
@@ -30,10 +30,10 @@ bridge.on('*', bus.emit)
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus, RedisEventBridge } from 'bubus'
+import { EventBus, RedisEventBridge } from 'abxbus'
 
 const bus = new EventBus('AppBus')
-const bridge = new RedisEventBridge('redis://localhost:6379/0/bubus_events')
+const bridge = new RedisEventBridge('redis://localhost:6379/0/abxbus_events')
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)

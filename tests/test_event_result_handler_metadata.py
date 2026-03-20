@@ -2,9 +2,9 @@ from uuid import uuid4
 
 import pytest
 
-from bubus.base_event import BaseEvent, EventResult
-from bubus.event_bus import EventBus
-from bubus.event_handler import EventHandler
+from abxbus.base_event import BaseEvent, EventResult
+from abxbus.event_bus import EventBus
+from abxbus.event_handler import EventHandler
 
 
 class StandaloneEvent(BaseEvent[str]):

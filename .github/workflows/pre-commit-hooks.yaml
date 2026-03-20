@@ -31,8 +31,8 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: bubus-ts/pnpm-lock.yaml
-      - run: pnpm --dir bubus-ts install --frozen-lockfile
+          cache-dependency-path: abxbus-ts/pnpm-lock.yaml
+      - run: pnpm --dir abxbus-ts install --frozen-lockfile
 
       - uses: j178/prek-action@v1
       - run: prek run --all-files

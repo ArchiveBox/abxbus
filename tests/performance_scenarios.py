@@ -11,7 +11,7 @@ from typing import Any
 
 import psutil
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 TRIM_TARGET = 1
 HISTORY_LIMIT_STREAM = 512

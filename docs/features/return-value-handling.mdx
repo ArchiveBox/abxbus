@@ -7,7 +7,7 @@ Handler return values are captured in `EventResult` records and can be consumed 
 
 Repository example files:
 - [`examples/simple.py`](https://github.com/pirate/bbus/blob/main/examples/simple.py)
-- [`bubus-ts/examples/simple.ts`](https://github.com/pirate/bbus/blob/main/bubus-ts/examples/simple.ts)
+- [`abxbus-ts/examples/simple.ts`](https://github.com/pirate/bbus/blob/main/abxbus-ts/examples/simple.ts)
 
 ## Typed return values
 
@@ -17,7 +17,7 @@ Use the event result type to enforce return typing across handlers.
 <Tab title="Python">
 
 ```python
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 class DoMathEvent(BaseEvent[int]):
     a: int
@@ -37,7 +37,7 @@ result = await event.event_result()
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 import { z } from 'zod'
 
 const DoMathEvent = BaseEvent.extend('DoMathEvent', {
@@ -65,7 +65,7 @@ When multiple handlers respond to the same event, collect all results.
 <Tab title="Python">
 
 ```python
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 class GetConfigEvent(BaseEvent[dict]):
     pass
@@ -95,7 +95,7 @@ merged_config = {key: val for config in values for key, val in config.items()}
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 import { z } from 'zod'
 
 const GetConfigEvent = BaseEvent.extend('GetConfigEvent', {

@@ -301,7 +301,7 @@ Both runtimes can serialize the entire bus state (config, handlers metadata, eve
 <Tab title="Python">
 
 ```python
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 class ResumeTickEvent(BaseEvent[None]):
     pass
@@ -341,7 +341,7 @@ await bus.stop(clear=True)
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 
 const ResumeTickEvent = BaseEvent.extend('ResumeTickEvent', {})
 

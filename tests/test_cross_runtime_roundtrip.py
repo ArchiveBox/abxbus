@@ -12,8 +12,8 @@ import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
-from bubus import BaseEvent, EventBus
-from bubus.helpers import CleanShutdownQueue
+from abxbus import BaseEvent, EventBus
+from abxbus.helpers import CleanShutdownQueue
 
 SUBPROCESS_TIMEOUT_SECONDS = 30
 EVENT_WAIT_TIMEOUT_SECONDS = 15
@@ -304,9 +304,9 @@ def _ts_roundtrip_events(payload: list[dict[str, Any]], tmp_path: Path) -> list[
     assert node_bin is not None, 'node is required for python<->ts roundtrip tests'
 
     repo_root = Path(__file__).resolve().parents[1]
-    ts_root = repo_root / 'bubus-ts'
+    ts_root = repo_root / 'abxbus-ts'
     assert (ts_root / 'dist' / 'esm' / 'index.js').exists(), (
-        'bubus-ts dist/esm build not found. Run `pnpm --dir bubus-ts run build` before cross-runtime tests.'
+        'abxbus-ts dist/esm build not found. Run `pnpm --dir abxbus-ts run build` before cross-runtime tests.'
     )
 
     in_path = tmp_path / 'python_events.json'
@@ -317,10 +317,10 @@ def _ts_roundtrip_events(payload: list[dict[str, Any]], tmp_path: Path) -> list[
 import { readFileSync, writeFileSync } from 'node:fs'
 import { BaseEvent } from './dist/esm/index.js'
 
-const inputPath = process.env.BUBUS_PY_TS_INPUT_PATH
-const outputPath = process.env.BUBUS_PY_TS_OUTPUT_PATH
+const inputPath = process.env.ABXBUS_PY_TS_INPUT_PATH
+const outputPath = process.env.ABXBUS_PY_TS_OUTPUT_PATH
 if (!inputPath || !outputPath) {
-  throw new Error('missing BUBUS_PY_TS_INPUT_PATH or BUBUS_PY_TS_OUTPUT_PATH')
+  throw new Error('missing ABXBUS_PY_TS_INPUT_PATH or ABXBUS_PY_TS_OUTPUT_PATH')
 }
 
 const raw = JSON.parse(readFileSync(inputPath, 'utf8'))
@@ -333,8 +333,8 @@ writeFileSync(outputPath, JSON.stringify(roundtripped, null, 2), 'utf8')
 """
 
     env = os.environ.copy()
-    env['BUBUS_PY_TS_INPUT_PATH'] = str(in_path)
-    env['BUBUS_PY_TS_OUTPUT_PATH'] = str(out_path)
+    env['ABXBUS_PY_TS_INPUT_PATH'] = str(in_path)
+    env['ABXBUS_PY_TS_OUTPUT_PATH'] = str(out_path)
     try:
         proc = subprocess.run(
             [node_bin, '--input-type=module', '-e', ts_script],
@@ -356,9 +356,9 @@ def _ts_roundtrip_bus(payload: dict[str, Any], tmp_path: Path) -> dict[str, Any]
     assert node_bin is not None, 'node is required for python<->ts roundtrip tests'
 
     repo_root = Path(__file__).resolve().parents[1]
-    ts_root = repo_root / 'bubus-ts'
+    ts_root = repo_root / 'abxbus-ts'
     assert (ts_root / 'dist' / 'esm' / 'index.js').exists(), (
-        'bubus-ts dist/esm build not found. Run `pnpm --dir bubus-ts run build` before cross-runtime tests.'
+        'abxbus-ts dist/esm build not found. Run `pnpm --dir abxbus-ts run build` before cross-runtime tests.'
     )
 
     in_path = tmp_path / 'python_bus.json'
@@ -369,10 +369,10 @@ def _ts_roundtrip_bus(payload: dict[str, Any], tmp_path: Path) -> dict[str, Any]
 import { readFileSync, writeFileSync } from 'node:fs'
 import { EventBus } from './dist/esm/index.js'
 
-const inputPath = process.env.BUBUS_PY_TS_BUS_INPUT_PATH
-const outputPath = process.env.BUBUS_PY_TS_BUS_OUTPUT_PATH
+const inputPath = process.env.ABXBUS_PY_TS_BUS_INPUT_PATH
+const outputPath = process.env.ABXBUS_PY_TS_BUS_OUTPUT_PATH
 if (!inputPath || !outputPath) {
-  throw new Error('missing BUBUS_PY_TS_BUS_INPUT_PATH or BUBUS_PY_TS_BUS_OUTPUT_PATH')
+  throw new Error('missing ABXBUS_PY_TS_BUS_INPUT_PATH or ABXBUS_PY_TS_BUS_OUTPUT_PATH')
 }
 
 const raw = JSON.parse(readFileSync(inputPath, 'utf8'))
@@ -385,8 +385,8 @@ writeFileSync(outputPath, JSON.stringify(roundtripped, null, 2), 'utf8')
 """
 
     env = os.environ.copy()
-    env['BUBUS_PY_TS_BUS_INPUT_PATH'] = str(in_path)
-    env['BUBUS_PY_TS_BUS_OUTPUT_PATH'] = str(out_path)
+    env['ABXBUS_PY_TS_BUS_INPUT_PATH'] = str(in_path)
+    env['ABXBUS_PY_TS_BUS_OUTPUT_PATH'] = str(out_path)
     try:
         proc = subprocess.run(
             [node_bin, '--input-type=module', '-e', ts_script],

@@ -1,9 +1,9 @@
 from collections import deque
 from typing import Any, cast
 
-from bubus.base_event import BaseEvent, EventResult
-from bubus.event_bus import EventBus
-from bubus.helpers import CleanShutdownQueue
+from abxbus.base_event import BaseEvent, EventResult
+from abxbus.event_bus import EventBus
+from abxbus.helpers import CleanShutdownQueue
 
 
 class SerializableEvent(BaseEvent[str]):

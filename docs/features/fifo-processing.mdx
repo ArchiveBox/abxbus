@@ -22,7 +22,7 @@ As you scale, you can tune these guarantees. See [Concurrency Control](../concur
 
 ```python
 import asyncio
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 class JobEvent(BaseEvent):
     order: int
@@ -65,7 +65,7 @@ print(emitted[0].event_completed_at <= emitted[1].event_completed_at <= emitted[
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 import { z } from 'zod'
 
 const JobEvent = BaseEvent.extend('JobEvent', {
@@ -125,7 +125,7 @@ Even if you emit a slow event and then a fast event right after, the fast one do
 
 ```python
 import asyncio
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 class SlowEvent(BaseEvent):
     name: str
@@ -169,7 +169,7 @@ print(tree_lines)
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 import { z } from 'zod'
 
 const SlowEvent = BaseEvent.extend('SlowEvent', {

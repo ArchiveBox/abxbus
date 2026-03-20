@@ -10,7 +10,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from bubus import BaseEvent, EventBus, SQLiteHistoryMirrorMiddleware
+from abxbus import BaseEvent, EventBus, SQLiteHistoryMirrorMiddleware
 
 if __package__ in (None, ''):
     repo_root = Path(__file__).resolve().parents[2]
@@ -40,7 +40,7 @@ class AuditTrailEvent(BaseEvent):
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='Generate random events for the bubus monitor.')
+    parser = argparse.ArgumentParser(description='Generate random events for the abxbus monitor.')
     parser.add_argument('--min-delay', type=float, default=0.2, help='Minimum delay between root events (seconds).')
     parser.add_argument('--max-delay', type=float, default=1.0, help='Maximum delay between root events (seconds).')
     parser.add_argument('--error-rate', type=float, default=0.2, help='Fraction of handlers that should raise an error.')

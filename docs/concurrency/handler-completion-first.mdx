@@ -19,7 +19,7 @@ description: Complete an event on the first successful handler result.
 
 ```python
 import asyncio
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 class CompletionEvent(BaseEvent[str]):
     pass
@@ -61,7 +61,7 @@ assert state['slow_cancelled'] is True
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 import { z } from 'zod'
 
 const CompletionEvent = BaseEvent.extend('CompletionEvent', { event_result_type: z.string() })

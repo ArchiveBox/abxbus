@@ -12,8 +12,8 @@ description: Mirror event and handler snapshots into SQLite tables.
 ## Setup with EventBus
 
 ```python
-from bubus import EventBus
-from bubus.middlewares import SQLiteHistoryMirrorMiddleware
+from abxbus import EventBus
+from abxbus.middlewares import SQLiteHistoryMirrorMiddleware
 
 bus = EventBus(
     name='AppBus',

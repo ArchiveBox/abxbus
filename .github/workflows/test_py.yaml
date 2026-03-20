@@ -114,7 +114,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: bubus-ts/pnpm-lock.yaml
+          cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
       - name: Install bridge service binaries
         if: matrix.task.kind == 'test' && matrix.task.name == 'test_bridges'
@@ -142,8 +142,8 @@ jobs:
       - name: Build TypeScript ESM bundle for cross-runtime roundtrip tests
         if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
         run: |
-          pnpm --dir bubus-ts install --frozen-lockfile
-          pnpm --dir bubus-ts run build
+          pnpm --dir abxbus-ts install --frozen-lockfile
+          pnpm --dir abxbus-ts run build
 
       - name: Verify bridge optional Python deps
         if: matrix.task.kind == 'test' && matrix.task.name == 'test_bridges'
@@ -158,11 +158,11 @@ jobs:
 
       - name: Run test with coverage
         if: matrix.task.kind == 'test'
-        run: uv run coverage run --parallel-mode --source=bubus -m pytest -x tests/${{ matrix.task.name }}.py
+        run: uv run coverage run --parallel-mode --source=abxbus -m pytest -x tests/${{ matrix.task.name }}.py
 
       - name: Run example
         if: matrix.task.kind == 'example'
-        run: uv run coverage run --parallel-mode --source=bubus examples/${{ matrix.task.name }}.py
+        run: uv run coverage run --parallel-mode --source=abxbus examples/${{ matrix.task.name }}.py
 
       - name: Check coverage files
         if: always()
@@ -216,7 +216,7 @@ jobs:
       - name: Combine coverage & fail if it's <50%
         run: |
           uv tool install 'coverage[toml]'
-          OMIT='bubus/bridge*.py'
+          OMIT='abxbus/bridge*.py'
 
           coverage combine
           coverage html --skip-covered --skip-empty --omit="$OMIT"

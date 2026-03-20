@@ -2,8 +2,8 @@
 
 from typing import Any, Literal
 
-from bubus import BaseEvent, EventBus, EventHandler, EventResult
-from bubus.helpers import monotonic_datetime
+from abxbus import BaseEvent, EventBus, EventHandler, EventResult
+from abxbus.helpers import monotonic_datetime
 
 
 class RootEvent(BaseEvent[str]):

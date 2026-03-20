@@ -1,13 +1,13 @@
 ---
 title: Quickstart
-description: Get started quickly with bubus in Python or TypeScript.
+description: Get started quickly with abxbus in Python or TypeScript.
 ---
 
-Install bubus, define one typed event, register a handler, and emit the event.
+Install abxbus, define one typed event, register a handler, and emit the event.
 
 Repository example files:
 - [`examples/simple.py`](https://github.com/pirate/bbus/blob/main/examples/simple.py)
-- [`bubus-ts/examples/simple.ts`](https://github.com/pirate/bbus/blob/main/bubus-ts/examples/simple.ts)
+- [`abxbus-ts/examples/simple.ts`](https://github.com/pirate/bbus/blob/main/abxbus-ts/examples/simple.ts)
 
 ## Install
 
@@ -15,14 +15,14 @@ Repository example files:
 <Tab title="Python">
 
 ```bash
-pip install bubus
+pip install abxbus
 ```
 
 </Tab>
 <Tab title="TypeScript">
 
 ```bash
-npm install bubus
+npm install abxbus
 ```
 
 </Tab>
@@ -35,7 +35,7 @@ npm install bubus
 
 ```python
 import asyncio
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 class CreateUserEvent(BaseEvent[dict]):
     email: str
@@ -59,7 +59,7 @@ asyncio.run(main())
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'bubus'
+import { BaseEvent, EventBus } from 'abxbus'
 import { z } from 'zod'
 
 const CreateUserEvent = BaseEvent.extend('CreateUserEvent', {
