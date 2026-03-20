@@ -122,10 +122,10 @@ def make_events(events: Mapping[str, Callable[..., Any]]) -> GeneratedEvents:
     return GeneratedEvents(**by_name, by_name=by_name)
 
 
-def make_handler(func: Callable[..., T_Result | Awaitable[T_Result]]) -> Callable[[BaseEvent[Any]], Awaitable[T_Result]]:
+def make_handler(func: Callable[..., object]) -> Callable[[BaseEvent[Any]], Awaitable[object]]:
     params, has_var_kwargs, _ = _callable_params(func)
 
-    async def _handler(event: BaseEvent[Any]) -> T_Result:
+    async def _handler(event: BaseEvent[Any]) -> object:
         payload = _event_payload(event)
         kwargs: dict[str, Any] = {}
         for param in params:

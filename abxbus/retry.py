@@ -190,12 +190,11 @@ def _resolve_semaphore_name(
     args: tuple[Any, ...],
 ) -> str:
     """Resolve semaphore name from a static name or call-time getter."""
-    base_name: str | Any
-    if callable(semaphore_name):
-        base_name = semaphore_name(*args)
-    else:
-        base_name = semaphore_name if semaphore_name is not None else func_name
-    return str(base_name)
+    if semaphore_name is None:
+        return func_name
+    if isinstance(semaphore_name, str):
+        return semaphore_name
+    return semaphore_name(*args)
 
 
 def _matches_retry_on_error(error: Exception, retry_on_errors: RetryOnErrors | None) -> bool:

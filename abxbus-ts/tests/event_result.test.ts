@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { BaseEvent, EventBus, EventHandlerResultSchemaError } from '../src/index.js'
 import { EventHandler } from '../src/event_handler.js'
 import { EventResult } from '../src/event_result.js'
+import { withResolvers } from '../src/lock_manager.js'
 
 const StringResultEvent = BaseEvent.extend('StringResultEvent', {
   event_result_type: z.string(),
@@ -220,13 +221,10 @@ test('runHandler is a no-op for already-settled results', async () => {
 test('handler result stays pending while waiting for handler lock entry', async () => {
   const LockWaitEvent = BaseEvent.extend('RunHandlerLockWaitEvent', {})
   const bus = new EventBus('RunHandlerLockWaitBus', { event_handler_concurrency: 'serial' })
-  let release_first_handler: (() => void) | null = null
-  const first_handler_started = new Promise<void>((resolve) => {
-    release_first_handler = resolve
-  })
+  const first_handler_started = withResolvers<void>()
 
   bus.on(LockWaitEvent, async function first_handler() {
-    await first_handler_started
+    await first_handler_started.promise
     return 'first'
   })
   bus.on(LockWaitEvent, async function second_handler() {
@@ -249,8 +247,7 @@ test('handler result stays pending while waiting for handler lock entry', async 
 
   await new Promise((resolve) => setTimeout(resolve, 5))
   assert.equal(second_result.status, 'pending')
-  assert.ok(release_first_handler)
-  release_first_handler()
+  first_handler_started.resolve()
   await event.done()
   assert.equal(second_result.status, 'completed')
   bus.destroy()
