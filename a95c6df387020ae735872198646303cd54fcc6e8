@@ -1,0 +1,31 @@
+bubus-ts/package.json
+  9479a50d3d3d75d0 7,14,20,25,30,32-33
+bubus-ts/src/optional_deps.ts
+  9479a50d3d3d75d0 13,17-24,26-31,33,35
+bubus-ts/scripts/copy_types_to_cjs.mjs
+  9479a50d3d3d75d0 1-3
+bubus-ts/scripts/build_cjs.mjs
+  9479a50d3d3d75d0 1-29
+bubus-ts/src/async_context.ts
+  9479a50d3d3d75d0 16-29,31-34,36,39,41-42,45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.3",
+  "base_commit_sha": "a95c6df387020ae735872198646303cd54fcc6e8",
+  "prompts": {
+    "9479a50d3d3d75d0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c6abb-fc9a-7543-8ae2-ab8a7c5f4704",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 84,
+      "total_deletions": 15,
+      "accepted_lines": 81,
+      "overriden_lines": 0
+    }
+  }
+}

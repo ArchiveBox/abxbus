@@ -1,0 +1,62 @@
+bubus/base_event.py
+  4466f9c47d0838b4 608
+tests/test_lock_manager.py
+  201f6dfadb4136c9 4-5,124-183
+bubus-ts/src/event_result.ts
+  4466f9c47d0838b4 348
+bubus-ts/tests/cross_runtime_roundtrip.test.ts
+  4466f9c47d0838b4 692,697,702-703
+bubus-ts/tests/eventbus_on_off.test.ts
+  4466f9c47d0838b4 4-5,28-30,32-35,88-89,102,112-113,115,127-139
+bubus-ts/tests/performance.browser.spec.cjs
+  4466f9c47d0838b4 2,12-28,30-64,66-78,80-84,105-108
+tests/test_eventbus_forwarding.py
+  201f6dfadb4136c9 26-29,181-219
+tests/test_eventbus_on_off.py
+  4466f9c47d0838b4 2-3,9,11,13-24,108-109,112
+bubus/event_handler.py
+  4466f9c47d0838b4 10,29-30,196-216,220-239,329-332,334-337
+bubus-ts/src/event_handler.ts
+  4466f9c47d0838b4 92,127,139-141,144
+bubus-ts/scripts/run_browser_perf.sh
+  4466f9c47d0838b4 8-13
+bubus-ts/src/event_bus.ts
+  4466f9c47d0838b4 700
+bubus-ts/tests/eventbus_serialization.test.ts
+  4466f9c47d0838b4 91-92
+bubus-ts/tests/lock_manager.test.ts
+  4466f9c47d0838b4 181,184,187-195,205-210
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.3",
+  "base_commit_sha": "49047da6aa047699cb8c7667c833bc6d38c3de08",
+  "prompts": {
+    "201f6dfadb4136c9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c692c-aea8-7212-a4f3-bec8cfb3e4ab",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 111,
+      "total_deletions": 0,
+      "accepted_lines": 111,
+      "overriden_lines": 0
+    },
+    "4466f9c47d0838b4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c6953-d5ab-7732-a001-0987b2011378",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 231,
+      "total_deletions": 140,
+      "accepted_lines": 219,
+      "overriden_lines": 0
+    }
+  }
+}

@@ -1,0 +1,129 @@
+bubus-ts/tests/base_event.test.ts
+  34d32b7a2f9e8d1c 23,26-98
+docs/concurrency/immediate-execution.mdx
+  34d32b7a2f9e8d1c 169,171
+bubus-ts/src/event_bus.ts
+  bd05db080a33ec84 170
+  34d32b7a2f9e8d1c 65,107,139,142,147,162,166,728,766,932,974,986,992,996,1032,1045,1066,1086,1108,1143,1235,1251
+  ce59f525d6a450d5 5,371,948
+bubus-ts/src/base_event.ts
+  59c4c0f9f74ea05e 50,64,66,284,287
+  34d32b7a2f9e8d1c 450,782,792,865,867,912
+  ce59f525d6a450d5 16,864
+tests/test_eventbus_performance.py
+  34d32b7a2f9e8d1c 1354-1356
+tests/test_typing_contracts.py
+  bd05db080a33ec84 29-30,35-39,41-44,46-47,49-50,52-55
+tests/test_event_result.py
+  bd05db080a33ec84 189-190,192-195,197-198,200-204,206-209,211-216,225-226,232-233,235-240,244-246,249,251-253,255-262,265,269,272-274
+  34d32b7a2f9e8d1c 285,290,299,308,317,331,336-337,343,356,564,567,649,653,668,696,698,721,723,732,735,869,884
+bubus/base_event.py
+  2f0e78c8b49a8cb7 39,42-43,557,615,622,1141,1151
+  dee239606e8e8df7 618,627,1165,1209,1228
+  34d32b7a2f9e8d1c 194,203,931,945,951-957
+docs/api/baseevent.mdx
+  34d32b7a2f9e8d1c 42-45,82,92
+bubus-ts/tests/eventbus.test.ts
+  34d32b7a2f9e8d1c 5,159,163,925
+  bd05db080a33ec84 131,933
+  59c4c0f9f74ea05e 909
+bubus-ts/examples/immediate_event_processing.ts
+  34d32b7a2f9e8d1c 10,101-103,112,121
+bubus/event_bus.py
+  dee239606e8e8df7 1808,1880,1920,1946,2020,2074,2130
+  ce59f525d6a450d5 2062
+  2f0e78c8b49a8cb7 47,1124-1125,2091
+  34d32b7a2f9e8d1c 76,136,183,469,514,607,746,1201,1680,1826,1852,1883,1963,2000,2004,2035,2108,2119
+bubus/lock_manager.py
+  34d32b7a2f9e8d1c 158
+  2f0e78c8b49a8cb7 166,169
+bubus-ts/README.md
+  34d32b7a2f9e8d1c 203,415,418
+bubus-ts/tests/eventbus_timeout.test.ts
+  34d32b7a2f9e8d1c 512
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.2",
+  "base_commit_sha": "fde2410716938727244b37329abd2eab5937f576",
+  "prompts": {
+    "2f0e78c8b49a8cb7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c690a-07d2-7330-a920-49a88e3d768b",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 16,
+      "total_deletions": 13,
+      "accepted_lines": 14,
+      "overriden_lines": 0
+    },
+    "34d32b7a2f9e8d1c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c68c9-a4b3-71c3-b046-9de5d0f40d99",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 198,
+      "total_deletions": 136,
+      "accepted_lines": 183,
+      "overriden_lines": 0
+    },
+    "59c4c0f9f74ea05e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c5a80-5e2d-7053-a16c-6d8d8bb43d9f",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 48,
+      "total_deletions": 50,
+      "accepted_lines": 7,
+      "overriden_lines": 1
+    },
+    "bd05db080a33ec84": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c5a60-0703-71f3-a099-bbace18e5f61",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 86,
+      "total_deletions": 83,
+      "accepted_lines": 78,
+      "overriden_lines": 0
+    },
+    "ce59f525d6a450d5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c68f8-4376-7f01-80aa-38cbb26ffdf3",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 41,
+      "total_deletions": 41,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    },
+    "dee239606e8e8df7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c6920-44b2-7a81-a09a-9689fe8c9cb7",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 12,
+      "total_deletions": 12,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    }
+  }
+}

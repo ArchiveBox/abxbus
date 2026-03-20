@@ -1,0 +1,27 @@
+bubus-ts/tests/event_result.test.ts
+  59c4c0f9f74ea05e 174
+tests/test_base_event.py
+  59c4c0f9f74ea05e 187-206
+tests/test_event_result_handler_metadata.py
+  59c4c0f9f74ea05e 7,23,59,91,134,151,161,170,175,205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.3",
+  "base_commit_sha": "6b1ac791023713ab661d5aeca590205af867d5f5",
+  "prompts": {
+    "59c4c0f9f74ea05e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c5a80-5e2d-7053-a16c-6d8d8bb43d9f",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 31,
+      "total_deletions": 12,
+      "accepted_lines": 31,
+      "overriden_lines": 0
+    }
+  }
+}

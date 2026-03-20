@@ -1,0 +1,29 @@
+.pre-commit-config.yaml
+  201f6dfadb4136c9 25,28-54
+test.sh
+  201f6dfadb4136c9 5
+pyproject.toml
+  201f6dfadb4136c9 40
+tests/test_eventbus_find.py
+  201f6dfadb4136c9 595,597
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.2",
+  "base_commit_sha": "7ec68f80e58eb4153f0881d1d885fb84a99e81f9",
+  "prompts": {
+    "201f6dfadb4136c9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c692c-aea8-7212-a4f3-bec8cfb3e4ab",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 33,
+      "total_deletions": 12,
+      "accepted_lines": 32,
+      "overriden_lines": 0
+    }
+  }
+}

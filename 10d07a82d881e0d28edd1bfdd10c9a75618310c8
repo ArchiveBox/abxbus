@@ -1,0 +1,97 @@
+bubus-ts/examples/parent_child_tracking.ts
+  dee239606e8e8df7 100
+bubus-ts/src/event_bus.ts
+  dee239606e8e8df7 24,667,929-930,1294
+bubus/event_history.py
+  dee239606e8e8df7 9,162,164-165,169-175,196-197,201,221,228,239-240,244,249,251,258,260
+  59c4c0f9f74ea05e 202,233
+bubus/helpers.py
+  dee239606e8e8df7 3,9,18-48,50-69
+  59c4c0f9f74ea05e 49
+bubus-ts/src/helpers.ts
+  dee239606e8e8df7 1-65
+bubus-ts/tests/cross_runtime_roundtrip.test.ts
+  dee239606e8e8df7 636-638
+  59c4c0f9f74ea05e 29
+bubus-ts/src/event_handler.ts
+  dee239606e8e8df7 7,151,155-178
+  59c4c0f9f74ea05e 82,113
+bubus-ts/src/base_event.ts
+  59c4c0f9f74ea05e 463-467
+  dee239606e8e8df7 6,17-18,136-141,144,181-182,221,253,255,397-398,426-462,468-477,521,846,968,974-975,996,1029,1031,1041-1042,1048
+bubus-ts/README.md
+  dee239606e8e8df7 392-394,459-478
+bubus-ts/src/event_result.ts
+  59c4c0f9f74ea05e 30,34-35,262-264,382,405,410,412,418,420,422,426,428,430,474-475
+  dee239606e8e8df7 15,125-127,130-131,261,265,270-310,329,332,368-372,386-388,411,413,421,423,429,431
+bubus/event_bus.py
+  dee239606e8e8df7 871,875-876,907,916,922,1092,1227,1767,1773,1846,1883,1885,1908,1911
+bubus/logging.py
+  dee239606e8e8df7 15-16,19-23,59-61,80,145-147,263-264,297-299,359-360,443
+bubus-ts/tests/eventbus.test.ts
+  dee239606e8e8df7 180-182,193
+tests/test_base_event.py
+  dee239606e8e8df7 168,171-173,179-181,187,197-202,206-207
+tests/test_bridges.py
+  dee239606e8e8df7 53
+bubus/event_handler.py
+  dee239606e8e8df7 15-16,255,276,278-279,282-285,336,369,378,384-387
+  59c4c0f9f74ea05e 280-281,379-382
+docs/api/eventhandler.mdx
+  dee239606e8e8df7 17
+README.md
+  dee239606e8e8df7 1140
+  59c4c0f9f74ea05e 948-950,1101-1102
+bubus-ts/tests/event_result.test.ts
+  dee239606e8e8df7 135
+bubus-ts/src/index.ts
+  dee239606e8e8df7 7
+bubus-ts/tests/comprehensive_patterns.test.ts
+  dee239606e8e8df7 240-242,244-245
+bubus-ts/src/event_history.ts
+  59c4c0f9f74ea05e 182,212
+  dee239606e8e8df7 4,122,135-137,144,168-169,176,206,218-222,231,240-241,243-246,251-252
+bubus/base_event.py
+  dee239606e8e8df7 42,193,198,207,210-212,312-321,323-324,340,473,475,505-506,762-763,770,774,983-984,986,989,992-993,1047,1052,1055-1058,1102-1107,1244-1251,1485,1498,1523,1530
+  59c4c0f9f74ea05e 322,990-991,1053-1054
+docs/api/baseevent.mdx
+  dee239606e8e8df7 146-163
+bubus-ts/tests/base_event.test.ts
+  dee239606e8e8df7 6,26-43,119-121,123-127,224-226,236
+tests/test_event_result_handler_metadata.py
+  59c4c0f9f74ea05e 109
+  dee239606e8e8df7 113,120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.3",
+  "base_commit_sha": "10d07a82d881e0d28edd1bfdd10c9a75618310c8",
+  "prompts": {
+    "59c4c0f9f74ea05e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c5a80-5e2d-7053-a16c-6d8d8bb43d9f",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 84,
+      "total_deletions": 177,
+      "accepted_lines": 50,
+      "overriden_lines": 0
+    },
+    "dee239606e8e8df7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c6920-44b2-7a81-a09a-9689fe8c9cb7",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 759,
+      "total_deletions": 647,
+      "accepted_lines": 618,
+      "overriden_lines": 0
+    }
+  }
+}
