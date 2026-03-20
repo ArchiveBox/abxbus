@@ -69,11 +69,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ArchiveBox/abx-bus.git",
+    "url": "git+https://github.com/ArchiveBox/abxbus.git",
     "directory": "abxbus-ts"
   },
   "bugs": {
-    "url": "https://github.com/ArchiveBox/abx-bus/issues"
+    "url": "https://github.com/ArchiveBox/abxbus/issues"
   },
   "homepage": "https://abxbus.archivebox.io",
   "publishConfig": {

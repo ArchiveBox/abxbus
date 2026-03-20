@@ -1,5 +1,5 @@
 [project]
-name = "abx-bus"
+name = "abxbus"
 description = "Advanced Pydantic-powered event bus with async support"
 authors = [{ name = "Nick Sweeting" }, { name = "ArchiveBox" }]
 version = "2.4.1"
@@ -36,11 +36,11 @@ bridges = [
 
 [project.urls]
 Homepage = "https://abxbus.archivebox.io"
-Repository = "https://github.com/ArchiveBox/abx-bus"
-"Issue Tracker" = "https://github.com/ArchiveBox/abx-bus/issues"
+Repository = "https://github.com/ArchiveBox/abxbus"
+"Issue Tracker" = "https://github.com/ArchiveBox/abxbus/issues"
 Documentation = "https://abxbus.archivebox.io"
-DeepWiki = "https://deepwiki.com/ArchiveBox/abx-bus"
-PyPI = "https://pypi.org/project/abx-bus/"
+DeepWiki = "https://deepwiki.com/ArchiveBox/abxbus"
+PyPI = "https://pypi.org/project/abxbus/"
 NPM = "https://www.npmjs.com/package/abxbus"
 
 [dependency-groups]
