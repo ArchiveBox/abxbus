@@ -1221,7 +1221,8 @@ uv run tests/performance_runtime.py
 
 ---
 
-> [🍃 Mintlify Docs](https://abxbus.archivebox.io) | [🧠 DeepWiki Docs](https://deepwiki.com/ArchiveBox/abxbus)
+> [🍃 Main Documentation](https://abxbus.archivebox.io) | [🧠 DeepWiki | Get AI Help](https://deepwiki.com/ArchiveBox/abxbus) | [🐍 PyPI Package](https://pypi.org/project/abxbus) | [📦 NPM Package](https://npmjs.com/package/abxbus) | [</> Github](https://github.com/ArchiveBox/abxbus)
+>
 > <img width="400" alt="image" src="https://github.com/user-attachments/assets/cedb5a2e-0643-4240-9a3d-5f27cb8b5741" /><img width="400" alt="image" src="https://github.com/user-attachments/assets/3ee0ee8c-8322-449f-979b-5c99ba6bd960" />
 
 ## 🏛️ License
