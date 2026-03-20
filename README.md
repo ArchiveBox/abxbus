@@ -1197,7 +1197,7 @@ uv run tests/performance_runtime.py
 
 - https://www.cosmicpython.com/book/chapter_08_events_and_message_bus.html#message_bus_diagram ⭐️
 - https://developer.mozilla.org/en-US/docs/Web/API/EventTarget ⭐️
-- https://github.com/sindresorhus/emittery ⭐️ (equivalent for JS), https://github.com/EventEmitter2/EventEmitter2, https://github.com/vitaly-t/sub-events
+- https://github.com/sindresorhus/emittery ⭐️, https://github.com/EventEmitter2/EventEmitter2, https://github.com/vitaly-t/sub-events
 - https://github.com/pytest-dev/pluggy ⭐️
 - https://github.com/teamhide/fastapi-event ⭐️
 - https://github.com/ethereum/lahja ⭐️
@@ -1230,3 +1230,12 @@ uv run tests/performance_runtime.py
 This project is licensed under the MIT License.
 
 This repo is a fork that adds many new features and performance enhancements over the [original project named `bubus`](https://github.com/browser-use/bubus), which was built to power the [Browser-Use Agent](https://github.com/browser-use/browser-use/tree/main/browser_use/browser/watchdogs) (but has since gone stale).
+
+Timeline:
+
+- 2025-06 `v1.0.1`: Original library released https://github.com/browser-use/bubus
+- 2025-10 `v1.5.1`: Browser-Use v0.6.0 released, first version powered by `bubus`
+- 2025-11 `v1.7.1`: `bubus` forked to `pirate/bbus` temporarily; `ContextVar` support, `Middlewares`, and `bus.find()` added
+- 2026-01 `v2.3.2`: `bubus-ts` Typescript implementation released, cross-compatible with Python version (now `abxbus-ts`)
+- 2026-03 `v2.4.1`: Fork renamed from `pirate/bbus -> ArchiveBox/abxbus`; added dual `CJS`/`ESM` support, bugfixes and perf improvmeents
+- 2026
