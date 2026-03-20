@@ -156,6 +156,7 @@ class EventBus:
     event_handler_completion: EventHandlerCompletionMode = EventHandlerCompletionMode.ALL
     event_handler_slow_timeout: float | None = 30.0
     event_handler_detect_file_paths: bool = True
+    max_handler_recursion_depth: int = 2
 
     # Runtime State
     id: UUIDStr = '00000000-0000-0000-0000-000000000000'
@@ -216,6 +217,7 @@ class EventBus:
         event_slow_timeout: float | None = 300.0,
         event_handler_slow_timeout: float | None = 30.0,
         event_handler_detect_file_paths: bool = True,
+        max_handler_recursion_depth: int = 2,
         middlewares: Sequence[EventBusMiddlewareInput] | None = None,
         id: UUIDStr | str | None = None,
     ):
@@ -282,6 +284,7 @@ class EventBus:
         self.event_slow_timeout = event_slow_timeout
         self.event_handler_slow_timeout = event_handler_slow_timeout
         self.event_handler_detect_file_paths = bool(event_handler_detect_file_paths)
+        self.max_handler_recursion_depth = int(max_handler_recursion_depth)
         assert self.event_timeout is None or self.event_timeout > 0, (
             f'event_timeout must be > 0 or None, got: {self.event_timeout!r}'
         )
@@ -290,6 +293,9 @@ class EventBus:
         )
         assert self.event_handler_slow_timeout is None or self.event_handler_slow_timeout > 0, (
             f'event_handler_slow_timeout must be > 0 or None, got: {self.event_handler_slow_timeout!r}'
+        )
+        assert self.max_handler_recursion_depth >= 0, (
+            f'max_handler_recursion_depth must be >= 0, got: {self.max_handler_recursion_depth!r}'
         )
         self._on_idle = None
         self.middlewares = self._normalize_middlewares(middlewares)
@@ -2178,16 +2184,16 @@ class EventBus:
         if not is_forwarding_handler:
             # Only check recursion for regular handlers, not forwarding
             recursion_depth = self._handler_dispatched_ancestor(event, handler_id)
-            if recursion_depth > 2:
+            if recursion_depth > self.max_handler_recursion_depth:
                 raise RuntimeError(
                     f'Infinite loop detected: Handler {handler_entry.label} '
                     f'has recursively processed {recursion_depth} levels of events. '
                     f'Current event: {event}, Handler: {handler_id}'
                 )
-            elif recursion_depth == 2:
+            elif recursion_depth == self.max_handler_recursion_depth:
                 logger.warning(
                     f'⚠️ {self} handler {handler_entry.label} '
-                    f'at maximum recursion depth (2 levels) - next level will raise exception'
+                    f'at maximum recursion depth ({self.max_handler_recursion_depth} levels) - next level will raise exception'
                 )
 
         return False

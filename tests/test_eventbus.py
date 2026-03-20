@@ -52,6 +52,13 @@ class SystemEventModel(BaseEvent):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
+class RecursiveEvent(BaseEvent):
+    """Test event model for handler recursion guard behavior."""
+
+    level: int = 0
+    max_level: int = 0
+
+
 @pytest.fixture
 async def eventbus():
     """Create an event bus for testing"""
@@ -88,6 +95,52 @@ class TestEventBusBasics:
 
         assert bus.id == custom_id
         assert bus.label.endswith('#1234')
+
+    def test_eventbus_accepts_custom_handler_recursion_depth(self):
+        """EventBus exposes a configurable per-handler recursion ceiling."""
+        bus = EventBus(max_handler_recursion_depth=5)
+
+        assert bus.max_handler_recursion_depth == 5
+
+    @pytest.mark.anyio
+    async def test_custom_handler_recursion_depth_allows_deeper_nested_handlers(self):
+        """A higher configured recursion ceiling should allow deeper nested queue-jumps."""
+        bus = EventBus(name='CustomRecursionDepthBus', max_handler_recursion_depth=5)
+        seen_levels: list[int] = []
+
+        async def handler(event: RecursiveEvent) -> None:
+            seen_levels.append(event.level)
+            if event.level < event.max_level:
+                await bus.emit(RecursiveEvent(level=event.level + 1, max_level=event.max_level))
+
+        bus.on(RecursiveEvent, handler)
+
+        try:
+            await bus.emit(RecursiveEvent(level=0, max_level=5))
+            assert seen_levels == [0, 1, 2, 3, 4, 5]
+        finally:
+            await bus.stop(clear=True)
+
+    @pytest.mark.anyio
+    async def test_default_handler_recursion_depth_still_catches_runaway_loops(self):
+        """The default recursion guard should still raise on deeper self-reentry."""
+        bus = EventBus(name='DefaultRecursionDepthBus')
+
+        async def handler(event: RecursiveEvent) -> None:
+            if event.level < event.max_level:
+                await bus.emit(RecursiveEvent(level=event.level + 1, max_level=event.max_level))
+
+        bus.on(RecursiveEvent, handler)
+
+        try:
+            await bus.emit(RecursiveEvent(level=0, max_level=3))
+            assert any(
+                result.status == 'error' and 'Infinite loop detected' in str(result.error)
+                for historical_event in bus.event_history.values()
+                for result in historical_event.event_results.values()
+            )
+        finally:
+            await bus.stop(clear=True)
 
     async def test_auto_start_and_stop(self):
         """Test auto-start functionality and stopping the event bus"""
