@@ -1,5 +1,5 @@
 [project]
-name = "abxbus"
+name = "abx-bus"
 description = "Advanced Pydantic-powered event bus with async support"
 authors = [{ name = "Nick Sweeting" }]
 version = "2.4.1"
