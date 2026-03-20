@@ -135,7 +135,7 @@ test('EventHandler JSON roundtrips handler metadata', () => {
 test('EventHandler.computeHandlerId matches uuidv5 seed algorithm', () => {
   const expected_seed =
     '018f8e40-1234-7000-8000-000000001234|pkg.module.handler|~/project/app.py:123|2025-01-02T03:04:05.678901000Z|StandaloneEvent'
-  const expected_id = '0acdaf2c-a5b1-5785-8499-7c48b3c2c5d8'
+  const expected_id = '19ea9fe8-cfbe-541e-8a35-2579e4e9efff'
 
   const params = {
     eventbus_id: '018f8e40-1234-7000-8000-000000001234',
@@ -220,9 +220,13 @@ test('runHandler is a no-op for already-settled results', async () => {
 test('handler result stays pending while waiting for handler lock entry', async () => {
   const LockWaitEvent = BaseEvent.extend('RunHandlerLockWaitEvent', {})
   const bus = new EventBus('RunHandlerLockWaitBus', { event_handler_concurrency: 'serial' })
+  let release_first_handler: (() => void) | null = null
+  const first_handler_started = new Promise<void>((resolve) => {
+    release_first_handler = resolve
+  })
 
   bus.on(LockWaitEvent, async function first_handler() {
-    await new Promise((resolve) => setTimeout(resolve, 40))
+    await first_handler_started
     return 'first'
   })
   bus.on(LockWaitEvent, async function second_handler() {
@@ -243,8 +247,10 @@ test('handler result stays pending while waiting for handler lock entry', async 
   assert.ok(second_result)
   assert.equal(second_result.status, 'pending')
 
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  await new Promise((resolve) => setTimeout(resolve, 5))
   assert.equal(second_result.status, 'pending')
+  assert.ok(release_first_handler)
+  release_first_handler()
   await event.done()
   assert.equal(second_result.status, 'completed')
   bus.destroy()

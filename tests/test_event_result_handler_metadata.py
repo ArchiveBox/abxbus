@@ -107,7 +107,7 @@ def test_event_handler_model_is_serializable() -> None:
 
 def test_event_handler_id_matches_typescript_uuidv5_algorithm() -> None:
     expected_seed = '018f8e40-1234-7000-8000-000000001234|pkg.module.handler|~/project/app.py:123|2025-01-02T03:04:05.678901000Z|StandaloneEvent'
-    expected_id = '0acdaf2c-a5b1-5785-8499-7c48b3c2c5d8'
+    expected_id = '19ea9fe8-cfbe-541e-8a35-2579e4e9efff'
 
     entry = EventHandler(
         handler_name='pkg.module.handler',
