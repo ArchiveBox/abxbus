@@ -2,9 +2,9 @@
 
 <img width="200" alt="image" src="https://github.com/user-attachments/assets/b3525c24-51ba-496c-b327-ccdfe46a7362" align="right" />
 
-[![DeepWiki: Python](https://img.shields.io/badge/DeepWiki-abxbus%2FPython-yellow.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)](https://deepwiki.com/ArchiveBox/abxbus) [![PyPI - Version](https://img.shields.io/pypi/v/abxbus)](https://pypi.org/project/abxbus/) [![PyPi Downloads/week](https://static.pepy.tech/badge/abxbus/week)](https://pepy.tech/projects/abxbus) ![GitHub last commit](https://img.shields.io/github/last-commit/ArchiveBox/abxbus)
+[![DeepWiki: Python](https://img.shields.io/badge/DeepWiki-abxbus%2FPython-yellow.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)](https://deepwiki.com/ArchiveBox/abxbus) [![PyPI - Version](https://img.shields.io/pypi/v/abxbus)](https://pypi.org/project/abxbus/) [![PyPi Downloads/week](https://static.pepy.tech/badge/bubus/week)](https://pepy.tech/projects/abxbus) ![GitHub last commit](https://img.shields.io/github/last-commit/ArchiveBox/abxbus)
 
-[![DeepWiki: TS](https://img.shields.io/badge/DeepWiki-abxbus%2FTypescript-blue.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)](https://deepwiki.com/ArchiveBox/abxbus/3-typescript-implementation) [![NPM Version](https://img.shields.io/npm/v/abxbus)](https://www.npmjs.com/package/abxbus) [![PyPi Downloads/month](https://static.pepy.tech/badge/abxbus/month)](https://pepy.tech/projects/abxbus) [![GitHub License](https://img.shields.io/github/license/ArchiveBox/abxbus)](https://github.com/ArchiveBox/abxbus)
+[![DeepWiki: TS](https://img.shields.io/badge/DeepWiki-abxbus%2FTypescript-blue.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)](https://deepwiki.com/ArchiveBox/abxbus/3-typescript-implementation) [![NPM Version](https://img.shields.io/npm/v/abxbus)](https://www.npmjs.com/package/abxbus) [![PyPi Downloads/month](https://static.pepy.tech/badge/bubus/month)](https://pepy.tech/projects/abxbus) [![GitHub License](https://img.shields.io/github/license/ArchiveBox/abxbus)](https://github.com/ArchiveBox/abxbus)
 
 AbxBus is an in-memory event bus library for async Python and TS (node/browser).
 
@@ -85,7 +85,7 @@ print(await event.event_result())
 <details>
 <summary><strong>🔎 Event Pattern Matching</strong></summary>
 
-Subscribe to events using multiple patterns:
+[Subscribe to events](https://abxbus.archivebox.io/features/event-pattern-matching) using multiple patterns:
 
 ```python
 # By event model class (recommended for best type hinting)
@@ -105,7 +105,7 @@ bus.on('*', universal_handler)
 <details>
 <summary><strong>🔀 Async and Sync Handler Support</strong></summary>
 
-Register both synchronous and asynchronous handlers for maximum flexibility:
+Register both [synchronous and asynchronous handlers](https://abxbus.archivebox.io/features/async-sync-handlers) for maximum flexibility:
 
 ```python
 # Async handler
@@ -151,7 +151,7 @@ bus.on(SomeEvent, SomeService.handlers_can_be_staticmethods)
 <details>
 <summary><strong>🔠 Type-Safe Events with Pydantic</strong></summary>
 
-Define events as Pydantic models with full type checking and validation:
+Define events as Pydantic models with [full type checking and validation](https://abxbus.archivebox.io/features/typed-events):
 
 ```python
 from typing import Any
@@ -173,7 +173,7 @@ event = OrderCreatedEvent(
 ```
 
 > [!TIP]
-> You can also enforce the types of [event handler return values](#-event-handler-return-values).
+> You can also enforce the types of [event handler return values](https://abxbus.archivebox.io/features/return-value-handling#typed-return-values).
 
 <br/>
 
@@ -183,7 +183,7 @@ event = OrderCreatedEvent(
 <summary><strong>⏩ Forward `Events` Between `EventBus`s</strong></summary>
 
 You can define separate `EventBus` instances in different "microservices" to separate different areas of concern.
-`EventBus`s can be set up to forward events between each other (with automatic loop prevention):
+`EventBus`s can be set up to [forward events between each other](https://abxbus.archivebox.io/features/forwarding-between-buses) (with automatic loop prevention):
 
 ```python
 # Create a hierarchy of buses
@@ -207,9 +207,9 @@ print(event.event_path)  # ['MainBus#ab12', 'AuthBus#cd34', 'DataBus#ef56']  # l
 </details>
 
 <details>
-<summary><strong>🔱 Event Results Aggregation</strong></summary>
+<summary><strong>🔱 Event Handler Return Value Support</strong></summary>
 
-Collect results from multiple handlers:
+[Collect results](https://abxbus.archivebox.io/features/return-value-handling) from multiple handlers:
 
 ```python
 async def load_user_config(event: GetConfigEvent) -> dict[str, Any]:
@@ -235,9 +235,9 @@ for handler_id, event_result in event.event_results.items():
 </details>
 
 <details>
-<summary><strong>🚦 FIFO Event Processing</strong></summary>
+<summary><strong>🚦 FIFO / Parallel Event Processing</strong></summary>
 
-Events are processed in strict FIFO order, maintaining consistency:
+By default, events and their handlers are processed in [strict serial FIFO order](https://abxbus.archivebox.io/concurrency/events-bus-serial), maintaining consistency:
 
 ```python
 # Events are processed in the order they were emitted
@@ -248,7 +248,7 @@ for i in range(10):
 await bus.wait_until_idle(timeout=30.0)
 ```
 
-If a handler emits and awaits any child events during execution, those events will jump the FIFO queue and be processed immediately:
+If a handler emits and awaits any child events during execution, those events will [jump the FIFO queue](https://abxbus.archivebox.io/concurrency/immediate-execution) and be processed immediately:
 
 ```python
 def child_handler(event: SomeOtherEvent) -> str:
@@ -269,6 +269,8 @@ await bus.emit(MainEvent()).event_result()
 # result from awaiting child event: xyz123
 ```
 
+You can also set [`event_concurrency='parallel'`](https://abxbus.archivebox.io/concurrency/events-parallel) and [`event_handler_concurrency='parallel'`](https://abxbus.archivebox.io/concurrency/handlers-parallel) options per-bus, per-event, or per-handler enable parallel processing when needed.
+
 <br/>
 
 </details>
@@ -276,7 +278,7 @@ await bus.emit(MainEvent()).event_result()
 <details>
 <summary><strong>🪆 Emit Nested Child Events From Handlers</strong></summary>
 
-Automatically track event relationships and causality tree:
+[Automatically track event relationships](https://abxbus.archivebox.io/features/parent-child-tracking) and causality tree:
 
 ```python
 async def parent_handler(event: BaseEvent):
@@ -321,7 +323,7 @@ if __name__ == '__main__':
 <details>
 <summary><strong>🔎 Find Events in History or Wait for Future Events</strong></summary>
 
-`find()` is the single lookup API: search history, wait for future events, or combine both.
+[`find()`](https://abxbus.archivebox.io/features/find-events) is the single lookup API: search history, wait for future events, or combine both to check for an existing recent event before emitting a new one.
 
 ```python
 # Default: non-blocking history lookup (past=True, future=False)
@@ -377,7 +379,7 @@ See the `EventBus.find(...)` API section below for full parameter details.
 <details>
 <summary><strong>🔁 Event Debouncing</strong></summary>
 
-Avoid re-running expensive work by reusing recent events. The `find()` method makes debouncing simple:
+Avoid re-running expensive work by reusing recent events. The `find()` method makes [debouncing](https://abxbus.archivebox.io/features/find-events#7-debounce-expensive-work) simple:
 
 ```python
 # Simple debouncing: reuse event from last 10 seconds, or emit new
@@ -402,7 +404,7 @@ await event                                              # get completed event
 <details>
 <summary><strong>🎯 Event Handler Return Values</strong></summary>
 
-There are two ways to get return values from event handlers:
+There are two ways to get [return values](https://abxbus.archivebox.io/features/return-value-handling) from event handlers:
 
 **1. Have handlers return their values directly, which puts them in `event.event_results`:**
 
@@ -442,9 +444,11 @@ print(result_event.final_sum)
 # 220
 ```
 
+These events can also be emitted automatically for you if you enable the [`AutoReturnEventMiddleware`](https://abxbus.archivebox.io/integrations/middleware-auto-return).
+
 #### Annotating Event Handler Return Value Types
 
-AbxBus supports optional strict typing for Event handler return values using a generic parameter passed to `BaseEvent[ReturnTypeHere]`.
+AbxBus supports optional [strict typing for Event handler return values](https://abxbus.archivebox.io/features/return-value-handling#typed-return-values) using a generic parameter passed to `BaseEvent[ReturnTypeHere]`.
 For example if you use `BaseEvent[str]`, abxbus would enforce that all handler functions must return `str | None` at compile-time via IDE/`mypy`/`pyright`/`ty` type hints, and at runtime when each handler finishes.
 
 ```python
@@ -508,7 +512,7 @@ For pure Python usage, `event_result_type` can be any Python/Pydantic type you w
 <details>
 <summary><strong>🧵 ContextVar Propagation</strong></summary>
 
-ContextVars set before `emit()` are automatically propagated to event handlers. This is essential for request-scoped context like request IDs, user sessions, or tracing spans:
+ContextVars set before `emit()` are [automatically propagated to event handlers](https://abxbus.archivebox.io/features/context-propagation). This is essential for request-scoped context like request IDs, user sessions, or tracing spans:
 
 ```python
 from contextvars import ContextVar
@@ -574,7 +578,7 @@ await event_b  # Still sees 'req-B'
 <details>
 <summary><strong>🧹 Memory Management</strong></summary>
 
-EventBus includes automatic memory management to prevent unbounded growth in long-running applications:
+EventBus includes [automatic memory management](https://abxbus.archivebox.io/api/eventbus#shared-configuration-semantics) to prevent unbounded growth in long-running applications:
 
 ```python
 # Create a bus with memory limits (default: 50 events)
@@ -627,7 +631,7 @@ finally:
 > [!CAUTION]
 > **Not Recommended.** Only for advanced users willing to implement their own concurrency control.
 
-Enable parallel processing of handlers for better performance.  
+Enable [parallel processing](https://abxbus.archivebox.io/concurrency/handlers-parallel) of handlers for better performance.  
 The harsh tradeoff is less deterministic ordering as handler execution order will not be guaranteed when run in parallel.
 (It's very hard to write non-flaky/reliable applications when handler execution order is not guaranteed.)
 
@@ -651,7 +655,7 @@ await bus.emit(DataEvent())
 <details>
 <summary><strong>🧩 Middlewares</strong></summary>
 
-Middlewares can observe or mutate the `EventResult` at each step, emit additional events, or trigger other side effects (metrics, retries, auth checks, etc.).
+[Middlewares](https://abxbus.archivebox.io/integrations/middlewares) can observe or mutate the `EventResult` at each step, emit additional events, or trigger other side effects (metrics, retries, auth checks, etc.).
 
 ```python
 from abxbus import EventBus
@@ -1209,14 +1213,19 @@ uv run tests/performance_runtime.py
 - https://github.com/nicolaszein/py-async-bus
 - https://github.com/AngusWG/simple-event-bus
 - https://www.joeltok.com/posts/2021-03-building-an-event-bus-in-python/
+- See more here: https://abxbus.archivebox.io/further-reading/similar-projects
+
+> [!TIP]
+> **Don't like working with event-driven interfaces?**
+> Check out our [`abxbus.events_suck`](https://abxbus.archivebox.io/further-reading/events-suck) wrapper utils that can help wrap events workflows in a simpler imperative API...
 
 ---
 
-> [🧠 DeepWiki Docs](https://deepwiki.com/ArchiveBox/abxbus)  
+> [🍃 Mintlify Docs](https://abxbus.archivebox.io) | [🧠 DeepWiki Docs](https://deepwiki.com/ArchiveBox/abxbus)
 > <img width="400" alt="image" src="https://github.com/user-attachments/assets/cedb5a2e-0643-4240-9a3d-5f27cb8b5741" /><img width="400" alt="image" src="https://github.com/user-attachments/assets/3ee0ee8c-8322-449f-979b-5c99ba6bd960" />
 
 ## 🏛️ License
 
 This project is licensed under the MIT License.
 
-This repo is the main active fork that adds many new features and performance enhancements over the original project (which has since gone stale): https://github.com/browser-use/abxbus
+This repo is a fork that adds many new features and performance enhancements over the [original project named `bubus`](https://github.com/browser-use/bubus), which was built to power the [Browser-Use Agent](https://github.com/browser-use/browser-use/tree/main/browser_use/browser/watchdogs) (but has since gone stale).
