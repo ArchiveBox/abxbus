@@ -308,24 +308,21 @@ class EventBus:
         self._pending_handler_changes = []
         self.find_waiters = set()
 
-        # Initialize Rust scheduling core (owns all scheduling decisions)
-        try:
-            from _abxbus_rust import RustEventBusCore
-            self._rust_core: 'RustEventBusCore | None' = RustEventBusCore(
-                bus_id=self.id,
-                bus_name=self.name,
-                event_concurrency=str(self.event_concurrency),
-                event_handler_concurrency=str(self.event_handler_concurrency),
-                event_handler_completion=str(self.event_handler_completion),
-                event_timeout=self.event_timeout,
-                event_slow_timeout=self.event_slow_timeout,
-                event_handler_slow_timeout=self.event_handler_slow_timeout,
-                max_handler_recursion_depth=self.max_handler_recursion_depth,
-                max_history_size=max_history_size,
-                max_history_drop=max_history_drop,
-            )
-        except ImportError:
-            self._rust_core = None
+        # Rust core owns all scheduling decisions, handler storage, and async dispatch
+        from _abxbus_rust import RustEventBusCore
+        self._core: 'RustEventBusCore' = RustEventBusCore(
+            bus_id=self.id,
+            bus_name=self.name,
+            event_concurrency=str(self.event_concurrency),
+            event_handler_concurrency=str(self.event_handler_concurrency),
+            event_handler_completion=str(self.event_handler_completion),
+            event_timeout=self.event_timeout,
+            event_slow_timeout=self.event_slow_timeout,
+            event_handler_slow_timeout=self.event_handler_slow_timeout,
+            max_handler_recursion_depth=self.max_handler_recursion_depth,
+            max_history_size=max_history_size,
+            max_history_drop=max_history_drop,
+        )
 
         # Register this instance
         type(self).all_instances.add(self)
@@ -849,29 +846,16 @@ class EventBus:
 
     @staticmethod
     def _resolve_event_slow_timeout(event: BaseEvent[Any], eventbus: 'EventBus') -> float | None:
-        if eventbus._rust_core is not None:
-            return eventbus._rust_core.resolve_event_slow_timeout(event.event_slow_timeout)
-        event_slow_timeout = event.event_slow_timeout
-        if event_slow_timeout is not None:
-            return event_slow_timeout
-        return eventbus.event_slow_timeout
+        return eventbus._core.resolve_event_slow_timeout(event.event_slow_timeout)
 
     @staticmethod
     def _resolve_handler_slow_timeout(event: BaseEvent[Any], handler: EventHandler, eventbus: 'EventBus') -> float | None:
-        if eventbus._rust_core is not None:
-            return eventbus._rust_core.resolve_handler_slow_timeout(
-                handler_slow_timeout=handler.handler_slow_timeout,
-                handler_slow_timeout_explicitly_set='handler_slow_timeout' in handler.model_fields_set,
-                event_handler_slow_timeout=event.event_handler_slow_timeout,
-                event_slow_timeout=event.event_slow_timeout,
-            )
-        if 'handler_slow_timeout' in handler.model_fields_set:
-            return handler.handler_slow_timeout
-        if event.event_handler_slow_timeout is not None:
-            return event.event_handler_slow_timeout
-        if event.event_slow_timeout is not None:
-            return event.event_slow_timeout
-        return eventbus.event_handler_slow_timeout
+        return eventbus._core.resolve_handler_slow_timeout(
+            handler_slow_timeout=handler.handler_slow_timeout,
+            handler_slow_timeout_explicitly_set='handler_slow_timeout' in handler.model_fields_set,
+            event_handler_slow_timeout=event.event_handler_slow_timeout,
+            event_slow_timeout=event.event_slow_timeout,
+        )
 
     @staticmethod
     def _resolve_handler_timeout(
@@ -880,37 +864,13 @@ class EventBus:
         eventbus: 'EventBus',
         timeout_override: float | None = None,
     ) -> float | None:
-        if eventbus._rust_core is not None:
-            return eventbus._rust_core.resolve_handler_timeout(
-                handler_timeout=handler.handler_timeout,
-                handler_timeout_explicitly_set='handler_timeout' in handler.model_fields_set,
-                event_handler_timeout=event.event_handler_timeout,
-                event_timeout=event.event_timeout,
-                timeout_override=timeout_override,
-            )
-        if 'handler_timeout' in handler.model_fields_set:
-            resolved_handler_timeout = handler.handler_timeout
-        elif event.event_handler_timeout is not None:
-            resolved_handler_timeout = event.event_handler_timeout
-        else:
-            resolved_handler_timeout = eventbus.event_timeout
-
-        resolved_event_timeout = event.event_timeout if event.event_timeout is not None else eventbus.event_timeout
-
-        if resolved_handler_timeout is None and resolved_event_timeout is None:
-            resolved_timeout = None
-        elif resolved_handler_timeout is None:
-            resolved_timeout = resolved_event_timeout
-        elif resolved_event_timeout is None:
-            resolved_timeout = resolved_handler_timeout
-        else:
-            resolved_timeout = min(resolved_handler_timeout, resolved_event_timeout)
-
-        if timeout_override is None:
-            return resolved_timeout
-        if resolved_timeout is None:
-            return timeout_override
-        return min(resolved_timeout, timeout_override)
+        return eventbus._core.resolve_handler_timeout(
+            handler_timeout=handler.handler_timeout,
+            handler_timeout_explicitly_set='handler_timeout' in handler.model_fields_set,
+            event_handler_timeout=event.event_handler_timeout,
+            event_timeout=event.event_timeout,
+            timeout_override=timeout_override,
+        )
 
     async def _slow_event_warning_monitor(self, event: BaseEvent[Any], event_slow_timeout: float) -> None:
         await asyncio.sleep(event_slow_timeout)
@@ -939,13 +899,11 @@ class EventBus:
         for bus in list(type(self).all_instances):
             if bus:
                 bus.in_flight_event_ids.discard(event_id)
-                if bus._rust_core is not None:
-                    bus._rust_core.clear_inflight(event_id)
-                    bus._rust_core.update_event_status(event_id, 'completed')
+                bus._core.clear_inflight(event_id)
+                bus._core.update_event_status(event_id, 'completed')
                 if bus.event_history.max_history_size == 0:
                     bus.event_history.remove_event(event_id)
-                    if bus._rust_core is not None:
-                        bus._rust_core.remove_event(event_id)
+                    bus._core.remove_event(event_id)
 
     @property
     def events_pending(self) -> list[BaseEvent[Any]]:
@@ -1051,16 +1009,14 @@ class EventBus:
         assert handler_entry.id is not None
         self.handlers[handler_entry.id] = handler_entry
         self.handlers_by_key[event_key].append(handler_entry.id)
-        # Mirror to Rust core for scheduling decisions + handler invocation
-        if self._rust_core is not None:
-            self._rust_core.register_handler(
-                handler_id=handler_entry.id,
-                handler_name=handler_entry.handler_name,
-                event_pattern=event_key,
-                eventbus_name=self.name,
-                eventbus_id=self.id,
-                callable=handler_entry.handler,
-            )
+        self._core.register_handler(
+            handler_id=handler_entry.id,
+            handler_name=handler_entry.handler_name,
+            event_pattern=event_key,
+            eventbus_name=self.name,
+            eventbus_id=self.id,
+            callable=handler_entry.handler,
+        )
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 '👂 %s.on(%s, %s) Registered event handler #%s',
@@ -1121,8 +1077,7 @@ class EventBus:
             if should_remove:
                 self.handlers.pop(handler_id, None)
                 self._remove_indexed_handler(event_key, handler_id)
-                if self._rust_core is not None:
-                    self._rust_core.unregister_handler(handler_id, event_key)
+                self._core.unregister_handler(handler_id, event_key)
                 self._notify_handler_change(entry, registered=False)
 
     def emit(self, event: T_ExpectedEvent) -> T_ExpectedEvent:
@@ -1239,30 +1194,27 @@ class EventBus:
                 # Only add to history after successfully queuing
                 self.event_history[event.event_id] = event
                 self.in_flight_event_ids.add(event.event_id)
-                # Store event metadata in Rust core for scheduling decisions
-                if self._rust_core is not None:
-                    self._rust_core.store_event_meta(
-                        event_id=event.event_id,
-                        event_type=event.event_type,
-                        event_path=list(event.event_path),
-                        event_status=str(event.event_status),
-                        event_parent_id=event.event_parent_id,
-                        event_created_at=event.event_created_at,
-                        event_concurrency=str(event.event_concurrency) if event.event_concurrency else None,
-                        event_handler_concurrency=str(event.event_handler_concurrency) if event.event_handler_concurrency else None,
-                        event_handler_completion=str(event.event_handler_completion) if event.event_handler_completion else None,
-                        event_timeout=event.event_timeout,
-                        event_handler_timeout=event.event_handler_timeout,
-                        event_slow_timeout=event.event_slow_timeout,
-                        event_handler_slow_timeout=event.event_handler_slow_timeout,
-                        emitted_by_handler_id=event.event_emitted_by_handler_id,
-                    )
-                    self._rust_core.mark_inflight(event.event_id)
-                    # Sync parent event result statuses so Rust can walk the ancestry chain
-                    if event.event_parent_id and event.event_parent_id in self.event_history:
-                        parent = self.event_history[event.event_parent_id]
-                        for hid, result in parent.event_results.items():
-                            self._rust_core.update_result_status(parent.event_id, hid, str(result.status))
+                self._core.store_event_meta(
+                    event_id=event.event_id,
+                    event_type=event.event_type,
+                    event_path=list(event.event_path),
+                    event_status=str(event.event_status),
+                    event_parent_id=event.event_parent_id,
+                    event_created_at=event.event_created_at,
+                    event_concurrency=str(event.event_concurrency) if event.event_concurrency else None,
+                    event_handler_concurrency=str(event.event_handler_concurrency) if event.event_handler_concurrency else None,
+                    event_handler_completion=str(event.event_handler_completion) if event.event_handler_completion else None,
+                    event_timeout=event.event_timeout,
+                    event_handler_timeout=event.event_handler_timeout,
+                    event_slow_timeout=event.event_slow_timeout,
+                    event_handler_slow_timeout=event.event_handler_slow_timeout,
+                    emitted_by_handler_id=event.event_emitted_by_handler_id,
+                )
+                self._core.mark_inflight(event.event_id)
+                if event.event_parent_id and event.event_parent_id in self.event_history:
+                    parent = self.event_history[event.event_parent_id]
+                    for hid, result in parent.event_results.items():
+                        self._core.update_result_status(parent.event_id, hid, str(result.status))
                 # Resolve future find waiters immediately on emit so callers
                 # don't wait for queue position or handler execution.
                 self._resolve_find_waiters(event)
@@ -1403,18 +1355,15 @@ class EventBus:
         Walks up the parent chain from event looking for ancestor.
         Returns True if ancestor is found in the chain, False otherwise.
         """
-        # Delegate to Rust core when available (fast parent-chain walk)
-        if self._rust_core is not None and self._rust_core.has_event(event.event_id):
-            return self._rust_core.is_child_of(event.event_id, ancestor.event_id)
-
+        if self._core.has_event(event.event_id):
+            return self._core.is_child_of(event.event_id, ancestor.event_id)
+        # Fallback for events not yet stored in Rust (e.g. rehydrated)
         current_id = event.event_parent_id
         visited: set[str] = set()
-
         while current_id and current_id not in visited:
             if current_id == ancestor.event_id:
                 return True
             visited.add(current_id)
-
             parent = self.event_history.get(current_id)
             if parent is None:
                 for bus in list(type(self).all_instances):
@@ -1424,7 +1373,6 @@ class EventBus:
             if parent is None:
                 break
             current_id = parent.event_parent_id
-
         return False
 
     def event_is_parent_of(self, event: BaseEvent[Any], descendant: BaseEvent[Any]) -> bool:
@@ -1577,8 +1525,7 @@ class EventBus:
 
         # Rename the bus to release the name.
         self.name = f'_stopped_{self.id[-8:]}'
-        if self._rust_core is not None:
-            self._rust_core.bus_name = self.name
+        self._core.bus_name = self.name
 
         # Clear event history and handlers if requested (for memory cleanup)
         if clear:
@@ -1586,8 +1533,7 @@ class EventBus:
             self.handlers.clear()
             self.handlers_by_key.clear()
             self.in_flight_event_ids.clear()
-            if self._rust_core is not None:
-                self._rust_core.clear_all()
+            self._core.clear_all()
 
             # Remove from global instance tracking
             if self in type(self).all_instances:
@@ -1821,11 +1767,9 @@ class EventBus:
         """
         self.processing_event_ids.discard(event.event_id)
         self.in_flight_event_ids.discard(event.event_id)
-        # Sync to Rust core
-        if self._rust_core is not None:
-            self._rust_core.clear_processing(event.event_id)
-            self._rust_core.clear_inflight(event.event_id)
-            self._rust_core.update_event_status(event.event_id, str(event.event_status))
+        self._core.clear_processing(event.event_id)
+        self._core.clear_inflight(event.event_id)
+        self._core.update_event_status(event.event_id, str(event.event_status))
 
         newly_completed_events = self._mark_event_tree_complete_if_ready(event)
         for completed_event in newly_completed_events:
@@ -2009,10 +1953,7 @@ class EventBus:
             and len(self.event_history) > self.event_history.max_history_size
         ):
             self.event_history.trim_event_history(owner_label=str(self))
-            # Sync removals to Rust core
-            if self._rust_core is not None:
-                removed = self._rust_core.trim_history(str(self))
-                # Rust core and Python history are now in sync
+            self._core.trim_history(str(self))
 
     async def _process_event(self, event: BaseEvent[Any], timeout: float | None = None) -> None:
         """
@@ -2190,68 +2131,43 @@ class EventBus:
         await self._finalize_event_timeout(event, timeout_seconds)
 
     def _get_handlers_for_event(self, event: BaseEvent[Any]) -> dict[PythonIdStr, EventHandler]:
-        """Get all handlers that should process the given event, filtering out those that would create loops"""
-        # Delegate handler matching and loop detection to Rust core when available
-        if self._rust_core is not None:
-            # Sync event metadata to Rust (status/path may have changed since emit)
-            self._rust_core.update_event_status(event.event_id, str(event.event_status))
-            self._rust_core.update_event_path(event.event_id, list(event.event_path))
-            for handler_id, result in event.event_results.items():
-                self._rust_core.update_result_status(event.event_id, handler_id, str(result.status))
-            # Sync all ancestor result statuses for recursion depth checking
-            current_pid = event.event_parent_id
-            visited: set[str] = set()
-            while current_pid and current_pid not in visited:
-                visited.add(current_pid)
-                parent_ev = self.event_history.get(current_pid)
-                if parent_ev is None:
-                    # Check other buses
-                    for bus in list(type(self).all_instances):
-                        if bus is not self and current_pid in bus.event_history:
-                            parent_ev = bus.event_history[current_pid]
-                            break
-                if parent_ev is None:
-                    break
-                for hid, res in parent_ev.event_results.items():
-                    self._rust_core.update_result_status(parent_ev.event_id, hid, str(res.status))
-                current_pid = parent_ev.event_parent_id
+        """Get all handlers that should process the given event, filtering out those that would create loops."""
+        # Sync event metadata to Rust (status/path may have changed since emit)
+        self._core.update_event_status(event.event_id, str(event.event_status))
+        self._core.update_event_path(event.event_id, list(event.event_path))
+        for handler_id, result in event.event_results.items():
+            self._core.update_result_status(event.event_id, handler_id, str(result.status))
+        # Sync all ancestor result statuses for recursion depth checking
+        current_pid = event.event_parent_id
+        visited: set[str] = set()
+        while current_pid and current_pid not in visited:
+            visited.add(current_pid)
+            parent_ev = self.event_history.get(current_pid)
+            if parent_ev is None:
+                for bus in list(type(self).all_instances):
+                    if bus is not self and current_pid in bus.event_history:
+                        parent_ev = bus.event_history[current_pid]
+                        break
+            if parent_ev is None:
+                break
+            for hid, res in parent_ev.event_results.items():
+                self._core.update_result_status(parent_ev.event_id, hid, str(res.status))
+            current_pid = parent_ev.event_parent_id
 
-            existing_ids = list(event.event_results.keys())
-            existing_statuses = {hid: str(r.status) for hid, r in event.event_results.items()}
-            handler_ids = self._rust_core.get_handlers_for_event(
-                event.event_id, existing_ids, existing_statuses
-            )
-            filtered: dict[PythonIdStr, EventHandler] = {}
-            for hid in handler_ids:
-                entry = self.handlers.get(hid)
-                if entry is not None:
-                    # Still need Python-side _would_create_loop for inspect-based checks
-                    # that Rust can't do (checking actual callable identity)
-                    if not self._would_create_loop(event, entry):
-                        filtered[hid] = entry
-            return filtered
-
-        # Pure-Python fallback
-        applicable_handlers: list[EventHandler] = []
-
-        for key in (event.event_type, '*'):
-            indexed_ids = self.handlers_by_key.get(key, [])
-            if not indexed_ids:
-                continue
-            for handler_id in indexed_ids:
-                handler_entry = self.handlers.get(handler_id)
-                if handler_entry:
-                    applicable_handlers.append(handler_entry)
-
-        filtered_handlers: dict[PythonIdStr, EventHandler] = {}
-        for handler_entry in applicable_handlers:
-            if self._would_create_loop(event, handler_entry):
-                continue
-            else:
-                assert handler_entry.id is not None
-                filtered_handlers[handler_entry.id] = handler_entry
-
-        return filtered_handlers
+        existing_ids = list(event.event_results.keys())
+        existing_statuses = {hid: str(r.status) for hid, r in event.event_results.items()}
+        handler_ids = self._core.get_handlers_for_event(
+            event.event_id, existing_ids, existing_statuses
+        )
+        filtered: dict[PythonIdStr, EventHandler] = {}
+        for hid in handler_ids:
+            entry = self.handlers.get(hid)
+            if entry is not None:
+                # Python-side _would_create_loop for inspect-based checks
+                # that Rust can't do (checking actual callable identity)
+                if not self._would_create_loop(event, entry):
+                    filtered[hid] = entry
+        return filtered
 
     @contextmanager
     def _run_with_handler_dispatch_context(self, event: BaseEvent[T_EventResultType], handler_id: str):
@@ -2419,40 +2335,27 @@ class EventBus:
         self, event: BaseEvent[Any], handler_id: str, visited: set[str] | None = None, depth: int = 0
     ) -> int:
         """Check how many times this handler appears in the ancestry chain. Returns the depth count."""
-        # Delegate to Rust core when available (fast parent-chain walk)
-        if self._rust_core is not None and self._rust_core.has_event(event.event_id):
-            return self._rust_core.handler_recursion_depth(event.event_id, handler_id)
-
-        # Pure-Python fallback
+        if self._core.has_event(event.event_id):
+            return self._core.handler_recursion_depth(event.event_id, handler_id)
+        # Fallback for events not yet stored in Rust
         if visited is None:
             visited = set()
         if event.event_id in visited:
             return depth
         visited.add(event.event_id)
-
-        # If this event has no parent, it's a root event - no ancestry to check
         if not event.event_parent_id:
             return depth
-
-        # Find parent event in any bus's history
         parent_event = None
-        # Create a list copy to avoid "Set changed size during iteration" error
         for bus in list(type(self).all_instances):
             if event.event_parent_id in bus.event_history:
                 parent_event = bus.event_history[event.event_parent_id]
                 break
-
         if not parent_event:
             return depth
-
-        # Check if this handler processed the parent event
         if handler_id in parent_event.event_results:
             result = parent_event.event_results[handler_id]
             if result.status in ('pending', 'started', 'completed'):
-                # This handler processed the parent event, increment depth
                 depth += 1
-
-        # Recursively check the parent's ancestry
         return self._handler_dispatched_ancestor(parent_event, handler_id, visited, depth)
 
     def log_tree(self) -> str:
