@@ -11,5 +11,7 @@ crate-type = ["cdylib"]
 [dependencies]
 abxbus = { path = "../abxbus" }
 pyo3 = { version = "0.25", features = ["extension-module"] }
+indexmap = "2"
 serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 tokio = { version = "1", features = ["full"] }

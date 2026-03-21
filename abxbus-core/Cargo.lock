@@ -25,6 +25,8 @@ name = "abxbus-python"
 version = "0.1.0"
 dependencies = [
  "abxbus",
+ "chrono",
+ "indexmap",
  "pyo3",
  "serde_json",
  "tokio",
