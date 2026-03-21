@@ -24,7 +24,11 @@ from pydantic import (
     model_validator,
 )
 from typing_extensions import TypeVar  # needed to get TypeVar(default=...) above python 3.11
-from uuid_extensions import uuid7str
+# Use Rust-accelerated UUID v7 when available (~3.6x faster)
+try:
+    from _abxbus_rust import uuid7str
+except ImportError:
+    from uuid_extensions import uuid7str
 
 from abxbus.event_handler import (
     ContravariantEventHandlerCallable,

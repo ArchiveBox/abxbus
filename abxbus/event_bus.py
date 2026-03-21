@@ -15,7 +15,11 @@ from functools import partial
 from typing import Any, Literal, TypeVar, overload
 from uuid import UUID
 
-from uuid_extensions import uuid7str
+# Use Rust-accelerated UUID v7 when available (~3.6x faster)
+try:
+    from _abxbus_rust import uuid7str
+except ImportError:
+    from uuid_extensions import uuid7str
 
 uuid7str: Callable[[], str] = uuid7str
 

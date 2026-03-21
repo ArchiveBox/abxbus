@@ -41,8 +41,8 @@ def _format_epoch_ns_to_iso(epoch_ns: int) -> str:
     return normalized
 
 
-def monotonic_datetime(isostring: str | None = None) -> str:
-    """Return canonical UTC ISO datetime with exactly 9 fractional digits."""
+def _monotonic_datetime_py(isostring: str | None = None) -> str:
+    """Pure-Python fallback: canonical UTC ISO datetime with exactly 9 fractional digits."""
     if isostring is not None:
         match = _MONOTONIC_DATETIME_REGEX.fullmatch(isostring)
         if match is None:
@@ -68,6 +68,18 @@ def monotonic_datetime(isostring: str | None = None) -> str:
             epoch_ns = _last_monotonic_datetime_ns + 1
         _last_monotonic_datetime_ns = epoch_ns
     return _format_epoch_ns_to_iso(epoch_ns)
+
+
+# Use Rust-accelerated monotonic_datetime when available (~4x faster)
+try:
+    from _abxbus_rust import monotonic_datetime as _monotonic_datetime_rust
+
+    def monotonic_datetime(isostring: str | None = None) -> str:
+        """Return canonical UTC ISO datetime with exactly 9 fractional digits. (Rust-accelerated)"""
+        return _monotonic_datetime_rust(isostring)
+
+except ImportError:
+    monotonic_datetime = _monotonic_datetime_py
 
 
 async def run_with_timeout(awaitable: Awaitable[R], timeout: float | None = None) -> R:
