@@ -1051,7 +1051,7 @@ class EventBus:
         assert handler_entry.id is not None
         self.handlers[handler_entry.id] = handler_entry
         self.handlers_by_key[event_key].append(handler_entry.id)
-        # Mirror to Rust core for scheduling decisions
+        # Mirror to Rust core for scheduling decisions + handler invocation
         if self._rust_core is not None:
             self._rust_core.register_handler(
                 handler_id=handler_entry.id,
@@ -1059,6 +1059,7 @@ class EventBus:
                 event_pattern=event_key,
                 eventbus_name=self.name,
                 eventbus_id=self.id,
+                callable=handler_entry.handler,
             )
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
@@ -2084,6 +2085,109 @@ class EventBus:
         await self._mark_event_complete_if_ready(event)
         await self._propagate_parent_completion(event)
         self._trim_event_history_if_needed()
+
+    # ── Rust dispatch callbacks ─────────────────────────────────────
+    # These methods are called from Rust's dispatch_event() to manage Python-side
+    # lifecycle (locks, ContextVars, middleware, EventResult updates).
+
+    async def _pre_run_handler(
+        self, event: BaseEvent[Any], handler_id: str, is_first: bool
+    ) -> tuple[Any, bool]:
+        """Called by Rust before invoking a handler.
+
+        Acquires handler lock, sets up ContextVars, creates EventResult if needed,
+        fires middleware. Returns (normalized_callable, should_skip).
+        """
+        handler_entry = self.handlers.get(handler_id)
+        if handler_entry is None or handler_entry.handler is None:
+            return (None, True)
+
+        resolved_timeout = self._resolve_handler_timeout(event, handler_entry, self)
+        resolved_slow_timeout = self._resolve_handler_slow_timeout(event, handler_entry, self)
+
+        # Create pending EventResult if not already present
+        if handler_id not in event.event_results:
+            new_results = event._create_pending_handler_results(  # pyright: ignore[reportPrivateUsage]
+                {handler_id: handler_entry}, eventbus=self, timeout=resolved_timeout
+            )
+            for pending_result in new_results.values():
+                await self.on_event_result_change(event, pending_result, EventStatus.PENDING)
+
+        event_result = event.event_results.get(handler_id)
+        if event_result is None:
+            return (None, True)
+
+        # Check if already complete (re-entrancy guard)
+        if event_result.status in ('error', 'completed'):
+            return (None, True)
+
+        # Mark started
+        event_result.update(status='started')
+        event._mark_started(event_result.started_at)  # pyright: ignore[reportPrivateUsage]
+        await self.on_event_result_change(event, event_result, EventStatus.STARTED)
+        if is_first:
+            await self.on_event_change(event, EventStatus.STARTED)
+
+        # Return the normalized async callable
+        normalized = handler_entry._handler_async  # pyright: ignore[reportPrivateUsage]
+        if normalized is None:
+            return (None, True)
+
+        return (normalized, False)
+
+    async def _post_run_handler_success(
+        self, event: BaseEvent[Any], handler_id: str, result_value: Any
+    ) -> bool:
+        """Called by Rust after a handler succeeds. Returns True if this is the winning result."""
+        event_result = event.event_results.get(handler_id)
+        if event_result is None:
+            return False
+
+        event_result.update(result=result_value)
+        await self.on_event_result_change(event, event_result, EventStatus.COMPLETED)
+
+        # Check if this is a "first-mode" winner
+        completion_mode = event.event_handler_completion or self.event_handler_completion
+        if completion_mode == EventHandlerCompletionMode.FIRST:
+            return event._is_first_mode_winning_result(event_result)  # pyright: ignore[reportPrivateUsage]
+        return False
+
+    async def _post_run_handler_error(
+        self, event: BaseEvent[Any], handler_id: str, error: Any
+    ) -> bool:
+        """Called by Rust after a handler fails."""
+        from abxbus.event_handler import EventHandlerTimeoutError
+
+        event_result = event.event_results.get(handler_id)
+        if event_result is None:
+            return False
+
+        # Normalize TimeoutError to EventHandlerTimeoutError
+        normalized_error: Exception = error
+        if isinstance(error, TimeoutError) and not isinstance(error, EventHandlerTimeoutError):
+            normalized_error = EventHandlerTimeoutError(str(error) or f'Handler {handler_id} timed out')
+
+        event_result.update(error=normalized_error)
+        logger.error(
+            '❌ %s Error in handler %s(%s) -> %s(%s)',
+            self, event_result.handler_name, event, type(normalized_error).__name__, normalized_error,
+        )
+        await self.on_event_result_change(event, event_result, EventStatus.COMPLETED)
+        return False
+
+    async def _cancel_remaining_handlers(
+        self, event: BaseEvent[Any], winner_handler_id: str, remaining_ids: list[str]
+    ) -> None:
+        """Called by Rust in first-mode to cancel remaining handlers after a winner."""
+        for hid in remaining_ids:
+            remaining_result = event.event_results.get(hid)
+            if remaining_result is None:
+                continue
+            await event._mark_remaining_first_mode_result_cancelled(remaining_result, eventbus=self)  # pyright: ignore[reportPrivateUsage]
+
+    async def _on_event_timeout(self, event: BaseEvent[Any], timeout_seconds: float) -> None:
+        """Called by Rust when the event-level timeout fires."""
+        await self._finalize_event_timeout(event, timeout_seconds)
 
     def _get_handlers_for_event(self, event: BaseEvent[Any]) -> dict[PythonIdStr, EventHandler]:
         """Get all handlers that should process the given event, filtering out those that would create loops"""

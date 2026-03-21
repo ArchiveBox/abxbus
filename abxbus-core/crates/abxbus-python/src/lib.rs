@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::Duration;
 
 use indexmap::IndexMap;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList, PyTuple};
 
 use abxbus::monotonic_dt;
 use abxbus::uuid_gen;
@@ -107,14 +108,29 @@ struct EventMeta {
     emitted_by_handler_id: Option<String>,
 }
 
-/// Handler metadata stored in Rust for pattern matching.
-#[derive(Clone, Debug)]
+/// Handler metadata stored in Rust for pattern matching and invocation.
+#[derive(Debug)]
 struct HandlerMeta {
     id: String,
     handler_name: String,
     event_pattern: String,
     eventbus_name: String,
     eventbus_id: String,
+    /// The Python callable (sync or async handler function).
+    callable: Option<PyObject>,
+}
+
+impl HandlerMeta {
+    fn clone_ref(&self, py: Python<'_>) -> Self {
+        Self {
+            id: self.id.clone(),
+            handler_name: self.handler_name.clone(),
+            event_pattern: self.event_pattern.clone(),
+            eventbus_name: self.eventbus_name.clone(),
+            eventbus_id: self.eventbus_id.clone(),
+            callable: self.callable.as_ref().map(|c| c.clone_ref(py)),
+        }
+    }
 }
 
 // ── RustEventBusCore ──────────────────────────────────────────────
@@ -215,7 +231,8 @@ impl RustEventBusCore {
 
     // ── Handler Registry ──────────────────────────────────────────
 
-    /// Register a handler pattern. Returns handler_id.
+    /// Register a handler pattern with optional callable. Returns handler_id.
+    #[pyo3(signature = (handler_id, handler_name, event_pattern, eventbus_name, eventbus_id, callable=None))]
     fn register_handler(
         &mut self,
         handler_id: String,
@@ -223,6 +240,7 @@ impl RustEventBusCore {
         event_pattern: String,
         eventbus_name: String,
         eventbus_id: String,
+        callable: Option<PyObject>,
     ) {
         let meta = HandlerMeta {
             id: handler_id.clone(),
@@ -230,6 +248,7 @@ impl RustEventBusCore {
             event_pattern: event_pattern.clone(),
             eventbus_name,
             eventbus_id,
+            callable,
         };
         self.handlers.insert(handler_id.clone(), meta);
         self.handlers_by_key
@@ -923,6 +942,243 @@ impl RustEventBusCore {
         self.processing_event_ids.clear();
     }
 
+    /// Check if a handler has a callable stored.
+    fn handler_has_callable(&self, handler_id: &str) -> bool {
+        self.handlers
+            .get(handler_id)
+            .is_some_and(|h| h.callable.is_some())
+    }
+
+    /// Run registered handlers for an event, returning a list of (handler_id, result, error) tuples.
+    ///
+    /// This is the core async bridge: Rust calls Python handler callables,
+    /// awaits coroutine results via pyo3-async-runtimes, enforces per-handler
+    /// timeouts via tokio, and orchestrates serial/parallel/first-mode execution.
+    ///
+    /// Returns a Python list of tuples: [(handler_id, result_or_None, error_or_None), ...]
+    #[pyo3(signature = (event_obj, handler_ids, concurrency_mode="serial", completion_mode="all", handler_timeouts=None))]
+    fn run_handlers<'py>(
+        &self,
+        py: Python<'py>,
+        event_obj: PyObject,
+        handler_ids: Vec<String>,
+        concurrency_mode: &str,
+        completion_mode: &str,
+        handler_timeouts: Option<HashMap<String, Option<f64>>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let timeouts = handler_timeouts.unwrap_or_default();
+        let mode = concurrency_mode.to_string();
+        let comp_mode = completion_mode.to_string();
+
+        // Collect handler callables under GIL
+        let mut callables: Vec<(String, PyObject)> = Vec::new();
+        for hid in &handler_ids {
+            if let Some(handler) = self.handlers.get(hid) {
+                if let Some(ref callable) = handler.callable {
+                    callables.push((hid.clone(), callable.clone_ref(py)));
+                }
+            }
+        }
+
+        let task_locals = pyo3_async_runtimes::tokio::get_current_locals(py)?;
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let results = if mode == "parallel" {
+                run_handlers_parallel(
+                    callables,
+                    event_obj,
+                    task_locals,
+                    &timeouts,
+                    &comp_mode,
+                )
+                .await
+            } else {
+                run_handlers_serial(
+                    callables,
+                    event_obj,
+                    task_locals,
+                    &timeouts,
+                    &comp_mode,
+                )
+                .await
+            };
+
+            // Convert results to Python list of tuples
+            Python::with_gil(|py| {
+                let py_list = PyList::empty(py);
+                for r in results {
+                    let result_val: PyObject = r.result.unwrap_or_else(|| py.None().into());
+                    let error_val: PyObject = match r.error_obj {
+                        Some(err) => err,
+                        None => match r.error {
+                            Some(ref err_str) => {
+                                let py_err = pyo3::exceptions::PyRuntimeError::new_err(err_str.clone());
+                                py_err.value(py).clone().unbind().into()
+                            }
+                            None => py.None().into(),
+                        },
+                    };
+                    let tuple = PyTuple::new(py, &[
+                        r.handler_id.into_pyobject(py)?.into_any().unbind(),
+                        result_val,
+                        error_val,
+                    ])?;
+                    py_list.append(tuple)?;
+                }
+                Ok(py_list.into_any().unbind())
+            })
+        })
+    }
+
+    /// Call a single Python callable with an event argument and await the result.
+    ///
+    /// This is the low-level async bridge for individual handler invocation.
+    /// Used by Python's EventResult._call_handler() when Rust acceleration is available.
+    ///
+    /// The callable can be sync or async - if async, the coroutine is driven
+    /// on the Python event loop via pyo3-async-runtimes while the GIL is released.
+    #[pyo3(signature = (callable, event_obj))]
+    fn invoke_handler<'py>(
+        &self,
+        py: Python<'py>,
+        callable: PyObject,
+        event_obj: PyObject,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let task_locals = pyo3_async_runtimes::tokio::get_current_locals(py)?;
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            invoke_python_callable(callable, event_obj, task_locals).await
+        })
+    }
+
+    /// Process one event by running all applicable handlers through Rust orchestration.
+    ///
+    /// This replaces Python's `_process_event()` method. Rust controls:
+    /// - Handler ordering and selection
+    /// - Serial vs parallel dispatch
+    /// - First-wins vs all completion mode
+    /// - Per-handler timeout enforcement (tokio::time::timeout)
+    /// - Event-level timeout enforcement
+    ///
+    /// Python retains control of (via callbacks on eventbus_obj):
+    /// - EventResult creation and mutation
+    /// - Lock acquisition/release (asyncio.Semaphore)
+    /// - ContextVar management
+    /// - Middleware notifications
+    /// - Pydantic model updates
+    ///
+    /// The eventbus_obj must expose these async callback methods:
+    /// - _rust_pre_handler(event, handler_id, is_first) -> (callable, should_skip)
+    /// - _rust_post_handler_success(event, handler_id, result) -> is_winner
+    /// - _rust_post_handler_error(event, handler_id, error) -> is_winner
+    /// - _rust_cancel_remaining_handlers(event, winner_handler_id, remaining_ids)
+    #[pyo3(signature = (
+        eventbus_obj,
+        event_obj,
+        handler_ids,
+        concurrency_mode = "serial",
+        completion_mode = "all",
+        event_timeout = None,
+        handler_timeouts = None,
+    ))]
+    fn process_event<'py>(
+        &self,
+        py: Python<'py>,
+        eventbus_obj: PyObject,
+        event_obj: PyObject,
+        handler_ids: Vec<String>,
+        concurrency_mode: &str,
+        completion_mode: &str,
+        event_timeout: Option<f64>,
+        handler_timeouts: Option<HashMap<String, Option<f64>>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let timeouts = handler_timeouts.unwrap_or_default();
+        let mode = concurrency_mode.to_string();
+        let comp_mode = completion_mode.to_string();
+
+        // Collect handler callables under GIL
+        let mut callables: Vec<(String, PyObject)> = Vec::new();
+        for hid in &handler_ids {
+            if let Some(handler) = self.handlers.get(hid) {
+                if let Some(ref callable) = handler.callable {
+                    callables.push((hid.clone(), callable.clone_ref(py)));
+                }
+            }
+        }
+
+        let task_locals = pyo3_async_runtimes::tokio::get_current_locals(py)?;
+        let all_handler_ids = handler_ids.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py::<_, PyObject>(py, async move {
+            let dispatch_future = async {
+                match mode.as_str() {
+                    "parallel" => {
+                        _run_handlers_parallel(
+                            &eventbus_obj,
+                            &event_obj,
+                            callables,
+                            &comp_mode,
+                            &timeouts,
+                            &task_locals,
+                            &all_handler_ids,
+                        )
+                        .await
+                    }
+                    _ => {
+                        _run_handlers_serial(
+                            &eventbus_obj,
+                            &event_obj,
+                            callables,
+                            &comp_mode,
+                            &timeouts,
+                            &task_locals,
+                            &all_handler_ids,
+                        )
+                        .await
+                    }
+                }
+            };
+
+            // Wrap in event-level timeout
+            let result = if let Some(timeout_secs) = event_timeout {
+                match tokio::time::timeout(
+                    Duration::from_secs_f64(timeout_secs),
+                    dispatch_future,
+                )
+                .await
+                {
+                    Ok(r) => r,
+                    Err(_) => {
+                        // Event timed out — call Python to finalize
+                        let coro = Python::with_gil(|py| -> PyResult<PyObject> {
+                            let coro = eventbus_obj.call_method1(
+                                py,
+                                "_on_event_timeout",
+                                (event_obj.clone_ref(py), timeout_secs),
+                            )?;
+                            Ok(coro)
+                        })?;
+                        // Await the Python coroutine
+                        let tl = Python::with_gil(|py| task_locals.clone_ref(py));
+                        let future = Python::with_gil(|py| {
+                            pyo3_async_runtimes::into_future_with_locals(
+                                &tl,
+                                coro.into_bound(py),
+                            )
+                        })?;
+                        future.await?;
+                        Ok(())
+                    }
+                }
+            } else {
+                dispatch_future.await
+            };
+
+            result?;
+            Ok(Python::with_gil(|py| py.None().into()))
+        })
+    }
+
     /// Get all event_ids in history order.
     fn history_event_ids(&self) -> Vec<String> {
         self.history_order.iter().cloned().collect()
@@ -1013,6 +1269,485 @@ impl RustEventBusCore {
         }
         false
     }
+}
+
+// ── Async Handler Invocation ──────────────────────────────────────
+
+/// Call a Python callable with one argument and await the result if it's a coroutine.
+///
+/// This is the core bridge: Rust calls a Python handler, and if it returns
+/// a coroutine, converts it to a Rust Future via pyo3-async-runtimes and awaits it.
+/// The GIL is released during the async await.
+async fn invoke_python_callable(
+    callable: PyObject,
+    arg: PyObject,
+    task_locals: pyo3_async_runtimes::TaskLocals,
+) -> PyResult<PyObject> {
+    // Step 1: Call the callable under GIL, check if result is coroutine
+    let (call_result, is_coroutine) = Python::with_gil(|py| -> PyResult<(PyObject, bool)> {
+        let result = callable.call1(py, (arg.clone_ref(py),))?;
+        let inspect = py.import("inspect")?;
+        let is_coro: bool = inspect
+            .call_method1("iscoroutine", (result.clone_ref(py),))?
+            .extract()?;
+        Ok((result, is_coro))
+    })?;
+
+    if is_coroutine {
+        // Step 2: Convert Python coroutine to Rust future and await it (GIL released)
+        let future = Python::with_gil(|py| {
+            pyo3_async_runtimes::into_future_with_locals(
+                &task_locals,
+                call_result.into_bound(py),
+            )
+        })?;
+        future.await
+    } else {
+        // Sync handler returned immediately
+        Ok(call_result)
+    }
+}
+
+/// Result of a single handler invocation.
+#[derive(Debug)]
+struct HandlerInvocationResult {
+    handler_id: String,
+    /// The return value (if successful)
+    result: Option<PyObject>,
+    /// Error string (if failed)
+    error: Option<String>,
+    /// The Python exception object (if failed)
+    error_obj: Option<PyObject>,
+}
+
+/// Run handlers serially, returning results in order.
+async fn run_handlers_serial(
+    handlers: Vec<(String, PyObject)>,
+    event_obj: PyObject,
+    task_locals: pyo3_async_runtimes::TaskLocals,
+    handler_timeouts: &HashMap<String, Option<f64>>,
+    completion_mode: &str,
+) -> Vec<HandlerInvocationResult> {
+    let mut results = Vec::new();
+
+    for (handler_id, callable) in handlers {
+        let timeout = handler_timeouts
+            .get(&handler_id)
+            .copied()
+            .flatten();
+
+        // Clone event_obj and task_locals under GIL for this handler invocation
+        let (event_clone, tl_clone) = Python::with_gil(|py| {
+            (event_obj.clone_ref(py), task_locals.clone_ref(py))
+        });
+
+        let invocation = invoke_python_callable(callable, event_clone, tl_clone);
+
+        let result = if let Some(timeout_secs) = timeout {
+            match tokio::time::timeout(Duration::from_secs_f64(timeout_secs), invocation).await {
+                Ok(r) => r,
+                Err(_) => Err(pyo3::exceptions::PyTimeoutError::new_err(
+                    format!("Handler {} timed out after {}s", handler_id, timeout_secs),
+                ).into()),
+            }
+        } else {
+            invocation.await
+        };
+
+        let invocation_result = match result {
+            Ok(value) => HandlerInvocationResult {
+                handler_id: handler_id.clone(),
+                result: Some(value),
+                error: None,
+                error_obj: None,
+            },
+            Err(err) => {
+                let (error_str, error_obj) = Python::with_gil(|py| {
+                    let error_str = format!("{}", err);
+                    let error_obj: PyObject = err.value(py).clone().unbind().into();
+                    (error_str, error_obj)
+                });
+                HandlerInvocationResult {
+                    handler_id: handler_id.clone(),
+                    result: None,
+                    error: Some(error_str),
+                    error_obj: Some(error_obj),
+                }
+            }
+        };
+
+        let is_success = invocation_result.error.is_none();
+        results.push(invocation_result);
+
+        // In "first" mode, stop after first successful handler
+        if completion_mode == "first" && is_success {
+            break;
+        }
+    }
+
+    results
+}
+
+/// Run handlers in parallel, returning all results.
+async fn run_handlers_parallel(
+    handlers: Vec<(String, PyObject)>,
+    event_obj: PyObject,
+    task_locals: pyo3_async_runtimes::TaskLocals,
+    handler_timeouts: &HashMap<String, Option<f64>>,
+    _completion_mode: &str,
+) -> Vec<HandlerInvocationResult> {
+    let mut handles = Vec::new();
+
+    for (handler_id, callable) in handlers {
+        let timeout = handler_timeouts
+            .get(&handler_id)
+            .copied()
+            .flatten();
+
+        // Clone event_obj and task_locals under GIL for each parallel handler
+        let (event_clone, tl) = Python::with_gil(|py| {
+            (event_obj.clone_ref(py), task_locals.clone_ref(py))
+        });
+        let hid = handler_id.clone();
+
+        let handle = tokio::spawn(async move {
+            let invocation = invoke_python_callable(callable, event_clone, tl);
+
+            let result = if let Some(timeout_secs) = timeout {
+                match tokio::time::timeout(Duration::from_secs_f64(timeout_secs), invocation).await {
+                    Ok(r) => r,
+                    Err(_) => Err(pyo3::exceptions::PyTimeoutError::new_err(
+                        format!("Handler {} timed out after {}s", hid, timeout_secs),
+                    ).into()),
+                }
+            } else {
+                invocation.await
+            };
+
+            match result {
+                Ok(value) => HandlerInvocationResult {
+                    handler_id: hid,
+                    result: Some(value),
+                    error: None,
+                    error_obj: None,
+                },
+                Err(err) => {
+                    let (error_str, error_obj) = Python::with_gil(|py| {
+                        let error_str = format!("{}", err);
+                        let error_obj: PyObject = err.value(py).clone().unbind().into();
+                        (error_str, error_obj)
+                    });
+                    HandlerInvocationResult {
+                        handler_id: hid,
+                        result: None,
+                        error: Some(error_str),
+                        error_obj: Some(error_obj),
+                    }
+                }
+            }
+        });
+
+        handles.push(handle);
+    }
+
+    let mut results = Vec::new();
+    for handle in handles {
+        match handle.await {
+            Ok(result) => results.push(result),
+            Err(e) => {
+                // JoinError (task panicked or was cancelled)
+                results.push(HandlerInvocationResult {
+                    handler_id: String::new(),
+                    result: None,
+                    error: Some(format!("Task join error: {}", e)),
+                    error_obj: None,
+                });
+            }
+        }
+    }
+
+    results
+}
+
+// ── Dispatch with Python Callbacks ────────────────────────────────
+
+/// Helper to await a Python coroutine from Rust async context.
+async fn await_python_coroutine(
+    coro: PyObject,
+    task_locals: &pyo3_async_runtimes::TaskLocals,
+) -> PyResult<PyObject> {
+    let (tl, future) = Python::with_gil(|py| -> PyResult<(pyo3_async_runtimes::TaskLocals, _)> {
+        let tl = task_locals.clone_ref(py);
+        let future = pyo3_async_runtimes::into_future_with_locals(
+            &tl,
+            coro.into_bound(py),
+        )?;
+        Ok((tl, future))
+    })?;
+    future.await
+}
+
+/// Check if a Python object is a coroutine and await it if so.
+async fn maybe_await(
+    obj: PyObject,
+    task_locals: &pyo3_async_runtimes::TaskLocals,
+) -> PyResult<PyObject> {
+    let is_coro = Python::with_gil(|py| -> PyResult<bool> {
+        let inspect = py.import("inspect")?;
+        let is_coro: bool = inspect
+            .call_method1("iscoroutine", (obj.clone_ref(py),))?
+            .extract()?;
+        Ok(is_coro)
+    })?;
+
+    if is_coro {
+        await_python_coroutine(obj, task_locals).await
+    } else {
+        Ok(obj)
+    }
+}
+
+/// Run handlers serially with Python callbacks for pre/post handler lifecycle.
+async fn _run_handlers_serial(
+    eventbus_obj: &PyObject,
+    event_obj: &PyObject,
+    callables: Vec<(String, PyObject)>,
+    completion_mode: &str,
+    handler_timeouts: &HashMap<String, Option<f64>>,
+    task_locals: &pyo3_async_runtimes::TaskLocals,
+    all_handler_ids: &[String],
+) -> PyResult<()> {
+    for (idx, (handler_id, _callable)) in callables.iter().enumerate() {
+        let timeout = handler_timeouts
+            .get(handler_id)
+            .copied()
+            .flatten();
+        let is_first = idx == 0;
+
+        // Pre-handler: Python acquires lock, sets context, creates EventResult
+        // Returns (normalized_callable_or_None, should_skip: bool)
+        let pre_result = Python::with_gil(|py| -> PyResult<PyObject> {
+            eventbus_obj.call_method1(
+                py,
+                "_pre_run_handler",
+                (event_obj.clone_ref(py), handler_id.clone(), is_first),
+            )
+        })?;
+        // Pre-handler may be a coroutine (has async middleware calls)
+        let pre_result = maybe_await(pre_result, task_locals).await?;
+
+        let (normalized_callable, should_skip) = Python::with_gil(|py| -> PyResult<(PyObject, bool)> {
+            let tuple = pre_result.downcast_bound::<PyTuple>(py)?;
+            let callable_obj: PyObject = tuple.get_item(0)?.unbind().into();
+            let skip: bool = tuple.get_item(1)?.extract()?;
+            Ok((callable_obj, skip))
+        })?;
+
+        if should_skip {
+            continue;
+        }
+
+        // Invoke handler with timeout
+        let (event_clone, tl_clone) = Python::with_gil(|py| {
+            (event_obj.clone_ref(py), task_locals.clone_ref(py))
+        });
+        let invocation = invoke_python_callable(normalized_callable, event_clone, tl_clone);
+
+        let handler_result = if let Some(timeout_secs) = timeout {
+            match tokio::time::timeout(Duration::from_secs_f64(timeout_secs), invocation).await {
+                Ok(r) => r,
+                Err(_) => Err(pyo3::exceptions::PyTimeoutError::new_err(
+                    format!("Handler {} timed out after {}s", handler_id, timeout_secs),
+                )
+                .into()),
+            }
+        } else {
+            invocation.await
+        };
+
+        // Post-handler: Python updates EventResult, releases lock, fires middleware
+        // Returns is_winner: bool
+        let post_result = match handler_result {
+            Ok(value) => {
+                Python::with_gil(|py| -> PyResult<PyObject> {
+                    eventbus_obj.call_method1(
+                        py,
+                        "_post_run_handler_success",
+                        (event_obj.clone_ref(py), handler_id.clone(), value),
+                    )
+                })?
+            }
+            Err(err) => {
+                Python::with_gil(|py| -> PyResult<PyObject> {
+                    let err_obj: PyObject = err.value(py).clone().unbind().into();
+                    eventbus_obj.call_method1(
+                        py,
+                        "_post_run_handler_error",
+                        (event_obj.clone_ref(py), handler_id.clone(), err_obj),
+                    )
+                })?
+            }
+        };
+        let post_result = maybe_await(post_result, task_locals).await?;
+        let is_winner: bool = Python::with_gil(|py| post_result.extract(py))?;
+
+        // In "first" mode, stop after first winning handler
+        if completion_mode == "first" && is_winner {
+            // Collect remaining handler IDs
+            let remaining: Vec<String> = callables[idx + 1..]
+                .iter()
+                .map(|(hid, _)| hid.clone())
+                .collect();
+            if !remaining.is_empty() {
+                let cancel_result = Python::with_gil(|py| -> PyResult<PyObject> {
+                    let remaining_list = PyList::new(py, &remaining)?;
+                    eventbus_obj.call_method1(
+                        py,
+                        "_cancel_remaining_handlers",
+                        (event_obj.clone_ref(py), handler_id.clone(), remaining_list),
+                    )
+                })?;
+                let _ = maybe_await(cancel_result, task_locals).await?;
+            }
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Run handlers in parallel with Python callbacks.
+async fn _run_handlers_parallel(
+    eventbus_obj: &PyObject,
+    event_obj: &PyObject,
+    callables: Vec<(String, PyObject)>,
+    completion_mode: &str,
+    handler_timeouts: &HashMap<String, Option<f64>>,
+    task_locals: &pyo3_async_runtimes::TaskLocals,
+    all_handler_ids: &[String],
+) -> PyResult<()> {
+    // For parallel mode, we spawn each handler as a concurrent task.
+    // But pre/post callbacks need GIL and Python state, so we keep them serial
+    // around the actual invocation which runs concurrently.
+
+    // Phase 1: Pre-handler for all handlers (serial, needs GIL)
+    let mut prepared_handlers: Vec<(String, PyObject, Option<f64>)> = Vec::new();
+    for (idx, (handler_id, _callable)) in callables.iter().enumerate() {
+        let timeout = handler_timeouts
+            .get(handler_id)
+            .copied()
+            .flatten();
+        let is_first = idx == 0;
+
+        let pre_result = Python::with_gil(|py| -> PyResult<PyObject> {
+            eventbus_obj.call_method1(
+                py,
+                "_pre_run_handler",
+                (event_obj.clone_ref(py), handler_id.clone(), is_first),
+            )
+        })?;
+        let pre_result = maybe_await(pre_result, task_locals).await?;
+
+        let (normalized_callable, should_skip) = Python::with_gil(|py| -> PyResult<(PyObject, bool)> {
+            let tuple = pre_result.downcast_bound::<PyTuple>(py)?;
+            let callable_obj: PyObject = tuple.get_item(0)?.unbind().into();
+            let skip: bool = tuple.get_item(1)?.extract()?;
+            Ok((callable_obj, skip))
+        })?;
+
+        if !should_skip {
+            prepared_handlers.push((handler_id.clone(), normalized_callable, timeout));
+        }
+    }
+
+    // Phase 2: Invoke all handlers concurrently
+    let mut handles: Vec<(String, tokio::task::JoinHandle<Result<PyObject, PyErr>>)> = Vec::new();
+    for (handler_id, callable, timeout) in prepared_handlers {
+        let (event_clone, tl_clone) = Python::with_gil(|py| {
+            (event_obj.clone_ref(py), task_locals.clone_ref(py))
+        });
+        let hid = handler_id.clone();
+
+        let handle = tokio::spawn(async move {
+            let invocation = invoke_python_callable(callable, event_clone, tl_clone);
+
+            if let Some(timeout_secs) = timeout {
+                match tokio::time::timeout(Duration::from_secs_f64(timeout_secs), invocation).await {
+                    Ok(r) => r,
+                    Err(_) => Err(pyo3::exceptions::PyTimeoutError::new_err(
+                        format!("Handler {} timed out after {}s", hid, timeout_secs),
+                    )
+                    .into()),
+                }
+            } else {
+                invocation.await
+            }
+        });
+        handles.push((handler_id, handle));
+    }
+
+    // Phase 3: Collect results and post-handler callbacks
+    let mut winner_id: Option<String> = None;
+    for (handler_id, handle) in handles {
+        let handler_result = match handle.await {
+            Ok(r) => r,
+            Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                format!("Task join error: {}", e),
+            )
+            .into()),
+        };
+
+        let post_result = match handler_result {
+            Ok(value) => {
+                Python::with_gil(|py| -> PyResult<PyObject> {
+                    eventbus_obj.call_method1(
+                        py,
+                        "_post_run_handler_success",
+                        (event_obj.clone_ref(py), handler_id.clone(), value),
+                    )
+                })?
+            }
+            Err(err) => {
+                Python::with_gil(|py| -> PyResult<PyObject> {
+                    let err_obj: PyObject = err.value(py).clone().unbind().into();
+                    eventbus_obj.call_method1(
+                        py,
+                        "_post_run_handler_error",
+                        (event_obj.clone_ref(py), handler_id.clone(), err_obj),
+                    )
+                })?
+            }
+        };
+        let post_result = maybe_await(post_result, task_locals).await?;
+        let is_winner: bool = Python::with_gil(|py| post_result.extract(py))?;
+
+        if completion_mode == "first" && is_winner && winner_id.is_none() {
+            winner_id = Some(handler_id.clone());
+        }
+    }
+
+    // Cancel remaining handlers in first mode
+    if completion_mode == "first" {
+        if let Some(ref winner) = winner_id {
+            let remaining: Vec<String> = all_handler_ids
+                .iter()
+                .filter(|id| *id != winner)
+                .cloned()
+                .collect();
+            if !remaining.is_empty() {
+                let cancel_result = Python::with_gil(|py| -> PyResult<PyObject> {
+                    let remaining_list = PyList::new(py, &remaining)?;
+                    eventbus_obj.call_method1(
+                        py,
+                        "_cancel_remaining_handlers",
+                        (event_obj.clone_ref(py), winner.clone(), remaining_list),
+                    )
+                })?;
+                let _ = maybe_await(cancel_result, task_locals).await?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // ── Python Module ─────────────────────────────────────────────────
