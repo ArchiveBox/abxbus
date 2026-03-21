@@ -21,6 +21,7 @@ CLAUDE.local.md
 # Build files
 dist/
 node_modules/
+bubus-rust/target/
 
 # Coverage files
 .coverage
