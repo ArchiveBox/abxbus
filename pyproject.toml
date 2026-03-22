@@ -2,7 +2,7 @@
 name = "abxbus"
 description = "Advanced Pydantic-powered event bus with async support"
 authors = [{ name = "Nick Sweeting" }, { name = "ArchiveBox" }]
-version = "2.4.5"
+version = "2.4.6"
 readme = "README.md"
 requires-python = ">=3.11"
 classifiers = [
