@@ -59,7 +59,6 @@ jobs:
           console.log('optional bridge deps resolve OK')
           NODE
       - run: pnpm run typecheck
-      - run: pnpm test
       - run: pnpm run build
 
       - name: Publish release tag

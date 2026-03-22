@@ -174,7 +174,7 @@ wait_for_runs() {
     local attempts=0
 
     while :; do
-        runs_json="$(gh run list --repo "${slug}" --event "${event}" --commit "${sha}" --limit 20 --json databaseId,status,conclusion,workflowName | perl -pe 's/\e\\[[0-9;]*[[:alpha:]]//g')"
+        runs_json="$(GH_FORCE_TTY=0 GH_PAGER=cat gh run list --repo "${slug}" --event "${event}" --commit "${sha}" --limit 20 --json databaseId,status,conclusion,workflowName)"
         if [[ "$(jq 'length' <<<"${runs_json}")" -gt 0 ]]; then
             break
         fi
