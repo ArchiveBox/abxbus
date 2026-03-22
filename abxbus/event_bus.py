@@ -156,6 +156,7 @@ class EventBus:
     event_handler_completion: EventHandlerCompletionMode = EventHandlerCompletionMode.ALL
     event_handler_slow_timeout: float | None = 30.0
     event_handler_detect_file_paths: bool = True
+    warn_on_duplicate_handler_names: bool = True
     max_handler_recursion_depth: int = 2
 
     # Runtime State
@@ -217,6 +218,7 @@ class EventBus:
         event_slow_timeout: float | None = 300.0,
         event_handler_slow_timeout: float | None = 30.0,
         event_handler_detect_file_paths: bool = True,
+        warn_on_duplicate_handler_names: bool = True,
         max_handler_recursion_depth: int = 2,
         middlewares: Sequence[EventBusMiddlewareInput] | None = None,
         id: UUIDStr | str | None = None,
@@ -284,6 +286,7 @@ class EventBus:
         self.event_slow_timeout = event_slow_timeout
         self.event_handler_slow_timeout = event_handler_slow_timeout
         self.event_handler_detect_file_paths = bool(event_handler_detect_file_paths)
+        self.warn_on_duplicate_handler_names = bool(warn_on_duplicate_handler_names)
         self.max_handler_recursion_depth = int(max_handler_recursion_depth)
         assert self.event_timeout is None or self.event_timeout > 0, (
             f'event_timeout must be > 0 or None, got: {self.event_timeout!r}'
@@ -535,6 +538,7 @@ class EventBus:
             'event_handler_completion': str(self.event_handler_completion),
             'event_handler_slow_timeout': self.event_handler_slow_timeout,
             'event_handler_detect_file_paths': self.event_handler_detect_file_paths,
+            'warn_on_duplicate_handler_names': self.warn_on_duplicate_handler_names,
             'handlers': handlers_payload,
             'handlers_by_key': handlers_by_key_payload,
             'event_history': event_history_payload,
@@ -576,6 +580,7 @@ class EventBus:
             or payload.get('event_handler_slow_timeout') is None
             else 30.0,
             event_handler_detect_file_paths=bool(payload.get('event_handler_detect_file_paths', True)),
+            warn_on_duplicate_handler_names=bool(payload.get('warn_on_duplicate_handler_names', True)),
             id=payload.get('id') if isinstance(payload.get('id'), str) else None,
         )
         if requested_name is not None:
@@ -984,7 +989,11 @@ class EventBus:
         # do not degrade into O(n^2) registration time.
         new_handler_name = EventHandler.get_callable_handler_name(handler)
         existing_handler_ids = self.handlers_by_key.get(event_key, [])
-        if existing_handler_ids and len(existing_handler_ids) <= self._duplicate_handler_name_check_limit:
+        if (
+            self.warn_on_duplicate_handler_names
+            and existing_handler_ids
+            and len(existing_handler_ids) <= self._duplicate_handler_name_check_limit
+        ):
             for existing_handler_id in existing_handler_ids:
                 existing_handler = self.handlers.get(existing_handler_id)
                 if existing_handler and existing_handler.handler_name == new_handler_name:

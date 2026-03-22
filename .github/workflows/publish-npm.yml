@@ -3,12 +3,6 @@ name: publish-npm
 on:
   release:
     types: [published]
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: npm dist-tag to publish under
-        required: false
-        default: latest
 
 permissions:
   contents: read
@@ -71,11 +65,5 @@ jobs:
       - name: Publish release tag
         if: github.event_name == 'release'
         run: pnpm publish --access public --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish manual tag
-        if: github.event_name == 'workflow_dispatch'
-        run: pnpm publish --access public --tag "${{ inputs.tag }}" --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

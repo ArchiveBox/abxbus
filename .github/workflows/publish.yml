@@ -3,7 +3,6 @@ name: publish
 on:
   release:
     types: [published]     # publish full release to PyPI when a release is created on Github
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -38,7 +37,7 @@ jobs:
           initdb --version
           postgres --version
           sqlite3 --version
-      - run: uv sync
+      - run: uv sync --dev --all-extras
       - name: Verify bridge optional Python deps
         run: |
           uv run python - <<'PY'
@@ -50,5 +49,5 @@ jobs:
           PY
       - run: uv run ruff check --no-fix --select PLE # quick check for syntax errors to avoid waiting time doing the rest of the build
       - run: uv build
-      - run: uv run pytest tests                  # dont push the package to PyPI if the tests fail
+      - run: uv run python -m pytest tests -o addopts=      # dont push the package to PyPI if the tests fail
       - run: uv publish --trusted-publishing always
