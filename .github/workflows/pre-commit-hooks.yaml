@@ -21,7 +21,7 @@ jobs:
         with:
           enable-cache: true
           activate-environment: true
-      - run: uv sync --dev --all-extras
+      - run: uv sync --all-extras --all-groups --no-cache
       - run: uv pip install fastapi
 
       - uses: pnpm/action-setup@v4
@@ -34,5 +34,4 @@ jobs:
           cache-dependency-path: abxbus-ts/pnpm-lock.yaml
       - run: pnpm --dir abxbus-ts install --frozen-lockfile
 
-      - uses: j178/prek-action@v1
-      - run: prek run --all-files
+      - run: uv run prek run --all-files
