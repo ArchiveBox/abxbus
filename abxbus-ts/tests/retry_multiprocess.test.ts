@@ -73,11 +73,25 @@ test('retry: semaphore_scope=multiprocess serializes across JS processes', async
     .flatMap((result) => result.events)
     .filter((event) => event.type === 'acquired')
     .sort((a, b) => Number(a.at_ms) - Number(b.at_ms))
+  const timeline = results
+    .flatMap((result) => result.events)
+    .filter((event) => event.type === 'acquired' || event.type === 'released')
+    .sort((a, b) => {
+      const delta = Number(a.at_ms) - Number(b.at_ms)
+      if (delta !== 0) return delta
+      return a.type === 'released' ? -1 : 1
+    })
 
   const completed = results.flatMap((result) => result.events).filter((event) => event.type === 'completed')
+  assert.equal(acquired.length, 4)
   assert.equal(completed.length, 4)
-  assert.deepEqual(new Set(acquired.slice(0, 2).map((event) => Number(event.worker_id))), new Set([0, 1]))
-  assert.deepEqual(new Set(acquired.slice(2).map((event) => Number(event.worker_id))), new Set([2, 3]))
+
+  let in_flight = 0
+  for (const event of timeline) {
+    in_flight += event.type === 'acquired' ? 1 : -1
+    assert.ok(in_flight >= 0, `negative in-flight count after ${JSON.stringify(event)}`)
+    assert.ok(in_flight <= 2, `semaphore limit exceeded by ${JSON.stringify(event)}`)
+  }
 })
 
 test('retry: semaphore_scope=multiprocess contends with Python retry() using the same semaphore name', async (t) => {
