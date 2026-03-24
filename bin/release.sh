@@ -303,7 +303,10 @@ publish_artifacts() {
         if [[ -n "${npm_token}" ]]; then
             (
                 cd abxbus-ts
-                NODE_AUTH_TOKEN="${npm_token}" pnpm publish --access public --no-git-checks
+                npm_config_file="$(mktemp)"
+                printf '//registry.npmjs.org/:_authToken=%s\n' "${npm_token}" >"${npm_config_file}"
+                NODE_AUTH_TOKEN="${npm_token}" npm_config_userconfig="${npm_config_file}" pnpm publish --access public --no-git-checks
+                rm -f "${npm_config_file}"
             )
         else
             echo "Missing npm credentials: set NPM_TOKEN or NODE_AUTH_TOKEN" >&2
