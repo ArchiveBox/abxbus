@@ -38,7 +38,7 @@ retry({
   semaphore_limit?: number | null,                                      // default: no semaphore limit
   semaphore_name?: string | ((...args: any[]) => string) | null,        // default: function name
   semaphore_lax?: boolean,                                              // default: true
-  semaphore_scope?: 'global' | 'class' | 'instance',                    // default: 'global'
+  semaphore_scope?: 'multiprocess' | 'global' | 'class' | 'instance',   // default: 'global'
   semaphore_timeout?: number | null,                                    // default: derived when timeout + limit are set
 })
 ```
@@ -57,7 +57,7 @@ retry({
 | `timeout` | Per-attempt timeout in seconds (`None`/`undefined` means no per-attempt timeout). |
 | `semaphore_limit` | Max concurrent executions sharing the same semaphore. |
 | `semaphore_name` | Semaphore key (string or function deriving a key from call args). |
-| `semaphore_scope` | Semaphore sharing scope (`global`, `class`, `instance`; Python also supports `multiprocess`). |
+| `semaphore_scope` | Semaphore sharing scope (`multiprocess`, `global`, `class`, `instance`). |
 | `semaphore_timeout` | Max wait time for semaphore acquisition before timeout/lax fallback. |
 | `semaphore_lax` | If true, continue execution without semaphore limit when acquisition times out. |
 
@@ -149,8 +149,8 @@ class ApiService {
 
 ## Runtime differences
 
-- Python supports semaphore scope `multiprocess` in addition to `global`, `class`, and `instance`.
-- TypeScript supports `global`, `class`, and `instance`, and uses async-context re-entrancy tracking in Node/Bun to avoid same-semaphore nested deadlocks.
+- Python and TypeScript both support `multiprocess`, `global`, `class`, and `instance`.
+- TypeScript uses async-context re-entrancy tracking in Node/Bun to avoid same-semaphore nested deadlocks.
 - `retry_on_errors` matching differs slightly:
   - Python: exception classes or compiled regex patterns (matched against `"ErrorClass: message"`).
   - TypeScript: error constructors, error-name strings, or regex patterns.

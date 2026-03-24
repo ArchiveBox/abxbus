@@ -1,5 +1,8 @@
 import asyncio
+import hashlib
+import json
 import logging
+import os
 import re
 import tempfile
 import threading
@@ -9,16 +12,6 @@ from functools import wraps
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Literal, ParamSpec, TypeVar, cast
-
-import portalocker
-
-# Silence portalocker debug messages
-portalocker_logger = logging.getLogger('portalocker.utils')
-portalocker_logger.setLevel(logging.WARNING)
-
-# Silence root level portalocker logs too
-portalocker_root_logger = logging.getLogger('portalocker')
-portalocker_root_logger.setLevel(logging.WARNING)
 
 psutil: ModuleType | None
 try:
@@ -46,10 +39,7 @@ GLOBAL_RETRY_SEMAPHORE_LOCK = threading.Lock()
 # Multiprocess semaphore support
 MULTIPROCESS_SEMAPHORE_DIR = Path(tempfile.gettempdir()) / 'browser_use_semaphores'
 MULTIPROCESS_SEMAPHORE_DIR.mkdir(exist_ok=True)
-
-# Global multiprocess semaphore registry
-# Multiprocess semaphores are not cached due to internal state issues causing "Already locked" errors
-MULTIPROCESS_SEMAPHORE_LOCK = threading.Lock()
+MULTIPROCESS_STALE_LOCK_SECONDS = 300.0
 
 # Global overload detection state
 _last_overload_check = 0.0
@@ -120,44 +110,7 @@ def _get_or_create_semaphore(
 ) -> Any:
     """Get or create a semaphore based on scope."""
     if semaphore_scope == 'multiprocess':
-        # Don't cache multiprocess semaphores - they have internal state issues
-        # Create a new instance each time to avoid "Already locked" errors
-        with MULTIPROCESS_SEMAPHORE_LOCK:
-            # Ensure the directory exists (it might have been cleaned up in cloud environments)
-            MULTIPROCESS_SEMAPHORE_DIR.mkdir(exist_ok=True, parents=True)
-
-            # Clean up any stale lock files before creating semaphore
-            lock_pattern = f'{sem_key}.*.lock'
-            for lock_file in MULTIPROCESS_SEMAPHORE_DIR.glob(lock_pattern):
-                try:
-                    # Try to remove lock files older than 5 minutes
-                    if lock_file.stat().st_mtime < time.time() - 300:
-                        lock_file.unlink(missing_ok=True)
-                except Exception:
-                    pass  # Ignore errors when cleaning up
-
-            # Use a more aggressive timeout for lock acquisition
-            try:
-                semaphore = portalocker.utils.NamedBoundedSemaphore(
-                    maximum=semaphore_limit,
-                    name=sem_key,
-                    directory=str(MULTIPROCESS_SEMAPHORE_DIR),
-                    timeout=0.1,  # Very short timeout for internal lock acquisition
-                )
-                return semaphore
-            except FileNotFoundError as e:
-                # In some cloud environments, the lock file creation might fail
-                # Try once more after ensuring directory exists
-                logger.warning(f'Lock file creation failed: {e}. Retrying after ensuring directory exists.')
-                MULTIPROCESS_SEMAPHORE_DIR.mkdir(exist_ok=True, parents=True)
-
-                # Create a fallback asyncio semaphore instead of multiprocess
-                logger.warning(f'Falling back to asyncio semaphore for {sem_key} due to filesystem issues')
-                with GLOBAL_RETRY_SEMAPHORE_LOCK:
-                    fallback_key = f'multiprocess_fallback_{sem_key}'
-                    if fallback_key not in GLOBAL_RETRY_SEMAPHORES:
-                        GLOBAL_RETRY_SEMAPHORES[fallback_key] = asyncio.Semaphore(semaphore_limit)
-                    return GLOBAL_RETRY_SEMAPHORES[fallback_key]
+        return sem_key
     else:
         with GLOBAL_RETRY_SEMAPHORE_LOCK:
             if sem_key not in GLOBAL_RETRY_SEMAPHORES:
@@ -222,95 +175,74 @@ async def _acquire_multiprocess_semaphore(
     semaphore_limit: int,
     timeout: float | None,
 ) -> tuple[bool, Any]:
-    """Acquire a multiprocess semaphore with retries and exponential backoff."""
+    """Acquire a cross-process semaphore using shared slot files.
+
+    Each slot is a file created with O_EXCL. The file content stores the owning
+    pid and a per-acquisition token so release can verify ownership. This format
+    is mirrored in abxbus-ts so the same semaphore name can contend across
+    Python and JS processes.
+    """
+    del semaphore
+
     start_time = time.time()
     retry_delay = 0.1  # Start with 100ms
     backoff_factor = 2.0
-    max_single_attempt = 1.0  # Max time for a single acquire attempt
-    recreate_attempts = 0
-    max_recreate_attempts = 3
     has_timeout = sem_timeout is not None and sem_timeout > 0
+    lock_prefix = hashlib.sha256(sem_key.encode()).hexdigest()[:40]
+    MULTIPROCESS_SEMAPHORE_DIR.mkdir(exist_ok=True, parents=True)
 
     while True:
-        try:
-            # Calculate remaining time (when configured)
-            elapsed = time.time() - start_time
-            remaining_time: float | None = (sem_timeout - elapsed) if has_timeout and sem_timeout is not None else None
-            if remaining_time is not None and remaining_time <= 0:
-                break
+        elapsed = time.time() - start_time
+        remaining_time: float | None = (sem_timeout - elapsed) if has_timeout and sem_timeout is not None else None
+        if remaining_time is not None and remaining_time <= 0:
+            break
 
-            # Use bounded one-second acquire loops so we can recover from transient lock file errors.
-            attempt_timeout = min(remaining_time, max_single_attempt) if remaining_time is not None else max_single_attempt
-
-            # Use a temporary thread to run the blocking operation
-            multiprocess_lock = await asyncio.to_thread(
-                lambda: semaphore.acquire(timeout=attempt_timeout, check_interval=0.1, fail_when_locked=False)
+        for slot in range(semaphore_limit):
+            slot_file = MULTIPROCESS_SEMAPHORE_DIR / f'{lock_prefix}.{slot:02d}.lock'
+            token = f'{os.getpid()}:{time.time_ns()}:{threading.get_ident()}'
+            owner = json.dumps(
+                {
+                    'token': token,
+                    'pid': os.getpid(),
+                    'semaphore_name': sem_key,
+                    'created_at_ms': int(time.time() * 1000),
+                }
             )
-            if multiprocess_lock:
-                return True, multiprocess_lock
 
-            # If we didn't get the lock, wait before retrying
-            if remaining_time is None or remaining_time > retry_delay:
-                await asyncio.sleep(retry_delay)
-                retry_delay = min(retry_delay * backoff_factor, 1.0)  # Cap at 1 second
+            try:
+                fd = os.open(slot_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+                    handle.write(owner)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                return True, (slot_file, token)
+            except FileExistsError:
+                try:
+                    raw = slot_file.read_text(encoding='utf-8').strip()
+                    current_owner: dict[str, Any] | None = json.loads(raw) if raw else None
+                    if not isinstance(current_owner, dict):
+                        current_owner = None
+                    current_pid = current_owner.get('pid') if current_owner else None
+                    if isinstance(current_pid, int):
+                        try:
+                            os.kill(current_pid, 0)
+                            continue
+                        except OSError:
+                            pass
 
-        except (FileNotFoundError, OSError) as e:
-            # Handle case where lock file disappears
-            if isinstance(e, FileNotFoundError) or 'No such file or directory' in str(e):
-                recreate_attempts += 1
-                if recreate_attempts <= max_recreate_attempts:
-                    logger.warning(
-                        f'Semaphore lock file disappeared for "{sem_key}". Attempting to recreate (attempt {recreate_attempts}/{max_recreate_attempts})...'
-                    )
-
-                    # Ensure directory exists
-                    with MULTIPROCESS_SEMAPHORE_LOCK:
-                        MULTIPROCESS_SEMAPHORE_DIR.mkdir(exist_ok=True, parents=True)
-
-                    # Try to recreate the semaphore
-                    try:
-                        semaphore = await asyncio.to_thread(
-                            lambda: portalocker.utils.NamedBoundedSemaphore(
-                                maximum=semaphore_limit,
-                                name=sem_key,
-                                directory=str(MULTIPROCESS_SEMAPHORE_DIR),
-                                timeout=0.1,
-                            )
-                        )
-                        # Continue with the new semaphore
-                        continue
-                    except Exception as recreate_error:
-                        logger.error(f'Failed to recreate semaphore: {recreate_error}')
-                        # If recreation fails and we're in lax mode, return without lock
-                        if semaphore_lax:
-                            logger.warning(f'Failed to recreate semaphore "{sem_key}", proceeding without concurrency limit')
-                            return False, None
-                        raise
-                else:
-                    # Max recreate attempts exceeded
-                    if semaphore_lax:
-                        logger.warning(
-                            f'Max semaphore recreation attempts exceeded for "{sem_key}", proceeding without concurrency limit'
-                        )
-                        return False, None
-                    raise
-            else:
-                # Other OS errors
-                raise
-
-        except (AssertionError, Exception) as e:
-            # Handle "Already locked" error by skipping this attempt
-            if 'Already locked' in str(e) or isinstance(e, AssertionError):
-                # Lock file might be stale from a previous process crash
-                # Wait before retrying
-                elapsed = time.time() - start_time
-                remaining_time = (sem_timeout - elapsed) if has_timeout and sem_timeout is not None else None
-                if remaining_time is None or remaining_time > retry_delay:
-                    await asyncio.sleep(retry_delay)
-                    retry_delay = min(retry_delay * backoff_factor, 1.0)
+                    slot_age = time.time() - slot_file.stat().st_mtime
+                    if isinstance(current_pid, int) or slot_age >= MULTIPROCESS_STALE_LOCK_SECONDS:
+                        slot_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            except FileNotFoundError:
+                MULTIPROCESS_SEMAPHORE_DIR.mkdir(exist_ok=True, parents=True)
                 continue
-            elif 'Could not acquire' not in str(e) and not isinstance(e, TimeoutError):
-                raise
+
+        sleep_for = retry_delay if remaining_time is None else min(retry_delay, remaining_time)
+        if sleep_for > 0:
+            await asyncio.sleep(sleep_for)
+        retry_delay = min(retry_delay * backoff_factor, 1.0)
 
     # Timeout reached
     if not semaphore_lax:
@@ -538,7 +470,13 @@ def retry(
                 if semaphore_acquired and semaphore:
                     try:
                         if semaphore_scope == 'multiprocess' and multiprocess_lock:
-                            await asyncio.to_thread(lambda: multiprocess_lock.release())
+                            slot_file, token = cast(tuple[Path, str], multiprocess_lock)
+                            raw = slot_file.read_text(encoding='utf-8').strip() if slot_file.exists() else ''
+                            current_owner: dict[str, Any] | None = json.loads(raw) if raw else None
+                            if not isinstance(current_owner, dict):
+                                current_owner = None
+                            if current_owner and current_owner.get('token') == token:
+                                slot_file.unlink(missing_ok=True)
                         elif semaphore:
                             semaphore.release()
                     except (FileNotFoundError, OSError) as e:

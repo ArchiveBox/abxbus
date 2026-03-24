@@ -1,4 +1,16 @@
 import { createAsyncLocalStorage, type AsyncLocalStorageLike } from './async_context.js'
+import { isNodeRuntime } from './optional_deps.js'
+
+type SemaphoreScope = 'multiprocess' | 'global' | 'class' | 'instance'
+
+type MultiprocessLockHandle = {
+  release: () => Promise<void>
+}
+
+const MULTIPROCESS_SEMAPHORE_DIRNAME = 'browser_use_semaphores'
+const MULTIPROCESS_STALE_LOCK_MS = 5 * 60 * 1000
+
+let multiprocess_fallback_reason_logged: string | null = null
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -31,11 +43,12 @@ export interface RetryOptions {
   semaphore_lax?: boolean
 
   /** Semaphore scoping strategy. Default: 'global'
+   *  - 'multiprocess': all processes on the machine share one semaphore (Node.js only)
    *  - 'global': all calls share one semaphore (keyed by semaphore_name)
    *  - 'class': all instances of the same class share one semaphore (keyed by className.semaphore_name)
    *  - 'instance': each object instance gets its own semaphore (keyed by instanceId.semaphore_name)
    *  'class' and 'instance' require `this` to be an object; they fall back to 'global' for standalone calls. */
-  semaphore_scope?: 'global' | 'class' | 'instance'
+  semaphore_scope?: SemaphoreScope
 
   /** Maximum seconds to wait for semaphore acquisition. Default: undefined → timeout * max(1, limit - 1) */
   semaphore_timeout?: number | null
@@ -103,7 +116,7 @@ function runWithHeldSemaphores<T>(held: ReentrantStore, fn: () => T): T {
 let _next_instance_id = 1
 const _instance_ids = new WeakMap<object, number>()
 
-function scopedSemaphoreKey(base_name: string, scope: 'global' | 'class' | 'instance', context: unknown): string {
+function scopedSemaphoreKey(base_name: string, scope: SemaphoreScope, context: unknown): string {
   if (scope === 'class' && context && typeof context === 'object') {
     return `${(context as object).constructor?.name ?? 'Object'}.${base_name}`
   }
@@ -171,6 +184,7 @@ function getOrCreateSemaphore(name: string, limit: number): RetrySemaphore {
 /** Reset the global semaphore registry. Useful in tests. */
 export function clearSemaphoreRegistry(): void {
   SEMAPHORE_REGISTRY.clear()
+  multiprocess_fallback_reason_logged = null
 }
 
 // ─── retry() decorator / higher-order wrapper ────────────────────────────────
@@ -226,29 +240,52 @@ export function retry(options: RetryOptions = {}) {
 
       // ── Semaphore acquisition (held across all retry attempts, skipped if re-entrant) ──
       let semaphore: RetrySemaphore | null = null
+      let multiprocess_lock: MultiprocessLockHandle | null = null
       let semaphore_acquired = false
 
       if (needs_semaphore && !is_reentrant) {
-        semaphore = getOrCreateSemaphore(scoped_key, semaphore_limit!)
-
         const effective_sem_timeout =
           semaphore_timeout != null ? semaphore_timeout : timeout != null ? timeout * Math.max(1, semaphore_limit! - 1) : null
 
-        if (effective_sem_timeout != null && effective_sem_timeout > 0) {
-          semaphore_acquired = await acquireWithTimeout(semaphore, effective_sem_timeout * 1000)
-          if (!semaphore_acquired) {
-            if (!semaphore_lax) {
-              throw new SemaphoreTimeoutError(
-                `Failed to acquire semaphore "${scoped_key}" within ${effective_sem_timeout}s (limit=${semaphore_limit})`,
-                { semaphore_name: scoped_key, semaphore_limit: semaphore_limit!, timeout_seconds: effective_sem_timeout }
-              )
+        if (semaphore_scope === 'multiprocess') {
+          if (isNodeRuntime()) {
+            multiprocess_lock = await acquireMultiprocessSemaphore(scoped_key, semaphore_limit!, effective_sem_timeout, semaphore_lax)
+            semaphore_acquired = multiprocess_lock !== null
+          } else {
+            logMultiprocessFallbackOnce('multiprocess semaphores require a Node.js runtime; falling back to in-process global scope')
+            semaphore = getOrCreateSemaphore(scoped_key, semaphore_limit!)
+            if (effective_sem_timeout != null && effective_sem_timeout > 0) {
+              semaphore_acquired = await acquireWithTimeout(semaphore, effective_sem_timeout * 1000)
+              if (!semaphore_acquired) {
+                if (!semaphore_lax) {
+                  throw new SemaphoreTimeoutError(
+                    `Failed to acquire semaphore "${scoped_key}" within ${effective_sem_timeout}s (limit=${semaphore_limit})`,
+                    { semaphore_name: scoped_key, semaphore_limit: semaphore_limit!, timeout_seconds: effective_sem_timeout }
+                  )
+                }
+              }
+            } else {
+              await semaphore.acquire()
+              semaphore_acquired = true
             }
-            // lax mode: proceed without concurrency limit
           }
         } else {
-          // No timeout configured: wait indefinitely for a slot
-          await semaphore.acquire()
-          semaphore_acquired = true
+          semaphore = getOrCreateSemaphore(scoped_key, semaphore_limit!)
+
+          if (effective_sem_timeout != null && effective_sem_timeout > 0) {
+            semaphore_acquired = await acquireWithTimeout(semaphore, effective_sem_timeout * 1000)
+            if (!semaphore_acquired) {
+              if (!semaphore_lax) {
+                throw new SemaphoreTimeoutError(
+                  `Failed to acquire semaphore "${scoped_key}" within ${effective_sem_timeout}s (limit=${semaphore_limit})`,
+                  { semaphore_name: scoped_key, semaphore_limit: semaphore_limit!, timeout_seconds: effective_sem_timeout }
+                )
+              }
+            }
+          } else {
+            await semaphore.acquire()
+            semaphore_acquired = true
+          }
         }
       }
 
@@ -298,7 +335,9 @@ export function retry(options: RetryOptions = {}) {
       try {
         return await runWithHeldSemaphores(new_held, runRetryLoop)
       } finally {
-        if (semaphore_acquired && semaphore) {
+        if (semaphore_acquired && multiprocess_lock) {
+          await multiprocess_lock.release()
+        } else if (semaphore_acquired && semaphore) {
           semaphore.release()
         }
       }
@@ -338,6 +377,117 @@ async function acquireWithTimeout(semaphore: RetrySemaphore, timeout_ms: number)
       }
     })
   })
+}
+
+function logMultiprocessFallbackOnce(reason: string): void {
+  if (multiprocess_fallback_reason_logged === reason) return
+  multiprocess_fallback_reason_logged = reason
+  console.warn(`[abxbus.retry] ${reason}`)
+}
+
+async function importNodeModule(specifier: string): Promise<any> {
+  const dynamic_import = Function('module_name', 'return import(module_name)') as (module_name: string) => Promise<unknown>
+  return dynamic_import(specifier) as Promise<any>
+}
+
+async function acquireMultiprocessSemaphore(
+  scoped_key: string,
+  semaphore_limit: number,
+  semaphore_timeout_seconds: number | null,
+  semaphore_lax: boolean
+): Promise<MultiprocessLockHandle | null> {
+  const [crypto, fs, os, path] = await Promise.all([
+    importNodeModule('node:crypto'),
+    importNodeModule('node:fs'),
+    importNodeModule('node:os'),
+    importNodeModule('node:path'),
+  ])
+  const semaphore_directory = path.join(os.tmpdir(), MULTIPROCESS_SEMAPHORE_DIRNAME)
+  const lock_prefix = crypto.createHash('sha256').update(scoped_key).digest('hex').slice(0, 40)
+  fs.mkdirSync(semaphore_directory, { recursive: true })
+
+  const start = Date.now()
+  let retry_delay_ms = 100
+
+  while (true) {
+    const elapsed_ms = Date.now() - start
+    const remaining_ms =
+      semaphore_timeout_seconds != null && semaphore_timeout_seconds > 0 ? semaphore_timeout_seconds * 1000 - elapsed_ms : null
+
+    if (remaining_ms != null && remaining_ms <= 0) {
+      break
+    }
+
+    for (let slot = 0; slot < semaphore_limit; slot++) {
+      const slot_file = path.join(semaphore_directory, `${lock_prefix}.${String(slot).padStart(2, '0')}.lock`)
+      const token = `${process.pid}:${Date.now()}:${Math.random().toString(16).slice(2)}`
+
+      try {
+        const fd = fs.openSync(slot_file, 'wx', 0o600)
+        try {
+          fs.writeFileSync(
+            fd,
+            JSON.stringify({
+              token,
+              pid: process.pid,
+              semaphore_name: scoped_key,
+              created_at_ms: Date.now(),
+            }),
+            'utf8'
+          )
+        } finally {
+          fs.closeSync(fd)
+        }
+        return {
+          release: async () => {
+            try {
+              const raw = String(fs.readFileSync(slot_file, 'utf8') || '').trim()
+              const current_owner = raw ? (JSON.parse(raw) as { token?: unknown }) : null
+              if (current_owner?.token === token) {
+                fs.unlinkSync(slot_file)
+              }
+            } catch {}
+          },
+        }
+      } catch (error) {
+        if (!(error instanceof Error) || (error as NodeJS.ErrnoException).code !== 'EEXIST') {
+          throw error
+        }
+
+        try {
+          const raw = String(fs.readFileSync(slot_file, 'utf8') || '').trim()
+          const current_owner = raw ? (JSON.parse(raw) as { pid?: unknown }) : null
+          const current_pid = typeof current_owner?.pid === 'number' ? current_owner.pid : null
+          if (current_pid != null) {
+            try {
+              process.kill(current_pid, 0)
+              continue
+            } catch {}
+          }
+
+          const slot_age_ms = Date.now() - fs.statSync(slot_file).mtimeMs
+          if (current_pid != null || slot_age_ms >= MULTIPROCESS_STALE_LOCK_MS) {
+            fs.unlinkSync(slot_file)
+          }
+        } catch {}
+      }
+    }
+
+    const sleep_ms = Math.min(retry_delay_ms, remaining_ms ?? retry_delay_ms)
+    if (sleep_ms > 0) {
+      await sleep(sleep_ms)
+    }
+    retry_delay_ms = Math.min(retry_delay_ms * 2, 1000)
+  }
+
+  if (!semaphore_lax) {
+    throw new SemaphoreTimeoutError(
+      `Failed to acquire semaphore "${scoped_key}" within ${semaphore_timeout_seconds}s (limit=${semaphore_limit})`,
+      { semaphore_name: scoped_key, semaphore_limit, timeout_seconds: semaphore_timeout_seconds ?? 0 }
+    )
+  }
+
+  return null
 }
 
 /** Run fn() with a timeout. Rejects with RetryTimeoutError if the timeout fires first. */
