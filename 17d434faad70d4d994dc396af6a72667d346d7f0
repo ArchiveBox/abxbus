@@ -1,0 +1,23 @@
+abxbus-ts/src/retry.ts
+  f2274f275e56173f 275-277,338-340,382-386
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "17d434faad70d4d994dc396af6a72667d346d7f0",
+  "prompts": {
+    "684eafc56e9d08fd": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019c6a97-a8d8-79a3-ae14-3fca35b56520",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 996,
+      "total_deletions": 3,
+      "accepted_lines": 996,
+      "overriden_lines": 0
+    }
+  }
+}
