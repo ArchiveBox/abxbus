@@ -170,12 +170,13 @@ wait_for_runs() {
     local event="$2"
     local sha="$3"
     local label="$4"
-    local runs_json
+    local run_count
+    local run_ids
     local attempts=0
 
     while :; do
-        runs_json="$(GH_FORCE_TTY=0 GH_PAGER=cat gh run list --repo "${slug}" --event "${event}" --commit "${sha}" --limit 20 --json databaseId,status,conclusion,workflowName)"
-        if [[ "$(jq 'length' <<<"${runs_json}")" -gt 0 ]]; then
+        run_count="$(GH_FORCE_TTY=0 GH_PROMPT_DISABLED=1 GH_PAGER=cat gh run list --repo "${slug}" --event "${event}" --commit "${sha}" --limit 20 --json databaseId,status,conclusion,workflowName --jq 'length')"
+        if [[ "${run_count}" -gt 0 ]]; then
             break
         fi
         attempts=$((attempts + 1))
@@ -186,9 +187,10 @@ wait_for_runs() {
         sleep 10
     done
 
+    run_ids="$(GH_FORCE_TTY=0 GH_PROMPT_DISABLED=1 GH_PAGER=cat gh run list --repo "${slug}" --event "${event}" --commit "${sha}" --limit 20 --json databaseId,status,conclusion,workflowName --jq '.[].databaseId')"
     while read -r run_id; do
         gh run watch "${run_id}" --repo "${slug}" --exit-status
-    done < <(jq -r '.[].databaseId' <<<"${runs_json}")
+    done <<<"${run_ids}"
 }
 
 wait_for_pypi() {
