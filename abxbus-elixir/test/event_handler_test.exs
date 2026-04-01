@@ -81,23 +81,20 @@ defmodule Abxbus.EventHandlerTest do
 
     test "first() preserves falsy values like 0" do
       {:ok, _} = Abxbus.start_bus(:first_zero,
-        event_handler_completion: :all,
+        event_handler_completion: :first,
         event_handler_concurrency: :serial
       )
-
-      second_called = :atomics.new(1, [])
 
       Abxbus.on(:first_zero, IntCompletionEvent, fn _event -> 0 end,
         handler_name: "zero_handler")
 
-      Abxbus.on(:first_zero, IntCompletionEvent, fn _event ->
-        :atomics.put(second_called, 1, 1)
-        99
-      end, handler_name: "second_handler")
+      Abxbus.on(:first_zero, IntCompletionEvent, fn _event -> 99 end,
+        handler_name: "second_handler")
 
       event = Abxbus.emit(:first_zero, IntCompletionEvent.new())
       result = Abxbus.first(event)
 
+      # 0 is falsy in many languages but should be preserved as a valid result
       assert result == 0
     end
 
