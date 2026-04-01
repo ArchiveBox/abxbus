@@ -603,7 +603,9 @@ defmodule Abxbus.BusServer do
       end)
 
     if all_children_complete and event.event_pending_bus_count <= 0 do
-      EventStore.update(event.event_id, %{event_status: :completed})
+      # Preserve :error status — only set :completed if not already terminal
+      final_status = if event.event_status == :error, do: :error, else: :completed
+      EventStore.update(event.event_id, %{event_status: final_status})
       updated = EventStore.get(event.event_id)
       EventStore.notify_waiters(event.event_id, updated)
 
