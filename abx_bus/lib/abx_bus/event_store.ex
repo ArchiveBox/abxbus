@@ -81,10 +81,10 @@ defmodule AbxBus.EventStore do
     ref
   end
 
-  @doc "Notify all waiters and remove their entries."
+  @doc "Atomically read and remove all waiters, then notify them."
   def notify_waiters(event_id, event) do
-    waiters = :ets.lookup(:abx_event_waiters, event_id)
-    :ets.delete(:abx_event_waiters, event_id)
+    # :ets.take/2 atomically reads and deletes — no TOCTOU race
+    waiters = :ets.take(:abx_event_waiters, event_id)
 
     for {_, {pid, ref}} <- waiters do
       send(pid, {:event_completed, ref, event})

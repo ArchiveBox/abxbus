@@ -74,26 +74,38 @@ defmodule AbxBus.CrossRuntimeFeaturesTest do
         event_handler_concurrency: :serial
       )
 
-      per_event_counter = :counters.new(1, [:atomics])
-      per_event_max = :atomics.new(1, [])
+      # Track per-event concurrency using event_id-keyed ETS counters
+      :ets.new(:cr_ps_per_event, [:set, :public, :named_table])
       global_counter = :counters.new(1, [:atomics])
       global_max = :atomics.new(1, [])
 
-      handler = fn _event ->
-        :counters.add(per_event_counter, 1, 1)
+      handler = fn event ->
+        eid = event.event_id
+
+        # Per-event counter: increment
+        per_event = case :ets.lookup(:cr_ps_per_event, {eid, :count}) do
+          [] -> :ets.insert(:cr_ps_per_event, {{eid, :count}, 1}); 1
+          [{_, c}] -> :ets.insert(:cr_ps_per_event, {{eid, :count}, c + 1}); c + 1
+        end
+
+        # Track per-event max
+        case :ets.lookup(:cr_ps_per_event, {eid, :max}) do
+          [] -> :ets.insert(:cr_ps_per_event, {{eid, :max}, per_event})
+          [{_, m}] when per_event > m -> :ets.insert(:cr_ps_per_event, {{eid, :max}, per_event})
+          _ -> :ok
+        end
+
+        # Global counter
         :counters.add(global_counter, 1, 1)
-
-        per = :counters.get(per_event_counter, 1)
-        old_per = :atomics.get(per_event_max, 1)
-        if per > old_per, do: :atomics.put(per_event_max, 1, per)
-
         g = :counters.get(global_counter, 1)
         old_g = :atomics.get(global_max, 1)
         if g > old_g, do: :atomics.put(global_max, 1, g)
 
         Process.sleep(10)
 
-        :counters.add(per_event_counter, 1, -1)
+        # Per-event counter: decrement
+        [{_, c}] = :ets.lookup(:cr_ps_per_event, {eid, :count})
+        :ets.insert(:cr_ps_per_event, {{eid, :count}, c - 1})
         :counters.add(global_counter, 1, -1)
         :ok
       end
@@ -101,16 +113,29 @@ defmodule AbxBus.CrossRuntimeFeaturesTest do
       AbxBus.on(:cr_ps, CRParallelSerialEvent, handler, handler_name: "h1")
       AbxBus.on(:cr_ps, CRParallelSerialEvent, handler, handler_name: "h2")
 
-      # Emit 2 events concurrently
-      AbxBus.emit(:cr_ps, CRParallelSerialEvent.new(label: "e1"))
-      AbxBus.emit(:cr_ps, CRParallelSerialEvent.new(label: "e2"))
+      e1 = AbxBus.emit(:cr_ps, CRParallelSerialEvent.new(label: "e1"))
+      e2 = AbxBus.emit(:cr_ps, CRParallelSerialEvent.new(label: "e2"))
 
       AbxBus.wait_until_idle(:cr_ps)
 
-      # Each event should run handlers serially (max 1 per event)
-      # But globally, multiple events overlap (max >= 2)
+      # Each event's handlers should run serially (max 1 handler at a time per event)
+      e1_max = case :ets.lookup(:cr_ps_per_event, {e1.event_id, :max}) do
+        [{_, m}] -> m
+        [] -> 0
+      end
+      e2_max = case :ets.lookup(:cr_ps_per_event, {e2.event_id, :max}) do
+        [{_, m}] -> m
+        [] -> 0
+      end
+
+      assert e1_max == 1, "Event 1 handlers should run serially (max 1), got #{e1_max}"
+      assert e2_max == 1, "Event 2 handlers should run serially (max 1), got #{e2_max}"
+
+      # But globally, multiple events should overlap (parallel event concurrency)
       assert :atomics.get(global_max, 1) >= 2,
              "Parallel events should overlap globally"
+
+      :ets.delete(:cr_ps_per_event)
     end
   end
 

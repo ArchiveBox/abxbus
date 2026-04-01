@@ -91,6 +91,15 @@ defmodule AbxBus.Event do
   """
   defmacro defevent(name, fields_and_opts \\ []) do
     {fields, opts} = split_fields_and_opts(fields_and_opts)
+
+    # Validate no user field starts with event_ (same rule as __before_compile__)
+    for {key, _} <- fields do
+      if String.starts_with?(Atom.to_string(key), "event_") do
+        raise CompileError,
+          description: "Field #{key} starts with 'event_' which is reserved for AbxBus metadata"
+      end
+    end
+
     result_type = Keyword.get(opts, :result_type, :any)
     version = Keyword.get(opts, :version, "1")
 

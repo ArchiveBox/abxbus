@@ -219,14 +219,23 @@ defmodule AbxBus do
   """
   def event_results_list(event, opts \\ []) do
     stored = EventStore.get(event.event_id) || event
-    results = Map.values(stored.event_results || %{})
+    all_results = Map.values(stored.event_results || %{})
+
+    # raise_if_any checks UNFILTERED results (matches Python behavior)
+    if Keyword.get(opts, :raise_if_any, true) do
+      errors = Enum.filter(all_results, &(&1.status == :error))
+      if errors != [] do
+        first_error = hd(errors)
+        raise first_error.error || %RuntimeError{message: "Handler error"}
+      end
+    end
 
     # Filter by include mode
     results =
       case Keyword.get(opts, :include, :completed) do
-        :all -> results
-        :completed -> Enum.filter(results, &(&1.status == :completed))
-        :errors -> Enum.filter(results, &(&1.status == :error))
+        :all -> all_results
+        :completed -> Enum.filter(all_results, &(&1.status == :completed))
+        :errors -> Enum.filter(all_results, &(&1.status == :error))
       end
 
     # Custom filter
@@ -236,16 +245,7 @@ defmodule AbxBus do
         fun -> Enum.filter(results, fun)
       end
 
-    # Raise checks
-    if Keyword.get(opts, :raise_if_any, false) do
-      errors = Enum.filter(results, &(&1.status == :error))
-      if errors != [] do
-        first_error = hd(errors)
-        raise first_error.error || %RuntimeError{message: "Handler error"}
-      end
-    end
-
-    if Keyword.get(opts, :raise_if_none, false) and results == [] do
+    if Keyword.get(opts, :raise_if_none, true) and results == [] do
       raise %RuntimeError{message: "No results after filtering"}
     end
 

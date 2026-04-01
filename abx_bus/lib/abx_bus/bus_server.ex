@@ -276,9 +276,15 @@ defmodule AbxBus.BusServer do
 
   def handle_call({:stop, opts}, _from, state) do
     if Keyword.get(opts, :clear, false) do
-      {:reply, :ok, %{state | pending_event_queue: :queue.new(), in_flight_event_ids: MapSet.new(),
-                       processing_event_ids: MapSet.new(), event_history: [], event_history_count: 0,
-                       started: false}}
+      {:reply, :ok, %{state |
+        pending_event_queue: :queue.new(),
+        in_flight_event_ids: MapSet.new(),
+        processing_event_ids: MapSet.new(),
+        event_history: [],
+        event_history_count: 0,
+        worker_monitors: %{},
+        started: false
+      }}
     else
       {:reply, :ok, %{state | started: false}}
     end

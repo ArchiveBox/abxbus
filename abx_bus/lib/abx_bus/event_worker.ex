@@ -397,7 +397,8 @@ defmodule AbxBus.EventWorker do
     bus_name = Process.get(:abx_current_bus)
     bus_pid = Process.get(:abx_current_bus_pid)
 
-    pid = spawn(fn ->
+    # Use spawn_link so handler is killed when parent dies (e.g. event timeout)
+    pid = spawn_link(fn ->
       Process.put(:abx_current_event_id, event_id)
       Process.put(:abx_current_bus, bus_name)
       Process.put(:abx_current_bus_pid, bus_pid)
@@ -406,19 +407,34 @@ defmodule AbxBus.EventWorker do
       send(caller, {:handler_timeout_result, ref, result})
     end)
 
+    # Trap exits so the linked child's death doesn't kill us
+    old_trap = Process.flag(:trap_exit, true)
+
+    result =
+      receive do
+        {:handler_timeout_result, ^ref, result} -> result
+      after
+        timeout_ms ->
+          Process.exit(pid, :kill)
+          {:error, %AbxBus.EventHandlerTimeoutError{}}
+      end
+
+    # Drain EXIT from the linked child
     receive do
-      {:handler_timeout_result, ^ref, result} -> result
+      {:EXIT, ^pid, _} -> :ok
     after
-      timeout_ms ->
-        Process.exit(pid, :kill)
-        # Drain any stale message from this handler
-        receive do
-          {:handler_timeout_result, ^ref, _} -> :ok
-        after
-          0 -> :ok
-        end
-        {:error, %AbxBus.EventHandlerTimeoutError{}}
+      0 -> :ok
     end
+
+    # Drain any stale result message
+    receive do
+      {:handler_timeout_result, ^ref, _} -> :ok
+    after
+      0 -> :ok
+    end
+
+    Process.flag(:trap_exit, old_trap)
+    result
   end
 
   defp maybe_with_semaphore(%{semaphore_scope: :none}, fun), do: fun.()
