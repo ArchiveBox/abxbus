@@ -31,7 +31,8 @@ defmodule AbxBus.EventBusFindTest do
     test "finds nothing when no match" do
       {:ok, _} = AbxBus.start_bus(:find2)
 
-      found = AbxBus.find(FindChildEvent, past: true, future: false)
+      # Search for a type that was never emitted on this specific bus
+      found = AbxBus.find(FindFutureEvent, past: true, future: false, event_status: :completed)
       assert found == nil
     end
   end

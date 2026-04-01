@@ -170,7 +170,8 @@ defmodule AbxBus.EventStore do
         cutoff =
           case past do
             true ->
-              0
+              # No time restriction — search all history
+              :no_cutoff
 
             seconds when is_number(seconds) ->
               System.monotonic_time(:nanosecond) - trunc(seconds * 1_000_000_000)
@@ -208,23 +209,16 @@ defmodule AbxBus.EventStore do
 
   defp search_past(event_type, cutoff, opts) do
     # Full scan of :abx_events ETS table with filters
-    :ets.foldl(
-      fn {_id, event}, acc ->
-        if acc == nil and matches_all?(event, event_type, cutoff, opts) do
-          event
-        else
-          acc
-        end
-      end,
-      nil,
-      :abx_events
-    )
+    :ets.tab2list(:abx_events)
+    |> Enum.find_value(fn {_id, event} ->
+      if matches_all?(event, event_type, cutoff, opts), do: event
+    end)
   end
 
   defp matches_all?(event, event_type, cutoff, opts) do
     matches_type?(event, event_type) and
       matches_cutoff?(event, cutoff) and
-      matches_child_of?(event, opts) and
+      matches_child_of_event?(event, opts) and
       matches_status?(event, opts) and
       matches_where?(event, opts) and
       matches_metadata?(event, opts)
@@ -238,30 +232,9 @@ defmodule AbxBus.EventStore do
     event_type_name == type
   end
 
+  defp matches_cutoff?(_event, :no_cutoff), do: true
   defp matches_cutoff?(event, cutoff) do
     (event.event_created_at || 0) >= cutoff
-  end
-
-  defp matches_child_of?(_event, opts) do
-    case Keyword.get(opts, :child_of) do
-      nil ->
-        true
-
-      parent when is_map(parent) ->
-        event_parent_id_matches?(opts, parent.event_id)
-
-      parent_id when is_binary(parent_id) ->
-        event_parent_id_matches?(opts, parent_id)
-    end
-  end
-
-  defp event_parent_id_matches?(opts, parent_id) do
-    # The event being searched should have the child's perspective
-    # We need the actual event from the opts context — but we're in foldl
-    # so we receive the candidate event. Let's fix the call chain:
-    # This is checked in matches_all? which passes the candidate event.
-    # We need to restructure. For now, return true and filter in matches_all?.
-    true
   end
 
   defp matches_child_of_event?(event, opts) do
@@ -304,16 +277,6 @@ defmodule AbxBus.EventStore do
   defp normalize_type(:wildcard), do: :wildcard
   defp normalize_type("*"), do: :wildcard
   defp normalize_type(type), do: type
-
-  # Override matches_all? to include child_of properly
-  defp matches_all?(event, event_type, cutoff, opts) do
-    matches_type?(event, event_type) and
-      matches_cutoff?(event, cutoff) and
-      matches_child_of_event?(event, opts) and
-      matches_status?(event, opts) and
-      matches_where?(event, opts) and
-      matches_metadata?(event, opts)
-  end
 
   # ── GenServer callbacks ─────────────────────────────────────────────────────
 

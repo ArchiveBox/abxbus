@@ -45,14 +45,16 @@ defmodule AbxBus.BaseEventTest do
       buses = Agent.start_link(fn -> [] end) |> elem(1)
 
       AbxBus.on(:be_nest, BEMainEvent, fn _event ->
-        Agent.update(buses, &(&1 ++ [{:parent, AbxBus.current_bus!()}]))
-        child = AbxBus.emit(AbxBus.current_bus!(), BEChildEvent.new())
+        bus = AbxBus.current_bus!()
+        Agent.update(buses, &(&1 ++ [{:parent, bus}]))
+        child = AbxBus.emit(bus, BEChildEvent.new())
         AbxBus.await(child)
         :ok
       end)
 
       AbxBus.on(:be_nest, BEChildEvent, fn _event ->
-        Agent.update(buses, &(&1 ++ [{:child, AbxBus.current_bus!()}]))
+        bus = AbxBus.current_bus!()
+        Agent.update(buses, &(&1 ++ [{:child, bus}]))
         :ok
       end)
 

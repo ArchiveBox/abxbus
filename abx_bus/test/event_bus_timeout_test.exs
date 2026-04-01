@@ -11,9 +11,9 @@ defmodule AbxBus.EventBusTimeoutTest do
   import AbxBus.TestEvents
 
   defevent(TimeoutFocusedEvent, event_timeout: 0.2, event_handler_timeout: 0.01)
-  defevent(HardCapEvent, event_timeout: 0.05)
-  defevent(HardCapParallelEvent, event_timeout: 0.03)
-  defevent(MixedTimeoutEvent, event_timeout: 0.05)
+  defevent(HardCapEvent, event_timeout: 0.15)
+  defevent(HardCapParallelEvent, event_timeout: 0.1)
+  defevent(MixedTimeoutEvent, event_timeout: 0.15)
 
   describe "handler timeout" do
     test "slow handler times out, fast handler succeeds" do
@@ -53,12 +53,12 @@ defmodule AbxBus.EventBusTimeoutTest do
       )
 
       AbxBus.on(:hcap, HardCapEvent, fn _event ->
-        Process.sleep(30)
+        Process.sleep(50)
         "first"
       end, handler_name: "first")
 
       AbxBus.on(:hcap, HardCapEvent, fn _event ->
-        Process.sleep(30)
+        Process.sleep(200)
         "second"
       end, handler_name: "second")
 
@@ -127,9 +127,9 @@ defmodule AbxBus.EventBusTimeoutTest do
         "decorated"
       end, handler_name: "decorated", timeout: 0.01)
 
-      # Handler without explicit timeout
+      # Handler without explicit timeout — sleeps longer than event_timeout
       AbxBus.on(:mixed, MixedTimeoutEvent, fn _event ->
-        Process.sleep(100)
+        Process.sleep(500)
         "long_running"
       end, handler_name: "long_running")
 

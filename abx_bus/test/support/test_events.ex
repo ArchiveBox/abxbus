@@ -14,7 +14,7 @@ defmodule AbxBus.TestEvents do
       event_created_at: nil,
       event_started_at: nil,
       event_completed_at: nil,
-      event_results: %{},
+      event_results: Macro.escape(%{}),
       event_concurrency: nil,
       event_handler_concurrency: nil,
       event_handler_completion: nil,
@@ -25,7 +25,14 @@ defmodule AbxBus.TestEvents do
       event_emitted_by_handler_id: nil
     ]
 
-    all_fields = Keyword.merge(meta_fields, fields)
+    # Escape user fields that might contain maps
+    escaped_fields =
+      Enum.map(fields, fn
+        {k, v} when is_map(v) -> {k, Macro.escape(v)}
+        other -> other
+      end)
+
+    all_fields = Keyword.merge(meta_fields, escaped_fields)
 
     quote do
       defmodule unquote(name) do

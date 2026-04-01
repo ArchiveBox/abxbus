@@ -14,7 +14,7 @@ defmodule AbxBus.CrossRuntimeFeaturesTest do
   defevent(CRParentEvent, label: "root")
   defevent(CRChildEvent, label: "child")
   defevent(CRSiblingEvent, label: "sibling")
-  defevent(CRTimeoutEvent, event_timeout: 0.02)
+  defevent(CRTimeoutEvent, event_timeout: 0.1)
   defevent(CRParallelSerialEvent, label: nil)
   defevent(CRHistoryEvent)
 

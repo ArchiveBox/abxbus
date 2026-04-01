@@ -149,10 +149,10 @@ defmodule AbxBus.LockManager do
     end
   end
 
-  def handle_call(:try_acquire, _from, %{global: global} = state) do
+  def handle_call(:try_acquire, from, %{global: global} = state) do
     case global.holder do
       nil ->
-        {:reply, :ok, %{state | global: %{global | holder: self()}}}
+        {:reply, :ok, %{state | global: %{global | holder: from}}}
 
       _held ->
         {:reply, :busy, state}
@@ -177,7 +177,7 @@ defmodule AbxBus.LockManager do
     case :queue.out(global.waiters) do
       {{:value, next_from}, rest} ->
         GenServer.reply(next_from, :ok)
-        {:noreply, %{state | global: %State{holder: next_from, waiters: rest}}}
+        {:noreply, %{state | global: %{global | holder: next_from, waiters: rest}}}
 
       {:empty, _} ->
         {:noreply, %{state | global: %State{}}}

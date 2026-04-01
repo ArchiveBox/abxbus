@@ -192,12 +192,18 @@ defmodule AbxBus do
         err
 
       %{event_results: results} ->
-        results
-        |> Map.values()
-        |> Enum.find_value(fn
-          %{status: :completed, result: value} when not is_nil(value) -> value
-          _ -> nil
-        end)
+        found =
+          results
+          |> Map.values()
+          |> Enum.find(fn
+            %{status: :completed, result: value} when not is_nil(value) -> true
+            _ -> false
+          end)
+
+        case found do
+          %{result: value} -> value
+          nil -> nil
+        end
     end
   end
 

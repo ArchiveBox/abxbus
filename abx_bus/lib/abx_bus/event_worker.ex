@@ -74,16 +74,22 @@ defmodule AbxBus.EventWorker do
     # Store initial results on event
     EventStore.update(event.event_id, %{event_results: results})
 
+    # Store event_id for result tracking during timeout
+    Process.put(:abx_event_results_key, nil)
+
     # Execute with event-level timeout
     results =
       maybe_with_event_timeout(event_timeout, fn ->
-        case handler_concurrency do
-          :parallel ->
-            run_handlers_parallel(event, handlers, results, handler_completion, bus_config)
+        result =
+          case handler_concurrency do
+            :parallel ->
+              run_handlers_parallel(event, handlers, results, handler_completion, bus_config, bus_name, bus_pid)
 
-          :serial ->
-            run_handlers_serial(event, handlers, results, handler_completion, bus_config)
-        end
+            :serial ->
+              run_handlers_serial(event, handlers, results, handler_completion, bus_config, bus_name, bus_pid)
+          end
+
+        result
       end, results)
 
     # Send results back to bus
@@ -92,8 +98,9 @@ defmodule AbxBus.EventWorker do
 
   # ── Parallel handler execution ─────────────────────────────────────────────
 
-  defp run_handlers_parallel(event, handlers, results, completion_mode, bus_config) do
-    parent_pid = self()
+  defp run_handlers_parallel(event, handlers, results, completion_mode, bus_config, bus_name, bus_pid) do
+    # Capture context values BEFORE spawning tasks
+    current_event_id = event.event_id
 
     # Spawn a task per handler
     tasks =
@@ -101,9 +108,9 @@ defmodule AbxBus.EventWorker do
         task =
           Task.async(fn ->
             # Propagate handler context to child task
-            Process.put(:abx_current_event_id, event.event_id)
-            Process.put(:abx_current_bus, Process.get(:abx_current_bus))
-            Process.put(:abx_current_bus_pid, Process.get(:abx_current_bus_pid))
+            Process.put(:abx_current_event_id, current_event_id)
+            Process.put(:abx_current_bus, bus_name)
+            Process.put(:abx_current_bus_pid, bus_pid)
             Process.put(:abx_current_handler_id, entry.id)
 
             run_single_handler(entry, event, bus_config)
@@ -115,31 +122,27 @@ defmodule AbxBus.EventWorker do
     case completion_mode do
       :all ->
         # Wait for all tasks
-        collected =
-          Enum.reduce(tasks, results, fn {handler_id, task}, acc ->
-            result_entry = Map.get(acc, handler_id)
-            result_entry = HandlerResult.mark_started(result_entry)
+        Enum.reduce(tasks, results, fn {handler_id, task}, acc ->
+          result_entry = Map.get(acc, handler_id) |> HandlerResult.mark_started()
 
-            case Task.yield(task, :infinity) do
-              {:ok, {:ok, value}} ->
-                Map.put(acc, handler_id, HandlerResult.mark_completed(result_entry, value))
+          case Task.yield(task, :infinity) do
+            {:ok, {:ok, value}} ->
+              Map.put(acc, handler_id, HandlerResult.mark_completed(result_entry, value))
 
-              {:ok, {:error, error}} ->
-                Map.put(acc, handler_id, HandlerResult.mark_error(result_entry, error))
+            {:ok, {:error, error}} ->
+              Map.put(acc, handler_id, HandlerResult.mark_error(result_entry, error))
 
-              {:exit, reason} ->
-                Map.put(acc, handler_id, HandlerResult.mark_error(result_entry, reason))
+            {:exit, reason} ->
+              Map.put(acc, handler_id, HandlerResult.mark_error(result_entry, reason))
 
-              nil ->
-                Task.shutdown(task, :brutal_kill)
-                Map.put(acc, handler_id, HandlerResult.mark_aborted(result_entry))
-            end
-          end)
-
-        collected
+            nil ->
+              Task.shutdown(task, :brutal_kill)
+              Map.put(acc, handler_id, HandlerResult.mark_aborted(result_entry))
+          end
+        end)
 
       :first ->
-        # Wait for first non-nil, non-event result
+        # Wait for first non-nil, non-event result using Task.yield_many
         await_first_parallel(tasks, results)
     end
   end
@@ -151,91 +154,129 @@ defmodule AbxBus.EventWorker do
         Map.update!(acc, handler_id, &HandlerResult.mark_started/1)
       end)
 
-    # Collect results as they come in, stop on first valid result
-    {final_results, _} =
-      Enum.reduce_while(tasks, {results, nil}, fn {handler_id, task}, {acc, _first} ->
-        case Task.yield(task, :infinity) do
-          {:ok, {:ok, value}} when not is_nil(value) ->
-            acc = Map.put(acc, handler_id, HandlerResult.mark_completed(Map.get(acc, handler_id), value))
-            # Cancel remaining tasks
-            cancel_remaining_tasks(tasks, handler_id)
-            {:halt, {acc, value}}
+    # Use a spawned collector to race tasks properly
+    task_map = Map.new(tasks, fn {handler_id, task} -> {task.ref, handler_id} end)
+    all_tasks = Enum.map(tasks, fn {_, task} -> task end)
 
-          {:ok, {:ok, nil}} ->
-            acc = Map.put(acc, handler_id, HandlerResult.mark_completed(Map.get(acc, handler_id), nil))
-            {:cont, {acc, nil}}
+    # Yield with a short timeout repeatedly, checking for first valid result
+    do_await_first(all_tasks, task_map, results, tasks)
+  end
+
+  defp do_await_first([], _task_map, results, _original_tasks), do: results
+
+  defp do_await_first(remaining_tasks, task_map, results, original_tasks) do
+    # Yield on all remaining tasks with a short timeout
+    yielded = Task.yield_many(remaining_tasks, 1)
+
+    {results, found_first, still_remaining} =
+      Enum.reduce(yielded, {results, nil, []}, fn {task, result}, {acc, first, rem} ->
+        handler_id = Map.get(task_map, task.ref)
+
+        case result do
+          {:ok, {:ok, value}} when not is_nil(value) and is_nil(first) ->
+            acc = Map.put(acc, handler_id, HandlerResult.mark_completed(Map.get(acc, handler_id), value))
+            {acc, value, rem}
+
+          {:ok, {:ok, value}} ->
+            acc = Map.put(acc, handler_id, HandlerResult.mark_completed(Map.get(acc, handler_id), value))
+            {acc, first, rem}
 
           {:ok, {:error, error}} ->
             acc = Map.put(acc, handler_id, HandlerResult.mark_error(Map.get(acc, handler_id), error))
-            {:cont, {acc, nil}}
+            {acc, first, rem}
 
           {:exit, reason} ->
             acc = Map.put(acc, handler_id, HandlerResult.mark_error(Map.get(acc, handler_id), reason))
-            {:cont, {acc, nil}}
+            {acc, first, rem}
 
           nil ->
-            Task.shutdown(task, :brutal_kill)
-            acc = Map.put(acc, handler_id, HandlerResult.mark_aborted(Map.get(acc, handler_id)))
-            {:cont, {acc, nil}}
+            # Not done yet
+            {acc, first, [task | rem]}
+        end
+      end)
+
+    if found_first != nil do
+      # Cancel remaining tasks
+      for task <- still_remaining do
+        Task.shutdown(task, :brutal_kill)
+        handler_id = Map.get(task_map, task.ref)
+        if handler_id do
+          results = Map.put(results, handler_id, HandlerResult.mark_cancelled(Map.get(results, handler_id)))
+        end
+      end
+      results
+    else
+      if still_remaining == [] do
+        results
+      else
+        do_await_first(still_remaining, task_map, results, original_tasks)
+      end
+    end
+  end
+
+  # ── Serial handler execution ───────────────────────────────────────────────
+
+  defp run_handlers_serial(event, handlers, results, completion_mode, bus_config, bus_name, bus_pid) do
+    {final_results, _done} =
+      Enum.reduce_while(handlers, {results, false}, fn entry, {acc, _} ->
+        # Set handler context for serial execution (we're in the worker process)
+        Process.put(:abx_current_event_id, event.event_id)
+        Process.put(:abx_current_bus, bus_name)
+        Process.put(:abx_current_bus_pid, bus_pid)
+        Process.put(:abx_current_handler_id, entry.id)
+
+        result_entry = Map.get(acc, entry.id) |> HandlerResult.mark_started()
+
+        case run_single_handler(entry, event, bus_config) do
+          {:ok, value} ->
+            updated = HandlerResult.mark_completed(result_entry, value)
+            acc = Map.put(acc, entry.id, updated)
+
+            # Update shared ETS for timeout monitoring
+            update_shared_results(acc)
+
+            case completion_mode do
+              :first when not is_nil(value) ->
+                acc = cancel_remaining_serial(handlers, entry.id, acc)
+                {:halt, {acc, true}}
+
+              _ ->
+                {:cont, {acc, false}}
+            end
+
+          {:error, error} ->
+            updated = HandlerResult.mark_error(result_entry, error)
+            acc = Map.put(acc, entry.id, updated)
+            update_shared_results(acc)
+            {:cont, {acc, false}}
         end
       end)
 
     final_results
   end
 
-  defp cancel_remaining_tasks(tasks, completed_id) do
-    for {handler_id, task} <- tasks, handler_id != completed_id do
-      Task.shutdown(task, :brutal_kill)
+  defp update_shared_results(results) do
+    # Update the shared ETS entry so the timeout monitor can see partial progress
+    case Process.get(:abx_event_results_key) do
+      nil -> :ok
+      key ->
+        case :ets.info(:abx_worker_results) do
+          :undefined -> :ok
+          _ -> :ets.insert(:abx_worker_results, {key, results})
+        end
     end
-  end
-
-  # ── Serial handler execution ───────────────────────────────────────────────
-
-  defp run_handlers_serial(event, handlers, results, completion_mode, bus_config) do
-    Enum.reduce_while(handlers, results, fn entry, acc ->
-      result_entry = Map.get(acc, entry.id) |> HandlerResult.mark_started()
-
-      case run_single_handler(entry, event, bus_config) do
-        {:ok, value} ->
-          updated = HandlerResult.mark_completed(result_entry, value)
-          acc = Map.put(acc, entry.id, updated)
-
-          case completion_mode do
-            :first when not is_nil(value) ->
-              # Mark remaining handlers as cancelled
-              acc = cancel_remaining_serial(handlers, entry.id, acc)
-              {:halt, acc}
-
-            _ ->
-              {:cont, acc}
-          end
-
-        {:error, error} ->
-          updated = HandlerResult.mark_error(result_entry, error)
-          acc = Map.put(acc, entry.id, updated)
-          {:cont, acc}
-      end
-    end)
   end
 
   defp cancel_remaining_serial(handlers, completed_id, results) do
-    found_completed = Enum.reduce_while(handlers, false, fn entry, _acc ->
-      if entry.id == completed_id, do: {:halt, true}, else: {:cont, false}
+    handlers
+    |> Enum.drop_while(fn e -> e.id != completed_id end)
+    |> Enum.drop(1)
+    |> Enum.reduce(results, fn entry, acc ->
+      case Map.get(acc, entry.id) do
+        nil -> acc
+        result -> Map.put(acc, entry.id, HandlerResult.mark_cancelled(result))
+      end
     end)
-
-    if found_completed do
-      handlers
-      |> Enum.drop_while(fn e -> e.id != completed_id end)
-      |> Enum.drop(1)
-      |> Enum.reduce(results, fn entry, acc ->
-        case Map.get(acc, entry.id) do
-          nil -> acc
-          result -> Map.put(acc, entry.id, HandlerResult.mark_cancelled(result))
-        end
-      end)
-    else
-      results
-    end
   end
 
   # ── Single handler execution ───────────────────────────────────────────────
@@ -245,15 +286,12 @@ defmodule AbxBus.EventWorker do
     timeout = LockManager.resolve_handler_timeout(entry, event, bus_config)
 
     # Apply semaphore if configured
-    result =
-      maybe_with_semaphore(entry, fn ->
-        maybe_with_handler_timeout(timeout, fn ->
-          # Retry loop
-          run_with_retries(entry, event, entry.max_attempts)
-        end)
+    maybe_with_semaphore(entry, fn ->
+      maybe_with_handler_timeout(timeout, fn ->
+        # Retry loop
+        run_with_retries(entry, event, entry.max_attempts)
       end)
-
-    result
+    end)
   end
 
   defp run_with_retries(entry, event, attempts_left) do
@@ -283,43 +321,112 @@ defmodule AbxBus.EventWorker do
 
   defp maybe_with_event_timeout(timeout_s, fun, results) do
     timeout_ms = trunc(timeout_s * 1000)
+    caller = self()
 
-    task = Task.async(fn -> fun.() end)
+    # Capture process dictionary values before spawning
+    event_id = Process.get(:abx_current_event_id)
+    bus_name = Process.get(:abx_current_bus)
+    bus_pid = Process.get(:abx_current_bus_pid)
 
-    case Task.yield(task, timeout_ms) do
-      {:ok, result} ->
-        result
+    # Use an ETS table to share partial results between worker and timeout monitor
+    results_ref = :erlang.make_ref()
+    results_key = {__MODULE__, results_ref}
 
-      nil ->
-        Task.shutdown(task, :brutal_kill)
+    case :ets.info(:abx_worker_results) do
+      :undefined -> :ets.new(:abx_worker_results, [:set, :public, :named_table])
+      _ -> :ok
+    end
 
-        # Mark all pending/started results as aborted/cancelled
-        Enum.reduce(results, results, fn {handler_id, result}, acc ->
-          updated =
-            case result.status do
-              :pending -> HandlerResult.mark_cancelled(result)
-              :started -> HandlerResult.mark_aborted(result)
-              _ -> result
+    :ets.insert(:abx_worker_results, {results_key, results})
+
+    pid = spawn_link(fn ->
+      Process.put(:abx_current_event_id, event_id)
+      Process.put(:abx_current_bus, bus_name)
+      Process.put(:abx_current_bus_pid, bus_pid)
+      Process.put(:abx_event_results_key, results_key)
+
+      result = fun.()
+
+      # Store final results for the parent
+      :ets.insert(:abx_worker_results, {results_key, result})
+      send(caller, {:event_timeout_result, result})
+    end)
+
+    # Trap exit so spawn_link doesn't kill us when we kill the child
+    Process.flag(:trap_exit, true)
+
+    result =
+      receive do
+        {:event_timeout_result, result} ->
+          result
+      after
+        timeout_ms ->
+          Process.exit(pid, :kill)
+          receive do
+            {:EXIT, ^pid, _} -> :ok
+          after
+            10 -> :ok
+          end
+
+          # Read the latest partial results from ETS
+          latest =
+            case :ets.lookup(:abx_worker_results, results_key) do
+              [{_, r}] -> r
+              [] -> results
             end
 
-          Map.put(acc, handler_id, updated)
-        end)
+          # Mark all incomplete results as error
+          Enum.reduce(latest, latest, fn {handler_id, result}, acc ->
+            updated =
+              case result.status do
+                s when s in [:pending, :started] ->
+                  HandlerResult.mark_error(result, %AbxBus.EventHandlerAbortedError{})
+                _ ->
+                  result
+              end
+
+            Map.put(acc, handler_id, updated)
+          end)
+      end
+
+    # Drain any EXIT message from the linked child
+    receive do
+      {:EXIT, ^pid, _} -> :ok
+    after
+      0 -> :ok
     end
+
+    Process.flag(:trap_exit, false)
+    :ets.delete(:abx_worker_results, results_key)
+    result
   end
 
   defp maybe_with_handler_timeout(nil, fun), do: fun.()
 
   defp maybe_with_handler_timeout(timeout_s, fun) do
     timeout_ms = trunc(timeout_s * 1000)
+    caller = self()
 
-    task = Task.async(fun)
+    # Capture context
+    event_id = Process.get(:abx_current_event_id)
+    bus_name = Process.get(:abx_current_bus)
+    bus_pid = Process.get(:abx_current_bus_pid)
 
-    case Task.yield(task, timeout_ms) do
-      {:ok, result} ->
+    pid = spawn(fn ->
+      Process.put(:abx_current_event_id, event_id)
+      Process.put(:abx_current_bus, bus_name)
+      Process.put(:abx_current_bus_pid, bus_pid)
+
+      result = fun.()
+      send(caller, {:handler_timeout_result, result})
+    end)
+
+    receive do
+      {:handler_timeout_result, result} ->
         result
-
-      nil ->
-        Task.shutdown(task, :brutal_kill)
+    after
+      timeout_ms ->
+        Process.exit(pid, :kill)
         {:error, %AbxBus.EventHandlerTimeoutError{}}
     end
   end

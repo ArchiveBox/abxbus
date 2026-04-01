@@ -84,7 +84,7 @@ defmodule AbxBus.Event do
 
   defmacro __before_compile__(env) do
     user_fields = Module.get_attribute(env.module, :struct) || []
-    meta = Module.get_attribute(env.module, :abx_event_meta) || @meta_fields
+    _meta = Module.get_attribute(env.module, :abx_event_meta) || @meta_fields
 
     # Validate no user field starts with event_
     for {key, _} <- user_fields, String.starts_with?(Atom.to_string(key), "event_") do

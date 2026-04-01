@@ -5,7 +5,7 @@ defmodule AbxBus.MixProject do
     [
       app: :abx_bus,
       version: "0.1.0",
-      elixir: "~> 1.17",
+      elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -16,7 +16,7 @@ defmodule AbxBus.MixProject do
 
   def application do
     [
-      extra_applications: [:logger],
+      extra_applications: [:logger, :crypto],
       mod: {AbxBus.Application, []}
     ]
   end
@@ -25,9 +25,6 @@ defmodule AbxBus.MixProject do
   defp elixirc_paths(_), do: ["lib"]
 
   defp deps do
-    [
-      {:uuid, "~> 1.1"},
-      {:telemetry, "~> 1.0"}
-    ]
+    []
   end
 end

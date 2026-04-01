@@ -41,7 +41,7 @@ defmodule AbxBus.BusServer do
   use GenServer
   require Logger
 
-  alias AbxBus.{EventStore, EventWorker, LockManager, HandlerEntry, HandlerResult}
+  alias AbxBus.{EventStore, EventWorker, LockManager, HandlerEntry}
 
   defstruct [
     :name,
@@ -175,7 +175,20 @@ defmodule AbxBus.BusServer do
       started: true
     }
 
+    # Register self in the bus PID table for global-serial broadcast
+    ensure_bus_pid_table()
+    :ets.insert(:abx_bus_pids, {self(), state.name})
+
     {:ok, state}
+  end
+
+  defp ensure_bus_pid_table do
+    case :ets.info(:abx_bus_pids) do
+      :undefined ->
+        :ets.new(:abx_bus_pids, [:set, :public, :named_table])
+      _ ->
+        :ok
+    end
   end
 
   # ── Emit ────────────────────────────────────────────────────────────────────
@@ -301,7 +314,7 @@ defmodule AbxBus.BusServer do
   # ── Queue jump ──────────────────────────────────────────────────────────────
 
   @impl true
-  def handle_cast({:jump_queue, event_id, notify_pid, notify_ref}, state) do
+  def handle_cast({:jump_queue, event_id, _notify_pid, _notify_ref}, state) do
     case remove_from_queue(state.pending_queue, event_id) do
       {:ok, event, new_queue} ->
         # Found in queue — process immediately, bypassing concurrency policy
@@ -318,11 +331,13 @@ defmodule AbxBus.BusServer do
 
   # ── Event worker completion ─────────────────────────────────────────────────
 
+  @impl true
   def handle_info({:event_worker_done, event_id, results}, state) do
     # Update event in store
     EventStore.update_fun(event_id, fn event ->
       now = System.monotonic_time(:nanosecond)
-      completed_at = Enum.max([now | for {_, r} <- results, r.completed_at, do: r.completed_at])
+      completed_ats = for({_, r} <- results, r.completed_at != nil, do: r.completed_at)
+      completed_at = Enum.max([now | completed_ats])
 
       %{event |
         event_results: results,
@@ -344,6 +359,8 @@ defmodule AbxBus.BusServer do
 
     if effective_concurrency == :global_serial do
       LockManager.release_global()
+      # Notify all buses to check their pending queues
+      notify_all_buses_check_pending()
     end
 
     # Notify completion waiters
@@ -360,11 +377,20 @@ defmodule AbxBus.BusServer do
     {:noreply, state}
   end
 
+  @impl true
   def handle_info({:event_worker_started, event_id}, state) do
     EventStore.update(event_id, %{event_status: :started, event_started_at: System.monotonic_time(:nanosecond)})
     {:noreply, state}
   end
 
+  @impl true
+  def handle_info(:check_pending, state) do
+    state = maybe_process_next(state)
+    state = maybe_notify_idle(state)
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_info(_msg, state) do
     {:noreply, state}
   end
@@ -375,7 +401,7 @@ defmodule AbxBus.BusServer do
     if :queue.is_empty(state.pending_queue) do
       state
     else
-      {{:value, event}, _rest} = :queue.peek(state.pending_queue)
+      {:value, event} = :queue.peek(state.pending_queue)
       effective_concurrency = LockManager.resolve_event_concurrency(event, config(state))
 
       case can_proceed?(effective_concurrency, state) do
@@ -542,6 +568,18 @@ defmodule AbxBus.BusServer do
         else
           remove_from_queue(rest, event_id, :queue.in(event, acc))
         end
+    end
+  end
+
+  defp notify_all_buses_check_pending do
+    # Broadcast to all registered buses
+    case :ets.info(:abx_bus_pids) do
+      :undefined -> :ok
+      _ ->
+        :ets.tab2list(:abx_bus_pids)
+        |> Enum.each(fn {pid, _} ->
+          if Process.alive?(pid), do: send(pid, :check_pending)
+        end)
     end
   end
 
