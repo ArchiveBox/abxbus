@@ -484,7 +484,7 @@ defmodule Abxbus.BusServer do
   # ── Internal: history trimming ──────────────────────────────────────────────
 
   defp maybe_trim_history(%{max_history_drop: false} = state), do: state
-  defp maybe_trim_history(%{max_history_size: max} = state) when max <= 0, do: state
+  defp maybe_trim_history(%{max_history_size: max} = state) when max < 0, do: state
 
   defp maybe_trim_history(state) do
     if state.event_history_count > state.max_history_size do

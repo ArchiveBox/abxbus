@@ -75,8 +75,9 @@ defmodule Abxbus do
   """
   def emit(bus, event) do
     event = maybe_set_parent(event)
-    maybe_track_child(event)
-    BusServer.emit(bus, event)
+    emitted = BusServer.emit(bus, event)
+    maybe_track_child(emitted)
+    emitted
   end
 
   @doc """

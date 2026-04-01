@@ -66,9 +66,9 @@ defmodule Abxbus.LockManager do
     GenServer.call(__MODULE__, {:acquire_semaphore, name, limit}, :infinity)
   end
 
-  @doc "Release a named semaphore slot."
-  def release_semaphore(name) do
-    GenServer.cast(__MODULE__, {:release_semaphore, name})
+  @doc "Release a named semaphore slot. Caller pid identifies which holder to remove."
+  def release_semaphore(name, caller_pid \\ self()) do
+    GenServer.cast(__MODULE__, {:release_semaphore, name, caller_pid})
   end
 
   # ── Concurrency policy resolution ──────────────────────────────────────────
@@ -188,17 +188,17 @@ defmodule Abxbus.LockManager do
     end
   end
 
-  def handle_cast({:release_semaphore, name}, state) do
+  def handle_cast({:release_semaphore, name, caller_pid}, state) do
     case Map.get(state.semaphores, name) do
       nil ->
         {:noreply, state}
 
       sem ->
-        # Remove one holder and demonitor
+        # Find and remove the specific holder matching caller_pid
         {removed, new_holders} =
-          case sem.holders do
-            [] -> {nil, []}
-            [h | rest] -> {h, rest}
+          case Enum.split_with(sem.holders, fn {{pid, _}, _mon} -> pid == caller_pid end) do
+            {[match | _rest_matches], remaining} -> {match, remaining}
+            {[], holders} -> {nil, holders}
           end
 
         # Demonitor the released holder and clean up monitor tracking
