@@ -283,9 +283,10 @@ defmodule Abxbus.EventStore do
   def handle_call({:put_or_merge, event}, _from, state) do
     case :ets.lookup(:abxbus_events, event.event_id) do
       [{_, existing}] ->
-        # Event already exists (forwarded) — only update path and increment bus count
+        # Event already exists (forwarded) — merge path and increment bus count
+        merged_path = Enum.uniq(existing.event_path ++ event.event_path)
         updated = %{existing |
-          event_path: event.event_path,
+          event_path: merged_path,
           event_pending_bus_count: (existing.event_pending_bus_count || 0) + 1
         }
         :ets.insert(:abxbus_events, {event.event_id, updated})
