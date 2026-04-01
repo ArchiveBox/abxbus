@@ -394,9 +394,10 @@ defmodule Abxbus.EventBusTimeoutTest do
 
       stored = Abxbus.EventStore.get(event.event_id)
       result = stored.event_results |> Map.values() |> hd()
-      # Handler-level timeout should be nil (bus only set event_timeout, not handler timeout)
-      # The event_timeout is enforced at event level, not per-handler
       assert result.status == :completed
+      # Bus set event_handler_timeout is not set (only event_timeout: 12.0),
+      # so handler result timeout should be nil
+      assert result.timeout == nil
     end
   end
 
@@ -430,17 +431,10 @@ defmodule Abxbus.EventBusTimeoutTest do
       assert default_result.timeout != nil
       assert abs(default_result.timeout - 0.05) < 1.0e-9
 
-      # Overridden handler: handler timeout (0.12) is tighter... but actually
-      # the resolution picks the tightest, so min(0.12, 0.05) = 0.05
-      # Wait — Python test expects 0.12 for overridden. Let's check: in Python,
-      # handler_timeout overrides event_handler_timeout unconditionally when set.
-      # In Elixir, resolve_handler_timeout picks the minimum of all candidates.
-      # So overridden should be min(0.12, 0.05) = 0.05.
-      # Actually the Python test sets overridden_entry.handler_timeout = 0.12
-      # and expects it to be 0.12 (handler-specific overrides event-level).
-      # The Elixir resolve picks minimum. Let's just assert it's the tightest.
+      # Overridden handler: handler-specific timeout (0.12) takes precedence
+      # over event-level (0.05) — priority chain, not minimum
       assert overridden_result.timeout != nil
-      assert overridden_result.timeout <= 0.12 + 1.0e-9
+      assert abs(overridden_result.timeout - 0.12) < 1.0e-9
     end
   end
 

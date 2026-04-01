@@ -104,22 +104,14 @@ defmodule Abxbus.LockManager do
   end
 
   @doc """
-  Resolve effective handler timeout. Tightest (smallest non-nil) wins.
-  Handler-specific > event-level > bus-level.
+  Resolve effective handler timeout. Priority chain (not minimum):
+  handler-specific > event-level > bus-level.
+  If handler has its own timeout, that wins unconditionally.
   """
   def resolve_handler_timeout(handler_entry, event, bus_config) do
-    candidates = [
-      handler_entry.handler_timeout,
-      Map.get(event, :event_handler_timeout),
+    handler_entry.handler_timeout ||
+      Map.get(event, :event_handler_timeout) ||
       Map.get(bus_config, :event_handler_timeout)
-    ]
-
-    candidates
-    |> Enum.reject(&is_nil/1)
-    |> case do
-      [] -> nil
-      timeouts -> Enum.min(timeouts)
-    end
   end
 
   @doc """
