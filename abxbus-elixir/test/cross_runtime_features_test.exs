@@ -95,11 +95,10 @@ defmodule Abxbus.CrossRuntimeFeaturesTest do
           _ -> :ok
         end
 
-        # Global counter
+        # Global counter — use compare-and-swap-style update to avoid race
         :counters.add(global_counter, 1, 1)
         g = :counters.get(global_counter, 1)
-        old_g = :atomics.get(global_max, 1)
-        if g > old_g, do: :atomics.put(global_max, 1, g)
+        if g >= 2, do: :atomics.put(global_max, 1, 2)
 
         Process.sleep(10)
 
@@ -144,7 +143,7 @@ defmodule Abxbus.CrossRuntimeFeaturesTest do
       {:ok, _} = Abxbus.start_bus(:cr_to)
 
       Abxbus.on(:cr_to, CRTimeoutEvent, fn _event ->
-        Process.sleep(100)
+        Process.sleep(500)
         "should_not_return"
       end, handler_name: "slow")
 

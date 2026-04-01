@@ -82,10 +82,12 @@ defmodule Abxbus.ParentTrackingTest do
       {:ok, _} = Abxbus.start_bus(:pt3, event_concurrency: :bus_serial)
 
       explicit_parent_id = Abxbus.Event.generate_id()
+      child_ids = Agent.start_link(fn -> [] end) |> elem(1)
 
       Abxbus.on(:pt3, PTParentEvent, fn _event ->
         child = Abxbus.emit(:pt3, PTChildEvent.new(event_parent_id: explicit_parent_id))
-        Abxbus.await(child)
+        completed = Abxbus.await(child)
+        Agent.update(child_ids, fn l -> l ++ [completed.event_id] end)
         :ok
       end)
 
@@ -93,6 +95,11 @@ defmodule Abxbus.ParentTrackingTest do
 
       Abxbus.emit(:pt3, PTParentEvent.new())
       Abxbus.wait_until_idle(:pt3)
+
+      [child_id] = Agent.get(child_ids, & &1)
+      child_stored = Abxbus.EventStore.get(child_id)
+      assert child_stored.event_parent_id == explicit_parent_id,
+             "Explicit parent_id should be preserved, got #{inspect(child_stored.event_parent_id)}"
     end
 
     test "forwarded events are NOT children" do
@@ -114,7 +121,7 @@ defmodule Abxbus.ParentTrackingTest do
       assert stored.event_parent_id == nil
 
       # Event path should show both buses
-      assert length(stored.event_path) >= 1
+      assert length(stored.event_path) >= 2
     end
   end
 

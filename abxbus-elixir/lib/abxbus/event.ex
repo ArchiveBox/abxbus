@@ -48,6 +48,8 @@ defmodule Abxbus.Event do
     event_emitted_by_handler_id: nil
   ]
 
+  @meta_keys Keyword.keys(@meta_fields)
+
   @doc false
   def meta_fields, do: @meta_fields
 
@@ -78,7 +80,12 @@ defmodule Abxbus.Event do
           "Field #{key} in #{inspect(env.module)} starts with 'event_' which is reserved for Abxbus metadata"
     end
 
+    result_type = Module.get_attribute(env.module, :abxbus_result_type) || :any
+    version = Module.get_attribute(env.module, :abxbus_event_version) || "1"
+
     quote do
+      def event_version, do: unquote(version)
+      def event_result_type, do: unquote(result_type)
     end
   end
 
@@ -92,9 +99,10 @@ defmodule Abxbus.Event do
   defmacro defevent(name, fields_and_opts \\ []) do
     {fields, opts} = split_fields_and_opts(fields_and_opts)
 
-    # Validate no user field starts with event_ (same rule as __before_compile__)
+    # Validate no user field starts with event_ unless it's a known overridable meta field
+    known_meta_keys = Keyword.keys(@meta_fields)
     for {key, _} <- fields do
-      if String.starts_with?(Atom.to_string(key), "event_") do
+      if String.starts_with?(Atom.to_string(key), "event_") and key not in known_meta_keys do
         raise CompileError,
           description: "Field #{key} starts with 'event_' which is reserved for Abxbus metadata"
       end
@@ -178,7 +186,15 @@ defmodule Abxbus.Event do
 
   @doc "Create a new event with metadata fields populated."
   def new(module, attrs \\ %{}) when is_atom(module) do
-    base = struct!(module, Map.to_list(attrs))
+    # Separate metadata overrides from user fields before passing to struct!
+    overridable = [
+      :event_concurrency, :event_handler_concurrency, :event_handler_completion,
+      :event_timeout, :event_handler_timeout, :event_slow_timeout,
+      :event_handler_slow_timeout, :event_version, :event_result_type
+    ]
+    {override_attrs, user_attrs} = Map.split(attrs, overridable)
+
+    base = struct!(module, Map.to_list(user_attrs))
 
     result_type =
       if function_exported?(module, :event_result_type, 0),
@@ -205,14 +221,7 @@ defmodule Abxbus.Event do
       event_emitted_by_handler_id: nil
     }
 
-    overridable = [
-      :event_concurrency, :event_handler_concurrency, :event_handler_completion,
-      :event_timeout, :event_handler_timeout, :event_slow_timeout,
-      :event_handler_slow_timeout, :event_version, :event_result_type
-    ]
-    user_overrides = Map.take(attrs, overridable)
-
-    Map.merge(base, Map.merge(meta, user_overrides))
+    Map.merge(base, Map.merge(meta, override_attrs))
   end
 
   @doc """
@@ -220,14 +229,14 @@ defmodule Abxbus.Event do
   Preserves user payload fields; resets all runtime metadata.
   """
   def reset(event) do
-    meta_keys = Keyword.keys(@meta_fields)
-
     # Keep user fields, reset all event_* metadata
-    user_fields = Map.drop(event, [:__struct__ | meta_keys])
+    user_fields = Map.drop(event, [:__struct__ | @meta_keys])
 
     base = struct!(event.__struct__, Map.to_list(user_fields))
 
-    %{base |
+    # Use Map.merge instead of %{base | ...} to handle structs that
+    # may not define all event_* keys (e.g. use Abxbus.Event structs)
+    Map.merge(base, %{
       event_id: generate_id(),
       event_type: event.event_type,
       event_version: Map.get(event, :event_version, "1"),
@@ -247,7 +256,7 @@ defmodule Abxbus.Event do
       event_handler_timeout: Map.get(event, :event_handler_timeout),
       event_slow_timeout: Map.get(event, :event_slow_timeout),
       event_handler_slow_timeout: Map.get(event, :event_handler_slow_timeout)
-    }
+    })
   end
 
   @doc "Generate a time-ordered unique event ID (UUID v7-style)."

@@ -83,16 +83,20 @@ defmodule Abxbus.EventBusFindTest do
 
       Abxbus.on(:find_fut, FindFutureEvent, fn _event -> :ok end)
 
-      # Start a finder that will wait
+      # Use a flag to signal when the finder has registered its waiter
+      ready = :atomics.new(1, [])
+
       finder_task =
         Task.async(fn ->
+          :atomics.put(ready, 1, 1)
           Abxbus.find(FindFutureEvent, past: false, future: 5.0)
         end)
 
-      # Give finder time to register
-      Process.sleep(10)
+      # Spin until finder task has started (deterministic, no fixed sleep)
+      spin_until(fn -> :atomics.get(ready, 1) == 1 end, 1000)
+      # One more yield to let find() register the ETS waiter
+      Process.sleep(1)
 
-      # Emit the event
       event = Abxbus.emit(:find_fut, FindFutureEvent.new())
 
       found = Task.await(finder_task, 6000)
@@ -136,6 +140,19 @@ defmodule Abxbus.EventBusFindTest do
 
       assert found != nil
       assert found.event_parent_id == parent.event_id
+    end
+  end
+
+  defp spin_until(fun, max_iters, iter \\ 0) do
+    if iter >= max_iters do
+      raise "spin_until exceeded #{max_iters} iterations"
+    end
+
+    if fun.() do
+      :ok
+    else
+      Process.sleep(1)
+      spin_until(fun, max_iters, iter + 1)
     end
   end
 end

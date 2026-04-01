@@ -79,10 +79,16 @@ defmodule Abxbus.EventBusTimeoutTest do
       # Remaining handlers should be error (aborted or cancelled)
       non_first = Enum.filter(results, &(&1.handler_name != "first"))
 
-      for r <- non_first do
-        assert r.status in [:error, :cancelled],
-               "Handler #{r.handler_name} should be error or cancelled, got #{r.status}"
-      end
+      second = Enum.find(non_first, &(&1.handler_name == "second"))
+      pending = Enum.find(non_first, &(&1.handler_name == "pending"))
+
+      # Second handler was running when timeout fired — should be aborted (error)
+      assert second.status == :error,
+             "Running handler 'second' should be aborted (error), got #{second.status}"
+
+      # Pending handler never started — should be error (aborted by event timeout)
+      assert pending.status == :error,
+             "Never-started handler 'pending' should be error, got #{pending.status}"
     end
 
     test "event timeout aborts all parallel handlers" do
@@ -174,10 +180,16 @@ defmodule Abxbus.EventBusTimeoutTest do
         :ok
       end)
 
-      _parent = Abxbus.emit(:tail, TimeoutParentEvent.new())
+      parent = Abxbus.emit(:tail, TimeoutParentEvent.new())
 
       # Give parent time to timeout
-      Process.sleep(40)
+      Process.sleep(80)
+
+      # Assert parent actually timed out
+      parent_stored = Abxbus.EventStore.get(parent.event_id)
+      parent_results = Map.values(parent_stored.event_results)
+      assert Enum.any?(parent_results, fn r -> r.status == :error end),
+             "Parent should have timed out with error results"
 
       # Dispatch tail event
       Abxbus.emit(:tail, TailEvent.new())

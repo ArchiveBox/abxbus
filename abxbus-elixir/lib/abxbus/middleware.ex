@@ -77,7 +77,11 @@ defmodule Abxbus.Middleware do
         rescue
           e ->
             require Logger
-            Logger.warning("Middleware #{inspect(middleware)}.#{callback} failed: #{inspect(e)}")
+            Logger.warning("Middleware #{inspect(middleware)}.#{callback} failed with exception: #{inspect(e)}")
+        catch
+          kind, reason ->
+            require Logger
+            Logger.warning("Middleware #{inspect(middleware)}.#{callback} failed with #{kind}: #{inspect(reason)}")
         end
       end
     end
