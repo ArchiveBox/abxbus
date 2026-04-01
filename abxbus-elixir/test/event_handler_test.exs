@@ -107,25 +107,19 @@ defmodule Abxbus.EventHandlerTest do
         event_handler_concurrency: :serial
       )
 
-      third_called = :atomics.new(1, [])
-
       Abxbus.on(:first_struct_skip, FirstModeEvent, fn _event ->
         ChildCompletionEvent.new()
       end, handler_name: "struct_handler")
 
       Abxbus.on(:first_struct_skip, FirstModeEvent, fn _event ->
-        "winner"
-      end, handler_name: "winner_handler")
-
-      Abxbus.on(:first_struct_skip, FirstModeEvent, fn _event ->
-        :atomics.put(third_called, 1, 1)
-        "third"
-      end, handler_name: "third_handler")
+        "non_struct_value"
+      end, handler_name: "value_handler")
 
       event = Abxbus.emit(:first_struct_skip, FirstModeEvent.new())
       result = Abxbus.first(event)
 
-      assert result == "winner"
+      # first() should skip the event struct result and return the string value
+      assert result == "non_struct_value"
     end
 
     test "first() returns nil when all handlers fail" do

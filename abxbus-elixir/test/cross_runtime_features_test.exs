@@ -209,7 +209,10 @@ defmodule Abxbus.CrossRuntimeFeaturesTest do
       # The key behavior is that future find still resolves new events.
 
       # Future search: dispatch later, find should resolve
+      ready = :atomics.new(1, [])
+
       task = Task.async(fn ->
+        :atomics.put(ready, 1, 1)
         Abxbus.find(ZHFindEvent,
           where: fn event -> event.value == "future" end,
           past: false,
@@ -217,8 +220,9 @@ defmodule Abxbus.CrossRuntimeFeaturesTest do
         )
       end)
 
-      # Small delay then emit the future event
-      Process.sleep(20)
+      # Spin until finder task has started, then yield once for ETS waiter registration
+      spin_until(fn -> :atomics.get(ready, 1) == 1 end, 500)
+      Process.sleep(1)
       future_event = Abxbus.emit(:cr_zh_find, ZHFindEvent.new(value: "future"))
       Abxbus.wait_until_idle(:cr_zh_find)
 
@@ -279,7 +283,8 @@ defmodule Abxbus.CrossRuntimeFeaturesTest do
       # Event path should include both buses
       stored = Abxbus.EventStore.get(parent.event_id)
       path_str = Enum.join(stored.event_path, ",")
-      assert path_str =~ "cr_ctx_a" or Enum.any?(stored.event_path, &(to_string(&1) =~ "cr_ctx_a"))
+      assert path_str =~ "cr_ctx_a", "event_path should include source bus cr_ctx_a"
+      assert path_str =~ "cr_ctx_b", "event_path should include target bus cr_ctx_b"
     end
   end
 
@@ -305,5 +310,10 @@ defmodule Abxbus.CrossRuntimeFeaturesTest do
       result = Abxbus.emit(:cr_bp, BPEvent.new(value: "second"))
       assert match?({:error, %Abxbus.HistoryFullError{}}, result)
     end
+  end
+
+  defp spin_until(fun, max, i \\ 0) do
+    if i >= max, do: raise("spin_until exceeded #{max} iterations")
+    if fun.(), do: :ok, else: (Process.sleep(1); spin_until(fun, max, i + 1))
   end
 end

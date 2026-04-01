@@ -190,7 +190,8 @@ defmodule Abxbus.Event do
     overridable = [
       :event_concurrency, :event_handler_concurrency, :event_handler_completion,
       :event_timeout, :event_handler_timeout, :event_slow_timeout,
-      :event_handler_slow_timeout, :event_version, :event_result_type
+      :event_handler_slow_timeout, :event_version, :event_result_type,
+      :event_parent_id
     ]
     {override_attrs, user_attrs} = Map.split(attrs, overridable)
 
@@ -259,11 +260,20 @@ defmodule Abxbus.Event do
     })
   end
 
-  @doc "Generate a time-ordered unique event ID (UUID v7-style)."
+  @doc "Generate a UUIDv7 event ID (time-ordered, cross-runtime compatible)."
   def generate_id do
-    ts = System.system_time(:microsecond)
-    rand = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
-    "#{ts}-#{rand}"
+    # UUIDv7: 48-bit unix_ts_ms | 4-bit version=0111 | 12-bit rand_a | 2-bit var=10 | 62-bit rand_b
+    ts_ms = System.system_time(:millisecond)
+    rand = :crypto.strong_rand_bytes(10)
+    <<rand_a::12, rand_b::62, _rest::6>> = rand
+
+    uuid_bits = <<ts_ms::48, 7::4, rand_a::12, 2::2, rand_b::62>>
+
+    <<a::32, b::16, c::16, d::16, e::48>> = uuid_bits
+
+    :io_lib.format("~8.16.0b-~4.16.0b-~4.16.0b-~4.16.0b-~12.16.0b", [a, b, c, d, e])
+    |> IO.iodata_to_binary()
+    |> String.downcase()
   end
 
   # Callbacks

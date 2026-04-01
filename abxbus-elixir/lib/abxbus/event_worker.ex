@@ -333,6 +333,9 @@ defmodule Abxbus.EventWorker do
 
     :ets.insert(:abxbus_worker_results, {results_key, results})
 
+    # Trap exits BEFORE spawn_link to avoid race window
+    old_trap = Process.flag(:trap_exit, true)
+
     pid = spawn_link(fn ->
       Process.put(:abxbus_current_event_id, event_id)
       Process.put(:abxbus_current_bus, bus_name)
@@ -343,8 +346,6 @@ defmodule Abxbus.EventWorker do
       :ets.insert(:abxbus_worker_results, {results_key, result})
       send(caller, {:event_timeout_result, result})
     end)
-
-    Process.flag(:trap_exit, true)
 
     result =
       receive do
@@ -381,7 +382,7 @@ defmodule Abxbus.EventWorker do
       0 -> :ok
     end
 
-    Process.flag(:trap_exit, false)
+    Process.flag(:trap_exit, old_trap)
     :ets.delete(:abxbus_worker_results, results_key)
     result
   end
@@ -439,9 +440,11 @@ defmodule Abxbus.EventWorker do
 
   defp maybe_with_semaphore(%{semaphore_scope: :none}, fun), do: fun.()
 
-  defp maybe_with_semaphore(%{semaphore_scope: scope, semaphore_name: name, semaphore_limit: limit}, fun)
+  defp maybe_with_semaphore(%{semaphore_scope: scope, semaphore_name: name, semaphore_limit: limit, eventbus_name: bus}, fun)
        when scope in [:global, :bus] do
-    sem_name = name || "default"
+    # Bus-scoped semaphores include bus name in key to isolate across buses
+    base_name = name || "default"
+    sem_name = if scope == :bus, do: "#{bus}:#{base_name}", else: base_name
     LockManager.acquire_semaphore(sem_name, limit)
 
     try do

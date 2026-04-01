@@ -123,20 +123,8 @@ defmodule Abxbus.EventStore do
   end
 
   def resolve_find_waiters(event) do
-    event_type = event.event_type
-
-    for type_key <- [event_type, :wildcard] do
-      waiters = :ets.lookup(:abxbus_find_waiters, type_key)
-
-      for {_, {pid, ref, opts}} = entry <- waiters do
-        if matches_find_criteria?(event, opts) do
-          :ets.delete_object(:abxbus_find_waiters, entry)
-          send(pid, {:find_match, ref, event})
-        end
-      end
-    end
-
-    :ok
+    # Serialize through GenServer to prevent TOCTOU race on lookup+delete
+    GenServer.call(__MODULE__, {:resolve_find_waiters, event})
   end
 
   # ── Find (past + future search) ────────────────────────────────────────────
@@ -324,5 +312,22 @@ defmodule Abxbus.EventStore do
           :error
       end
     {:reply, result, state}
+  end
+
+  def handle_call({:resolve_find_waiters, event}, _from, state) do
+    event_type = event.event_type
+
+    for type_key <- [event_type, :wildcard] do
+      waiters = :ets.lookup(:abxbus_find_waiters, type_key)
+
+      for {_, {pid, ref, opts}} = entry <- waiters do
+        if matches_find_criteria?(event, opts) do
+          :ets.delete_object(:abxbus_find_waiters, entry)
+          send(pid, {:find_match, ref, event})
+        end
+      end
+    end
+
+    {:reply, :ok, state}
   end
 end

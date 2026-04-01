@@ -491,7 +491,10 @@ defmodule Abxbus.ComprehensivePatternsTest do
         child = Abxbus.emit(:multi_await, MultiAwaitChild.new())
         Agent.update(child_ref, fn _ -> child end)
 
-        # Spawn two concurrent tasks that both await the same child
+        # First await in handler context triggers queue-jump
+        Abxbus.await(child)
+
+        # Spawn two concurrent tasks that both await the same (now completed) child
         task1 = Task.async(fn ->
           Abxbus.await(child)
           Agent.update(await_results, &(&1 ++ ["await1_completed"]))

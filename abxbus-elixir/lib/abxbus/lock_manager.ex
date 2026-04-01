@@ -128,12 +128,13 @@ defmodule Abxbus.LockManager do
     {:ok, %{global: %State{}, semaphores: %{}, sem_monitors: %{}}}
   end
 
-  # Global serial lock
+  # Global serial lock — monitor holder to auto-release on crash
   @impl true
-  def handle_call(:acquire, from, %{global: global} = state) do
+  def handle_call(:acquire, {caller_pid, _} = from, %{global: global} = state) do
     case global.holder do
       nil ->
-        {:reply, :ok, %{state | global: %{global | holder: from}}}
+        mon = Process.monitor(caller_pid)
+        {:reply, :ok, %{state | global: %{global | holder: {from, mon}}}}
 
       _held ->
         new_waiters = :queue.in(from, global.waiters)
@@ -141,10 +142,11 @@ defmodule Abxbus.LockManager do
     end
   end
 
-  def handle_call(:try_acquire, from, %{global: global} = state) do
+  def handle_call(:try_acquire, {caller_pid, _} = from, %{global: global} = state) do
     case global.holder do
       nil ->
-        {:reply, :ok, %{state | global: %{global | holder: from}}}
+        mon = Process.monitor(caller_pid)
+        {:reply, :ok, %{state | global: %{global | holder: {from, mon}}}}
 
       _held ->
         {:reply, :busy, state}
@@ -170,10 +172,17 @@ defmodule Abxbus.LockManager do
 
   @impl true
   def handle_cast(:release, %{global: global} = state) do
+    # Demonitor current holder
+    case global.holder do
+      {_, mon} when is_reference(mon) -> Process.demonitor(mon, [:flush])
+      _ -> :ok
+    end
+
     case :queue.out(global.waiters) do
-      {{:value, next_from}, rest} ->
+      {{:value, {waiter_pid, _} = next_from}, rest} ->
+        mon = Process.monitor(waiter_pid)
         GenServer.reply(next_from, :ok)
-        {:noreply, %{state | global: %{global | holder: next_from, waiters: rest}}}
+        {:noreply, %{state | global: %{global | holder: {next_from, mon}, waiters: rest}}}
 
       {:empty, _} ->
         {:noreply, %{state | global: %State{}}}
@@ -221,9 +230,27 @@ defmodule Abxbus.LockManager do
     end
   end
 
-  # Auto-release semaphore slot when holder process dies (crash, kill, etc.)
+  # Auto-release locks when holder process dies
   @impl true
   def handle_info({:DOWN, mon_ref, :process, _pid, _reason}, state) do
+    # Check if it's the global lock holder
+    state =
+      case state.global.holder do
+        {_, ^mon_ref} ->
+          # Global lock holder died — release and promote next waiter
+          case :queue.out(state.global.waiters) do
+            {{:value, {waiter_pid, _} = next_from}, rest} ->
+              new_mon = Process.monitor(waiter_pid)
+              GenServer.reply(next_from, :ok)
+              %{state | global: %{state.global | holder: {next_from, new_mon}, waiters: rest}}
+            {:empty, _} ->
+              %{state | global: %State{}}
+          end
+        _ ->
+          state
+      end
+
+    # Check if it's a semaphore holder
     monitors = state[:sem_monitors] || %{}
 
     case Map.pop(monitors, mon_ref) do

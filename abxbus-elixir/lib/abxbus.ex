@@ -98,8 +98,8 @@ defmodule Abxbus do
     ref = EventStore.add_waiter(event.event_id)
 
     case EventStore.get(event.event_id) do
-      %{event_status: :completed} = completed ->
-        # Already complete — drain any notification sent between registration and check
+      %{event_status: status} = completed when status in [:completed, :error] ->
+        # Already terminal — drain any notification sent between registration and check
         receive do
           {:event_completed, ^ref, _} -> :ok
         after
@@ -138,7 +138,7 @@ defmodule Abxbus do
     ref = EventStore.add_waiter(event.event_id)
 
     case EventStore.get(event.event_id) do
-      %{event_status: :completed} = completed ->
+      %{event_status: status} = completed when status in [:completed, :error] ->
         receive do
           {:event_completed, ^ref, _} -> :ok
         after

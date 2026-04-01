@@ -150,6 +150,10 @@ defmodule Abxbus.BusServer do
   # ── Emit ────────────────────────────────────────────────────────────────────
 
   @impl true
+  def handle_call({:emit, _event}, _from, %{started: false} = state) do
+    {:reply, {:error, :stopped}, state}
+  end
+
   def handle_call({:emit, event}, _from, state) do
     event =
       event
