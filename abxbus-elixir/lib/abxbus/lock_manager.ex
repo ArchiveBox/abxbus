@@ -133,7 +133,7 @@ defmodule Abxbus.LockManager do
 
   @impl true
   def init(_opts) do
-    {:ok, %{global: %State{}, semaphores: %{}}}
+    {:ok, %{global: %State{}, semaphores: %{}, sem_monitors: %{}}}
   end
 
   # Global serial lock
@@ -159,13 +159,17 @@ defmodule Abxbus.LockManager do
     end
   end
 
-  # Named semaphores
-  def handle_call({:acquire_semaphore, name, limit}, from, state) do
+  # Named semaphores — monitor holders so slots auto-release on crash/kill
+  def handle_call({:acquire_semaphore, name, limit}, {caller_pid, _} = from, state) do
     sem = Map.get(state.semaphores, name, %{holders: [], waiters: :queue.new(), limit: limit})
 
     if length(sem.holders) < sem.limit do
-      new_sem = %{sem | holders: [from | sem.holders]}
-      {:reply, :ok, %{state | semaphores: Map.put(state.semaphores, name, new_sem)}}
+      mon_ref = Process.monitor(caller_pid)
+      holder = {from, mon_ref}
+      new_sem = %{sem | holders: [holder | sem.holders]}
+      # Track monitor -> {semaphore_name} for :DOWN cleanup
+      monitors = Map.put(state[:sem_monitors] || %{}, mon_ref, name)
+      {:reply, :ok, %{state | semaphores: Map.put(state.semaphores, name, new_sem), sem_monitors: monitors}}
     else
       new_sem = %{sem | waiters: :queue.in(from, sem.waiters)}
       {:noreply, %{state | semaphores: Map.put(state.semaphores, name, new_sem)}}
@@ -190,22 +194,85 @@ defmodule Abxbus.LockManager do
         {:noreply, state}
 
       sem ->
-        # Remove one holder (the caller)
-        new_holders = tl(sem.holders)
+        # Remove one holder and demonitor
+        {removed, new_holders} =
+          case sem.holders do
+            [] -> {nil, []}
+            [h | rest] -> {h, rest}
+          end
+
+        # Demonitor the released holder and clean up monitor tracking
+        monitors = state[:sem_monitors] || %{}
+        monitors =
+          case removed do
+            {_, mon_ref} ->
+              Process.demonitor(mon_ref, [:flush])
+              Map.delete(monitors, mon_ref)
+            _ ->
+              monitors
+          end
 
         # Promote next waiter if available
-        {new_holders, new_waiters} =
+        {new_holders, new_waiters, monitors} =
           case :queue.out(sem.waiters) do
-            {{:value, next_from}, rest} ->
+            {{:value, {waiter_pid, _} = next_from}, rest} ->
+              mon_ref = Process.monitor(waiter_pid)
               GenServer.reply(next_from, :ok)
-              {[next_from | new_holders], rest}
+              {[{next_from, mon_ref} | new_holders], rest, Map.put(monitors, mon_ref, name)}
 
             {:empty, _} ->
-              {new_holders, sem.waiters}
+              {new_holders, sem.waiters, monitors}
           end
 
         new_sem = %{sem | holders: new_holders, waiters: new_waiters}
-        {:noreply, %{state | semaphores: Map.put(state.semaphores, name, new_sem)}}
+        {:noreply, %{state | semaphores: Map.put(state.semaphores, name, new_sem), sem_monitors: monitors}}
     end
   end
+
+  # Auto-release semaphore slot when holder process dies (crash, kill, etc.)
+  @impl true
+  def handle_info({:DOWN, mon_ref, :process, _pid, _reason}, state) do
+    monitors = state[:sem_monitors] || %{}
+
+    case Map.pop(monitors, mon_ref) do
+      {nil, _} ->
+        {:noreply, state}
+
+      {sem_name, monitors} ->
+        state = %{state | sem_monitors: monitors}
+
+        case Map.get(state.semaphores, sem_name) do
+          nil ->
+            {:noreply, state}
+
+          sem ->
+            # Remove the dead holder by matching on monitor ref
+            new_holders = Enum.reject(sem.holders, fn
+              {_, ^mon_ref} -> true
+              _ -> false
+            end)
+
+            # Promote next waiter if slot freed
+            {new_holders, new_waiters, monitors} =
+              if length(new_holders) < sem.limit do
+                case :queue.out(sem.waiters) do
+                  {{:value, {waiter_pid, _} = next_from}, rest} ->
+                    new_mon = Process.monitor(waiter_pid)
+                    GenServer.reply(next_from, :ok)
+                    {[{next_from, new_mon} | new_holders], rest, Map.put(state[:sem_monitors] || %{}, new_mon, sem_name)}
+
+                  {:empty, _} ->
+                    {new_holders, sem.waiters, state[:sem_monitors] || %{}}
+                end
+              else
+                {new_holders, sem.waiters, state[:sem_monitors] || %{}}
+              end
+
+            new_sem = %{sem | holders: new_holders, waiters: new_waiters}
+            {:noreply, %{state | semaphores: Map.put(state.semaphores, sem_name, new_sem), sem_monitors: monitors}}
+        end
+    end
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
 end

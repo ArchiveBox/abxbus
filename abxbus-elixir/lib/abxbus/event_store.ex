@@ -152,7 +152,7 @@ defmodule Abxbus.EventStore do
               System.monotonic_time(:nanosecond) - trunc(seconds * 1_000_000_000)
           end
 
-        search_past(event_type, cutoff, opts)
+        search_past(normalize_type(event_type), cutoff, opts)
       end
 
     case {result, future, future_ref} do
