@@ -97,12 +97,12 @@ defmodule Abxbus.EventBusTimeoutTest do
       )
 
       Abxbus.on(:hcpar, HardCapParallelEvent, fn _event ->
-        Process.sleep(100)
+        Process.sleep(500)
         "handler1"
       end, handler_name: "h1")
 
       Abxbus.on(:hcpar, HardCapParallelEvent, fn _event ->
-        Process.sleep(100)
+        Process.sleep(500)
         "handler2"
       end, handler_name: "h2")
 

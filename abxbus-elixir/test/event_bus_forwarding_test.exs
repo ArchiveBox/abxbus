@@ -70,18 +70,24 @@ defmodule Abxbus.EventBusForwardingTest do
 
       Abxbus.on(:fwd_a, "*", fn e -> Abxbus.emit(:fwd_b, e) end, handler_name: "fwd")
 
+      # Use a barrier: both handlers signal they've started, then wait for release.
+      # If parallel, both will be blocked at the barrier simultaneously.
+      both_started = :counters.new(1, [:atomics])
       log = Agent.start_link(fn -> [] end) |> elem(1)
 
       Abxbus.on(:fwd_b, ForwardedDefaultsChildEvent, fn _event ->
         Agent.update(log, &(&1 ++ ["b1_start"]))
-        Process.sleep(20)
+        :counters.add(both_started, 1, 1)
+        # Spin until both handlers have started (proves parallelism)
+        spin_until(fn -> :counters.get(both_started, 1) >= 2 end, 500)
         Agent.update(log, &(&1 ++ ["b1_end"]))
         :ok
       end)
 
       Abxbus.on(:fwd_b, ForwardedDefaultsChildEvent, fn _event ->
         Agent.update(log, &(&1 ++ ["b2_start"]))
-        Process.sleep(5)
+        :counters.add(both_started, 1, 1)
+        spin_until(fn -> :counters.get(both_started, 1) >= 2 end, 500)
         Agent.update(log, &(&1 ++ ["b2_end"]))
         :ok
       end)
@@ -135,5 +141,10 @@ defmodule Abxbus.EventBusForwardingTest do
       result = Abxbus.first(event)
       assert result == "fast", "First-mode should return the fast handler's result"
     end
+  end
+
+  defp spin_until(fun, max_iters, iter \\ 0) do
+    if iter >= max_iters, do: raise("spin_until exceeded #{max_iters} iterations")
+    if fun.(), do: :ok, else: (Process.sleep(1); spin_until(fun, max_iters, iter + 1))
   end
 end

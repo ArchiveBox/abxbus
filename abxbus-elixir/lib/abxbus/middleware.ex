@@ -73,7 +73,14 @@ defmodule Abxbus.Middleware do
     for middleware <- middlewares do
       if function_exported?(middleware, callback, length(args)) do
         try do
-          apply(middleware, callback, args)
+          case apply(middleware, callback, args) do
+            {:error, reason} ->
+              require Logger
+              Logger.warning("Middleware #{inspect(middleware)}.#{callback} returned error: #{inspect(reason)}")
+
+            _ ->
+              :ok
+          end
         rescue
           e ->
             require Logger
