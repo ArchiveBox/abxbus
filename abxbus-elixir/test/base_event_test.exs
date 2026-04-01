@@ -144,4 +144,163 @@ defmodule Abxbus.BaseEventTest do
       ]
     end
   end
+
+  describe "bus property single bus" do
+    test "current_bus! returns bus name and can dispatch child" do
+      {:ok, _} = Abxbus.start_bus(:be_single, event_concurrency: :bus_serial)
+
+      handler_called = :atomics.new(1, [])
+      child_dispatched = Agent.start_link(fn -> nil end) |> elem(1)
+
+      Abxbus.on(:be_single, BEMainEvent, fn _event ->
+        :atomics.put(handler_called, 1, 1)
+        assert Abxbus.current_bus!() == :be_single
+
+        child = Abxbus.emit(Abxbus.current_bus!(), BEChildEvent.new())
+        completed = Abxbus.await(child)
+        Agent.update(child_dispatched, fn _ -> completed end)
+        :ok
+      end)
+
+      Abxbus.on(:be_single, BEChildEvent, fn _event -> :ok end)
+
+      Abxbus.emit(:be_single, BEMainEvent.new())
+      Abxbus.wait_until_idle(:be_single)
+
+      assert :atomics.get(handler_called, 1) == 1
+      child = Agent.get(child_dispatched, & &1)
+      assert child != nil
+    end
+  end
+
+  describe "bus property multiple buses" do
+    test "each handler sees its own bus" do
+      {:ok, _} = Abxbus.start_bus(:be_multi1)
+      {:ok, _} = Abxbus.start_bus(:be_multi2)
+
+      bus1_seen = Agent.start_link(fn -> nil end) |> elem(1)
+      bus2_seen = Agent.start_link(fn -> nil end) |> elem(1)
+
+      Abxbus.on(:be_multi1, BEMainEvent, fn _event ->
+        bus = Abxbus.current_bus!()
+        Agent.update(bus1_seen, fn _ -> bus end)
+        :ok
+      end)
+
+      Abxbus.on(:be_multi2, BEMainEvent, fn _event ->
+        bus = Abxbus.current_bus!()
+        Agent.update(bus2_seen, fn _ -> bus end)
+        :ok
+      end)
+
+      Abxbus.emit(:be_multi1, BEMainEvent.new(message: "bus1"))
+      Abxbus.wait_until_idle(:be_multi1)
+
+      Abxbus.emit(:be_multi2, BEMainEvent.new(message: "bus2"))
+      Abxbus.wait_until_idle(:be_multi2)
+
+      assert Agent.get(bus1_seen, & &1) == :be_multi1
+      assert Agent.get(bus2_seen, & &1) == :be_multi2
+    end
+  end
+
+  describe "bus property with forwarding" do
+    test "forwarded event handler sees target bus" do
+      {:ok, _} = Abxbus.start_bus(:be_fwd1)
+      {:ok, _} = Abxbus.start_bus(:be_fwd2)
+
+      # Forward from fwd1 -> fwd2
+      Abxbus.on(:be_fwd1, "*", fn e -> Abxbus.emit(:be_fwd2, e) end, handler_name: "fwd")
+
+      handler_bus = Agent.start_link(fn -> nil end) |> elem(1)
+
+      Abxbus.on(:be_fwd2, BEMainEvent, fn _event ->
+        bus = Abxbus.current_bus!()
+        Agent.update(handler_bus, fn _ -> bus end)
+        :ok
+      end)
+
+      Abxbus.emit(:be_fwd1, BEMainEvent.new())
+      Abxbus.wait_until_idle(:be_fwd1)
+      Abxbus.wait_until_idle(:be_fwd2)
+
+      # Handler running on bus2 should see bus2
+      assert Agent.get(handler_bus, & &1) == :be_fwd2
+    end
+  end
+
+  describe "event result update" do
+    test "event results tracked correctly" do
+      {:ok, _} = Abxbus.start_bus(:be_result)
+
+      defevent(BEResultEvent)
+
+      Abxbus.on(:be_result, BEResultEvent, fn _event ->
+        "seeded_result"
+      end, handler_name: "result_handler")
+
+      event = Abxbus.emit(:be_result, BEResultEvent.new())
+      Abxbus.wait_until_idle(:be_result)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      results = Map.values(stored.event_results)
+
+      assert length(results) == 1
+      result = hd(results)
+      assert result.status == :completed
+      assert result.result == "seeded_result"
+      assert result.handler_name == "result_handler"
+    end
+  end
+
+  describe "reserved fields rejected" do
+    test "event_ prefix fields rejected at compile time" do
+      # In Elixir, defevent raises a CompileError at compile time for
+      # fields starting with event_ that are not known meta fields.
+      # We test this by attempting to eval code that defines such an event.
+      assert_raise CompileError, fn ->
+        Code.eval_string("""
+          require Abxbus.Event
+          Abxbus.Event.defevent(BadPrefixEvent, event_unknown_field: 123)
+        """)
+      end
+    end
+  end
+
+  describe "event children property" do
+    test "children tracked correctly" do
+      {:ok, _} = Abxbus.start_bus(:be_children, event_concurrency: :bus_serial)
+
+      child_ids = Agent.start_link(fn -> [] end) |> elem(1)
+
+      Abxbus.on(:be_children, BEMainEvent, fn _event ->
+        c1 = Abxbus.emit(:be_children, BEChildEvent.new(data: "c1"))
+        c2 = Abxbus.emit(:be_children, BEChildEvent.new(data: "c2"))
+        Abxbus.await(c1)
+        Abxbus.await(c2)
+        Agent.update(child_ids, fn _ -> [c1.event_id, c2.event_id] end)
+        :ok
+      end)
+
+      Abxbus.on(:be_children, BEChildEvent, fn _event -> :ok end)
+
+      parent = Abxbus.emit(:be_children, BEMainEvent.new())
+      Abxbus.wait_until_idle(:be_children)
+
+      # Verify children are tracked
+      children = Abxbus.EventStore.children_of(parent.event_id)
+      expected_ids = Agent.get(child_ids, & &1)
+
+      assert length(children) == 2
+      for id <- expected_ids do
+        assert id in children, "Child #{id} should be tracked"
+      end
+
+      # Verify each child's parent_id
+      for cid <- children do
+        child_stored = Abxbus.EventStore.get(cid)
+        assert child_stored.event_parent_id == parent.event_id
+      end
+    end
+  end
 end

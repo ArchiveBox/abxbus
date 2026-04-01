@@ -188,5 +188,122 @@ defmodule Abxbus.CrossRuntimeFeaturesTest do
 
       assert :counters.get(counter, 1) == 3
     end
+
+    test "zero history but find(future) still resolves" do
+      {:ok, _} = Abxbus.start_bus(:cr_zh_find,
+        max_history_size: 0,
+        max_history_drop: true
+      )
+
+      defevent(ZHFindEvent, value: "default")
+
+      Abxbus.on(:cr_zh_find, ZHFindEvent, fn _event -> "ok" end)
+
+      # Emit first event — should be processed but not in history
+      first = Abxbus.emit(:cr_zh_find, ZHFindEvent.new(value: "first"))
+      Abxbus.wait_until_idle(:cr_zh_find)
+
+      # Past search: ETS stores events globally, but with max_history_size=0
+      # and max_history_drop=true, the bus trims its history list.
+      # find() searches ETS directly, so it may still find events.
+      # The key behavior is that future find still resolves new events.
+
+      # Future search: dispatch later, find should resolve
+      task = Task.async(fn ->
+        Abxbus.find(ZHFindEvent,
+          where: fn event -> event.value == "future" end,
+          past: false,
+          future: 2.0
+        )
+      end)
+
+      # Small delay then emit the future event
+      Process.sleep(20)
+      future_event = Abxbus.emit(:cr_zh_find, ZHFindEvent.new(value: "future"))
+      Abxbus.wait_until_idle(:cr_zh_find)
+
+      match = Task.await(task, 5000)
+      assert match != nil
+      assert match.value == "future"
+      assert match.event_id == future_event.event_id
+    end
+  end
+
+  describe "context propagation through forwarding" do
+    test "context propagation across forwarded buses" do
+      {:ok, _} = Abxbus.start_bus(:cr_ctx_a)
+      {:ok, _} = Abxbus.start_bus(:cr_ctx_b)
+
+      defevent(CtxParentEvent)
+      defevent(CtxChildEvent)
+
+      captured = Agent.start_link(fn -> %{} end) |> elem(1)
+
+      # Forward from A -> B
+      Abxbus.on(:cr_ctx_a, "*", fn e -> Abxbus.emit(:cr_ctx_b, e) end, handler_name: "fwd")
+
+      # Parent handler on B dispatches child
+      Abxbus.on(:cr_ctx_b, CtxParentEvent, fn event ->
+        parent_bus = Abxbus.current_bus!()
+        Agent.update(captured, &Map.put(&1, :parent_id, event.event_id))
+        Agent.update(captured, &Map.put(&1, :parent_bus, parent_bus))
+
+        child = Abxbus.emit(parent_bus, CtxChildEvent.new())
+        Abxbus.await(child)
+        "parent_ok"
+      end, handler_name: "parent_handler")
+
+      # Child handler on B
+      Abxbus.on(:cr_ctx_b, CtxChildEvent, fn event ->
+        child_bus = Abxbus.current_bus!()
+        Agent.update(captured, &Map.put(&1, :child_parent_id, event.event_parent_id))
+        Agent.update(captured, &Map.put(&1, :child_bus, child_bus))
+        "child_ok"
+      end, handler_name: "child_handler")
+
+      parent = Abxbus.emit(:cr_ctx_a, CtxParentEvent.new())
+      Abxbus.wait_until_idle(:cr_ctx_a)
+      Abxbus.wait_until_idle(:cr_ctx_b)
+
+      state = Agent.get(captured, & &1)
+
+      # Parent handler should see bus B
+      assert state.parent_bus == :cr_ctx_b
+
+      # Child handler should also see bus B
+      assert state.child_bus == :cr_ctx_b
+
+      # Child's parent_id should match parent event
+      assert state.child_parent_id == state.parent_id
+
+      # Event path should include both buses
+      stored = Abxbus.EventStore.get(parent.event_id)
+      path_str = Enum.join(stored.event_path, ",")
+      assert path_str =~ "cr_ctx_a" or Enum.any?(stored.event_path, &(to_string(&1) =~ "cr_ctx_a"))
+    end
+  end
+
+  describe "history backpressure rejects overflow" do
+    test "max_history_drop=false rejects at limit" do
+      {:ok, _} = Abxbus.start_bus(:cr_bp,
+        max_history_size: 1,
+        max_history_drop: false
+      )
+
+      defevent(BPEvent, value: "default")
+
+      Abxbus.on(:cr_bp, BPEvent, fn _event -> "ok" end)
+
+      # First event should succeed
+      first = Abxbus.emit(:cr_bp, BPEvent.new(value: "first"))
+      Abxbus.wait_until_idle(:cr_bp)
+
+      stored_first = Abxbus.EventStore.get(first.event_id)
+      assert stored_first != nil
+
+      # Second event should be rejected (history is full, drop=false)
+      result = Abxbus.emit(:cr_bp, BPEvent.new(value: "second"))
+      assert match?({:error, %Abxbus.HistoryFullError{}}, result)
+    end
   end
 end

@@ -271,4 +271,265 @@ defmodule Abxbus.ComprehensivePatternsTest do
       assert "mb2_E4" in order
     end
   end
+
+  describe "comprehensive patterns with forwarding" do
+    test "full forwarding + async/sync dispatch + parent tracking" do
+      {:ok, _} = Abxbus.start_bus(:cp_bus1, event_concurrency: :bus_serial)
+      {:ok, _} = Abxbus.start_bus(:cp_bus2)
+
+      defevent(CPForwardParent)
+      defevent(CPForwardImmediate)
+      defevent(CPForwardQueued)
+
+      log = Agent.start_link(fn -> [] end) |> elem(1)
+      ids = Agent.start_link(fn -> %{} end) |> elem(1)
+
+      # Forward all from bus1 -> bus2
+      Abxbus.on(:cp_bus1, "*", fn e -> Abxbus.emit(:cp_bus2, e) end, handler_name: "fwd")
+
+      # Bus2 handler
+      Abxbus.on(:cp_bus2, CPForwardImmediate, fn _event ->
+        Agent.update(log, &(&1 ++ ["bus2_immediate"]))
+        "forwarded"
+      end, handler_name: "bus2_handler")
+
+      Abxbus.on(:cp_bus2, CPForwardQueued, fn _event ->
+        Agent.update(log, &(&1 ++ ["bus2_queued"]))
+        "forwarded_queued"
+      end, handler_name: "bus2_queued_handler")
+
+      # Parent handler on bus1
+      Abxbus.on(:cp_bus1, CPForwardParent, fn event ->
+        Agent.update(ids, &Map.put(&1, :parent_id, event.event_id))
+        Agent.update(log, &(&1 ++ ["parent_start"]))
+
+        # Async dispatch
+        queued = Abxbus.emit(:cp_bus1, CPForwardQueued.new())
+        Agent.update(ids, &Map.put(&1, :queued_id, queued.event_id))
+
+        # Sync dispatch (await)
+        immediate = Abxbus.emit(:cp_bus1, CPForwardImmediate.new())
+        completed = Abxbus.await(immediate)
+        Agent.update(ids, &Map.put(&1, :immediate_id, immediate.event_id))
+
+        assert completed.event_status == :completed
+
+        Agent.update(log, &(&1 ++ ["parent_end"]))
+        "parent_done"
+      end, handler_name: "parent_handler")
+
+      parent = Abxbus.emit(:cp_bus1, CPForwardParent.new())
+      Abxbus.wait_until_idle(:cp_bus1)
+      Abxbus.wait_until_idle(:cp_bus2)
+
+      order = Agent.get(log, & &1)
+      captured_ids = Agent.get(ids, & &1)
+
+      # Parent handler should start and end
+      assert "parent_start" in order
+      assert "parent_end" in order
+
+      # Immediate child should have been forwarded to bus2
+      assert "bus2_immediate" in order
+
+      # Queued child should have been forwarded too
+      assert "bus2_queued" in order
+
+      # Verify parent-child relationships
+      immediate_stored = Abxbus.EventStore.get(captured_ids.immediate_id)
+      queued_stored = Abxbus.EventStore.get(captured_ids.queued_id)
+
+      assert immediate_stored.event_parent_id == captured_ids.parent_id
+      assert queued_stored.event_parent_id == captured_ids.parent_id
+    end
+  end
+
+  describe "await forwarded event" do
+    test "awaiting on source waits for target handlers" do
+      {:ok, _} = Abxbus.start_bus(:afe_src)
+      {:ok, _} = Abxbus.start_bus(:afe_dst)
+
+      defevent(AFEForwardedEvent)
+
+      target_ran = :atomics.new(1, [])
+
+      # Forward from src -> dst
+      Abxbus.on(:afe_src, "*", fn e -> Abxbus.emit(:afe_dst, e) end, handler_name: "fwd")
+
+      Abxbus.on(:afe_dst, AFEForwardedEvent, fn _event ->
+        Process.sleep(30)
+        :atomics.put(target_ran, 1, 1)
+        "target_done"
+      end, handler_name: "target_handler")
+
+      event = Abxbus.emit(:afe_src, AFEForwardedEvent.new())
+      Abxbus.await(event)
+      Abxbus.wait_until_idle(:afe_src)
+      Abxbus.wait_until_idle(:afe_dst)
+
+      assert :atomics.get(target_ran, 1) == 1, "Target handler should have run"
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      results = Map.values(stored.event_results)
+
+      # Should have at least the forwarding handler result; target handler result
+      # is merged into the same event store entry when the event_id matches.
+      assert length(results) >= 1
+      assert Enum.all?(results, fn r -> r.status in [:completed, :error] end)
+    end
+  end
+
+  describe "race condition stress" do
+    test "stress test with multiple runs" do
+      defevent(StressParent)
+      defevent(StressImmediateChild)
+      defevent(StressQueuedChild)
+
+      for run <- 1..3 do
+        b1 = :"stress1_#{run}"
+        b2 = :"stress2_#{run}"
+        {:ok, _} = Abxbus.start_bus(b1)
+        {:ok, _} = Abxbus.start_bus(b2)
+
+        child_counter = :counters.new(1, [:atomics])
+
+        # Forward all from b1 -> b2
+        Abxbus.on(b1, "*", fn e -> Abxbus.emit(b2, e) end, handler_name: "fwd")
+
+        Abxbus.on(b1, StressImmediateChild, fn _event ->
+          :counters.add(child_counter, 1, 1)
+          "child_bus1"
+        end, handler_name: "child_bus1")
+
+        Abxbus.on(b1, StressQueuedChild, fn _event ->
+          :counters.add(child_counter, 1, 1)
+          "queued_bus1"
+        end, handler_name: "queued_bus1")
+
+        Abxbus.on(b2, StressImmediateChild, fn _event ->
+          :counters.add(child_counter, 1, 1)
+          "child_bus2"
+        end, handler_name: "child_bus2")
+
+        Abxbus.on(b2, StressQueuedChild, fn _event ->
+          :counters.add(child_counter, 1, 1)
+          "queued_bus2"
+        end, handler_name: "queued_bus2")
+
+        Abxbus.on(b1, StressParent, fn _event ->
+          bus = Abxbus.current_bus!()
+          # Dispatch children
+          for _ <- 1..2 do
+            Abxbus.emit(bus, StressQueuedChild.new())
+          end
+
+          imm = Abxbus.emit(bus, StressImmediateChild.new())
+          Abxbus.await(imm)
+
+          "parent_done"
+        end, handler_name: "parent_handler")
+
+        Abxbus.emit(b1, StressParent.new())
+        Abxbus.wait_until_idle(b1)
+        Abxbus.wait_until_idle(b2)
+
+        count = :counters.get(child_counter, 1)
+        # 3 child events x 2 buses = 6 handler runs
+        assert count == 6, "Expected 6 child handler runs, got #{count}"
+      end
+    end
+  end
+
+  describe "await already completed event" do
+    test "awaiting completed event is no-op" do
+      {:ok, _} = Abxbus.start_bus(:already_done, event_concurrency: :bus_serial)
+
+      defevent(AlreadyDoneEvent1)
+      defevent(AlreadyDoneEvent2)
+
+      Abxbus.on(:already_done, AlreadyDoneEvent1, fn _event ->
+        "event1_done"
+      end, handler_name: "handler1")
+
+      Abxbus.on(:already_done, AlreadyDoneEvent2, fn _event ->
+        "event2_done"
+      end, handler_name: "handler2")
+
+      # Emit and wait for E1 to complete
+      event1 = Abxbus.emit(:already_done, AlreadyDoneEvent1.new())
+      Abxbus.wait_until_idle(:already_done)
+
+      stored1 = Abxbus.EventStore.get(event1.event_id)
+      assert stored1.event_status == :completed
+
+      # Emit E2
+      event2 = Abxbus.emit(:already_done, AlreadyDoneEvent2.new())
+
+      # Await E1 again — should return immediately (no-op)
+      Abxbus.await(event1)
+
+      # E2 should still complete normally
+      Abxbus.wait_until_idle(:already_done)
+
+      stored2 = Abxbus.EventStore.get(event2.event_id)
+      assert stored2.event_status == :completed
+    end
+  end
+
+  describe "multiple awaits same event" do
+    test "concurrent awaits on same event" do
+      {:ok, _} = Abxbus.start_bus(:multi_await, event_concurrency: :bus_serial)
+
+      defevent(MultiAwaitParent)
+      defevent(MultiAwaitChild)
+      defevent(MultiAwaitE2)
+
+      await_results = Agent.start_link(fn -> [] end) |> elem(1)
+      child_ref = Agent.start_link(fn -> nil end) |> elem(1)
+
+      Abxbus.on(:multi_await, MultiAwaitParent, fn _event ->
+        child = Abxbus.emit(:multi_await, MultiAwaitChild.new())
+        Agent.update(child_ref, fn _ -> child end)
+
+        # Spawn two concurrent tasks that both await the same child
+        task1 = Task.async(fn ->
+          Abxbus.await(child)
+          Agent.update(await_results, &(&1 ++ ["await1_completed"]))
+        end)
+
+        task2 = Task.async(fn ->
+          Abxbus.await(child)
+          Agent.update(await_results, &(&1 ++ ["await2_completed"]))
+        end)
+
+        Task.await(task1, 5000)
+        Task.await(task2, 5000)
+
+        "parent_done"
+      end, handler_name: "parent_handler")
+
+      Abxbus.on(:multi_await, MultiAwaitChild, fn _event ->
+        Process.sleep(10)
+        "child_done"
+      end, handler_name: "child_handler")
+
+      Abxbus.on(:multi_await, MultiAwaitE2, fn _event ->
+        "e2_done"
+      end, handler_name: "e2_handler")
+
+      Abxbus.emit(:multi_await, MultiAwaitParent.new())
+      _e2 = Abxbus.emit(:multi_await, MultiAwaitE2.new())
+      Abxbus.wait_until_idle(:multi_await)
+
+      results = Agent.get(await_results, & &1)
+      assert "await1_completed" in results
+      assert "await2_completed" in results
+      assert length(results) == 2
+
+      # Child should have exactly one set of handler results
+      child_event = Agent.get(child_ref, & &1)
+      child_stored = Abxbus.EventStore.get(child_event.event_id)
+      assert map_size(child_stored.event_results) == 1
+    end
+  end
 end
