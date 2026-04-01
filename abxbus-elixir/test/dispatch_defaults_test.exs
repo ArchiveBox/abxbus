@@ -16,6 +16,7 @@ defmodule Abxbus.DispatchDefaultsTest do
     event_handler_concurrency: :serial,
     event_handler_completion: :all
   )
+  defevent(HandlerDefaultsEvent)
 
   describe "event defaults stay nil until dispatch" do
     test "emitted event retains nil overrides" do
@@ -94,6 +95,35 @@ defmodule Abxbus.DispatchDefaultsTest do
       # Handler override to serial should force max 1 concurrent handler
       assert :atomics.get(max_ref, 1) == 1,
              "Handler concurrency override to serial should limit to 1, got #{:atomics.get(max_ref, 1)}"
+    end
+  end
+
+  describe "handler defaults remain nil until processing" do
+    test "handler defaults nil on dispatch, resolve during processing" do
+      {:ok, _} = Abxbus.start_bus(:dd4,
+        event_handler_concurrency: :parallel,
+        event_handler_completion: :first
+      )
+
+      Abxbus.on(:dd4, HandlerDefaultsEvent, fn _event -> "ok" end,
+        handler_name: "handler")
+
+      implicit = Abxbus.emit(:dd4, HandlerDefaultsEvent.new())
+      explicit_none = Abxbus.emit(:dd4,
+        HandlerDefaultsEvent.new(
+          event_handler_concurrency: nil,
+          event_handler_completion: nil
+        )
+      )
+
+      # Both should have nil handler fields on dispatch
+      assert implicit.event_handler_concurrency == nil
+      assert implicit.event_handler_completion == nil
+      assert explicit_none.event_handler_concurrency == nil
+      assert explicit_none.event_handler_completion == nil
+
+      Abxbus.await(implicit)
+      Abxbus.await(explicit_none)
     end
   end
 end

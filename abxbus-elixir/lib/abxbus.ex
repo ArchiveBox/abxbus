@@ -175,7 +175,9 @@ defmodule Abxbus do
           results
           |> Map.values()
           |> Enum.find(fn
-            %{status: :completed, result: value} when not is_nil(value) -> true
+            %{status: :completed, result: value} when not is_nil(value) ->
+              # Skip event struct results (matches Python's BaseEvent filtering)
+              not (is_map(value) and Map.has_key?(value, :event_id))
             _ -> false
           end)
 
