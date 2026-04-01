@@ -15,7 +15,7 @@ defmodule AbxBus.EventWorker do
 
   require Logger
 
-  alias AbxBus.{EventStore, LockManager, HandlerResult}
+  alias AbxBus.{EventStore, LockManager, EventResult}
 
   @doc """
   Main entry point — runs in a spawned process.
@@ -38,11 +38,12 @@ defmodule AbxBus.EventWorker do
     results =
       handlers
       |> Enum.map(fn entry ->
-        {entry.id, HandlerResult.new(entry.id,
+        {entry.id, EventResult.new(entry.id,
+          event_id: event.event_id,
           handler_name: entry.handler_name,
           handler_file_path: entry.handler_file_path,
           timeout: LockManager.resolve_handler_timeout(entry, event, bus_config),
-          handler_registered_at: entry.registered_at,
+          handler_registered_at: entry.handler_registered_at,
           eventbus_name: bus_name
         )}
       end)
@@ -122,18 +123,18 @@ defmodule AbxBus.EventWorker do
     case completion_mode do
       :all ->
         Enum.reduce(tasks, results, fn {handler_id, task}, acc ->
-          result_entry = Map.get(acc, handler_id) |> HandlerResult.mark_started()
+          result_entry = Map.get(acc, handler_id) |> EventResult.mark_started()
 
           case Task.yield(task, :infinity) do
             {:ok, {:ok, value}} ->
-              Map.put(acc, handler_id, HandlerResult.mark_completed(result_entry, value))
+              Map.put(acc, handler_id, EventResult.mark_completed(result_entry, value))
             {:ok, {:error, error}} ->
-              Map.put(acc, handler_id, HandlerResult.mark_error(result_entry, error))
+              Map.put(acc, handler_id, EventResult.mark_error(result_entry, error))
             {:exit, reason} ->
-              Map.put(acc, handler_id, HandlerResult.mark_error(result_entry, reason))
+              Map.put(acc, handler_id, EventResult.mark_error(result_entry, reason))
             nil ->
               Task.shutdown(task, :brutal_kill)
-              Map.put(acc, handler_id, HandlerResult.mark_aborted(result_entry))
+              Map.put(acc, handler_id, EventResult.mark_aborted(result_entry))
           end
         end)
 
@@ -144,7 +145,7 @@ defmodule AbxBus.EventWorker do
 
   defp await_first_parallel(tasks, results) do
     results = Enum.reduce(tasks, results, fn {handler_id, _}, acc ->
-      Map.update!(acc, handler_id, &HandlerResult.mark_started/1)
+      Map.update!(acc, handler_id, &EventResult.mark_started/1)
     end)
 
     task_map = Map.new(tasks, fn {handler_id, task} -> {task.ref, handler_id} end)
@@ -163,16 +164,16 @@ defmodule AbxBus.EventWorker do
 
         case result do
           {:ok, {:ok, value}} when not is_nil(value) and is_nil(first) ->
-            acc = Map.put(acc, handler_id, HandlerResult.mark_completed(Map.get(acc, handler_id), value))
+            acc = Map.put(acc, handler_id, EventResult.mark_completed(Map.get(acc, handler_id), value))
             {acc, value, rem}
           {:ok, {:ok, value}} ->
-            acc = Map.put(acc, handler_id, HandlerResult.mark_completed(Map.get(acc, handler_id), value))
+            acc = Map.put(acc, handler_id, EventResult.mark_completed(Map.get(acc, handler_id), value))
             {acc, first, rem}
           {:ok, {:error, error}} ->
-            acc = Map.put(acc, handler_id, HandlerResult.mark_error(Map.get(acc, handler_id), error))
+            acc = Map.put(acc, handler_id, EventResult.mark_error(Map.get(acc, handler_id), error))
             {acc, first, rem}
           {:exit, reason} ->
-            acc = Map.put(acc, handler_id, HandlerResult.mark_error(Map.get(acc, handler_id), reason))
+            acc = Map.put(acc, handler_id, EventResult.mark_error(Map.get(acc, handler_id), reason))
             {acc, first, rem}
           nil ->
             {acc, first, [task | rem]}
@@ -184,7 +185,7 @@ defmodule AbxBus.EventWorker do
         Task.shutdown(task, :brutal_kill)
         handler_id = Map.get(task_map, task.ref)
         if handler_id do
-          Map.put(acc, handler_id, HandlerResult.mark_cancelled(Map.get(acc, handler_id)))
+          Map.put(acc, handler_id, EventResult.mark_cancelled(Map.get(acc, handler_id)))
         else
           acc
         end
@@ -205,7 +206,7 @@ defmodule AbxBus.EventWorker do
         Process.put(:abx_current_bus_pid, bus_pid)
         Process.put(:abx_current_handler_id, entry.id)
 
-        result_entry = Map.get(acc, entry.id) |> HandlerResult.mark_started()
+        result_entry = Map.get(acc, entry.id) |> EventResult.mark_started()
 
         slow_t = entry.handler_slow_timeout || handler_slow
         monitor = maybe_start_slow_monitor(slow_t, event, bus_name, {:handler, entry.handler_name})
@@ -216,7 +217,7 @@ defmodule AbxBus.EventWorker do
 
         case outcome do
           {:ok, value} ->
-            updated = HandlerResult.mark_completed(result_entry, value)
+            updated = EventResult.mark_completed(result_entry, value)
             acc = Map.put(acc, entry.id, updated)
             update_shared_results(acc)
 
@@ -229,7 +230,7 @@ defmodule AbxBus.EventWorker do
             end
 
           {:error, error} ->
-            updated = HandlerResult.mark_error(result_entry, error)
+            updated = EventResult.mark_error(result_entry, error)
             acc = Map.put(acc, entry.id, updated)
             update_shared_results(acc)
             {:cont, {acc, false}}
@@ -257,7 +258,7 @@ defmodule AbxBus.EventWorker do
     |> Enum.reduce(results, fn entry, acc ->
       case Map.get(acc, entry.id) do
         nil -> acc
-        result -> Map.put(acc, entry.id, HandlerResult.mark_cancelled(result))
+        result -> Map.put(acc, entry.id, EventResult.mark_cancelled(result))
       end
     end)
   end
@@ -276,7 +277,7 @@ defmodule AbxBus.EventWorker do
 
   defp run_with_retries(entry, event, attempts_left, attempt_index) do
     try do
-      value = entry.handler_fn.(event)
+      value = entry.handler.(event)
       {:ok, value}
     rescue
       e ->
@@ -367,7 +368,7 @@ defmodule AbxBus.EventWorker do
             updated =
               case result.status do
                 s when s in [:pending, :started] ->
-                  HandlerResult.mark_error(result, %AbxBus.EventHandlerAbortedError{})
+                  EventResult.mark_error(result, %AbxBus.EventHandlerAbortedError{})
                 _ -> result
               end
             Map.put(acc, handler_id, updated)

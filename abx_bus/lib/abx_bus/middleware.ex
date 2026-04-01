@@ -55,14 +55,14 @@ defmodule AbxBus.Middleware do
   @callback on_event_result_change(
               bus_name :: AbxBus.Types.bus_name(),
               event :: map(),
-              result :: AbxBus.HandlerResult.t(),
+              result :: AbxBus.EventResult.t(),
               status :: :pending | :started | :completed
             ) :: :ok | {:error, term()}
 
   @doc "Called when a handler is registered or unregistered."
   @callback on_bus_handlers_change(
               bus_name :: AbxBus.Types.bus_name(),
-              handler :: AbxBus.HandlerEntry.t(),
+              handler :: AbxBus.EventHandler.t(),
               registered? :: boolean()
             ) :: :ok | {:error, term()}
 

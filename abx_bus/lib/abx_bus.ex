@@ -302,6 +302,9 @@ defmodule AbxBus do
     BusServer.off(bus, event_type, handler_fn)
   end
 
+  @doc "Alias for `emit/2` (matches Python's `bus.dispatch()`)."
+  def dispatch(bus, event), do: emit(bus, event)
+
   # ── Bus queries ─────────────────────────────────────────────────────────────
 
   @doc "Wait until a bus has no pending or in-flight events."
@@ -310,8 +313,16 @@ defmodule AbxBus do
   end
 
   @doc "Get the bus label (name#short_id)."
-  @doc "Get the bus label (name#short_id)."
   def label(bus), do: BusServer.label(bus)
+
+  @doc "List pending events."
+  def events_pending(bus), do: BusServer.events_pending(bus)
+
+  @doc "List started (in-progress) events."
+  def events_started(bus), do: BusServer.events_started(bus)
+
+  @doc "List completed events."
+  def events_completed(bus), do: BusServer.events_completed(bus)
 
   # ── Event queries ───────────────────────────────────────────────────────────
 
