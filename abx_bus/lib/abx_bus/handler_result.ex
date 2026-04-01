@@ -9,6 +9,7 @@ defmodule AbxBus.HandlerResult do
   @type t :: %__MODULE__{
           handler_id: binary(),
           handler_name: binary() | nil,
+          handler_file_path: binary() | nil,
           status: AbxBus.Types.handler_result_status(),
           result: any(),
           error: any(),
@@ -16,12 +17,14 @@ defmodule AbxBus.HandlerResult do
           started_at: integer() | nil,
           completed_at: integer() | nil,
           handler_registered_at: integer() | nil,
-          eventbus_name: binary() | nil
+          eventbus_name: binary() | nil,
+          event_children: [binary()]
         }
 
   defstruct [
     :handler_id,
     :handler_name,
+    :handler_file_path,
     :result,
     :error,
     :timeout,
@@ -29,13 +32,15 @@ defmodule AbxBus.HandlerResult do
     :completed_at,
     :handler_registered_at,
     :eventbus_name,
-    status: :pending
+    status: :pending,
+    event_children: []
   ]
 
   def new(handler_id, opts \\ []) do
     %__MODULE__{
       handler_id: handler_id,
       handler_name: Keyword.get(opts, :handler_name),
+      handler_file_path: Keyword.get(opts, :handler_file_path),
       status: :pending,
       timeout: Keyword.get(opts, :timeout),
       handler_registered_at: Keyword.get(opts, :handler_registered_at),

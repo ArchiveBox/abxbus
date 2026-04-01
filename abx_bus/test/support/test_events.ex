@@ -1,12 +1,13 @@
 defmodule AbxBus.TestEvents do
   @moduledoc "Event definitions used across test suites."
 
-  # ── Helper to create simple event structs with metadata fields ──────────────
-
   defmacro defevent(name, fields \\ []) do
+    # Re-export the AbxBus.Event.defevent macro behavior
     meta_fields = [
       event_id: nil,
       event_type: nil,
+      event_version: "1",
+      event_result_type: :any,
       event_parent_id: nil,
       event_children: [],
       event_path: [],
@@ -20,12 +21,12 @@ defmodule AbxBus.TestEvents do
       event_handler_completion: nil,
       event_timeout: nil,
       event_handler_timeout: nil,
+      event_handler_slow_timeout: nil,
       event_slow_timeout: nil,
       event_pending_bus_count: 0,
       event_emitted_by_handler_id: nil
     ]
 
-    # Escape user fields that might contain maps
     escaped_fields =
       Enum.map(fields, fn
         {k, v} when is_map(v) -> {k, Macro.escape(v)}

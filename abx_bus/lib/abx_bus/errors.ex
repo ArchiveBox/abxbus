@@ -17,3 +17,7 @@ end
 defmodule AbxBus.HistoryFullError do
   defexception message: "Event history is full and max_history_drop is false"
 end
+
+defmodule AbxBus.HandlerNotFoundError do
+  defexception message: "Handler not found"
+end

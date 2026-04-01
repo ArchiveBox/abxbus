@@ -29,10 +29,8 @@ defmodule AbxBus.EventBusFindTest do
     end
 
     test "finds nothing when no match" do
-      {:ok, _} = AbxBus.start_bus(:find2)
-
-      # Search for a type that was never emitted on this specific bus
-      found = AbxBus.find(FindFutureEvent, past: true, future: false, event_status: :completed)
+      defevent(NeverEmittedEvent)
+      found = AbxBus.find(NeverEmittedEvent, past: true, future: false)
       assert found == nil
     end
   end
@@ -114,7 +112,7 @@ defmodule AbxBus.EventBusFindTest do
       {:ok, _} = AbxBus.start_bus(:find_auth)
 
       # Forward ParentEvent from main to auth
-      AbxBus.forward(:find_main, :find_auth)
+      AbxBus.on(:find_main, "*", fn e -> AbxBus.emit(:find_auth, e) end, handler_name: "fwd")
 
       AbxBus.on(:find_auth, FindParentEvent, fn event ->
         # Dispatch child on auth bus

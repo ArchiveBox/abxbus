@@ -12,42 +12,23 @@ defmodule AbxBus do
       `:all` (wait for every handler), `:first` (first non-nil result wins)
     * **Queue-jump** — when a handler awaits a child event, that child bypasses
       the pending queue and processes immediately, preventing deadlock
-    * **Forwarding** — events can be forwarded to other buses (same `event_id`,
-      NOT a parent-child relationship)
+    * **Forwarding** — register a wildcard handler that emits to another bus:
+      `AbxBus.on(:bus_a, "*", fn e -> AbxBus.emit(:bus_b, e) end)`
+      Forwarded events keep the same `event_id` (NOT parent-child).
     * **Lineage** — parent-child tracking via `event_parent_id`, automatic when
       emitting from within a handler
 
   ## Quick start
 
-      # Start a bus
       {:ok, _} = AbxBus.start_bus(:auth, event_concurrency: :bus_serial)
 
-      # Register handlers
       AbxBus.on(:auth, MyApp.UserCreated, fn event ->
         IO.puts("User created: \#{event.username}")
         :ok
       end)
 
-      # Emit events
       event = AbxBus.emit(:auth, MyApp.UserCreated.new(username: "alice"))
-
-      # Wait for completion
       completed = AbxBus.await(event)
-
-      # Or wait for the bus to be idle
-      AbxBus.wait_until_idle(:auth)
-
-  ## Queue-jump example
-
-      AbxBus.on(:main, MyApp.ParentEvent, fn event ->
-        # This child will jump the queue and process immediately
-        child = AbxBus.emit(AbxBus.current_bus!(), MyApp.ChildEvent.new())
-        completed_child = AbxBus.await(child)
-
-        # Siblings stay in queue until parent handler finishes
-        AbxBus.emit(AbxBus.current_bus!(), MyApp.SiblingEvent.new())
-        :ok
-      end)
   """
 
   alias AbxBus.{BusServer, EventStore}
@@ -65,8 +46,10 @@ defmodule AbxBus do
     * `:event_timeout` — default event timeout in seconds
     * `:event_handler_timeout` — default handler timeout in seconds
     * `:event_slow_timeout` — slow event warning threshold in seconds
+    * `:event_handler_slow_timeout` — slow handler warning threshold in seconds
     * `:max_history_size` — max completed events to keep (default 1000)
     * `:max_history_drop` — whether to drop old history (default true)
+    * `:middlewares` — list of middleware modules (default [])
   """
   def start_bus(name, opts \\ []) do
     opts = Keyword.put(opts, :name, name)
@@ -78,7 +61,7 @@ defmodule AbxBus do
   end
 
   @doc "Stop a bus."
-  def stop_bus(name, opts \\ []) do
+  def stop(name, opts \\ []) do
     BusServer.stop(name, opts)
   end
 
@@ -89,17 +72,10 @@ defmodule AbxBus do
 
   If called from within a handler, `event_parent_id` is automatically set
   to the current event's ID (unless explicitly provided).
-
-  The event will be queued and processed asynchronously according to the bus's
-  concurrency policy.
   """
   def emit(bus, event) do
-    # Auto-set parent from handler context before calling BusServer
     event = maybe_set_parent(event)
-
-    # Track child in parent's children list
     maybe_track_child(event)
-
     BusServer.emit(bus, event)
   end
 
@@ -109,26 +85,28 @@ defmodule AbxBus do
 
   **Queue-jump**: If called from within a handler, the awaited event will
   jump the queue and process immediately. Non-awaited siblings stay queued.
-  This prevents deadlock in bus-serial mode.
 
   Returns the completed event.
   """
   def await(event, timeout \\ :infinity) do
-    # Check if already complete
+    # Register waiter FIRST to prevent TOCTOU race
+    ref = EventStore.add_waiter(event.event_id)
+
     case EventStore.get(event.event_id) do
       %{event_status: :completed} = completed ->
+        # Already complete — drain any notification sent between registration and check
+        receive do
+          {:event_completed, ^ref, _} -> :ok
+        after
+          0 -> :ok
+        end
         completed
 
       _ ->
-        # Register as waiter
-        ref = EventStore.add_waiter(event.event_id)
-
-        # If we're inside a handler, trigger queue-jump
         if in_handler_context?() do
           trigger_queue_jump(event)
         end
 
-        # Block until completion
         timeout_ms =
           case timeout do
             :infinity -> :infinity
@@ -149,19 +127,21 @@ defmodule AbxBus do
   Wait for event completion WITHOUT queue-jumping.
 
   Unlike `await/2`, this does NOT cause the event to jump the queue.
-  It simply waits for the event's completion signal passively.
-
-  Use this when you want to observe completion without affecting
-  processing order (analogous to Python's `event.event_completed()`).
+  Analogous to Python's `event.event_completed()`.
   """
-  def wait_for_completion(event, timeout \\ :infinity) do
+  def event_completed(event, timeout \\ :infinity) do
+    ref = EventStore.add_waiter(event.event_id)
+
     case EventStore.get(event.event_id) do
       %{event_status: :completed} = completed ->
+        receive do
+          {:event_completed, ^ref, _} -> :ok
+        after
+          0 -> :ok
+        end
         completed
 
       _ ->
-        ref = EventStore.add_waiter(event.event_id)
-
         timeout_ms =
           case timeout do
             :infinity -> :infinity
@@ -181,8 +161,6 @@ defmodule AbxBus do
   @doc """
   Get the first non-nil result from an event's handlers.
   Blocks until the event completes.
-
-  For `:first` completion mode events, this returns the winning result.
   """
   def first(event, timeout \\ :infinity) do
     completed = await(event, timeout)
@@ -207,6 +185,79 @@ defmodule AbxBus do
     end
   end
 
+  @doc """
+  Get the first handler result (value only). Blocks until complete.
+
+  Unlike `first/2`, this returns `nil` results too — it's the value of
+  the first completed handler regardless of the value.
+  """
+  def event_result(event, timeout \\ :infinity) do
+    completed = await(event, timeout)
+
+    case completed do
+      {:error, _} = err -> err
+      %{event_results: results} ->
+        results
+        |> Map.values()
+        |> Enum.find(fn r -> r.status == :completed end)
+        |> case do
+          nil -> nil
+          r -> r.result
+        end
+    end
+  end
+
+  @doc """
+  Get all handler results as a list with optional filtering.
+
+  ## Options
+
+    * `:where` — `fn result -> boolean` custom filter
+    * `:raise_if_any` — raise if any result has `:error` status
+    * `:raise_if_none` — raise if no results pass the filter
+    * `:include` — filter by status, one of `:all`, `:completed`, `:errors`
+  """
+  def event_results_list(event, opts \\ []) do
+    stored = EventStore.get(event.event_id) || event
+    results = Map.values(stored.event_results || %{})
+
+    # Filter by include mode
+    results =
+      case Keyword.get(opts, :include, :completed) do
+        :all -> results
+        :completed -> Enum.filter(results, &(&1.status == :completed))
+        :errors -> Enum.filter(results, &(&1.status == :error))
+      end
+
+    # Custom filter
+    results =
+      case Keyword.get(opts, :where) do
+        nil -> results
+        fun -> Enum.filter(results, fun)
+      end
+
+    # Raise checks
+    if Keyword.get(opts, :raise_if_any, false) do
+      errors = Enum.filter(results, &(&1.status == :error))
+      if errors != [] do
+        first_error = hd(errors)
+        raise first_error.error || %RuntimeError{message: "Handler error"}
+      end
+    end
+
+    if Keyword.get(opts, :raise_if_none, false) and results == [] do
+      raise %RuntimeError{message: "No results after filtering"}
+    end
+
+    Enum.map(results, & &1.result)
+  end
+
+  @doc """
+  Create a fresh pending copy of an event for re-emission.
+  Preserves user payload fields; resets all runtime metadata.
+  """
+  def event_reset(event), do: AbxBus.Event.reset(event)
+
   # ── Handler registration ────────────────────────────────────────────────────
 
   @doc """
@@ -214,12 +265,17 @@ defmodule AbxBus do
 
   `event_type` can be:
     * A module atom (e.g., `MyApp.UserCreated`)
+    * A string type name (e.g., `"UserCreated"`)
     * `"*"` or `:wildcard` to match all events
 
   ## Options
 
     * `:timeout` — per-handler timeout in seconds
+    * `:handler_slow_timeout` — slow handler warning threshold
     * `:max_attempts` — retry count (default 1)
+    * `:retry_after` — base delay between retries in seconds (default 0)
+    * `:retry_backoff_factor` — exponential multiplier (default 1.0)
+    * `:retry_on_errors` — list of error modules/matchers to retry on
     * `:handler_name` — human-readable name
     * `:semaphore_scope` — `:none` | `:global` | `:bus`
     * `:semaphore_name` — shared semaphore name
@@ -231,18 +287,19 @@ defmodule AbxBus do
     BusServer.on(bus, event_type, handler_fn, opts)
   end
 
-  # ── Forwarding ──────────────────────────────────────────────────────────────
-
   @doc """
-  Forward all events from source bus to target bus.
+  Unregister handlers.
 
-  Forwarded events keep the same `event_id` (they are NOT children).
-  The target bus appends its label to `event_path`.
-
-  This is equivalent to `bus.on('*', other_bus.emit)` in the Python version.
+    * `off(bus, event_type)` — remove ALL handlers for this event type
+    * `off(bus, event_type, handler_fn)` — remove handler matching this function
+    * `off(bus, handler_id: id)` — remove handler by its unique ID
   """
-  def forward(source_bus, target_bus) do
-    BusServer.forward_to(source_bus, target_bus)
+  def off(bus, event_type_or_opts) do
+    BusServer.off(bus, event_type_or_opts)
+  end
+
+  def off(bus, event_type, handler_fn) do
+    BusServer.off(bus, event_type, handler_fn)
   end
 
   # ── Bus queries ─────────────────────────────────────────────────────────────
@@ -253,9 +310,8 @@ defmodule AbxBus do
   end
 
   @doc "Get the bus label (name#short_id)."
-  def bus_label(bus) do
-    BusServer.label(bus)
-  end
+  @doc "Get the bus label (name#short_id)."
+  def label(bus), do: BusServer.label(bus)
 
   # ── Event queries ───────────────────────────────────────────────────────────
 
@@ -270,12 +326,29 @@ defmodule AbxBus do
     * `:future` — `false` | seconds to wait for future event
     * `:event_status` — filter by status
     * Other key-value pairs match event fields exactly
-
-  Returns the matching event or `nil`.
   """
   def find(event_type, opts \\ []) do
     EventStore.find(event_type, opts)
   end
+
+  # ── Lineage queries ────────────────────────────────────────────────────────
+
+  @doc "Check whether `child` is a descendant of `parent`."
+  def event_is_child_of(child, parent), do: AbxBus.Tree.child_of?(child, parent)
+
+  @doc "Check whether `parent` is an ancestor of `child`."
+  def event_is_parent_of(parent, child), do: AbxBus.Tree.parent_of?(parent, child)
+
+  @doc """
+  Render an ASCII tree of the event hierarchy.
+
+  ## Options
+
+    * `:max_depth` — maximum depth (default: 10)
+    * `:show_timing` — include timing info (default: true)
+    * `:show_results` — include handler results (default: false)
+  """
+  def log_tree(event, opts \\ []), do: AbxBus.Tree.log_tree(event, opts)
 
   # ── Handler context ─────────────────────────────────────────────────────────
 
@@ -285,38 +358,34 @@ defmodule AbxBus do
   """
   def current_bus! do
     case Process.get(:abx_current_bus) do
-      nil ->
-        raise RuntimeError, "bus can only be accessed from within an event handler"
-
-      bus ->
-        bus
+      nil -> raise RuntimeError, "bus can only be accessed from within an event handler"
+      bus -> bus
     end
   end
 
   @doc "Get the current event ID from handler context, or nil."
-  def current_event_id do
-    Process.get(:abx_current_event_id)
-  end
+  def current_event_id, do: Process.get(:abx_current_event_id)
 
   @doc "Get the current handler ID from handler context, or nil."
-  def current_handler_id do
-    Process.get(:abx_current_handler_id)
-  end
+  def current_handler_id, do: Process.get(:abx_current_handler_id)
 
   @doc "Check whether we're inside an event handler."
-  def in_handler_context? do
-    Process.get(:abx_current_event_id) != nil
-  end
+  def in_handler_context?, do: Process.get(:abx_current_event_id) != nil
 
   # ── Internals ───────────────────────────────────────────────────────────────
 
   defp maybe_set_parent(%{event_parent_id: nil} = event) do
-    case Process.get(:abx_current_event_id) do
-      nil -> event
-      parent_id -> %{event | event_parent_id: parent_id}
+    # If event already has entries in event_path, it's being forwarded
+    # (same event re-emitted to another bus) — don't set parent.
+    if event.event_path != [] do
+      event
+    else
+      case Process.get(:abx_current_event_id) do
+        nil -> event
+        parent_id -> %{event | event_parent_id: parent_id}
+      end
     end
   end
-
   defp maybe_set_parent(event), do: event
 
   defp maybe_track_child(event) do
@@ -327,11 +396,9 @@ defmodule AbxBus do
   end
 
   defp trigger_queue_jump(event) do
-    # Send jump_queue to each bus where this event is queued
     notify_ref = make_ref()
 
     for bus_label <- event.event_path do
-      # Extract bus name from label (format: "name#short_id")
       bus_name =
         case String.split(bus_label, "#") do
           [name | _] -> String.to_existing_atom(name)

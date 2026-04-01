@@ -8,40 +8,15 @@ defmodule AbxBus.BusServer do
     * In-flight and processing event tracking
     * Forwarding to other buses
     * Idle detection and `wait_until_idle/1`
-    * History management with backpressure
-
-  ## Concurrency model
-
-  In **bus-serial** mode (default), the GenServer processes one event at a time.
-  When the current event's EventWorker completes, it sends `{:event_worker_done, ...}`
-  back, and only then does `maybe_process_next/1` dequeue the next event.
-
-  In **parallel** mode, the GenServer drains the entire queue — every event gets
-  its own EventWorker immediately.
-
-  In **global-serial** mode, the GenServer coordinates with `AbxBus.LockManager`
-  to ensure only ONE event runs across ALL buses.
-
-  ## Queue-jump mechanics
-
-  When a handler blocks on `AbxBus.await(child_event)`:
-
-  1. The handler process sends `{:jump_queue, event_id}` to each bus where the
-     child is queued.
-  2. BusServer removes the event from its pending queue (if found).
-  3. BusServer spawns an EventWorker for it directly — bypassing the concurrency
-     policy check. This is safe because the parent handler is blocked in `receive`
-     (not holding any GenServer state).
-  4. When the child worker completes, the EventStore notifies the waiting handler
-     process, which unblocks and continues.
-
-  No re-entrant locks are needed. The BEAM's process model gives us this for free.
+    * History management with backpressure and trimming
+    * Middleware lifecycle dispatch
+    * Handler registration and unregistration
   """
 
   use GenServer
   require Logger
 
-  alias AbxBus.{EventStore, EventWorker, LockManager, HandlerEntry}
+  alias AbxBus.{EventStore, EventWorker, LockManager, HandlerEntry, Middleware}
 
   defstruct [
     :name,
@@ -60,12 +35,14 @@ defmodule AbxBus.BusServer do
     pending_queue: :queue.new(),
     in_flight: MapSet.new(),
     processing: MapSet.new(),
+    worker_monitors: %{},
     history: [],
+    history_count: 0,
     max_history_size: 1000,
     max_history_drop: true,
     idle_waiters: [],
-    forwarding_targets: [],
     handlers: %{},
+    middlewares: [],
     started: false
   ]
 
@@ -79,47 +56,34 @@ defmodule AbxBus.BusServer do
   def via(name) when is_atom(name), do: name
   def via(name), do: {:via, Registry, {AbxBus.BusRegistry, name}}
 
-  @doc """
-  Emit an event onto this bus. Non-blocking — returns the event immediately
-  with `event_id` and metadata populated. The event will be processed
-  asynchronously.
-
-  If called from within a handler process, automatically sets `event_parent_id`.
-  """
+  @doc "Emit an event onto this bus. Non-blocking."
   def emit(bus, event) do
     GenServer.call(lookup(bus), {:emit, event})
   end
 
-  @doc """
-  Register a handler for an event type. Returns the handler entry.
-
-  `event_type` can be a module atom or `:wildcard` (matches all events).
-
-  ## Options
-
-    * `:timeout` — per-handler timeout in seconds
-    * `:max_attempts` — retry count
-    * `:semaphore_scope` — `:none` | `:global` | `:bus`
-    * `:semaphore_name` — name for the semaphore
-    * `:semaphore_limit` — max concurrent invocations
-    * `:handler_name` — human-readable name
-  """
+  @doc "Register a handler for an event type. Returns the handler entry."
   def on(bus, event_type, handler_fn, opts \\ []) do
     GenServer.call(lookup(bus), {:register_handler, event_type, handler_fn, opts})
   end
 
   @doc """
-  Add a forwarding target. All events emitted on this bus will also be
-  emitted (same event_id, not a child) on the target bus.
+  Unregister handlers.
+
+  ## Patterns
+
+    * `off(bus, event_type)` — remove ALL handlers for this event type
+    * `off(bus, event_type, handler_fn)` — remove handler matching this function ref
+    * `off(bus, handler_id: id)` — remove handler by its unique ID
   """
-  def forward_to(source_bus, target_bus) do
-    GenServer.call(lookup(source_bus), {:add_forward, target_bus})
+  def off(bus, event_type_or_opts) do
+    GenServer.call(lookup(bus), {:unregister_handler, event_type_or_opts, nil})
   end
 
-  @doc """
-  Wait until the bus has no pending or in-flight events.
-  Blocks the calling process.
-  """
+  def off(bus, event_type, handler_fn) do
+    GenServer.call(lookup(bus), {:unregister_handler, event_type, handler_fn})
+  end
+
+  @doc "Wait until the bus has no pending or in-flight events."
   def wait_until_idle(bus, timeout \\ :infinity) do
     GenServer.call(lookup(bus), :wait_until_idle, timeout)
   end
@@ -130,24 +94,24 @@ defmodule AbxBus.BusServer do
   end
 
   @doc "Get the bus label (name#short_id)."
-  def label(bus) do
-    GenServer.call(lookup(bus), :label)
-  end
+  def label(bus), do: GenServer.call(lookup(bus), :label)
 
   @doc "Get current in-flight event IDs."
-  def in_flight_event_ids(bus) do
-    GenServer.call(lookup(bus), :in_flight_event_ids)
-  end
+  def in_flight_event_ids(bus), do: GenServer.call(lookup(bus), :in_flight_event_ids)
 
   @doc "Get current processing event IDs."
-  def processing_event_ids(bus) do
-    GenServer.call(lookup(bus), :processing_event_ids)
-  end
+  def processing_event_ids(bus), do: GenServer.call(lookup(bus), :processing_event_ids)
 
   @doc "Get the pending queue size."
-  def queue_size(bus) do
-    GenServer.call(lookup(bus), :queue_size)
+  def queue_size(bus), do: GenServer.call(lookup(bus), :queue_size)
+
+  @doc "Get handler count for an event type (or all if :all)."
+  def handler_count(bus, event_type \\ :all) do
+    GenServer.call(lookup(bus), {:handler_count, event_type})
   end
+
+  @doc "Get bus config as a map."
+  def get_config(bus), do: GenServer.call(lookup(bus), :get_config)
 
   defp lookup(bus) when is_pid(bus), do: bus
   defp lookup(bus), do: via(bus)
@@ -172,10 +136,10 @@ defmodule AbxBus.BusServer do
       event_handler_detect_file_paths: Keyword.get(opts, :event_handler_detect_file_paths, true),
       max_history_size: Keyword.get(opts, :max_history_size, 1000),
       max_history_drop: Keyword.get(opts, :max_history_drop, true),
+      middlewares: Keyword.get(opts, :middlewares, []),
       started: true
     }
 
-    # Register self in the bus PID table for global-serial broadcast
     ensure_bus_pid_table()
     :ets.insert(:abx_bus_pids, {self(), state.name})
 
@@ -183,11 +147,10 @@ defmodule AbxBus.BusServer do
   end
 
   defp ensure_bus_pid_table do
-    case :ets.info(:abx_bus_pids) do
-      :undefined ->
-        :ets.new(:abx_bus_pids, [:set, :public, :named_table])
-      _ ->
-        :ok
+    try do
+      :ets.new(:abx_bus_pids, [:set, :public, :named_table])
+    rescue
+      ArgumentError -> :ok
     end
   end
 
@@ -195,7 +158,6 @@ defmodule AbxBus.BusServer do
 
   @impl true
   def handle_call({:emit, event}, _from, state) do
-    # Ensure event has ID and metadata
     event =
       event
       |> ensure_event_id()
@@ -203,39 +165,28 @@ defmodule AbxBus.BusServer do
       |> ensure_timestamps()
       |> append_bus_to_path(state.label)
 
-    # Set parent from calling context (process dictionary of caller)
-    # The caller's process dictionary won't be visible here (we're in the
-    # GenServer process), so parent_id must be set by the caller before calling emit.
-
-    # Check history backpressure
     case check_backpressure(state) do
       :ok ->
-        # Enqueue
         new_queue = :queue.in(event, state.pending_queue)
         new_in_flight = MapSet.put(state.in_flight, event.event_id)
 
-        # Store in ETS
         EventStore.put(event)
         EventStore.index_to_bus(state.name, event.event_id)
-
-        # Update event's pending bus count
         EventStore.update(event.event_id, %{
           event_pending_bus_count: (event.event_pending_bus_count || 0) + 1
         })
-
-        # Resolve find-waiters
         EventStore.resolve_find_waiters(event)
 
         state = %{state |
           pending_queue: new_queue,
           in_flight: new_in_flight,
-          history: [event.event_id | state.history]
+          history: [event.event_id | state.history],
+          history_count: state.history_count + 1
         }
 
-        # Forward to target buses (same event_id — NOT a child)
-        forward_event(event, state)
+        # Middleware: event pending
+        Middleware.dispatch(state.middlewares, :on_event_change, [state.name, event, :pending])
 
-        # Try to process next event
         state = maybe_process_next(state)
 
         {:reply, event, state}
@@ -248,13 +199,10 @@ defmodule AbxBus.BusServer do
   # ── Handler registration ────────────────────────────────────────────────────
 
   def handle_call({:register_handler, event_type, handler_fn, opts}, _from, state) do
-    # Normalize event type: "*" or :wildcard both map to :wildcard
-    event_type =
-      case event_type do
-        "*" -> :wildcard
-        other -> other
-      end
+    event_type = normalize_event_type(event_type)
 
+    detect = Keyword.get(opts, :detect_file_paths, state.event_handler_detect_file_paths)
+    opts = Keyword.put(opts, :detect_file_paths, detect)
     entry = HandlerEntry.new(event_type, handler_fn, Keyword.put(opts, :bus_name, state.name))
 
     handlers =
@@ -262,17 +210,42 @@ defmodule AbxBus.BusServer do
         existing ++ [entry]
       end)
 
+    # Middleware: handler registered
+    Middleware.dispatch(state.middlewares, :on_bus_handlers_change, [state.name, entry, true])
+
     {:reply, entry, %{state | handlers: handlers}}
   end
 
-  # ── Forwarding ──────────────────────────────────────────────────────────────
+  # ── Handler unregistration ─────────────────────────────────────────────────
 
-  def handle_call({:add_forward, target_bus}, _from, state) do
-    targets = [target_bus | state.forwarding_targets] |> Enum.uniq()
-    {:reply, :ok, %{state | forwarding_targets: targets}}
+  def handle_call({:unregister_handler, event_type_or_opts, handler_fn}, _from, state) do
+    {removed, handlers} =
+      case {event_type_or_opts, handler_fn} do
+        {[handler_id: id], _} ->
+          # Remove by handler ID across all types
+          remove_handler_by_id(state.handlers, id)
+
+        {event_type, nil} ->
+          # Remove all handlers for this event type
+          et = normalize_event_type(event_type)
+          removed = Map.get(state.handlers, et, [])
+          {removed, Map.delete(state.handlers, et)}
+
+        {event_type, handler_fn} ->
+          # Remove specific handler function for this event type
+          et = normalize_event_type(event_type)
+          remove_handler_by_fn(state.handlers, et, handler_fn)
+      end
+
+    # Middleware: handler unregistered
+    for entry <- List.wrap(removed) do
+      Middleware.dispatch(state.middlewares, :on_bus_handlers_change, [state.name, entry, false])
+    end
+
+    {:reply, :ok, %{state | handlers: handlers}}
   end
 
-  # ── Idle detection ──────────────────────────────────────────────────────────
+  # ── Idle ────────────────────────────────────────────────────────────────────
 
   def handle_call(:wait_until_idle, from, state) do
     if idle?(state) do
@@ -284,20 +257,20 @@ defmodule AbxBus.BusServer do
 
   # ── Introspection ──────────────────────────────────────────────────────────
 
-  def handle_call(:label, _from, state) do
-    {:reply, state.label, state}
+  def handle_call(:label, _from, state), do: {:reply, state.label, state}
+  def handle_call(:in_flight_event_ids, _from, state), do: {:reply, state.in_flight, state}
+  def handle_call(:processing_event_ids, _from, state), do: {:reply, state.processing, state}
+  def handle_call(:queue_size, _from, state), do: {:reply, :queue.len(state.pending_queue), state}
+  def handle_call(:get_config, _from, state), do: {:reply, config(state), state}
+
+  def handle_call({:handler_count, :all}, _from, state) do
+    count = state.handlers |> Map.values() |> List.flatten() |> length()
+    {:reply, count, state}
   end
 
-  def handle_call(:in_flight_event_ids, _from, state) do
-    {:reply, state.in_flight, state}
-  end
-
-  def handle_call(:processing_event_ids, _from, state) do
-    {:reply, state.processing, state}
-  end
-
-  def handle_call(:queue_size, _from, state) do
-    {:reply, :queue.len(state.pending_queue), state}
+  def handle_call({:handler_count, event_type}, _from, state) do
+    et = normalize_event_type(event_type)
+    {:reply, length(Map.get(state.handlers, et, [])), state}
   end
 
   # ── Stop ────────────────────────────────────────────────────────────────────
@@ -317,14 +290,11 @@ defmodule AbxBus.BusServer do
   def handle_cast({:jump_queue, event_id, _notify_pid, _notify_ref}, state) do
     case remove_from_queue(state.pending_queue, event_id) do
       {:ok, event, new_queue} ->
-        # Found in queue — process immediately, bypassing concurrency policy
         state = %{state | pending_queue: new_queue}
         state = spawn_event_worker(state, event, jump: true)
         {:noreply, state}
 
       :not_found ->
-        # Already dequeued by normal processing. The EventWorker will handle it.
-        # Nothing to do — the waiter will be notified when the worker completes.
         {:noreply, state}
     end
   end
@@ -333,7 +303,6 @@ defmodule AbxBus.BusServer do
 
   @impl true
   def handle_info({:event_worker_done, event_id, results}, state) do
-    # Update event in store
     EventStore.update_fun(event_id, fn event ->
       now = System.monotonic_time(:nanosecond)
       completed_ats = for({_, r} <- results, r.completed_at != nil, do: r.completed_at)
@@ -347,31 +316,29 @@ defmodule AbxBus.BusServer do
       }
     end)
 
-    # Remove from processing and in-flight
     state = %{state |
       processing: MapSet.delete(state.processing, event_id),
       in_flight: MapSet.delete(state.in_flight, event_id)
     }
 
-    # Release global lock if we held it
     event = EventStore.get(event_id)
     effective_concurrency = LockManager.resolve_event_concurrency(event || %{}, config(state))
 
     if effective_concurrency == :global_serial do
       LockManager.release_global()
-      # Notify all buses to check their pending queues
       notify_all_buses_check_pending()
     end
 
-    # Notify completion waiters
+    # Middleware: event completed
     if event do
+      Middleware.dispatch(state.middlewares, :on_event_change, [state.name, event, :completed])
       maybe_mark_tree_complete(event)
     end
 
-    # Try to process next event
-    state = maybe_process_next(state)
+    # Trim history if needed
+    state = maybe_trim_history(state)
 
-    # Check idle
+    state = maybe_process_next(state)
     state = maybe_notify_idle(state)
 
     {:noreply, state}
@@ -380,7 +347,39 @@ defmodule AbxBus.BusServer do
   @impl true
   def handle_info({:event_worker_started, event_id}, state) do
     EventStore.update(event_id, %{event_status: :started, event_started_at: System.monotonic_time(:nanosecond)})
+
+    # Middleware: event started
+    if event = EventStore.get(event_id) do
+      Middleware.dispatch(state.middlewares, :on_event_change, [state.name, event, :started])
+    end
+
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    case Map.pop(state.worker_monitors, ref) do
+      {nil, _} ->
+        {:noreply, state}
+
+      {event_id, monitors} ->
+        state = %{state | worker_monitors: monitors}
+
+        if reason != :normal do
+          Logger.warning("EventWorker for #{event_id} crashed: #{inspect(reason)}")
+          # Clean up as if worker completed with error
+          EventStore.update(event_id, %{event_status: :error})
+          state = %{state |
+            processing: MapSet.delete(state.processing, event_id),
+            in_flight: MapSet.delete(state.in_flight, event_id)
+          }
+          state = maybe_process_next(state)
+          state = maybe_notify_idle(state)
+          {:noreply, state}
+        else
+          {:noreply, state}
+        end
+    end
   end
 
   @impl true
@@ -391,9 +390,7 @@ defmodule AbxBus.BusServer do
   end
 
   @impl true
-  def handle_info(_msg, state) do
-    {:noreply, state}
-  end
+  def handle_info(_msg, state), do: {:noreply, state}
 
   # ── Internal: queue processing ──────────────────────────────────────────────
 
@@ -410,7 +407,6 @@ defmodule AbxBus.BusServer do
           state = %{state | pending_queue: new_queue}
           state = spawn_event_worker(state, event, jump: false)
 
-          # In parallel mode, keep draining
           if effective_concurrency == :parallel do
             maybe_process_next(state)
           else
@@ -425,12 +421,8 @@ defmodule AbxBus.BusServer do
 
   defp can_proceed?(concurrency_mode, state) do
     case concurrency_mode do
-      :parallel ->
-        true
-
-      :bus_serial ->
-        MapSet.size(state.processing) == 0
-
+      :parallel -> true
+      :bus_serial -> MapSet.size(state.processing) == 0
       :global_serial ->
         MapSet.size(state.processing) == 0 and
           LockManager.try_acquire_global() == :ok
@@ -444,12 +436,16 @@ defmodule AbxBus.BusServer do
     bus_config = config(state)
     _jump = Keyword.get(opts, :jump, false)
 
-    # Spawn a linked process for this event
-    spawn_link(fn ->
+    pid = spawn(fn ->
       EventWorker.run(event, handlers, bus_config, bus_pid, bus_name)
     end)
 
-    %{state | processing: MapSet.put(state.processing, event.event_id)}
+    ref = Process.monitor(pid)
+
+    %{state |
+      processing: MapSet.put(state.processing, event.event_id),
+      worker_monitors: Map.put(state.worker_monitors, ref, event.event_id)
+    }
   end
 
   defp applicable_handlers(state, event) do
@@ -458,51 +454,65 @@ defmodule AbxBus.BusServer do
     type_handlers = Map.get(state.handlers, event_type, [])
     wildcard_handlers = Map.get(state.handlers, :wildcard, [])
 
-    # Filter out handlers that would create forwarding loops
-    (type_handlers ++ wildcard_handlers)
+    # Also match string-registered handlers
+    type_name = if is_atom(event_type), do: event_type |> Module.split() |> List.last(), else: nil
+    string_handlers = if type_name, do: Map.get(state.handlers, type_name, []), else: []
+
+    (type_handlers ++ string_handlers ++ wildcard_handlers)
     |> Enum.reject(fn entry ->
-      # If this handler's bus is already in the event path (besides the current bus),
-      # and the handler is a wildcard (forwarding), skip to prevent loops
       entry.event_type == :wildcard and
         entry.bus_name != state.name and
         Enum.any?(event.event_path, fn p -> String.starts_with?(p, "#{entry.bus_name}#") end)
     end)
   end
 
-  # ── Internal: forwarding ────────────────────────────────────────────────────
+  # ── Internal: handler removal ───────────────────────────────────────────────
 
-  defp forward_event(event, state) do
-    for target <- state.forwarding_targets do
-      # Forward is NOT a child — same event_id, just adding to path
-      # The target bus's emit handler will append its label to event_path
-      Task.start(fn ->
-        try do
-          AbxBus.BusServer.emit(target, event)
-        rescue
-          _ -> :ok
-        end
-      end)
+  defp remove_handler_by_id(handlers, id) do
+    Enum.reduce(handlers, {[], handlers}, fn {type, entries}, {removed_acc, h} ->
+      {matching, remaining} = Enum.split_with(entries, fn e -> e.id == id end)
+      {removed_acc ++ matching, Map.put(h, type, remaining)}
+    end)
+  end
+
+  defp remove_handler_by_fn(handlers, event_type, handler_fn) do
+    entries = Map.get(handlers, event_type, [])
+    {matching, remaining} = Enum.split_with(entries, fn e -> e.handler_fn == handler_fn end)
+    {matching, Map.put(handlers, event_type, remaining)}
+  end
+
+  # ── Internal: history trimming ──────────────────────────────────────────────
+
+  defp maybe_trim_history(%{max_history_drop: false} = state), do: state
+  defp maybe_trim_history(%{max_history_size: max} = state) when max <= 0, do: state
+
+  defp maybe_trim_history(state) do
+    if state.history_count > state.max_history_size do
+      trimmed = Enum.take(state.history, state.max_history_size)
+      %{state | history: trimmed, history_count: state.max_history_size}
+    else
+      state
     end
   end
 
   # ── Internal: helpers ───────────────────────────────────────────────────────
 
+  defp normalize_event_type("*"), do: :wildcard
+  defp normalize_event_type(type), do: type
+
   defp ensure_event_id(%{event_id: nil} = event) do
     %{event | event_id: AbxBus.Event.generate_id()}
   end
-
   defp ensure_event_id(event), do: event
 
   defp ensure_event_type(%{event_type: nil} = event) do
     %{event | event_type: event.__struct__}
   end
-
   defp ensure_event_type(event), do: event
 
   defp ensure_timestamps(%{event_created_at: nil} = event) do
     %{event | event_created_at: System.monotonic_time(:nanosecond)}
   end
-
   defp ensure_timestamps(event), do: event
 
   defp append_bus_to_path(event, label) do
@@ -515,7 +525,7 @@ defmodule AbxBus.BusServer do
   end
 
   defp check_backpressure(state) do
-    if length(state.history) >= state.max_history_size and not state.max_history_drop do
+    if state.history_count >= state.max_history_size and not state.max_history_drop do
       {:error, %AbxBus.HistoryFullError{}}
     else
       :ok
@@ -535,16 +545,12 @@ defmodule AbxBus.BusServer do
   end
 
   defp idle?(state) do
-    :queue.is_empty(state.pending_queue) and
-      MapSet.size(state.in_flight) == 0
+    :queue.is_empty(state.pending_queue) and MapSet.size(state.in_flight) == 0
   end
 
   defp maybe_notify_idle(state) do
     if idle?(state) do
-      for waiter <- state.idle_waiters do
-        GenServer.reply(waiter, :ok)
-      end
-
+      for waiter <- state.idle_waiters, do: GenServer.reply(waiter, :ok)
       %{state | idle_waiters: []}
     else
       state
@@ -557,14 +563,10 @@ defmodule AbxBus.BusServer do
 
   defp remove_from_queue(queue, event_id, acc) do
     case :queue.out(queue) do
-      {:empty, _} ->
-        :not_found
-
+      {:empty, _} -> :not_found
       {{:value, event}, rest} ->
         if event.event_id == event_id do
-          # Found it — rebuild queue without this event
-          remaining = :queue.join(acc, rest)
-          {:ok, event, remaining}
+          {:ok, event, :queue.join(acc, rest)}
         else
           remove_from_queue(rest, event_id, :queue.in(event, acc))
         end
@@ -572,7 +574,6 @@ defmodule AbxBus.BusServer do
   end
 
   defp notify_all_buses_check_pending do
-    # Broadcast to all registered buses
     case :ets.info(:abx_bus_pids) do
       :undefined -> :ok
       _ ->
@@ -584,7 +585,6 @@ defmodule AbxBus.BusServer do
   end
 
   defp maybe_mark_tree_complete(event) do
-    # Check if all children are complete
     children_ids = EventStore.children_of(event.event_id)
     all_children_complete =
       Enum.all?(children_ids, fn child_id ->
@@ -595,12 +595,10 @@ defmodule AbxBus.BusServer do
       end)
 
     if all_children_complete and event.event_pending_bus_count <= 0 do
-      # Mark this event fully complete and notify waiters
       EventStore.update(event.event_id, %{event_status: :completed})
       updated = EventStore.get(event.event_id)
       EventStore.notify_waiters(event.event_id, updated)
 
-      # Propagate up to parent
       if event.event_parent_id do
         case EventStore.get(event.event_parent_id) do
           nil -> :ok

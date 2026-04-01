@@ -21,4 +21,6 @@ defmodule AbxBus.Types do
   @type handler_result_status :: :pending | :started | :completed | :error | :cancelled
 
   @type timestamp :: integer()
+
+  @type event_pattern :: module() | binary() | :wildcard
 end

@@ -1,32 +1,27 @@
 defmodule AbxBus.EventStore do
   @moduledoc """
-  ETS-backed event registry.
+  ETS-backed event registry with serialized updates.
 
-  Provides O(1) event lookup by ID, parent-child indexing, and the `find/3`
-  query mechanism with past/future search windows.
+  All mutations go through the GenServer to prevent concurrent read-modify-write
+  races. Reads are direct ETS lookups for performance.
 
   ## Tables
 
-    * `:abx_events`        — `{event_id, event_map}` (set)
-    * `:abx_event_children` — `{parent_id, child_id}` (bag)
-    * `:abx_event_waiters`  — `{event_id, {pid, ref}}` (bag) — completion waiters
-    * `:abx_find_waiters`   — `{event_type_or_wildcard, {pid, ref, opts}}` (bag)
-    * `:abx_bus_events`     — `{bus_name, event_id}` (bag) — per-bus event index
+    * `:abx_events`         — `{event_id, event_map}` (set)
+    * `:abx_event_children`  — `{parent_id, child_id}` (bag)
+    * `:abx_event_waiters`   — `{event_id, {pid, ref}}` (bag)
+    * `:abx_find_waiters`    — `{event_type, {pid, ref, opts}}` (bag)
+    * `:abx_bus_events`      — `{bus_name, event_id}` (bag)
+    * `:abx_worker_results`  — `{key, results_map}` (set) — shared timeout state
   """
 
   use GenServer
-
-  # ── Client API ──────────────────────────────────────────────────────────────
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @doc "Store or update an event in the registry."
-  def put(event) do
-    :ets.insert(:abx_events, {event.event_id, event})
-    :ok
-  end
+  # ── Direct ETS reads (no serialization needed) ─────────────────────────────
 
   @doc "Retrieve an event by ID."
   def get(event_id) do
@@ -36,48 +31,10 @@ defmodule AbxBus.EventStore do
     end
   end
 
-  @doc "Update specific fields on a stored event."
-  def update(event_id, updates) when is_map(updates) do
-    case get(event_id) do
-      nil ->
-        :error
-
-      event ->
-        updated = Map.merge(event, updates)
-        put(updated)
-        {:ok, updated}
-    end
-  end
-
-  @doc "Atomically update an event via a transform function."
-  def update_fun(event_id, fun) when is_function(fun, 1) do
-    case get(event_id) do
-      nil ->
-        :error
-
-      event ->
-        updated = fun.(event)
-        put(updated)
-        {:ok, updated}
-    end
-  end
-
-  @doc "Record a parent-child relationship."
-  def add_child(parent_id, child_id) do
-    :ets.insert(:abx_event_children, {parent_id, child_id})
-    :ok
-  end
-
   @doc "Get all child event IDs for a parent."
   def children_of(parent_id) do
     :ets.lookup(:abx_event_children, parent_id)
     |> Enum.map(fn {_, child_id} -> child_id end)
-  end
-
-  @doc "Index an event to a bus."
-  def index_to_bus(bus_name, event_id) do
-    :ets.insert(:abx_bus_events, {bus_name, event_id})
-    :ok
   end
 
   @doc "Get all event IDs for a bus."
@@ -86,19 +43,45 @@ defmodule AbxBus.EventStore do
     |> Enum.map(fn {_, event_id} -> event_id end)
   end
 
+  # ── Serialized mutations (through GenServer) ───────────────────────────────
+
+  @doc "Store or update an event in the registry."
+  def put(event) do
+    GenServer.call(__MODULE__, {:put, event})
+  end
+
+  @doc "Update specific fields on a stored event."
+  def update(event_id, updates) when is_map(updates) do
+    GenServer.call(__MODULE__, {:update, event_id, updates})
+  end
+
+  @doc "Atomically update an event via a transform function."
+  def update_fun(event_id, fun) when is_function(fun, 1) do
+    GenServer.call(__MODULE__, {:update_fun, event_id, fun})
+  end
+
+  @doc "Record a parent-child relationship."
+  def add_child(parent_id, child_id) do
+    :ets.insert(:abx_event_children, {parent_id, child_id})
+    :ok
+  end
+
+  @doc "Index an event to a bus."
+  def index_to_bus(bus_name, event_id) do
+    :ets.insert(:abx_bus_events, {bus_name, event_id})
+    :ok
+  end
+
   # ── Completion waiters ──────────────────────────────────────────────────────
 
-  @doc """
-  Register the calling process to be notified when an event completes.
-  Returns a ref that will appear in the `{:event_completed, ref, event}` message.
-  """
+  @doc "Register completion waiter. Returns ref for matching."
   def add_waiter(event_id, pid \\ self()) do
     ref = make_ref()
     :ets.insert(:abx_event_waiters, {event_id, {pid, ref}})
     ref
   end
 
-  @doc "Notify all waiters that an event has completed and remove their entries."
+  @doc "Notify all waiters and remove their entries."
   def notify_waiters(event_id, event) do
     waiters = :ets.lookup(:abx_event_waiters, event_id)
     :ets.delete(:abx_event_waiters, event_id)
@@ -112,23 +95,26 @@ defmodule AbxBus.EventStore do
 
   # ── Find waiters (future search) ───────────────────────────────────────────
 
-  @doc """
-  Register a find-waiter: a process waiting for a future event matching criteria.
-  Returns a ref. The process will receive `{:find_match, ref, event}`.
-  """
   def add_find_waiter(event_type, opts, pid \\ self()) do
     ref = make_ref()
     :ets.insert(:abx_find_waiters, {event_type, {pid, ref, opts}})
     ref
   end
 
-  @doc """
-  Check all find-waiters against a newly emitted event. Notify and remove matches.
-  """
+  def remove_find_waiter(ref) do
+    # Scan and remove entry with this ref
+    for type_key <- [:abx_find_waiters] do
+      :ets.tab2list(:abx_find_waiters)
+      |> Enum.each(fn {_, {_, r, _}} = entry ->
+        if r == ref, do: :ets.delete_object(:abx_find_waiters, entry)
+      end)
+    end
+    :ok
+  end
+
   def resolve_find_waiters(event) do
     event_type = event.event_type
 
-    # Check both specific-type waiters and wildcard waiters
     for type_key <- [event_type, :wildcard] do
       waiters = :ets.lookup(:abx_find_waiters, type_key)
 
@@ -145,34 +131,23 @@ defmodule AbxBus.EventStore do
 
   # ── Find (past + future search) ────────────────────────────────────────────
 
-  @doc """
-  Search for events matching criteria.
-
-  ## Options
-
-    * `:child_of` — parent event (struct or event_id) to scope search
-    * `:where` — `fn event -> boolean` filter
-    * `:past` — `true` | seconds (float) to search history
-    * `:future` — `false` | seconds (float) to wait for future events
-    * `:event_status` — filter by status atom
-    * `:bus_name` — scope to events processed by a specific bus
-    * Any other key-value pair is matched as metadata equality
-
-  Returns the matching event or `nil`.
-  """
+  @doc "Search for events matching criteria. See AbxBus.find/2 for options."
   def find(event_type, opts \\ []) do
     past = Keyword.get(opts, :past, true)
     future = Keyword.get(opts, :future, false)
+
+    # For future searches: register waiter FIRST to avoid TOCTOU race
+    future_ref =
+      if future != false do
+        add_find_waiter(normalize_type(event_type), opts)
+      end
 
     # Phase 1: search past events
     result =
       if past do
         cutoff =
           case past do
-            true ->
-              # No time restriction — search all history
-              :no_cutoff
-
+            true -> :no_cutoff
             seconds when is_number(seconds) ->
               System.monotonic_time(:nanosecond) - trunc(seconds * 1_000_000_000)
           end
@@ -180,27 +155,28 @@ defmodule AbxBus.EventStore do
         search_past(event_type, cutoff, opts)
       end
 
-    # Phase 2: wait for future events
-    case {result, future} do
-      {nil, false} ->
+    case {result, future, future_ref} do
+      {nil, false, _} ->
         nil
 
-      {nil, timeout_s} ->
+      {nil, _, ref} ->
         timeout_ms =
-          case timeout_s do
+          case future do
             true -> :infinity
             s when is_number(s) -> trunc(s * 1000)
           end
 
-        ref = add_find_waiter(normalize_type(event_type), opts)
-
         receive do
           {:find_match, ^ref, event} -> event
         after
-          timeout_ms -> nil
+          timeout_ms ->
+            remove_find_waiter(ref)
+            nil
         end
 
-      {event, _} ->
+      {event, _, ref} ->
+        # Found in past — clean up future waiter if registered
+        if ref, do: remove_find_waiter(ref)
         event
     end
   end
@@ -208,7 +184,6 @@ defmodule AbxBus.EventStore do
   # ── Internals ───────────────────────────────────────────────────────────────
 
   defp search_past(event_type, cutoff, opts) do
-    # Full scan of :abx_events ETS table with filters
     :ets.tab2list(:abx_events)
     |> Enum.find_value(fn {_id, event} ->
       if matches_all?(event, event_type, cutoff, opts), do: event
@@ -233,9 +208,7 @@ defmodule AbxBus.EventStore do
   end
 
   defp matches_cutoff?(_event, :no_cutoff), do: true
-  defp matches_cutoff?(event, cutoff) do
-    (event.event_created_at || 0) >= cutoff
-  end
+  defp matches_cutoff?(event, cutoff), do: (event.event_created_at || 0) >= cutoff
 
   defp matches_child_of_event?(event, opts) do
     case Keyword.get(opts, :child_of) do
@@ -282,11 +255,44 @@ defmodule AbxBus.EventStore do
 
   @impl true
   def init(_opts) do
-    :ets.new(:abx_events, [:set, :public, :named_table, read_concurrency: true, write_concurrency: true])
+    :ets.new(:abx_events, [:set, :public, :named_table, read_concurrency: true])
     :ets.new(:abx_event_children, [:bag, :public, :named_table, write_concurrency: true])
     :ets.new(:abx_event_waiters, [:bag, :public, :named_table, write_concurrency: true])
     :ets.new(:abx_find_waiters, [:bag, :public, :named_table, write_concurrency: true])
     :ets.new(:abx_bus_events, [:bag, :public, :named_table, write_concurrency: true])
+    :ets.new(:abx_worker_results, [:set, :public, :named_table, write_concurrency: true])
     {:ok, %{}}
+  end
+
+  @impl true
+  def handle_call({:put, event}, _from, state) do
+    :ets.insert(:abx_events, {event.event_id, event})
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:update, event_id, updates}, _from, state) do
+    result =
+      case :ets.lookup(:abx_events, event_id) do
+        [{^event_id, event}] ->
+          updated = Map.merge(event, updates)
+          :ets.insert(:abx_events, {event_id, updated})
+          {:ok, updated}
+        [] ->
+          :error
+      end
+    {:reply, result, state}
+  end
+
+  def handle_call({:update_fun, event_id, fun}, _from, state) do
+    result =
+      case :ets.lookup(:abx_events, event_id) do
+        [{^event_id, event}] ->
+          updated = fun.(event)
+          :ets.insert(:abx_events, {event_id, updated})
+          {:ok, updated}
+        [] ->
+          :error
+      end
+    {:reply, result, state}
   end
 end

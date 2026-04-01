@@ -1,9 +1,7 @@
 defmodule AbxBus.EventBusForwardingTest do
   @moduledoc """
-  Tests for event forwarding between buses: completion race, self-parent
-  prevention, defaults inheritance, and first-mode forwarding.
-
-  Port of tests/test_eventbus_forwarding.py.
+  Tests for event forwarding between buses via wildcard handlers.
+  Forwarding is done with `bus.on("*", fn e -> AbxBus.emit(other, e) end)`.
   """
 
   use ExUnit.Case, async: false
@@ -12,20 +10,18 @@ defmodule AbxBus.EventBusForwardingTest do
 
   defevent(RelayEvent)
   defevent(SelfParentForwardEvent)
-  defevent(ForwardedDefaultsTriggerEvent)
   defevent(ForwardedDefaultsChildEvent, mode: "inherited")
   defevent(ForwardedFirstDefaultsEvent)
 
   describe "forwarding completion" do
-    test "circular forwarding doesn't leave stale in-flight IDs" do
+    test "linear forwarding chain completes without stale in-flight IDs" do
       {:ok, _} = AbxBus.start_bus(:p1, event_concurrency: :bus_serial)
       {:ok, _} = AbxBus.start_bus(:p2, event_concurrency: :bus_serial)
       {:ok, _} = AbxBus.start_bus(:p3, event_concurrency: :bus_serial)
 
-      # Circular forwarding: p1 -> p2 -> p3 -> p1
-      # (In practice, path detection prevents re-queueing on same bus)
-      AbxBus.forward(:p1, :p2)
-      AbxBus.forward(:p2, :p3)
+      # p1 -> p2 -> p3 via wildcard handlers
+      AbxBus.on(:p1, "*", fn e -> AbxBus.emit(:p2, e) end, handler_name: "fwd_p1_p2")
+      AbxBus.on(:p2, "*", fn e -> AbxBus.emit(:p3, e) end, handler_name: "fwd_p2_p3")
 
       AbxBus.on(:p1, RelayEvent, fn _event -> :ok end)
       AbxBus.on(:p2, RelayEvent, fn _event -> :ok end)
@@ -37,12 +33,10 @@ defmodule AbxBus.EventBusForwardingTest do
       AbxBus.wait_until_idle(:p2)
       AbxBus.wait_until_idle(:p3)
 
-      # No stale in-flight IDs
       assert MapSet.size(AbxBus.BusServer.in_flight_event_ids(:p1)) == 0
       assert MapSet.size(AbxBus.BusServer.in_flight_event_ids(:p2)) == 0
       assert MapSet.size(AbxBus.BusServer.in_flight_event_ids(:p3)) == 0
 
-      # Event should be completed
       stored = AbxBus.EventStore.get(event.event_id)
       assert stored.event_status == :completed
     end
@@ -53,7 +47,7 @@ defmodule AbxBus.EventBusForwardingTest do
       {:ok, _} = AbxBus.start_bus(:origin)
       {:ok, _} = AbxBus.start_bus(:target)
 
-      AbxBus.forward(:origin, :target)
+      AbxBus.on(:origin, "*", fn e -> AbxBus.emit(:target, e) end, handler_name: "fwd")
 
       AbxBus.on(:origin, SelfParentForwardEvent, fn _event -> :ok end)
       AbxBus.on(:target, SelfParentForwardEvent, fn _event -> :ok end)
@@ -64,11 +58,7 @@ defmodule AbxBus.EventBusForwardingTest do
       AbxBus.wait_until_idle(:target)
 
       stored = AbxBus.EventStore.get(event.event_id)
-
-      # Root event should have no parent
       assert stored.event_parent_id == nil
-
-      # Event path should show both buses
       assert length(stored.event_path) == 2
     end
   end
@@ -78,11 +68,10 @@ defmodule AbxBus.EventBusForwardingTest do
       {:ok, _} = AbxBus.start_bus(:fwd_a, event_handler_concurrency: :serial)
       {:ok, _} = AbxBus.start_bus(:fwd_b, event_handler_concurrency: :parallel)
 
-      AbxBus.forward(:fwd_a, :fwd_b)
+      AbxBus.on(:fwd_a, "*", fn e -> AbxBus.emit(:fwd_b, e) end, handler_name: "fwd")
 
       log = Agent.start_link(fn -> [] end) |> elem(1)
 
-      # Two handlers on bus_b — in parallel mode, both should start before either ends
       AbxBus.on(:fwd_b, ForwardedDefaultsChildEvent, fn _event ->
         Agent.update(log, &(&1 ++ ["b1_start"]))
         Process.sleep(20)
@@ -104,15 +93,14 @@ defmodule AbxBus.EventBusForwardingTest do
 
       order = Agent.get(log, & &1)
 
-      # With parallel handler concurrency on bus_b, both should start
-      # before either finishes
       b1_start = Enum.find_index(order, &(&1 == "b1_start"))
       b2_start = Enum.find_index(order, &(&1 == "b2_start"))
       b1_end = Enum.find_index(order, &(&1 == "b1_end"))
 
-      if b1_start && b2_start && b1_end do
-        assert b2_start < b1_end, "With parallel handlers, b2 should start before b1 finishes"
-      end
+      assert b1_start != nil
+      assert b2_start != nil
+      assert b1_end != nil
+      assert b2_start < b1_end, "With parallel handlers, b2 should start before b1 finishes"
     end
   end
 
@@ -127,7 +115,7 @@ defmodule AbxBus.EventBusForwardingTest do
         event_handler_concurrency: :parallel
       )
 
-      AbxBus.forward(:first_a, :first_b)
+      AbxBus.on(:first_a, "*", fn e -> AbxBus.emit(:first_b, e) end, handler_name: "fwd")
 
       AbxBus.on(:first_b, ForwardedFirstDefaultsEvent, fn _event ->
         Process.sleep(50)

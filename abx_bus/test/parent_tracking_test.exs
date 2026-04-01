@@ -99,7 +99,7 @@ defmodule AbxBus.ParentTrackingTest do
       {:ok, _} = AbxBus.start_bus(:pt_fwd_a)
       {:ok, _} = AbxBus.start_bus(:pt_fwd_b)
 
-      AbxBus.forward(:pt_fwd_a, :pt_fwd_b)
+      AbxBus.on(:pt_fwd_a, "*", fn e -> AbxBus.emit(:pt_fwd_b, e) end, handler_name: "fwd")
 
       AbxBus.on(:pt_fwd_a, PTParentEvent, fn _event -> :ok end)
       AbxBus.on(:pt_fwd_b, PTParentEvent, fn _event -> :ok end)
