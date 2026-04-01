@@ -163,11 +163,8 @@ defmodule Abxbus.BusServer do
         new_queue = :queue.in(event, state.pending_event_queue)
         new_in_flight = MapSet.put(state.in_flight_event_ids, event.event_id)
 
-        EventStore.put(event)
+        EventStore.put_or_merge(event)
         EventStore.index_to_bus(state.name, event.event_id)
-        EventStore.update(event.event_id, %{
-          event_pending_bus_count: (event.event_pending_bus_count || 0) + 1
-        })
         EventStore.resolve_find_waiters(event)
 
         state = %{state |
@@ -374,6 +371,21 @@ defmodule Abxbus.BusServer do
             processing_event_ids: MapSet.delete(state.processing_event_ids, event_id),
             in_flight_event_ids: MapSet.delete(state.in_flight_event_ids, event_id)
           }
+
+          # Same cleanup as normal completion path — release locks, notify waiters
+          event = EventStore.get(event_id)
+          effective_concurrency = LockManager.resolve_event_concurrency(event || %{}, config(state))
+
+          if effective_concurrency == :global_serial do
+            LockManager.release_global()
+            notify_all_buses_check_pending()
+          end
+
+          if event do
+            Middleware.dispatch(state.middlewares, :on_event_change, [state.name, event, :completed])
+            maybe_mark_tree_complete(event)
+          end
+
           state = maybe_process_next(state)
           state = maybe_notify_idle(state)
           {:noreply, state}

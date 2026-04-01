@@ -50,6 +50,16 @@ defmodule Abxbus.EventStore do
     GenServer.call(__MODULE__, {:put, event})
   end
 
+  @doc """
+  Atomic upsert for forwarded events: if event_id doesn't exist, insert with
+  event_pending_bus_count=1. If it already exists, only update event_path
+  (append new bus label) and increment event_pending_bus_count — never
+  overwrite runtime state like event_status, event_results, etc.
+  """
+  def put_or_merge(event) do
+    GenServer.call(__MODULE__, {:put_or_merge, event})
+  end
+
   @doc "Update specific fields on a stored event."
   def update(event_id, updates) when is_map(updates) do
     GenServer.call(__MODULE__, {:update, event_id, updates})
@@ -268,6 +278,25 @@ defmodule Abxbus.EventStore do
   def handle_call({:put, event}, _from, state) do
     :ets.insert(:abxbus_events, {event.event_id, event})
     {:reply, :ok, state}
+  end
+
+  def handle_call({:put_or_merge, event}, _from, state) do
+    case :ets.lookup(:abxbus_events, event.event_id) do
+      [{_, existing}] ->
+        # Event already exists (forwarded) — only update path and increment bus count
+        updated = %{existing |
+          event_path: event.event_path,
+          event_pending_bus_count: (existing.event_pending_bus_count || 0) + 1
+        }
+        :ets.insert(:abxbus_events, {event.event_id, updated})
+        {:reply, :ok, state}
+
+      [] ->
+        # New event — insert with count=1
+        inserted = %{event | event_pending_bus_count: 1}
+        :ets.insert(:abxbus_events, {event.event_id, inserted})
+        {:reply, :ok, state}
+    end
   end
 
   def handle_call({:update, event_id, updates}, _from, state) do
