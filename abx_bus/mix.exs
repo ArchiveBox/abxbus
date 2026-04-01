@@ -1,0 +1,33 @@
+defmodule AbxBus.MixProject do
+  use Mix.Project
+
+  def project do
+    [
+      app: :abx_bus,
+      version: "0.1.0",
+      elixir: "~> 1.17",
+      start_permanent: Mix.env() == :prod,
+      deps: deps(),
+      elixirc_paths: elixirc_paths(Mix.env()),
+      name: "AbxBus",
+      description: "An OTP-native event bus with queue-jump, multi-bus forwarding, and lineage tracking"
+    ]
+  end
+
+  def application do
+    [
+      extra_applications: [:logger],
+      mod: {AbxBus.Application, []}
+    ]
+  end
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
+
+  defp deps do
+    [
+      {:uuid, "~> 1.1"},
+      {:telemetry, "~> 1.0"}
+    ]
+  end
+end
