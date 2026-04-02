@@ -65,6 +65,9 @@ dev = [
 requires = ["uv_build>=0.10.2,<0.11.0"]
 build-backend = "uv_build"
 
+[tool.uv]
+exclude-newer = "14 days"
+
 [tool.uv.build-backend]
 module-name = "abxbus"
 module-root = "."
