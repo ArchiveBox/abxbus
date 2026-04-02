@@ -316,7 +316,7 @@ defmodule Abxbus.BusServer do
       completed_at = Enum.max([now | completed_ats])
 
       %{event |
-        event_results: results,
+        event_results: Map.merge(event.event_results, results),
         event_status: :completed,
         event_completed_at: completed_at,
         event_pending_bus_count: max((event.event_pending_bus_count || 1) - 1, 0)

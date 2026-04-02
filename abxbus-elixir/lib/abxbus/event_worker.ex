@@ -398,7 +398,9 @@ defmodule Abxbus.EventWorker do
     bus_name = Process.get(:abxbus_current_bus)
     bus_pid = Process.get(:abxbus_current_bus_pid)
 
-    # Use spawn_link so handler is killed when parent dies (e.g. event timeout)
+    # Trap exits BEFORE spawn_link to avoid race window
+    old_trap = Process.flag(:trap_exit, true)
+
     pid = spawn_link(fn ->
       Process.put(:abxbus_current_event_id, event_id)
       Process.put(:abxbus_current_bus, bus_name)
@@ -407,9 +409,6 @@ defmodule Abxbus.EventWorker do
       result = fun.()
       send(caller, {:handler_timeout_result, ref, result})
     end)
-
-    # Trap exits so the linked child's death doesn't kill us
-    old_trap = Process.flag(:trap_exit, true)
 
     result =
       receive do
