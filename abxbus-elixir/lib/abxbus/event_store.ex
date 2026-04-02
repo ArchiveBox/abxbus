@@ -211,8 +211,18 @@ defmodule Abxbus.EventStore do
   defp matches_child_of_event?(event, opts) do
     case Keyword.get(opts, :child_of) do
       nil -> true
-      parent when is_map(parent) -> event.event_parent_id == parent.event_id
-      parent_id when is_binary(parent_id) -> event.event_parent_id == parent_id
+      parent when is_map(parent) -> is_descendant_of?(event, parent.event_id)
+      parent_id when is_binary(parent_id) -> is_descendant_of?(event, parent_id)
+    end
+  end
+
+  # Walk the parent chain to check transitive ancestry (matches Python behavior)
+  defp is_descendant_of?(%{event_parent_id: nil}, _ancestor_id), do: false
+  defp is_descendant_of?(%{event_parent_id: pid}, ancestor_id) when pid == ancestor_id, do: true
+  defp is_descendant_of?(%{event_parent_id: pid}, ancestor_id) do
+    case :ets.lookup(:abxbus_events, pid) do
+      [{_, parent}] -> is_descendant_of?(parent, ancestor_id)
+      [] -> false
     end
   end
 

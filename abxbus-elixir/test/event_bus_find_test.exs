@@ -264,7 +264,7 @@ defmodule Abxbus.EventBusFindTest do
       end)
 
       spin_until(fn -> :atomics.get(ready, 1) == 1 end, 1000)
-      Process.sleep(1)
+      wait_for_find_waiter()
 
       event = Abxbus.emit(:ff1, FindFutureEvent.new())
       found = Task.await(task, 6000)
@@ -299,7 +299,7 @@ defmodule Abxbus.EventBusFindTest do
       end)
 
       spin_until(fn -> :atomics.get(ready, 1) == 1 end, 1000)
-      Process.sleep(1)
+      wait_for_find_waiter()
 
       Abxbus.emit(:ff_wc, FindFutureEvent.new(value: "target"))
       found = Task.await(task, 6000)
@@ -324,7 +324,7 @@ defmodule Abxbus.EventBusFindTest do
       end)
 
       spin_until(fn -> :atomics.get(ready, 1) == 1 end, 1000)
-      Process.sleep(1)
+      wait_for_find_waiter()
 
       event = Abxbus.emit(:ff_early, FindFutureEvent.new())
 
@@ -356,7 +356,7 @@ defmodule Abxbus.EventBusFindTest do
       end)
 
       spin_until(fn -> :counters.get(ready, 1) >= 2 end, 1000)
-      Process.sleep(1)
+      wait_for_find_waiter()
 
       e1 = Abxbus.emit(:ff_multi, FindFutureEvent.new(value: "t1"))
       e2 = Abxbus.emit(:ff_multi, FindFutureEvent.new(value: "t2"))
@@ -396,7 +396,7 @@ defmodule Abxbus.EventBusFindTest do
       end)
 
       spin_until(fn -> :atomics.get(ready, 1) == 1 end, 1000)
-      Process.sleep(1)
+      wait_for_find_waiter()
 
       event = Abxbus.emit(:pf2, FindFutureEvent.new(value: "pf_new"))
       found = Task.await(task, 3000)
@@ -464,9 +464,12 @@ defmodule Abxbus.EventBusFindTest do
       parent = Abxbus.emit(:fc3, FindParentEvent.new())
       Abxbus.wait_until_idle(:fc3)
 
-      # Direct child_of only matches direct parent, not grandparent
+      # child_of matches descendants transitively (child and grandchild)
       child_found = Abxbus.find(FindChildEvent, child_of: parent, past: true)
       assert child_found != nil
+
+      grandchild_found = Abxbus.find(FindGrandchildEvent, child_of: parent, past: true)
+      assert grandchild_found != nil
     end
 
     test "future wait with child_of" do
@@ -483,7 +486,7 @@ defmodule Abxbus.EventBusFindTest do
       end)
 
       spin_until(fn -> :atomics.get(ready, 1) == 1 end, 1000)
-      Process.sleep(1)
+      wait_for_find_waiter()
 
       child = Abxbus.emit(:fc4, FindChildEvent.new(event_parent_id: parent.event_id))
       Abxbus.wait_until_idle(:fc4)
@@ -520,7 +523,240 @@ defmodule Abxbus.EventBusFindTest do
     end
   end
 
+  # ── past float time window ──────────────────────────────────────────────────
+
+  describe "find past float time window" do
+    test "past float filters by time window" do
+      {:ok, _} = Abxbus.start_bus(:pf_tw)
+      Abxbus.on(:pf_tw, FindParentEvent, fn _e -> :ok end)
+      event = Abxbus.emit(:pf_tw, FindParentEvent.new(target_id: "recent"))
+      Abxbus.wait_until_idle(:pf_tw)
+
+      # Event was just created — should be within 5 second window
+      found = Abxbus.find(FindParentEvent, past: 5.0, future: false, event_id: event.event_id)
+      assert found != nil
+    end
+
+    test "past float returns none when events too old" do
+      {:ok, _} = Abxbus.start_bus(:pf_old)
+      Abxbus.on(:pf_old, FindParentEvent, fn _e -> :ok end)
+      Abxbus.emit(:pf_old, FindParentEvent.new(target_id: "old"))
+      Abxbus.wait_until_idle(:pf_old)
+
+      # 0.001 second window — event should be "too old" by now
+      Process.sleep(5)
+      found = Abxbus.find(FindParentEvent, past: 0.001, future: false, target_id: "old")
+      assert found == nil
+    end
+
+    test "where combined with past float" do
+      {:ok, _} = Abxbus.start_bus(:pf_wh)
+      Abxbus.on(:pf_wh, FindParentEvent, fn _e -> :ok end)
+      Abxbus.emit(:pf_wh, FindParentEvent.new(target_id: "yes"))
+      Abxbus.emit(:pf_wh, FindParentEvent.new(target_id: "no"))
+      Abxbus.wait_until_idle(:pf_wh)
+
+      found = Abxbus.find(FindParentEvent, past: 5.0, future: false,
+        where: &(Map.get(&1, :target_id) == "yes"))
+      assert found != nil
+      assert found.target_id == "yes"
+    end
+
+    test "child_of combined with past float" do
+      {:ok, _} = Abxbus.start_bus(:pf_co, event_concurrency: :bus_serial)
+      Abxbus.on(:pf_co, FindParentEvent, fn _e ->
+        child = Abxbus.emit(:pf_co, FindChildEvent.new(target_id: "timed_child"))
+        Abxbus.await(child)
+        :ok
+      end)
+      Abxbus.on(:pf_co, FindChildEvent, fn _e -> :ok end)
+
+      parent = Abxbus.emit(:pf_co, FindParentEvent.new())
+      Abxbus.wait_until_idle(:pf_co)
+
+      found = Abxbus.find(FindChildEvent, child_of: parent, past: 5.0, future: false)
+      assert found != nil
+    end
+  end
+
+  # ── combined parameter tests ───────────────────────────────────────────────
+
+  describe "find combined parameters" do
+    test "event_id and event_timeout field filters" do
+      {:ok, _} = Abxbus.start_bus(:fc_id)
+      Abxbus.on(:fc_id, FindParentEvent, fn _e -> :ok end)
+      event = Abxbus.emit(:fc_id, FindParentEvent.new(target_id: "id_test"))
+      Abxbus.wait_until_idle(:fc_id)
+
+      found = Abxbus.find(FindParentEvent, past: true, event_id: event.event_id)
+      assert found != nil
+      assert found.event_id == event.event_id
+
+      # Non-matching event_id should return nil
+      not_found = Abxbus.find(FindParentEvent, past: true, event_id: "nonexistent")
+      assert not_found == nil
+    end
+
+    test "non-event data field filters" do
+      {:ok, _} = Abxbus.start_bus(:fc_data)
+      Abxbus.on(:fc_data, FindParentEvent, fn _e -> :ok end)
+      Abxbus.emit(:fc_data, FindParentEvent.new(target_id: "data_match"))
+      Abxbus.emit(:fc_data, FindParentEvent.new(target_id: "data_other"))
+      Abxbus.wait_until_idle(:fc_data)
+
+      found = Abxbus.find(FindParentEvent, past: true, target_id: "data_match")
+      assert found != nil
+      assert found.target_id == "data_match"
+    end
+
+    test "all parameters combined" do
+      {:ok, _} = Abxbus.start_bus(:fc_all, event_concurrency: :bus_serial)
+      Abxbus.on(:fc_all, FindParentEvent, fn _e ->
+        c1 = Abxbus.emit(:fc_all, FindChildEvent.new(target_id: "match"))
+        c2 = Abxbus.emit(:fc_all, FindChildEvent.new(target_id: "skip"))
+        Abxbus.await(c1)
+        Abxbus.await(c2)
+        :ok
+      end)
+      Abxbus.on(:fc_all, FindChildEvent, fn _e -> :ok end)
+
+      parent = Abxbus.emit(:fc_all, FindParentEvent.new())
+      Abxbus.wait_until_idle(:fc_all)
+
+      found = Abxbus.find(FindChildEvent,
+        child_of: parent,
+        past: 5.0,
+        future: false,
+        where: &(Map.get(&1, :target_id) == "match")
+      )
+      assert found != nil
+      assert found.target_id == "match"
+      assert found.event_parent_id == parent.event_id
+    end
+
+    test "include-style where filter" do
+      {:ok, _} = Abxbus.start_bus(:fc_inc)
+      Abxbus.on(:fc_inc, FindFutureEvent, fn _e -> :ok end)
+      Abxbus.emit(:fc_inc, FindFutureEvent.new(value: "include_me"))
+      Abxbus.emit(:fc_inc, FindFutureEvent.new(value: "exclude_me"))
+      Abxbus.wait_until_idle(:fc_inc)
+
+      found = Abxbus.find(FindFutureEvent, past: true,
+        where: &(Map.get(&1, :value) == "include_me"))
+      assert found != nil
+      assert found.value == "include_me"
+    end
+
+    test "exclude-style where filter" do
+      {:ok, _} = Abxbus.start_bus(:fc_exc)
+      Abxbus.on(:fc_exc, FindFutureEvent, fn _e -> :ok end)
+      Abxbus.emit(:fc_exc, FindFutureEvent.new(value: "keep"))
+      Abxbus.emit(:fc_exc, FindFutureEvent.new(value: "drop"))
+      Abxbus.wait_until_idle(:fc_exc)
+
+      found = Abxbus.find(FindFutureEvent, past: true,
+        where: &(Map.get(&1, :value) != "drop"))
+      assert found != nil
+      assert found.value == "keep"
+    end
+
+    test "past true future float returns past without waiting" do
+      {:ok, _} = Abxbus.start_bus(:pf_tfl)
+      Abxbus.on(:pf_tfl, FindParentEvent, fn _e -> :ok end)
+      event = Abxbus.emit(:pf_tfl, FindParentEvent.new(target_id: "already_here"))
+      Abxbus.wait_until_idle(:pf_tfl)
+
+      # Should return immediately from past, not wait future=5s
+      t0 = System.monotonic_time(:millisecond)
+      found = Abxbus.find(FindParentEvent, past: true, future: 5.0, event_id: event.event_id)
+      elapsed = System.monotonic_time(:millisecond) - t0
+
+      assert found != nil
+      assert elapsed < 1000, "Should return from past immediately, took #{elapsed}ms"
+    end
+
+    test "find catches already-fired event via past" do
+      {:ok, _} = Abxbus.start_bus(:fc_catch)
+      Abxbus.on(:fc_catch, FindParentEvent, fn _e -> :ok end)
+      event = Abxbus.emit(:fc_catch, FindParentEvent.new(target_id: "catch_me"))
+      Abxbus.wait_until_idle(:fc_catch)
+
+      # Event already completed — past=true catches it
+      found = Abxbus.find(FindParentEvent, past: true, event_id: event.event_id)
+      assert found != nil
+    end
+
+    test "child_of filters to correct parent only" do
+      {:ok, _} = Abxbus.start_bus(:fc_correct, event_concurrency: :bus_serial)
+
+      ids = Agent.start_link(fn -> %{} end) |> elem(1)
+
+      Abxbus.on(:fc_correct, FindParentEvent, fn event ->
+        Agent.update(ids, &Map.put(&1, event.target_id, event.event_id))
+        child = Abxbus.emit(:fc_correct, FindChildEvent.new(target_id: event.target_id))
+        Abxbus.await(child)
+        :ok
+      end)
+      Abxbus.on(:fc_correct, FindChildEvent, fn _e -> :ok end)
+
+      Abxbus.emit(:fc_correct, FindParentEvent.new(target_id: "p1"))
+      Abxbus.emit(:fc_correct, FindParentEvent.new(target_id: "p2"))
+      Abxbus.wait_until_idle(:fc_correct)
+
+      captured = Agent.get(ids, & &1)
+
+      # Find children of p1 only
+      p1_event = Abxbus.EventStore.get(captured["p1"])
+      found = Abxbus.find(FindChildEvent, child_of: p1_event, past: true)
+      assert found != nil
+      assert found.target_id == "p1"
+    end
+
+    test "event path retains bus label" do
+      {:ok, _} = Abxbus.start_bus(:fc_path)
+      Abxbus.on(:fc_path, FindParentEvent, fn _e -> :ok end)
+      event = Abxbus.emit(:fc_path, FindParentEvent.new())
+      Abxbus.wait_until_idle(:fc_path)
+
+      found = Abxbus.find(FindParentEvent, past: true, event_id: event.event_id)
+      assert found != nil
+      assert length(found.event_path) >= 1
+      assert Enum.any?(found.event_path, &String.contains?(&1, "fc_path"))
+    end
+
+    test "past float with future float combined" do
+      {:ok, _} = Abxbus.start_bus(:pf_combo)
+      Abxbus.on(:pf_combo, FindFutureEvent, fn _e -> :ok end)
+
+      ready = :atomics.new(1, [])
+      task = Task.async(fn ->
+        :atomics.put(ready, 1, 1)
+        Abxbus.find(FindFutureEvent, past: 0.001, future: 2.0, where: &(Map.get(&1, :value) == "combo"))
+      end)
+
+      spin_until(fn -> :atomics.get(ready, 1) == 1 end, 1000)
+      wait_for_find_waiter()
+
+      event = Abxbus.emit(:pf_combo, FindFutureEvent.new(value: "combo"))
+      found = Task.await(task, 3000)
+
+      assert found != nil
+      assert found.event_id == event.event_id
+    end
+  end
+
   # ── helpers ────────────────────────────────────────────────────────────────
+
+  # Wait until at least one find waiter is registered in ETS
+  # (deterministic replacement for Process.sleep(1) after task startup)
+  defp wait_for_find_waiter do
+    spin_until(fn ->
+      case :ets.info(:abxbus_find_waiters, :size) do
+        n when is_integer(n) and n > 0 -> true
+        _ -> false
+      end
+    end, 1000)
+  end
 
   defp spin_until(fun, max_iters, iter \\ 0) do
     if iter >= max_iters, do: raise("spin_until exceeded #{max_iters} iterations")

@@ -303,4 +303,166 @@ defmodule Abxbus.BaseEventTest do
       end
     end
   end
+
+  describe "event result status-only update preserves fields" do
+    test "updating status preserves existing result and error" do
+      {:ok, _} = Abxbus.start_bus(:be_rup)
+
+      defevent(BEResultUpdateEvent)
+
+      Abxbus.on(:be_rup, BEResultUpdateEvent, fn _event ->
+        "initial_result"
+      end, handler_name: "updater")
+
+      event = Abxbus.emit(:be_rup, BEResultUpdateEvent.new())
+      Abxbus.wait_until_idle(:be_rup)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      result = stored.event_results |> Map.values() |> hd()
+
+      # Result should have status=completed and preserve the result value
+      assert result.status == :completed
+      assert result.result == "initial_result"
+      assert result.error == nil
+    end
+  end
+
+  describe "event.bus aliases" do
+    test "current_bus! is the handler context accessor" do
+      {:ok, _} = Abxbus.start_bus(:be_alias)
+
+      bus_val = Agent.start_link(fn -> nil end) |> elem(1)
+
+      Abxbus.on(:be_alias, BEMainEvent, fn _event ->
+        # In Elixir, event.bus is accessed via Abxbus.current_bus!()
+        b = Abxbus.current_bus!()
+        Agent.update(bus_val, fn _ -> b end)
+        :ok
+      end)
+
+      Abxbus.emit(:be_alias, BEMainEvent.new())
+      Abxbus.wait_until_idle(:be_alias)
+
+      assert Agent.get(bus_val, & &1) == :be_alias
+    end
+  end
+
+  describe "multi-bus child dispatch" do
+    test "child dispatch across forwarded buses preserves bus context" do
+      {:ok, _} = Abxbus.start_bus(:be_mbc1)
+      {:ok, _} = Abxbus.start_bus(:be_mbc2)
+
+      Abxbus.on(:be_mbc1, "*", fn e -> Abxbus.emit(:be_mbc2, e) end, handler_name: "fwd")
+
+      child_bus = Agent.start_link(fn -> nil end) |> elem(1)
+
+      Abxbus.on(:be_mbc2, BEMainEvent, fn _event ->
+        bus = Abxbus.current_bus!()
+        child = Abxbus.emit(bus, BEChildEvent.new())
+        Abxbus.await(child)
+        :ok
+      end)
+
+      Abxbus.on(:be_mbc2, BEChildEvent, fn _event ->
+        bus = Abxbus.current_bus!()
+        Agent.update(child_bus, fn _ -> bus end)
+        :ok
+      end)
+
+      Abxbus.emit(:be_mbc1, BEMainEvent.new())
+      Abxbus.wait_until_idle(:be_mbc1)
+      Abxbus.wait_until_idle(:be_mbc2)
+
+      assert Agent.get(child_bus, & &1) == :be_mbc2
+    end
+  end
+
+  describe "nested handler bus property" do
+    test "deeply nested handlers all see correct bus" do
+      {:ok, _} = Abxbus.start_bus(:be_deep, event_concurrency: :bus_serial)
+
+      defevent(BELevel2Event)
+      defevent(BELevel3Event)
+
+      buses = Agent.start_link(fn -> [] end) |> elem(1)
+
+      Abxbus.on(:be_deep, BEMainEvent, fn _event ->
+        bus = Abxbus.current_bus!()
+        Agent.update(buses, &(&1 ++ [{:level1, bus}]))
+        child = Abxbus.emit(bus, BELevel2Event.new())
+        Abxbus.await(child)
+        :ok
+      end)
+
+      Abxbus.on(:be_deep, BELevel2Event, fn _event ->
+        bus = Abxbus.current_bus!()
+        Agent.update(buses, &(&1 ++ [{:level2, bus}]))
+        gc = Abxbus.emit(bus, BELevel3Event.new())
+        Abxbus.await(gc)
+        :ok
+      end)
+
+      Abxbus.on(:be_deep, BELevel3Event, fn _event ->
+        bus = Abxbus.current_bus!()
+        Agent.update(buses, &(&1 ++ [{:level3, bus}]))
+        :ok
+      end)
+
+      Abxbus.emit(:be_deep, BEMainEvent.new())
+      Abxbus.wait_until_idle(:be_deep)
+
+      seen = Agent.get(buses, & &1)
+      assert {:level1, :be_deep} in seen
+      assert {:level2, :be_deep} in seen
+      assert {:level3, :be_deep} in seen
+    end
+  end
+
+  describe "unknown event_ field validation" do
+    test "unknown event_ prefixed fields rejected" do
+      # Unknown event_ fields should be rejected at compile time
+      assert_raise CompileError, fn ->
+        Code.eval_string("""
+          require Abxbus.Event
+          Abxbus.Event.defevent(BadEvent2, event_foobar: 123)
+        """)
+      end
+    end
+
+    test "known event_ overrides are allowed" do
+      # Known event_ fields like event_timeout should be allowed
+      Code.eval_string("""
+        require Abxbus.Event
+        Abxbus.Event.defevent(GoodOverrideEvent, event_timeout: 5.0)
+      """)
+    end
+  end
+
+  describe "string event type matching" do
+    test "on() with string type name matches events" do
+      {:ok, _} = Abxbus.start_bus(:be_str)
+      called = :atomics.new(1, [])
+
+      Abxbus.on(:be_str, "BEMainEvent", fn _event ->
+        :atomics.put(called, 1, 1)
+        :ok
+      end)
+
+      Abxbus.emit(:be_str, BEMainEvent.new())
+      Abxbus.wait_until_idle(:be_str)
+
+      assert :atomics.get(called, 1) == 1
+    end
+
+    test "find() with string type name matches" do
+      {:ok, _} = Abxbus.start_bus(:be_str_find)
+      Abxbus.on(:be_str_find, BEMainEvent, fn _e -> :ok end)
+      event = Abxbus.emit(:be_str_find, BEMainEvent.new())
+      Abxbus.wait_until_idle(:be_str_find)
+
+      found = Abxbus.find("BEMainEvent", past: true, event_id: event.event_id)
+      assert found != nil
+      assert found.event_id == event.event_id
+    end
+  end
 end

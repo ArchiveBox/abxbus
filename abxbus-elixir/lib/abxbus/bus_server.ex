@@ -315,9 +315,12 @@ defmodule Abxbus.BusServer do
       completed_ats = for({_, r} <- results, r.completed_at != nil, do: r.completed_at)
       completed_at = Enum.max([now | completed_ats])
 
+      # Preserve :error status from earlier bus completions
+      new_status = if event.event_status == :error, do: :error, else: :completed
+
       %{event |
         event_results: Map.merge(event.event_results, results),
-        event_status: :completed,
+        event_status: new_status,
         event_completed_at: completed_at,
         event_pending_bus_count: max((event.event_pending_bus_count || 1) - 1, 0)
       }
