@@ -130,6 +130,7 @@ defmodule Abxbus do
                 completed_event
             after
               timeout_ms ->
+                EventStore.remove_waiter(event.event_id, ref)
                 {:error, :timeout}
             end
         end
@@ -166,6 +167,7 @@ defmodule Abxbus do
             completed_event
         after
           timeout_ms ->
+            EventStore.remove_waiter(event.event_id, ref)
             {:error, :timeout}
         end
     end

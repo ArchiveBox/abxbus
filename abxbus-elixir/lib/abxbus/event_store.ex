@@ -117,6 +117,12 @@ defmodule Abxbus.EventStore do
     length(waiters)
   end
 
+  @doc "Remove a specific waiter by event_id and ref (cleanup on timeout)."
+  def remove_waiter(event_id, ref) do
+    :ets.match_delete(:abxbus_event_waiters, {event_id, {:_, ref}})
+    :ok
+  end
+
   # ── Find waiters ───────────────────────────────────────────────────────────
 
   def add_find_waiter(event_type, opts, pid \\ self()) do
@@ -330,7 +336,17 @@ defmodule Abxbus.EventStore do
   def handle_call({:resolve_find_waiters, event}, _from, state) do
     event_type = event.event_type
 
-    for type_key <- [event_type, :wildcard] do
+    # Also check string short-name key (e.g. "UserCreated" for MyApp.UserCreated)
+    # to match find waiters registered with string type names
+    type_keys = [event_type, :wildcard]
+    type_keys =
+      if is_atom(event_type) and event_type != nil do
+        type_keys ++ [event_type |> Module.split() |> List.last()]
+      else
+        type_keys
+      end
+
+    for type_key <- type_keys do
       waiters = :ets.lookup(:abxbus_find_waiters, type_key)
 
       for {_, {pid, ref, opts}} = entry <- waiters do
