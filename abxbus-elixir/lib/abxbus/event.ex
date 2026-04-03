@@ -264,17 +264,26 @@ defmodule Abxbus.Event do
   def generate_id do
     # UUIDv7: 48-bit unix_ts_ms | 4-bit version=0111 | 12-bit rand_a | 2-bit var=10 | 62-bit rand_b
     ts_ms = System.system_time(:millisecond)
-    rand = :crypto.strong_rand_bytes(10)
-    <<rand_a::12, rand_b::62, _rest::6>> = rand
+    <<rand_a::12, rand_b::62, _::6>> = :crypto.strong_rand_bytes(10)
 
-    uuid_bits = <<ts_ms::48, 7::4, rand_a::12, 2::2, rand_b::62>>
+    <<a1::32, a2::16, a3::16, a4::16, a5::48>> =
+      <<ts_ms::48, 7::4, rand_a::12, 2::2, rand_b::62>>
 
-    <<a::32, b::16, c::16, d::16, e::48>> = uuid_bits
-
-    :io_lib.format("~8.16.0b-~4.16.0b-~4.16.0b-~4.16.0b-~12.16.0b", [a, b, c, d, e])
-    |> IO.iodata_to_binary()
-    |> String.downcase()
+    encode_uuid(a1, a2, a3, a4, a5)
   end
+
+  # Direct binary hex encoding — avoids String.downcase/pad_leading/length overhead
+  import Bitwise
+
+  defp encode_uuid(a1, a2, a3, a4, a5) do
+    <<hex8(a1)::binary, ?-, hex4(a2)::binary, ?-, hex4(a3)::binary, ?-,
+      hex4(a4)::binary, ?-, hex12(a5)::binary>>
+  end
+
+  defp hex4(n), do: <<hex_char(n >>> 12), hex_char(n >>> 8), hex_char(n >>> 4), hex_char(n)>>
+  defp hex8(n), do: <<hex4(n >>> 16)::binary, hex4(n &&& 0xFFFF)::binary>>
+  defp hex12(n), do: <<hex8(n >>> 16)::binary, hex4(n &&& 0xFFFF)::binary>>
+  defp hex_char(n), do: elem({?0, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?a, ?b, ?c, ?d, ?e, ?f}, n &&& 0xF)
 
   # Callbacks
   @callback handle(map()) :: any()

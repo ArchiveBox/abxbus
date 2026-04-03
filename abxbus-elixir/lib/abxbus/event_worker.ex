@@ -27,6 +27,45 @@ defmodule Abxbus.EventWorker do
 
     send(bus_pid, {:event_worker_started, event.event_id})
 
+    results = run_handlers(event, handlers, bus_config, bus_pid, bus_name)
+
+    send(bus_pid, {:event_worker_done, event.event_id, results})
+  end
+
+  @doc """
+  Run handlers inline (no process spawn). Used by BusServer for serial mode.
+  Saves and restores process dictionary context to support nested inline execution.
+  Returns {:ok, results} or {:crash, kind, reason, stacktrace}.
+  """
+  def run_inline(event, handlers, bus_config, bus_pid, bus_name) do
+    prev_event_id = Process.get(:abxbus_current_event_id)
+    prev_bus = Process.get(:abxbus_current_bus)
+    prev_bus_pid = Process.get(:abxbus_current_bus_pid)
+
+    Process.put(:abxbus_current_event_id, event.event_id)
+    Process.put(:abxbus_current_bus, bus_name)
+    Process.put(:abxbus_current_bus_pid, bus_pid)
+
+    try do
+      results = run_handlers(event, handlers, bus_config, bus_pid, bus_name)
+      {:ok, results}
+    catch
+      kind, reason ->
+        {:crash, kind, reason, __STACKTRACE__}
+    after
+      restore_process_dict(:abxbus_current_event_id, prev_event_id)
+      restore_process_dict(:abxbus_current_bus, prev_bus)
+      restore_process_dict(:abxbus_current_bus_pid, prev_bus_pid)
+    end
+  end
+
+  defp restore_process_dict(key, nil), do: Process.delete(key)
+  defp restore_process_dict(key, val), do: Process.put(key, val)
+
+  # Fast path: no handlers, no work to do
+  defp run_handlers(_event, [], _bus_config, _bus_pid, _bus_name), do: %{}
+
+  defp run_handlers(event, handlers, bus_config, bus_pid, bus_name) do
     handler_concurrency = LockManager.resolve_handler_concurrency(event, bus_config)
     handler_completion = LockManager.resolve_handler_completion(event, bus_config)
     event_timeout = LockManager.resolve_event_timeout(event, bus_config)
@@ -70,7 +109,7 @@ defmodule Abxbus.EventWorker do
     # Stop slow event monitor
     maybe_stop_slow_monitor(slow_monitor)
 
-    send(bus_pid, {:event_worker_done, event.event_id, results})
+    results
   end
 
   # ── Slow monitoring ────────────────────────────────────────────────────────
@@ -79,7 +118,7 @@ defmodule Abxbus.EventWorker do
 
   defp maybe_start_slow_monitor(timeout_s, event, bus_name, kind) do
     timeout_ms = trunc(timeout_s * 1000)
-    pid = self()
+    _self = self()
 
     _pid = spawn(fn ->
       Process.sleep(timeout_ms)
@@ -97,6 +136,25 @@ defmodule Abxbus.EventWorker do
   defp maybe_stop_slow_monitor(pid), do: Process.exit(pid, :kill)
 
   # ── Parallel handler execution ─────────────────────────────────────────────
+
+  # Fast path: single handler — run directly without Task.async overhead
+  defp run_handlers_parallel(event, [entry], results, _completion_mode, bus_config, bus_name, _bus_pid, handler_slow) do
+    Process.put(:abxbus_current_handler_id, entry.id)
+
+    result_entry = Map.get(results, entry.id) |> EventResult.mark_started()
+
+    slow_t = entry.handler_slow_timeout || handler_slow
+    monitor = maybe_start_slow_monitor(slow_t, event, bus_name, {:handler, entry.handler_name})
+    outcome = run_single_handler(entry, event, bus_config)
+    maybe_stop_slow_monitor(monitor)
+
+    case outcome do
+      {:ok, value} ->
+        Map.put(results, entry.id, EventResult.mark_completed(result_entry, value))
+      {:error, error} ->
+        Map.put(results, entry.id, EventResult.mark_error(result_entry, error))
+    end
+  end
 
   defp run_handlers_parallel(event, handlers, results, completion_mode, bus_config, bus_name, bus_pid, handler_slow) do
     current_event_id = event.event_id

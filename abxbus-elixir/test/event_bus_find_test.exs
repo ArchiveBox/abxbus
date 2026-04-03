@@ -650,14 +650,14 @@ defmodule Abxbus.EventBusFindTest do
     test "exclude-style where filter" do
       {:ok, _} = Abxbus.start_bus(:fc_exc)
       Abxbus.on(:fc_exc, FindFutureEvent, fn _e -> :ok end)
-      Abxbus.emit(:fc_exc, FindFutureEvent.new(value: "keep"))
-      Abxbus.emit(:fc_exc, FindFutureEvent.new(value: "drop"))
+      Abxbus.emit(:fc_exc, FindFutureEvent.new(value: "exc_keep"))
+      Abxbus.emit(:fc_exc, FindFutureEvent.new(value: "exc_drop"))
       Abxbus.wait_until_idle(:fc_exc)
 
       found = Abxbus.find(FindFutureEvent, past: true,
-        where: &(Map.get(&1, :value) != "drop"))
+        where: &(Map.get(&1, :value) == "exc_keep"))
       assert found != nil
-      assert found.value == "keep"
+      assert found.value == "exc_keep"
     end
 
     test "past true future float returns past without waiting" do

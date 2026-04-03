@@ -1,9 +1,10 @@
 defmodule Abxbus.EventStore do
   @moduledoc """
-  ETS-backed event registry with serialized updates.
+  ETS-backed event registry.
 
-  All mutations go through the GenServer to prevent concurrent read-modify-write
-  races. Reads are direct ETS lookups for performance.
+  Performance-critical operations (put, get, index) go directly to ETS.
+  Only true read-modify-write operations that need atomicity (update_fun,
+  put_or_merge for forwarded events) serialize through the GenServer.
 
   ## Tables
 
@@ -12,7 +13,7 @@ defmodule Abxbus.EventStore do
     * `:abxbus_event_waiters`   — `{event_id, {pid, ref}}` (bag)
     * `:abxbus_find_waiters`    — `{event_type, {pid, ref, opts}}` (bag)
     * `:abxbus_bus_events`      — `{bus_name, event_id}` (bag)
-    * `:abxbus_worker_results`  — `{key, results_map}` (set) — shared timeout state
+    * `:abxbus_worker_results`  — `{key, results_map}` (set)
   """
 
   use GenServer
@@ -21,9 +22,9 @@ defmodule Abxbus.EventStore do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  # ── Direct ETS reads (no serialization needed) ─────────────────────────────
+  # ── Direct ETS operations (no serialization needed) ────────────────────────
 
-  @doc "Retrieve an event by ID."
+  @doc "Retrieve an event by ID. Direct ETS read."
   def get(event_id) do
     case :ets.lookup(:abxbus_events, event_id) do
       [{^event_id, event}] -> event
@@ -43,46 +44,60 @@ defmodule Abxbus.EventStore do
     |> Enum.map(fn {_, event_id} -> event_id end)
   end
 
-  # ── Serialized mutations (through GenServer) ───────────────────────────────
-
-  @doc "Store or update an event in the registry."
+  @doc "Store an event. Direct ETS write (idempotent)."
   def put(event) do
-    GenServer.call(__MODULE__, {:put, event})
+    :ets.insert(:abxbus_events, {event.event_id, event})
+    :ok
   end
 
   @doc """
-  Atomic upsert for forwarded events: if event_id doesn't exist, insert with
-  event_pending_bus_count=1. If it already exists, only update event_path
-  (append new bus label) and increment event_pending_bus_count — never
-  overwrite runtime state like event_status, event_results, etc.
+  Fast-path upsert: tries insert_new (atomic, no GenServer hop).
+  Falls back to GenServer only for the rare merge case (forwarded events).
   """
   def put_or_merge(event) do
-    GenServer.call(__MODULE__, {:put_or_merge, event})
+    inserted = %{event | event_pending_bus_count: 1}
+
+    case :ets.insert_new(:abxbus_events, {event.event_id, inserted}) do
+      true ->
+        # New event — fast path, no GenServer needed
+        :ok
+
+      false ->
+        # Already exists (forwarded event) — need atomic merge
+        GenServer.call(__MODULE__, {:merge_forwarded, event})
+    end
   end
 
-  @doc "Update specific fields on a stored event."
+  @doc "Update specific fields on a stored event. Direct ETS read-modify-write."
   def update(event_id, updates) when is_map(updates) do
-    GenServer.call(__MODULE__, {:update, event_id, updates})
+    case :ets.lookup(:abxbus_events, event_id) do
+      [{^event_id, event}] ->
+        updated = Map.merge(event, updates)
+        :ets.insert(:abxbus_events, {event_id, updated})
+        {:ok, updated}
+      [] ->
+        :error
+    end
   end
 
-  @doc "Atomically update an event via a transform function."
+  @doc "Atomically update an event via a transform function. Through GenServer for safety."
   def update_fun(event_id, fun) when is_function(fun, 1) do
     GenServer.call(__MODULE__, {:update_fun, event_id, fun})
   end
 
-  @doc "Record a parent-child relationship."
+  @doc "Record a parent-child relationship. Direct ETS."
   def add_child(parent_id, child_id) do
     :ets.insert(:abxbus_event_children, {parent_id, child_id})
     :ok
   end
 
-  @doc "Index an event to a bus."
+  @doc "Index an event to a bus. Direct ETS."
   def index_to_bus(bus_name, event_id) do
     :ets.insert(:abxbus_bus_events, {bus_name, event_id})
     :ok
   end
 
-  # ── Completion waiters ──────────────────────────────────────────────────────
+  # ── Completion waiters (direct ETS — atomic via :ets.take) ─────────────────
 
   @doc "Register completion waiter. Returns ref for matching."
   def add_waiter(event_id, pid \\ self()) do
@@ -93,7 +108,6 @@ defmodule Abxbus.EventStore do
 
   @doc "Atomically read and remove all waiters, then notify them."
   def notify_waiters(event_id, event) do
-    # :ets.take/2 atomically reads and deletes — no TOCTOU race
     waiters = :ets.take(:abxbus_event_waiters, event_id)
 
     for {_, {pid, ref}} <- waiters do
@@ -103,7 +117,7 @@ defmodule Abxbus.EventStore do
     length(waiters)
   end
 
-  # ── Find waiters (future search) ───────────────────────────────────────────
+  # ── Find waiters ───────────────────────────────────────────────────────────
 
   def add_find_waiter(event_type, opts, pid \\ self()) do
     ref = make_ref()
@@ -112,19 +126,23 @@ defmodule Abxbus.EventStore do
   end
 
   def remove_find_waiter(ref) do
-    # Scan and remove entry with this ref
-    for type_key <- [:abxbus_find_waiters] do
-      :ets.tab2list(:abxbus_find_waiters)
-      |> Enum.each(fn {_, {_, r, _}} = entry ->
-        if r == ref, do: :ets.delete_object(:abxbus_find_waiters, entry)
-      end)
-    end
+    :ets.tab2list(:abxbus_find_waiters)
+    |> Enum.each(fn {_, {_, r, _}} = entry ->
+      if r == ref, do: :ets.delete_object(:abxbus_find_waiters, entry)
+    end)
     :ok
   end
 
+  @doc """
+  Check find-waiters against a newly emitted event. Fast path: skip entirely
+  if no waiters registered. Slow path through GenServer only when waiters exist.
+  """
   def resolve_find_waiters(event) do
-    # Serialize through GenServer to prevent TOCTOU race on lookup+delete
-    GenServer.call(__MODULE__, {:resolve_find_waiters, event})
+    # Fast path: check if ANY find waiters exist before doing expensive work
+    case :ets.info(:abxbus_find_waiters, :size) do
+      0 -> :ok
+      _ -> GenServer.call(__MODULE__, {:resolve_find_waiters, event})
+    end
   end
 
   # ── Find (past + future search) ────────────────────────────────────────────
@@ -173,7 +191,6 @@ defmodule Abxbus.EventStore do
         end
 
       {event, _, ref} ->
-        # Found in past — clean up future waiter if registered
         if ref, do: remove_find_waiter(ref)
         event
     end
@@ -216,7 +233,6 @@ defmodule Abxbus.EventStore do
     end
   end
 
-  # Walk the parent chain to check transitive ancestry (matches Python behavior)
   defp is_descendant_of?(%{event_parent_id: nil}, _ancestor_id), do: false
   defp is_descendant_of?(%{event_parent_id: pid}, ancestor_id) when pid == ancestor_id, do: true
   defp is_descendant_of?(%{event_parent_id: pid}, ancestor_id) do
@@ -263,25 +279,20 @@ defmodule Abxbus.EventStore do
 
   @impl true
   def init(_opts) do
-    :ets.new(:abxbus_events, [:set, :public, :named_table, read_concurrency: true])
+    :ets.new(:abxbus_events, [:set, :public, :named_table, read_concurrency: true, write_concurrency: true])
     :ets.new(:abxbus_event_children, [:bag, :public, :named_table, write_concurrency: true])
     :ets.new(:abxbus_event_waiters, [:bag, :public, :named_table, write_concurrency: true])
     :ets.new(:abxbus_find_waiters, [:bag, :public, :named_table, write_concurrency: true])
-    :ets.new(:abxbus_bus_events, [:bag, :public, :named_table, write_concurrency: true])
+    :ets.new(:abxbus_bus_events, [:duplicate_bag, :public, :named_table, write_concurrency: true])
     :ets.new(:abxbus_worker_results, [:set, :public, :named_table, write_concurrency: true])
     {:ok, %{}}
   end
 
+  # Only used for the forwarded-event merge path
   @impl true
-  def handle_call({:put, event}, _from, state) do
-    :ets.insert(:abxbus_events, {event.event_id, event})
-    {:reply, :ok, state}
-  end
-
-  def handle_call({:put_or_merge, event}, _from, state) do
+  def handle_call({:merge_forwarded, event}, _from, state) do
     case :ets.lookup(:abxbus_events, event.event_id) do
       [{_, existing}] ->
-        # Event already exists (forwarded) — merge path and increment bus count
         merged_path = Enum.uniq(existing.event_path ++ event.event_path)
         updated = %{existing |
           event_path: merged_path,
@@ -291,24 +302,16 @@ defmodule Abxbus.EventStore do
         {:reply, :ok, state}
 
       [] ->
-        # New event — insert with count=1
+        # Raced — insert now
         inserted = %{event | event_pending_bus_count: 1}
         :ets.insert(:abxbus_events, {event.event_id, inserted})
         {:reply, :ok, state}
     end
   end
 
-  def handle_call({:update, event_id, updates}, _from, state) do
-    result =
-      case :ets.lookup(:abxbus_events, event_id) do
-        [{^event_id, event}] ->
-          updated = Map.merge(event, updates)
-          :ets.insert(:abxbus_events, {event_id, updated})
-          {:ok, updated}
-        [] ->
-          :error
-      end
-    {:reply, result, state}
+  def handle_call({:put, event}, _from, state) do
+    :ets.insert(:abxbus_events, {event.event_id, event})
+    {:reply, :ok, state}
   end
 
   def handle_call({:update_fun, event_id, fun}, _from, state) do

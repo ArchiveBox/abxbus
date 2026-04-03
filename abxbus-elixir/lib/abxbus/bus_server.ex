@@ -30,6 +30,12 @@ defmodule Abxbus.BusServer do
     event_slow_timeout: nil,
     event_handler_slow_timeout: nil,
     event_handler_detect_file_paths: true,
+    # Performance: run serial handlers inline in the GenServer process (no spawn).
+    # Only safe when handlers are fast and don't block. Incompatible with handlers
+    # that spin-wait, sleep, or require concurrent find-before-completion semantics.
+    inline_handlers: false,
+    # cached config map (rebuilt on config change)
+    cached_config: %{},
     # runtime state
     pending_event_queue: :queue.new(),
     in_flight_event_ids: MapSet.new(),
@@ -56,7 +62,25 @@ defmodule Abxbus.BusServer do
   def via(name), do: {:via, Registry, {Abxbus.BusRegistry, name}}
 
   @doc "Emit an event onto this bus. Non-blocking."
-  def emit(bus, event), do: GenServer.call(lookup(bus), {:emit, event})
+  def emit(bus, event) do
+    case Process.get(:abxbus_inline_bus) do
+      nil ->
+        GenServer.call(lookup(bus), {:emit, event})
+
+      inline_bus_name ->
+        # We're inside an inline handler. Check if same bus.
+        target = lookup(bus)
+        inline_target = lookup(inline_bus_name)
+
+        if target == inline_target do
+          # Same-bus re-entrant emit: process child synchronously (nested inline)
+          emit_inline_reentrant(event)
+        else
+          # Different bus: safe to call its GenServer
+          GenServer.call(target, {:emit, event})
+        end
+    end
+  end
 
   @doc "Alias for emit (matches Python's dispatch)."
   def dispatch(bus, event), do: emit(bus, event)
@@ -127,11 +151,14 @@ defmodule Abxbus.BusServer do
       event_slow_timeout: Keyword.get(opts, :event_slow_timeout),
       event_handler_slow_timeout: Keyword.get(opts, :event_handler_slow_timeout),
       event_handler_detect_file_paths: Keyword.get(opts, :event_handler_detect_file_paths, true),
+      inline_handlers: Keyword.get(opts, :inline_handlers, false),
       max_history_size: Keyword.get(opts, :max_history_size, 1000),
       max_history_drop: Keyword.get(opts, :max_history_drop, true),
       middlewares: Keyword.get(opts, :middlewares, []),
       started: true
     }
+
+    state = %{state | cached_config: build_config(state)}
 
     ensure_bus_pid_table()
     :ets.insert(:abxbus_bus_pids, {self(), state.name})
@@ -155,33 +182,35 @@ defmodule Abxbus.BusServer do
   end
 
   def handle_call({:emit, event}, _from, state) do
-    event =
-      event
-      |> ensure_event_id()
-      |> ensure_event_type()
-      |> ensure_timestamps()
-      |> append_bus_to_path(state.label)
+    event = prepare_event(event, state.label)
 
     case check_backpressure(state) do
       :ok ->
-        new_queue = :queue.in(event, state.pending_event_queue)
-        new_in_flight = MapSet.put(state.in_flight_event_ids, event.event_id)
-
+        # Store in ETS and index — needed for find, await, etc.
         EventStore.put_or_merge(event)
         EventStore.index_to_bus(state.name, event.event_id)
         EventStore.resolve_find_waiters(event)
 
         state = %{state |
-          pending_event_queue: new_queue,
-          in_flight_event_ids: new_in_flight,
+          pending_event_queue: :queue.in(event, state.pending_event_queue),
+          in_flight_event_ids: MapSet.put(state.in_flight_event_ids, event.event_id),
           event_history: [event.event_id | state.event_history],
           event_history_count: state.event_history_count + 1
         }
 
-        Middleware.dispatch(state.middlewares, :on_event_change, [state.name, event, :pending])
+        if state.middlewares != [] do
+          Middleware.dispatch(state.middlewares, :on_event_change, [state.name, event, :pending])
+        end
         state = maybe_process_next(state)
 
-        {:reply, event, state}
+        # If inline processing completed and left deferred events in the queue,
+        # use handle_continue to drain them without blocking the caller.
+        if not :queue.is_empty(state.pending_event_queue) and
+           MapSet.size(state.processing_event_ids) == 0 do
+          {:reply, event, state, {:continue, :drain_queue}}
+        else
+          {:reply, event, state}
+        end
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -291,6 +320,21 @@ defmodule Abxbus.BusServer do
     end
   end
 
+  # ── Inline queue drain (via handle_continue) ────────────────────────────────
+
+  @impl true
+  def handle_continue(:drain_queue, state) do
+    state = maybe_process_next(state)
+
+    if not :queue.is_empty(state.pending_event_queue) and
+       MapSet.size(state.processing_event_ids) == 0 do
+      {:noreply, state, {:continue, :drain_queue}}
+    else
+      state = maybe_notify_idle(state)
+      {:noreply, state}
+    end
+  end
+
   # ── Queue jump ──────────────────────────────────────────────────────────────
 
   @impl true
@@ -310,21 +354,23 @@ defmodule Abxbus.BusServer do
 
   @impl true
   def handle_info({:event_worker_done, event_id, results}, state) do
-    EventStore.update_fun(event_id, fn event ->
-      now = System.monotonic_time(:nanosecond)
-      completed_ats = for({_, r} <- results, r.completed_at != nil, do: r.completed_at)
-      completed_at = Enum.max([now | completed_ats])
+    # Direct ETS update — avoid GenServer roundtrip in completion hot path
+    case EventStore.get(event_id) do
+      nil -> :ok
+      event ->
+        now = System.monotonic_time(:nanosecond)
+        completed_ats = for({_, r} <- results, r.completed_at != nil, do: r.completed_at)
+        completed_at = Enum.max([now | completed_ats])
+        new_status = if event.event_status == :error, do: :error, else: :completed
 
-      # Preserve :error status from earlier bus completions
-      new_status = if event.event_status == :error, do: :error, else: :completed
-
-      %{event |
-        event_results: Map.merge(event.event_results, results),
-        event_status: new_status,
-        event_completed_at: completed_at,
-        event_pending_bus_count: max((event.event_pending_bus_count || 1) - 1, 0)
-      }
-    end)
+        updated = %{event |
+          event_results: Map.merge(event.event_results, results),
+          event_status: new_status,
+          event_completed_at: completed_at,
+          event_pending_bus_count: max((event.event_pending_bus_count || 1) - 1, 0)
+        }
+        EventStore.put(updated)
+    end
 
     state = %{state |
       processing_event_ids: MapSet.delete(state.processing_event_ids, event_id),
@@ -351,7 +397,6 @@ defmodule Abxbus.BusServer do
     {:noreply, state}
   end
 
-  @impl true
   def handle_info({:event_worker_started, event_id}, state) do
     EventStore.update(event_id, %{event_status: :started, event_started_at: System.monotonic_time(:nanosecond)})
 
@@ -362,7 +407,6 @@ defmodule Abxbus.BusServer do
     {:noreply, state}
   end
 
-  @impl true
   def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
     case Map.pop(state.worker_monitors, ref) do
       {nil, _} ->
@@ -402,14 +446,12 @@ defmodule Abxbus.BusServer do
     end
   end
 
-  @impl true
   def handle_info(:check_pending, state) do
     state = maybe_process_next(state)
     state = maybe_notify_idle(state)
     {:noreply, state}
   end
 
-  @impl true
   def handle_info(_msg, state), do: {:noreply, state}
 
   # ── Internal: queue processing ──────────────────────────────────────────────
@@ -449,24 +491,274 @@ defmodule Abxbus.BusServer do
     end
   end
 
-  defp spawn_event_worker(state, event, opts) do
+  defp spawn_event_worker(state, event, _opts) do
     bus_pid = self()
     bus_name = state.name
     handlers = applicable_handlers(state, event)
     bus_config = config(state)
-    _jump = Keyword.get(opts, :jump, false)
 
-    pid = spawn(fn ->
-      EventWorker.run(event, handlers, bus_config, bus_pid, bus_name)
-    end)
+    # Inline execution for serial modes: no process spawn overhead.
+    # Only enabled when inline_handlers: true is set on the bus config.
+    event_timeout = LockManager.resolve_event_timeout(event, bus_config)
+    effective_concurrency = LockManager.resolve_event_concurrency(event, bus_config)
 
-    ref = Process.monitor(pid)
+    use_inline = state.inline_handlers and
+                 effective_concurrency in [:bus_serial, :global_serial] and
+                 event_timeout == nil
 
-    %{state |
-      processing_event_ids: MapSet.put(state.processing_event_ids, event.event_id),
-      worker_monitors: Map.put(state.worker_monitors, ref, event.event_id)
-    }
+    if use_inline do
+      started_at = System.monotonic_time(:nanosecond)
+
+      if state.middlewares != [] do
+        started_event = %{event | event_status: :started, event_started_at: started_at}
+        EventStore.put(started_event)
+        Middleware.dispatch(state.middlewares, :on_event_change, [state.name, started_event, :started])
+      end
+
+      state = %{state | processing_event_ids: MapSet.put(state.processing_event_ids, event.event_id)}
+
+      # Stash context for re-entrant emit (nested inline)
+      prev_inline_bus = Process.get(:abxbus_inline_bus)
+      prev_inline_ctx = Process.get(:abxbus_inline_context)
+
+      Process.put(:abxbus_inline_bus, bus_name)
+      Process.put(:abxbus_inline_context, %{
+        handlers: state.handlers,
+        bus_config: bus_config,
+        bus_label: state.label,
+        bus_name: bus_name,
+        bus_pid: bus_pid,
+        middlewares: state.middlewares
+      })
+
+      # Initialize deferred queue for re-entrant emits
+      prev_deferred = Process.get(:abxbus_inline_deferred)
+      Process.put(:abxbus_inline_deferred, [])
+
+      result = EventWorker.run_inline(event, handlers, bus_config, bus_pid, bus_name)
+
+      # Collect any remaining deferred events (emitted but not awaited)
+      remaining_deferred = Enum.reverse(Process.get(:abxbus_inline_deferred, []))
+
+      # Restore previous context (supports nested inline across different buses)
+      restore_process_dict(:abxbus_inline_bus, prev_inline_bus)
+      restore_process_dict(:abxbus_inline_context, prev_inline_ctx)
+      restore_process_dict(:abxbus_inline_deferred, prev_deferred)
+
+      # Add remaining deferred events to the bus pending queue
+      state = Enum.reduce(remaining_deferred, state, fn deferred_event, acc ->
+        %{acc |
+          pending_event_queue: :queue.in(deferred_event, acc.pending_event_queue),
+          in_flight_event_ids: MapSet.put(acc.in_flight_event_ids, deferred_event.event_id),
+          event_history: [deferred_event.event_id | acc.event_history],
+          event_history_count: acc.event_history_count + 1
+        }
+      end)
+
+      case result do
+        {:ok, results} ->
+          now = System.monotonic_time(:nanosecond)
+          completed_ats = for({_, r} <- results, r.completed_at != nil, do: r.completed_at)
+          completed_at = Enum.max([now | completed_ats])
+
+          completed_event = %{event |
+            event_status: :completed,
+            event_started_at: started_at,
+            event_completed_at: completed_at,
+            event_results: results,
+            event_pending_bus_count: max((event.event_pending_bus_count || 1) - 1, 0)
+          }
+          EventStore.put(completed_event)
+
+          state = %{state |
+            processing_event_ids: MapSet.delete(state.processing_event_ids, event.event_id),
+            in_flight_event_ids: MapSet.delete(state.in_flight_event_ids, event.event_id)
+          }
+
+          if effective_concurrency == :global_serial do
+            LockManager.release_global()
+            notify_all_buses_check_pending()
+          end
+
+          if state.middlewares != [] do
+            Middleware.dispatch(state.middlewares, :on_event_change, [state.name, completed_event, :completed])
+          end
+          maybe_mark_tree_complete(completed_event)
+
+          state = maybe_trim_history(state)
+          state = maybe_notify_idle(state)
+          state
+
+        {:crash, _kind, reason, _stacktrace} ->
+          Logger.warning("Inline EventWorker for #{event.event_id} crashed: #{inspect(reason)}")
+
+          error_event = %{event | event_status: :error}
+          EventStore.put(error_event)
+
+          state = %{state |
+            processing_event_ids: MapSet.delete(state.processing_event_ids, event.event_id),
+            in_flight_event_ids: MapSet.delete(state.in_flight_event_ids, event.event_id)
+          }
+
+          if effective_concurrency == :global_serial do
+            LockManager.release_global()
+            notify_all_buses_check_pending()
+          end
+
+          if state.middlewares != [] do
+            Middleware.dispatch(state.middlewares, :on_event_change, [state.name, error_event, :completed])
+          end
+          maybe_mark_tree_complete(error_event)
+
+          state = maybe_notify_idle(state)
+          state
+      end
+    else
+      # Spawn a process for parallel mode or when timeouts are needed
+      pid = spawn(fn ->
+        EventWorker.run(event, handlers, bus_config, bus_pid, bus_name)
+      end)
+
+      ref = Process.monitor(pid)
+
+      %{state |
+        processing_event_ids: MapSet.put(state.processing_event_ids, event.event_id),
+        worker_monitors: Map.put(state.worker_monitors, ref, event.event_id)
+      }
+    end
   end
+
+  # Defer a child event when emitting from within an inline handler on the same bus.
+  # The event is stored in ETS and added to a process-dict deferred queue.
+  # It will be processed inline when awaited (queue-jump) or added back to the
+  # bus pending queue when the inline handler completes.
+  defp emit_inline_reentrant(event) do
+    ctx = Process.get(:abxbus_inline_context)
+
+    event = prepare_event(event, ctx.bus_label)
+
+    EventStore.put_or_merge(event)
+    EventStore.index_to_bus(ctx.bus_name, event.event_id)
+    EventStore.resolve_find_waiters(event)
+
+    if ctx.middlewares != [] do
+      Middleware.dispatch(ctx.middlewares, :on_event_change, [ctx.bus_name, event, :pending])
+    end
+
+    # Add to deferred queue — will be processed on await or after handler returns
+    deferred = Process.get(:abxbus_inline_deferred, [])
+    Process.put(:abxbus_inline_deferred, [event | deferred])
+
+    event
+  end
+
+  @doc """
+  Process a deferred inline event immediately (inline queue-jump).
+  Called from Abxbus.await when the awaited event is in the inline deferred queue.
+  """
+  def process_deferred_inline(event_id) do
+    deferred = Process.get(:abxbus_inline_deferred, [])
+
+    case pop_deferred(deferred, event_id) do
+      {:ok, event, remaining} ->
+        Process.put(:abxbus_inline_deferred, remaining)
+        ctx = Process.get(:abxbus_inline_context)
+
+        handlers = applicable_handlers_from_map(ctx.handlers, ctx.bus_name, event)
+
+        started_at = System.monotonic_time(:nanosecond)
+
+        if ctx.middlewares != [] do
+          started_event = %{event | event_status: :started, event_started_at: started_at}
+          EventStore.put(started_event)
+          Middleware.dispatch(ctx.middlewares, :on_event_change, [ctx.bus_name, started_event, :started])
+        end
+
+        result = EventWorker.run_inline(event, handlers, ctx.bus_config, ctx.bus_pid, ctx.bus_name)
+
+        case result do
+          {:ok, results} ->
+            now = System.monotonic_time(:nanosecond)
+            completed_ats = for({_, r} <- results, r.completed_at != nil, do: r.completed_at)
+            completed_at = if completed_ats == [], do: now, else: Enum.max([now | completed_ats])
+
+            completed_event = %{event |
+              event_status: :completed,
+              event_started_at: started_at,
+              event_completed_at: completed_at,
+              event_results: results,
+              event_pending_bus_count: max((event.event_pending_bus_count || 1) - 1, 0)
+            }
+            EventStore.put(completed_event)
+
+            if ctx.middlewares != [] do
+              Middleware.dispatch(ctx.middlewares, :on_event_change, [ctx.bus_name, completed_event, :completed])
+            end
+
+            EventStore.notify_waiters(event_id, completed_event)
+            completed_event
+
+          {:crash, _kind, reason, _stacktrace} ->
+            Logger.warning("Inline deferred EventWorker for #{event_id} crashed: #{inspect(reason)}")
+
+            error_event = %{event | event_status: :error}
+            EventStore.put(error_event)
+            EventStore.notify_waiters(event_id, error_event)
+            error_event
+        end
+
+      :not_found ->
+        # Not in deferred queue, return nil to signal normal await should proceed
+        nil
+    end
+  end
+
+  defp pop_deferred([], _event_id), do: :not_found
+  defp pop_deferred([event | rest], event_id) do
+    if event.event_id == event_id do
+      {:ok, event, rest}
+    else
+      case pop_deferred(rest, event_id) do
+        {:ok, found, remaining} -> {:ok, found, [event | remaining]}
+        :not_found -> :not_found
+      end
+    end
+  end
+
+  defp restore_process_dict(key, nil), do: Process.delete(key)
+  defp restore_process_dict(key, val), do: Process.put(key, val)
+
+  # Like applicable_handlers/2 but works with a raw handlers map + bus_name
+  defp applicable_handlers_from_map(handlers, bus_name, event) when map_size(handlers) == 0, do: []
+
+  defp applicable_handlers_from_map(handlers, bus_name, event) do
+    event_type = event.event_type
+
+    type_handlers = Map.get(handlers, event_type, [])
+    wildcard_handlers = Map.get(handlers, :wildcard, [])
+
+    string_handlers =
+      if map_size(handlers) > length(type_handlers) + length(wildcard_handlers) and is_atom(event_type) do
+        type_name = event_type |> Module.split() |> List.last()
+        Map.get(handlers, type_name, [])
+      else
+        []
+      end
+
+    all = type_handlers ++ string_handlers ++ wildcard_handlers
+
+    if wildcard_handlers == [] do
+      all
+    else
+      Enum.reject(all, fn entry ->
+        entry.event_pattern == :wildcard and
+          entry.eventbus_name != bus_name and
+          Enum.any?(event.event_path, fn p -> String.starts_with?(p, "#{entry.eventbus_name}#") end)
+      end)
+    end
+  end
+
+  defp applicable_handlers(%{handlers: handlers}, _event) when map_size(handlers) == 0, do: []
 
   defp applicable_handlers(state, event) do
     event_type = event.event_type
@@ -474,15 +766,26 @@ defmodule Abxbus.BusServer do
     type_handlers = Map.get(state.handlers, event_type, [])
     wildcard_handlers = Map.get(state.handlers, :wildcard, [])
 
-    type_name = if is_atom(event_type), do: event_type |> Module.split() |> List.last(), else: nil
-    string_handlers = if type_name, do: Map.get(state.handlers, type_name, []), else: []
+    # Only do Module.split for string-based handler lookup if needed
+    string_handlers =
+      if map_size(state.handlers) > length(type_handlers) + length(wildcard_handlers) and is_atom(event_type) do
+        type_name = event_type |> Module.split() |> List.last()
+        Map.get(state.handlers, type_name, [])
+      else
+        []
+      end
 
-    (type_handlers ++ string_handlers ++ wildcard_handlers)
-    |> Enum.reject(fn entry ->
-      entry.event_pattern == :wildcard and
-        entry.eventbus_name != state.name and
-        Enum.any?(event.event_path, fn p -> String.starts_with?(p, "#{entry.eventbus_name}#") end)
-    end)
+    all = type_handlers ++ string_handlers ++ wildcard_handlers
+
+    if wildcard_handlers == [] do
+      all
+    else
+      Enum.reject(all, fn entry ->
+        entry.event_pattern == :wildcard and
+          entry.eventbus_name != state.name and
+          Enum.any?(event.event_path, fn p -> String.starts_with?(p, "#{entry.eventbus_name}#") end)
+      end)
+    end
   end
 
   # ── Internal: handler removal ───────────────────────────────────────────────
@@ -506,7 +809,9 @@ defmodule Abxbus.BusServer do
   defp maybe_trim_history(%{max_history_size: max} = state) when max < 0, do: state
 
   defp maybe_trim_history(state) do
-    if state.event_history_count > state.max_history_size do
+    # Trim at 2x max to amortize the O(n) Enum.take cost.
+    # Each trim costs O(max), but only runs every max events → amortized O(1).
+    if state.event_history_count > state.max_history_size * 2 do
       trimmed = Enum.take(state.event_history, state.max_history_size)
       %{state | event_history: trimmed, event_history_count: state.max_history_size}
     else
@@ -519,24 +824,24 @@ defmodule Abxbus.BusServer do
   defp normalize_event_pattern("*"), do: :wildcard
   defp normalize_event_pattern(type), do: type
 
-  defp ensure_event_id(%{event_id: nil} = event), do: %{event | event_id: Abxbus.Event.generate_id()}
-  defp ensure_event_id(event), do: event
-
-  defp ensure_event_type(%{event_type: nil} = event), do: %{event | event_type: event.__struct__}
-  defp ensure_event_type(event), do: event
-
-  defp ensure_timestamps(%{event_created_at: nil} = event) do
-    %{event | event_created_at: System.monotonic_time(:nanosecond)}
-  end
-  defp ensure_timestamps(event), do: event
-
-  defp append_bus_to_path(event, label) do
-    if label in event.event_path do
-      Logger.warning("Event #{event.event_id} already has bus #{label} in path — possible circular forwarding")
-      event
+  # Prepare event metadata in a single pass (avoids multiple struct copies)
+  defp prepare_event(event, label) do
+    id = event.event_id || Abxbus.Event.generate_id()
+    type = event.event_type || event.__struct__
+    created_at = event.event_created_at || System.monotonic_time(:nanosecond)
+    path = if label in event.event_path do
+      Logger.warning("Event #{id} already has bus #{label} in path — possible circular forwarding")
+      event.event_path
     else
-      %{event | event_path: event.event_path ++ [label]}
+      event.event_path ++ [label]
     end
+
+    %{event |
+      event_id: id,
+      event_type: type,
+      event_created_at: created_at,
+      event_path: path
+    }
   end
 
   defp check_backpressure(state) do
@@ -547,7 +852,9 @@ defmodule Abxbus.BusServer do
     end
   end
 
-  defp config(state) do
+  defp config(state), do: state.cached_config
+
+  defp build_config(state) do
     %{
       event_concurrency: state.event_concurrency,
       event_handler_concurrency: state.event_handler_concurrency,
@@ -563,6 +870,7 @@ defmodule Abxbus.BusServer do
     :queue.is_empty(state.pending_event_queue) and MapSet.size(state.in_flight_event_ids) == 0
   end
 
+  defp maybe_notify_idle(%{idle_waiters: []} = state), do: state
   defp maybe_notify_idle(state) do
     if idle?(state) do
       for waiter <- state.idle_waiters, do: GenServer.reply(waiter, :ok)
@@ -600,26 +908,34 @@ defmodule Abxbus.BusServer do
   end
 
   defp maybe_mark_tree_complete(event) do
-    children_ids = EventStore.children_of(event.event_id)
-    all_children_complete =
-      Enum.all?(children_ids, fn child_id ->
-        case EventStore.get(child_id) do
-          nil -> true
-          child -> child.event_status in [:completed, :error]
-        end
-      end)
+    # Skip tree check if pending_bus_count > 0 (common for forwarded events)
+    if (event.event_pending_bus_count || 0) > 0, do: :ok, else: do_mark_tree_complete(event)
+  end
 
-    if all_children_complete and event.event_pending_bus_count <= 0 do
-      # Preserve :error status — only set :completed if not already terminal
-      final_status = if event.event_status == :error, do: :error, else: :completed
-      EventStore.update(event.event_id, %{event_status: final_status})
-      updated = EventStore.get(event.event_id)
-      EventStore.notify_waiters(event.event_id, updated)
+  defp do_mark_tree_complete(event) do
+    # Only proceed if this event's own handler has finished (status is terminal).
+    # This prevents premature tree-completion when a child finishes but the parent
+    # handler is still running (e.g., handler called await(child) and continues after).
+    unless event.event_status in [:completed, :error] do
+      :ok
+    else
+      children_ids = EventStore.children_of(event.event_id)
+      all_children_complete =
+        Enum.all?(children_ids, fn child_id ->
+          case EventStore.get(child_id) do
+            nil -> true
+            child -> child.event_status in [:completed, :error]
+          end
+        end)
 
-      if event.event_parent_id do
-        case EventStore.get(event.event_parent_id) do
-          nil -> :ok
-          parent -> maybe_mark_tree_complete(parent)
+      if all_children_complete do
+        EventStore.notify_waiters(event.event_id, event)
+
+        if event.event_parent_id do
+          case EventStore.get(event.event_parent_id) do
+            nil -> :ok
+            parent -> do_mark_tree_complete(parent)
+          end
         end
       end
     end

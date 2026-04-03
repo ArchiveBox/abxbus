@@ -94,36 +94,44 @@ defmodule Abxbus do
   Returns the completed event.
   """
   def await(event, timeout \\ :infinity) do
-    # Register waiter FIRST to prevent TOCTOU race
-    ref = EventStore.add_waiter(event.event_id)
-
-    case EventStore.get(event.event_id) do
-      %{event_status: status} = completed when status in [:completed, :error] ->
-        # Already terminal — drain any notification sent between registration and check
-        receive do
-          {:event_completed, ^ref, _} -> :ok
-        after
-          0 -> :ok
-        end
+    # Check if this is a deferred inline event that should be processed now
+    # (inline queue-jump: handler emitted to same bus, now awaiting)
+    case BusServer.process_deferred_inline(event.event_id) do
+      %{} = completed ->
         completed
 
-      _ ->
-        if in_handler_context?() do
-          trigger_queue_jump(event)
-        end
+      nil ->
+        # Normal await path
+        ref = EventStore.add_waiter(event.event_id)
 
-        timeout_ms =
-          case timeout do
-            :infinity -> :infinity
-            s when is_number(s) -> trunc(s * 1000)
-          end
+        case EventStore.get(event.event_id) do
+          %{event_status: status} = completed when status in [:completed, :error] ->
+            # Already terminal — drain any notification sent between registration and check
+            receive do
+              {:event_completed, ^ref, _} -> :ok
+            after
+              0 -> :ok
+            end
+            completed
 
-        receive do
-          {:event_completed, ^ref, completed_event} ->
-            completed_event
-        after
-          timeout_ms ->
-            {:error, :timeout}
+          _ ->
+            if in_handler_context?() do
+              trigger_queue_jump(event)
+            end
+
+            timeout_ms =
+              case timeout do
+                :infinity -> :infinity
+                s when is_number(s) -> trunc(s * 1000)
+              end
+
+            receive do
+              {:event_completed, ^ref, completed_event} ->
+                completed_event
+            after
+              timeout_ms ->
+                {:error, :timeout}
+            end
         end
     end
   end
