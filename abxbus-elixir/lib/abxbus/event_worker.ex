@@ -25,11 +25,36 @@ defmodule Abxbus.EventWorker do
     Process.put(:abxbus_current_bus, bus_name)
     Process.put(:abxbus_current_bus_pid, bus_pid)
 
+    # Write pending handler results to ETS BEFORE signaling started,
+    # so middleware can see them in on_event_result_change(:started)
+    pre_populate_pending_results(event, handlers, bus_config, bus_name)
+
     send(bus_pid, {:event_worker_started, event.event_id})
 
     results = run_handlers(event, handlers, bus_config, bus_pid, bus_name)
 
     send(bus_pid, {:event_worker_done, event.event_id, results})
+  end
+
+  defp pre_populate_pending_results(_event, [], _bus_config, _bus_name), do: :ok
+  defp pre_populate_pending_results(event, handlers, bus_config, bus_name) do
+    pending =
+      handlers
+      |> Enum.map(fn entry ->
+        {entry.id, EventResult.new(entry.id,
+          event_id: event.event_id,
+          handler_name: entry.handler_name,
+          handler_file_path: entry.handler_file_path,
+          timeout: LockManager.resolve_handler_timeout(entry, event, bus_config),
+          handler_registered_at: entry.handler_registered_at,
+          eventbus_name: bus_name
+        )}
+      end)
+      |> Map.new()
+
+    EventStore.update_fun(event.event_id, fn existing ->
+      %{existing | event_results: Map.merge(existing.event_results, pending)}
+    end)
   end
 
   # Fast path: no handlers, no work to do
@@ -44,6 +69,8 @@ defmodule Abxbus.EventWorker do
     event_slow = Map.get(event, :event_slow_timeout) || Map.get(bus_config, :event_slow_timeout)
     handler_slow = Map.get(event, :event_handler_slow_timeout) || Map.get(bus_config, :event_handler_slow_timeout)
 
+    # Pending results already written to ETS by pre_populate_pending_results.
+    # Reconstruct local results map for handler execution tracking.
     results =
       handlers
       |> Enum.map(fn entry ->
@@ -57,8 +84,6 @@ defmodule Abxbus.EventWorker do
         )}
       end)
       |> Map.new()
-
-    EventStore.update(event.event_id, %{event_results: results})
 
     Process.put(:abxbus_event_results_key, nil)
 

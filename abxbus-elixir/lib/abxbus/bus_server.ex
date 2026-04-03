@@ -153,6 +153,16 @@ defmodule Abxbus.BusServer do
     end
   end
 
+  @impl true
+  def terminate(_reason, _state) do
+    try do
+      :ets.delete(:abxbus_bus_pids, self())
+    rescue
+      ArgumentError -> :ok
+    end
+    :ok
+  end
+
   # ── Emit ────────────────────────────────────────────────────────────────────
 
   @impl true

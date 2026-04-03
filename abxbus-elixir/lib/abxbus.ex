@@ -233,11 +233,16 @@ defmodule Abxbus do
     all_results = Map.values(stored.event_results || %{})
 
     # raise_if_any checks UNFILTERED results (matches Python behavior)
-    if Keyword.get(opts, :raise_if_any, true) do
+    if Keyword.get(opts, :raise_if_any, false) do
       errors = Enum.filter(all_results, &(&1.status == :error))
       if errors != [] do
         first_error = hd(errors)
-        raise first_error.error || %RuntimeError{message: "Handler error"}
+        error = first_error.error
+        cond do
+          is_exception(error) -> raise error
+          is_nil(error) -> raise %RuntimeError{message: "Handler error"}
+          true -> raise %RuntimeError{message: "Handler error: #{inspect(error)}"}
+        end
       end
     end
 
@@ -256,7 +261,7 @@ defmodule Abxbus do
         fun -> Enum.filter(results, fun)
       end
 
-    if Keyword.get(opts, :raise_if_none, true) and results == [] do
+    if Keyword.get(opts, :raise_if_none, false) and results == [] do
       raise %RuntimeError{message: "No results after filtering"}
     end
 
