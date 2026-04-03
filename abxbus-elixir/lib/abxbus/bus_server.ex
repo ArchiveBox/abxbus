@@ -364,9 +364,10 @@ defmodule Abxbus.BusServer do
     if event = EventStore.get(event_id) do
       Middleware.dispatch(state.middlewares, :on_event_change, [state.name, event, :started])
 
-      # Dispatch :started for each handler result
+      # Dispatch :started for each handler result owned by this bus
       if state.middlewares != [] do
-        for {_handler_id, result} <- event.event_results do
+        for {_handler_id, result} <- event.event_results,
+            result.eventbus_name == nil or result.eventbus_name == state.name do
           Middleware.dispatch(state.middlewares, :on_event_result_change, [state.name, event, result, :started])
         end
       end
