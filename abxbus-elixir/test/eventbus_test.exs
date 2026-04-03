@@ -614,12 +614,14 @@ defmodule Abxbus.EventbusTest do
 
       event = Abxbus.emit(:eb_fwd_a, EBFwdFlatEvent.new())
 
+      # Wait for all buses to finish processing (sequential ensures ordering)
       Abxbus.wait_until_idle(:eb_fwd_a)
       Abxbus.wait_until_idle(:eb_fwd_b)
       Abxbus.wait_until_idle(:eb_fwd_c)
 
-      # Allow async result propagation to settle
-      Process.sleep(50)
+      # Use event_completed to wait for the full forwarding chain to settle.
+      # After all buses are idle, the event should be terminal.
+      Abxbus.event_completed(event, 2.0)
 
       stored = Abxbus.EventStore.get(event.event_id)
       results = Map.values(stored.event_results)

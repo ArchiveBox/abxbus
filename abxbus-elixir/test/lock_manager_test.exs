@@ -153,17 +153,11 @@ defmodule Abxbus.LockManagerTest do
           LockManager.acquire_global()
         end)
 
-      # Give the task time to start waiting
-      Process.sleep(20)
-
-      # Release from this process
+      # Release from this process — the task will unblock and acquire
       LockManager.release_global()
 
-      # The task should now complete with :ok
+      # The task should complete with :ok (it was waiting for release)
       assert :ok == Task.await(task, 2000)
-
-      # Clean up: the task process died after completing, auto-releasing the lock
-      Process.sleep(10)
     end
 
     test "lock auto-released when holder process dies" do
@@ -181,15 +175,18 @@ defmodule Abxbus.LockManagerTest do
         1000 -> flunk("Spawned process did not exit")
       end
 
-      # Allow the DOWN message to be processed by LockManager
-      Process.sleep(20)
+      # Spin-wait for the DOWN monitor to be processed by LockManager
+      result =
+        Enum.reduce_while(1..100, :busy, fn _, _ ->
+          Process.sleep(5)
+          task = Task.async(fn -> LockManager.try_acquire_global() end)
+          case Task.await(task) do
+            :ok -> {:halt, :ok}
+            :busy -> {:cont, :busy}
+          end
+        end)
 
-      # Lock should now be available
-      assert :ok == LockManager.try_acquire_global()
-
-      # Clean up
-      LockManager.release_global()
-      Process.sleep(10)
+      assert result == :ok, "Lock should be auto-released after holder process dies"
     end
   end
 end
