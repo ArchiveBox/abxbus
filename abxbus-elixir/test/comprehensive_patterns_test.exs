@@ -535,4 +535,54 @@ defmodule Abxbus.ComprehensivePatternsTest do
       assert map_size(child_stored.event_results) == 1
     end
   end
+
+  describe "deeply nested awaited children" do
+    test "parent > child > grandchild all complete in order" do
+      {:ok, _} = Abxbus.start_bus(:deep_nest, event_concurrency: :bus_serial)
+
+      defevent(DeepParent)
+      defevent(DeepChild)
+      defevent(DeepGrandchild)
+
+      log = Agent.start_link(fn -> [] end) |> elem(1)
+
+      Abxbus.on(:deep_nest, DeepParent, fn _event ->
+        Agent.update(log, &(&1 ++ ["parent_start"]))
+
+        child = Abxbus.emit(:deep_nest, DeepChild.new())
+        Abxbus.await(child)
+
+        Agent.update(log, &(&1 ++ ["parent_end"]))
+        "parent_done"
+      end, handler_name: "parent_handler")
+
+      Abxbus.on(:deep_nest, DeepChild, fn _event ->
+        Agent.update(log, &(&1 ++ ["child_start"]))
+
+        grandchild = Abxbus.emit(:deep_nest, DeepGrandchild.new())
+        Abxbus.await(grandchild)
+
+        Agent.update(log, &(&1 ++ ["child_end"]))
+        "child_done"
+      end, handler_name: "child_handler")
+
+      Abxbus.on(:deep_nest, DeepGrandchild, fn _event ->
+        Agent.update(log, &(&1 ++ ["grandchild"]))
+        "grandchild_done"
+      end, handler_name: "grandchild_handler")
+
+      Abxbus.emit(:deep_nest, DeepParent.new())
+      Abxbus.wait_until_idle(:deep_nest)
+
+      order = Agent.get(log, & &1)
+
+      assert order == [
+        "parent_start",
+        "child_start",
+        "grandchild",
+        "child_end",
+        "parent_end"
+      ]
+    end
+  end
 end

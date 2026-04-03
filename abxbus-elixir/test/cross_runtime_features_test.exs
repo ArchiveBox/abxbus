@@ -312,6 +312,53 @@ defmodule Abxbus.CrossRuntimeFeaturesTest do
     end
   end
 
+  describe "pending queue find visibility transitions to completed" do
+    test "in-progress event is visible via find, then transitions to completed" do
+      {:ok, _} = Abxbus.start_bus(:cr_pqv)
+
+      defevent(PQVEvent, value: "default")
+
+      barrier = :atomics.new(1, [])
+
+      Abxbus.on(:cr_pqv, PQVEvent, fn _event ->
+        # Block until barrier is released
+        spin_until(fn -> :atomics.get(barrier, 1) == 1 end, 5000)
+        "done"
+      end, handler_name: "slow_handler")
+
+      event = Abxbus.emit(:cr_pqv, PQVEvent.new(value: "target"))
+
+      # Give the handler a moment to start processing
+      Process.sleep(20)
+
+      # While handler is blocked, the event should be findable and in-progress (pending)
+      in_progress = Abxbus.find(PQVEvent,
+        where: fn e -> e.value == "target" end,
+        past: true
+      )
+      assert in_progress != nil
+      assert in_progress.event_id == event.event_id
+
+      in_progress_stored = Abxbus.EventStore.get(event.event_id)
+      assert in_progress_stored.event_status in [:pending, :processing, :started]
+
+      # Release the handler
+      :atomics.put(barrier, 1, 1)
+      Abxbus.wait_until_idle(:cr_pqv)
+
+      # Now the event should be completed
+      completed_stored = Abxbus.EventStore.get(event.event_id)
+      assert completed_stored.event_status == :completed
+
+      completed_find = Abxbus.find(PQVEvent,
+        where: fn e -> e.value == "target" end,
+        past: true
+      )
+      assert completed_find != nil
+      assert completed_find.event_id == event.event_id
+    end
+  end
+
   defp spin_until(fun, max, i \\ 0) do
     if i >= max, do: raise("spin_until exceeded #{max} iterations")
     if fun.(), do: :ok, else: (Process.sleep(1); spin_until(fun, max, i + 1))

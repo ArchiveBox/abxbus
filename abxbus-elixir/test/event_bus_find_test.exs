@@ -745,6 +745,53 @@ defmodule Abxbus.EventBusFindTest do
     end
   end
 
+  # ── find edge cases ─────────────────────────────────────────────────────────
+
+  describe "find edge cases" do
+    test "find future works with string event type" do
+      {:ok, _} = Abxbus.start_bus(:fe_str)
+      Abxbus.on(:fe_str, FindFutureEvent, fn _e -> :ok end)
+
+      ready = :atomics.new(1, [])
+      task = Task.async(fn ->
+        :atomics.put(ready, 1, 1)
+        Abxbus.find("FindFutureEvent", past: false, future: 5.0)
+      end)
+
+      spin_until(fn -> :atomics.get(ready, 1) == 1 end, 1000)
+      wait_for_find_waiter()
+
+      event = Abxbus.emit(:fe_str, FindFutureEvent.new(value: "str_type"))
+      found = Task.await(task, 6000)
+
+      assert found != nil
+      assert found.event_id == event.event_id
+    end
+
+    test "find future ignores already-dispatched in-flight events when past=false" do
+      {:ok, _} = Abxbus.start_bus(:fe_inflight)
+      barrier = :atomics.new(1, [])
+
+      Abxbus.on(:fe_inflight, FindFutureEvent, fn _e ->
+        :atomics.put(barrier, 1, 1)
+        spin_until(fn -> :atomics.get(barrier, 1) == 2 end, 5000)
+        :ok
+      end)
+
+      # Emit event BEFORE starting find — handler is slow, event is in-flight
+      _event = Abxbus.emit(:fe_inflight, FindFutureEvent.new(value: "in_flight"))
+      spin_until(fn -> :atomics.get(barrier, 1) == 1 end, 1000)
+
+      # find with past=false should NOT see the already-dispatched in-flight event
+      found = Abxbus.find(FindFutureEvent, past: false, future: 0.5)
+      assert found == nil
+
+      # Release the handler
+      :atomics.put(barrier, 1, 2)
+      Abxbus.wait_until_idle(:fe_inflight)
+    end
+  end
+
   # ── helpers ────────────────────────────────────────────────────────────────
 
   # Wait until at least one find waiter is registered in ETS
