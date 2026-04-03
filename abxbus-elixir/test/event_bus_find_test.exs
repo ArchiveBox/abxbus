@@ -655,7 +655,7 @@ defmodule Abxbus.EventBusFindTest do
       Abxbus.wait_until_idle(:fc_exc)
 
       found = Abxbus.find(FindFutureEvent, past: true,
-        where: &(Map.get(&1, :value) == "exc_keep"))
+        where: &(Map.get(&1, :value) in ["exc_keep", "exc_drop"] and Map.get(&1, :value) != "exc_drop"))
       assert found != nil
       assert found.value == "exc_keep"
     end

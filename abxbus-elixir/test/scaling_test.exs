@@ -9,7 +9,7 @@ defmodule Abxbus.ScalingTest do
     IO.puts("\n=== Per-Event Cost vs Scale ===\n")
 
     for n <- [100, 500, 1000, 5000, 10_000, 50_000] do
-      {:ok, _} = Abxbus.start_bus(:"scale_#{n}", event_concurrency: :bus_serial, inline_handlers: true)
+      {:ok, _} = Abxbus.start_bus(:"scale_#{n}", event_concurrency: :bus_serial)
       counter = :counters.new(1, [:atomics])
       Abxbus.on(:"scale_#{n}", ScaleEvent, fn _e ->
         :counters.add(counter, 1, 1)
