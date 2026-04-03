@@ -112,7 +112,7 @@ defmodule Abxbus.EventbusErrorHandlingTest do
 
       Abxbus.on(:eh_subsequent, EHCrashEvent, fn _e ->
         raise "boom"
-      end, handler_name: "crasher")
+      end, handler_name: "fail_handler")
 
       # First event fails
       Abxbus.emit(:eh_subsequent, EHCrashEvent.new())
@@ -128,8 +128,8 @@ defmodule Abxbus.EventbusErrorHandlingTest do
       assert length(results2) > 0,
              "Bus should still process events after previous errors"
 
-      crasher = Enum.find(results2, &(&1.handler_name == "crasher"))
-      assert crasher.status == :error,
+      fail_result = Enum.find(results2, &(&1.handler_name == "fail_handler"))
+      assert fail_result.status == :error,
              "Handler should still report :error status on second invocation"
     end
   end
