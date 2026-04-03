@@ -891,8 +891,13 @@ defmodule Abxbus.EventBusFindTest do
         Abxbus.find(FindConcC, past: false, future: 2.0)
       end)
 
-      spin_until(fn -> :counters.get(ready, 1) >= 3 end, 1000)
-      wait_for_find_waiter()
+      spin_until(fn ->
+        :counters.get(ready, 1) >= 3 and
+          (case :ets.info(:abxbus_find_waiters, :size) do
+             n when is_integer(n) and n >= 3 -> true
+             _ -> false
+           end)
+      end, 1000)
 
       e_a = Abxbus.emit(:fe_conc, FindConcA.new(tag: "a"))
       e_b = Abxbus.emit(:fe_conc, FindConcB.new(tag: "b"))

@@ -223,8 +223,16 @@ defmodule Abxbus.EventbusTest do
       handler = fn _event ->
         :counters.add(counter, 1, 1)
         current = :counters.get(counter, 1)
-        old = :atomics.get(max_concurrent, 1)
-        if current > old, do: :atomics.put(max_concurrent, 1, current)
+        # Atomic compare-and-swap loop to avoid racy max update
+        Stream.repeatedly(fn ->
+          old = :atomics.get(max_concurrent, 1)
+          if current > old do
+            :atomics.compare_exchange(max_concurrent, 1, old, current)
+          else
+            :ok
+          end
+        end)
+        |> Enum.find(fn result -> result == :ok end)
         Process.sleep(50)
         :counters.add(counter, 1, -1)
         :ok

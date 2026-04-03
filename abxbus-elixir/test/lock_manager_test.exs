@@ -126,20 +126,20 @@ defmodule Abxbus.LockManagerTest do
       # Release the lock
       LockManager.release_global()
 
-      # Allow async cast to process
-      Process.sleep(10)
-
-      # Now another process should be able to acquire
-      task2 =
-        Task.async(fn ->
-          LockManager.try_acquire_global()
+      # Spin-wait until the async release is processed and lock is acquirable
+      result =
+        Enum.reduce_while(1..100, :busy, fn _, _ ->
+          Process.sleep(5)
+          task2 = Task.async(fn -> LockManager.try_acquire_global() end)
+          case Task.await(task2) do
+            :ok -> {:halt, :ok}
+            :busy -> {:cont, :busy}
+          end
         end)
 
-      assert :ok == Task.await(task2)
+      assert result == :ok, "Lock should be acquirable after release"
 
-      # Clean up: release from the task2 process
-      # Since task2 acquired it, we need task2's process to release
-      # But task2 already exited. The monitor-based auto-release handles this.
+      # Clean up: the acquiring task already exited, monitor-based auto-release handles it.
       Process.sleep(10)
     end
 
