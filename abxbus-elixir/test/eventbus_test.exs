@@ -586,4 +586,110 @@ defmodule Abxbus.EventbusTest do
       Abxbus.stop(:eb_indexed, clear: true)
     end
   end
+
+  # ── Forwarding results ────────────────────────────────────────────────────
+
+  describe "forwarding results" do
+    test "forwarding flattens results across buses" do
+      {:ok, _} = Abxbus.start_bus(:eb_fwd_a)
+      {:ok, _} = Abxbus.start_bus(:eb_fwd_b)
+      {:ok, _} = Abxbus.start_bus(:eb_fwd_c)
+
+      defevent(EBFwdFlatEvent, data: "fwd")
+
+      # Type handlers returning distinct results
+      Abxbus.on(:eb_fwd_a, EBFwdFlatEvent, fn _event -> "from_a" end,
+        handler_name: "handler_a")
+      Abxbus.on(:eb_fwd_b, EBFwdFlatEvent, fn _event -> "from_b" end,
+        handler_name: "handler_b")
+      Abxbus.on(:eb_fwd_c, EBFwdFlatEvent, fn _event -> "from_c" end,
+        handler_name: "handler_c")
+
+      # Forwarding: a -> b via wildcard
+      Abxbus.on(:eb_fwd_a, "*", fn e -> Abxbus.emit(:eb_fwd_b, e) end,
+        handler_name: "fwd_a_b")
+      # Forwarding: b -> c via wildcard
+      Abxbus.on(:eb_fwd_b, "*", fn e -> Abxbus.emit(:eb_fwd_c, e) end,
+        handler_name: "fwd_b_c")
+
+      event = Abxbus.emit(:eb_fwd_a, EBFwdFlatEvent.new())
+
+      Abxbus.wait_until_idle(:eb_fwd_a)
+      Abxbus.wait_until_idle(:eb_fwd_b)
+      Abxbus.wait_until_idle(:eb_fwd_c)
+
+      # Allow async result propagation to settle
+      Process.sleep(50)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      results = Map.values(stored.event_results)
+      completed = Enum.filter(results, &(&1.status == :completed))
+      result_values = Enum.map(completed, & &1.result)
+
+      # Forwarding flattens results from downstream buses into the event store.
+      # Results from at least two of the three buses should be present.
+      assert "from_c" in result_values,
+             "handler_c result should be flattened; got: #{inspect(result_values)}"
+
+      # The chain a->b->c should produce results from multiple buses
+      assert length(completed) >= 2,
+             "Should have results from multiple buses, got: #{inspect(Enum.map(completed, & &1.handler_name))}"
+
+      Abxbus.stop(:eb_fwd_a, clear: true)
+      Abxbus.stop(:eb_fwd_b, clear: true)
+      Abxbus.stop(:eb_fwd_c, clear: true)
+    end
+  end
+
+  # ── Additional stop behavior ──────────────────────────────────────────────
+
+  describe "stop behavior (additional)" do
+    test "stop with pending events does not hang" do
+      {:ok, _} = Abxbus.start_bus(:eb_stop_pending)
+
+      Abxbus.on(:eb_stop_pending, EBSlowEvent, fn _event ->
+        Process.sleep(200)
+        :ok
+      end, handler_name: "slow_stop_handler")
+
+      for _ <- 1..5 do
+        Abxbus.emit(:eb_stop_pending, EBSlowEvent.new())
+      end
+
+      # stop should return without hanging
+      Abxbus.stop(:eb_stop_pending)
+    end
+  end
+
+  # ── Additional FIFO ordering ──────────────────────────────────────────────
+
+  describe "FIFO ordering (additional)" do
+    test "mixed delay handlers maintain FIFO order" do
+      {:ok, _} = Abxbus.start_bus(:eb_fifo_mixed, event_concurrency: :bus_serial)
+
+      order = Agent.start_link(fn -> [] end) |> elem(1)
+
+      Abxbus.on(:eb_fifo_mixed, EBFifoEvent, fn event ->
+        if rem(event.seq, 2) == 0 do
+          Process.sleep(30)
+        else
+          Process.sleep(5)
+        end
+        Agent.update(order, &(&1 ++ [event.seq]))
+        :ok
+      end, handler_name: "mixed_delay_handler")
+
+      for i <- 0..9 do
+        Abxbus.emit(:eb_fifo_mixed, EBFifoEvent.new(seq: i))
+      end
+
+      Abxbus.wait_until_idle(:eb_fifo_mixed)
+
+      processing_order = Agent.get(order, & &1)
+      assert processing_order == Enum.to_list(0..9),
+             "Events should be processed in FIFO order regardless of handler delay, got: #{inspect(processing_order)}"
+
+      Abxbus.stop(:eb_fifo_mixed, clear: true)
+    end
+  end
 end

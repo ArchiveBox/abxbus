@@ -109,4 +109,73 @@ defmodule Abxbus.EventbusEdgeCasesTest do
       assert match?({:error, :stopped}, result)
     end
   end
+
+  describe "event_reset (additional)" do
+    test "event_reset creates fresh event with new id" do
+      {:ok, _} = Abxbus.start_bus(:ec_reset_fresh_a)
+      {:ok, _} = Abxbus.start_bus(:ec_reset_fresh_b)
+
+      Abxbus.on(:ec_reset_fresh_a, ECResetEvent, fn _event -> "handled_a" end,
+        handler_name: "reset_fresh_handler_a")
+
+      handled_b = :counters.new(1, [:atomics])
+      Abxbus.on(:ec_reset_fresh_b, ECResetEvent, fn _event ->
+        :counters.add(handled_b, 1, 1)
+        "handled_b"
+      end, handler_name: "reset_fresh_handler_b")
+
+      # Emit on bus_a and wait for completion
+      event_a = Abxbus.emit(:ec_reset_fresh_a, ECResetEvent.new())
+      completed = Abxbus.await(event_a)
+
+      assert completed.event_status == :completed
+
+      # Reset the completed event
+      reset = Abxbus.event_reset(completed)
+
+      # Verify reset event has new ID, :pending status, empty results
+      assert reset.event_id != completed.event_id
+      assert reset.event_status == :pending
+      assert reset.event_results == %{}
+
+      # Can emit the reset event on bus_b
+      event_b = Abxbus.emit(:ec_reset_fresh_b, reset)
+      Abxbus.await(event_b)
+
+      assert :counters.get(handled_b, 1) == 1
+
+      Abxbus.stop(:ec_reset_fresh_a, clear: true)
+      Abxbus.stop(:ec_reset_fresh_b, clear: true)
+    end
+  end
+
+  describe "wait_until_idle timeout" do
+    test "wait_until_idle timeout returns without hanging" do
+      {:ok, _} = Abxbus.start_bus(:ec_idle_timeout)
+
+      Abxbus.on(:ec_idle_timeout, ECIdleEvent, fn _event ->
+        Process.sleep(500)
+        :ok
+      end, handler_name: "slow_idle_handler")
+
+      Abxbus.emit(:ec_idle_timeout, ECIdleEvent.new())
+
+      # With a very short timeout, the GenServer call should exit
+      # We catch the timeout to verify it doesn't hang
+      start_time = System.monotonic_time(:millisecond)
+
+      try do
+        Abxbus.wait_until_idle(:ec_idle_timeout, 10)
+      catch
+        :exit, {:timeout, _} -> :ok
+      end
+
+      elapsed = System.monotonic_time(:millisecond) - start_time
+      assert elapsed < 200, "wait_until_idle with short timeout should return quickly, took #{elapsed}ms"
+
+      # Clean up: wait for handler to finish before stopping
+      Abxbus.wait_until_idle(:ec_idle_timeout)
+      Abxbus.stop(:ec_idle_timeout, clear: true)
+    end
+  end
 end

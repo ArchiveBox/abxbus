@@ -166,4 +166,66 @@ defmodule Abxbus.EventbusContextTest do
       end
     end
   end
+
+  describe "context through forwarding" do
+    defevent(CtxFwdEvent)
+
+    test "context propagates through event forwarding" do
+      {:ok, _} = Abxbus.start_bus(:ctx_fwd1)
+      {:ok, _} = Abxbus.start_bus(:ctx_fwd2)
+
+      captured_bus = Agent.start_link(fn -> nil end) |> elem(1)
+
+      # Forward all events from bus1 to bus2 via wildcard
+      Abxbus.on(:ctx_fwd1, "*", fn e -> Abxbus.emit(:ctx_fwd2, e) end,
+        handler_name: "fwd_1_2")
+
+      # Handler on bus2 captures current_bus!()
+      Abxbus.on(:ctx_fwd2, CtxFwdEvent, fn _event ->
+        bus = Abxbus.current_bus!()
+        Agent.update(captured_bus, fn _ -> bus end)
+        :ok
+      end, handler_name: "bus2_handler")
+
+      Abxbus.emit(:ctx_fwd1, CtxFwdEvent.new())
+      Abxbus.wait_until_idle(:ctx_fwd1)
+      Abxbus.wait_until_idle(:ctx_fwd2)
+
+      assert Agent.get(captured_bus, & &1) == :ctx_fwd2
+
+      Abxbus.stop(:ctx_fwd1, clear: true)
+      Abxbus.stop(:ctx_fwd2, clear: true)
+    end
+  end
+
+  describe "context isolation with concurrent events" do
+    defevent(CtxConcEvent, label: nil)
+
+    test "context isolated between concurrent events" do
+      {:ok, _} = Abxbus.start_bus(:ctx_conc, event_concurrency: :parallel)
+
+      captured_ids = Agent.start_link(fn -> [] end) |> elem(1)
+
+      Abxbus.on(:ctx_conc, CtxConcEvent, fn _event ->
+        eid = Abxbus.current_event_id()
+        Process.sleep(20)
+        Agent.update(captured_ids, &(&1 ++ [eid]))
+        :ok
+      end, handler_name: "conc_handler")
+
+      e1 = Abxbus.emit(:ctx_conc, CtxConcEvent.new(label: "first"))
+      e2 = Abxbus.emit(:ctx_conc, CtxConcEvent.new(label: "second"))
+
+      Abxbus.wait_until_idle(:ctx_conc)
+
+      ids = Agent.get(captured_ids, & &1)
+      assert length(ids) == 2
+      assert e1.event_id in ids
+      assert e2.event_id in ids
+      assert Enum.at(ids, 0) != Enum.at(ids, 1),
+             "Each concurrent handler should see its own event_id"
+
+      Abxbus.stop(:ctx_conc, clear: true)
+    end
+  end
 end

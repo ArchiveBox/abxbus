@@ -340,6 +340,13 @@ defmodule Abxbus.BusServer do
     end
 
     if event do
+      # Dispatch per-handler result change notifications
+      if state.middlewares != [] do
+        for {_handler_id, result} <- results do
+          Middleware.dispatch(state.middlewares, :on_event_result_change, [state.name, event, result, result.status])
+        end
+      end
+
       Middleware.dispatch(state.middlewares, :on_event_change, [state.name, event, :completed])
       maybe_mark_tree_complete(event)
     end
@@ -356,6 +363,13 @@ defmodule Abxbus.BusServer do
 
     if event = EventStore.get(event_id) do
       Middleware.dispatch(state.middlewares, :on_event_change, [state.name, event, :started])
+
+      # Dispatch :started for each handler result
+      if state.middlewares != [] do
+        for {_handler_id, result} <- event.event_results do
+          Middleware.dispatch(state.middlewares, :on_event_result_change, [state.name, event, result, :started])
+        end
+      end
     end
 
     {:noreply, state}

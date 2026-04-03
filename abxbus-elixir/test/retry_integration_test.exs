@@ -1,0 +1,226 @@
+defmodule Abxbus.RetryIntegrationTest do
+  @moduledoc """
+  Integration tests for retry behaviour: max_attempts, retry_after,
+  retry_backoff_factor, and retry_on_errors filtering.
+
+  Port of tests/test_eventbus_retry_integration.py.
+  """
+
+  use ExUnit.Case, async: false
+
+  import Abxbus.TestEvents
+
+  defevent(RetrySuccessEvent)
+  defevent(RetryExhaustEvent)
+  defevent(RetryFilterNoMatchEvent)
+  defevent(RetryFilterMatchEvent)
+  defevent(RetryBackoffEvent)
+  defevent(RetryNoRetryEvent)
+
+  # ── Helpers ────────────────────────────────────────────────────────────────
+
+  defp unique_bus(base) do
+    :"#{base}_#{System.unique_integer([:positive])}"
+  end
+
+  # ── Tests ──────────────────────────────────────────────────────────────────
+
+  describe "retry integration" do
+    test "retry handler retries on failure and succeeds" do
+      bus = unique_bus(:retry_ok)
+      {:ok, _} = Abxbus.start_bus(bus)
+
+      counter = :counters.new(1, [:atomics])
+
+      Abxbus.on(bus, RetrySuccessEvent, fn _event ->
+        n = :counters.get(counter, 1) + 1
+        :counters.put(counter, 1, n)
+
+        if n < 3 do
+          raise "transient failure #{n}"
+        end
+
+        :success
+      end, max_attempts: 3, retry_after: 0.05, handler_name: "retry_handler")
+
+      event = Abxbus.emit(bus, RetrySuccessEvent.new())
+      Abxbus.wait_until_idle(bus)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      results = Map.values(stored.event_results)
+      handler_result = Enum.find(results, &(&1.handler_name == "retry_handler"))
+
+      assert :counters.get(counter, 1) == 3,
+             "Handler should have been called 3 times, got #{:counters.get(counter, 1)}"
+
+      assert handler_result.status == :completed,
+             "Final result should be :completed, got #{handler_result.status}"
+
+      Abxbus.stop(bus, clear: true)
+    end
+
+    test "retry exhausts all attempts and marks error" do
+      bus = unique_bus(:retry_exhaust)
+      {:ok, _} = Abxbus.start_bus(bus)
+
+      counter = :counters.new(1, [:atomics])
+
+      Abxbus.on(bus, RetryExhaustEvent, fn _event ->
+        :counters.add(counter, 1, 1)
+        raise "permanent failure"
+      end, max_attempts: 3, retry_after: 0.01, handler_name: "exhaust_handler")
+
+      event = Abxbus.emit(bus, RetryExhaustEvent.new())
+      Abxbus.wait_until_idle(bus)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      results = Map.values(stored.event_results)
+      handler_result = Enum.find(results, &(&1.handler_name == "exhaust_handler"))
+
+      assert :counters.get(counter, 1) == 3,
+             "Handler should have been called 3 times, got #{:counters.get(counter, 1)}"
+
+      assert handler_result.status == :error,
+             "Result should be :error after exhausting retries, got #{handler_result.status}"
+
+      Abxbus.stop(bus, clear: true)
+    end
+
+    test "retry_on_errors only retries matching errors" do
+      bus = unique_bus(:retry_nomatch)
+      {:ok, _} = Abxbus.start_bus(bus)
+
+      counter = :counters.new(1, [:atomics])
+
+      Abxbus.on(bus, RetryFilterNoMatchEvent, fn _event ->
+        :counters.add(counter, 1, 1)
+        raise RuntimeError, "not in retry list"
+      end,
+        max_attempts: 3,
+        retry_after: 0.01,
+        retry_on_errors: [ArgumentError],
+        handler_name: "nomatch_handler"
+      )
+
+      event = Abxbus.emit(bus, RetryFilterNoMatchEvent.new())
+      Abxbus.wait_until_idle(bus)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      results = Map.values(stored.event_results)
+      handler_result = Enum.find(results, &(&1.handler_name == "nomatch_handler"))
+
+      assert :counters.get(counter, 1) == 1,
+             "Handler should have been called only once (RuntimeError not in retry list), got #{:counters.get(counter, 1)}"
+
+      assert handler_result.status == :error
+
+      Abxbus.stop(bus, clear: true)
+    end
+
+    test "retry_on_errors retries matching errors" do
+      bus = unique_bus(:retry_match)
+      {:ok, _} = Abxbus.start_bus(bus)
+
+      counter = :counters.new(1, [:atomics])
+
+      Abxbus.on(bus, RetryFilterMatchEvent, fn _event ->
+        n = :counters.get(counter, 1) + 1
+        :counters.put(counter, 1, n)
+
+        if n < 3 do
+          raise ArgumentError, "transient arg error #{n}"
+        end
+
+        :recovered
+      end,
+        max_attempts: 3,
+        retry_after: 0.01,
+        retry_on_errors: [ArgumentError],
+        handler_name: "match_handler"
+      )
+
+      event = Abxbus.emit(bus, RetryFilterMatchEvent.new())
+      Abxbus.wait_until_idle(bus)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      results = Map.values(stored.event_results)
+      handler_result = Enum.find(results, &(&1.handler_name == "match_handler"))
+
+      assert :counters.get(counter, 1) == 3,
+             "Handler should have been called 3 times, got #{:counters.get(counter, 1)}"
+
+      assert handler_result.status == :completed,
+             "Final result should be :completed, got #{handler_result.status}"
+
+      Abxbus.stop(bus, clear: true)
+    end
+
+    test "retry with backoff delays between attempts" do
+      bus = unique_bus(:retry_backoff)
+      {:ok, _} = Abxbus.start_bus(bus)
+
+      {:ok, timestamps} = Agent.start_link(fn -> [] end)
+
+      Abxbus.on(bus, RetryBackoffEvent, fn _event ->
+        Agent.update(timestamps, &[System.monotonic_time(:millisecond) | &1])
+        raise "backoff failure"
+      end,
+        max_attempts: 3,
+        retry_after: 0.05,
+        retry_backoff_factor: 2.0,
+        handler_name: "backoff_handler"
+      )
+
+      event = Abxbus.emit(bus, RetryBackoffEvent.new())
+      Abxbus.wait_until_idle(bus)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      results = Map.values(stored.event_results)
+      handler_result = Enum.find(results, &(&1.handler_name == "backoff_handler"))
+
+      assert handler_result.status == :error
+
+      ts = Agent.get(timestamps, & &1) |> Enum.reverse()
+      assert length(ts) == 3, "Expected 3 timestamps, got #{length(ts)}"
+
+      # First delay should be ~50ms (retry_after=0.05), second ~100ms (0.05 * 2.0)
+      [t0, t1, t2] = ts
+      delay1 = t1 - t0
+      delay2 = t2 - t1
+
+      assert delay1 >= 30,
+             "First delay should be ~50ms, got #{delay1}ms"
+
+      assert delay2 >= delay1 * 1.3,
+             "Second delay (#{delay2}ms) should be noticeably larger than first (#{delay1}ms) due to backoff"
+
+      Abxbus.stop(bus, clear: true)
+    end
+
+    test "max_attempts 1 means no retries" do
+      bus = unique_bus(:retry_noretry)
+      {:ok, _} = Abxbus.start_bus(bus)
+
+      counter = :counters.new(1, [:atomics])
+
+      Abxbus.on(bus, RetryNoRetryEvent, fn _event ->
+        :counters.add(counter, 1, 1)
+        raise "single attempt failure"
+      end, max_attempts: 1, handler_name: "noretry_handler")
+
+      event = Abxbus.emit(bus, RetryNoRetryEvent.new())
+      Abxbus.wait_until_idle(bus)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      results = Map.values(stored.event_results)
+      handler_result = Enum.find(results, &(&1.handler_name == "noretry_handler"))
+
+      assert :counters.get(counter, 1) == 1,
+             "Handler should have been called exactly once, got #{:counters.get(counter, 1)}"
+
+      assert handler_result.status == :error
+
+      Abxbus.stop(bus, clear: true)
+    end
+  end
+end
