@@ -369,7 +369,16 @@ defmodule Abxbus.BusServer do
   end
 
   def handle_info({:event_worker_started, event_id}, state) do
-    EventStore.update(event_id, %{event_status: :started, event_started_at: System.monotonic_time(:nanosecond)})
+    # Use atomic update_fun to avoid clobbering concurrent updates from
+    # other buses on forwarded events. Only advance status forward.
+    now = System.monotonic_time(:nanosecond)
+    EventStore.update_fun(event_id, fn event ->
+      if event.event_status == :pending do
+        %{event | event_status: :started, event_started_at: now}
+      else
+        event
+      end
+    end)
 
     if event = EventStore.get(event_id) do
       Middleware.dispatch(state.middlewares, :on_event_change, [state.name, event, :started])
@@ -396,7 +405,14 @@ defmodule Abxbus.BusServer do
 
         if reason != :normal do
           Logger.warning("EventWorker for #{event_id} crashed: #{inspect(reason)}")
-          EventStore.update(event_id, %{event_status: :error})
+          # Atomic update — only set :error if not already in a terminal state
+          EventStore.update_fun(event_id, fn event ->
+            if event.event_status in [:completed, :error] do
+              event
+            else
+              %{event | event_status: :error}
+            end
+          end)
           state = %{state |
             processing_event_ids: MapSet.delete(state.processing_event_ids, event_id),
             in_flight_event_ids: MapSet.delete(state.in_flight_event_ids, event_id)
