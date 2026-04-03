@@ -405,13 +405,9 @@ defmodule Abxbus.BusServer do
 
         if reason != :normal do
           Logger.warning("EventWorker for #{event_id} crashed: #{inspect(reason)}")
-          # Atomic update — only set :error if not already in a terminal state
+          # Atomic update — always escalate to :error (crashes override :completed)
           EventStore.update_fun(event_id, fn event ->
-            if event.event_status in [:completed, :error] do
-              event
-            else
-              %{event | event_status: :error}
-            end
+            %{event | event_status: :error}
           end)
           state = %{state |
             processing_event_ids: MapSet.delete(state.processing_event_ids, event_id),
