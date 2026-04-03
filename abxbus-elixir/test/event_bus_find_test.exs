@@ -792,6 +792,174 @@ defmodule Abxbus.EventBusFindTest do
     end
   end
 
+  # ── find edge cases - string and wildcard ──────────────────────────────────
+
+  describe "find edge cases - string and wildcard" do
+    test "find future works with string event type name" do
+      defevent(FindStringEvent, info: nil)
+      {:ok, _} = Abxbus.start_bus(:fe_strname)
+      Abxbus.on(:fe_strname, FindStringEvent, fn _e -> :ok end)
+
+      ready = :atomics.new(1, [])
+      task = Task.async(fn ->
+        :atomics.put(ready, 1, 1)
+        Abxbus.find("FindStringEvent", past: false, future: 1.0)
+      end)
+
+      spin_until(fn -> :atomics.get(ready, 1) == 1 end, 1000)
+      wait_for_find_waiter()
+
+      event = Abxbus.emit(:fe_strname, FindStringEvent.new(info: "hello"))
+      found = Task.await(task, 2000)
+
+      assert found != nil
+      assert found.event_id == event.event_id
+    end
+
+    test "find wildcard with where filter matches across event types in history" do
+      {:ok, _} = Abxbus.start_bus(:fe_wcross)
+      defevent(FindWildcardA, value: nil)
+      defevent(FindWildcardB, value: nil)
+      Abxbus.on(:fe_wcross, FindWildcardA, fn _e -> :ok end)
+      Abxbus.on(:fe_wcross, FindWildcardB, fn _e -> :ok end)
+
+      Abxbus.emit(:fe_wcross, FindWildcardA.new(value: "nope"))
+      Abxbus.emit(:fe_wcross, FindWildcardB.new(value: "target"))
+      Abxbus.wait_until_idle(:fe_wcross)
+
+      found = Abxbus.find("*", past: true, where: fn e -> Map.get(e, :value) == "target" end)
+      assert found != nil
+      assert Map.get(found, :value) == "target"
+    end
+  end
+
+  # ── find edge cases - time windows ────────────────────────────────────────
+
+  describe "find edge cases - time windows" do
+    test "past true future float returns past event immediately" do
+      {:ok, _} = Abxbus.start_bus(:fe_tw1)
+      Abxbus.on(:fe_tw1, FindParentEvent, fn _e -> :ok end)
+      event = Abxbus.emit(:fe_tw1, FindParentEvent.new(target_id: "tw_past"))
+      Abxbus.wait_until_idle(:fe_tw1)
+
+      t0 = System.monotonic_time(:millisecond)
+      found = Abxbus.find(FindParentEvent, past: true, future: 2.0, event_id: event.event_id)
+      elapsed = System.monotonic_time(:millisecond) - t0
+
+      assert found != nil
+      assert found.event_id == event.event_id
+      assert elapsed < 1000, "Should return past event immediately, took #{elapsed}ms"
+    end
+
+    test "past false future float waits for timeout when no event" do
+      defevent(FindTimeoutEvent)
+
+      t0 = System.monotonic_time(:millisecond)
+      found = Abxbus.find(FindTimeoutEvent, past: false, future: 0.1)
+      elapsed = System.monotonic_time(:millisecond) - t0
+
+      assert found == nil
+      assert elapsed >= 80, "Should wait approximately 0.1s, only waited #{elapsed}ms"
+    end
+  end
+
+  # ── find edge cases - concurrent waiters ──────────────────────────────────
+
+  describe "find edge cases - concurrent waiters" do
+    test "multiple concurrent find waiters resolve correct events" do
+      defevent(FindConcA, tag: nil)
+      defevent(FindConcB, tag: nil)
+      defevent(FindConcC, tag: nil)
+
+      {:ok, _} = Abxbus.start_bus(:fe_conc)
+      Abxbus.on(:fe_conc, FindConcA, fn _e -> :ok end)
+      Abxbus.on(:fe_conc, FindConcB, fn _e -> :ok end)
+      Abxbus.on(:fe_conc, FindConcC, fn _e -> :ok end)
+
+      ready = :counters.new(1, [:atomics])
+
+      task_a = Task.async(fn ->
+        :counters.add(ready, 1, 1)
+        Abxbus.find(FindConcA, past: false, future: 2.0)
+      end)
+      task_b = Task.async(fn ->
+        :counters.add(ready, 1, 1)
+        Abxbus.find(FindConcB, past: false, future: 2.0)
+      end)
+      task_c = Task.async(fn ->
+        :counters.add(ready, 1, 1)
+        Abxbus.find(FindConcC, past: false, future: 2.0)
+      end)
+
+      spin_until(fn -> :counters.get(ready, 1) >= 3 end, 1000)
+      wait_for_find_waiter()
+
+      e_a = Abxbus.emit(:fe_conc, FindConcA.new(tag: "a"))
+      e_b = Abxbus.emit(:fe_conc, FindConcB.new(tag: "b"))
+      e_c = Abxbus.emit(:fe_conc, FindConcC.new(tag: "c"))
+
+      found_a = Task.await(task_a, 3000)
+      found_b = Task.await(task_b, 3000)
+      found_c = Task.await(task_c, 3000)
+
+      assert found_a != nil
+      assert found_b != nil
+      assert found_c != nil
+      assert found_a.event_id == e_a.event_id
+      assert found_b.event_id == e_b.event_id
+      assert found_c.event_id == e_c.event_id
+    end
+  end
+
+  # ── find edge cases - child_of combined ───────────────────────────────────
+
+  describe "find edge cases - child_of combined" do
+    test "find with child_of and past float" do
+      {:ok, _} = Abxbus.start_bus(:fe_cop, event_concurrency: :bus_serial)
+
+      Abxbus.on(:fe_cop, FindParentEvent, fn _e ->
+        child = Abxbus.emit(:fe_cop, FindChildEvent.new(target_id: "cop_child"))
+        Abxbus.await(child)
+        :ok
+      end)
+      Abxbus.on(:fe_cop, FindChildEvent, fn _e -> :ok end)
+
+      parent = Abxbus.emit(:fe_cop, FindParentEvent.new(target_id: "cop_parent"))
+      Abxbus.wait_until_idle(:fe_cop)
+
+      found = Abxbus.find(FindChildEvent, past: true, child_of: parent)
+      assert found != nil
+      assert found.target_id == "cop_child"
+      assert found.event_parent_id == parent.event_id
+    end
+
+    test "find with all parameters combined" do
+      {:ok, _} = Abxbus.start_bus(:fe_allp, event_concurrency: :bus_serial)
+
+      Abxbus.on(:fe_allp, FindParentEvent, fn _e ->
+        c1 = Abxbus.emit(:fe_allp, FindChildEvent.new(target_id: "allp_yes"))
+        c2 = Abxbus.emit(:fe_allp, FindChildEvent.new(target_id: "allp_no"))
+        Abxbus.await(c1)
+        Abxbus.await(c2)
+        :ok
+      end)
+      Abxbus.on(:fe_allp, FindChildEvent, fn _e -> :ok end)
+
+      parent = Abxbus.emit(:fe_allp, FindParentEvent.new(target_id: "allp_parent"))
+      Abxbus.wait_until_idle(:fe_allp)
+
+      found = Abxbus.find(FindChildEvent,
+        past: 5.0,
+        future: 1.0,
+        child_of: parent,
+        where: fn e -> Map.get(e, :target_id) == "allp_yes" end
+      )
+      assert found != nil
+      assert found.target_id == "allp_yes"
+      assert found.event_parent_id == parent.event_id
+    end
+  end
+
   # ── helpers ────────────────────────────────────────────────────────────────
 
   # Wait until at least one find waiter is registered in ETS
