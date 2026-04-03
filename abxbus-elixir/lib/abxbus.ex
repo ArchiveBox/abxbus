@@ -102,7 +102,9 @@ defmodule Abxbus do
         receive do
           {:event_completed, ^ref, _} -> :ok
         after
-          0 -> :ok
+          0 ->
+            # Waiter was added after notify_waiters ran — clean it up
+            EventStore.remove_waiter(event.event_id, ref)
         end
         completed
 
@@ -142,7 +144,8 @@ defmodule Abxbus do
         receive do
           {:event_completed, ^ref, _} -> :ok
         after
-          0 -> :ok
+          0 ->
+            EventStore.remove_waiter(event.event_id, ref)
         end
         completed
 
