@@ -166,13 +166,17 @@ defmodule Abxbus.DebounceTest do
       Abxbus.wait_until_idle(bus)
 
       # Or-chain pattern: find(type, past: true) || emit(bus, type.new())
+      start_t = System.monotonic_time(:millisecond)
       result = Abxbus.find(DebOrExistEvent, past: true) ||
         (fn ->
           :counters.add(emit_count, 1, 1)
           Abxbus.emit(bus, DebOrExistEvent.new())
         end).()
 
+      elapsed = System.monotonic_time(:millisecond) - start_t
       assert result != nil
+      assert elapsed < 200,
+             "find(past: true) || emit should return quickly when found, took #{elapsed}ms"
       assert result.event_id == event.event_id
       assert :counters.get(emit_count, 1) == 0,
              "Should not have dispatched a new event, dispatched #{:counters.get(emit_count, 1)}"
@@ -198,6 +202,8 @@ defmodule Abxbus.DebounceTest do
       assert result != nil
       assert :counters.get(emit_count, 1) == 1,
              "Should have dispatched exactly 1 event"
+
+      Abxbus.wait_until_idle(bus)
 
       Abxbus.stop(bus, clear: true)
     end

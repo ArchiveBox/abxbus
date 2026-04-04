@@ -49,6 +49,9 @@ defmodule Abxbus.EventWorker do
           result = EventResult.new(entry.id,
             event_id: event.event_id,
             handler_name: entry.handler_name,
+            handler_file_path: entry.handler_file_path,
+            timeout: LockManager.resolve_handler_timeout(entry, event, bus_config),
+            handler_registered_at: entry.handler_registered_at,
             eventbus_name: bus_name
           ) |> EventResult.mark_started() |> EventResult.mark_error(
             %RuntimeError{message: "Infinite loop detected: handler recursion depth #{caller_depth + 1} exceeds max #{max_depth}"}

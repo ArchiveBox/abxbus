@@ -171,8 +171,9 @@ defmodule Abxbus.EventResultTest do
       stored = Abxbus.EventStore.get(event.event_id)
       result = stored.event_results |> Map.values() |> hd()
 
-      # handler_file_path is derived from the handler function's module
-      assert result.handler_file_path != nil
+      # handler_file_path should be set (non-nil) when detect_file_paths is enabled
+      assert result.handler_file_path != nil, "handler_file_path should be detected"
+      assert is_binary(result.handler_file_path), "handler_file_path should be a string"
     end
   end
 

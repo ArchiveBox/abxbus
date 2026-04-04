@@ -992,8 +992,13 @@ defmodule Abxbus.EventBusFindTest do
       found = Task.await(task, 6000)
       assert found != nil
 
-      # Give a moment for cleanup
-      Process.sleep(10)
+      # Wait for cleanup using spin_until
+      spin_until(fn ->
+        case :ets.info(:abxbus_find_waiters, :size) do
+          n when is_integer(n) -> n == size_before
+          _ -> true
+        end
+      end, 1000)
 
       size_after = case :ets.info(:abxbus_find_waiters, :size) do
         n when is_integer(n) -> n

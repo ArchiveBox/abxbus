@@ -209,9 +209,19 @@ defmodule Abxbus.RetryIntegrationTest do
       handler_fn = fn _event ->
         :atomics.add(current, 1, 1)
         cur = :atomics.get(current, 1)
-        # Update max if current is higher
-        old_max = :atomics.get(max_concurrent, 1)
-        if cur > old_max, do: :atomics.put(max_concurrent, 1, cur)
+        # CAS loop to update max concurrency atomically
+        update_max = fn update_max_fn ->
+          old_max = :atomics.get(max_concurrent, 1)
+          if cur > old_max do
+            case :atomics.compare_exchange(max_concurrent, 1, old_max, cur) do
+              :ok -> :ok
+              _ -> update_max_fn.(update_max_fn)
+            end
+          else
+            :ok
+          end
+        end
+        update_max.(update_max)
         Process.sleep(50)
         :atomics.sub(current, 1, 1)
         :ok

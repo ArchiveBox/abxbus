@@ -853,7 +853,7 @@ defmodule Abxbus.EventbusTest do
       event = Abxbus.emit(:eb_event_completed, EBEventCompletedEvent.new())
       completed = Abxbus.event_completed(event, 5.0)
 
-      assert completed.event_status in [:completed, :error]
+      assert completed.event_status == :completed
       results = Map.values(completed.event_results)
       assert Enum.any?(results, fn r -> r.result == "completed_value" end)
 
@@ -902,6 +902,7 @@ defmodule Abxbus.EventbusTest do
       found = Abxbus.find(EBFindPastEvent, past: true)
       assert found != nil
       assert found.event_type == EBFindPastEvent
+      assert found.value in ["first", "second", "third"]
 
       Abxbus.stop(:eb_find_past, clear: true)
     end

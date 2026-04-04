@@ -464,10 +464,9 @@ defmodule Abxbus.MiddlewareTest do
         :ok
       end, handler_name: "slow_handler")
 
-      Abxbus.emit(:mw_monotonic_bus, MWMonotonicEvent.new())
-      # Wait enough for timeout + cleanup
-      Process.sleep(800)
-      Abxbus.wait_until_idle(:mw_monotonic_bus)
+      event = Abxbus.emit(:mw_monotonic_bus, MWMonotonicEvent.new())
+      completed = Abxbus.event_completed(event, 2.0)
+      assert completed.event_status in [:completed, :error]
 
       log = Agent.get(:mw_monotonic, & &1)
 
