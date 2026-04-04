@@ -8,19 +8,21 @@ defmodule Abxbus.Middlewares.WAL do
 
   ## Usage
 
-      # Start an Agent that holds the WAL file path:
+      # Start an Agent that holds the WAL file path and register it for a bus:
       {:ok, agent} = Abxbus.Middlewares.WAL.start("/tmp/wal.jsonl")
+      Abxbus.Middlewares.WAL.register(:my_bus, agent)
+      Abxbus.start_bus(:my_bus, middlewares: [Abxbus.Middlewares.WAL])
 
-      # Then register a wrapper module that closes over the agent:
-      wal_mod = Abxbus.Middlewares.WAL.build(agent)
-      Abxbus.start_bus(:my_bus, middlewares: [wal_mod])
+  Configuration is stored in an ETS table keyed by bus_name, so no dynamic
+  module creation is needed (avoiding atom leaks).
 
-  Because the `Abxbus.Middleware` behaviour dispatches to *modules* (not
-  instances), `build/2` dynamically defines a one-off module that delegates
-  to this module with the right agent reference.
+  For backwards compatibility, `build/1` still works but now registers the
+  agent globally and returns this module.
   """
 
   @behaviour Abxbus.Middleware
+
+  @wal_config_table :abxbus_wal_config
 
   # ---------------------------------------------------------------------------
   # Public helpers
@@ -37,42 +39,96 @@ defmodule Abxbus.Middlewares.WAL do
   end
 
   @doc """
-  Build a dynamically-defined middleware module that delegates to this module
-  with the given `agent` pid.
+  Register an agent for a specific bus_name. The `on_event_change/3` callback
+  will look up the agent from the ETS table when events complete.
+  """
+  def register(bus_name, agent) do
+    ensure_config_table()
+    :ets.insert(@wal_config_table, {bus_name, agent})
+    :ok
+  end
 
-  The generated module satisfies `@behaviour Abxbus.Middleware`.
+  @doc """
+  Unregister the WAL config for a bus.
+  """
+  def unregister(bus_name) do
+    if :ets.whereis(@wal_config_table) != :undefined do
+      :ets.delete(@wal_config_table, bus_name)
+    end
+    :ok
+  end
+
+  @doc """
+  Build a middleware reference for the given `agent`.
+
+  For backwards compatibility this accepts an agent pid, registers it under
+  a global key (`:__wal_default__`), and returns this module. Prefer using
+  `register/2` with an explicit bus_name instead.
   """
   def build(agent) do
-    mod_name = :"Abxbus.Middlewares.WAL.Instance_#{:erlang.unique_integer([:positive])}"
+    ensure_config_table()
+    :ets.insert(@wal_config_table, {:__wal_default__, agent})
+    __MODULE__
+  end
 
-    Module.create(
-      mod_name,
-      quote do
-        @behaviour Abxbus.Middleware
-
-        @impl true
-        def on_event_change(bus_name, event, status) do
-          Abxbus.Middlewares.WAL.on_event_change(bus_name, event, status, unquote(agent))
-        end
-
-        @impl true
-        def on_event_result_change(_bus_name, _event, _result, _status), do: :ok
-
-        @impl true
-        def on_bus_handlers_change(_bus_name, _handler, _registered?), do: :ok
-      end,
-      Macro.Env.location(__ENV__)
-    )
-
-    mod_name
+  defp ensure_config_table do
+    if :ets.whereis(@wal_config_table) == :undefined do
+      :ets.new(@wal_config_table, [:named_table, :public, :set])
+    end
   end
 
   # ---------------------------------------------------------------------------
-  # Callback used by dynamically-built modules
+  # Behaviour callbacks
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def on_event_change(bus_name, event, :completed) do
+    agent =
+      case :ets.whereis(@wal_config_table) do
+        :undefined -> nil
+        _tid ->
+          case :ets.lookup(@wal_config_table, bus_name) do
+            [{_, agent}] -> agent
+            [] ->
+              # Fall back to global default (set by build/1)
+              case :ets.lookup(@wal_config_table, :__wal_default__) do
+                [{_, agent}] -> agent
+                [] -> nil
+              end
+          end
+      end
+
+    if agent do
+      write_event(agent, event)
+    else
+      :ok
+    end
+  end
+
+  def on_event_change(_bus_name, _event, _status), do: :ok
+
+  @impl true
+  def on_event_result_change(_bus_name, _event, _result, _status), do: :ok
+
+  @impl true
+  def on_bus_handlers_change(_bus_name, _handler, _registered?), do: :ok
+
+  # ---------------------------------------------------------------------------
+  # Kept for backwards compatibility with any code calling the 4-arity version
   # ---------------------------------------------------------------------------
 
   @doc false
   def on_event_change(_bus_name, event, :completed, agent) do
+    write_event(agent, event)
+  end
+
+  def on_event_change(_bus_name, _event, _status, _agent), do: :ok
+
+  # ---------------------------------------------------------------------------
+  # Internal
+  # ---------------------------------------------------------------------------
+
+  defp write_event(agent, event) do
     %{path: path, format: format} = Agent.get(agent, & &1)
     File.mkdir_p!(Path.dirname(path))
 
@@ -95,20 +151,4 @@ defmodule Abxbus.Middlewares.WAL do
 
     File.write!(path, line <> "\n", [:append])
   end
-
-  def on_event_change(_bus_name, _event, _status, _agent), do: :ok
-
-  # ---------------------------------------------------------------------------
-  # Direct behaviour callbacks (no-ops — used only when the module itself is
-  # registered as middleware without `build/1`).
-  # ---------------------------------------------------------------------------
-
-  @impl true
-  def on_event_change(_bus_name, _event, _status), do: :ok
-
-  @impl true
-  def on_event_result_change(_bus_name, _event, _result, _status), do: :ok
-
-  @impl true
-  def on_bus_handlers_change(_bus_name, _handler, _registered?), do: :ok
 end
