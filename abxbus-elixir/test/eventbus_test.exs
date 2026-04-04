@@ -694,4 +694,266 @@ defmodule Abxbus.EventbusTest do
       Abxbus.stop(:eb_fifo_mixed, clear: true)
     end
   end
+
+  # ── Handler recursion depth ──────────────────────────────────────────────
+
+  defevent(EBRecursiveEvent, level: 0, max_level: 0)
+
+  describe "handler recursion depth" do
+    test "custom handler recursion depth allows deeper nested handlers" do
+      {:ok, _} = Abxbus.start_bus(:eb_recurse_deep, max_handler_recursion_depth: 6)
+
+      {:ok, seen_agent} = Agent.start_link(fn -> [] end)
+
+      Abxbus.on(:eb_recurse_deep, EBRecursiveEvent, fn event ->
+        Agent.update(seen_agent, &(&1 ++ [event.level]))
+
+        if event.level < event.max_level do
+          child = EBRecursiveEvent.new(level: event.level + 1, max_level: event.max_level)
+          child_event = Abxbus.emit(:eb_recurse_deep, child)
+          Abxbus.await(child_event)
+        end
+
+        :ok
+      end, handler_name: "recursive_handler")
+
+      _event = Abxbus.emit(:eb_recurse_deep, EBRecursiveEvent.new(level: 0, max_level: 5))
+      Abxbus.wait_until_idle(:eb_recurse_deep)
+
+      seen = Agent.get(seen_agent, & &1)
+      for level <- 0..5 do
+        assert level in seen,
+               "Level #{level} should have been seen, got: #{inspect(seen)}"
+      end
+
+      Agent.stop(seen_agent)
+      Abxbus.stop(:eb_recurse_deep, clear: true)
+    end
+
+    test "default handler recursion depth catches runaway loops" do
+      {:ok, _} = Abxbus.start_bus(:eb_recurse_default)
+
+      Abxbus.on(:eb_recurse_default, EBRecursiveEvent, fn event ->
+        if event.level < event.max_level do
+          child = EBRecursiveEvent.new(level: event.level + 1, max_level: event.max_level)
+          child_event = Abxbus.emit(:eb_recurse_default, child)
+          Abxbus.await(child_event)
+        end
+
+        :ok
+      end, handler_name: "runaway_handler")
+
+      _event = Abxbus.emit(:eb_recurse_default, EBRecursiveEvent.new(level: 0, max_level: 10))
+      Abxbus.wait_until_idle(:eb_recurse_default)
+
+      # Some deeper events should have been blocked with error
+      # Check all events in the store for error results containing "Infinite loop"
+      all_bus_events = Abxbus.events_completed(:eb_recurse_default) ++
+                       Abxbus.events_pending(:eb_recurse_default)
+
+      # Also check directly via ETS for all recursive events
+      found_infinite_loop_error = Enum.any?(all_bus_events, fn evt ->
+        stored = Abxbus.EventStore.get(evt.event_id)
+        stored != nil and Enum.any?(Map.values(stored.event_results), fn r ->
+          r.status == :error and is_binary(inspect(r.error)) and
+            String.contains?(inspect(r.error), "Infinite loop detected")
+        end)
+      end)
+
+      assert found_infinite_loop_error,
+             "Should have at least one event with 'Infinite loop detected' error"
+
+      Abxbus.stop(:eb_recurse_default, clear: true)
+    end
+  end
+
+  # ── Event data ───────────────────────────────────────────────────────────
+
+  defevent(EBComplexDataEvent, data: %{})
+  defevent(EBVersionedEvent, payload: "v", version: "2")
+
+  describe "event data" do
+    test "event with complex nested data" do
+      {:ok, _} = Abxbus.start_bus(:eb_complex_data)
+
+      captured = Agent.start_link(fn -> nil end) |> elem(1)
+
+      Abxbus.on(:eb_complex_data, EBComplexDataEvent, fn event ->
+        Agent.update(captured, fn _ -> event.data end)
+        :ok
+      end, handler_name: "data_handler")
+
+      nested_data = %{
+        "users" => [
+          %{"name" => "Alice", "scores" => [100, 95, 88]},
+          %{"name" => "Bob", "scores" => [70, 80]}
+        ],
+        "meta" => %{"version" => 1, "tags" => ["a", "b"]}
+      }
+
+      _event = Abxbus.emit(:eb_complex_data, EBComplexDataEvent.new(data: nested_data))
+      Abxbus.wait_until_idle(:eb_complex_data)
+
+      received_data = Agent.get(captured, & &1)
+      assert received_data == nested_data
+
+      Agent.stop(captured)
+      Abxbus.stop(:eb_complex_data, clear: true)
+    end
+
+    test "event_version defaults and overrides" do
+      # Default version is "1"
+      default_event = EBComplexDataEvent.new()
+      assert default_event.event_version == "1"
+
+      # Overridden version via defevent option
+      versioned_event = EBVersionedEvent.new()
+      assert versioned_event.event_version == "2"
+    end
+  end
+
+  # ── Result access patterns ──────────────────────────────────────────────
+
+  defevent(EBNamedHandlerEvent)
+  defevent(EBEventCompletedEvent)
+  defevent(EBFindWaiterEvent, value: "")
+  defevent(EBFindPastEvent, value: "")
+  defevent(EBMultiBusFwdEvent, data: "multi")
+
+  describe "result access patterns" do
+    test "results accessible by handler_name" do
+      {:ok, _} = Abxbus.start_bus(:eb_named_handler)
+
+      Abxbus.on(:eb_named_handler, EBNamedHandlerEvent, fn _event ->
+        "named_result"
+      end, handler_name: "my_handler")
+
+      event = Abxbus.emit(:eb_named_handler, EBNamedHandlerEvent.new())
+      Abxbus.wait_until_idle(:eb_named_handler)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      results = Map.values(stored.event_results)
+
+      matching = Enum.find(results, fn r -> r.handler_name == "my_handler" end)
+      assert matching != nil
+      assert matching.result == "named_result"
+      assert matching.status == :completed
+
+      Abxbus.stop(:eb_named_handler, clear: true)
+    end
+
+    test "wait_for_result via event_completed" do
+      {:ok, _} = Abxbus.start_bus(:eb_event_completed)
+
+      Abxbus.on(:eb_event_completed, EBEventCompletedEvent, fn _event ->
+        Process.sleep(50)
+        "completed_value"
+      end, handler_name: "slow_handler")
+
+      event = Abxbus.emit(:eb_event_completed, EBEventCompletedEvent.new())
+      completed = Abxbus.event_completed(event, 5.0)
+
+      assert completed.event_status in [:completed, :error]
+      results = Map.values(completed.event_results)
+      assert Enum.any?(results, fn r -> r.result == "completed_value" end)
+
+      Abxbus.stop(:eb_event_completed, clear: true)
+    end
+
+    test "find_waiter_cleanup after resolve and timeout" do
+      {:ok, _} = Abxbus.start_bus(:eb_find_waiter)
+
+      Abxbus.on(:eb_find_waiter, EBFindWaiterEvent, fn _event -> :ok end)
+
+      size_before = :ets.info(:abxbus_find_waiters, :size)
+
+      # find with future timeout that times out — waiters should be cleaned up
+      _result = Abxbus.find(EBFindWaiterEvent, past: false, future: 0.1)
+      # The find timed out since no event was emitted during that window
+      size_after_timeout = :ets.info(:abxbus_find_waiters, :size)
+      assert size_after_timeout == size_before,
+             "Find waiters should be cleaned up after timeout"
+
+      # find that resolves — emit event then find it in past
+      Abxbus.emit(:eb_find_waiter, EBFindWaiterEvent.new(value: "found_it"))
+      Abxbus.wait_until_idle(:eb_find_waiter)
+
+      found = Abxbus.find(EBFindWaiterEvent, past: true)
+      assert found != nil
+
+      size_after_resolve = :ets.info(:abxbus_find_waiters, :size)
+      assert size_after_resolve == size_before,
+             "Find waiters should be cleaned up after resolve"
+
+      Abxbus.stop(:eb_find_waiter, clear: true)
+    end
+
+    test "find past returns most recent match" do
+      {:ok, _} = Abxbus.start_bus(:eb_find_past)
+
+      Abxbus.on(:eb_find_past, EBFindPastEvent, fn _event -> :ok end)
+
+      for v <- ["first", "second", "third"] do
+        Abxbus.emit(:eb_find_past, EBFindPastEvent.new(value: v))
+      end
+
+      Abxbus.wait_until_idle(:eb_find_past)
+
+      found = Abxbus.find(EBFindPastEvent, past: true)
+      assert found != nil
+      assert found.event_type == EBFindPastEvent
+
+      Abxbus.stop(:eb_find_past, clear: true)
+    end
+
+    test "complex multi-bus forwarding with results" do
+      {:ok, _} = Abxbus.start_bus(:eb_multi_a)
+      {:ok, _} = Abxbus.start_bus(:eb_multi_b)
+      {:ok, _} = Abxbus.start_bus(:eb_multi_c)
+
+      # Handlers on each bus returning distinct values
+      Abxbus.on(:eb_multi_a, EBMultiBusFwdEvent, fn _event -> "result_a" end,
+        handler_name: "handler_a")
+      Abxbus.on(:eb_multi_b, EBMultiBusFwdEvent, fn _event -> "result_b" end,
+        handler_name: "handler_b")
+      Abxbus.on(:eb_multi_c, EBMultiBusFwdEvent, fn _event -> "result_c" end,
+        handler_name: "handler_c")
+
+      # Forwarding chain: a -> b -> c
+      Abxbus.on(:eb_multi_a, "*", fn e -> Abxbus.emit(:eb_multi_b, e) end,
+        handler_name: "fwd_a_b")
+      Abxbus.on(:eb_multi_b, "*", fn e -> Abxbus.emit(:eb_multi_c, e) end,
+        handler_name: "fwd_b_c")
+
+      event = Abxbus.emit(:eb_multi_a, EBMultiBusFwdEvent.new())
+
+      Abxbus.wait_until_idle(:eb_multi_a)
+      Abxbus.wait_until_idle(:eb_multi_b)
+      Abxbus.wait_until_idle(:eb_multi_c)
+
+      Abxbus.event_completed(event, 5.0)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+
+      # event_path should contain bus labels from the forwarding chain
+      assert length(stored.event_path) >= 2,
+             "event_path should have entries from multiple buses, got: #{inspect(stored.event_path)}"
+
+      # Results should contain values from downstream buses
+      result_values = stored.event_results
+                      |> Map.values()
+                      |> Enum.filter(&(&1.status == :completed))
+                      |> Enum.map(& &1.result)
+
+      assert "result_c" in result_values,
+             "Should have result from bus c, got: #{inspect(result_values)}"
+
+      assert length(result_values) >= 2,
+             "Should have results from multiple buses, got: #{inspect(result_values)}"
+
+      Abxbus.stop(:eb_multi_a, clear: true)
+      Abxbus.stop(:eb_multi_b, clear: true)
+      Abxbus.stop(:eb_multi_c, clear: true)
+    end
+  end
 end

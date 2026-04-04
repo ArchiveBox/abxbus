@@ -291,6 +291,7 @@ defmodule Abxbus.EventStore do
     :ets.new(:abxbus_find_waiters, [:bag, :public, :named_table, write_concurrency: true])
     :ets.new(:abxbus_bus_events, [:duplicate_bag, :public, :named_table, write_concurrency: true])
     :ets.new(:abxbus_worker_results, [:set, :public, :named_table, write_concurrency: true])
+    :ets.new(:abxbus_event_depth, [:set, :public, :named_table, write_concurrency: true])
     {:ok, %{}}
   end
 

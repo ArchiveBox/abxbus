@@ -158,6 +158,52 @@ defmodule Abxbus.EventResultTest do
     end
   end
 
+  describe "handler_file_path detection" do
+    test "handler_file_path detected in EventResult" do
+      {:ok, _} = Abxbus.start_bus(:er_filepath)
+
+      Abxbus.on(:er_filepath, ERNoHandlersEvent, fn _e -> :ok end,
+        handler_name: "filepath_handler")
+
+      event = Abxbus.emit(:er_filepath, ERNoHandlersEvent.new())
+      Abxbus.wait_until_idle(:er_filepath)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      result = stored.event_results |> Map.values() |> hd()
+
+      # handler_file_path is derived from the handler function's module
+      assert result.handler_file_path != nil
+    end
+  end
+
+  describe "EventResult status transitions" do
+    test "EventResult status transitions from pending to started to completed" do
+      result = Abxbus.EventResult.new("handler_1", handler_name: "test")
+      assert result.status == :pending
+
+      result = Abxbus.EventResult.mark_started(result)
+      assert result.status == :started
+      assert result.started_at != nil
+
+      result = Abxbus.EventResult.mark_completed(result, :done)
+      assert result.status == :completed
+      assert result.result == :done
+      assert result.completed_at != nil
+    end
+
+    test "EventResult mark_error stores error" do
+      result = Abxbus.EventResult.new("handler_2", handler_name: "err_test")
+      assert result.status == :pending
+
+      error = %RuntimeError{message: "something went wrong"}
+      result = Abxbus.EventResult.mark_error(result, error)
+
+      assert result.status == :error
+      assert result.error == error
+      assert result.completed_at != nil
+    end
+  end
+
   describe "edge cases" do
     test "event with no handlers has empty results" do
       {:ok, _} = Abxbus.start_bus(:er_empty)

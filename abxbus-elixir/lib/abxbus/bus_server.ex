@@ -30,6 +30,7 @@ defmodule Abxbus.BusServer do
     event_slow_timeout: nil,
     event_handler_slow_timeout: nil,
     event_handler_detect_file_paths: true,
+    max_handler_recursion_depth: 3,
     # cached config map (rebuilt on config change)
     cached_config: %{},
     # runtime state
@@ -59,7 +60,9 @@ defmodule Abxbus.BusServer do
 
   @doc "Emit an event onto this bus. Non-blocking."
   def emit(bus, event) do
-    GenServer.call(lookup(bus), {:emit, event})
+    # Pass caller's handler depth so child workers inherit recursion tracking
+    caller_depth = Process.get(:abxbus_handler_depth, 0)
+    GenServer.call(lookup(bus), {:emit, event, caller_depth})
   end
 
   @doc "Alias for emit (matches Python's dispatch)."
@@ -131,6 +134,7 @@ defmodule Abxbus.BusServer do
       event_slow_timeout: Keyword.get(opts, :event_slow_timeout),
       event_handler_slow_timeout: Keyword.get(opts, :event_handler_slow_timeout),
       event_handler_detect_file_paths: Keyword.get(opts, :event_handler_detect_file_paths, true),
+      max_handler_recursion_depth: Keyword.get(opts, :max_handler_recursion_depth, 3),
       max_history_size: Keyword.get(opts, :max_history_size, 1000),
       max_history_drop: Keyword.get(opts, :max_history_drop, true),
       middlewares: Keyword.get(opts, :middlewares, []),
@@ -166,11 +170,11 @@ defmodule Abxbus.BusServer do
   # ── Emit ────────────────────────────────────────────────────────────────────
 
   @impl true
-  def handle_call({:emit, _event}, _from, %{started: false} = state) do
+  def handle_call({:emit, _event, _depth}, _from, %{started: false} = state) do
     {:reply, {:error, :stopped}, state}
   end
 
-  def handle_call({:emit, event}, _from, state) do
+  def handle_call({:emit, event, caller_depth}, _from, state) do
     event = prepare_event(event, state.label)
 
     case check_backpressure(state) do
@@ -179,6 +183,9 @@ defmodule Abxbus.BusServer do
         EventStore.put_or_merge(event)
         EventStore.index_to_bus(state.name, event.event_id)
         EventStore.resolve_find_waiters(event)
+
+        # Tag event with caller's handler depth for recursion tracking
+        :ets.insert(:abxbus_event_depth, {event.event_id, caller_depth})
 
         state = %{state |
           pending_event_queue: :queue.in(event, state.pending_event_queue),
@@ -604,7 +611,8 @@ defmodule Abxbus.BusServer do
       event_timeout: state.event_timeout,
       event_handler_timeout: state.event_handler_timeout,
       event_slow_timeout: state.event_slow_timeout,
-      event_handler_slow_timeout: state.event_handler_slow_timeout
+      event_handler_slow_timeout: state.event_handler_slow_timeout,
+      max_handler_recursion_depth: state.max_handler_recursion_depth
     }
   end
 

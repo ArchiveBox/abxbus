@@ -16,6 +16,8 @@ defmodule Abxbus.RetryIntegrationTest do
   defevent(RetryFilterMatchEvent)
   defevent(RetryBackoffEvent)
   defevent(RetryNoRetryEvent)
+  defevent(RetrySemaphoreEvent)
+  defevent(RetryTimeoutEvent)
 
   # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -193,6 +195,77 @@ defmodule Abxbus.RetryIntegrationTest do
 
       assert delay2 >= delay1 * 1.3,
              "Second delay (#{delay2}ms) should be noticeably larger than first (#{delay1}ms) due to backoff"
+
+      Abxbus.stop(bus, clear: true)
+    end
+
+    test "retry with semaphore limits concurrent handlers" do
+      bus = unique_bus(:retry_sem)
+      {:ok, _} = Abxbus.start_bus(bus, event_handler_concurrency: :parallel)
+
+      max_concurrent = :atomics.new(1, [])
+      current = :atomics.new(1, [])
+
+      handler_fn = fn _event ->
+        :atomics.add(current, 1, 1)
+        cur = :atomics.get(current, 1)
+        # Update max if current is higher
+        old_max = :atomics.get(max_concurrent, 1)
+        if cur > old_max, do: :atomics.put(max_concurrent, 1, cur)
+        Process.sleep(50)
+        :atomics.sub(current, 1, 1)
+        :ok
+      end
+
+      for i <- 1..4 do
+        Abxbus.on(bus, RetrySemaphoreEvent, handler_fn,
+          handler_name: "sem_handler_#{i}",
+          semaphore_scope: :global,
+          semaphore_name: "test_sem",
+          semaphore_limit: 2
+        )
+      end
+
+      event = Abxbus.emit(bus, RetrySemaphoreEvent.new())
+      Abxbus.wait_until_idle(bus)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      completed = stored.event_results |> Map.values() |> Enum.filter(&(&1.status == :completed))
+      assert length(completed) == 4, "All 4 handlers should complete"
+
+      assert :atomics.get(max_concurrent, 1) <= 2,
+             "Max concurrent should be <= 2, got #{:atomics.get(max_concurrent, 1)}"
+
+      Abxbus.stop(bus, clear: true)
+    end
+
+    test "retry timeout aborts handler" do
+      bus = unique_bus(:retry_timeout)
+      {:ok, _} = Abxbus.start_bus(bus)
+
+      counter = :counters.new(1, [:atomics])
+
+      Abxbus.on(bus, RetryTimeoutEvent, fn _event ->
+        :counters.add(counter, 1, 1)
+        # Sleep longer than the timeout
+        Process.sleep(2000)
+        :ok
+      end,
+        max_attempts: 3,
+        retry_after: 0.01,
+        timeout: 0.05,
+        handler_name: "timeout_handler"
+      )
+
+      event = Abxbus.emit(bus, RetryTimeoutEvent.new())
+      Abxbus.wait_until_idle(bus)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      results = Map.values(stored.event_results)
+      handler_result = Enum.find(results, &(&1.handler_name == "timeout_handler"))
+
+      assert handler_result.status == :error,
+             "Handler should be in error status after timeout, got #{handler_result.status}"
 
       Abxbus.stop(bus, clear: true)
     end

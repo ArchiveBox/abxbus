@@ -21,6 +21,16 @@ defmodule Abxbus.EventWorker do
   Main entry point — runs in a spawned process.
   """
   def run(event, handlers, bus_config, bus_pid, bus_name) do
+    # Track handler recursion depth across nested emit→await chains.
+    # The caller's depth is stored per-event in ETS by the BusServer.
+    caller_depth =
+      case :ets.lookup(:abxbus_event_depth, event.event_id) do
+        [{_, d}] -> d
+        [] -> 0
+      end
+    max_depth = Map.get(bus_config, :max_handler_recursion_depth, 3)
+    Process.put(:abxbus_handler_depth, caller_depth + 1)
+
     Process.put(:abxbus_current_event_id, event.event_id)
     Process.put(:abxbus_current_bus, bus_name)
     Process.put(:abxbus_current_bus_pid, bus_pid)
@@ -31,7 +41,24 @@ defmodule Abxbus.EventWorker do
 
     send(bus_pid, {:event_worker_started, event.event_id})
 
-    results = run_handlers(event, handlers, bus_config, bus_pid, bus_name)
+    results =
+      if caller_depth >= max_depth do
+        # Recursion depth exceeded — mark all handlers as error
+        handlers
+        |> Enum.map(fn entry ->
+          result = EventResult.new(entry.id,
+            event_id: event.event_id,
+            handler_name: entry.handler_name,
+            eventbus_name: bus_name
+          ) |> EventResult.mark_started() |> EventResult.mark_error(
+            %RuntimeError{message: "Infinite loop detected: handler recursion depth #{caller_depth + 1} exceeds max #{max_depth}"}
+          )
+          {entry.id, result}
+        end)
+        |> Map.new()
+      else
+        run_handlers(event, handlers, bus_config, bus_pid, bus_name)
+      end
 
     send(bus_pid, {:event_worker_done, event.event_id, results})
   end

@@ -965,6 +965,72 @@ defmodule Abxbus.EventBusFindTest do
     end
   end
 
+  # ── find waiter cleanup ────────────────────────────────────────────────────
+
+  describe "find waiter cleanup" do
+    test "find waiter cleanup after resolve" do
+      defevent(FindCleanupResolveEvent, tag: nil)
+      {:ok, _} = Abxbus.start_bus(:fw_resolve)
+      Abxbus.on(:fw_resolve, FindCleanupResolveEvent, fn _e -> :ok end)
+
+      size_before = case :ets.info(:abxbus_find_waiters, :size) do
+        n when is_integer(n) -> n
+        _ -> 0
+      end
+
+      ready = :atomics.new(1, [])
+      task = Task.async(fn ->
+        :atomics.put(ready, 1, 1)
+        Abxbus.find(FindCleanupResolveEvent, past: false, future: 5.0)
+      end)
+
+      spin_until(fn -> :atomics.get(ready, 1) == 1 end, 1000)
+      wait_for_find_waiter()
+
+      # Emit to resolve the find waiter
+      Abxbus.emit(:fw_resolve, FindCleanupResolveEvent.new(tag: "resolve"))
+      found = Task.await(task, 6000)
+      assert found != nil
+
+      # Give a moment for cleanup
+      Process.sleep(10)
+
+      size_after = case :ets.info(:abxbus_find_waiters, :size) do
+        n when is_integer(n) -> n
+        _ -> 0
+      end
+
+      assert size_after == size_before,
+             "Waiter should be cleaned up after resolve. Before: #{size_before}, after: #{size_after}"
+
+      Abxbus.wait_until_idle(:fw_resolve)
+    end
+
+    test "find waiter cleanup after timeout" do
+      defevent(FindCleanupTimeoutEvent, tag: nil)
+
+      size_before = case :ets.info(:abxbus_find_waiters, :size) do
+        n when is_integer(n) -> n
+        _ -> 0
+      end
+
+      # find with short future timeout — no events will be emitted
+      found = Abxbus.find(FindCleanupTimeoutEvent, past: false, future: 0.1)
+      assert found == nil
+
+      # Give a moment for cleanup
+      Process.sleep(10)
+
+      size_after = case :ets.info(:abxbus_find_waiters, :size) do
+        n when is_integer(n) -> n
+        _ -> 0
+      end
+
+      assert size_after == size_before,
+             "Waiter should be cleaned up after timeout. Before: #{size_before}, after: #{size_after}"
+    end
+  end
+
   # ── helpers ────────────────────────────────────────────────────────────────
 
   # Wait until at least one find waiter is registered in ETS

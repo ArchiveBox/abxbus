@@ -314,4 +314,184 @@ defmodule Abxbus.MiddlewareTest do
       Agent.stop(agent)
     end
   end
+
+  # ── Additional middleware tests ───────────────────────────────────────────
+
+  defevent(MWHookStatusEvent, payload: "hook_status")
+  defevent(MWStringWildcardEvent, payload: "sw")
+  defevent(MWMonotonicEvent, payload: "monotonic", event_timeout: 0.5)
+
+  defmodule HookStatusMiddleware do
+    @behaviour Abxbus.Middleware
+
+    @impl true
+    def on_event_change(_bus_name, _event, status) do
+      Agent.update(:mw_hook_statuses, fn log -> log ++ [{:event, status}] end)
+      :ok
+    end
+
+    @impl true
+    def on_event_result_change(_bus_name, _event, _result, status) do
+      Agent.update(:mw_hook_statuses, fn log -> log ++ [{:result, status}] end)
+      :ok
+    end
+
+    @impl true
+    def on_bus_handlers_change(_bus_name, _handler, _registered?), do: :ok
+  end
+
+  defmodule HandlerPatternMiddleware do
+    @behaviour Abxbus.Middleware
+
+    @impl true
+    def on_event_change(_bus_name, _event, _status), do: :ok
+
+    @impl true
+    def on_event_result_change(_bus_name, _event, _result, _status), do: :ok
+
+    @impl true
+    def on_bus_handlers_change(_bus_name, handler, registered?) do
+      Agent.update(:mw_handler_patterns, fn log ->
+        log ++ [{handler.handler_name, registered?}]
+      end)
+      :ok
+    end
+  end
+
+  defmodule MonotonicMiddleware do
+    @behaviour Abxbus.Middleware
+
+    @impl true
+    def on_event_change(_bus_name, _event, status) do
+      Agent.update(:mw_monotonic, fn log -> log ++ [status] end)
+      :ok
+    end
+
+    @impl true
+    def on_event_result_change(_bus_name, _event, _result, _status), do: :ok
+
+    @impl true
+    def on_bus_handlers_change(_bus_name, _handler, _registered?), do: :ok
+  end
+
+  describe "middleware hook statuses never emit error" do
+    test "middleware hook statuses never emit error" do
+      {:ok, agent} = Agent.start_link(fn -> [] end, name: :mw_hook_statuses)
+
+      {:ok, _} = Abxbus.start_bus(:mw_hook_status_bus, middlewares: [HookStatusMiddleware])
+
+      Abxbus.on(:mw_hook_status_bus, MWHookStatusEvent, fn _event ->
+        raise "handler failure!"
+      end, handler_name: "failing_handler")
+
+      Abxbus.emit(:mw_hook_status_bus, MWHookStatusEvent.new())
+      Abxbus.wait_until_idle(:mw_hook_status_bus)
+
+      log = Agent.get(:mw_hook_statuses, & &1)
+
+      # Event lifecycle statuses should be :pending, :started, :completed — never :error
+      event_statuses = log |> Enum.filter(fn {type, _} -> type == :event end) |> Enum.map(fn {_, s} -> s end)
+      assert :error not in event_statuses,
+             "Event lifecycle statuses should never include :error, got: #{inspect(event_statuses)}"
+      assert event_statuses == [:pending, :started, :completed]
+
+      # The :error status appears only in result changes, not event changes
+      result_statuses = log |> Enum.filter(fn {type, _} -> type == :result end) |> Enum.map(fn {_, s} -> s end)
+      assert :error in result_statuses,
+             "Handler result should have :error status, got: #{inspect(result_statuses)}"
+
+      Abxbus.stop(:mw_hook_status_bus, clear: true)
+      Agent.stop(agent)
+    end
+  end
+
+  describe "middleware hooks cover string and wildcard handler patterns" do
+    test "middleware hooks cover string and wildcard handler patterns" do
+      {:ok, agent} = Agent.start_link(fn -> [] end, name: :mw_handler_patterns)
+      {:ok, results_agent} = Agent.start_link(fn -> [] end, name: :mw_sw_results)
+
+      {:ok, _} = Abxbus.start_bus(:mw_sw_bus, middlewares: [HandlerPatternMiddleware])
+
+      # Register handler via string pattern
+      Abxbus.on(:mw_sw_bus, "MWStringWildcardEvent", fn _event ->
+        Agent.update(:mw_sw_results, fn log -> log ++ [:string_handler] end)
+        :ok
+      end, handler_name: "string_handler")
+
+      # Register handler via wildcard
+      Abxbus.on(:mw_sw_bus, "*", fn _event ->
+        Agent.update(:mw_sw_results, fn log -> log ++ [:wildcard_handler] end)
+        :ok
+      end, handler_name: "wildcard_handler")
+
+      handler_log = Agent.get(:mw_handler_patterns, & &1)
+
+      # Both registrations should have triggered on_bus_handlers_change
+      registered_names = handler_log
+                         |> Enum.filter(fn {_name, reg?} -> reg? end)
+                         |> Enum.map(fn {name, _} -> name end)
+
+      assert "string_handler" in registered_names,
+             "String handler registration should be observed, got: #{inspect(registered_names)}"
+      assert "wildcard_handler" in registered_names,
+             "Wildcard handler registration should be observed, got: #{inspect(registered_names)}"
+
+      # Emit event, both handlers should run
+      Abxbus.emit(:mw_sw_bus, MWStringWildcardEvent.new())
+      Abxbus.wait_until_idle(:mw_sw_bus)
+
+      results = Agent.get(:mw_sw_results, & &1)
+      assert :string_handler in results
+      assert :wildcard_handler in results
+
+      Abxbus.stop(:mw_sw_bus, clear: true)
+      Agent.stop(agent)
+      Agent.stop(results_agent)
+    end
+  end
+
+  describe "middleware event lifecycle monotonic on timeout" do
+    test "middleware event lifecycle monotonic on timeout" do
+      {:ok, agent} = Agent.start_link(fn -> [] end, name: :mw_monotonic)
+
+      {:ok, _} = Abxbus.start_bus(:mw_monotonic_bus,
+        middlewares: [MonotonicMiddleware],
+        event_timeout: 0.3
+      )
+
+      Abxbus.on(:mw_monotonic_bus, MWMonotonicEvent, fn _event ->
+        Process.sleep(500)
+        :ok
+      end, handler_name: "slow_handler")
+
+      Abxbus.emit(:mw_monotonic_bus, MWMonotonicEvent.new())
+      # Wait enough for timeout + cleanup
+      Process.sleep(800)
+      Abxbus.wait_until_idle(:mw_monotonic_bus)
+
+      log = Agent.get(:mw_monotonic, & &1)
+
+      # Status transitions should be monotonically ordered: pending -> started -> completed
+      # No status reversal should occur
+      status_order = %{pending: 0, started: 1, completed: 2}
+      indices = Enum.map(log, fn s -> Map.get(status_order, s, -1) end)
+      # Filter to only known statuses
+      known_indices = Enum.filter(indices, &(&1 >= 0))
+
+      # Each successive index should be >= the previous (monotonic)
+      pairs = Enum.zip(known_indices, Enum.drop(known_indices, 1))
+      for {a, b} <- pairs do
+        assert a <= b,
+               "Status transitions should be monotonic, got: #{inspect(log)}"
+      end
+
+      # Should see at least pending and started
+      assert :pending in log, "Should see :pending status"
+      assert :started in log, "Should see :started status"
+      assert :completed in log, "Should see :completed status, got: #{inspect(log)}"
+
+      Abxbus.stop(:mw_monotonic_bus, clear: true)
+      Agent.stop(agent)
+    end
+  end
 end

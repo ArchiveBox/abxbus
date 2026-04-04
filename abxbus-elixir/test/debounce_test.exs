@@ -13,6 +13,10 @@ defmodule Abxbus.DebounceTest do
   defevent(DebNoMatchEvent, value: "nomatch")
   defevent(DebStaleEvent, value: "stale")
   defevent(DebDebounceEvent, value: "debounce")
+  defevent(DebDebouncePatternEvent, value: "debounce_pattern")
+  defevent(DebRecentEvent, value: "recent")
+  defevent(DebOrExistEvent, value: "or_exist")
+  defevent(DebOrNewEvent, value: "or_new")
   defevent(DebPastOnlyEvent, value: "pastonly")
   defevent(DebPastFloatEvent, value: "pastfloat")
   defevent(DebFutureTimeoutEvent, value: "future")
@@ -100,14 +104,14 @@ defmodule Abxbus.DebounceTest do
 
       emit_count = :counters.new(1, [:atomics])
 
-      Abxbus.on(bus, DebDebounceEvent, fn _e -> :ok end, handler_name: "debounce_handler")
+      Abxbus.on(bus, DebDebouncePatternEvent, fn _e -> :ok end, handler_name: "debounce_handler")
 
       # Debounce helper: find existing or dispatch new
       debounce = fn ->
-        case Abxbus.find(DebDebounceEvent, past: 0.5) do
+        case Abxbus.find(DebDebouncePatternEvent, past: 0.5) do
           nil ->
             :counters.add(emit_count, 1, 1)
-            event = Abxbus.emit(bus, DebDebounceEvent.new())
+            event = Abxbus.emit(bus, DebDebouncePatternEvent.new())
             Abxbus.wait_until_idle(bus)
             event
 
@@ -127,6 +131,73 @@ defmodule Abxbus.DebounceTest do
 
       assert :counters.get(emit_count, 1) == 1,
              "Only 1 event should have been emitted, got #{:counters.get(emit_count, 1)}"
+
+      Abxbus.stop(bus, clear: true)
+    end
+  end
+
+  describe "debounce or-chain patterns" do
+    test "debounce prefers recent history over dispatch" do
+      bus = unique_bus(:deb_recent)
+      {:ok, _} = Abxbus.start_bus(bus)
+
+      Abxbus.on(bus, DebRecentEvent, fn _e -> :ok end, handler_name: "recent_handler")
+
+      event = Abxbus.emit(bus, DebRecentEvent.new())
+      Abxbus.wait_until_idle(bus)
+
+      # find with past: 1.0 should return the existing event (no new dispatch)
+      found = Abxbus.find(DebRecentEvent, past: 1.0)
+      assert found != nil, "find(past: 1.0) should return the existing event"
+      assert found.event_id == event.event_id
+
+      Abxbus.stop(bus, clear: true)
+    end
+
+    test "or chain without waiting finds existing" do
+      bus = unique_bus(:deb_or_exist)
+      {:ok, _} = Abxbus.start_bus(bus)
+
+      emit_count = :counters.new(1, [:atomics])
+
+      Abxbus.on(bus, DebOrExistEvent, fn _e -> :ok end, handler_name: "or_handler")
+
+      event = Abxbus.emit(bus, DebOrExistEvent.new())
+      Abxbus.wait_until_idle(bus)
+
+      # Or-chain pattern: find(type, past: true) || emit(bus, type.new())
+      result = Abxbus.find(DebOrExistEvent, past: true) ||
+        (fn ->
+          :counters.add(emit_count, 1, 1)
+          Abxbus.emit(bus, DebOrExistEvent.new())
+        end).()
+
+      assert result != nil
+      assert result.event_id == event.event_id
+      assert :counters.get(emit_count, 1) == 0,
+             "Should not have dispatched a new event, dispatched #{:counters.get(emit_count, 1)}"
+
+      Abxbus.stop(bus, clear: true)
+    end
+
+    test "or chain dispatches when no match" do
+      bus = unique_bus(:deb_or_new)
+      {:ok, _} = Abxbus.start_bus(bus)
+
+      emit_count = :counters.new(1, [:atomics])
+
+      Abxbus.on(bus, DebOrNewEvent, fn _e -> :ok end, handler_name: "or_new_handler")
+
+      # No prior events of this type — find should return nil
+      result = Abxbus.find(DebOrNewEvent, past: true) ||
+        (fn ->
+          :counters.add(emit_count, 1, 1)
+          Abxbus.emit(bus, DebOrNewEvent.new())
+        end).()
+
+      assert result != nil
+      assert :counters.get(emit_count, 1) == 1,
+             "Should have dispatched exactly 1 event"
 
       Abxbus.stop(bus, clear: true)
     end
