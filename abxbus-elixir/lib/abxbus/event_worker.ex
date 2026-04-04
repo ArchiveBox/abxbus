@@ -183,6 +183,7 @@ defmodule Abxbus.EventWorker do
 
   defp run_handlers_parallel(event, handlers, results, completion_mode, bus_config, bus_name, bus_pid, handler_slow) do
     current_event_id = event.event_id
+    handler_depth = Process.get(:abxbus_handler_depth, 0)
 
     tasks =
       Enum.map(handlers, fn entry ->
@@ -192,6 +193,7 @@ defmodule Abxbus.EventWorker do
             Process.put(:abxbus_current_bus, bus_name)
             Process.put(:abxbus_current_bus_pid, bus_pid)
             Process.put(:abxbus_current_handler_id, entry.id)
+            Process.put(:abxbus_handler_depth, handler_depth)
 
             slow_t = entry.handler_slow_timeout || handler_slow
             monitor = maybe_start_slow_monitor(slow_t, event, bus_name, {:handler, entry.handler_name})
@@ -410,6 +412,7 @@ defmodule Abxbus.EventWorker do
     event_id = Process.get(:abxbus_current_event_id)
     bus_name = Process.get(:abxbus_current_bus)
     bus_pid = Process.get(:abxbus_current_bus_pid)
+    handler_depth = Process.get(:abxbus_handler_depth, 0)
 
     results_ref = :erlang.make_ref()
     results_key = {__MODULE__, results_ref}
@@ -423,6 +426,7 @@ defmodule Abxbus.EventWorker do
       Process.put(:abxbus_current_event_id, event_id)
       Process.put(:abxbus_current_bus, bus_name)
       Process.put(:abxbus_current_bus_pid, bus_pid)
+      Process.put(:abxbus_handler_depth, handler_depth)
       Process.put(:abxbus_event_results_key, results_key)
 
       result = fun.()
@@ -480,6 +484,7 @@ defmodule Abxbus.EventWorker do
     event_id = Process.get(:abxbus_current_event_id)
     bus_name = Process.get(:abxbus_current_bus)
     bus_pid = Process.get(:abxbus_current_bus_pid)
+    handler_depth = Process.get(:abxbus_handler_depth, 0)
 
     # Trap exits BEFORE spawn_link to avoid race window
     old_trap = Process.flag(:trap_exit, true)
@@ -488,6 +493,7 @@ defmodule Abxbus.EventWorker do
       Process.put(:abxbus_current_event_id, event_id)
       Process.put(:abxbus_current_bus, bus_name)
       Process.put(:abxbus_current_bus_pid, bus_pid)
+      Process.put(:abxbus_handler_depth, handler_depth)
 
       result = fun.()
       send(caller, {:handler_timeout_result, ref, result})
