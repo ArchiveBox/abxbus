@@ -343,8 +343,11 @@ defmodule Abxbus.BusServer do
       }
     end)
 
-    # Clean up depth tracking entry now that the event is done
-    :ets.delete(:abxbus_event_depth, event_id)
+    # Clean up depth tracking only when all buses are done with this event
+    case EventStore.get(event_id) do
+      %{event_pending_bus_count: 0} -> :ets.delete(:abxbus_event_depth, event_id)
+      _ -> :ok
+    end
 
     state = %{state |
       processing_event_ids: MapSet.delete(state.processing_event_ids, event_id),

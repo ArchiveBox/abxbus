@@ -72,8 +72,10 @@ defmodule Abxbus.Middlewares.WAL do
   end
 
   defp ensure_config_table do
-    if :ets.whereis(@wal_config_table) == :undefined do
+    try do
       :ets.new(@wal_config_table, [:named_table, :public, :set])
+    rescue
+      ArgumentError -> @wal_config_table
     end
   end
 
