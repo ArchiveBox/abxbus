@@ -907,6 +907,43 @@ defmodule Abxbus.EventbusTest do
       Abxbus.stop(:eb_find_past, clear: true)
     end
 
+    test "results filterable by eventbus_name" do
+      {:ok, _} = Abxbus.start_bus(:eb_filter_a)
+      {:ok, _} = Abxbus.start_bus(:eb_filter_b)
+
+      defevent(EBFilterEvent)
+
+      Abxbus.on(:eb_filter_a, EBFilterEvent, fn _event -> "from_a" end,
+        handler_name: "filter_handler_a")
+      Abxbus.on(:eb_filter_b, EBFilterEvent, fn _event -> "from_b" end,
+        handler_name: "filter_handler_b")
+
+      # Forward a -> b
+      Abxbus.on(:eb_filter_a, "*", fn e -> Abxbus.emit(:eb_filter_b, e) end,
+        handler_name: "fwd_filter")
+
+      event = Abxbus.emit(:eb_filter_a, EBFilterEvent.new())
+      Abxbus.wait_until_idle(:eb_filter_a)
+      Abxbus.wait_until_idle(:eb_filter_b)
+      Abxbus.event_completed(event, 2.0)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      all_results = Map.values(stored.event_results)
+      completed = Enum.filter(all_results, &(&1.status == :completed))
+
+      # Filter by eventbus_name
+      a_results = Enum.filter(completed, &(&1.eventbus_name == :eb_filter_a))
+      b_results = Enum.filter(completed, &(&1.eventbus_name == :eb_filter_b))
+
+      assert length(a_results) >= 1,
+             "Should have results from bus a, got: #{inspect(Enum.map(completed, & &1.eventbus_name))}"
+      assert length(b_results) >= 1,
+             "Should have results from bus b, got: #{inspect(Enum.map(completed, & &1.eventbus_name))}"
+
+      Abxbus.stop(:eb_filter_a, clear: true)
+      Abxbus.stop(:eb_filter_b, clear: true)
+    end
+
     test "complex multi-bus forwarding with results" do
       {:ok, _} = Abxbus.start_bus(:eb_multi_a)
       {:ok, _} = Abxbus.start_bus(:eb_multi_b)
