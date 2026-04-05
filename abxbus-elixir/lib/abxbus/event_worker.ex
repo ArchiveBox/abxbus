@@ -167,6 +167,7 @@ defmodule Abxbus.EventWorker do
     Process.put(:abxbus_current_handler_id, entry.id)
 
     result_entry = Map.get(results, entry.id) |> EventResult.mark_started()
+    update_result_in_ets(event.event_id, entry.id, result_entry)
 
     slow_t = entry.handler_slow_timeout || handler_slow
     monitor = maybe_start_slow_monitor(slow_t, event, bus_name, {:handler, entry.handler_name})
@@ -175,9 +176,13 @@ defmodule Abxbus.EventWorker do
 
     case outcome do
       {:ok, value} ->
-        Map.put(results, entry.id, EventResult.mark_completed(result_entry, value))
+        updated = EventResult.mark_completed(result_entry, value)
+        update_result_in_ets(event.event_id, entry.id, updated)
+        Map.put(results, entry.id, updated)
       {:error, error} ->
-        Map.put(results, entry.id, EventResult.mark_error(result_entry, error))
+        updated = EventResult.mark_error(result_entry, error)
+        update_result_in_ets(event.event_id, entry.id, updated)
+        Map.put(results, entry.id, updated)
     end
   end
 
@@ -292,6 +297,7 @@ defmodule Abxbus.EventWorker do
         Process.put(:abxbus_current_handler_id, entry.id)
 
         result_entry = Map.get(acc, entry.id) |> EventResult.mark_started()
+        update_result_in_ets(event.event_id, entry.id, result_entry)
 
         slow_t = entry.handler_slow_timeout || handler_slow
         monitor = maybe_start_slow_monitor(slow_t, event, bus_name, {:handler, entry.handler_name})
@@ -303,6 +309,7 @@ defmodule Abxbus.EventWorker do
         case outcome do
           {:ok, value} ->
             updated = EventResult.mark_completed(result_entry, value)
+            update_result_in_ets(event.event_id, entry.id, updated)
             acc = Map.put(acc, entry.id, updated)
             update_shared_results(acc)
 
@@ -316,6 +323,7 @@ defmodule Abxbus.EventWorker do
 
           {:error, error} ->
             updated = EventResult.mark_error(result_entry, error)
+            update_result_in_ets(event.event_id, entry.id, updated)
             acc = Map.put(acc, entry.id, updated)
             update_shared_results(acc)
             {:cont, {acc, false}}
@@ -323,6 +331,13 @@ defmodule Abxbus.EventWorker do
       end)
 
     final_results
+  end
+
+  # Write individual handler result to ETS for real-time observability
+  defp update_result_in_ets(event_id, handler_id, result) do
+    EventStore.update_fun(event_id, fn event ->
+      %{event | event_results: Map.put(event.event_results, handler_id, result)}
+    end)
   end
 
   defp update_shared_results(results) do

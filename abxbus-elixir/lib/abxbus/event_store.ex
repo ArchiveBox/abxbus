@@ -205,10 +205,14 @@ defmodule Abxbus.EventStore do
   # ── Internals ───────────────────────────────────────────────────────────────
 
   defp search_past(event_type, cutoff, opts) do
+    # Return the most recent match (by event_created_at), not arbitrary order
     :ets.tab2list(:abxbus_events)
-    |> Enum.find_value(fn {_id, event} ->
-      if matches_all?(event, event_type, cutoff, opts), do: event
-    end)
+    |> Enum.filter(fn {_id, event} -> matches_all?(event, event_type, cutoff, opts) end)
+    |> Enum.max_by(fn {_id, event} -> event.event_created_at || 0 end, fn -> nil end)
+    |> case do
+      nil -> nil
+      {_id, event} -> event
+    end
   end
 
   defp matches_all?(event, event_type, cutoff, opts) do
