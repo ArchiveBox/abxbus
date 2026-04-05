@@ -493,4 +493,43 @@ defmodule Abxbus.MiddlewareTest do
       Agent.stop(agent)
     end
   end
+
+  # ── WAL persistence writes completed events ──────────────────────────────
+
+  defevent(MWWalEvent, payload: "wal_test")
+
+  describe "WAL persistence" do
+    test "WAL persistence writes completed events" do
+      tmp_path = Path.join(System.tmp_dir!(), "wal_mw_#{:erlang.unique_integer([:positive])}.jsonl")
+
+      {:ok, wal_agent} = Abxbus.Middlewares.WAL.start(tmp_path)
+      Abxbus.Middlewares.WAL.register(:mw_wal_bus, wal_agent)
+
+      {:ok, _} = Abxbus.start_bus(:mw_wal_bus,
+        middlewares: [Abxbus.Middlewares.WAL])
+
+      Abxbus.on(:mw_wal_bus, MWWalEvent, fn _event -> :ok end,
+        handler_name: "wal_mw_handler")
+
+      for _ <- 1..3 do
+        Abxbus.emit(:mw_wal_bus, MWWalEvent.new())
+      end
+
+      Abxbus.wait_until_idle(:mw_wal_bus)
+
+      # Give WAL writes time to flush
+      Process.sleep(50)
+
+      assert File.exists?(tmp_path), "WAL file should exist at #{tmp_path}"
+      lines = tmp_path |> File.read!() |> String.split("\n", trim: true)
+      assert length(lines) == 3,
+             "WAL file should have 3 lines for 3 completed events, got #{length(lines)}"
+
+      # Cleanup
+      File.rm(tmp_path)
+      Abxbus.Middlewares.WAL.unregister(:mw_wal_bus)
+      Agent.stop(wal_agent)
+      Abxbus.stop(:mw_wal_bus, clear: true)
+    end
+  end
 end
