@@ -465,4 +465,44 @@ defmodule Abxbus.BaseEventTest do
       assert found.event_id == event.event_id
     end
   end
+
+  describe "forwarded event handler sees correct bus per bus" do
+    test "forwarded event handler sees correct bus per bus" do
+      {:ok, _} = Abxbus.start_bus(:be_fwd_bus1)
+      {:ok, _} = Abxbus.start_bus(:be_fwd_bus2)
+
+      bus1_seen = Agent.start_link(fn -> nil end) |> elem(1)
+      bus2_seen = Agent.start_link(fn -> nil end) |> elem(1)
+
+      # Forward from bus1 -> bus2
+      Abxbus.on(:be_fwd_bus1, "*", fn e -> Abxbus.emit(:be_fwd_bus2, e) end,
+        handler_name: "fwd")
+
+      Abxbus.on(:be_fwd_bus1, BEMainEvent, fn _event ->
+        bus = Abxbus.current_bus!()
+        Agent.update(bus1_seen, fn _ -> bus end)
+        :ok
+      end, handler_name: "bus1_handler")
+
+      Abxbus.on(:be_fwd_bus2, BEMainEvent, fn _event ->
+        bus = Abxbus.current_bus!()
+        Agent.update(bus2_seen, fn _ -> bus end)
+        :ok
+      end, handler_name: "bus2_handler")
+
+      Abxbus.emit(:be_fwd_bus1, BEMainEvent.new())
+      Abxbus.wait_until_idle(:be_fwd_bus1)
+      Abxbus.wait_until_idle(:be_fwd_bus2)
+
+      assert Agent.get(bus1_seen, & &1) == :be_fwd_bus1,
+             "Bus1 handler should see :be_fwd_bus1"
+      assert Agent.get(bus2_seen, & &1) == :be_fwd_bus2,
+             "Bus2 handler should see :be_fwd_bus2"
+
+      Agent.stop(bus1_seen)
+      Agent.stop(bus2_seen)
+      Abxbus.stop(:be_fwd_bus1, clear: true)
+      Abxbus.stop(:be_fwd_bus2, clear: true)
+    end
+  end
 end

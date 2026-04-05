@@ -216,4 +216,99 @@ defmodule Abxbus.EventResultTest do
       assert stored.event_results == %{}
     end
   end
+
+  # ── Additional result tests ──────────────────────────────────────────────
+
+  defevent(ERStartedTimingEvent)
+  defevent(ERNoCastEvent)
+  defevent(ERHandlerIdMatchEvent)
+
+  describe "handler started timing" do
+    test "handler started timing after lock entry" do
+      {:ok, _} = Abxbus.start_bus(:er_started_timing,
+        event_handler_concurrency: :serial)
+
+      barrier = :atomics.new(1, [])
+
+      entry1 = Abxbus.on(:er_started_timing, ERStartedTimingEvent, fn _event ->
+        :atomics.put(barrier, 1, 1)
+        spin_wait(fn -> :atomics.get(barrier, 1) == 2 end, 5000)
+        "first_done"
+      end, handler_name: "first_handler")
+
+      entry2 = Abxbus.on(:er_started_timing, ERStartedTimingEvent, fn _event ->
+        "second_done"
+      end, handler_name: "second_handler")
+
+      event = Abxbus.emit(:er_started_timing, ERStartedTimingEvent.new())
+
+      # Wait for first handler to start
+      spin_wait(fn -> :atomics.get(barrier, 1) == 1 end, 2000)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      h1_result = Map.get(stored.event_results, entry1.id)
+      h2_result = Map.get(stored.event_results, entry2.id)
+
+      assert h1_result != nil
+      assert h1_result.status == :started,
+             "First handler should be :started, got: #{inspect(h1_result.status)}"
+
+      assert h2_result == nil or h2_result.status == :pending,
+             "Second handler should be :pending or nil, got: #{inspect(h2_result)}"
+
+      # Release
+      :atomics.put(barrier, 1, 2)
+      Abxbus.wait_until_idle(:er_started_timing)
+
+      Abxbus.stop(:er_started_timing, clear: true)
+    end
+  end
+
+  describe "no casting when no result_type" do
+    test "no casting when no result_type" do
+      {:ok, _} = Abxbus.start_bus(:er_no_cast)
+
+      Abxbus.on(:er_no_cast, ERNoCastEvent, fn _event ->
+        %{raw: "data"}
+      end, handler_name: "raw_handler")
+
+      event = Abxbus.emit(:er_no_cast, ERNoCastEvent.new())
+      Abxbus.wait_until_idle(:er_no_cast)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      result = stored.event_results |> Map.values() |> hd()
+
+      assert result.result == %{raw: "data"},
+             "Result should be the raw map unchanged, got: #{inspect(result.result)}"
+
+      Abxbus.stop(:er_no_cast, clear: true)
+    end
+  end
+
+  describe "handler_id matches registered entry" do
+    test "handler_id matches registered entry id" do
+      {:ok, _} = Abxbus.start_bus(:er_hid_match)
+
+      entry = Abxbus.on(:er_hid_match, ERHandlerIdMatchEvent, fn _event -> :ok end,
+        handler_name: "match_handler")
+
+      event = Abxbus.emit(:er_hid_match, ERHandlerIdMatchEvent.new())
+      Abxbus.wait_until_idle(:er_hid_match)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      result = stored.event_results |> Map.values() |> hd()
+
+      assert result.handler_id == entry.id,
+             "handler_id should match entry.id; got result.handler_id=#{inspect(result.handler_id)}, entry.id=#{inspect(entry.id)}"
+
+      Abxbus.stop(:er_hid_match, clear: true)
+    end
+  end
+
+  # ── Helpers ──────────────────────────────────────────────────────────────
+
+  defp spin_wait(fun, max_ms, elapsed \\ 0) do
+    if elapsed >= max_ms, do: raise("spin_wait exceeded #{max_ms}ms")
+    if fun.(), do: :ok, else: (Process.sleep(1); spin_wait(fun, max_ms, elapsed + 1))
+  end
 end

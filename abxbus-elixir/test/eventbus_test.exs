@@ -994,4 +994,433 @@ defmodule Abxbus.EventbusTest do
       Abxbus.stop(:eb_multi_c, clear: true)
     end
   end
+
+  # ── Handler matching ─────────────────────────────────────────────────────
+
+  defevent(EBMatchEvent, data: nil)
+
+  describe "handler matching" do
+    test "class matcher matches generic base event by event_type" do
+      {:ok, _} = Abxbus.start_bus(:eb_class_match)
+
+      string_called = :counters.new(1, [:atomics])
+      wildcard_called = :counters.new(1, [:atomics])
+
+      Abxbus.on(:eb_class_match, "EBMatchEvent", fn _event ->
+        :counters.add(string_called, 1, 1)
+        :ok
+      end, handler_name: "string_matcher")
+
+      Abxbus.on(:eb_class_match, "*", fn _event ->
+        :counters.add(wildcard_called, 1, 1)
+        :ok
+      end, handler_name: "wildcard_matcher")
+
+      Abxbus.emit(:eb_class_match, EBMatchEvent.new())
+      Abxbus.wait_until_idle(:eb_class_match)
+
+      assert :counters.get(string_called, 1) == 1,
+             "String handler should match by short name"
+      assert :counters.get(wildcard_called, 1) >= 1,
+             "Wildcard handler should also fire"
+
+      Abxbus.stop(:eb_class_match, clear: true)
+    end
+  end
+
+  # ── Error aggregation ────────────────────────────────────────────────────
+
+  defevent(EBAggErrorEvent)
+
+  describe "error aggregation" do
+    test "multiple handler errors aggregated in results" do
+      {:ok, _} = Abxbus.start_bus(:eb_agg_err,
+        event_handler_concurrency: :parallel)
+
+      Abxbus.on(:eb_agg_err, EBAggErrorEvent, fn _event ->
+        raise "error_1"
+      end, handler_name: "fail_1")
+
+      Abxbus.on(:eb_agg_err, EBAggErrorEvent, fn _event ->
+        raise "error_2"
+      end, handler_name: "fail_2")
+
+      Abxbus.on(:eb_agg_err, EBAggErrorEvent, fn _event ->
+        "ok"
+      end, handler_name: "ok_handler")
+
+      event = Abxbus.emit(:eb_agg_err, EBAggErrorEvent.new())
+      Abxbus.wait_until_idle(:eb_agg_err)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      results = Map.values(stored.event_results)
+
+      error_results = Enum.filter(results, &(&1.status == :error))
+      completed_results = Enum.filter(results, &(&1.status == :completed))
+
+      assert length(error_results) == 2,
+             "Should have 2 error results, got: #{length(error_results)}"
+      assert length(completed_results) == 1,
+             "Should have 1 completed result, got: #{length(completed_results)}"
+
+      Abxbus.stop(:eb_agg_err, clear: true)
+    end
+
+    test "single handler error preserved in result" do
+      {:ok, _} = Abxbus.start_bus(:eb_single_err)
+
+      Abxbus.on(:eb_single_err, EBAggErrorEvent, fn _event ->
+        raise RuntimeError, "test error"
+      end, handler_name: "single_fail")
+
+      event = Abxbus.emit(:eb_single_err, EBAggErrorEvent.new())
+      Abxbus.wait_until_idle(:eb_single_err)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      result = stored.event_results |> Map.values() |> hd()
+
+      assert result.status == :error
+      assert inspect(result.error) =~ "test error"
+
+      Abxbus.stop(:eb_single_err, clear: true)
+    end
+  end
+
+  # ── Result hierarchy ─────────────────────────────────────────────────────
+
+  defevent(EBHierEvent, data: "hier")
+
+  describe "result hierarchy" do
+    test "three level hierarchy result bubbling" do
+      {:ok, _} = Abxbus.start_bus(:eb_hier_a)
+      {:ok, _} = Abxbus.start_bus(:eb_hier_b)
+      {:ok, _} = Abxbus.start_bus(:eb_hier_c)
+
+      Abxbus.on(:eb_hier_a, EBHierEvent, fn _event -> "a" end,
+        handler_name: "handler_a")
+      Abxbus.on(:eb_hier_b, EBHierEvent, fn _event -> "b" end,
+        handler_name: "handler_b")
+      Abxbus.on(:eb_hier_c, EBHierEvent, fn _event -> "c" end,
+        handler_name: "handler_c")
+
+      # Forwarding: a -> b -> c
+      Abxbus.on(:eb_hier_a, "*", fn e -> Abxbus.emit(:eb_hier_b, e) end,
+        handler_name: "fwd_a_b")
+      Abxbus.on(:eb_hier_b, "*", fn e -> Abxbus.emit(:eb_hier_c, e) end,
+        handler_name: "fwd_b_c")
+
+      event = Abxbus.emit(:eb_hier_a, EBHierEvent.new())
+
+      Abxbus.wait_until_idle(:eb_hier_a)
+      Abxbus.wait_until_idle(:eb_hier_b)
+      Abxbus.wait_until_idle(:eb_hier_c)
+
+      Abxbus.event_completed(event, 2.0)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      assert length(stored.event_path) >= 3,
+             "event_path should have entries from 3 buses, got: #{inspect(stored.event_path)}"
+
+      Abxbus.stop(:eb_hier_a, clear: true)
+      Abxbus.stop(:eb_hier_b, clear: true)
+      Abxbus.stop(:eb_hier_c, clear: true)
+    end
+  end
+
+  # ── Circular subscription ────────────────────────────────────────────────
+
+  defevent(EBCircularEvent, depth: 0)
+
+  describe "circular subscription" do
+    test "circular subscription prevented by recursion guard" do
+      {:ok, _} = Abxbus.start_bus(:eb_circular)
+
+      Abxbus.on(:eb_circular, EBCircularEvent, fn event ->
+        child = Abxbus.emit(:eb_circular, EBCircularEvent.new(depth: event.depth + 1))
+        Abxbus.await(child)
+        :ok
+      end, handler_name: "circular_handler")
+
+      event = Abxbus.emit(:eb_circular, EBCircularEvent.new(depth: 0))
+      Abxbus.wait_until_idle(:eb_circular)
+
+      # With default recursion depth, should eventually hit the limit
+      # Check all events for error results containing "Infinite loop"
+      all_events = Abxbus.events_completed(:eb_circular) ++
+                   Abxbus.events_pending(:eb_circular)
+
+      found_infinite_loop = Enum.any?(all_events, fn evt ->
+        stored = Abxbus.EventStore.get(evt.event_id)
+        stored != nil and Enum.any?(Map.values(stored.event_results), fn r ->
+          r.status == :error and String.contains?(inspect(r.error), "Infinite loop")
+        end)
+      end)
+
+      assert found_infinite_loop,
+             "Should have at least one event with 'Infinite loop' error"
+
+      Abxbus.stop(:eb_circular, clear: true)
+    end
+  end
+
+  # ── Event results indexed by handler id ──────────────────────────────────
+
+  defevent(EBIdxEvent)
+
+  describe "event_results indexed by handler id (extended)" do
+    test "event_results indexed by handler id" do
+      {:ok, _} = Abxbus.start_bus(:eb_idx3,
+        event_handler_concurrency: :serial)
+
+      entry1 = Abxbus.on(:eb_idx3, EBIdxEvent, fn _event -> "r1" end,
+        handler_name: "h1")
+      entry2 = Abxbus.on(:eb_idx3, EBIdxEvent, fn _event -> "r2" end,
+        handler_name: "h2")
+      entry3 = Abxbus.on(:eb_idx3, EBIdxEvent, fn _event -> "r3" end,
+        handler_name: "h3")
+
+      event = Abxbus.emit(:eb_idx3, EBIdxEvent.new())
+      Abxbus.wait_until_idle(:eb_idx3)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      keys = Map.keys(stored.event_results)
+
+      assert entry1.id in keys, "Handler 1 ID should be a key in event_results"
+      assert entry2.id in keys, "Handler 2 ID should be a key in event_results"
+      assert entry3.id in keys, "Handler 3 ID should be a key in event_results"
+
+      Abxbus.stop(:eb_idx3, clear: true)
+    end
+
+    test "results accessible by handler_name" do
+      {:ok, _} = Abxbus.start_bus(:eb_named2)
+
+      Abxbus.on(:eb_named2, EBIdxEvent, fn _event -> "named_val" end,
+        handler_name: "named")
+
+      event = Abxbus.emit(:eb_named2, EBIdxEvent.new())
+      Abxbus.wait_until_idle(:eb_named2)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      results = Map.values(stored.event_results)
+      match = Enum.find(results, fn r -> r.handler_name == "named" end)
+
+      assert match != nil, "Should find result by handler_name 'named'"
+      assert match.result == "named_val"
+
+      Abxbus.stop(:eb_named2, clear: true)
+    end
+
+    test "results filterable by eventbus_name" do
+      {:ok, _} = Abxbus.start_bus(:eb_filt_a2)
+      {:ok, _} = Abxbus.start_bus(:eb_filt_b2)
+
+      defevent(EBFiltEvent2)
+
+      Abxbus.on(:eb_filt_a2, EBFiltEvent2, fn _event -> "from_a" end,
+        handler_name: "filt_handler_a")
+      Abxbus.on(:eb_filt_b2, EBFiltEvent2, fn _event -> "from_b" end,
+        handler_name: "filt_handler_b")
+
+      Abxbus.on(:eb_filt_a2, "*", fn e -> Abxbus.emit(:eb_filt_b2, e) end,
+        handler_name: "fwd_filt")
+
+      event = Abxbus.emit(:eb_filt_a2, EBFiltEvent2.new())
+      Abxbus.wait_until_idle(:eb_filt_a2)
+      Abxbus.wait_until_idle(:eb_filt_b2)
+      Abxbus.event_completed(event, 2.0)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      all_results = Map.values(stored.event_results)
+      completed = Enum.filter(all_results, &(&1.status == :completed))
+
+      a_results = Enum.filter(completed, &(&1.eventbus_name == :eb_filt_a2))
+      b_results = Enum.filter(completed, &(&1.eventbus_name == :eb_filt_b2))
+
+      assert length(a_results) >= 1,
+             "Should have results from bus a, got: #{inspect(Enum.map(completed, & &1.eventbus_name))}"
+      assert length(b_results) >= 1,
+             "Should have results from bus b, got: #{inspect(Enum.map(completed, & &1.eventbus_name))}"
+
+      Abxbus.stop(:eb_filt_a2, clear: true)
+      Abxbus.stop(:eb_filt_b2, clear: true)
+    end
+  end
+
+  # ── Automatic event_type from module ─────────────────────────────────────
+
+  defevent(EBAutoType, x: 1)
+
+  describe "automatic event_type from module" do
+    test "automatic event_type from module" do
+      event = EBAutoType.new()
+      assert event.event_type == EBAutoType
+    end
+  end
+
+  # ── WAL middleware captures completed events ─────────────────────────────
+
+  defevent(EBWalEvent, data: "wal")
+
+  describe "WAL middleware" do
+    test "WAL middleware captures completed events" do
+      tmp_path = Path.join(System.tmp_dir!(), "wal_eb_#{:erlang.unique_integer([:positive])}.jsonl")
+
+      {:ok, agent} = Abxbus.Middlewares.WAL.start(tmp_path)
+      Abxbus.Middlewares.WAL.register(:eb_wal_test, agent)
+
+      {:ok, _} = Abxbus.start_bus(:eb_wal_test,
+        middlewares: [Abxbus.Middlewares.WAL])
+
+      Abxbus.on(:eb_wal_test, EBWalEvent, fn _event -> :ok end,
+        handler_name: "wal_handler")
+
+      for _ <- 1..3 do
+        Abxbus.emit(:eb_wal_test, EBWalEvent.new())
+      end
+
+      Abxbus.wait_until_idle(:eb_wal_test)
+
+      # Give a moment for WAL writes to flush
+      Process.sleep(50)
+
+      assert File.exists?(tmp_path), "WAL file should exist"
+      lines = tmp_path |> File.read!() |> String.split("\n", trim: true)
+      assert length(lines) == 3,
+             "WAL file should have 3 lines, got #{length(lines)}"
+
+      # Cleanup
+      File.rm(tmp_path)
+      Abxbus.Middlewares.WAL.unregister(:eb_wal_test)
+      Agent.stop(agent)
+      Abxbus.stop(:eb_wal_test, clear: true)
+    end
+  end
+
+  # ── wait_until_idle recovers after slow handler ──────────────────────────
+
+  defevent(EBSlowIdleEvent)
+
+  describe "wait_until_idle recovery" do
+    test "wait_until_idle recovers after slow handler" do
+      {:ok, _} = Abxbus.start_bus(:eb_slow_idle)
+
+      barrier = :atomics.new(1, [])
+
+      Abxbus.on(:eb_slow_idle, EBSlowIdleEvent, fn _event ->
+        :atomics.put(barrier, 1, 1)
+        # Block until released
+        spin_wait(fn -> :atomics.get(barrier, 1) == 2 end, 5000)
+        :ok
+      end, handler_name: "slow_handler")
+
+      Abxbus.emit(:eb_slow_idle, EBSlowIdleEvent.new())
+
+      # Wait until handler is running
+      spin_wait(fn -> :atomics.get(barrier, 1) == 1 end, 2000)
+
+      # Short wait_until_idle should return quickly (not block forever)
+      # We just verify it doesn't hang; the bus is still busy
+      task = Task.async(fn ->
+        Abxbus.wait_until_idle(:eb_slow_idle)
+        :done
+      end)
+
+      # Release the handler
+      :atomics.put(barrier, 1, 2)
+
+      # Now wait_until_idle should complete
+      assert Task.await(task, 5000) == :done
+
+      Abxbus.stop(:eb_slow_idle, clear: true)
+    end
+  end
+
+  # ── Parallel handlers results not clobbered ──────────────────────────────
+
+  defevent(EBParallelResultEvent)
+
+  describe "parallel handler results" do
+    test "parallel handlers results not clobbered" do
+      {:ok, _} = Abxbus.start_bus(:eb_par_res,
+        event_handler_concurrency: :parallel)
+
+      Abxbus.on(:eb_par_res, EBParallelResultEvent, fn _event ->
+        %{source: "handler_1"}
+      end, handler_name: "par_h1")
+
+      Abxbus.on(:eb_par_res, EBParallelResultEvent, fn _event ->
+        %{source: "handler_2"}
+      end, handler_name: "par_h2")
+
+      event = Abxbus.emit(:eb_par_res, EBParallelResultEvent.new())
+      Abxbus.wait_until_idle(:eb_par_res)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      results = Map.values(stored.event_results)
+      result_values = Enum.map(results, & &1.result)
+
+      assert %{source: "handler_1"} in result_values,
+             "Handler 1 result should be present, got: #{inspect(result_values)}"
+      assert %{source: "handler_2"} in result_values,
+             "Handler 2 result should be present, got: #{inspect(result_values)}"
+
+      Abxbus.stop(:eb_par_res, clear: true)
+    end
+  end
+
+  # ── Real-time result updates ─────────────────────────────────────────────
+
+  defevent(EBRealTimeEvent)
+
+  describe "real-time result updates" do
+    test "handler started visible in ETS during execution" do
+      {:ok, _} = Abxbus.start_bus(:eb_realtime,
+        event_handler_concurrency: :serial)
+
+      barrier = :atomics.new(1, [])
+
+      entry1 = Abxbus.on(:eb_realtime, EBRealTimeEvent, fn _event ->
+        :atomics.put(barrier, 1, 1)
+        spin_wait(fn -> :atomics.get(barrier, 1) == 2 end, 5000)
+        "result_1"
+      end, handler_name: "blocking_handler")
+
+      entry2 = Abxbus.on(:eb_realtime, EBRealTimeEvent, fn _event ->
+        "result_2"
+      end, handler_name: "instant_handler")
+
+      event = Abxbus.emit(:eb_realtime, EBRealTimeEvent.new())
+
+      # Wait for first handler to start blocking
+      spin_wait(fn -> :atomics.get(barrier, 1) == 1 end, 2000)
+
+      # Check ETS state while handler 1 is blocked
+      stored = Abxbus.EventStore.get(event.event_id)
+
+      h1_result = Map.get(stored.event_results, entry1.id)
+      h2_result = Map.get(stored.event_results, entry2.id)
+
+      assert h1_result != nil, "Handler 1 result should exist in ETS"
+      assert h1_result.status == :started,
+             "Handler 1 should be :started, got: #{inspect(h1_result.status)}"
+
+      # Handler 2 should be pending (serial bus, h1 not done yet)
+      assert h2_result == nil or h2_result.status == :pending,
+             "Handler 2 should be :pending or nil, got: #{inspect(h2_result)}"
+
+      # Release
+      :atomics.put(barrier, 1, 2)
+      Abxbus.wait_until_idle(:eb_realtime)
+
+      Abxbus.stop(:eb_realtime, clear: true)
+    end
+  end
+
+  # ── Helpers ──────────────────────────────────────────────────────────────
+
+  defp spin_wait(fun, max_ms, elapsed \\ 0) do
+    if elapsed >= max_ms, do: raise("spin_wait exceeded #{max_ms}ms")
+    if fun.(), do: :ok, else: (Process.sleep(1); spin_wait(fun, max_ms, elapsed + 1))
+  end
 end

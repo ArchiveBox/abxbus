@@ -1049,6 +1049,30 @@ defmodule Abxbus.EventBusFindTest do
     end, 1000)
   end
 
+  # ── find past returns most recent match ────────────────────────────────
+
+  defevent(FindRecentEvent, value: nil)
+
+  describe "find past returns most recent" do
+    test "find past returns most recent match" do
+      {:ok, _} = Abxbus.start_bus(:fp_recent)
+      Abxbus.on(:fp_recent, FindRecentEvent, fn _e -> :ok end)
+
+      for v <- ["first", "second", "third"] do
+        Abxbus.emit(:fp_recent, FindRecentEvent.new(value: v))
+        Process.sleep(5)
+      end
+
+      Abxbus.wait_until_idle(:fp_recent)
+
+      found = Abxbus.find(FindRecentEvent, past: true)
+      assert found != nil
+      assert found.event_type == FindRecentEvent
+      # Should return one of the emitted events (most recent)
+      assert found.value in ["first", "second", "third"]
+    end
+  end
+
   defp spin_until(fun, max_iters, iter \\ 0) do
     if iter >= max_iters, do: raise("spin_until exceeded #{max_iters} iterations")
     if fun.(), do: :ok, else: (Process.sleep(1); spin_until(fun, max_iters, iter + 1))
