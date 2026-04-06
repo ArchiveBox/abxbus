@@ -288,4 +288,107 @@ defmodule Abxbus.Event do
   # Callbacks
   @callback handle(map()) :: any()
   @optional_callbacks [handle: 1]
+
+  # ── JSON serialization ────────────────────────────────────────────────────
+
+  @doc """
+  Serialize an event to a JSON-compatible map with string keys.
+
+  Field names match Python/TS exactly — no aliasing or renaming.
+  Atoms are converted to strings, event_results serialized as a list.
+  """
+  def to_json(event) do
+    event
+    |> Map.from_struct()
+    |> Map.update(:event_results, [], fn results ->
+      results
+      |> Map.values()
+      |> Enum.map(&json_encode_value/1)
+    end)
+    |> Enum.reduce(%{}, fn {k, v}, acc ->
+      Map.put(acc, Atom.to_string(k), json_encode_value(v))
+    end)
+  end
+
+  @doc """
+  Deserialize a JSON map (string keys) back to an event struct.
+
+  If `module` is nil, tries to resolve from `event_type`.
+  """
+  def from_json(json_map, module \\ nil) do
+    atomized =
+      Enum.reduce(json_map, %{}, fn {k, v}, acc ->
+        key = if is_binary(k), do: safe_to_atom(k), else: k
+        Map.put(acc, key, json_decode_value(key, v))
+      end)
+
+    atomized = restore_event_type(atomized)
+    atomized = restore_event_status(atomized)
+    atomized = restore_event_results(atomized)
+
+    target = module || Map.get(atomized, :event_type)
+
+    if is_atom(target) and target != nil and function_exported?(target, :__struct__, 0) do
+      struct!(target, Map.to_list(atomized))
+    else
+      atomized
+    end
+  end
+
+  @doc "Encode an event to a JSON string."
+  def to_json_string(event), do: event |> to_json() |> Abxbus.JSON.encode()
+
+  @doc "Decode a JSON string to an event."
+  def from_json_string(json_string, module \\ nil) do
+    json_string |> Abxbus.JSON.decode() |> from_json(module)
+  end
+
+  defp json_encode_value(nil), do: nil
+  defp json_encode_value(true), do: true
+  defp json_encode_value(false), do: false
+  defp json_encode_value(v) when is_atom(v), do: Atom.to_string(v)
+  defp json_encode_value(v) when is_binary(v), do: v
+  defp json_encode_value(v) when is_number(v), do: v
+  defp json_encode_value(v) when is_list(v), do: Enum.map(v, &json_encode_value/1)
+  defp json_encode_value(%{__struct__: _} = v), do: json_encode_value(Map.from_struct(v))
+  defp json_encode_value(v) when is_map(v) do
+    Enum.reduce(v, %{}, fn {k, val}, acc ->
+      Map.put(acc, to_string(k), json_encode_value(val))
+    end)
+  end
+  defp json_encode_value(v), do: inspect(v)
+
+  defp json_decode_value(:event_concurrency, v) when is_binary(v), do: safe_to_atom(v)
+  defp json_decode_value(:event_handler_concurrency, v) when is_binary(v), do: safe_to_atom(v)
+  defp json_decode_value(:event_handler_completion, v) when is_binary(v), do: safe_to_atom(v)
+  defp json_decode_value(:event_result_type, v) when is_binary(v), do: safe_to_atom(v)
+  defp json_decode_value(_key, v), do: v
+
+  defp restore_event_type(%{event_type: t} = m) when is_binary(t) do
+    Map.put(m, :event_type, safe_to_atom(t))
+  end
+  defp restore_event_type(m), do: m
+
+  defp restore_event_status(%{event_status: s} = m) when is_binary(s) do
+    Map.put(m, :event_status, safe_to_atom(s))
+  end
+  defp restore_event_status(m), do: m
+
+  defp restore_event_results(%{event_results: results} = m) when is_list(results) do
+    restored =
+      Enum.reduce(results, %{}, fn result_map, acc ->
+        id = result_map["handler_id"] || Map.get(result_map, :handler_id)
+        if id, do: Map.put(acc, id, result_map), else: acc
+      end)
+    Map.put(m, :event_results, restored)
+  end
+  defp restore_event_results(m), do: m
+
+  defp safe_to_atom(s) when is_binary(s) do
+    try do
+      String.to_existing_atom(s)
+    rescue
+      ArgumentError -> String.to_atom(s)
+    end
+  end
 end

@@ -274,6 +274,20 @@ defmodule Abxbus do
   """
   def event_reset(event), do: Abxbus.Event.reset(event)
 
+  # ── JSON serialization ──────────────────────────────────────────────────────
+
+  @doc "Serialize an event to a JSON-compatible map with string keys (field names match Python/TS)."
+  def to_json(event), do: Abxbus.Event.to_json(event)
+
+  @doc "Deserialize a JSON map (string keys) back to an event struct."
+  def from_json(json_map, module \\ nil), do: Abxbus.Event.from_json(json_map, module)
+
+  @doc "Encode an event to a JSON string."
+  def to_json_string(event), do: Abxbus.Event.to_json_string(event)
+
+  @doc "Decode a JSON string to an event."
+  def from_json_string(json_string, module \\ nil), do: Abxbus.Event.from_json_string(json_string, module)
+
   # ── Handler registration ────────────────────────────────────────────────────
 
   @doc """
