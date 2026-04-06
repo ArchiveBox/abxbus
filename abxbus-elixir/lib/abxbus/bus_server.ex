@@ -692,7 +692,8 @@ defmodule Abxbus.BusServer do
         end)
 
       if all_children_complete do
-        EventStore.notify_waiters(event.event_id, event)
+        # Re-read event to get the latest state (other buses may have merged results)
+        EventStore.notify_waiters(event.event_id, EventStore.get(event.event_id) || event)
 
         if event.event_parent_id do
           case EventStore.get(event.event_parent_id) do

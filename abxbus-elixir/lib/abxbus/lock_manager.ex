@@ -51,9 +51,9 @@ defmodule Abxbus.LockManager do
     GenServer.call(__MODULE__, :try_acquire)
   end
 
-  @doc "Release the global serial lock."
+  @doc "Release the global serial lock. Synchronous to ensure ordering with subsequent acquire attempts."
   def release_global do
-    GenServer.cast(__MODULE__, :release)
+    GenServer.call(__MODULE__, :release)
   end
 
   # ── Named semaphores (for handler-level concurrency limits) ────────────────
@@ -171,7 +171,7 @@ defmodule Abxbus.LockManager do
   end
 
   @impl true
-  def handle_cast(:release, %{global: global} = state) do
+  def handle_call(:release, _from, %{global: global} = state) do
     # Demonitor current holder
     case global.holder do
       {_, mon} when is_reference(mon) -> Process.demonitor(mon, [:flush])
@@ -182,10 +182,10 @@ defmodule Abxbus.LockManager do
       {{:value, {waiter_pid, _} = next_from}, rest} ->
         mon = Process.monitor(waiter_pid)
         GenServer.reply(next_from, :ok)
-        {:noreply, %{state | global: %{global | holder: {next_from, mon}, waiters: rest}}}
+        {:reply, :ok, %{state | global: %{global | holder: {next_from, mon}, waiters: rest}}}
 
       {:empty, _} ->
-        {:noreply, %{state | global: %State{}}}
+        {:reply, :ok, %{state | global: %State{}}}
     end
   end
 
