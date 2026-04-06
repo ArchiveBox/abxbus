@@ -390,7 +390,7 @@ defmodule Abxbus.EventWorker do
         end
     catch
       :exit, reason ->
-        if attempts_left > 1 do
+        if attempts_left > 1 and should_retry?(reason, entry.retry_on_errors) do
           delay = compute_retry_delay(entry, attempt_index)
           if delay > 0, do: Process.sleep(trunc(delay * 1000))
           run_with_retries(entry, event, attempts_left - 1, attempt_index + 1)
