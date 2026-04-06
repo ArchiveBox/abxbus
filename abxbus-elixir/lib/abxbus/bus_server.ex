@@ -535,11 +535,18 @@ defmodule Abxbus.BusServer do
     if wildcard_handlers == [] do
       all
     else
-      Enum.reject(all, fn entry ->
-        entry.event_pattern == :wildcard and
-          entry.eventbus_name != state.name and
-          Enum.any?(event.event_path, fn p -> String.starts_with?(p, "#{entry.eventbus_name}#") end)
-      end)
+      # Skip wildcard handlers if this bus already appears in the event's path
+      # BEFORE the current visit (i.e. it's a re-visit via circular forwarding).
+      # prepare_event adds the current bus label to the path, so count > 1 means loop.
+      bus_prefix = "#{state.name}#"
+      bus_visits = Enum.count(event.event_path, fn p -> String.starts_with?(p, bus_prefix) end)
+
+      if bus_visits > 1 do
+        # Event has already been processed on this bus — skip wildcard forwarding
+        Enum.reject(all, fn entry -> entry.event_pattern == :wildcard end)
+      else
+        all
+      end
     end
   end
 

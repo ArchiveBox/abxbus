@@ -388,7 +388,7 @@ defmodule Abxbus.Event do
     try do
       String.to_existing_atom(s)
     rescue
-      ArgumentError -> String.to_atom(s)
+      ArgumentError -> s
     end
   end
 end
