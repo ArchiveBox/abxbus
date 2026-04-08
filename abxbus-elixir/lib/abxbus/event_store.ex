@@ -60,12 +60,18 @@ defmodule Abxbus.EventStore do
     case :ets.insert_new(:abxbus_events, {event.event_id, inserted}) do
       true ->
         # New event — fast path, no GenServer needed
+        index_by_type(event.event_type, event.event_id)
         :ok
 
       false ->
         # Already exists (forwarded event) — need atomic merge
         GenServer.call(__MODULE__, {:merge_forwarded, event})
     end
+  end
+
+  defp index_by_type(nil, _event_id), do: :ok
+  defp index_by_type(event_type, event_id) do
+    :ets.insert(:abxbus_events_by_type, {event_type, event_id})
   end
 
   @doc "Update specific fields on a stored event. Direct ETS read-modify-write."
@@ -205,14 +211,50 @@ defmodule Abxbus.EventStore do
   # ── Internals ───────────────────────────────────────────────────────────────
 
   defp search_past(event_type, cutoff, opts) do
-    # Return the most recent match (by event_created_at), not arbitrary order
-    :ets.tab2list(:abxbus_events)
-    |> Enum.filter(fn {_id, event} -> matches_all?(event, event_type, cutoff, opts) end)
-    |> Enum.max_by(fn {_id, event} -> event.event_created_at || 0 end, fn -> nil end)
-    |> case do
-      nil -> nil
-      {_id, event} -> event
-    end
+    # Use ETS select with match spec to filter by event_type at the ETS level.
+    # This avoids O(n) scans when the events table has many unrelated entries.
+    candidates = select_by_type(event_type)
+
+    candidates
+    |> Enum.filter(fn event -> matches_all?(event, event_type, cutoff, opts) end)
+    |> Enum.max_by(fn event -> event.event_created_at || 0 end, fn -> nil end)
+  end
+
+  # O(k) lookup by event_type using the secondary index, where k is the
+  # number of events of that type (not the total number of events).
+  defp select_by_type(:wildcard) do
+    # Wildcard needs all events — use a full scan (rare case)
+    :ets.select(:abxbus_events, [{{:_, :"$1"}, [], [:"$1"]}])
+  end
+
+  defp select_by_type(type) when is_atom(type) do
+    # Lookup event_ids for this type, then fetch each event
+    :abxbus_events_by_type
+    |> :ets.lookup(type)
+    |> Enum.flat_map(fn {_type, event_id} ->
+      case :ets.lookup(:abxbus_events, event_id) do
+        [{_, event}] -> [event]
+        [] -> []
+      end
+    end)
+  end
+
+  defp select_by_type(type) when is_binary(type) do
+    # String type — iterate all keys in the index (cheap — keys are atoms)
+    # and match by Module short name. Much smaller than scanning all events.
+    :abxbus_events_by_type
+    |> :ets.tab2list()
+    |> Enum.reduce(%{}, fn {k, _v}, acc -> Map.put(acc, k, true) end)
+    |> Map.keys()
+    |> Enum.filter(fn
+      k when is_atom(k) ->
+        case Code.ensure_loaded?(k) do
+          true -> Module.split(k) |> List.last() == type
+          false -> Atom.to_string(k) == type
+        end
+      _ -> false
+    end)
+    |> Enum.flat_map(fn matching_atom -> select_by_type(matching_atom) end)
   end
 
   defp matches_all?(event, event_type, cutoff, opts) do
@@ -290,6 +332,7 @@ defmodule Abxbus.EventStore do
   @impl true
   def init(_opts) do
     :ets.new(:abxbus_events, [:set, :public, :named_table, read_concurrency: true, write_concurrency: true])
+    :ets.new(:abxbus_events_by_type, [:duplicate_bag, :public, :named_table, write_concurrency: true])
     :ets.new(:abxbus_event_children, [:bag, :public, :named_table, write_concurrency: true])
     :ets.new(:abxbus_event_waiters, [:bag, :public, :named_table, write_concurrency: true])
     :ets.new(:abxbus_find_waiters, [:bag, :public, :named_table, write_concurrency: true])

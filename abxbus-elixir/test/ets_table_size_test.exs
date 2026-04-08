@@ -72,16 +72,15 @@ defmodule Abxbus.EtsTableSizeTest do
     end)
     :ets.delete(tab3)
 
-    # Test GC impact on GenServer
+    # Test baseline Abxbus throughput with default heap
     {:ok, _} = Abxbus.start_bus(:gc_test, event_concurrency: :bus_serial)
-    # Set GenServer to have large heap
-    gc_bus_pid = GenServer.whereis(:gc_test)
-    :erlang.process_flag(gc_bus_pid, :min_heap_size, 1_000_000)
 
-    measure("Full Abxbus (0 handlers, large GenServer heap)", n, fn ->
+    measure("Full Abxbus (0 handlers, default heap)", n, fn ->
       for e <- events, do: Abxbus.emit(:gc_test, e)
       Abxbus.wait_until_idle(:gc_test)
     end)
+
+    Abxbus.stop(:gc_test, clear: true)
 
     IO.puts("")
   end
