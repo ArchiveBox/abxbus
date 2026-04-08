@@ -505,4 +505,70 @@ defmodule Abxbus.BaseEventTest do
       Abxbus.stop(:be_fwd_bus2, clear: true)
     end
   end
+
+  # ── event runtime state ───────────────────────────────────────────────────
+
+  defevent(BERuntimeStartedEvent, value: nil)
+  defevent(BERuntimeOrderingEvent, value: nil)
+  defevent(BERuntimeNoHandlerEvent, value: nil)
+
+  describe "event runtime state" do
+    test "event_started_at and event_completed_at set after processing" do
+      {:ok, _} = Abxbus.start_bus(:be_runtime_started)
+
+      Abxbus.on(:be_runtime_started, BERuntimeStartedEvent, fn _e -> :ok end,
+        handler_name: "runtime_started_handler")
+
+      event = Abxbus.emit(:be_runtime_started, BERuntimeStartedEvent.new())
+      Abxbus.wait_until_idle(:be_runtime_started)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      assert stored != nil
+      assert stored.event_started_at != nil,
+             "event_started_at should be set after processing"
+      assert stored.event_completed_at != nil,
+             "event_completed_at should be set after processing"
+
+      Abxbus.stop(:be_runtime_started, clear: true)
+    end
+
+    test "event_started_at != nil before event_completed_at" do
+      {:ok, _} = Abxbus.start_bus(:be_runtime_ordering)
+
+      Abxbus.on(:be_runtime_ordering, BERuntimeOrderingEvent, fn _e ->
+        Process.sleep(5)
+        :ok
+      end, handler_name: "runtime_ordering_handler")
+
+      event = Abxbus.emit(:be_runtime_ordering, BERuntimeOrderingEvent.new())
+      Abxbus.wait_until_idle(:be_runtime_ordering)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      assert stored.event_started_at != nil
+      assert stored.event_completed_at != nil
+
+      # Both are nanosecond monotonic timestamps; started <= completed
+      assert stored.event_started_at <= stored.event_completed_at,
+             "event_started_at (#{stored.event_started_at}) should be <= event_completed_at (#{stored.event_completed_at})"
+
+      Abxbus.stop(:be_runtime_ordering, clear: true)
+    end
+
+    test "event with no handlers still gets timestamps" do
+      {:ok, _} = Abxbus.start_bus(:be_runtime_no_handler)
+
+      # No handler registered for BERuntimeNoHandlerEvent
+      event = Abxbus.emit(:be_runtime_no_handler, BERuntimeNoHandlerEvent.new())
+      Abxbus.wait_until_idle(:be_runtime_no_handler)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      assert stored != nil
+      assert stored.event_started_at != nil,
+             "event_started_at should be set even with no handlers"
+      assert stored.event_completed_at != nil,
+             "event_completed_at should be set even with no handlers"
+
+      Abxbus.stop(:be_runtime_no_handler, clear: true)
+    end
+  end
 end

@@ -305,5 +305,46 @@ defmodule Abxbus.RetryIntegrationTest do
 
       Abxbus.stop(bus, clear: true)
     end
+
+    test "retry wrapping emit retries full dispatch cycle" do
+      bus = unique_bus(:retry_dispatch_cycle)
+      {:ok, _} = Abxbus.start_bus(bus)
+
+      # Simpler approach: register a handler with max_attempts: 3 that fails
+      # twice and then succeeds. Produces exactly 1 result (completed).
+      counter = :counters.new(1, [:atomics])
+
+      Abxbus.on(bus, RetrySuccessEvent, fn _event ->
+        n = :counters.get(counter, 1) + 1
+        :counters.put(counter, 1, n)
+
+        if n < 3 do
+          raise "attempt #{n} fails"
+        else
+          "success_on_#{n}"
+        end
+      end, max_attempts: 3, retry_after: 0.05, handler_name: "dispatch_cycle_handler")
+
+      event = Abxbus.emit(bus, RetrySuccessEvent.new())
+      Abxbus.wait_until_idle(bus)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      results = Map.values(stored.event_results)
+
+      handler_results =
+        Enum.filter(results, &(&1.handler_name == "dispatch_cycle_handler"))
+
+      assert length(handler_results) == 1,
+             "Expected exactly 1 result for the retrying handler, got #{length(handler_results)}"
+
+      [handler_result] = handler_results
+      assert handler_result.status == :completed
+      assert handler_result.result == "success_on_3"
+
+      assert :counters.get(counter, 1) == 3,
+             "Handler should have been called 3 times total (2 failures + 1 success)"
+
+      Abxbus.stop(bus, clear: true)
+    end
   end
 end

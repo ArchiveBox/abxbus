@@ -52,7 +52,8 @@ defmodule Abxbus.EventWorker do
             handler_file_path: entry.handler_file_path,
             timeout: LockManager.resolve_handler_timeout(entry, event, bus_config),
             handler_registered_at: entry.handler_registered_at,
-            eventbus_name: bus_name
+            eventbus_name: bus_name,
+            eventbus_id: entry.eventbus_id
           ) |> EventResult.mark_started() |> EventResult.mark_error(
             %RuntimeError{message: "Infinite loop detected: handler recursion depth #{caller_depth + 1} exceeds max #{max_depth}"}
           )
@@ -77,7 +78,8 @@ defmodule Abxbus.EventWorker do
           handler_file_path: entry.handler_file_path,
           timeout: LockManager.resolve_handler_timeout(entry, event, bus_config),
           handler_registered_at: entry.handler_registered_at,
-          eventbus_name: bus_name
+          eventbus_name: bus_name,
+          eventbus_id: entry.eventbus_id
         )}
       end)
       |> Map.new()
@@ -110,7 +112,8 @@ defmodule Abxbus.EventWorker do
           handler_file_path: entry.handler_file_path,
           timeout: LockManager.resolve_handler_timeout(entry, event, bus_config),
           handler_registered_at: entry.handler_registered_at,
-          eventbus_name: bus_name
+          eventbus_name: bus_name,
+          eventbus_id: entry.eventbus_id
         )}
       end)
       |> Map.new()

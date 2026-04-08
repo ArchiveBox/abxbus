@@ -532,4 +532,116 @@ defmodule Abxbus.MiddlewareTest do
       Abxbus.stop(:mw_wal_bus, clear: true)
     end
   end
+
+  # ── WAL persistence edge cases ───────────────────────────────────────────
+
+  defevent(MWWalNestedEvent, payload: "nested")
+  defevent(MWWalIncompleteEvent, payload: "incomplete")
+
+  describe "WAL persistence edge cases" do
+    test "WAL creates parent directories" do
+      base =
+        Path.join(
+          System.tmp_dir!(),
+          "abxbus_wal_test_#{:erlang.unique_integer([:positive])}"
+        )
+
+      nested_path = Path.join([base, "a", "b", "c", "wal.jsonl"])
+
+      refute File.exists?(base), "base dir should not exist before bus start"
+
+      {:ok, wal_agent} = Abxbus.Middlewares.WAL.start(nested_path)
+      Abxbus.Middlewares.WAL.register(:mw_wal_nested_bus, wal_agent)
+
+      {:ok, _} = Abxbus.start_bus(:mw_wal_nested_bus,
+        middlewares: [Abxbus.Middlewares.WAL])
+
+      Abxbus.on(:mw_wal_nested_bus, MWWalNestedEvent, fn _e -> :ok end,
+        handler_name: "nested_handler")
+
+      Abxbus.emit(:mw_wal_nested_bus, MWWalNestedEvent.new())
+      Abxbus.wait_until_idle(:mw_wal_nested_bus)
+      Process.sleep(50)
+
+      assert File.exists?(nested_path),
+             "WAL file should exist at nested path #{nested_path}"
+      assert File.dir?(Path.dirname(nested_path)),
+             "parent directories should be created automatically"
+
+      lines = nested_path |> File.read!() |> String.split("\n", trim: true)
+      assert length(lines) == 1,
+             "WAL file should have 1 line for 1 completed event, got #{length(lines)}"
+
+      # Cleanup
+      File.rm_rf!(base)
+      Abxbus.Middlewares.WAL.unregister(:mw_wal_nested_bus)
+      Agent.stop(wal_agent)
+      Abxbus.stop(:mw_wal_nested_bus, clear: true)
+    end
+
+    test "WAL skips incomplete events" do
+      tmp_path =
+        Path.join(
+          System.tmp_dir!(),
+          "abxbus_wal_incomplete_#{:erlang.unique_integer([:positive])}.jsonl"
+        )
+
+      {:ok, wal_agent} = Abxbus.Middlewares.WAL.start(tmp_path)
+      Abxbus.Middlewares.WAL.register(:mw_wal_incomplete_bus, wal_agent)
+
+      {:ok, _} = Abxbus.start_bus(:mw_wal_incomplete_bus,
+        middlewares: [Abxbus.Middlewares.WAL])
+
+      barrier = :atomics.new(1, [])
+
+      Abxbus.on(:mw_wal_incomplete_bus, MWWalIncompleteEvent, fn _e ->
+        :atomics.put(barrier, 1, 1)
+        # Block until released
+        spin_wait_mw(fn -> :atomics.get(barrier, 1) == 2 end, 5000)
+        :ok
+      end, handler_name: "slow_wal_handler")
+
+      _event = Abxbus.emit(:mw_wal_incomplete_bus, MWWalIncompleteEvent.new())
+
+      # Wait for handler to start
+      spin_wait_mw(fn -> :atomics.get(barrier, 1) == 1 end, 2000)
+
+      # While the handler is still running, WAL should NOT have written anything
+      # (WAL only writes on :completed).
+      exists_before = File.exists?(tmp_path)
+
+      lines_before =
+        if exists_before do
+          tmp_path |> File.read!() |> String.split("\n", trim: true)
+        else
+          []
+        end
+
+      assert lines_before == [],
+             "WAL should not contain any events while the handler is still running, got: #{inspect(lines_before)}"
+
+      # Release the handler
+      :atomics.put(barrier, 1, 2)
+      Abxbus.wait_until_idle(:mw_wal_incomplete_bus)
+      Process.sleep(50)
+
+      assert File.exists?(tmp_path), "WAL file should exist after completion"
+      lines = tmp_path |> File.read!() |> String.split("\n", trim: true)
+      assert length(lines) == 1,
+             "WAL file should have 1 line after completion, got #{length(lines)}"
+
+      # Cleanup
+      File.rm(tmp_path)
+      Abxbus.Middlewares.WAL.unregister(:mw_wal_incomplete_bus)
+      Agent.stop(wal_agent)
+      Abxbus.stop(:mw_wal_incomplete_bus, clear: true)
+    end
+  end
+
+  # ── Helpers ──────────────────────────────────────────────────────────────
+
+  defp spin_wait_mw(fun, max_ms, elapsed \\ 0) do
+    if elapsed >= max_ms, do: raise("spin_wait_mw exceeded #{max_ms}ms")
+    if fun.(), do: :ok, else: (Process.sleep(1); spin_wait_mw(fun, max_ms, elapsed + 1))
+  end
 end

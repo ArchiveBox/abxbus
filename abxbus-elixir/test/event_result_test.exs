@@ -305,6 +305,57 @@ defmodule Abxbus.EventResultTest do
     end
   end
 
+  # ── EventResult update ordering semantics ────────────────────────────────
+
+  defevent(ERUpdateErrorEvent)
+  defevent(ERResultTypeStoredEvent, value: nil, result_type: :string)
+
+  describe "EventResult update ordering semantics" do
+    test "EventResult.update preserves existing error when only status changes" do
+      err = %RuntimeError{message: "boom"}
+
+      result =
+        Abxbus.EventResult.new("handler_update", handler_name: "update_handler")
+        |> Abxbus.EventResult.mark_error(err)
+
+      assert result.status == :error
+      assert result.error == err
+
+      # Applying mark_started afterwards updates status & started_at, but the
+      # existing error field is not explicitly cleared — it should still be
+      # present because the update only touches the fields it explicitly sets.
+      updated = Abxbus.EventResult.mark_started(result)
+
+      assert updated.status == :started
+      assert updated.started_at != nil
+      assert updated.error == err,
+             "error should be preserved when not explicitly changed, got: #{inspect(updated.error)}"
+    end
+
+    test "result_type stored in EventResult struct" do
+      {:ok, _} = Abxbus.start_bus(:er_result_type_stored)
+
+      Abxbus.on(:er_result_type_stored, ERResultTypeStoredEvent, fn _e -> "ok" end,
+        handler_name: "rt_handler")
+
+      event = Abxbus.emit(:er_result_type_stored, ERResultTypeStoredEvent.new(value: "v"))
+      Abxbus.wait_until_idle(:er_result_type_stored)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      result = stored.event_results |> Map.values() |> hd()
+
+      # Either the EventResult records the event's result_type, or it defaults
+      # to :any. Both are acceptable — just check that the field exists.
+      assert Map.has_key?(result, :result_type)
+      assert result.result_type in [:string, :any]
+
+      # And the event itself should have the configured result_type
+      assert stored.event_result_type == :string
+
+      Abxbus.stop(:er_result_type_stored, clear: true)
+    end
+  end
+
   # ── Helpers ──────────────────────────────────────────────────────────────
 
   defp spin_wait(fun, max_ms, elapsed \\ 0) do

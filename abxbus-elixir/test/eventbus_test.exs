@@ -1417,6 +1417,127 @@ defmodule Abxbus.EventbusTest do
     end
   end
 
+  # ── Result type enforcement ─────────────────────────────────────────────
+
+  defevent(EBDictResultEvent, data: nil, result_type: :map)
+  defevent(EBListResultEvent, data: nil, result_type: :list)
+
+  describe "result type enforcement" do
+    test "event_result_type :map enforces dict-shaped results" do
+      {:ok, _} = Abxbus.start_bus(:eb_result_type_map)
+
+      Abxbus.on(:eb_result_type_map, EBDictResultEvent, fn _e -> %{key: "v"} end,
+        handler_name: "map_handler_1")
+      Abxbus.on(:eb_result_type_map, EBDictResultEvent, fn _e -> %{key: "v"} end,
+        handler_name: "map_handler_2")
+      Abxbus.on(:eb_result_type_map, EBDictResultEvent, fn _e -> "string" end,
+        handler_name: "string_handler")
+      Abxbus.on(:eb_result_type_map, EBDictResultEvent, fn _e -> 42 end,
+        handler_name: "int_handler")
+      Abxbus.on(:eb_result_type_map, EBDictResultEvent, fn _e -> [1, 2, 3] end,
+        handler_name: "list_handler")
+
+      event = Abxbus.emit(:eb_result_type_map, EBDictResultEvent.new())
+      Abxbus.wait_until_idle(:eb_result_type_map)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      results = Map.values(stored.event_results)
+
+      completed = Enum.filter(results, &(&1.status == :completed))
+      errors = Enum.filter(results, &(&1.status == :error))
+
+      assert length(completed) == 2,
+             "Expected 2 completed results, got: #{inspect(Enum.map(results, &{&1.handler_name, &1.status}))}"
+      assert length(errors) == 3,
+             "Expected 3 error results, got: #{inspect(Enum.map(results, &{&1.handler_name, &1.status}))}"
+
+      for err_result <- errors do
+        assert match?(%Abxbus.EventHandlerResultSchemaError{}, err_result.error),
+               "Expected EventHandlerResultSchemaError, got: #{inspect(err_result.error)}"
+      end
+
+      Abxbus.stop(:eb_result_type_map, clear: true)
+    end
+
+    test "event_result_type :list enforces list-shaped results" do
+      {:ok, _} = Abxbus.start_bus(:eb_result_type_list)
+
+      Abxbus.on(:eb_result_type_list, EBListResultEvent, fn _e -> [1, 2] end,
+        handler_name: "list_handler_1")
+      Abxbus.on(:eb_result_type_list, EBListResultEvent, fn _e -> ["a", "b"] end,
+        handler_name: "list_handler_2")
+      Abxbus.on(:eb_result_type_list, EBListResultEvent, fn _e -> %{k: "v"} end,
+        handler_name: "dict_handler")
+      Abxbus.on(:eb_result_type_list, EBListResultEvent, fn _e -> "string" end,
+        handler_name: "string_handler")
+
+      event = Abxbus.emit(:eb_result_type_list, EBListResultEvent.new())
+      Abxbus.wait_until_idle(:eb_result_type_list)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      results = Map.values(stored.event_results)
+
+      completed = Enum.filter(results, &(&1.status == :completed))
+      errors = Enum.filter(results, &(&1.status == :error))
+
+      assert length(completed) == 2
+      assert length(errors) == 2
+
+      Abxbus.stop(:eb_result_type_list, clear: true)
+    end
+  end
+
+  # ── Additional result access patterns ──────────────────────────────────
+
+  defevent(EBEventbusIdFilterEvent, tag: "ebid")
+
+  describe "result access patterns by id" do
+    test "results filterable by eventbus_id and path" do
+      {:ok, _} = Abxbus.start_bus(:eb_id_filter_a)
+      {:ok, _} = Abxbus.start_bus(:eb_id_filter_b)
+
+      Abxbus.on(:eb_id_filter_a, EBEventbusIdFilterEvent, fn _e -> "a_result" end,
+        handler_name: "id_handler_a")
+      Abxbus.on(:eb_id_filter_b, EBEventbusIdFilterEvent, fn _e -> "b_result" end,
+        handler_name: "id_handler_b")
+
+      # Forward a -> b
+      Abxbus.on(:eb_id_filter_a, "*", fn e -> Abxbus.emit(:eb_id_filter_b, e) end,
+        handler_name: "fwd_id_a_b")
+
+      event = Abxbus.emit(:eb_id_filter_a, EBEventbusIdFilterEvent.new())
+      Abxbus.wait_until_idle(:eb_id_filter_a)
+      Abxbus.wait_until_idle(:eb_id_filter_b)
+      Abxbus.event_completed(event, 2.0)
+
+      stored = Abxbus.EventStore.get(event.event_id)
+      all_results = Map.values(stored.event_results)
+      completed = Enum.filter(all_results, &(&1.status == :completed))
+
+      # Distinct eventbus_ids across results
+      bus_ids =
+        completed
+        |> Enum.map(& &1.eventbus_id)
+        |> Enum.reject(&is_nil/1)
+        |> Enum.uniq()
+
+      assert length(bus_ids) >= 2,
+             "Expected at least 2 distinct eventbus_ids, got: #{inspect(bus_ids)}"
+
+      # Can filter down to one bus's results by id
+      [bus_a_id | _] = bus_ids
+      a_only = Enum.filter(completed, &(&1.eventbus_id == bus_a_id))
+      assert length(a_only) >= 1
+
+      # event_path should include both bus labels
+      assert length(stored.event_path) >= 2,
+             "event_path should have entries from both buses, got: #{inspect(stored.event_path)}"
+
+      Abxbus.stop(:eb_id_filter_a, clear: true)
+      Abxbus.stop(:eb_id_filter_b, clear: true)
+    end
+  end
+
   # ── Helpers ──────────────────────────────────────────────────────────────
 
   defp spin_wait(fun, max_ms, elapsed \\ 0) do

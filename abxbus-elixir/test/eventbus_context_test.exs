@@ -228,4 +228,71 @@ defmodule Abxbus.EventbusContextTest do
       Abxbus.stop(:ctx_conc, clear: true)
     end
   end
+
+  describe "context propagates to parallel handler concurrency" do
+    defevent(CtxParallelEvent)
+
+    test "context propagates to parallel handler concurrency" do
+      {:ok, _} =
+        Abxbus.start_bus(:ctx_parallel,
+          event_handler_concurrency: :parallel
+        )
+
+      captured = Agent.start_link(fn -> [] end) |> elem(1)
+
+      entry1 = Abxbus.on(:ctx_parallel, CtxParallelEvent, fn _event ->
+        eid = Abxbus.current_event_id()
+        hid = Abxbus.current_handler_id()
+        Process.sleep(20)
+        Agent.update(captured, &(&1 ++ [%{event_id: eid, handler_id: hid, h: 1}]))
+        :ok
+      end, handler_name: "parallel_handler_1")
+
+      entry2 = Abxbus.on(:ctx_parallel, CtxParallelEvent, fn _event ->
+        eid = Abxbus.current_event_id()
+        hid = Abxbus.current_handler_id()
+        Process.sleep(20)
+        Agent.update(captured, &(&1 ++ [%{event_id: eid, handler_id: hid, h: 2}]))
+        :ok
+      end, handler_name: "parallel_handler_2")
+
+      entry3 = Abxbus.on(:ctx_parallel, CtxParallelEvent, fn _event ->
+        eid = Abxbus.current_event_id()
+        hid = Abxbus.current_handler_id()
+        Process.sleep(20)
+        Agent.update(captured, &(&1 ++ [%{event_id: eid, handler_id: hid, h: 3}]))
+        :ok
+      end, handler_name: "parallel_handler_3")
+
+      event = Abxbus.emit(:ctx_parallel, CtxParallelEvent.new())
+      Abxbus.wait_until_idle(:ctx_parallel)
+
+      captures = Agent.get(captured, & &1)
+      assert length(captures) == 3
+
+      # All handlers should see the SAME event_id
+      event_ids = captures |> Enum.map(& &1.event_id) |> Enum.uniq()
+      assert event_ids == [event.event_id]
+
+      # Each handler should see its OWN unique handler_id matching its entry
+      handler_ids = captures |> Enum.map(& &1.handler_id) |> Enum.sort()
+      expected_ids = Enum.sort([entry1.id, entry2.id, entry3.id])
+      assert handler_ids == expected_ids
+
+      # Each handler's observed handler_id should match its own entry id
+      for cap <- captures do
+        expected =
+          case cap.h do
+            1 -> entry1.id
+            2 -> entry2.id
+            3 -> entry3.id
+          end
+
+        assert cap.handler_id == expected,
+               "handler #{cap.h} should see its own id #{expected}, got #{cap.handler_id}"
+      end
+
+      Abxbus.stop(:ctx_parallel, clear: true)
+    end
+  end
 end

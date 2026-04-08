@@ -126,4 +126,57 @@ defmodule Abxbus.EventbusOnOffTest do
       assert entry.handler_name == "full_check"
     end
   end
+
+  describe "deterministic handler IDs" do
+    test "handler_id is deterministic uuidv5 hash of metadata" do
+      id =
+        Abxbus.EventHandler.compute_handler_id(
+          "018f8e40-1234-7000-8000-000000001234",
+          "pkg.module.handler",
+          "~/project/app.py:123",
+          "2025-01-02T03:04:05.678901000Z",
+          "StandaloneEvent"
+        )
+
+      assert id == "19ea9fe8-cfbe-541e-8a35-2579e4e9efff"
+    end
+
+    test "compute_handler_id matches across same metadata" do
+      args = [
+        "018f8e40-1234-7000-8000-000000001234",
+        "pkg.module.handler",
+        "~/project/app.py:123",
+        "2025-01-02T03:04:05.678901000Z",
+        "StandaloneEvent"
+      ]
+
+      id1 = apply(Abxbus.EventHandler, :compute_handler_id, args)
+      id2 = apply(Abxbus.EventHandler, :compute_handler_id, args)
+
+      assert id1 == id2
+      assert is_binary(id1)
+    end
+
+    test "compute_handler_id differs for different metadata" do
+      id1 =
+        Abxbus.EventHandler.compute_handler_id(
+          "018f8e40-aaaa-7000-8000-000000000001",
+          "module.handler_one",
+          "~/project/a.py:1",
+          "2025-01-02T03:04:05.678901000Z",
+          "EventA"
+        )
+
+      id2 =
+        Abxbus.EventHandler.compute_handler_id(
+          "018f8e40-bbbb-7000-8000-000000000002",
+          "module.handler_two",
+          "~/project/b.py:2",
+          "2025-01-02T03:04:05.678901000Z",
+          "EventB"
+        )
+
+      assert id1 != id2
+    end
+  end
 end

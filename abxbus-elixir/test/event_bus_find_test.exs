@@ -1073,6 +1073,44 @@ defmodule Abxbus.EventBusFindTest do
     end
   end
 
+  # ── debounce uses future match before dispatch fallback ────────────────
+
+  defevent(FindDebounceEvent, value: nil)
+
+  describe "debounce future match" do
+    test "debounce uses future match before dispatch fallback" do
+      {:ok, _} = Abxbus.start_bus(:fp_debounce)
+      Abxbus.on(:fp_debounce, FindDebounceEvent, fn _e -> :ok end,
+        handler_name: "debounce_handler")
+
+      parent = self()
+
+      # Task calls find with past: 0.1 (no past matches yet), future: 0.5
+      # The find should block waiting for a future match.
+      task =
+        Task.async(fn ->
+          result = Abxbus.find(FindDebounceEvent, past: 0.1, future: 0.5)
+          send(parent, {:found, result})
+          result
+        end)
+
+      # Wait for the find waiter to register
+      wait_for_find_waiter()
+
+      # Emit a matching event during the future window
+      Abxbus.emit(:fp_debounce, FindDebounceEvent.new(value: "debounce_hit"))
+
+      found = Task.await(task, 2000)
+
+      assert found != nil, "Task should have resolved to a matching event"
+      assert found.event_type == FindDebounceEvent
+      assert found.value == "debounce_hit"
+
+      Abxbus.wait_until_idle(:fp_debounce)
+      Abxbus.stop(:fp_debounce, clear: true)
+    end
+  end
+
   defp spin_until(fun, max_iters, iter \\ 0) do
     if iter >= max_iters, do: raise("spin_until exceeded #{max_iters} iterations")
     if fun.(), do: :ok, else: (Process.sleep(1); spin_until(fun, max_iters, iter + 1))
