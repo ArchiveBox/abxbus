@@ -1,321 +1,299 @@
-# TODO: Child Event Completion Blocking Semantics
+# TODO: Child Event Completion Blocking
 
 ## Goal
 
-Make child-event completion blocking explicit in both Python `abxbus` and `abxbus-ts`.
+Make child-event completion blocking explicit and simple in both Python `abxbus` and `abxbus-ts`.
 
 Desired API:
 
 - `event.emit(child)`
-  - emit a child event
-  - always blocks parent event completion
-  - blocks even if the caller does not await it
+  - emits a child event owned by the current parent event
+  - always blocks parent event completion, even if the caller never awaits it
 - `bus.emit(child)` / `event.bus.emit(child)`
-  - emit a later/non-blocking event
-  - does **not** block parent completion by default
-  - only becomes completion-blocking if the emitted event is explicitly awaited
+  - emits a normal event with ancestry preserved
+  - does not block parent event completion by itself
+- `await child`
+  - does **not** rewrite parentage
+  - does **not** upgrade the child into an owned blocking child
+  - naturally blocks the current handler because the handler is still running until the await finishes
 
-This is needed because `abx-dl` has both kinds of child work:
+This matches the real `bus.find()` / cross-parent usage pattern:
 
-- phase-owned hook processes that must complete before a phase can finish
-- detached/later follow-up work that should not keep the parent phase open
+- waiting on some event should block the current handler
+- only explicit owned child work should block parent completion after the handler returns
 
-## Current Problem
+## Core Design
 
-Today, both Python and TypeScript conflate:
+Add a real event field:
 
-- ancestry/linkage: "this event was emitted by this parent/handler"
-- completion-blocking: "this child must finish before the parent can complete"
+- `event.event_blocks_parent_completion: bool = False`
 
-As a result, `bus.emit(child)` from inside a handler currently behaves like a completion-blocking child event even if the caller never awaits it.
+Meaning:
 
-That is what caused the recent `archivebox` / `abx-dl` lifecycle bug:
+- `False`
+  - this event may still be a descendant for ancestry/logging/history purposes
+  - but it does not keep its parent event open after the emitting handler finishes
+- `True`
+  - this event is an owned blocking child
+  - the parent event cannot complete until this child completes
 
-- a background `ProcessEvent` emitted during crawl/snapshot setup kept the phase event incomplete
-- the phase never advanced the way the caller expected
+The field is public runtime/event metadata and should travel with the event across serialization and bus bridges.
 
-## Verified Current Behavior
+## Emission Semantics
 
-### Python
+### `event.emit(child)`
 
-Relevant files:
+Implementation contract:
+
+- set `child.event_blocks_parent_completion = True`
+- dispatch using the current event's bus
+- preserve normal ancestry linkage:
+  - `event_parent_id`
+  - `event_emitted_by_handler_id`
+  - inclusion in `event_children`
+
+Use this for true phase-owned child work.
+
+### `bus.emit(child)` / `event.bus.emit(child)`
+
+Implementation contract:
+
+- leave `child.event_blocks_parent_completion = False`
+- preserve normal ancestry linkage:
+  - `event_parent_id`
+  - `event_emitted_by_handler_id`
+  - inclusion in `event_children`
+
+Use this for detached or later work that should still appear in ancestry/history.
+
+### `await child`
+
+Implementation contract:
+
+- do not mutate:
+  - `event_parent_id`
+  - `event_emitted_by_handler_id`
+  - `event_blocks_parent_completion`
+- rely on normal handler lifecycle:
+  - while a handler is awaiting, its `EventResult` is still `started`
+  - therefore the current parent event cannot complete yet
+
+This is the correct behavior for events discovered via `bus.find()` or shared across parents.
+
+## Lifecycle Rules
+
+Parent completion should depend on two independent things:
+
+1. all handler results are finished
+2. all child events with `event_blocks_parent_completion=True` are complete
+
+That means:
+
+- an awaited detached event blocks the current handler naturally
+- once the handler returns, only explicit blocking children keep the parent open
+
+## Python Touch Points
+
+Files:
 
 - [abxbus/base_event.py](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/base_event.py)
 - [abxbus/event_bus.py](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/event_bus.py)
 
-Current behavior:
+Field definition / event schema:
 
-- `EventBus.emit(...)` auto-links emitted child events into the current handler's `event_children`
-- `_are_all_children_complete()` checks all linked child events
-- parent completion therefore waits for all linked children, regardless of whether the child was awaited
+- add or finalize `event_blocks_parent_completion: bool = False` on `BaseEvent`
+- ensure it is included in normal model validation / dump / reset behavior
 
-### TypeScript
+Emit transition points:
 
-Relevant files:
+- [`EventBus.emit(...)` in `event_bus.py`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/event_bus.py#L1082)
+  - keep responsibility limited to queueing and ancestry linkage
+  - do not implicitly force child completion blocking
+- add `BaseEvent.emit(...)` in [`base_event.py`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/base_event.py)
+  - set the field to `True`
+  - delegate to `self.bus.emit(...)`
+
+Completion / wait paths:
+
+- [`BaseEvent.__await__`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/base_event.py#L927)
+- [`BaseEvent.event_completed()`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/base_event.py#L948)
+- [`BaseEvent.event_result()`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/base_event.py#L1286)
+- [`BaseEvent.event_results_list()`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/base_event.py#L1343)
+
+These wait paths should stay unchanged semantically: they wait for handler / event completion, but should not mutate parent-child ownership.
+
+Parent-completion checks:
+
+- [`BaseEvent._mark_completed()`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/base_event.py#L1470)
+- [`BaseEvent._are_all_children_complete()`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/base_event.py#L1570)
+
+Rule:
+
+- only child events with `event_blocks_parent_completion=True` should keep the parent open
+
+Parent-cancellation paths:
+
+- [`BaseEvent._cancel_pending_child_processing()`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/base_event.py#L1602)
+- any bus finalization / timeout path that recursively cancels child work
+
+Rule:
+
+- only owned blocking children should be canceled as part of parent cancellation
+- detached descendants should keep their original ancestry but not be force-canceled just because the parent timed out or completed
+
+Reset / serialization paths:
+
+- [`BaseEvent.event_reset()`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/base_event.py#L1563)
+- bridge payload dumps in:
+  - [abxbus/bridge_jsonl.py](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/bridge_jsonl.py)
+  - [abxbus/bridge_sqlite.py](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/bridge_sqlite.py)
+  - [abxbus/bridge_postgres.py](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/bridge_postgres.py)
+  - [abxbus/bridge_redis.py](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/bridge_redis.py)
+  - [abxbus/bridge_nats.py](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/bridge_nats.py)
+  - [abxbus/bridges.py](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/bridges.py)
+
+Caveat:
+
+- keeping the field serialized is desirable so cross-bus child ownership semantics stay consistent
+
+## TypeScript Touch Points
+
+Files:
 
 - [abxbus-ts/src/base_event.ts](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/base_event.ts)
 - [abxbus-ts/src/event_bus.ts](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/event_bus.ts)
 - [abxbus-ts/src/event_result.ts](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/event_result.ts)
 
-Current behavior:
+Field definition / schema:
 
-- `event.bus.emit(child)` is intercepted by the bus-scoped proxy in `event_bus.ts`
-- that proxy calls `handler_result._linkEmittedChildEvent(child)`
-- `_linkEmittedChildEvent(...)` pushes the child into `result.event_children`
-- `BaseEvent._areAllChildrenComplete()` uses `event_descendants`
-- parent completion therefore waits for all emitted child events, even if the caller never waits on them
+- add `event_blocks_parent_completion` to:
+  - `BaseEventSchema`
+  - `BaseEventFields`
+  - `BaseEvent` class properties
+  - `toJSON()` / `fromJSON()`
 
-Important note:
+Emit transition points:
 
-- `abxbus-ts` does **not** currently have a real `BaseEvent.emit(child)` API
-- the current child-linking behavior comes from proxied `event.bus.emit(...)`
+- [`EventBus.emit(...)` in `event_bus.ts`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/event_bus.ts#L720)
+  - keep ancestry linkage
+  - do not force child completion blocking
+- add real `BaseEvent.emit(...)` in [`base_event.ts`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/base_event.ts)
+  - set the field to `true`
+  - delegate to `this.bus.emit(...)`
 
-## Proposed Design
+Child-link tracking:
 
-Do **not** add a new public event field/config option for this.
+- [`EventResult._linkEmittedChildEvent(...)` in `event_result.ts`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/event_result.ts#L147)
 
-Instead, split runtime bookkeeping into two internal buckets:
+Rule:
 
-- emitted children
-  - all emitted descendants
-  - used for ancestry, logging, tree views, `child_of`, debugging
-- blocking children
-  - only the subset that should delay parent completion
-  - used for:
-    - parent completion checks
-    - parent timeout cancellation
-    - first-mode loser cancellation
+- keep this method ancestry-focused
+- do not overload it with blocking semantics beyond preserving the child's own field value
 
-## Planned Semantics
+Completion / wait paths:
 
-### 1. `event.emit(child)`
+- [`done()`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/base_event.ts#L828)
+- [`eventCompleted()`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/base_event.ts#L972)
+- [`first()`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/base_event.ts#L860)
 
-- new method in both Python and TypeScript
-- same high-level signature/behavior as `bus.emit(child)`
-- internally:
-  - dispatch through the bus
-  - register the child as emitted
-  - register the child as completion-blocking for the current handler
+These should remain pure wait paths. They should not rewrite parentage or child-blocking ownership.
 
-### 2. `bus.emit(child)` / `event.bus.emit(child)`
+Parent-completion checks:
 
-- dispatch and ancestry-link only
-- do **not** automatically register the child as completion-blocking
+- [`_markCompleted()`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/base_event.ts#L1016)
+- [`_areAllChildrenComplete()`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/base_event.ts#L1101)
 
-### 3. Awaiting a bus-emitted event upgrades it to blocking
+Rule:
+
+- only descendants with `event_blocks_parent_completion === true` should keep the parent open
+
+Reset / serialization paths:
+
+- [`eventReset()`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/base_event.ts#L995)
+- bridge payloads in:
+  - [abxbus-ts/src/bridge_jsonl.ts](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/bridge_jsonl.ts)
+  - [abxbus-ts/src/bridge_sqlite.ts](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/bridge_sqlite.ts)
+  - [abxbus-ts/src/bridge_postgres.ts](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/bridge_postgres.ts)
+  - [abxbus-ts/src/bridge_redis.ts](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/bridge_redis.ts)
+  - [abxbus-ts/src/bridge_nats.ts](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/bridge_nats.ts)
+  - [abxbus-ts/src/bridges.ts](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/bridges.ts)
+
+## Important Caveats
+
+### Awaiting another event is not child ownership
+
+This is the main rule to preserve.
+
+Examples:
+
+- waiting on an event returned by `bus.find()`
+- waiting on an event emitted by some other parent
+- waiting on a shared global event reference
+
+In all of those cases:
+
+- the current handler should remain blocked naturally
+- the awaited event should keep its original `event_parent_id`
+- the awaited event should keep its original `event_blocks_parent_completion` value
+
+### Ancestry and completion are intentionally different
+
+An event may be:
+
+- a descendant for history/logging/tree purposes
+- but not completion-blocking for its original parent
+
+That is expected and should be preserved.
+
+### Parent timeout / cancellation must respect ownership
+
+If a parent is canceled or times out:
+
+- owned blocking children should cascade-cancel
+- detached descendants should not be canceled only because they share ancestry
+
+This is a real semantic boundary and should be reflected in both runtimes.
+
+## Downstream Consequences
+
+### `abx-dl`
+
+Files likely affected:
+
+- [abx_dl/events.py](/Users/squash/Local/Code/archiveboxes/new/abx-dl/abx_dl/events.py)
+- [abx_dl/orchestrator.py](/Users/squash/Local/Code/archiveboxes/new/abx-dl/abx_dl/orchestrator.py)
+- [abx_dl/services/crawl_service.py](/Users/squash/Local/Code/archiveboxes/new/abx-dl/abx_dl/services/crawl_service.py)
+- [abx_dl/services/snapshot_service.py](/Users/squash/Local/Code/archiveboxes/new/abx-dl/abx_dl/services/snapshot_service.py)
+- [abx_dl/services/process_service.py](/Users/squash/Local/Code/archiveboxes/new/abx-dl/abx_dl/services/process_service.py)
+
+Required transition:
+
+- phase-owned hook work should use `event.emit(...)`
+- detached later work should keep using `bus.emit(...)`
+
+### `archivebox`
+
+Anything relying on phase completion semantics will inherit the corrected ownership model once `abx-dl` switches to explicit `event.emit(...)` for phase-owned child work.
+
+## Tests To Add
 
 Python:
 
-- `await bus.emit(child)`
-- branch in `BaseEvent.__await__`
-- if currently inside a handler and this child was emitted by that handler, upgrade it into the blocking-child set before waiting
+- `event.emit(child)` keeps parent incomplete after handler return until child finishes
+- `bus.emit(child)` does not keep parent incomplete after handler return
+- awaiting a detached child inside a handler blocks only because the handler is still running
+- awaiting a child found via `bus.find()` does not rewrite parentage
+- parent timeout cancels owned blocking children but not detached descendants
+- bridge round-trip preserves `event_blocks_parent_completion`
 
 TypeScript:
 
-- `await bus.emit(child).done()`
-- branch in `BaseEvent.done()`
-- if currently inside the emitting handler, upgrade the child into the blocking-child set before waiting
-
-This keeps the queueing path unified and moves the semantic split into child registration / wait paths.
-
-## Why This Design
-
-This gives the API contract we want:
-
-- `event.emit(child)` = explicit blocking child work
-- `bus.emit(child)` = detached/non-blocking by default
-- awaiting a bus-emitted child = opt in to blocking semantics
-
-It also maps cleanly onto `abx-dl`:
-
-- hook `ProcessEvent`s owned by a phase should use `event.emit(...)`
-- detached follow-up work should use `bus.emit(...)`
-
-## Implementation Notes
-
-### Python `abxbus`
-
-Likely touch points:
-
-- [abxbus/base_event.py](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/base_event.py)
-- [abxbus/event_bus.py](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/event_bus.py)
-- possibly [abxbus/event_result.py](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/event_result.py) if logic is split there later
-
-Expected changes:
-
-- add `BaseEvent.emit(...)`
-- stop auto-registering every handler-emitted `bus.emit(...)` child as completion-blocking
-- keep ancestry tracking for all emitted children
-- introduce internal runtime-only blocking-child bookkeeping
-- make `_are_all_children_complete()` check only blocking children
-- make parent timeout / cancellation code only cancel blocking children
-- make `BaseEvent.__await__` upgrade a matching emitted child into the blocking set
-
-### TypeScript `abxbus-ts`
-
-Likely touch points:
-
-- [abxbus-ts/src/base_event.ts](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/base_event.ts)
-- [abxbus-ts/src/event_bus.ts](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/event_bus.ts)
-- [abxbus-ts/src/event_result.ts](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/event_result.ts)
-
-Expected changes:
-
-- add a real `BaseEvent.emit(...)`
-- remove "all child emits are blocking" behavior from the generic proxied `event.bus.emit(...)` path
-- preserve ancestry linking in `event.bus.emit(...)`
-- split `event_children` vs internal blocking-child tracking
-- make `_areAllChildrenComplete()` use blocking descendants only
-- make `done()` upgrade a matching bus-emitted child into the blocking set before waiting
-
-## Caveats
-
-### Await-detection cannot happen at `emit()` time
-
-We cannot know at `bus.emit(...)` call time whether the caller will await the returned event later.
-
-So the upgrade to "blocking child" must happen in:
-
-- Python: `__await__`
-- TypeScript: `done()` / equivalent wait path
-
-### Ancestry and completion must stay separate
-
-Detached children still need:
-
-- `event_parent_id`
-- `event_emitted_by_handler_id`
-- event-tree/logging visibility
-- `child_of=...` style history queries
-
-But they must not delay parent completion unless explicitly blocking.
-
-### Timeout cancellation behavior will change
-
-Today, parent timeout cancellation cascades through all linked children.
-
-After the refactor, timeout cancellation should only cascade through blocking children.
-
-That is desirable, but it is a real semantic change and must be documented/tested.
-
-## Current Temporary Local Fixes
-
-There are already local changes made during debugging that should be revisited once the explicit API is implemented:
-
-### In `abx-dl`
-
-- [abx_dl/services/process_service.py](/Users/squash/Local/Code/archiveboxes/new/abx-dl/abx_dl/services/process_service.py)
-- [abx_dl/services/crawl_service.py](/Users/squash/Local/Code/archiveboxes/new/abx-dl/abx_dl/services/crawl_service.py)
-- [abx_dl/services/snapshot_service.py](/Users/squash/Local/Code/archiveboxes/new/abx-dl/abx_dl/services/snapshot_service.py)
-- [abx_dl/orchestrator.py](/Users/squash/Local/Code/archiveboxes/new/abx-dl/abx_dl/orchestrator.py)
-- [abx_dl/events.py](/Users/squash/Local/Code/archiveboxes/new/abx-dl/abx_dl/events.py)
-
-These changes fixed real timeouts/hangs, but they are partly compensating for the current `abxbus` child-completion semantics.
-
-Once `event.emit(...)` exists, `abx-dl` should be updated to use explicit blocking emits for phase-owned hook work instead of relying on bus-global child-link semantics.
-
-### In Python `abxbus`
-
-- [abxbus/base_event.py](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus/base_event.py)
-
-A temporary local field-based approach was introduced during debugging. That should likely be replaced by the explicit `event.emit(...)` / awaited-`bus.emit(...)` design so we do not keep a public/configurable field for this.
-
-## Consequences For Other Repos
-
-### `abx-dl`
-
-Most important downstream repo.
-
-Places to audit:
-
-- crawl setup hook emission
-- snapshot hook emission
-- cleanup kill events
-- any fire-and-forget or background follow-up work
-
-Desired end state:
-
-- phase-owned hook processes use `event.emit(...)`
-- detached work uses `bus.emit(...)`
-
-### `archivebox`
-
-Indirectly affected through `abx-dl`.
-
-The recent passing full test suite in `archivebox` depended on fixing the child-completion semantics problem, especially around:
-
-- title extraction
-- chrome crawl/snapshot setup/cleanup lifecycle
-- phase progression after background hooks
-
-After the explicit API change, rerun the full `archivebox` suite and re-check browser-heavy tests first.
-
-### `abxbus-ts` consumers
-
-Any TS caller that currently assumes:
-
-- `event.bus.emit(child)` automatically creates a blocking child
-
-will change behavior after this refactor.
-
-Those callers will need to switch to:
-
-- `event.emit(child)` for explicit blocking child behavior
-
-## Tests To Add / Update
-
-### Python `abxbus`
-
-Add tests proving:
-
-- `event.emit(child)` blocks parent completion even if not awaited
-- `bus.emit(child)` does not block parent completion when not awaited
-- `await bus.emit(child)` upgrades the child to blocking
-- parent timeout cancels blocking children but not detached children
-
-### TypeScript `abxbus-ts`
-
-Add equivalent tests proving:
-
-- `event.emit(child)` blocks parent completion
-- `event.bus.emit(child)` / `bus.emit(child)` is non-blocking by default
-- `await bus.emit(child).done()` upgrades to blocking
-- timeout/first-mode cancellation only hits blocking children
-
-### `abx-dl`
-
-Update/add integration coverage proving:
-
-- phase-owned background hooks keep the phase open only when emitted explicitly as blocking children
-- detached bus-emitted follow-up work does not stall phase progression
-
-### `archivebox`
-
-Rerun at minimum:
-
-- title/chrome-related tests
-- full suite
-
-## Recommended Order Of Work
-
-1. Implement the explicit semantics in Python `abxbus`.
-2. Update Python `abx-dl` to use `event.emit(...)` for phase-owned hook work.
-3. Remove the temporary field-based workaround from Python `abxbus` / `abx-dl`.
-4. Re-run `abx-dl` and `archivebox` suites.
-5. Mirror the same semantics in `abxbus-ts`.
-6. Update TS consumers/tests if any rely on old auto-blocking child behavior.
-
-## Summary
-
-The key design rule should be:
-
-- **child ancestry is cheap and automatic**
-- **child completion blocking is explicit**
-
-API:
-
-- `event.emit(child)` => explicit blocking child
-- `bus.emit(child)` => detached by default
-- awaiting a bus-emitted child => upgrades it to blocking
-
-That preserves the orchestration guarantees `abx-dl` needs without forcing every emitted child event to block parent completion forever.
+- same coverage as Python using `done()` / `eventCompleted()` wait APIs
+
+## Recommended Order
+
+1. implement the field and `event.emit(...)` in Python
+2. update Python completion/cancellation semantics to honor the field
+3. mirror the same design in `abxbus-ts`
+4. update `abx-dl` to use `event.emit(...)` for phase-owned child work
+5. run downstream `archivebox` integration tests against the new semantics
