@@ -69,15 +69,21 @@ defmodule Abxbus.EventHandler do
         end
       end
 
-    %__MODULE__{
-      id: Abxbus.Event.generate_id(),
+    # ISO datetime string for cross-runtime stability of handler_id
+    registered_at = DateTime.utc_now() |> DateTime.to_iso8601()
+    eventbus_name = Keyword.get(opts, :eventbus_name, "")
+    eventbus_id = Keyword.get(opts, :eventbus_id)
+
+    pattern_str = pattern_to_string(event_pattern)
+
+    handler = %__MODULE__{
       event_pattern: event_pattern,
       handler: handler,
       handler_name: name,
       handler_timeout: Keyword.get(opts, :timeout),
       handler_slow_timeout: Keyword.get(opts, :handler_slow_timeout),
       handler_file_path: file_path,
-      handler_registered_at: System.monotonic_time(:nanosecond),
+      handler_registered_at: registered_at,
       max_attempts: Keyword.get(opts, :max_attempts, 1),
       retry_after: Keyword.get(opts, :retry_after, 0),
       retry_backoff_factor: Keyword.get(opts, :retry_backoff_factor, 1.0),
@@ -87,10 +93,44 @@ defmodule Abxbus.EventHandler do
       semaphore_limit: Keyword.get(opts, :semaphore_limit, 1),
       semaphore_timeout: Keyword.get(opts, :semaphore_timeout),
       semaphore_lax: Keyword.get(opts, :semaphore_lax, true),
-      eventbus_name: Keyword.get(opts, :eventbus_name, ""),
-      eventbus_id: Keyword.get(opts, :eventbus_id)
+      eventbus_name: eventbus_name,
+      eventbus_id: eventbus_id
     }
+
+    # Allow explicit id override (matches Python from_callable behavior)
+    id =
+      Keyword.get_lazy(opts, :id, fn ->
+        compute_handler_id(eventbus_id, name, file_path, registered_at, pattern_str)
+      end)
+
+    %{handler | id: id}
   end
+
+  @doc """
+  Compute a deterministic handler ID matching Python/TS uuidv5 algorithm.
+  Seed format: "{eventbus_id}|{handler_name}|{file_path}|{registered_at}|{event_pattern}"
+  """
+  def compute_handler_id(eventbus_id, handler_name, handler_file_path, handler_registered_at, event_pattern) do
+    file_path = handler_file_path || "unknown"
+    bus_id = eventbus_id || "unknown"
+    seed = "#{bus_id}|#{handler_name}|#{file_path}|#{handler_registered_at}|#{event_pattern}"
+    Abxbus.Event.uuid5(Abxbus.Event.handler_id_namespace(), seed)
+  end
+
+  @doc "Compute handler ID from a struct (convenience)."
+  def compute_handler_id(%__MODULE__{} = entry) do
+    compute_handler_id(
+      entry.eventbus_id,
+      entry.handler_name,
+      entry.handler_file_path,
+      entry.handler_registered_at,
+      pattern_to_string(entry.event_pattern)
+    )
+  end
+
+  defp pattern_to_string(:wildcard), do: "*"
+  defp pattern_to_string(p) when is_atom(p), do: Atom.to_string(p)
+  defp pattern_to_string(p) when is_binary(p), do: p
 
   @doc "Handler label: handler_name#short_id"
   def label(%__MODULE__{handler_name: name, id: id}) do

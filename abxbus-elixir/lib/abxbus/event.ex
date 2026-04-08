@@ -1,4 +1,6 @@
 defmodule Abxbus.Event do
+  import Bitwise
+
   @moduledoc """
   Base event behaviour and struct helpers.
 
@@ -272,9 +274,37 @@ defmodule Abxbus.Event do
     encode_uuid(a1, a2, a3, a4, a5)
   end
 
-  # Direct binary hex encoding — avoids String.downcase/pad_leading/length overhead
-  import Bitwise
+  @doc """
+  Generate a UUIDv5 (deterministic name-based UUID) matching the Python/TS algorithm.
+  Uses SHA-1 hash of namespace bytes + name.
+  """
+  def uuid5(namespace_uuid, name) when is_binary(namespace_uuid) and is_binary(name) do
+    namespace_bytes = uuid_to_bytes(namespace_uuid)
+    hash = :crypto.hash(:sha, namespace_bytes <> name)
 
+    # Take first 16 bytes of SHA-1 hash, set version and variant bits per RFC 4122
+    <<b1::32, b2::16, b3::16, b4::16, b5::48, _::binary>> = hash
+    # Set version 5 in top 4 bits of b3
+    b3 = (b3 &&& 0x0FFF) ||| 0x5000
+    # Set variant 10 in top 2 bits of b4
+    b4 = (b4 &&& 0x3FFF) ||| 0x8000
+
+    encode_uuid(b1, b2, b3, b4, b5)
+  end
+
+  defp uuid_to_bytes(uuid) do
+    uuid
+    |> String.replace("-", "")
+    |> Base.decode16!(case: :mixed)
+  end
+
+  # Namespace for handler IDs (matches Python/TS: uuid5(NAMESPACE_DNS, 'abxbus-handler'))
+  @uuid_namespace_dns "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+
+  @doc "The handler ID namespace UUID (matches Python/TS HANDLER_ID_NAMESPACE)."
+  def handler_id_namespace, do: uuid5(@uuid_namespace_dns, "abxbus-handler")
+
+  # Direct binary hex encoding — avoids String.downcase/pad_leading/length overhead
   defp encode_uuid(a1, a2, a3, a4, a5) do
     <<hex8(a1)::binary, ?-, hex4(a2)::binary, ?-, hex4(a3)::binary, ?-,
       hex4(a4)::binary, ?-, hex12(a5)::binary>>

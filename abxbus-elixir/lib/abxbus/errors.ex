@@ -21,3 +21,7 @@ end
 defmodule Abxbus.HandlerNotFoundError do
   defexception message: "Handler not found"
 end
+
+defmodule Abxbus.EventHandlerResultSchemaError do
+  defexception [:message, :expected, :actual]
+end

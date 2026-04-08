@@ -368,12 +368,47 @@ defmodule Abxbus.EventWorker do
   defp run_single_handler(entry, event, bus_config) do
     timeout = LockManager.resolve_handler_timeout(entry, event, bus_config)
 
-    maybe_with_semaphore(entry, fn ->
-      maybe_with_handler_timeout(timeout, fn ->
-        run_with_retries(entry, event, entry.max_attempts, 1)
+    outcome =
+      maybe_with_semaphore(entry, fn ->
+        maybe_with_handler_timeout(timeout, fn ->
+          run_with_retries(entry, event, entry.max_attempts, 1)
+        end)
       end)
-    end)
+
+    # Enforce event_result_type if set on the event
+    enforce_result_type(outcome, event)
   end
+
+  defp enforce_result_type({:ok, value}, %{event_result_type: type}) when type not in [nil, :any] do
+    if matches_result_type?(value, type) do
+      {:ok, value}
+    else
+      {:error, %Abxbus.EventHandlerResultSchemaError{
+        message: "Handler result #{inspect(value)} does not match expected event_result_type #{inspect(type)}",
+        expected: type,
+        actual: value
+      }}
+    end
+  end
+  defp enforce_result_type(outcome, _event), do: outcome
+
+  defp matches_result_type?(value, :string), do: is_binary(value)
+  defp matches_result_type?(value, :binary), do: is_binary(value)
+  defp matches_result_type?(value, :integer), do: is_integer(value)
+  defp matches_result_type?(value, :float), do: is_float(value)
+  defp matches_result_type?(value, :number), do: is_number(value)
+  defp matches_result_type?(value, :boolean), do: is_boolean(value)
+  defp matches_result_type?(value, :atom), do: is_atom(value)
+  defp matches_result_type?(value, :list), do: is_list(value)
+  defp matches_result_type?(value, :map), do: is_map(value) and not is_struct(value)
+  defp matches_result_type?(value, :dict), do: is_map(value) and not is_struct(value)
+  defp matches_result_type?(value, :nil), do: is_nil(value)
+  defp matches_result_type?(_value, :any), do: true
+  defp matches_result_type?(value, mod) when is_atom(mod) do
+    # Module-based result type — check struct match
+    is_struct(value, mod)
+  end
+  defp matches_result_type?(_value, _), do: true
 
   defp run_with_retries(entry, event, attempts_left, attempt_index) do
     try do
