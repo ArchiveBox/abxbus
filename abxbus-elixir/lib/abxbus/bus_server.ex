@@ -521,11 +521,19 @@ defmodule Abxbus.BusServer do
     type_handlers = Map.get(state.handlers, event_type, [])
     wildcard_handlers = Map.get(state.handlers, :wildcard, [])
 
-    # Only do Module.split for string-based handler lookup if needed
+    # Only do Module.split for string-based handler lookup if other keys exist.
+    # Compare key counts (not entry counts) to avoid silently dropping string handlers
+    # when the type key has multiple entries.
     string_handlers =
-      if map_size(state.handlers) > length(type_handlers) + length(wildcard_handlers) and is_atom(event_type) do
-        type_name = event_type |> Module.split() |> List.last()
-        Map.get(state.handlers, type_name, [])
+      if is_atom(event_type) do
+        accounted_keys = (if type_handlers != [], do: 1, else: 0) +
+                         (if wildcard_handlers != [], do: 1, else: 0)
+        if map_size(state.handlers) > accounted_keys do
+          type_name = event_type |> Module.split() |> List.last()
+          Map.get(state.handlers, type_name, [])
+        else
+          []
+        end
       else
         []
       end
