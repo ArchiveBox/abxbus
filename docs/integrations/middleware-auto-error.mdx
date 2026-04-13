@@ -24,7 +24,7 @@ bus = EventBus(
 ## Behavior
 
 - Runs on completed handler results.
-- If a handler errored, emits a auto event with:
+- If a handler errored, emits an auto event with:
   - `event_type`: `{OriginalEventType}ErrorEvent`
   - `error`: original exception
   - `error_type`: exception class name

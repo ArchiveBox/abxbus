@@ -4,7 +4,7 @@ description: Process only one event at a time across all buses.
 ---
 
 `global-serial` enforces a single global event-processing slot across all `EventBus` instances.
-Note: that global lock is scoped to the `EventBus` class; if you need separate global lock domains, subclass `EventBus`.
+Note that the global lock is scoped to the `EventBus` class; if you need separate global lock domains, subclass `EventBus`.
 
 Companion runnable example:
 - [`examples/concurrency_options.py`](https://github.com/ArchiveBox/abxbus/blob/main/examples/concurrency_options.py)
