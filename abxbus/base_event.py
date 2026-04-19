@@ -729,6 +729,13 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             'None defers to the bus default.'
         ),
     )
+    event_blocks_parent_completion: bool = Field(
+        default=True,
+        description=(
+            'Whether this event must finish before the emitting parent event can complete. '
+            'Set False for background child events that should retain ancestry without blocking the parent phase.'
+        ),
+    )
     event_result_type: Any = Field(
         default=None, description='Schema/type for handler result validation (serialized as JSON Schema)'
     )
@@ -1582,6 +1589,8 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         _visited.add(self.event_id)
 
         for child_event in self.event_children:
+            if not child_event.event_blocks_parent_completion:
+                continue
             if child_event.event_status != 'completed':
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug('Event %s has incomplete child %s', self, child_event)

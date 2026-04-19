@@ -1,5 +1,7 @@
 # TODO: Child Event Completion Blocking
 
+codex resume 'abxbus implement event.emit(...) to explicitly block parent event completion'
+
 ## Goal
 
 Make child-event completion blocking explicit and simple in both Python `abxbus` and `abxbus-ts`.
