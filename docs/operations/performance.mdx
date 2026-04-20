@@ -7,7 +7,7 @@ description: Performance notes and benchmark snapshots.
 <Tab title="Python">
 
 ```bash
-uv run pytest tests/test_eventbus_performance.py -vxs   # run the performance test suite in python
+uv run pytest tests/test_eventbus_performance.py -vxs   # run the performance test suite in Python
 ```
 
 | Runtime | 1 bus x 50k events x 1 handler | 500 buses x 100 events x 1 handler | 1 bus x 1 event x 50k parallel handlers | 1 bus x 50k events x 50k one-off handlers | Worst case (N buses x N events x N handlers) |
