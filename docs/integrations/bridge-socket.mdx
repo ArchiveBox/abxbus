@@ -1,13 +1,13 @@
 ---
 title: SocketEventBridge
-description: Forward events through unix domain sockets.
+description: Forward events through Unix domain sockets.
 ---
 
-`SocketEventBridge` uses a unix socket path for both send and listen directions.
+`SocketEventBridge` uses a Unix socket path for both send and listen directions.
 
 ## Constructor params
 
-- `path`: unix socket path (absolute path recommended)
+- `path`: Unix socket path (absolute path recommended)
 - `name`: optional bridge label
 
 <Tabs>
@@ -64,8 +64,8 @@ bridge.on('*', bus.emit)
 
 ## Behavior
 
-- `emit(...)` writes newline-delimited event JSON frames to the unix socket.
+- `emit(...)` writes newline-delimited event JSON frames to the Unix socket.
 - `on(...)` subscribes handlers on the inbound side and auto-starts the socket listener.
 - Incoming frames are decoded into events, reset, then emitted on the internal bus.
 - `close()` stops the socket server and tears down the internal bus.
-- TypeScript socket bridges require Node.js runtime support for unix sockets.
+- TypeScript socket bridges require Node.js runtime support for Unix sockets.
