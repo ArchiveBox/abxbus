@@ -1,5 +1,6 @@
 import type { BaseEvent } from './base_event.js'
 import type { EventResult } from './event_result.js'
+import { createAsyncLocalStorage, type AsyncLocalStorageLike } from './async_context.js'
 
 // ─── Deferred / withResolvers ────────────────────────────────────────────────
 
@@ -84,6 +85,8 @@ export const runWithLock = async <T>(lock: AsyncLock | null, fn: () => Promise<T
     lock.release()
   }
 }
+
+const handler_context_storage: AsyncLocalStorageLike | null = createAsyncLocalStorage()
 
 // ─── HandlerLock ─────────────────────────────────────────────────────────────
 
@@ -230,7 +233,10 @@ export class LockManager {
   async _runWithHandlerDispatchContext<T>(result: EventResult, fn: () => Promise<T>): Promise<T> {
     this.active_handler_results.push(result)
     try {
-      return await fn()
+      if (!handler_context_storage) {
+        return await fn()
+      }
+      return await handler_context_storage.run(result, fn)
     } finally {
       const idx = this.active_handler_results.indexOf(result)
       if (idx >= 0) {
@@ -239,8 +245,9 @@ export class LockManager {
     }
   }
 
-  _getActiveHandlerResult(): EventResult | undefined {
-    return this.active_handler_results[this.active_handler_results.length - 1]
+  _getActiveHandlerResultForCurrentAsyncContext(): EventResult | undefined {
+    const result = handler_context_storage?.getStore() as EventResult | undefined
+    return result?.status === 'started' ? result : undefined
   }
 
   _getActiveHandlerResults(): EventResult[] {
@@ -248,9 +255,8 @@ export class LockManager {
   }
 
   // Per-bus check: true only if this specific bus has a handler on its stack.
-  // For cross-bus queue-jumping, EventBus._processEventImmediately uses getParentEventResultAcrossAllBuses()
-  // to walk up the parent event tree, and the bus proxy passes handler_result
-  // to _processEventImmediately so it can yield/reacquire the correct lock.
+  // This is intentionally broader than the async-local handler context and is
+  // only used for implicit parent-linking heuristics.
   _isAnyHandlerActive(): boolean {
     return this.active_handler_results.length > 0
   }

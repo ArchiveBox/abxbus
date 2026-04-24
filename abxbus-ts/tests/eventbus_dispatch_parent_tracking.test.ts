@@ -534,6 +534,108 @@ test('bus.emit child does not block parent completion by default', async () => {
   }
 })
 
+test('outside await of detached bus.emit child.done() does not promote parent completion blocking', async () => {
+  const bus = new EventBus('DetachedChildExternalDoneBus')
+  let parent_holding_resolve: (() => void) | null = null
+  const parent_holding = new Promise<void>((resolve) => {
+    parent_holding_resolve = resolve
+  })
+  let release_parent!: () => void
+  const parent_released = new Promise<void>((resolve) => {
+    release_parent = () => resolve()
+  })
+  let release_child!: () => void
+  const child_released = new Promise<void>((resolve) => {
+    release_child = () => resolve()
+  })
+  let child_ref: BaseEvent | undefined
+
+  bus.on(ParentEvent, async () => {
+    child_ref = bus.emit(ChildEvent({ data: 'external_done' }))
+    parent_holding_resolve?.()
+    await parent_released
+    return 'parent'
+  })
+  bus.on(ChildEvent, async () => {
+    await child_released
+    return 'child'
+  })
+
+  const parent = bus.emit(ParentEvent({ message: 'external_done' }))
+  try {
+    await parent_holding
+    assert.ok(child_ref)
+    assert.equal(child_ref.event_parent_id, parent.event_id)
+    assert.equal(child_ref.event_blocks_parent_completion, false)
+
+    const child_done = child_ref.done()
+    assert.equal(child_ref.event_blocks_parent_completion, false)
+
+    release_parent()
+    await parent.eventCompleted()
+    assert.equal(parent.event_status, 'completed')
+    assert.notEqual(child_ref.event_status, 'completed')
+
+    release_child()
+    await child_done
+    await bus.waitUntilIdle()
+  } finally {
+    release_parent()
+    release_child()
+  }
+})
+
+test('outside eventCompleted wait of detached bus.emit child does not promote parent completion blocking', async () => {
+  const bus = new EventBus('DetachedChildExternalEventCompletedBus')
+  let parent_holding_resolve: (() => void) | null = null
+  const parent_holding = new Promise<void>((resolve) => {
+    parent_holding_resolve = resolve
+  })
+  let release_parent!: () => void
+  const parent_released = new Promise<void>((resolve) => {
+    release_parent = () => resolve()
+  })
+  let release_child!: () => void
+  const child_released = new Promise<void>((resolve) => {
+    release_child = () => resolve()
+  })
+  let child_ref: BaseEvent | undefined
+
+  bus.on(ParentEvent, async () => {
+    child_ref = bus.emit(ChildEvent({ data: 'external_event_completed' }))
+    parent_holding_resolve?.()
+    await parent_released
+    return 'parent'
+  })
+  bus.on(ChildEvent, async () => {
+    await child_released
+    return 'child'
+  })
+
+  const parent = bus.emit(ParentEvent({ message: 'external_event_completed' }))
+  try {
+    await parent_holding
+    assert.ok(child_ref)
+    assert.equal(child_ref.event_parent_id, parent.event_id)
+    assert.equal(child_ref.event_blocks_parent_completion, false)
+
+    const child_completed = child_ref.eventCompleted()
+    assert.equal(child_ref.event_blocks_parent_completion, false)
+
+    release_parent()
+    await parent.eventCompleted()
+    assert.equal(parent.event_status, 'completed')
+    assert.notEqual(child_ref.event_status, 'completed')
+
+    release_child()
+    await child_completed
+    await bus.waitUntilIdle()
+  } finally {
+    release_parent()
+    release_child()
+  }
+})
+
 test('awaited bus.emit child upgrades parent completion blocking flag', async () => {
   const bus = new EventBus('AwaitedBusEmitBlocksParentBus')
   let child_ref: BaseEvent | undefined

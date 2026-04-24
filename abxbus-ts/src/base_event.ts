@@ -1010,8 +1010,7 @@ export class BaseEvent {
     if (original.event_blocks_parent_completion || !original.event_bus) {
       return
     }
-    const active_result =
-      original.event_bus.locks._getActiveHandlerResult() ?? original.event_bus._getParentEventResultAcrossAllBuses(original) ?? undefined
+    const active_result = original.event_bus.locks._getActiveHandlerResultForCurrentAsyncContext()
     if (!active_result || active_result.status !== 'started') {
       return
     }

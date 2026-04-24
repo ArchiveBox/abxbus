@@ -881,24 +881,6 @@ export class EventBus {
     return this.event_history.get(event_id) ?? this.all_instances.findEventById(event_id)
   }
 
-  // Walk up the parent event chain to find an in-flight ancestor handler result.
-  // Returns the result if found, null otherwise. Used by _processEventImmediately to detect
-  // cross-bus queue-jump scenarios where the calling handler is on a different bus.
-  _getParentEventResultAcrossAllBuses(event: BaseEvent): EventResult | null {
-    const original = event._event_original ?? event
-    let current_parent_id = original.event_parent_id
-    let current_handler_id = original.event_emitted_by_handler_id
-    while (current_handler_id && current_parent_id) {
-      const parent = this.all_instances.findEventById(current_parent_id)
-      if (!parent) break
-      const handler_result = parent.event_results.get(current_handler_id)
-      if (handler_result && handler_result.status === 'started') return handler_result
-      current_parent_id = parent.event_parent_id
-      current_handler_id = parent.event_emitted_by_handler_id
-    }
-    return null
-  }
-
   private _startRunloop(): void {
     if (this.runloop_running) {
       return
@@ -963,13 +945,11 @@ export class EventBus {
   // the child completes so the parent handler can continue with the lock held.
   async _processEventImmediately<T extends BaseEvent>(event: T, handler_result?: EventResult): Promise<T> {
     const original_event = event._event_original ?? event
-    // Find the parent handler's result: prefer the proxy-provided one (only if
-    // the handler is still running), then this bus's stack, then walk up the
-    // parent event tree (cross-bus case). If none found, we're not inside a
-    // handler and should fall back to eventCompleted().
+    // Find the handler result for the current await call site. Proxy-provided
+    // context covers event.emit(...); async-local context covers direct
+    // bus.emit(...) from inside a handler, including cross-bus emits.
     const proxy_result = handler_result?.status === 'started' ? handler_result : undefined
-    const currently_active_event_result =
-      proxy_result ?? this.locks._getActiveHandlerResult() ?? this._getParentEventResultAcrossAllBuses(original_event) ?? undefined
+    const currently_active_event_result = proxy_result ?? this.locks._getActiveHandlerResultForCurrentAsyncContext()
     if (!currently_active_event_result) {
       // Not inside any handler scope — avoid queue-jump, but if this event is
       // next in line we can process it immediately without waiting on the _runloop.
