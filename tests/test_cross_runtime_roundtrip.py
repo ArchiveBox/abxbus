@@ -589,3 +589,147 @@ async def test_python_to_ts_to_python_bus_roundtrip_rehydrates_and_resumes(tmp_p
 
     await source_bus.stop(clear=True)
     await restored.stop(clear=True)
+
+
+def _rust_roundtrip_events(payload: list[dict[str, Any]], tmp_path: Path) -> list[dict[str, Any]]:
+    repo_root = Path(__file__).resolve().parents[1]
+    rust_bin = repo_root / 'bubus-rust' / 'target' / 'debug' / 'roundtrip_events'
+    if not rust_bin.exists():
+        rust_bin = repo_root / 'bubus-rust' / 'target' / 'release' / 'roundtrip_events'
+    assert rust_bin.exists(), (
+        'bubus-rust roundtrip_events binary not found. '
+        'Run `cargo build --bin roundtrip_events` in bubus-rust/ before cross-runtime tests.'
+    )
+
+    in_path = tmp_path / 'python_events_for_rust.json'
+    out_path = tmp_path / 'rust_events.json'
+    in_path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+
+    env = os.environ.copy()
+    env['BUBUS_RUST_INPUT_PATH'] = str(in_path)
+    env['BUBUS_RUST_OUTPUT_PATH'] = str(out_path)
+    try:
+        proc = subprocess.run(
+            [str(rust_bin)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=SUBPROCESS_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f'rust event roundtrip timed out after {SUBPROCESS_TIMEOUT_SECONDS}s: {exc}')
+
+    assert proc.returncode == 0, f'rust roundtrip failed:\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}'
+    return json.loads(out_path.read_text(encoding='utf-8'))
+
+
+def test_python_to_rust_roundtrip_preserves_event_fields_and_result_type_semantics(tmp_path: Path) -> None:
+    cases = _build_python_roundtrip_cases()
+    events = [entry.event for entry in cases]
+    cases_by_type = {entry.event.event_type: entry for entry in cases}
+    python_dumped = [event.model_dump(mode='json') for event in events]
+
+    for event_dump in python_dumped:
+        assert 'event_result_type' in event_dump
+        assert isinstance(event_dump['event_result_type'], dict)
+
+    rust_roundtripped = _rust_roundtrip_events(python_dumped, tmp_path)
+    assert len(rust_roundtripped) == len(python_dumped)
+
+    for i, original in enumerate(python_dumped):
+        rust_event = rust_roundtripped[i]
+        assert isinstance(rust_event, dict)
+
+        event_type = str(original.get('event_type'))
+        semantics_case = cases_by_type.get(event_type)
+        assert semantics_case is not None, f'missing semantics case for event_type={event_type}'
+
+        for key, value in original.items():
+            assert key in rust_event, f'missing key after rust roundtrip: {key}'
+            if key == 'event_result_type':
+                assert isinstance(rust_event[key], dict), 'event_result_type should serialize as JSON schema dict'
+                _assert_result_type_semantics_equal(
+                    semantics_case.event.event_result_type,
+                    rust_event[key],
+                    semantics_case.valid_results,
+                    semantics_case.invalid_results,
+                    f'rust roundtrip {event_type}',
+                )
+            else:
+                assert rust_event[key] == value, f'field changed after rust roundtrip: {key}'
+
+        restored = BaseEvent[Any].model_validate(rust_event)
+        restored_dump = restored.model_dump(mode='json')
+        for key, value in original.items():
+            assert key in restored_dump, f'missing key after python reload from rust: {key}'
+            if key == 'event_result_type':
+                assert isinstance(restored_dump[key], dict), 'event_result_type should remain JSON schema after reload'
+                _assert_result_type_semantics_equal(
+                    semantics_case.event.event_result_type,
+                    restored_dump[key],
+                    semantics_case.valid_results,
+                    semantics_case.invalid_results,
+                    f'python reload from rust {event_type}',
+                )
+            else:
+                assert restored_dump[key] == value, f'field changed after python reload from rust: {key}'
+
+
+async def test_python_to_rust_roundtrip_schema_enforcement_after_reload(tmp_path: Path) -> None:
+    events = [entry.event for entry in _build_python_roundtrip_cases()]
+    python_dumped = [event.model_dump(mode='json') for event in events]
+    rust_roundtripped = _rust_roundtrip_events(python_dumped, tmp_path)
+
+    screenshot_payload = next(event for event in rust_roundtripped if event.get('event_type') == 'PyTsScreenshotEvent')
+
+    wrong_bus = EventBus(name='py_rust_py_wrong_shape')
+
+    async def wrong_shape_handler(event: BaseEvent[Any]) -> dict[str, Any]:
+        return {
+            'image_url': 123,
+            'width': '1920',
+            'height': 1080,
+            'tags': ['a', 'b'],
+            'is_animated': 'false',
+            'confidence_scores': [0.9, 0.8],
+            'metadata': {'score': 0.99},
+            'regions': [{'id': '98f51f1d-b10a-7cd9-8ee6-cb706153f717', 'label': 'face', 'score': 0.9, 'visible': True}],
+        }
+
+    wrong_bus.on('PyTsScreenshotEvent', wrong_shape_handler)
+    wrong_event = BaseEvent[Any].model_validate(screenshot_payload)
+    assert isinstance(wrong_event.event_result_type, type)
+    assert issubclass(wrong_event.event_result_type, BaseModel)
+    await asyncio.wait_for(wrong_bus.emit(wrong_event), timeout=EVENT_WAIT_TIMEOUT_SECONDS)
+    wrong_result = next(iter(wrong_event.event_results.values()))
+    assert wrong_result.status == 'error'
+    assert wrong_result.error is not None
+    await wrong_bus.stop()
+
+    right_bus = EventBus(name='py_rust_py_right_shape')
+
+    async def right_shape_handler(event: BaseEvent[Any]) -> dict[str, Any]:
+        return {
+            'image_url': 'https://img.local/1.png',
+            'width': 1920,
+            'height': 1080,
+            'tags': ['hero', 'dashboard'],
+            'is_animated': False,
+            'confidence_scores': [0.95, 0.89],
+            'metadata': {'score': 0.99, 'variance': 0.01},
+            'regions': [
+                {'id': '98f51f1d-b10a-7cd9-8ee6-cb706153f717', 'label': 'face', 'score': 0.9, 'visible': True},
+                {'id': '5f234e9d-29e9-7921-8cf2-2a65f6ba3bdd', 'label': 'button', 'score': 0.7, 'visible': False},
+            ],
+        }
+
+    right_bus.on('PyTsScreenshotEvent', right_shape_handler)
+    right_event = BaseEvent[Any].model_validate(screenshot_payload)
+    assert isinstance(right_event.event_result_type, type)
+    assert issubclass(right_event.event_result_type, BaseModel)
+    await asyncio.wait_for(right_bus.emit(right_event), timeout=EVENT_WAIT_TIMEOUT_SECONDS)
+    right_result = next(iter(right_event.event_results.values()))
+    assert right_result.status == 'completed'
+    assert right_result.error is None
+    assert right_result.result is not None
+    await right_bus.stop()
