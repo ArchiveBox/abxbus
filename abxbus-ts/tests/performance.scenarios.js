@@ -320,7 +320,7 @@ export const runPerf50kEvents = async (input) => {
     assert(!isStillInHistory, `expected sampled early event to be evicted from history: ${event.event_id}`)
     sampledEvictedCount += 1
     assert(event.event_results.size === 0, `trimmed event still has event_results: ${event.event_id} (${event.event_results.size})`)
-    assert(event.bus === undefined, `trimmed event still has bus reference: ${event.event_id}`)
+    assert(event.event_bus === undefined, `trimmed event still has bus reference: ${event.event_id}`)
   }
   assert(
     sampledEvictedCount === sampledEarlyEvents.length,
@@ -576,7 +576,7 @@ export const runPerfWorstCase = async (input) => {
 
   busC.on(ChildEvent, async (event) => {
     childHandled += 1
-    const gc = event.bus.emit(GrandchildEvent({}))
+    const gc = event.emit(GrandchildEvent({}))
     busC.emit(gc)
     if (event.event_timeout !== null) {
       // Yield once so near-zero timeout paths execute without adding a large fixed delay.
@@ -597,7 +597,7 @@ export const runPerfWorstCase = async (input) => {
 
     const ephemeralHandler = async (event) => {
       parentHandledA += 1
-      const child = event.bus.emit(
+      const child = event.emit(
         ChildEvent({
           // event_timeout is in seconds; use a near-zero timeout to exercise timeout handling overhead.
           event_timeout: shouldTimeout ? WORST_CASE_IMMEDIATE_TIMEOUT_SECONDS : null,

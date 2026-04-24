@@ -486,7 +486,7 @@ test('find child_of returns child event', async () => {
   const bus = new EventBus('FindChildBus')
 
   bus.on(ParentEvent, (event) => {
-    event.bus?.emit(ChildEvent({}))
+    event.emit(ChildEvent({}))
   })
 
   const parent_event = bus.emit(ParentEvent({}))
@@ -524,11 +524,11 @@ test('find child_of returns grandchild event', async () => {
 
   let child_event_id: string | null = null
   bus.on(ParentEvent, async (event) => {
-    const child = await event.bus?.emit(ChildEvent({})).done()
+    const child = await event.emit(ChildEvent({})).done()
     child_event_id = child?.event_id ?? null
   })
   bus.on(ChildEvent, async (event) => {
-    await event.bus?.emit(GrandchildEvent({})).done()
+    await event.emit(GrandchildEvent({})).done()
   })
 
   const parent_event = bus.emit(ParentEvent({}))
@@ -553,7 +553,7 @@ test('find child_of works across forwarded buses', async () => {
 
   main_bus.on(ParentEvent, auth_bus.emit)
   auth_bus.on(ParentEvent, async (event) => {
-    const event_bus = event.bus
+    const event_bus = event.event_bus
     assert.ok(event_bus)
     const child_event = event_bus.emit(ChildEvent({}))
     const child = await child_event.done()
@@ -580,7 +580,7 @@ test('find child_of filters to correct parent among siblings', async () => {
   const bus = new EventBus('FindCorrectParentBus')
 
   bus.on(NavigateEvent, async (event) => {
-    await event.bus?.emit(TabCreatedEvent({ tab_id: `tab_for_${event.url}` })).done()
+    await event.emit(TabCreatedEvent({ tab_id: `tab_for_${event.url}` })).done()
   })
   bus.on(TabCreatedEvent, () => {})
 
@@ -611,7 +611,7 @@ test('find future with child_of waits for matching child', async () => {
 
   bus.on(ParentEvent, async (event) => {
     await delay(30)
-    await event.bus?.emit(ChildEvent({})).done()
+    await event.emit(ChildEvent({})).done()
   })
 
   const parent_event = bus.emit(ParentEvent({}))
@@ -650,7 +650,7 @@ test('find with child_of and past float', async () => {
 
   let child_event_id: string | null = null
   bus.on(ParentEvent, async (event) => {
-    const child = await event.bus?.emit(ChildEvent({})).done()
+    const child = await event.emit(ChildEvent({})).done()
     child_event_id = child?.event_id ?? null
   })
 
@@ -673,7 +673,7 @@ test('find with all parameters combined', async () => {
 
   let child_event_id: string | null = null
   bus.on(ParentEvent, async (event) => {
-    const child = await event.bus?.emit(ScreenshotEvent({ target_id: FIND_TARGET_CHILD })).done()
+    const child = await event.emit(ScreenshotEvent({ target_id: FIND_TARGET_CHILD })).done()
     child_event_id = child?.event_id ?? null
   })
 
@@ -737,7 +737,7 @@ test('find catches child event that fired during parent handler', async () => {
 
   let tab_event_id: string | null = null
   bus.on(NavigateEvent, async (event) => {
-    const tab_event = await event.bus?.emit(TabCreatedEvent({ tab_id: '06bee4cf-9f51-7e5d-82d3-65f35169329c' })).done()
+    const tab_event = await event.emit(TabCreatedEvent({ tab_id: '06bee4cf-9f51-7e5d-82d3-65f35169329c' })).done()
     tab_event_id = tab_event?.event_id ?? null
   })
   bus.on(TabCreatedEvent, () => {})

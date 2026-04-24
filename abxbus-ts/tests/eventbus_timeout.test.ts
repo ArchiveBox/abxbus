@@ -99,7 +99,7 @@ test('event handler errors expose event_result, cause, and timeout metadata', as
 
   let pending_child = null as BaseEvent | null
   bus.on(ParentCancelEvent, async (event) => {
-    pending_child = event.bus?.emit(PendingChildEvent({ event_timeout: 0.5 })) ?? null
+    pending_child = event.emit(PendingChildEvent({ event_timeout: 0.5 })) ?? null
     await delay(80)
   })
 
@@ -110,7 +110,7 @@ test('event handler errors expose event_result, cause, and timeout metadata', as
 
   let aborted_child = null as BaseEvent | null
   bus.on(ParentAbortEvent, async (event) => {
-    aborted_child = event.bus?.emit(AbortChildEvent({ event_timeout: 0.5 })) ?? null
+    aborted_child = event.emit(AbortChildEvent({ event_timeout: 0.5 })) ?? null
     await aborted_child?.done({ raise_if_any: false })
   })
 
@@ -510,7 +510,7 @@ test('queue-jump awaited child timeout aborts still fire across buses', async ()
     // then also dispatch on bus_b for cross-bus handler execution.
     // Without parent tracking, _processEventImmediately can't detect the queue-jump context
     // and falls back to eventCompleted(), which deadlocks with global-serial.
-    const child = event.bus?.emit(ChildEvent({ event_timeout: 0.01 }))!
+    const child = event.emit(ChildEvent({ event_timeout: 0.01 }))!
     bus_b.emit(child)
     child_ref = child
     await child.done()
@@ -567,7 +567,7 @@ for (const handler_mode of STEP1_HANDLER_MODES) {
     bus.on(
       ParentEvent,
       withGlobalLock(async (event) => {
-        const child = event.bus?.emit(ChildEvent({ event_timeout: 0.2, event_handler_concurrency: 'parallel' }))!
+        const child = event.emit(ChildEvent({ event_timeout: 0.2, event_handler_concurrency: 'parallel' }))!
         await child.done()
         return 'parent_main'
       })
@@ -629,7 +629,7 @@ for (const handler_mode of STEP1_HANDLER_MODES) {
     bus.on(
       ChildEvent,
       withGlobalLock(async (event) => {
-        const grandchild = event.bus?.emit(GrandchildEvent({ event_timeout: 0.2 }))!
+        const grandchild = event.emit(GrandchildEvent({ event_timeout: 0.2 }))!
         await grandchild.done()
         await delay(40)
         return 'child_done'
@@ -647,8 +647,8 @@ for (const handler_mode of STEP1_HANDLER_MODES) {
     bus.on(
       ParentEvent,
       withGlobalLock(async (event) => {
-        queued_sibling_ref = event.bus?.emit(QueuedSiblingEvent({ event_timeout: 0.2 }))!
-        const child = event.bus?.emit(ChildEvent({ event_timeout: 0.02 }))!
+        queued_sibling_ref = event.emit(QueuedSiblingEvent({ event_timeout: 0.2 }))!
+        const child = event.emit(ChildEvent({ event_timeout: 0.02 }))!
         await child.done({ raise_if_any: false })
         await delay(40)
       })
@@ -709,7 +709,7 @@ test('parent timeout cancels pending child handler results under serial handler 
   })
 
   bus.on(ParentEvent, async (event) => {
-    event.bus?.emit(ChildEvent({ event_timeout: 0.2 }))
+    event.emit(ChildEvent({ event_timeout: 0.2 }))
     await delay(50)
   })
 
@@ -743,7 +743,7 @@ test('retry timeout cancels pending child handler results', async () => {
   bus.on(
     ParentEvent,
     retry({ max_attempts: 1, timeout: 0.01 })(async (event) => {
-      event.bus?.emit(ChildEvent({ event_timeout: 0.2 }))
+      event.emit(ChildEvent({ event_timeout: 0.2 }))
       await delay(50)
       return 'parent_done'
     })
@@ -788,7 +788,7 @@ test('handler_timeout stops in-flight retries and cancels child events', async (
     attempts_started += 1
     if (!emitted) {
       emitted = true
-      child_ref = event.bus?.emit(ChildEvent({ event_timeout: 2 })) ?? null
+      child_ref = event.emit(ChildEvent({ event_timeout: 2 })) ?? null
       await delay(10)
     }
     await delay(200)
@@ -887,8 +887,8 @@ test('multi-level timeout cascade with mixed cancellations', async () => {
   }
 
   const awaited_child_slow = async (event: BaseEvent) => {
-    queued_grandchild = event.bus?.emit(QueuedGrandchildEvent({ event_timeout: 0.2 }))!
-    immediate_grandchild = event.bus?.emit(ImmediateGrandchildEvent({ event_timeout: 0.2 }))!
+    queued_grandchild = event.emit(QueuedGrandchildEvent({ event_timeout: 0.2 }))!
+    immediate_grandchild = event.emit(ImmediateGrandchildEvent({ event_timeout: 0.2 }))!
     await immediate_grandchild.done()
     await delay(100)
     return 'awaited_slow'
@@ -928,8 +928,8 @@ test('multi-level timeout cascade with mixed cancellations', async () => {
   bus.on(QueuedGrandchildEvent, queued_grandchild_fast)
 
   bus.on(TopEvent, async (event) => {
-    queued_child = event.bus?.emit(QueuedChildEvent({ event_timeout: 0.2 }))!
-    awaited_child = event.bus?.emit(AwaitedChildEvent({ event_timeout: 0.03 }))!
+    queued_child = event.emit(QueuedChildEvent({ event_timeout: 0.2 }))!
+    awaited_child = event.emit(AwaitedChildEvent({ event_timeout: 0.03 }))!
     await awaited_child.done({ raise_if_any: false })
     await delay(80)
   })
@@ -1084,8 +1084,8 @@ test('three-level timeout cascade with per-level timeouts and cascading cancella
   // After grandchild completes, sleeps 300ms → times out at 80ms total
   const child_handler = async (event: InstanceType<typeof ChildEvent>) => {
     execution_log.push('child_start')
-    grandchild_ref = event.bus?.emit(GrandchildEvent({ event_timeout: 0.035 }))!
-    queued_grandchild_ref = event.bus?.emit(QueuedGrandchildEvent({ event_timeout: 0.5 }))!
+    grandchild_ref = event.emit(GrandchildEvent({ event_timeout: 0.035 }))!
+    queued_grandchild_ref = event.emit(QueuedGrandchildEvent({ event_timeout: 0.5 }))!
     // Queue-jump: processes GrandchildEvent immediately via yield-and-reacquire.
     // All 5 GC handlers run serially. Completes in ~115ms (within 150ms child timeout).
     await grandchild_ref.done({ raise_if_any: false })
@@ -1118,8 +1118,8 @@ test('three-level timeout cascade with per-level timeouts and cascading cancella
 
   const top_handler_main = async (event: InstanceType<typeof TopEvent>) => {
     execution_log.push('top_main_start')
-    child_ref = event.bus?.emit(ChildEvent({ event_timeout: 0.15 }))!
-    sibling_ref = event.bus?.emit(SiblingEvent({ event_timeout: 0.5 }))!
+    child_ref = event.emit(ChildEvent({ event_timeout: 0.15 }))!
+    sibling_ref = event.emit(SiblingEvent({ event_timeout: 0.5 }))!
     // Queue-jump: processes ChildEvent immediately (which in turn queue-jumps
     // GrandchildEvent). This entire subtree resolves in ~80ms (child timeout).
     await child_ref.done({ raise_if_any: false })
@@ -1323,14 +1323,14 @@ test('cancellation error chain preserves cause references through hierarchy', as
 
   // InnerEvent handler: emits DeepEvent (not awaited), then sleeps long → times out
   const inner_handler = async (event: InstanceType<typeof InnerEvent>) => {
-    deep_ref = event.bus?.emit(DeepEvent({ event_timeout: 0.5 }))!
+    deep_ref = event.emit(DeepEvent({ event_timeout: 0.5 }))!
     await delay(200) // interrupted by inner timeout
     return 'inner_done'
   }
 
   // OuterEvent handler: emits InnerEvent (awaited), then sleeps long → times out
   const outer_handler = async (event: InstanceType<typeof OuterEvent>) => {
-    inner_ref = event.bus?.emit(InnerEvent({ event_timeout: 0.04 }))!
+    inner_ref = event.emit(InnerEvent({ event_timeout: 0.04 }))!
     await inner_ref.done({ raise_if_any: false })
     await delay(200) // interrupted by outer timeout
     return 'outer_done'
@@ -1408,7 +1408,7 @@ test('parent timeout cancels children that have no timeout of their own', async 
   const parent_handler = async (event: InstanceType<typeof ParentEvent>) => {
     // event_timeout: null means the child has no timeout of its own.
     // It would run forever if the parent didn't cancel it.
-    child_ref = event.bus?.emit(NoTimeoutChild({ event_timeout: null }))!
+    child_ref = event.emit(NoTimeoutChild({ event_timeout: null }))!
     await delay(200)
     return 'parent_done'
   }

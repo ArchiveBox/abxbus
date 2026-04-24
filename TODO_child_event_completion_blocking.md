@@ -11,7 +11,7 @@ Desired API:
 - `event.emit(child)`
   - emits a child event owned by the current parent event
   - always blocks parent event completion, even if the caller never awaits it
-- `bus.emit(child)` / `event.bus.emit(child)`
+- `bus.emit(child)` / `event.event_bus.emit(child)`
   - emits a normal event with ancestry preserved
   - does not block parent event completion by itself
 - `await child`
@@ -56,7 +56,7 @@ Implementation contract:
 
 Use this for true phase-owned child work.
 
-### `bus.emit(child)` / `event.bus.emit(child)`
+### `bus.emit(child)` / `event.event_bus.emit(child)`
 
 Implementation contract:
 
@@ -181,7 +181,7 @@ Emit transition points:
   - do not force child completion blocking
 - add real `BaseEvent.emit(...)` in [`base_event.ts`](/Users/squash/Local/Code/archiveboxes/new/abxbus/abxbus-ts/src/base_event.ts)
   - set the field to `true`
-  - delegate to `this.bus.emit(...)`
+  - delegate to `this.event_bus.emit(...)`
 
 Child-link tracking:
 

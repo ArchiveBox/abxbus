@@ -218,11 +218,11 @@ await this.locks._runWithEventLock(event, () =>
 )
 
 // BaseEvent._runHandlers(...) + EventResult.runHandler(...)
-await this.bus.locks._runWithHandlerLock(original, this.bus.event_handler_concurrency, async (handler_lock) => {
+await this.event_bus.locks._runWithHandlerLock(original, this.event_bus.event_handler_concurrency, async (handler_lock) => {
   await entry.runHandler(handler_lock)
 })
 
-await this.bus.locks._runWithHandlerDispatchContext(this, async () => {
+await this.event_bus.locks._runWithHandlerDispatchContext(this, async () => {
   await _runWithAsyncContext(event._getDispatchContext() ?? null, async () => {
     await _runWithTimeout(this.handler_timeout, () => this._createHandlerTimeoutError(event), () =>
       _runWithSlowMonitor(slow_handler_warning_timer, () =>

@@ -1031,20 +1031,23 @@ test('reset creates a fresh pending event for cross-bus dispatch', async () => {
   bus_b.destroy()
 })
 
-test('scoped handler event reports bus and _event_original via in-operator', async () => {
+test('scoped handler event reports event_bus and _event_original via in-operator', async () => {
   const ProxyEvent = BaseEvent.extend('ProxyHasCoverageEvent', {})
   const bus = new EventBus('ProxyHasCoverageBus')
-  let has_bus = false
+  let has_event_bus = false
+  let has_legacy_bus = true
   let has_original = false
 
   bus.on(ProxyEvent, (event) => {
-    has_bus = 'bus' in event
+    has_event_bus = 'event_bus' in event
+    has_legacy_bus = 'bus' in event
     has_original = '_event_original' in event
   })
 
   await bus.emit(ProxyEvent({})).done()
 
-  assert.equal(has_bus, true)
+  assert.equal(has_event_bus, true)
+  assert.equal(has_legacy_bus, false)
   assert.equal(has_original, true)
   bus.destroy()
 })

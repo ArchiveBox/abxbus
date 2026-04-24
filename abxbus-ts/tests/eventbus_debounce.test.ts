@@ -19,7 +19,7 @@ test('simple debounce uses recent history or dispatches new', async () => {
   const parent_event = bus.emit(ParentEvent({}))
   await parent_event.done()
 
-  const child_event = parent_event.bus?.emit(ScreenshotEvent({ target_id: TARGET_ID_1 }))
+  const child_event = parent_event.emit(ScreenshotEvent({ target_id: TARGET_ID_1 }))
   assert.ok(child_event)
   await child_event.done()
 

@@ -7,7 +7,7 @@ const MainEvent = BaseEvent.extend('MainEvent', {})
 const ChildEvent = BaseEvent.extend('ChildEvent', {})
 const GrandchildEvent = BaseEvent.extend('GrandchildEvent', {})
 
-test('event.bus inside handler returns the dispatching bus', async () => {
+test('event.event_bus inside handler returns the dispatching bus', async () => {
   const bus = new EventBus('TestBus')
 
   let handler_called = false
@@ -16,10 +16,12 @@ test('event.bus inside handler returns the dispatching bus', async () => {
 
   bus.on(MainEvent, (event) => {
     handler_called = true
-    handler_bus_name = event.bus?.name
+    handler_bus_name = event.event_bus?.name
+    assert.equal(Reflect.get(event, 'bus'), undefined)
+    assert.equal('bus' in event, false)
 
-    // Should be able to dispatch child events using event.bus
-    child_event = event.bus?.emit(ChildEvent({}))
+    // Should be able to dispatch child events from the current event.
+    child_event = event.emit(ChildEvent({}))
   })
 
   bus.on(ChildEvent, () => {})
@@ -29,39 +31,43 @@ test('event.bus inside handler returns the dispatching bus', async () => {
 
   assert.equal(handler_called, true)
   assert.equal(handler_bus_name, 'TestBus')
-  assert.ok(child_event, 'child event should have been dispatched via event.bus')
+  assert.ok(child_event, 'child event should have been dispatched via event.emit')
   assert.equal(child_event!.event_type, 'ChildEvent')
 })
 
-test('event.event_bus inside handler returns the dispatching bus', async () => {
-  const bus = new EventBus('EventBusPropertyBus')
-  let handler_bus_name: string | undefined
+test('legacy bus property is not exposed inside handlers', async () => {
+  const bus = new EventBus('NoLegacyEventBusPropertyBus')
+  let legacy_bus_value: unknown = 'unset'
+  let has_legacy_bus = true
 
   bus.on(MainEvent, (event) => {
-    handler_bus_name = event.event_bus.name
-    assert.equal(event.event_bus, event.bus)
+    legacy_bus_value = Reflect.get(event, 'bus')
+    has_legacy_bus = 'bus' in event
   })
 
   await bus.emit(MainEvent({})).done()
-  assert.equal(handler_bus_name, 'EventBusPropertyBus')
+  assert.equal(legacy_bus_value, undefined)
+  assert.equal(has_legacy_bus, false)
 })
 
-test('event.event_bus aliases event.bus for child events emitted in handler', async () => {
+test('event.event_bus is set for child events emitted in handler', async () => {
   const bus = new EventBus('EventBusPropertyFallbackBus')
   let child_bus_name: string | undefined
+  let child_legacy_bus_value: unknown = 'unset'
 
   bus.on(MainEvent, (event) => {
-    const child = event.event_bus.emit(ChildEvent({}))
-    child_bus_name = child.event_bus.name
-    assert.equal(child.event_bus, child.bus)
+    const child = event.emit(ChildEvent({}))
+    child_bus_name = child.event_bus!.name
+    child_legacy_bus_value = Reflect.get(child, 'bus')
   })
   bus.on(ChildEvent, () => {})
 
   await bus.emit(MainEvent({})).done()
   assert.equal(child_bus_name, 'EventBusPropertyFallbackBus')
+  assert.equal(child_legacy_bus_value, undefined)
 })
 
-test('event.event_bus aliases event.bus for detached events', async () => {
+test('event.event_bus is absent on detached events', async () => {
   const bus = new EventBus('EventBusPropertyDetachedBus')
   bus.on(MainEvent, () => {})
 
@@ -69,20 +75,22 @@ test('event.event_bus aliases event.bus for detached events', async () => {
   await original.done()
 
   const detached = BaseEvent.fromJSON(original.toJSON())
-  assert.equal(detached.bus, undefined)
+  assert.equal(detached.event_bus, undefined)
+  assert.equal(Reflect.get(detached, 'bus'), undefined)
+  assert.equal('bus' in detached, false)
   assert.deepEqual(detached.event_path, [bus.label])
-  assert.equal(detached.event_bus, detached.bus)
 })
 
-test('event.event_bus aliases event.bus outside handler context', async () => {
+test('event.event_bus is available outside handler context', async () => {
   const bus = new EventBus('EventBusPropertyOutsideHandlerBus')
   const event = bus.emit(MainEvent({}))
   await event.done()
 
-  assert.equal(event.event_bus, event.bus)
+  assert.equal(event.event_bus!.name, 'EventBusPropertyOutsideHandlerBus')
+  assert.equal(Reflect.get(event, 'bus'), undefined)
 })
 
-test('event.bus returns correct bus when multiple buses exist', async () => {
+test('event.event_bus returns correct bus when multiple buses exist', async () => {
   const bus1 = new EventBus('Bus1')
   const bus2 = new EventBus('Bus2')
 
@@ -90,11 +98,11 @@ test('event.bus returns correct bus when multiple buses exist', async () => {
   let handler2_bus_name: string | undefined
 
   bus1.on(MainEvent, (event) => {
-    handler1_bus_name = event.bus?.name
+    handler1_bus_name = event.event_bus?.name
   })
 
   bus2.on(MainEvent, (event) => {
-    handler2_bus_name = event.bus?.name
+    handler2_bus_name = event.event_bus?.name
   })
 
   bus1.emit(MainEvent({}))
@@ -107,7 +115,7 @@ test('event.bus returns correct bus when multiple buses exist', async () => {
   assert.equal(handler2_bus_name, 'Bus2')
 })
 
-test('event.bus reflects the currently-processing bus when forwarded', async () => {
+test('event.event_bus reflects the currently-processing bus when forwarded', async () => {
   const bus1 = new EventBus('Bus1')
   const bus2 = new EventBus('Bus2')
 
@@ -117,34 +125,34 @@ test('event.bus reflects the currently-processing bus when forwarded', async () 
   let bus2_handler_bus_name: string | undefined
 
   bus2.on(MainEvent, (event) => {
-    bus2_handler_bus_name = event.bus?.name
+    bus2_handler_bus_name = event.event_bus?.name
   })
 
   const event = bus1.emit(MainEvent({}))
   await bus1.waitUntilIdle()
   await bus2.waitUntilIdle()
 
-  // The handler on bus2 should see bus2 as event.bus, not bus1
+  // The handler on bus2 should see bus2 as event.event_bus, not bus1
   assert.equal(bus2_handler_bus_name, 'Bus2')
   assert.deepEqual(event.event_path, [bus1.label, bus2.label])
 })
 
-test('event.bus in nested handlers sees the same bus', async () => {
+test('event.event_bus in nested handlers sees the same bus', async () => {
   const bus = new EventBus('MainBus')
 
   let outer_bus_name: string | undefined
   let inner_bus_name: string | undefined
 
   bus.on(MainEvent, async (event) => {
-    outer_bus_name = event.bus?.name
+    outer_bus_name = event.event_bus?.name
 
-    // Dispatch child using event.bus
-    const child = event.bus!.emit(ChildEvent({}))
+    // Dispatch child using event.emit.
+    const child = event.emit(ChildEvent({}))
     await child.done()
   })
 
   bus.on(ChildEvent, (event) => {
-    inner_bus_name = event.bus?.name
+    inner_bus_name = event.event_bus?.name
   })
 
   const parent = bus.emit(MainEvent({}))
@@ -154,7 +162,7 @@ test('event.bus in nested handlers sees the same bus', async () => {
   assert.equal(inner_bus_name, 'MainBus')
 })
 
-test('event.bus.emit sets parent-child relationships through 3 levels', async () => {
+test('event.emit sets parent-child relationships through 3 levels', async () => {
   const bus = new EventBus('MainBus')
 
   const execution_order: string[] = []
@@ -163,9 +171,9 @@ test('event.bus.emit sets parent-child relationships through 3 levels', async ()
 
   bus.on(MainEvent, async (event) => {
     execution_order.push('parent_start')
-    assert.equal(event.bus?.name, 'MainBus')
+    assert.equal(event.event_bus?.name, 'MainBus')
 
-    child_ref = event.bus!.emit(ChildEvent({}))
+    child_ref = event.emit(ChildEvent({}))
     await child_ref.done()
 
     execution_order.push('parent_end')
@@ -173,9 +181,9 @@ test('event.bus.emit sets parent-child relationships through 3 levels', async ()
 
   bus.on(ChildEvent, async (event) => {
     execution_order.push('child_start')
-    assert.equal(event.bus?.name, 'MainBus')
+    assert.equal(event.event_bus?.name, 'MainBus')
 
-    grandchild_ref = event.bus!.emit(GrandchildEvent({}))
+    grandchild_ref = event.emit(GrandchildEvent({}))
     await grandchild_ref.done()
 
     execution_order.push('child_end')
@@ -183,7 +191,7 @@ test('event.bus.emit sets parent-child relationships through 3 levels', async ()
 
   bus.on(GrandchildEvent, (event) => {
     execution_order.push('grandchild_start')
-    assert.equal(event.bus?.name, 'MainBus')
+    assert.equal(event.event_bus?.name, 'MainBus')
     execution_order.push('grandchild_end')
   })
 
@@ -207,7 +215,7 @@ test('event.bus.emit sets parent-child relationships through 3 levels', async ()
   assert.equal(grandchild_ref!.event_parent?.event_id, child_ref!.event_id)
 })
 
-test('event.bus with forwarding: child dispatched via event.bus goes to the correct bus', async () => {
+test('event.emit with forwarding: child dispatch goes to the correct bus', async () => {
   const bus1 = new EventBus('Bus1')
   const bus2 = new EventBus('Bus2')
 
@@ -219,15 +227,15 @@ test('event.bus with forwarding: child dispatched via event.bus goes to the corr
   // Handlers only on bus2
   bus2.on(MainEvent, async (event) => {
     // Handler runs on bus2 (forwarded from bus1)
-    assert.equal(event.bus?.name, 'Bus2')
+    assert.equal(event.event_bus?.name, 'Bus2')
 
-    // Child dispatched via event.bus should go to bus2
-    const child = event.bus!.emit(ChildEvent({}))
+    // Child dispatched via event.emit should go to bus2.
+    const child = event.emit(ChildEvent({}))
     await child.done()
   })
 
   bus2.on(ChildEvent, (event) => {
-    child_handler_bus_name = event.bus?.name
+    child_handler_bus_name = event.event_bus?.name
   })
 
   bus1.emit(MainEvent({}))
@@ -238,25 +246,25 @@ test('event.bus with forwarding: child dispatched via event.bus goes to the corr
   assert.equal(child_handler_bus_name, 'Bus2')
 })
 
-test('event.bus is set on the event after dispatch (outside handler)', async () => {
+test('event.event_bus is set on the event after dispatch (outside handler)', async () => {
   const bus = new EventBus('TestBus')
 
   // Before dispatch, bus is not set
   const raw_event = MainEvent({})
-  assert.equal(raw_event.bus, undefined)
+  assert.equal(raw_event.event_bus, undefined)
 
   // After dispatch, bus is set on the original event
   const dispatched = bus.emit(raw_event)
-  assert.ok(dispatched.bus, 'event.bus should be set after dispatch')
+  assert.ok(dispatched.event_bus, 'event.event_bus should be set after dispatch')
 
   await bus.waitUntilIdle()
 })
 
-test('event.bus.emit from handler correctly attributes event_emitted_by_handler_id', async () => {
+test('event.emit from handler correctly attributes event_emitted_by_handler_id', async () => {
   const bus = new EventBus('TestBus')
 
   bus.on(MainEvent, (event) => {
-    event.bus?.emit(ChildEvent({}))
+    event.emit(ChildEvent({}))
   })
 
   bus.on(ChildEvent, () => {})
@@ -271,7 +279,7 @@ test('event.bus.emit from handler correctly attributes event_emitted_by_handler_
   assert.equal(child!.event_parent?.event_id, parent.event_id)
 
   // The child should have event_emitted_by_handler_id set to the handler that emitted it
-  assert.ok(child!.event_emitted_by_handler_id, 'event_emitted_by_handler_id should be set on child events dispatched via event.bus')
+  assert.ok(child!.event_emitted_by_handler_id, 'event_emitted_by_handler_id should be set on child events dispatched via event.emit')
 
   // The handler id should correspond to a handler result on the parent event
   const parent_from_history = Array.from(bus.event_history.values()).find((e) => e.event_type === 'MainEvent')
@@ -288,7 +296,7 @@ test('dispatch preserves explicit event_parent_id and does not override it', asy
     const child = ChildEvent({
       event_parent_id: explicit_parent_id,
     })
-    event.bus?.emit(child)
+    event.emit(child)
   })
 
   const parent = bus.emit(MainEvent({}))
@@ -311,7 +319,7 @@ test('eventIsChildOf and eventIsParentOf work for direct children', async () => 
   const bus = new EventBus('ParentChildBus')
 
   bus.on(LineageParentEvent, (event) => {
-    event.bus?.emit(LineageChildEvent({}))
+    event.emit(LineageChildEvent({}))
   })
 
   const parent_event = bus.emit(LineageParentEvent({}))
@@ -330,11 +338,11 @@ test('eventIsChildOf works for grandchildren', async () => {
   const bus = new EventBus('GrandchildBus')
 
   bus.on(LineageParentEvent, (event) => {
-    event.bus?.emit(LineageChildEvent({}))
+    event.emit(LineageChildEvent({}))
   })
 
   bus.on(LineageChildEvent, (event) => {
-    event.bus?.emit(LineageGrandchildEvent({}))
+    event.emit(LineageGrandchildEvent({}))
   })
 
   const parent_event = bus.emit(LineageParentEvent({}))

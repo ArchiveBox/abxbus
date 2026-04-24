@@ -66,8 +66,9 @@ async def test_await_event_queue_jumps_inside_handler():
 
     async def on_parent(event: ParentEvent) -> None:
         order.append('parent_start')
+        # Explicitly detached: this sibling should stay queued until the awaited child finishes.
         event.bus.emit(SiblingEvent())
-        child = event.bus.emit(ChildEvent())
+        child = event.emit(ChildEvent())
         await child
         order.append('parent_end')
 
@@ -106,8 +107,9 @@ async def test_event_completed_waits_in_queue_order_inside_handler():
 
     async def on_parent(event: ParentEvent) -> None:
         order.append('parent_start')
+        # Explicitly detached: this sibling should keep normal queue order.
         event.bus.emit(SiblingEvent())
-        child = event.bus.emit(ChildEvent())
+        child = event.emit(ChildEvent())
         await child.event_completed()
         order.append('parent_end')
 
@@ -277,8 +279,8 @@ async def test_event_bus_property_single_bus():
         assert event.bus == bus
         assert event.bus.name == 'TestBus'
 
-        # Should be able to dispatch child events using the property
-        dispatched_child = await event.bus.emit(ChildEvent())
+        # Should be able to dispatch child events from the current event.
+        dispatched_child = await event.emit(ChildEvent())
 
     bus.on(MainEvent, handler)
 
@@ -403,7 +405,7 @@ async def test_event_bus_property_nested_handlers():
             inner_bus_name = child_event.bus.name
 
         bus.on(ChildEvent, inner_handler)
-        await event.bus.emit(child)
+        await event.emit(child)
 
     bus.on(MainEvent, outer_handler)
 
@@ -483,9 +485,9 @@ async def test_event_bus_property_child_dispatch():
         assert event.bus == bus
         assert event.bus.name == 'MainBus'
 
-        # Dispatch a child event using event.bus
+        # Dispatch an owned child event using event.emit.
         nonlocal child_event_ref
-        child_event_ref = event.bus.emit(ChildEvent(data='from_parent'))
+        child_event_ref = event.emit(ChildEvent(data='from_parent'))
 
         # The child event should start processing immediately within our handler
         # (due to the deadlock prevention in BaseEvent.__await__)
@@ -503,7 +505,7 @@ async def test_event_bus_property_child_dispatch():
 
         # Dispatch a grandchild event
         nonlocal grandchild_event_ref
-        grandchild_event_ref = event.bus.emit(GrandchildEvent(info='from_child'))
+        grandchild_event_ref = event.emit(GrandchildEvent(info='from_child'))
 
         # Wait for grandchild to complete
         await grandchild_event_ref
@@ -561,10 +563,10 @@ async def test_event_bus_property_multi_bus_child_dispatch():
         # This handler runs in bus2 (due to forwarding)
         assert event.bus == bus2
 
-        # Dispatch child using event.bus (should dispatch to bus2)
+        # Dispatch child using event.emit (should dispatch to bus2).
         nonlocal child_dispatch_bus
         child_dispatch_bus = event.bus
-        await event.bus.emit(ChildEvent(data='from_bus2_handler'))
+        await event.emit(ChildEvent(data='from_bus2_handler'))
 
     async def child_handler(event: ChildEvent):
         # Child handler should see bus2 as well

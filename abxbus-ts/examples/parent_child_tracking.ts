@@ -24,26 +24,24 @@ async function main(): Promise<void> {
   // Step 2: Create one bus so parent/child linkage is easy to inspect in one history.
   const bus = new EventBus('ParentChildTrackingBus')
 
-  // Step 3: Child handler dispatches a grandchild through event.bus.
+  // Step 3: Child handler dispatches a grandchild through event.emit.
   // Because this runs inside ChildEvent handling, grandchild gets linked automatically.
   bus.on(ChildEvent, async (event: InstanceType<typeof ChildEvent>): Promise<string> => {
     console.log(`child handler start: ${event.event_type}#${shortId(event.event_id)}`)
 
-    const grandchild = event.bus?.emit(
+    const grandchild = event.emit(
       GrandchildEvent({
         note: `spawned by ${event.stage}`,
       })
     )
 
-    if (grandchild) {
-      console.log(
-        `  child dispatched grandchild: ${grandchild.event_type}#${shortId(grandchild.event_id)} parent_id=${shortId(grandchild.event_parent_id)}`
-      )
+    console.log(
+      `  child dispatched grandchild: ${grandchild.event_type}#${shortId(grandchild.event_id)} parent_id=${shortId(grandchild.event_parent_id)}`
+    )
 
-      // Step 4: Await a nested event so ordering and linkage are explicit in output.
-      await grandchild.done()
-      console.log(`  child resumed after grandchild.done(): ${shortId(grandchild.event_id)}`)
-    }
+    // Step 4: Await a nested event so ordering and linkage are explicit in output.
+    await grandchild.done()
+    console.log(`  child resumed after grandchild.done(): ${shortId(grandchild.event_id)}`)
 
     return `child_completed:${event.stage}`
   })
@@ -54,38 +52,34 @@ async function main(): Promise<void> {
     return `grandchild_completed:${event.note}`
   })
 
-  // Step 6: Parent handler emits/dispatches child events via event.bus.
+  // Step 6: Parent handler emits/dispatches child events via event.emit.
   // One child is awaited with .done() to clearly show queue-jump + linkage behavior.
   bus.on(ParentEvent, async (event: InstanceType<typeof ParentEvent>): Promise<string> => {
     console.log(`parent handler start: ${event.event_type}#${shortId(event.event_id)} workflow="${event.workflow}"`)
 
-    const awaitedChild = event.bus?.emit(ChildEvent({ stage: 'awaited-child' }))
-    if (awaitedChild) {
-      console.log(
-        `  parent emitted child: ${awaitedChild.event_type}#${shortId(awaitedChild.event_id)} parent_id=${shortId(awaitedChild.event_parent_id)}`
-      )
+    const awaitedChild = event.emit(ChildEvent({ stage: 'awaited-child' }))
+    console.log(
+      `  parent emitted child: ${awaitedChild.event_type}#${shortId(awaitedChild.event_id)} parent_id=${shortId(awaitedChild.event_parent_id)}`
+    )
 
-      // Required by this example: await at least one child so parent/child linkage is obvious.
-      await awaitedChild.done()
-      console.log(`  parent resumed after awaited child.done(): ${shortId(awaitedChild.event_id)}`)
-    }
+    // Required by this example: await at least one child so parent/child linkage is obvious.
+    await awaitedChild.done()
+    console.log(`  parent resumed after awaited child.done(): ${shortId(awaitedChild.event_id)}`)
 
-    const backgroundChild = event.bus?.emit(ChildEvent({ stage: 'background-child' }))
+    const backgroundChild = event.event_bus?.emit(ChildEvent({ stage: 'background-child' }))
     if (backgroundChild) {
       console.log(
         `  parent dispatched second child: ${backgroundChild.event_type}#${shortId(backgroundChild.event_id)} parent_id=${shortId(backgroundChild.event_parent_id)}`
       )
     }
 
-    // Parent also dispatches a GrandchildEvent type directly via event.bus.
+    // Parent also dispatches a GrandchildEvent type directly via event.emit.
     // This is still automatically linked to the parent event.
-    const directGrandchild = event.bus?.emit(GrandchildEvent({ note: 'directly from parent' }))
-    if (directGrandchild) {
-      console.log(
-        `  parent dispatched grandchild type directly: ${directGrandchild.event_type}#${shortId(directGrandchild.event_id)} parent_id=${shortId(directGrandchild.event_parent_id)}`
-      )
-      await directGrandchild.done()
-    }
+    const directGrandchild = event.emit(GrandchildEvent({ note: 'directly from parent' }))
+    console.log(
+      `  parent dispatched grandchild type directly: ${directGrandchild.event_type}#${shortId(directGrandchild.event_id)} parent_id=${shortId(directGrandchild.event_parent_id)}`
+    )
+    await directGrandchild.done()
 
     return 'parent_completed'
   })

@@ -46,7 +46,7 @@ class TestParentEventTracking:
         async def parent_handler(event: ParentEvent) -> str:
             # Handler that dispatches a child event
             child = ChildEvent(data=f'child_of_{event.message}')
-            eventbus.emit(child)
+            event.emit(child)
             event_children.append(child)
             return 'parent_handled'
 
@@ -78,13 +78,13 @@ class TestParentEventTracking:
         async def parent_handler(event: BaseEvent[str]) -> str:
             events_by_level['parent'] = event
             child = ChildEvent(data='child_data')
-            eventbus.emit(child)
+            event.emit(child)
             return 'parent'
 
         async def child_handler(event: BaseEvent[str]) -> str:
             events_by_level['child'] = event
             grandchild = GrandchildEvent(value=42)
-            eventbus.emit(grandchild)
+            event.emit(grandchild)
             return 'child'
 
         async def grandchild_handler(event: BaseEvent[str]) -> str:
@@ -121,7 +121,7 @@ class TestParentEventTracking:
             # Dispatch multiple children
             for i in range(3):
                 child = ChildEvent(data=f'child_{i}')
-                eventbus.emit(child)
+                event.emit(child)
                 event_children.append(child)
             return 'spawned_children'
 
@@ -145,14 +145,14 @@ class TestParentEventTracking:
         async def handler1(event: BaseEvent[str]) -> str:
             await asyncio.sleep(0.01)  # Simulate work
             child = ChildEvent(data='from_h1')
-            eventbus.emit(child)
+            event.emit(child)
             events_from_handlers['h1'].append(child)
             return 'h1'
 
         async def handler2(event: BaseEvent[str]) -> str:
             await asyncio.sleep(0.02)  # Different timing
             child = ChildEvent(data='from_h2')
-            eventbus.emit(child)
+            event.emit(child)
             events_from_handlers['h2'].append(child)
             return 'h2'
 
@@ -181,7 +181,7 @@ class TestParentEventTracking:
             # Create child with explicit event_parent_id
             explicit_parent_id = '018f8e40-1234-7000-8000-000000001234'
             child = ChildEvent(data='explicit', event_parent_id=explicit_parent_id)
-            eventbus.emit(child)
+            event.emit(child)
             captured_child = child
             return 'dispatched'
 
@@ -245,7 +245,7 @@ class TestParentEventTracking:
         def sync_parent_handler(event: BaseEvent[str]) -> str:
             # Sync handler that dispatches child
             child = ChildEvent(data='from_sync')
-            eventbus.emit(child)
+            event.emit(child)
             event_children.append(child)
             return 'sync_handled'
 
@@ -267,7 +267,7 @@ class TestParentEventTracking:
         async def failing_handler(event: BaseEvent[str]) -> str:
             # Dispatch child before failing
             child = ChildEvent(data='before_error')
-            eventbus.emit(child)
+            event.emit(child)
             event_children.append(child)
             raise ValueError(
                 'Handler error - expected to fail - testing that parent event tracking works even when handlers error'
@@ -276,7 +276,7 @@ class TestParentEventTracking:
         async def success_handler(event: BaseEvent[str]) -> str:
             # This should still run
             child = ChildEvent(data='after_error')
-            eventbus.emit(child)
+            event.emit(child)
             event_children.append(child)
             return 'success'
 
@@ -300,7 +300,7 @@ class TestParentEventTracking:
             # Dispatch multiple child events
             for i in range(3):
                 child = ChildEvent(data=f'child_{i}')
-                eventbus.emit(child)
+                event.emit(child)
             return 'parent_done'
 
         async def child_handler(event: ChildEvent) -> str:
@@ -332,12 +332,12 @@ class TestParentEventTracking:
 
         async def parent_handler(event: ParentEvent) -> str:
             child = ChildEvent(data='level1')
-            eventbus.emit(child)
+            event.emit(child)
             return 'parent'
 
         async def child_handler(event: ChildEvent) -> str:
             grandchild = GrandchildEvent(value=42)
-            eventbus.emit(grandchild)
+            event.emit(grandchild)
             return 'child'
 
         async def grandchild_handler(event: GrandchildEvent) -> str:
@@ -368,15 +368,15 @@ class TestParentEventTracking:
 
         async def handler1(event: ParentEvent) -> str:
             child1 = ChildEvent(data='from_handler1')
-            eventbus.emit(child1)
+            event.emit(child1)
             return 'h1'
 
         async def handler2(event: ParentEvent) -> str:
             # Dispatch 2 children from this handler
             child2 = ChildEvent(data='from_handler2_a')
             child3 = ChildEvent(data='from_handler2_b')
-            eventbus.emit(child2)
-            eventbus.emit(child3)
+            event.emit(child2)
+            event.emit(child3)
             return 'h2'
 
         async def child_handler(event: ChildEvent) -> str:
@@ -436,7 +436,7 @@ class TestParentEventTracking:
             await bus2.stop(clear=True)
 
     async def test_parent_completion_waits_for_all_children(self, eventbus: EventBus):
-        """Parent event completion should wait until all dispatched children complete."""
+        """Parent event completion should wait until explicitly-owned children complete."""
         completion_order: list[str] = []
         child_started = asyncio.Event()
         release_children = asyncio.Event()
@@ -444,8 +444,8 @@ class TestParentEventTracking:
         async def parent_handler(event: ParentEvent) -> str:
             child1 = ChildEvent(data='child1')
             child2 = ChildEvent(data='child2')
-            eventbus.emit(child1)
-            eventbus.emit(child2)
+            event.emit(child1)
+            event.emit(child2)
             completion_order.append('parent_handler')
             return 'parent'
 
@@ -474,4 +474,82 @@ class TestParentEventTracking:
         assert parent.event_status == 'completed'
         assert len(parent.event_children) == 2
         for child in parent.event_children:
+            assert child.event_blocks_parent_completion is True
             assert child.event_status == 'completed'
+
+    async def test_bus_emit_child_does_not_block_parent_completion_by_default(self, eventbus: EventBus):
+        """A detached child keeps ancestry metadata but does not hold the parent event open."""
+        child_started = asyncio.Event()
+        release_child = asyncio.Event()
+        captured_child: ChildEvent | None = None
+
+        async def parent_handler(event: ParentEvent) -> str:
+            nonlocal captured_child
+            captured_child = eventbus.emit(ChildEvent(data='detached'))
+            return 'parent'
+
+        async def child_handler(event: ChildEvent) -> str:
+            child_started.set()
+            await release_child.wait()
+            return f'handled_{event.data}'
+
+        eventbus.on('ParentEvent', parent_handler)
+        eventbus.on('ChildEvent', child_handler)
+
+        parent = ParentEvent(message='detached_completion_test')
+        parent_event = eventbus.emit(parent)
+
+        await child_started.wait()
+        assert captured_child is not None
+        assert captured_child.event_parent_id == parent.event_id
+        assert captured_child.event_blocks_parent_completion is False
+        assert captured_child in parent.event_children
+
+        await asyncio.wait_for(parent_event.event_completed(), timeout=1.0)
+        assert parent.event_status == 'completed'
+        assert captured_child.event_status != 'completed'
+
+        release_child.set()
+        await eventbus.wait_until_idle()
+        assert captured_child.event_status == 'completed'
+
+    async def test_event_emit_marks_child_as_parent_completion_blocking(self, eventbus: EventBus):
+        captured_child: ChildEvent | None = None
+
+        async def parent_handler(event: ParentEvent) -> str:
+            nonlocal captured_child
+            captured_child = event.emit(ChildEvent(data='owned'))
+            return 'parent'
+
+        async def child_handler(event: ChildEvent) -> str:
+            return f'handled_{event.data}'
+
+        eventbus.on('ParentEvent', parent_handler)
+        eventbus.on('ChildEvent', child_handler)
+
+        parent = await eventbus.emit(ParentEvent(message='owned_completion_test'))
+        assert captured_child is not None
+        assert captured_child.event_parent_id == parent.event_id
+        assert captured_child.event_blocks_parent_completion is True
+        assert captured_child in parent.event_children
+
+    async def test_awaiting_bus_emitted_child_upgrades_blocking_flag(self, eventbus: EventBus):
+        captured_child: ChildEvent | None = None
+
+        async def parent_handler(event: ParentEvent) -> str:
+            nonlocal captured_child
+            captured_child = eventbus.emit(ChildEvent(data='awaited_detached'))
+            assert captured_child.event_blocks_parent_completion is False
+            await captured_child
+            assert captured_child.event_blocks_parent_completion is True
+            return 'parent'
+
+        async def child_handler(event: ChildEvent) -> str:
+            return f'handled_{event.data}'
+
+        eventbus.on('ParentEvent', parent_handler)
+        eventbus.on('ChildEvent', child_handler)
+
+        await eventbus.emit(ParentEvent(message='awaited_detached_test'))
+        assert captured_child is not None
+        assert captured_child.event_blocks_parent_completion is True
