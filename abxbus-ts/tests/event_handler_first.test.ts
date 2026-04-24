@@ -472,7 +472,7 @@ test('first: cancels child events emitted by losing handlers', async () => {
 
   // Slow handler: emits a child event, then waits
   bus.on(ParentEvent, async (event) => {
-    const child = event.bus!.emit(ChildEvent({}))
+    const child = event.emit(ChildEvent({}))
     await child.done()
     return 'slow parent with child'
   })

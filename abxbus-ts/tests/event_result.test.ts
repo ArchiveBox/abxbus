@@ -180,7 +180,7 @@ test('EventResult.update keeps consistent ordering semantics for status/result/e
   const bus = new EventBus('EventResultUpdateOrderingBus')
   const handler = bus.on(StringResultEvent, () => 'ok')
   const event = StringResultEvent({})
-  event.bus = bus
+  event.event_bus = bus
   const result = new EventResult({ event, handler })
 
   const existing_error = new Error('existing')
@@ -206,7 +206,7 @@ test('runHandler is a no-op for already-settled results', async () => {
   })
 
   const event = SettledEvent({})
-  event.bus = bus
+  event.event_bus = bus
 
   const result = new EventResult({ event, handler })
   result.status = 'completed'

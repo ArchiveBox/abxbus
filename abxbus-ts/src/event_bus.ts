@@ -565,7 +565,7 @@ export class EventBus {
         ...(payload as Record<string, unknown>),
         event_id: typeof (payload as { event_id?: unknown }).event_id === 'string' ? (payload as { event_id: string }).event_id : event_id,
       })
-      event.bus = bus
+      event.event_bus = bus
       bus.event_history.set(event.event_id, event)
     }
 
@@ -709,9 +709,9 @@ export class EventBus {
 
   emit<T extends BaseEvent>(event: T): T {
     const original_event = event._event_original ?? event // if event is a bus-scoped proxy already, get the original underlying event object
-    if (!original_event.bus) {
-      // if we are the first bus to emit this event, set the bus property on the original event object
-      original_event.bus = this
+    if (!original_event.event_bus) {
+      // if we are the first bus to emit this event, set the event_bus property on the original event object
+      original_event.event_bus = this
     }
     if (!Array.isArray(original_event.event_path)) {
       original_event.event_path = []
@@ -1015,6 +1015,15 @@ export class EventBus {
       return event
     }
 
+    const active_parent = currently_active_event_result.event._event_original ?? currently_active_event_result.event
+    const is_child_of_active_handler =
+      original_event.event_parent_id === active_parent.event_id &&
+      original_event.event_emitted_by_handler_id === currently_active_event_result.handler_id &&
+      currently_active_event_result.event_children.some((child) => (child._event_original ?? child).event_id === original_event.event_id)
+    if (is_child_of_active_handler) {
+      original_event.event_blocks_parent_completion = true
+    }
+
     // ensure a pause request is set so the bus _runloop pauses and (will resume when the handler exits)
     currently_active_event_result._ensureQueueJumpPause(this)
     if (original_event.event_status === 'completed') {
@@ -1198,7 +1207,7 @@ export class EventBus {
   }
 
   // get a proxy wrapper around an Event that will automatically link emitted child events to this bus and handler
-  // proxy is what gets passed into the handler, if handler does event.bus.emit(...) to dispatch child events,
+  // proxy is what gets passed into the handler, if handler does event.emit(...) to dispatch child events,
   // the proxy auto-sets event.parent_event_id and event.event_emitted_by_handler_id
   _getEventProxyScopedToThisBus<T extends BaseEvent>(event: T, handler_result?: EventResult): T {
     const original_event = event._event_original ?? event
@@ -1233,7 +1242,7 @@ export class EventBus {
     })
     const scoped = new Proxy(original_event, {
       get(target, prop, receiver) {
-        if (prop === 'bus') {
+        if (prop === 'event_bus') {
           return bus_proxy
         }
         if (prop === '_event_original') {
@@ -1242,13 +1251,13 @@ export class EventBus {
         return Reflect.get(target, prop, receiver)
       },
       set(target, prop, value) {
-        if (prop === 'bus') {
+        if (prop === 'event_bus') {
           return true
         }
         return Reflect.set(target, prop, value, target)
       },
       has(target, prop) {
-        if (prop === 'bus') {
+        if (prop === 'event_bus') {
           return true
         }
         if (prop === '_event_original') {

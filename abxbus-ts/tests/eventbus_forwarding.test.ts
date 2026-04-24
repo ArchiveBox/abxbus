@@ -258,7 +258,7 @@ test('proxy dispatch auto-links child events like emit', async () => {
   const bus = new EventBus('ProxyDispatchAutoLinkBus')
 
   bus.on(ProxyDispatchRootEvent, (event) => {
-    event.bus?.emit(ProxyDispatchChildEvent({}))
+    event.emit(ProxyDispatchChildEvent({}))
     return 'root'
   })
   bus.on(ProxyDispatchChildEvent, () => 'child')
@@ -277,7 +277,7 @@ test('proxy dispatch of same event does not self-parent or self-link child', asy
   const bus = new EventBus('ProxyDispatchSameEventBus')
 
   bus.on(ProxyDispatchRootEvent, (event) => {
-    event.bus?.emit(event)
+    event.emit(event)
     return 'root'
   })
 

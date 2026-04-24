@@ -28,8 +28,7 @@ class ChildEvent(BaseEvent[str]):
 bus = EventBus('RpcBus')
 
 async def on_parent(event: ParentEvent) -> str:
-    assert event.event_bus is not None
-    child = event.event_bus.emit(ChildEvent())
+    child = event.emit(ChildEvent())
     await child  # queue-jump while still inside this handler
     value = await child.event_result()
     return f'parent got: {value}'
@@ -54,7 +53,7 @@ const ChildEvent = BaseEvent.extend('ChildEvent', { event_result_type: z.string(
 const bus = new EventBus('RpcBus')
 
 bus.on(ParentEvent, async (event) => {
-  const child = event.event_bus!.emit(ChildEvent({}))
+  const child = event.emit(ChildEvent({}))
   await child.done() // queue-jump while still inside this handler
   return `parent got: ${child.event_result}`
 })
@@ -88,10 +87,10 @@ bus = EventBus('OrderBus', event_concurrency='bus-serial', event_handler_concurr
 order: list[str] = []
 
 async def on_parent(event: ParentEvent) -> None:
-    assert event.event_bus is not None
     order.append('parent_start')
-    event.event_bus.emit(SiblingEvent())
-    child = event.event_bus.emit(ChildEvent())
+    # Explicitly detached: the sibling stays queued until the owned child finishes.
+    bus.emit(SiblingEvent())
+    child = event.emit(ChildEvent())
     await child
     order.append('parent_end')
 
@@ -130,8 +129,9 @@ const order: string[] = []
 
 bus.on(ParentEvent, async (event) => {
   order.push('parent_start')
-  event.event_bus!.emit(SiblingEvent({}))
-  const child = event.event_bus!.emit(ChildEvent({}))
+  // Explicitly detached: the sibling stays queued until the owned child finishes.
+  bus.emit(SiblingEvent({}))
+  const child = event.emit(ChildEvent({}))
   await child.done()
   order.push('parent_end')
 })

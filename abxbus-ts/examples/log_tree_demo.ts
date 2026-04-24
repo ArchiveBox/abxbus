@@ -37,15 +37,13 @@ async function main(): Promise<void> {
 
   async function root_fast_handler(event: InstanceType<typeof RootEvent>): Promise<string> {
     await delay(10)
-    const child = event.bus?.emit(ChildEvent({ tab_id: 'tab-123', event_timeout: 0.1 }))
-    if (child) {
-      await child.done()
-    }
+    const child = event.emit(ChildEvent({ tab_id: 'tab-123', event_timeout: 0.1 }))
+    await child.done()
     return 'root_fast_handler_ok'
   }
 
   async function root_slow_handler(event: InstanceType<typeof RootEvent>): Promise<string> {
-    event.bus?.emit(ChildEvent({ tab_id: 'tab-timeout', event_timeout: 0.1 }))
+    event.event_bus?.emit(ChildEvent({ tab_id: 'tab-timeout', event_timeout: 0.1 }))
     await delay(400)
     return 'root_slow_handler_timeout'
   }
@@ -60,10 +58,8 @@ async function main(): Promise<void> {
 
   async function child_fast_handler(event: InstanceType<typeof ChildEvent>): Promise<string> {
     await delay(10)
-    const grandchild = event.bus?.emit(GrandchildEvent({ status: 'ok', event_timeout: 0.05 }))
-    if (grandchild) {
-      await grandchild.done()
-    }
+    const grandchild = event.emit(GrandchildEvent({ status: 'ok', event_timeout: 0.05 }))
+    await grandchild.done()
     return 'child_handler_ok'
   }
 

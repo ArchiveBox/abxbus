@@ -123,10 +123,11 @@ class EventConcurrencyMode(StrEnum):
 
 T_EventResultType = TypeVar('T_EventResultType', bound=Any, default=None)
 # TypeVar for BaseEvent and its subclasses
-RESERVED_USER_EVENT_FIELDS = frozenset({'bus', 'first', 'toString', 'toJSON', 'fromJSON'})
+RESERVED_USER_EVENT_FIELDS = frozenset({'bus', 'emit', 'first', 'toString', 'toJSON', 'fromJSON'})
 # We use contravariant=True because if a handler accepts BaseEvent,
 # it can also handle any subclass of BaseEvent
 T_Event = TypeVar('T_Event', bound='BaseEvent[Any]', contravariant=True, default='BaseEvent[Any]')
+T_EmittedEvent = TypeVar('T_EmittedEvent', bound='BaseEvent[Any]', default='BaseEvent[Any]')
 EventResultFilter = Callable[['EventResult[Any]'], bool]
 
 
@@ -730,7 +731,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         ),
     )
     event_blocks_parent_completion: bool = Field(
-        default=True,
+        default=False,
         description=(
             'Whether this event must finish before the emitting parent event can complete. '
             'Set False for background child events that should retain ancestry without blocking the parent phase.'
@@ -928,6 +929,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         """Immediate await path (queue-jump when inside a handler), returns self."""
 
         async def wait_for_handlers_to_complete_then_return_event():
+            self._mark_blocks_parent_completion_if_awaited_from_emitting_handler()
             if self._event_is_complete_flag:
                 return self
             assert self.event_completed_signal is not None
@@ -947,6 +949,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
     async def event_completed(self) -> Self:
         """Queue-order await path (never queue-jumps), returns self."""
+        self._mark_blocks_parent_completion_if_awaited_from_emitting_handler()
         if self._event_is_complete_flag:
             return self
         assert self.event_completed_signal is not None
@@ -1291,6 +1294,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         raise_if_none: bool = True,
     ) -> T_EventResultType | None:
         """Get the first non-None result from the event handlers"""
+        self._mark_blocks_parent_completion_if_awaited_from_emitting_handler()
         if not self._event_is_complete_flag:
             completed_signal = self._event_completed_signal
             if completed_signal is None:
@@ -1348,6 +1352,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         raise_if_none: bool = True,
     ) -> list[T_EventResultType | None]:
         """Get all result values in a list [handler1_result, handler2_result, ...]"""
+        self._mark_blocks_parent_completion_if_awaited_from_emitting_handler()
         if not self._event_is_complete_flag:
             completed_signal = self._event_completed_signal
             if completed_signal is None:
@@ -1578,6 +1583,28 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     def _set_dispatch_context(self, dispatch_context: contextvars.Context | None) -> None:
         self._event_dispatch_context = dispatch_context
 
+    def _mark_blocks_parent_completion_if_awaited_from_emitting_handler(self) -> None:
+        """Upgrade same-handler awaited children emitted via bus.emit() into blocking children."""
+        if self.event_blocks_parent_completion:
+            return
+        from abxbus.event_bus import get_current_event, get_current_handler_id
+
+        current_event = get_current_event()
+        current_handler_id = get_current_handler_id()
+        if current_event is None or current_handler_id is None:
+            return
+        if self.event_id == current_event.event_id:
+            return
+        if self.event_parent_id != current_event.event_id:
+            return
+        if self.event_emitted_by_handler_id != current_handler_id:
+            return
+        current_result = current_event.event_results.get(current_handler_id)
+        if current_result is None:
+            return
+        if any(child.event_id == self.event_id for child in current_result.event_children):
+            self.event_blocks_parent_completion = True
+
     def _are_all_children_complete(self, _visited: set[str] | None = None) -> bool:
         """Recursively check if all child events and their descendants are complete"""
         if _visited is None:
@@ -1607,6 +1634,8 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                 f'Cancelled pending handler as a result of parent error {error}'
             )  # keep the word "pending" in the error, checked by print_handler_line()
         for child_event in self.event_children:
+            if not child_event.event_blocks_parent_completion:
+                continue
             for result in child_event.event_results.values():
                 if result.status == 'pending':
                     # print('CANCELLING CHILD HANDLER', result, 'due to', error)
@@ -1660,9 +1689,14 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     def event_bus(self) -> 'EventBus':
         return self.bus
 
+    def emit(self, event: T_EmittedEvent) -> T_EmittedEvent:
+        """Emit an explicitly-owned child event that blocks this event's completion."""
+        event.event_blocks_parent_completion = True
+        return self.bus.emit(event)
+
 
 def attr_name_allowed_on_event(key: str) -> bool:
-    allowed_unprefixed_attrs = {'first', 'bus'}
+    allowed_unprefixed_attrs = {'first', 'bus', 'emit'}
     return key in pydantic_builtin_attrs or key in event_builtin_attrs or key.startswith('_') or key in allowed_unprefixed_attrs
 
 

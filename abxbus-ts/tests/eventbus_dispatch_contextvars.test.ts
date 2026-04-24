@@ -57,7 +57,7 @@ test('context propagates through nested handlers', async () => {
     captured_parent.request_id = store?.request_id
     captured_parent.trace_id = store?.trace_id
 
-    const child = event.bus?.emit(ChildEvent({}))
+    const child = event.emit(ChildEvent({}))
     if (child) {
       await child.done()
     }
@@ -169,7 +169,7 @@ test('handler can modify context without affecting parent', async () => {
       throw new Error('AsyncLocalStorage.enterWith is required for this test')
     }
     storage.enterWith({ request_id: parent_request_id })
-    const child = event.bus?.emit(ChildEvent({}))
+    const child = event.emit(ChildEvent({}))
     if (child) {
       await child.done()
     }
@@ -200,7 +200,7 @@ test('event parent_id tracking still works with context propagation', async () =
 
   bus.on(SimpleEvent, async (event) => {
     parent_event_id = event.event_id
-    const child = event.bus?.emit(ChildEvent({}))
+    const child = event.emit(ChildEvent({}))
     if (child) {
       await child.done()
     }
@@ -230,7 +230,7 @@ test('dispatch context and parent_id both work together', async () => {
     const store = storage.getStore() as ContextStore | undefined
     results.parent_request_id = store?.request_id
     results.parent_event_id = event.event_id
-    const child = event.bus?.emit(ChildEvent({}))
+    const child = event.emit(ChildEvent({}))
     if (child) {
       await child.done()
     }
@@ -274,7 +274,7 @@ test('deeply nested context and parent tracking', async () => {
       event_id: event.event_id,
       parent_id: event.event_parent_id,
     })
-    const child = event.bus?.emit(Level2Event({}))
+    const child = event.emit(Level2Event({}))
     if (child) {
       await child.done()
     }
@@ -288,7 +288,7 @@ test('deeply nested context and parent tracking', async () => {
       event_id: event.event_id,
       parent_id: event.event_parent_id,
     })
-    const child = event.bus?.emit(Level3Event({}))
+    const child = event.emit(Level3Event({}))
     if (child) {
       await child.done()
     }

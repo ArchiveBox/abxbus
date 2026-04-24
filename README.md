@@ -59,7 +59,7 @@ class UserLoginEvent(BaseEvent[str]):
     is_admin: bool
 
 async def handle_login(event: UserLoginEvent) -> str:
-    auth_request = await event.event_bus.emit(AuthRequestEvent(...))  # nested events supported
+    auth_request = await event.emit(AuthRequestEvent(...))  # nested events supported
     auth_response = await event.event_bus.find(AuthResponseEvent, child_of=auth_request, future=30)
     return f"User {event.username} logged in admin={event.is_admin} with API response: {await auth_response.event_result()}"
 
@@ -255,8 +255,8 @@ def child_handler(event: SomeOtherEvent) -> str:
     return 'xzy123'
 
 def main_handler(event: MainEvent) -> str:
-    # enqueue event for processing after main_handler exits
-    child_event = bus.emit(SomeOtherEvent())
+    # emit an owned child event
+    child_event = event.emit(SomeOtherEvent())
 
     # can also await child events to process immediately instead of adding to FIFO queue
     completed_child_event = await child_event
@@ -282,17 +282,17 @@ You can also set [`event_concurrency='parallel'`](https://abxbus.archivebox.io/c
 
 ```python
 async def parent_handler(event: BaseEvent):
-    # handlers can emit more events to be processed asynchronously after this handler completes
+    # handlers can emit owned child events
     child = ChildEvent()
-    child_event_async = event.event_bus.emit(child)   # equivalent to bus.emit(...)
+    child_event_async = event.emit(child)
     assert child.event_status != 'completed'
     assert child_event_async.event_parent_id == event.event_id
     await child_event_async
 
-    # or you can emit an event and block until it finishes processing by awaiting the event
+    # awaiting the child blocks until it finishes processing
     # this recursively waits for all handlers, including if event is forwarded to other buses
     # (note: awaiting an event from inside a handler jumps the FIFO queue and will process it immediately, before any other pending events)
-    child_event_sync = await bus.emit(ChildEvent())
+    child_event_sync = await event.emit(ChildEvent())
     # ChildEvent handlers run immediately
     assert child_event_sync.event_status == 'completed'
 
@@ -435,7 +435,7 @@ You can use these helpers to interact with the results returned by handlers:
 ```python
 def do_some_math(event: DoSomeMathEvent[int]) -> int:
     result = event.a + event.b
-    event.event_bus.emit(MathCompleteEvent(final_sum=result))
+    event.emit(MathCompleteEvent(final_sum=result))
 
 event_bus.on(DoSomeMathEvent, do_some_math)
 await event_bus.emit(DoSomeMathEvent(a=100, b=120))
@@ -544,7 +544,7 @@ async def parent_handler(event: ParentEvent) -> str:
     print(f"Parent sees: {request_id.get()}")  # 'req-12345'
 
     # Child events inherit the same context
-    await bus.emit(ChildEvent())
+    await event.emit(ChildEvent())
     return "parent_done"
 
 async def child_handler(event: ChildEvent) -> str:
@@ -1038,11 +1038,11 @@ Shortcut to get the `EventBus` that is currently processing this event. Can be u
 bus = EventBus()
 
 async def some_handler(event: MyEvent):
-    # You can always emit directly to any bus you have a reference to
-    child_event = bus.emit(ChildEvent())
+    # Owned child work should use event.emit(...), which blocks parent completion.
+    child_event = await event.emit(ChildEvent())
 
-    # OR use the event.event_bus shortcut to get the current bus:
-    child_event = await event.event_bus.emit(ChildEvent())
+    # Use bus.emit(...) only for detached background work.
+    detached_child = bus.emit(ChildEvent())
 ```
 
 ---

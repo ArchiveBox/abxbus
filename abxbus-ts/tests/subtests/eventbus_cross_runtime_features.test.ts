@@ -36,7 +36,7 @@ test('queue-jump preserves parent/child lineage and find visibility', async () =
 
   bus.on(QueueJumpRootEvent, async (event) => {
     execution_order.push('root:start')
-    const child = event.bus!.emit(QueueJumpChildEvent({}))
+    const child = event.emit(QueueJumpChildEvent({}))
     await child.done()
     execution_order.push('root:end')
     return 'root-ok'
@@ -220,7 +220,7 @@ test('context propagates through forwarding and child dispatch with lineage inta
     captured_parent_request_id = store?.request_id ?? null
     parent_event_id = event.event_id
 
-    const child = event.bus!.emit(ContextChildEvent({}))
+    const child = event.emit(ContextChildEvent({}))
     await child.done()
     return 'parent-ok'
   })

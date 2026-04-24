@@ -23,10 +23,11 @@ This tracking works across nested chains (parent -> child -> grandchild) and is 
 
 Parent-child links are recorded when you emit from inside a running handler context:
 
-- Python: `event.event_bus.emit(...)`
-- TypeScript: `event.bus?.emit(...)`
+- Python: `event.emit(...)`
+- TypeScript: `event.emit(...)`
 
-Using the event-scoped bus keeps ancestry metadata intact automatically.
+Use `event.emit(...)` for owned child work. It keeps ancestry metadata intact and marks the child as blocking parent completion.
+Use `bus.emit(...)` from a handler only for explicitly detached/background work that should keep ancestry but not hold the parent open unless later awaited.
 
 ## Works across forwarded buses too
 
@@ -38,7 +39,7 @@ If a forwarded event is handled on another bus and that handler emits a child:
 - the child is linked under the emitting handler's `event_children`
 - forwarding that child onward keeps the same lineage metadata
 
-Use the event-scoped bus in handlers (`event.event_bus` / `event.bus`) so the runtime can attach ancestry correctly.
+Use `event.emit(...)` in handlers so the runtime can attach ancestry and ownership correctly.
 
 See also: [Forwarding Between Buses](./forwarding-between-buses)
 
@@ -83,15 +84,15 @@ class SendReceiptEvent(BaseEvent[str]):
 bus = EventBus('TreeBus')
 
 async def on_checkout(event: CheckoutEvent) -> str:
-    reserve = event.event_bus.emit(ReserveInventoryEvent(order_id=event.order_id))
+    reserve = event.emit(ReserveInventoryEvent(order_id=event.order_id))
     await reserve
     reserve_id = await reserve.event_result()
 
-    charge = event.event_bus.emit(ChargeCardEvent(order_id=event.order_id))
+    charge = event.emit(ChargeCardEvent(order_id=event.order_id))
     await charge
     charge_id = await charge.event_result()
 
-    receipt = event.event_bus.emit(SendReceiptEvent(order_id=event.order_id))
+    receipt = event.emit(SendReceiptEvent(order_id=event.order_id))
     await receipt
     receipt_id = await receipt.event_result()
 
@@ -101,7 +102,7 @@ async def on_reserve(event: ReserveInventoryEvent) -> str:
     return f'reserve:{event.order_id}'
 
 async def on_charge(event: ChargeCardEvent) -> str:
-    fraud = event.event_bus.emit(FraudCheckEvent(order_id=event.order_id))
+    fraud = event.emit(FraudCheckEvent(order_id=event.order_id))
     await fraud
     fraud_status = await fraud.event_result()
     return f'charge:{event.order_id}:{fraud_status}'
@@ -157,13 +158,13 @@ const SendReceiptEvent = BaseEvent.extend('SendReceiptEvent', {
 const bus = new EventBus('TreeBus')
 
 bus.on(CheckoutEvent, async (event) => {
-  const reserve = event.bus!.emit(ReserveInventoryEvent({ order_id: event.order_id }))
+  const reserve = event.emit(ReserveInventoryEvent({ order_id: event.order_id }))
   await reserve.done()
 
-  const charge = event.bus!.emit(ChargeCardEvent({ order_id: event.order_id }))
+  const charge = event.emit(ChargeCardEvent({ order_id: event.order_id }))
   await charge.done()
 
-  const receipt = event.bus!.emit(SendReceiptEvent({ order_id: event.order_id }))
+  const receipt = event.emit(SendReceiptEvent({ order_id: event.order_id }))
   await receipt.done()
 
   return `${reserve.event_result}|${charge.event_result}|${receipt.event_result}`
@@ -171,7 +172,7 @@ bus.on(CheckoutEvent, async (event) => {
 
 bus.on(ReserveInventoryEvent, async (event) => `reserve:${event.order_id}`)
 bus.on(ChargeCardEvent, async (event) => {
-  const fraud = event.bus!.emit(FraudCheckEvent({ order_id: event.order_id }))
+  const fraud = event.emit(FraudCheckEvent({ order_id: event.order_id }))
   await fraud.done()
   return `charge:${event.order_id}:${fraud.event_result}`
 })

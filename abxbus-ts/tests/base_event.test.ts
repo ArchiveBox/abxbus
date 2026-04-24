@@ -100,8 +100,8 @@ test('await event.done() queue-jumps child processing inside handlers', async ()
 
   bus.on(ParentEvent, async (event) => {
     order.push('parent_start')
-    event.bus?.emit(SiblingEvent({}))
-    const child = event.bus?.emit(ChildEvent({}))
+    event.emit(SiblingEvent({}))
+    const child = event.emit(ChildEvent({}))
     assert.ok(child)
     await child.done()
     order.push('parent_end')
@@ -135,8 +135,8 @@ test('await event.eventCompleted() preserves normal queue order inside handlers'
 
   bus.on(ParentEvent, async (event) => {
     order.push('parent_start')
-    event.bus?.emit(SiblingEvent({}))
-    const child = event.bus?.emit(ChildEvent({}))
+    event.emit(SiblingEvent({}))
+    const child = event.emit(ChildEvent({}))
     assert.ok(child)
     await child.eventCompleted()
     order.push('parent_end')
@@ -372,7 +372,7 @@ test('BaseEvent status hooks capture bus reference before event gc', async () =>
 
   const bus = new HookCaptureBus('BaseEventHookCaptureBus')
   const event = HookEvent({})
-  event.bus = bus
+  event.event_bus = bus
 
   event._markStarted()
   event._markCompleted()

@@ -84,11 +84,11 @@ async function main(): Promise<void> {
     log(`[parent:${event.mode}] start`)
 
     // Queue a sibling first so normal queue order has sibling ahead of child.
-    event.bus?.emit(SiblingEvent({ scenario: event.mode }))
+    event.event_bus?.emit(SiblingEvent({ scenario: event.mode }))
     log(`[parent:${event.mode}] sibling queued`)
 
     // Queue child second; this is the event we await in two different ways.
-    const child = event.bus?.emit(ChildEvent({ scenario: event.mode }))!
+    const child = event.emit(ChildEvent({ scenario: event.mode }))
     log(`[parent:${event.mode}] child queued`)
 
     if (event.mode === 'immediate') {

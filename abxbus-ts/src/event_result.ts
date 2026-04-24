@@ -87,7 +87,7 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
   }
 
   get bus(): EventBus {
-    return this.event.bus!
+    return this.event.event_bus!
   }
 
   get handler_id(): string {
@@ -115,7 +115,7 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
   }
 
   private getHookBus(): EventBus | undefined {
-    const root_bus = this.event.bus
+    const root_bus = this.event.event_bus
     if (!root_bus) {
       return undefined
     }

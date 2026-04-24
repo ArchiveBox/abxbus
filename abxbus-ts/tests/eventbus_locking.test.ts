@@ -34,13 +34,13 @@ E) FIFO correctness
 - FIFO order broken with forwarded events.
 
 F) Forwarding & bus context
-- Forwarded event’s event.bus mutates current handler context (wrong bus).
+- Forwarded event’s event.event_bus mutates current handler context (wrong bus).
 - Child events emitted after forwarding are mis-parented.
 - event.event_path diverges between buses.
 - Handler attribution lost when forwarded across buses (tree/log issues).
 
 G) Parent/child tracking
-- Child events not correctly linked to the parent handler when emitted via event.bus.
+- Child events not correctly linked to the parent handler when emitted via event.emit.
 - event_children missing under concurrency due to async timing.
 - event_pending_bus_count not decremented properly, leaving events stuck.
 
@@ -155,7 +155,7 @@ test('global-serial: awaited child jumps ahead of queued events across buses', a
     bus_b.emit(QueuedEvent({}))
     // Emit through the scoped proxy so parent tracking is set up,
     // then also dispatch to bus_b for cross-bus processing.
-    const child = event.bus?.emit(ChildEvent({}))!
+    const child = event.emit(ChildEvent({}))!
     bus_b.emit(child)
     order.push('child_dispatched')
     await child.done()
@@ -326,7 +326,7 @@ test('bus-serial: awaiting child on one bus does not block other bus queue', asy
 
   bus_a.on(ParentEvent, async (event) => {
     order.push('parent_start')
-    const child = event.bus?.emit(ChildEvent({}))!
+    const child = event.emit(ChildEvent({}))!
     await child.done()
     order.push('parent_end')
   })
@@ -793,7 +793,7 @@ test('queue-jump: awaited child preempts queued sibling on same bus', async () =
   bus.on(ParentEvent, async (event) => {
     order.push('parent_start')
     bus.emit(SiblingEvent({}))
-    const child = event.bus?.emit(ChildEvent({}))!
+    const child = event.emit(ChildEvent({}))!
     order.push('child_dispatched')
     await child.done()
     order.push('child_awaited')
@@ -850,7 +850,7 @@ test('queue-jump: same event handlers on separate buses stay isolated without fo
   bus_a.on(ParentEvent, async (event) => {
     order.push('parent_start')
     bus_a.emit(SiblingEvent({}))
-    const shared = event.bus?.emit(SharedEvent({}))!
+    const shared = event.emit(SharedEvent({}))!
     order.push('shared_dispatched')
     await shared.done()
     order.push('shared_awaited')
@@ -1023,9 +1023,9 @@ test('find: past returns most recent completed event (bus-scoped)', async () => 
   assert.ok(found)
   assert.equal(found.value, 2)
   assert.equal(found.event_status, 'completed')
-  assert.ok(found.bus)
-  assert.equal(found.bus.name, 'FindPastBus')
-  assert.equal(typeof found.bus.emit, 'function')
+  assert.ok(found.event_bus)
+  assert.equal(found.event_bus.name, 'FindPastBus')
+  assert.equal(typeof found.emit, 'function')
 })
 
 test('find: past returns in-flight dispatched event and done waits', async () => {
@@ -1043,8 +1043,8 @@ test('find: past returns in-flight dispatched event and done waits', async () =>
   assert.ok(found)
   assert.equal(found.value, 1)
   assert.ok(found.event_status !== 'completed')
-  assert.ok(found.bus)
-  assert.equal(found.bus.name, 'FindFutureBus')
+  assert.ok(found.event_bus)
+  assert.equal(found.event_bus.name, 'FindFutureBus')
 
   resolve()
   const completed = await found.done()
@@ -1064,8 +1064,8 @@ test('find: future waits for next event when none in-flight', async () => {
   const found = await bus.find(DebounceEvent, { past: false, future: 0.2 })
   assert.ok(found)
   assert.equal(found.value, 99)
-  assert.ok(found.bus)
-  assert.equal(found.bus.name, 'FindWaitBus')
+  assert.ok(found.event_bus)
+  assert.equal(found.event_bus.name, 'FindWaitBus')
   await found.done()
 })
 
