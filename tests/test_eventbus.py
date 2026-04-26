@@ -111,7 +111,7 @@ class TestEventBusBasics:
         async def handler(event: RecursiveEvent) -> None:
             seen_levels.append(event.level)
             if event.level < event.max_level:
-                await bus.emit(RecursiveEvent(level=event.level + 1, max_level=event.max_level))
+                await event.emit(RecursiveEvent(level=event.level + 1, max_level=event.max_level))
 
         bus.on(RecursiveEvent, handler)
 
@@ -128,7 +128,7 @@ class TestEventBusBasics:
 
         async def handler(event: RecursiveEvent) -> None:
             if event.level < event.max_level:
-                await bus.emit(RecursiveEvent(level=event.level + 1, max_level=event.max_level))
+                await event.emit(RecursiveEvent(level=event.level + 1, max_level=event.max_level))
 
         bus.on(RecursiveEvent, handler)
 

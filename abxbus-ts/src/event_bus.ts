@@ -730,10 +730,6 @@ export class EventBus {
       original_event.event_path.push(this.label)
     }
 
-    if (!original_event.event_parent_id && !original_event.event_emitted_by_handler_id) {
-      this._resolveImplicitParentHandlerResult()?._linkEmittedChildEvent(original_event)
-    }
-
     if (original_event.event_parent_id && original_event.event_emitted_by_handler_id) {
       const parent_result = original_event.event_parent?.event_results.get(original_event.event_emitted_by_handler_id)
       if (parent_result) {
@@ -946,8 +942,8 @@ export class EventBus {
   async _processEventImmediately<T extends BaseEvent>(event: T, handler_result?: EventResult): Promise<T> {
     const original_event = event._event_original ?? event
     // Find the handler result for the current await call site. Proxy-provided
-    // context covers event.emit(...); async-local context covers direct
-    // bus.emit(...) from inside a handler, including cross-bus emits.
+    // context covers event.emit(...); async-local context lets awaited bus.emit(...)
+    // events queue-jump without implicitly changing their parentage.
     const proxy_result = handler_result?.status === 'started' ? handler_result : undefined
     const currently_active_event_result = proxy_result ?? this.locks._getActiveHandlerResultForCurrentAsyncContext()
     if (!currently_active_event_result) {
@@ -1164,26 +1160,6 @@ export class EventBus {
       return false
     }
     return results.every((result) => result.status === 'completed' || result.status === 'error')
-  }
-
-  private _resolveImplicitParentHandlerResult(): EventResult | null {
-    const active_on_target_bus = this.locks._getActiveHandlerResults().filter((result) => result.status === 'started')
-    if (active_on_target_bus.length === 1) {
-      return active_on_target_bus[0]
-    }
-
-    const active_globally: EventResult[] = []
-    for (const bus of this.all_instances) {
-      for (const result of bus.locks._getActiveHandlerResults()) {
-        if (result.status === 'started') {
-          active_globally.push(result)
-        }
-      }
-    }
-    if (active_globally.length === 1) {
-      return active_globally[0]
-    }
-    return null
   }
 
   // get a proxy wrapper around an Event that will automatically link emitted child events to this bus and handler

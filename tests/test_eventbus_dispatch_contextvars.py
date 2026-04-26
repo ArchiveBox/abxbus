@@ -89,7 +89,7 @@ class TestContextPropagation:
             captured_parent['trace_id'] = trace_id_var.get()
 
             # Dispatch child event
-            child = await bus.emit(ChildEvent())
+            child = await event.emit(ChildEvent())
             return 'parent_done'
 
         async def child_handler(event: ChildEvent) -> str:
@@ -237,7 +237,7 @@ class TestContextPropagation:
             request_id_var.set('parent-value')
 
             # Dispatch child which will modify the context
-            await bus.emit(ChildEvent())
+            await event.emit(ChildEvent())
 
             # Parent's context should be unchanged
             parent_value_after_child = request_id_var.get()
@@ -277,8 +277,8 @@ class TestContextPropagation:
             nonlocal parent_event_id
             parent_event_id = event.event_id
 
-            # Child event should automatically get parent_id set
-            child = await bus.emit(ChildEvent())
+            # Child event should get parent_id set through the explicit child API.
+            child = await event.emit(ChildEvent())
             return 'parent_done'
 
         async def child_handler(event: ChildEvent) -> str:
@@ -319,7 +319,7 @@ class TestContextPropagation:
             results['parent_event_id'] = event.event_id
 
             # Dispatch child - should get both user context AND parent tracking
-            child = await bus.emit(ChildEvent())
+            child = await event.emit(ChildEvent())
             return 'parent_done'
 
         async def child_handler(event: ChildEvent) -> str:
@@ -374,7 +374,7 @@ class TestContextPropagation:
                     'parent_id': event.event_parent_id,
                 }
             )
-            await bus.emit(Level2Event())
+            await event.emit(Level2Event())
             return 'level1_done'
 
         async def level2_handler(event: Level2Event) -> str:
@@ -386,7 +386,7 @@ class TestContextPropagation:
                     'parent_id': event.event_parent_id,
                 }
             )
-            await bus.emit(Level3Event())
+            await event.emit(Level3Event())
             return 'level2_done'
 
         async def level3_handler(event: Level3Event) -> str:

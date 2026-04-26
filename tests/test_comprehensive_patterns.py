@@ -54,15 +54,15 @@ async def test_comprehensive_patterns():
         print(f'\n[{seq}] parent_bus1_handler: START processing {event}')
         results.append((seq, 'parent_start'))
 
-        # Pattern 1: Async dispatch - handlers run after parent completes
+        # Pattern 1: Explicit child dispatch - handlers can run without awaiting here
         print('\n1. Testing async dispatch...')
-        child_event_async = bus1.emit(QueuedChildEvent())
+        child_event_async = event.emit(QueuedChildEvent())
         print(f'   child_event_async.event_status = {child_event_async.event_status}')
         assert child_event_async.event_status != 'completed'
 
         # Pattern 2: Sync dispatch with await - handlers run immediately
         print('\n2. Testing sync dispatch (await)...')
-        child_event_sync = await bus1.emit(ImmediateChildEvent())
+        child_event_sync = await event.emit(ImmediateChildEvent())
         print(f'   child_event_sync.event_status = {child_event_sync.event_status}')
         assert child_event_sync.event_status == 'completed'
 

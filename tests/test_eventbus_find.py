@@ -91,7 +91,7 @@ class TestEventIsChildOf:
             child_event_ref: list[BaseEvent] = []
 
             async def parent_handler(event: ParentEvent) -> str:
-                child = await bus.emit(ChildEvent())
+                child = await event.emit(ChildEvent())
                 child_event_ref.append(child)
                 return 'parent_done'
 
@@ -117,11 +117,11 @@ class TestEventIsChildOf:
             grandchild_ref: list[BaseEvent] = []
 
             async def parent_handler(event: ParentEvent) -> str:
-                await bus.emit(ChildEvent())
+                await event.emit(ChildEvent())
                 return 'parent_done'
 
             async def child_handler(event: ChildEvent) -> str:
-                grandchild = await bus.emit(GrandchildEvent())
+                grandchild = await event.emit(GrandchildEvent())
                 grandchild_ref.append(grandchild)
                 return 'child_done'
 
@@ -178,7 +178,7 @@ class TestEventIsChildOf:
             child_ref: list[BaseEvent] = []
 
             async def parent_handler(event: ParentEvent) -> str:
-                child = await bus.emit(ChildEvent())
+                child = await event.emit(ChildEvent())
                 child_ref.append(child)
                 return 'parent_done'
 
@@ -208,7 +208,7 @@ class TestEventIsParentOf:
             child_ref: list[BaseEvent] = []
 
             async def parent_handler(event: ParentEvent) -> str:
-                child = await bus.emit(ChildEvent())
+                child = await event.emit(ChildEvent())
                 child_ref.append(child)
                 return 'parent_done'
 
@@ -234,11 +234,11 @@ class TestEventIsParentOf:
             grandchild_ref: list[BaseEvent] = []
 
             async def parent_handler(event: ParentEvent) -> str:
-                await bus.emit(ChildEvent())
+                await event.emit(ChildEvent())
                 return 'parent_done'
 
             async def child_handler(event: ChildEvent) -> str:
-                grandchild = await bus.emit(GrandchildEvent())
+                grandchild = await event.emit(GrandchildEvent())
                 grandchild_ref.append(grandchild)
                 return 'child_done'
 
@@ -1059,7 +1059,7 @@ class TestFindWithChildOf:
             child_ref: list[BaseEvent] = []
 
             async def parent_handler(event: ParentEvent) -> str:
-                child = await bus.emit(ChildEvent())
+                child = await event.emit(ChildEvent())
                 child_ref.append(child)
                 return 'parent_done'
 
@@ -1105,11 +1105,11 @@ class TestFindWithChildOf:
             grandchild_ref: list[BaseEvent] = []
 
             async def parent_handler(event: ParentEvent) -> str:
-                await bus.emit(ChildEvent())
+                await event.emit(ChildEvent())
                 return 'parent_done'
 
             async def child_handler(event: ChildEvent) -> str:
-                grandchild = await bus.emit(GrandchildEvent())
+                grandchild = await event.emit(GrandchildEvent())
                 grandchild_ref.append(grandchild)
                 return 'child_done'
 
@@ -1142,7 +1142,7 @@ class TestFindWithChildOf:
 
             # auth_bus handles ParentEvent and dispatches a ChildEvent
             async def auth_handler(event: ParentEvent) -> str:
-                child = await auth_bus.emit(ChildEvent())
+                child = await event.emit(ChildEvent())
                 child_ref.append(child)
                 return 'auth_done'
 
@@ -1172,7 +1172,7 @@ class TestFindWithChildOf:
 
             async def parent_handler(event: ParentEvent) -> str:
                 await asyncio.sleep(0.03)
-                await bus.emit(ChildEvent())
+                await event.emit(ChildEvent())
                 return 'parent_done'
 
             bus.on(ParentEvent, parent_handler)
@@ -1330,7 +1330,7 @@ class TestFindLegacyPatternCoverage:
             child_ref: list[BaseEvent] = []
 
             async def parent_handler(event: ParentEvent) -> str:
-                child = await bus.emit(ChildEvent())
+                child = await event.emit(ChildEvent())
                 child_ref.append(child)
                 return 'parent_done'
 
@@ -1366,7 +1366,7 @@ class TestRaceConditionFix:
 
             async def navigate_handler(event: NavigateEvent) -> str:
                 # This synchronously creates the tab event
-                tab = await bus.emit(TabCreatedEvent(tab_id='06bee4cf-9f51-7e5d-82d3-65f35169329c'))
+                tab = await event.emit(TabCreatedEvent(tab_id='06bee4cf-9f51-7e5d-82d3-65f35169329c'))
                 tab_ref.append(tab)
                 return 'navigate_done'
 
@@ -1393,7 +1393,7 @@ class TestRaceConditionFix:
         try:
 
             async def navigate_handler(event: NavigateEvent) -> str:
-                await bus.emit(TabCreatedEvent(tab_id=f'tab_for_{event.url}'))
+                await event.emit(TabCreatedEvent(tab_id=f'tab_for_{event.url}'))
                 return 'navigate_done'
 
             bus.on(NavigateEvent, navigate_handler)
@@ -1545,7 +1545,7 @@ class TestNewParameterCombinations:
             child_ref: list[BaseEvent] = []
 
             async def parent_handler(event: ParentEvent) -> str:
-                child = await bus.emit(ChildEvent())
+                child = await event.emit(ChildEvent())
                 child_ref.append(child)
                 return 'done'
 
@@ -1576,7 +1576,7 @@ class TestNewParameterCombinations:
             child_ref: list[BaseEvent] = []
 
             async def parent_handler(event: ParentEvent) -> str:
-                child = await bus.emit(ScreenshotEvent(target_id=TARGET_ID_CHILD))
+                child = await event.emit(ScreenshotEvent(target_id=TARGET_ID_CHILD))
                 child_ref.append(child)
                 return 'done'
 

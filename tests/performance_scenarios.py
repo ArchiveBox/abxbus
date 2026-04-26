@@ -644,7 +644,7 @@ async def run_perf_worst_case(input: PerfInput) -> dict[str, Any]:
         nonlocal child_handled, checksum
         child_handled += 1
         checksum += (event.value * 2) + event.iteration
-        gc_event = event.event_bus.emit(WCGrandchild(iteration=event.iteration, value=event.value + 1))
+        gc_event = event.emit(WCGrandchild(iteration=event.iteration, value=event.value + 1))
         if event.event_timeout is not None:
             await hooks.sleep(0)
         await gc_event
@@ -671,7 +671,7 @@ async def run_perf_worst_case(input: PerfInput) -> dict[str, Any]:
                 nonlocal parent_handled_a, checksum
                 parent_handled_a += 1
                 checksum += event.value + 11
-                child = event.event_bus.emit(
+                child = event.emit(
                     WCChild(
                         iteration=event.iteration,
                         value=event.value,

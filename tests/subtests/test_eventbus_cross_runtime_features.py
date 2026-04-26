@@ -69,7 +69,7 @@ async def test_queue_jump_preserves_parent_child_lineage_and_find_visibility() -
 
     async def on_root(event: QueueJumpRootEvent) -> str:
         execution_order.append('root:start')
-        child = event.event_bus.emit(QueueJumpChildEvent())
+        child = event.emit(QueueJumpChildEvent())
         await child
         execution_order.append('root:end')
         return 'root-ok'
@@ -257,7 +257,7 @@ async def test_context_propagates_through_forwarding_and_child_dispatch_with_lin
         captured_parent_request_id = request_id_var.get()
         parent_event_id = event.event_id
 
-        child = event.event_bus.emit(ContextChildEvent())
+        child = event.emit(ContextChildEvent())
         await child
         return 'parent-ok'
 

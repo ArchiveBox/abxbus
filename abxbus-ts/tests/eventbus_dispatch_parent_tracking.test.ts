@@ -96,55 +96,55 @@ test('multiple children from same parent keep same event_parent_id', async () =>
   }
 })
 
-test('bus.emit inside handler auto-links parent when not using event.emit', async () => {
-  const bus = new EventBus('ImplicitParentLinkBus')
+test('bus.emit inside handler does not link parent when not using event.emit', async () => {
+  const bus = new EventBus('ExplicitEventEmitParentLinkBus')
   const child_events: BaseEvent[] = []
 
   bus.on(ParentEvent, (event) => {
-    const child = ChildEvent({ data: `implicit_for_${event.event_id.slice(-4)}` })
+    const child = ChildEvent({ data: `root_for_${event.event_id.slice(-4)}` })
     child_events.push(bus.emit(child))
     return 'parent_done'
   })
   bus.on(ChildEvent, () => 'child_done')
 
-  const parent = bus.emit(ParentEvent({ message: 'implicit_parent' }))
+  const parent = bus.emit(ParentEvent({ message: 'root_parent' }))
   await bus.waitUntilIdle()
   await parent.done()
 
   assert.equal(child_events.length, 1)
   const child = child_events[0]
-  assert.equal(child.event_parent_id, parent.event_id)
-  assert.ok(child.event_emitted_by_handler_id)
-  assert.ok(parent.event_results.has(child.event_emitted_by_handler_id!))
+  assert.equal(child.event_parent_id, null)
+  assert.equal(child.event_emitted_by_handler_id, null)
+  assert.equal(parent.event_children.length, 0)
 })
 
-test('cross-bus bus.emit inside handler auto-links parent when exactly one handler is active', async () => {
-  const bus1 = new EventBus('ImplicitParentLinkBus1')
-  const bus2 = new EventBus('ImplicitParentLinkBus2')
+test('cross-bus bus.emit inside handler does not link parent when exactly one handler is active', async () => {
+  const bus1 = new EventBus('ExplicitEventEmitParentLinkBus1')
+  const bus2 = new EventBus('ExplicitEventEmitParentLinkBus2')
   const emitted_children: BaseEvent[] = []
 
   bus1.on(ParentEvent, (event) => {
-    const child = ChildEvent({ data: `cross_implicit_for_${event.event_id.slice(-4)}` })
+    const child = ChildEvent({ data: `cross_root_for_${event.event_id.slice(-4)}` })
     emitted_children.push(bus2.emit(child))
     return 'parent_done'
   })
   bus2.on(ChildEvent, () => 'child_done')
 
-  const parent = bus1.emit(ParentEvent({ message: 'cross_implicit_parent' }))
+  const parent = bus1.emit(ParentEvent({ message: 'cross_root_parent' }))
   await Promise.all([bus1.waitUntilIdle(), bus2.waitUntilIdle()])
   await parent.done()
 
   assert.equal(emitted_children.length, 1)
   const child = emitted_children[0]
-  assert.equal(child.event_parent_id, parent.event_id)
-  assert.ok(child.event_emitted_by_handler_id)
-  assert.ok(parent.event_results.has(child.event_emitted_by_handler_id!))
+  assert.equal(child.event_parent_id, null)
+  assert.equal(child.event_emitted_by_handler_id, null)
+  assert.equal(parent.event_children.length, 0)
 })
 
 test('bus.emit outside handler does not guess a parent when multiple handlers are active', async () => {
-  const bus1 = new EventBus('ImplicitParentAmbiguousBus1')
-  const bus2 = new EventBus('ImplicitParentAmbiguousBus2')
-  const bus3 = new EventBus('ImplicitParentAmbiguousBus3')
+  const bus1 = new EventBus('NoParentGuessAmbiguousBus1')
+  const bus2 = new EventBus('NoParentGuessAmbiguousBus2')
+  const bus3 = new EventBus('NoParentGuessAmbiguousBus3')
 
   let release_a!: () => void
   let release_b!: () => void
@@ -489,8 +489,8 @@ test('parent completion waits for all children', async () => {
   }
 })
 
-test('bus.emit child does not block parent completion by default', async () => {
-  const bus = new EventBus('DetachedChildCompletionBus')
+test('bus.emit inside a handler dispatches a root event by default', async () => {
+  const bus = new EventBus('RootChildCompletionBus')
   let child_started_resolve: (() => void) | null = null
   const child_started = new Promise<void>((resolve) => {
     child_started_resolve = resolve
@@ -515,11 +515,12 @@ test('bus.emit child does not block parent completion by default', async () => {
   try {
     await child_started
     assert.ok(child_ref)
-    assert.equal(child_ref.event_parent_id, parent.event_id)
+    assert.equal(child_ref.event_parent_id, null)
+    assert.equal(child_ref.event_emitted_by_handler_id, null)
     assert.equal(child_ref.event_blocks_parent_completion, false)
     assert.equal(
       parent.event_children.some((child) => child.event_id === child_ref?.event_id),
-      true
+      false
     )
 
     await parent.eventCompleted()
@@ -534,8 +535,8 @@ test('bus.emit child does not block parent completion by default', async () => {
   }
 })
 
-test('outside await of detached bus.emit child.done() does not promote parent completion blocking', async () => {
-  const bus = new EventBus('DetachedChildExternalDoneBus')
+test('outside await of bus.emit child.done() keeps it independent of the active handler', async () => {
+  const bus = new EventBus('RootChildExternalDoneBus')
   let parent_holding_resolve: (() => void) | null = null
   const parent_holding = new Promise<void>((resolve) => {
     parent_holding_resolve = resolve
@@ -565,7 +566,8 @@ test('outside await of detached bus.emit child.done() does not promote parent co
   try {
     await parent_holding
     assert.ok(child_ref)
-    assert.equal(child_ref.event_parent_id, parent.event_id)
+    assert.equal(child_ref.event_parent_id, null)
+    assert.equal(child_ref.event_emitted_by_handler_id, null)
     assert.equal(child_ref.event_blocks_parent_completion, false)
 
     const child_done = child_ref.done()
@@ -585,8 +587,8 @@ test('outside await of detached bus.emit child.done() does not promote parent co
   }
 })
 
-test('outside eventCompleted wait of detached bus.emit child does not promote parent completion blocking', async () => {
-  const bus = new EventBus('DetachedChildExternalEventCompletedBus')
+test('outside eventCompleted wait of bus.emit child keeps it independent of the active handler', async () => {
+  const bus = new EventBus('RootChildExternalEventCompletedBus')
   let parent_holding_resolve: (() => void) | null = null
   const parent_holding = new Promise<void>((resolve) => {
     parent_holding_resolve = resolve
@@ -616,7 +618,8 @@ test('outside eventCompleted wait of detached bus.emit child does not promote pa
   try {
     await parent_holding
     assert.ok(child_ref)
-    assert.equal(child_ref.event_parent_id, parent.event_id)
+    assert.equal(child_ref.event_parent_id, null)
+    assert.equal(child_ref.event_emitted_by_handler_id, null)
     assert.equal(child_ref.event_blocks_parent_completion, false)
 
     const child_completed = child_ref.eventCompleted()
@@ -636,22 +639,25 @@ test('outside eventCompleted wait of detached bus.emit child does not promote pa
   }
 })
 
-test('awaited bus.emit child upgrades parent completion blocking flag', async () => {
-  const bus = new EventBus('AwaitedBusEmitBlocksParentBus')
+test('awaited bus.emit child remains independent and does not block parent completion', async () => {
+  const bus = new EventBus('AwaitedBusEmitRootBus')
   let child_ref: BaseEvent | undefined
 
   bus.on(ParentEvent, async () => {
     child_ref = bus.emit(ChildEvent({ data: 'awaited' }))
+    assert.equal(child_ref.event_parent_id, null)
+    assert.equal(child_ref.event_emitted_by_handler_id, null)
     assert.equal(child_ref.event_blocks_parent_completion, false)
     await child_ref.done()
-    assert.equal(child_ref.event_blocks_parent_completion, true)
+    assert.equal(child_ref.event_blocks_parent_completion, false)
     return 'parent'
   })
   bus.on(ChildEvent, () => 'child')
 
   await bus.emit(ParentEvent({ message: 'awaited' })).done()
   assert.ok(child_ref)
-  assert.equal(child_ref.event_blocks_parent_completion, true)
+  assert.equal(child_ref.event_parent_id, null)
+  assert.equal(child_ref.event_blocks_parent_completion, false)
 })
 
 test('forwarded events are not counted as parent event_children', async () => {

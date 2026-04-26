@@ -1584,7 +1584,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         self._event_dispatch_context = dispatch_context
 
     def _mark_blocks_parent_completion_if_awaited_from_emitting_handler(self) -> None:
-        """Upgrade same-handler awaited children emitted via bus.emit() into blocking children."""
+        """Upgrade same-handler awaited children into blocking children when they are explicitly linked."""
         if self.event_blocks_parent_completion:
             return
         from abxbus.event_bus import get_current_event, get_current_handler_id
@@ -1691,7 +1691,25 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
     def emit(self, event: T_EmittedEvent) -> T_EmittedEvent:
         """Emit an explicitly-owned child event that blocks this event's completion."""
+        from abxbus.event_bus import get_current_event, get_current_handler_id
+
         event.event_blocks_parent_completion = True
+        if event.event_parent_id is None and event.event_id != self.event_id:
+            event.event_parent_id = self.event_id
+
+        current_event = get_current_event()
+        current_handler_id = get_current_handler_id()
+        if (
+            current_event is not None
+            and current_handler_id is not None
+            and current_event.event_id == self.event_id
+            and event.event_id != self.event_id
+            and current_handler_id in current_event.event_results
+        ):
+            if event.event_emitted_by_handler_id is None:
+                event.event_emitted_by_handler_id = current_handler_id
+            current_event.event_results[current_handler_id].event_children.append(event)
+
         return self.bus.emit(event)
 
 

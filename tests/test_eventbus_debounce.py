@@ -31,7 +31,7 @@ class TestDebouncingPattern:
             child_ref: list[BaseEvent] = []
 
             async def parent_handler(event: ParentEvent) -> str:
-                child = await bus.emit(ScreenshotEvent(target_id='0c1ccf21-65c0-7390-8b64-9182e985740e'))
+                child = await event.emit(ScreenshotEvent(target_id='0c1ccf21-65c0-7390-8b64-9182e985740e'))
                 child_ref.append(child)
                 return 'parent_done'
 

@@ -345,8 +345,22 @@ type PythonRunner = {
 }
 
 const resolvePython = (): PythonRunner | null => {
+  if (process.env.ABXBUS_PYTHON_BIN) {
+    const probe = runCommand(process.env.ABXBUS_PYTHON_BIN, ['--version'])
+    if (probe.status === 0) {
+      return { command: process.env.ABXBUS_PYTHON_BIN, args_prefix: [], label: process.env.ABXBUS_PYTHON_BIN }
+    }
+  }
+
+  const uv_probe = runCommand('uv', ['--version'])
+  if (uv_probe.status === 0) {
+    const uv_python_probe = runCommand('uv', ['run', 'python', '--version'])
+    if (uv_python_probe.status === 0) {
+      return { command: 'uv', args_prefix: ['run', 'python'], label: 'uv run python' }
+    }
+  }
+
   const candidates = [
-    process.env.ABXBUS_PYTHON_BIN,
     resolve(repo_root, '.venv', 'bin', 'python'),
     resolve(repo_root, '.venv', 'Scripts', 'python.exe'),
     'python3',
@@ -360,14 +374,6 @@ const resolvePython = (): PythonRunner | null => {
     const probe = runCommand(candidate, ['--version'])
     if (probe.status === 0) {
       return { command: candidate, args_prefix: [], label: candidate }
-    }
-  }
-
-  const uv_probe = runCommand('uv', ['--version'])
-  if (uv_probe.status === 0) {
-    const uv_python_probe = runCommand('uv', ['run', 'python', '--version'])
-    if (uv_python_probe.status === 0) {
-      return { command: 'uv', args_prefix: ['run', 'python'], label: 'uv run python' }
     }
   }
 

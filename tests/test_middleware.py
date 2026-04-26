@@ -521,7 +521,7 @@ class TestHandlerMiddleware:
             return None
 
         async def root_handler(event: RootEvent) -> None:
-            child = event.event_bus.emit(ChildEvent())
+            child = event.emit(ChildEvent())
             await child
 
         bus.on(RootEvent, root_handler)

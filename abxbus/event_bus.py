@@ -1107,30 +1107,10 @@ class EventBus:
         assert event.event_created_at, 'Missing event.event_created_at: str = monotonic_datetime()'
         assert event.event_type and event.event_type.isidentifier(), 'Missing event.event_type: str'
 
-        # Automatically set event_parent_id from context when emitting a NEW child event.
-        # If we are forwarding the same event object from inside its own handler, keep the
-        # existing parent linkage untouched to avoid self-parent cycles.
-        if event.event_parent_id is None:
-            current_event: BaseEvent[Any] | None = EventBus.current_event_context.get()
-            if current_event is not None and event.event_id != current_event.event_id:
-                event.event_parent_id = current_event.event_id
-
         # Capture emit-time context for propagation to handlers (GitHub issue #20)
         # This ensures ContextVars set before emit() are accessible in handlers
         if event._get_dispatch_context() is None:  # pyright: ignore[reportPrivateUsage]
             event._set_dispatch_context(contextvars.copy_context())  # pyright: ignore[reportPrivateUsage]
-
-        # Track child events - if we're inside a handler, add this event to the handler's event_children list
-        # Only track if this is a NEW event (not forwarding an existing event)
-        current_handler_id = EventBus.current_handler_id_context.get()
-        if current_handler_id is not None:
-            current_event = EventBus.current_event_context.get()
-            if current_event is not None and current_handler_id in current_event.event_results:
-                # Only add as child if it's a different event (not forwarding the same event)
-                if event.event_id != current_event.event_id:
-                    if event.event_emitted_by_handler_id is None:
-                        event.event_emitted_by_handler_id = current_handler_id
-                    current_event.event_results[current_handler_id].event_children.append(event)
 
         # Add this EventBus label to the event_path if not already there
         if self.label not in event.event_path:

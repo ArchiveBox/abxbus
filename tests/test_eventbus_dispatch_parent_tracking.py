@@ -205,8 +205,9 @@ class TestParentEventTracking:
         captured_events: list[tuple[str, BaseEvent[Any], BaseEvent[Any] | None]] = []
 
         async def bus1_handler(event: BaseEvent[Any]) -> str:
-            # Dispatch child to bus2
+            # Explicitly link a child, then forward it to bus2.
             child = ChildEvent(data='cross_bus_child')
+            event.emit(child)
             bus2.emit(child)
             captured_events.append(('bus1', event, child))
             return 'bus1_handled'
@@ -477,8 +478,8 @@ class TestParentEventTracking:
             assert child.event_blocks_parent_completion is True
             assert child.event_status == 'completed'
 
-    async def test_bus_emit_child_does_not_block_parent_completion_by_default(self, eventbus: EventBus):
-        """A detached child keeps ancestry metadata but does not hold the parent event open."""
+    async def test_bus_emit_inside_handler_dispatches_detached_event_by_default(self, eventbus: EventBus):
+        """bus.emit() inside a handler dispatches an independent event by default."""
         child_started = asyncio.Event()
         release_child = asyncio.Event()
         captured_child: ChildEvent | None = None
@@ -501,9 +502,10 @@ class TestParentEventTracking:
 
         await child_started.wait()
         assert captured_child is not None
-        assert captured_child.event_parent_id == parent.event_id
+        assert captured_child.event_parent_id is None
+        assert captured_child.event_emitted_by_handler_id is None
         assert captured_child.event_blocks_parent_completion is False
-        assert captured_child in parent.event_children
+        assert captured_child not in parent.event_children
 
         await asyncio.wait_for(parent_event.event_completed(), timeout=1.0)
         assert parent.event_status == 'completed'
@@ -533,7 +535,7 @@ class TestParentEventTracking:
         assert captured_child.event_blocks_parent_completion is True
         assert captured_child in parent.event_children
 
-    async def test_awaiting_bus_emitted_child_upgrades_blocking_flag(self, eventbus: EventBus):
+    async def test_awaiting_bus_emitted_child_keeps_independent_parentage(self, eventbus: EventBus):
         captured_child: ChildEvent | None = None
 
         async def parent_handler(event: ParentEvent) -> str:
@@ -541,7 +543,7 @@ class TestParentEventTracking:
             captured_child = eventbus.emit(ChildEvent(data='awaited_detached'))
             assert captured_child.event_blocks_parent_completion is False
             await captured_child
-            assert captured_child.event_blocks_parent_completion is True
+            assert captured_child.event_blocks_parent_completion is False
             return 'parent'
 
         async def child_handler(event: ChildEvent) -> str:
@@ -550,6 +552,9 @@ class TestParentEventTracking:
         eventbus.on('ParentEvent', parent_handler)
         eventbus.on('ChildEvent', child_handler)
 
-        await eventbus.emit(ParentEvent(message='awaited_detached_test'))
+        parent = await eventbus.emit(ParentEvent(message='awaited_detached_test'))
         assert captured_child is not None
-        assert captured_child.event_blocks_parent_completion is True
+        assert captured_child.event_parent_id is None
+        assert captured_child.event_emitted_by_handler_id is None
+        assert captured_child.event_blocks_parent_completion is False
+        assert captured_child not in parent.event_children

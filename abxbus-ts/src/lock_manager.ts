@@ -255,8 +255,6 @@ export class LockManager {
   }
 
   // Per-bus check: true only if this specific bus has a handler on its stack.
-  // This is intentionally broader than the async-local handler context and is
-  // only used for implicit parent-linking heuristics.
   _isAnyHandlerActive(): boolean {
     return this.active_handler_results.length > 0
   }
