@@ -1,0 +1,39 @@
+abxbus/base_event.py
+  305ee7dbd16b3e44 1693
+tests/test_eventbus_dispatch_parent_tracking.py
+  305ee7dbd16b3e44 439-440,448-453,485-521,559,565-567
+README.md
+  305ee7dbd16b3e44 1041,1044-1048
+abxbus-ts/src/base_event.ts
+  305ee7dbd16b3e44 188
+abxbus-ts/tests/eventbus_dispatch_parent_tracking.test.ts
+  305ee7dbd16b3e44 437,452-456,458-459,496-538
+abxbus-ts/package.json
+  305ee7dbd16b3e44 3
+docs/features/parent-child-tracking.mdx
+  305ee7dbd16b3e44 29-30
+abxbus-ts/tests/eventbus_timeout.test.ts
+  305ee7dbd16b3e44 674-676,678,690,724-725,727,729-731,734,768-772,775,821-824,955-958,981-984,995-998,1005-1006,1078-1079,1081,1103-1104,1106,1200,1203,1207-1208,1210,1213,1217-1218,1244-1246,1292,1305,1348,1351-1354,1364,1377,1404,1407-1409,1413-1414
+pyproject.toml
+  305ee7dbd16b3e44 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "cc0ae523447b6f7a1e10c4fc60788e160ab6f6a2",
+  "prompts": {
+    "305ee7dbd16b3e44": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dce22-d203-71d0-966d-c3304c639b70",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "messages": [],
+      "total_additions": 230,
+      "total_deletions": 115,
+      "accepted_lines": 230,
+      "overriden_lines": 0
+    }
+  }
+}
