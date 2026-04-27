@@ -1,4 +1,4 @@
-import { context, SpanStatusCode, trace, type Context, type Span, type Tracer } from '@opentelemetry/api'
+import { ROOT_CONTEXT, SpanStatusCode, trace, type Context, type Span, type Tracer } from '@opentelemetry/api'
 
 import type { BaseEvent } from './base_event.js'
 import type { EventBus } from './event_bus.js'
@@ -54,7 +54,7 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
       return existing
     }
 
-    const parent_context = this.parentContextForEvent(event)
+    const parent_context = this.parentContextForEvent(event) ?? ROOT_CONTEXT
     const span = this.tracer.startSpan(
       `abxbus.event ${event.event_type}`,
       {
@@ -72,7 +72,7 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
       },
       parent_context
     )
-    const span_context = this.trace_api.setSpan(parent_context ?? context.active(), span)
+    const span_context = this.trace_api.setSpan(parent_context, span)
     this.event_spans.set(event.event_id, span)
     this.event_contexts.set(event.event_id, span_context)
     return span
@@ -105,7 +105,7 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
     }
 
     const parent_context =
-      this.event_contexts.get(event.event_id) ?? this.trace_api.setSpan(context.active(), this.startEventSpan(eventbus, event))
+      this.event_contexts.get(event.event_id) ?? this.trace_api.setSpan(ROOT_CONTEXT, this.startEventSpan(eventbus, event))
     const span = this.tracer.startSpan(
       `abxbus.handler ${event.event_type} ${event_result.handler_name}`,
       {

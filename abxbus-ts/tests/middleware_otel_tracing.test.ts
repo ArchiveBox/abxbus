@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import type {
-  Context,
-  Span,
-  SpanAttributes,
-  SpanAttributeValue,
-  SpanContext,
-  SpanOptions,
-  SpanStatus,
-  TimeInput,
-  Tracer,
+import {
+  ROOT_CONTEXT,
+  type Context,
+  type Span,
+  type SpanAttributes,
+  type SpanAttributeValue,
+  type SpanContext,
+  type SpanOptions,
+  type SpanStatus,
+  type TimeInput,
+  type Tracer,
 } from '@opentelemetry/api'
 
 import { BaseEvent, EventBus, OtelTracingMiddleware } from '../src/index.js'
@@ -151,6 +152,7 @@ test('OtelTracingMiddleware creates event and handler spans with child event par
   assert.ok(parent_handler_span)
   assert.ok(child_event_span)
   assert.ok(child_handler_span)
+  assert.equal(parent_event_span.parent_context, ROOT_CONTEXT)
   assert.equal(parent_event_span.ended, true)
   assert.equal(parent_handler_span.ended, true)
   assert.equal(child_event_span.ended, true)
