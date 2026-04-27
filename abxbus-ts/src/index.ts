@@ -6,6 +6,8 @@ export { EventBus } from './event_bus.js'
 export type { EventBusJSON, EventBusOptions } from './event_bus.js'
 export { monotonicDatetime } from './helpers.js'
 export type { EventBusMiddleware, EventBusMiddlewareCtor, EventBusMiddlewareInput } from './middlewares.js'
+export { OtelTracingMiddleware } from './middleware_otel_tracing.js'
+export type { OtelTracingMiddlewareOptions } from './middleware_otel_tracing.js'
 export {
   EventHandlerTimeoutError,
   EventHandlerCancelledError,
