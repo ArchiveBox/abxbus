@@ -6,6 +6,7 @@ import {
   type Span,
   type SpanAttributeValue,
   type SpanAttributes,
+  type SpanContext,
   type Tracer,
 } from '@opentelemetry/api'
 
@@ -17,9 +18,20 @@ import type { EventStatus } from './types.js'
 
 type OpenTelemetryTraceApi = Pick<typeof trace, 'getTracer' | 'setSpan'>
 
+export type OtelTracingSpanFactoryInput = {
+  name: string
+  span_context: SpanContext
+  parent_span_context?: SpanContext
+  attributes: SpanAttributes
+  start_time?: Date
+}
+
+export type OtelTracingSpanFactory = (input: OtelTracingSpanFactoryInput) => Span
+
 export type OtelTracingMiddlewareOptions = {
   tracer?: Tracer
   trace_api?: OpenTelemetryTraceApi
+  span_factory?: OtelTracingSpanFactory
   root_span_name?: string | ((eventbus: EventBus, event: BaseEvent) => string)
   root_span_attributes?: SpanAttributes | ((eventbus: EventBus, event: BaseEvent) => SpanAttributes)
 }
@@ -27,6 +39,7 @@ export type OtelTracingMiddlewareOptions = {
 export class OtelTracingMiddleware implements EventBusMiddleware {
   private readonly tracer: Tracer
   private readonly trace_api: OpenTelemetryTraceApi
+  private readonly span_factory?: OtelTracingSpanFactory
   private readonly root_span_name: OtelTracingMiddlewareOptions['root_span_name']
   private readonly root_span_attributes: OtelTracingMiddlewareOptions['root_span_attributes']
   private readonly root_spans = new Map<string, Span>()
@@ -39,12 +52,16 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
   constructor(options: OtelTracingMiddlewareOptions = {}) {
     this.trace_api = options.trace_api ?? trace
     this.tracer = options.tracer ?? this.trace_api.getTracer('abxbus')
+    this.span_factory = options.span_factory
     this.root_span_name = options.root_span_name
     this.root_span_attributes = options.root_span_attributes
   }
 
   onEventChange(eventbus: EventBus, event: BaseEvent, status: EventStatus): void {
     if (status === 'started') {
+      if (this.span_factory) {
+        return
+      }
       this.startEventSpan(eventbus, event)
       return
     }
@@ -56,12 +73,15 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
 
   onEventResultChange(eventbus: EventBus, event: BaseEvent, event_result: EventResult, status: EventStatus): void {
     if (status === 'started') {
+      if (this.span_factory) {
+        return
+      }
       this.startHandlerSpan(eventbus, event, event_result)
       return
     }
 
     if (status === 'completed') {
-      this.completeHandlerSpan(event_result)
+      this.completeHandlerSpan(eventbus, event, event_result)
     }
   }
 
@@ -98,6 +118,11 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
   }
 
   private completeEventSpan(eventbus: EventBus, event: BaseEvent): void {
+    if (this.span_factory) {
+      this.completeEventSpanWithFactory(eventbus, event)
+      return
+    }
+
     const span = this.event_spans.get(event.event_id) ?? this.startEventSpan(eventbus, event)
     if (event.event_errors.length > 0) {
       recordSpanError(span, event.event_errors[0])
@@ -152,7 +177,12 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
     return span
   }
 
-  private completeHandlerSpan(event_result: EventResult): void {
+  private completeHandlerSpan(eventbus: EventBus, event: BaseEvent, event_result: EventResult): void {
+    if (this.span_factory) {
+      this.completeHandlerSpanWithFactory(eventbus, event, event_result)
+      return
+    }
+
     const span = this.handler_spans.get(event_result.id)
     if (!span) {
       return
@@ -226,10 +256,189 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
 
     return event.event_parent_id ? this.event_contexts.get(event.event_parent_id) : undefined
   }
+
+  private completeEventSpanWithFactory(eventbus: EventBus, event: BaseEvent): void {
+    const root_event = rootEventForEvent(eventbus, event)
+    const trace_id = traceIdForRootEvent(root_event.event_id)
+    const event_context = eventSpanContext(trace_id, event.event_id)
+    const start_time = dateFromIso(event.event_started_at)
+    const end_time = endTimeAfterStart(start_time, dateFromIso(event.event_completed_at))
+
+    if (!event.event_parent_id) {
+      const root_span = this.span_factory!({
+        name: resolveRootSpanName(this.root_span_name, eventbus, event),
+        span_context: rootSpanContext(trace_id, event.event_id),
+        attributes: rootSpanAttributes(this.root_span_attributes, eventbus, event),
+        start_time,
+      })
+      root_span.setStatus({ code: SpanStatusCode.OK })
+      root_span.end(end_time)
+    }
+
+    const span = this.span_factory!({
+      name: `abxbus.event ${event.event_type}`,
+      span_context: event_context,
+      parent_span_context: parentSpanContextForEvent(event, trace_id),
+      attributes: eventSpanAttributes(eventbus, event),
+      start_time,
+    })
+    if (event.event_errors.length > 0) {
+      recordSpanError(span, event.event_errors[0])
+    } else {
+      span.setStatus({ code: SpanStatusCode.OK })
+    }
+    span.end(end_time)
+  }
+
+  private completeHandlerSpanWithFactory(eventbus: EventBus, event: BaseEvent, event_result: EventResult): void {
+    const root_event = rootEventForEvent(eventbus, event)
+    const trace_id = traceIdForRootEvent(root_event.event_id)
+    const start_time = dateFromIso(event_result.started_at)
+    const span = this.span_factory!({
+      name: `abxbus.handler ${event.event_type} ${event_result.handler_name}`,
+      span_context: handlerSpanContext(trace_id, event_result.event_id, event_result.handler_id),
+      parent_span_context: eventSpanContext(trace_id, event.event_id),
+      attributes: handlerSpanAttributes(eventbus, event, event_result),
+      start_time,
+    })
+
+    if (event_result.error !== undefined) {
+      recordSpanError(span, event_result.error)
+    } else {
+      span.setStatus({ code: SpanStatusCode.OK })
+    }
+    span.end(endTimeAfterStart(start_time, dateFromIso(event_result.completed_at)))
+  }
 }
 
 function handlerSpanKey(event_id: string, handler_id: string): string {
   return `${event_id}:${handler_id}`
+}
+
+function eventSpanAttributes(eventbus: EventBus, event: BaseEvent): SpanAttributes {
+  return compactAttributes({
+    'abxbus.bus.id': eventbus.id,
+    'abxbus.bus.name': eventbus.name,
+    'abxbus.event.id': event.event_id,
+    'abxbus.event.type': event.event_type,
+    'abxbus.event.version': event.event_version,
+    'abxbus.event.session_id': stringValue((event as { session_id?: unknown }).session_id),
+    'abxbus.event.parent_id': event.event_parent_id,
+    'abxbus.event.emitted_by_handler_id': event.event_emitted_by_handler_id,
+    'abxbus.event.path': event.event_path.join(' '),
+    'abxbus.event.status': event.event_status,
+    'abxbus.event.result_count': event.event_results.size,
+    'abxbus.event.error_count': event.event_errors.length,
+    'abxbus.event.child_count': event.event_children.length,
+  })
+}
+
+function handlerSpanAttributes(eventbus: EventBus, event: BaseEvent, event_result: EventResult): SpanAttributes {
+  return compactAttributes({
+    'abxbus.bus.id': eventbus.id,
+    'abxbus.bus.name': eventbus.name,
+    'abxbus.event.id': event.event_id,
+    'abxbus.event.type': event.event_type,
+    'abxbus.handler.id': event_result.handler_id,
+    'abxbus.handler.name': event_result.handler_name,
+    'abxbus.handler.file_path': event_result.handler_file_path,
+    'abxbus.handler.event_pattern': event_result.handler.event_pattern,
+    'abxbus.event_result.id': event_result.id,
+    'abxbus.event_result.status': event_result.status,
+    'abxbus.handler.child_count': event_result.event_children.length,
+  })
+}
+
+function rootSpanAttributes(
+  root_span_attributes: OtelTracingMiddlewareOptions['root_span_attributes'],
+  eventbus: EventBus,
+  event: BaseEvent
+): SpanAttributes {
+  const session_id = stringValue((event as { session_id?: unknown }).session_id)
+  return compactAttributes({
+    ...resolveAttributes(root_span_attributes, eventbus, event),
+    'abxbus.trace.root': true,
+    'abxbus.bus.id': eventbus.id,
+    'abxbus.bus.name': eventbus.name,
+    'abxbus.root_event.id': event.event_id,
+    'abxbus.root_event.type': event.event_type,
+    'abxbus.root_event.session_id': session_id,
+    'abxbus.root_event.status': event.event_status,
+    'abxbus.root_event.error_count': event.event_errors.length,
+    'abxbus.root_event.child_count': event.event_children.length,
+  })
+}
+
+function rootEventForEvent(eventbus: EventBus, event: BaseEvent): BaseEvent {
+  let current = event._event_original ?? event
+  const seen = new Set<string>()
+  while (current.event_parent_id && !seen.has(current.event_id)) {
+    seen.add(current.event_id)
+    const parent = eventbus.findEventById(current.event_parent_id)
+    if (!parent) {
+      break
+    }
+    current = parent._event_original ?? parent
+  }
+  return current
+}
+
+function parentSpanContextForEvent(event: BaseEvent, trace_id: string): SpanContext {
+  if (!event.event_parent_id) {
+    return rootSpanContext(trace_id, event.event_id)
+  }
+
+  if (event.event_emitted_by_handler_id) {
+    return handlerSpanContext(trace_id, event.event_parent_id, event.event_emitted_by_handler_id)
+  }
+
+  return eventSpanContext(trace_id, event.event_parent_id)
+}
+
+function rootSpanContext(trace_id: string, event_id: string): SpanContext {
+  return {
+    traceId: trace_id,
+    spanId: deterministicSpanId(`abxbus.root:${event_id}`),
+    traceFlags: 1,
+  }
+}
+
+function eventSpanContext(trace_id: string, event_id: string): SpanContext {
+  return {
+    traceId: trace_id,
+    spanId: deterministicSpanId(`abxbus.event:${event_id}`),
+    traceFlags: 1,
+  }
+}
+
+function handlerSpanContext(trace_id: string, event_id: string, handler_id: string): SpanContext {
+  return {
+    traceId: trace_id,
+    spanId: deterministicSpanId(`abxbus.handler:${event_id}:${handler_id}`),
+    traceFlags: 1,
+  }
+}
+
+function traceIdForRootEvent(event_id: string): string {
+  return `${fnv1a64Hex(`abxbus.trace.a:${event_id}`)}${fnv1a64Hex(`abxbus.trace.b:${event_id}`)}`
+}
+
+function deterministicSpanId(input: string): string {
+  return fnv1a64Hex(input)
+}
+
+function fnv1a64Hex(input: string): string {
+  let hash = 0xcbf29ce484222325n
+  const prime = 0x100000001b3n
+  const mask = 0xffffffffffffffffn
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= BigInt(input.charCodeAt(index))
+    hash = (hash * prime) & mask
+  }
+  if (hash === 0n) {
+    hash = 1n
+  }
+  return hash.toString(16).padStart(16, '0')
 }
 
 function dateFromIso(value: string | null | undefined): Date | undefined {
