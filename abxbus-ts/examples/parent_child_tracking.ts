@@ -66,12 +66,10 @@ async function main(): Promise<void> {
     await awaitedChild.done()
     console.log(`  parent resumed after awaited child.done(): ${shortId(awaitedChild.event_id)}`)
 
-    const backgroundChild = event.event_bus?.emit(ChildEvent({ stage: 'background-child' }))
-    if (backgroundChild) {
-      console.log(
-        `  parent dispatched second child: ${backgroundChild.event_type}#${shortId(backgroundChild.event_id)} parent_id=${shortId(backgroundChild.event_parent_id)}`
-      )
-    }
+    const backgroundChild = event.emit(ChildEvent({ stage: 'background-child' }))
+    console.log(
+      `  parent dispatched linked background child: ${backgroundChild.event_type}#${shortId(backgroundChild.event_id)} parent_id=${shortId(backgroundChild.event_parent_id)}`
+    )
 
     // Parent also dispatches a GrandchildEvent type directly via event.emit.
     // This is still automatically linked to the parent event.

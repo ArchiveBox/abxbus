@@ -88,7 +88,7 @@ order: list[str] = []
 
 async def on_parent(event: ParentEvent) -> None:
     order.append('parent_start')
-    # Explicitly detached: the sibling stays queued until the owned child finishes.
+    # Detached top-level work: no parent link is recorded for the sibling.
     bus.emit(SiblingEvent())
     child = event.emit(ChildEvent())
     await child
@@ -129,7 +129,7 @@ const order: string[] = []
 
 bus.on(ParentEvent, async (event) => {
   order.push('parent_start')
-  // Explicitly detached: the sibling stays queued until the owned child finishes.
+  // Detached top-level work: no parent link is recorded for the sibling.
   bus.emit(SiblingEvent({}))
   const child = event.emit(ChildEvent({}))
   await child.done()

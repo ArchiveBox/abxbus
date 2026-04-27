@@ -38,12 +38,12 @@ async def main() -> None:
 
         async def root_fast_handler(event: RootEvent) -> str:
             await delay_ms(10)
-            child = event.event_bus.emit(ChildEvent(tab_id='tab-123', event_timeout=0.1))
+            child = event.emit(ChildEvent(tab_id='tab-123', event_timeout=0.1))
             await child
             return 'root_fast_handler_ok'
 
         async def root_slow_handler(event: RootEvent) -> str:
-            event.event_bus.emit(ChildEvent(tab_id='tab-timeout', event_timeout=0.1))
+            event.emit(ChildEvent(tab_id='tab-timeout', event_timeout=0.1))
             await delay_ms(400)
             return 'root_slow_handler_timeout'
 
@@ -56,7 +56,7 @@ async def main() -> None:
 
         async def child_fast_handler(event: ChildEvent) -> str:
             await delay_ms(10)
-            grandchild = event.event_bus.emit(GrandchildEvent(status='ok', event_timeout=0.05))
+            grandchild = event.emit(GrandchildEvent(status='ok', event_timeout=0.05))
             await grandchild
             return 'child_handler_ok'
 

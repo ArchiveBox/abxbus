@@ -43,7 +43,7 @@ async function main(): Promise<void> {
   }
 
   async function root_slow_handler(event: InstanceType<typeof RootEvent>): Promise<string> {
-    event.event_bus?.emit(ChildEvent({ tab_id: 'tab-timeout', event_timeout: 0.1 }))
+    event.emit(ChildEvent({ tab_id: 'tab-timeout', event_timeout: 0.1 }))
     await delay(400)
     return 'root_slow_handler_timeout'
   }

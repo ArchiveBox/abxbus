@@ -14,20 +14,25 @@ Repository example files:
 ## What gets tracked
 
 - `event_parent_id`: points from child -> parent event
-- `event_children`: aggregated list of children emitted by handler execution
+- `event_children`: aggregated list of child events emitted with `event.emit(...)` during handler execution
 - `event_emitted_by_handler_id`: which specific handler emitted the child
 
 This tracking works across nested chains (parent -> child -> grandchild) and is surfaced in event helpers and tree logs.
 
-## When links are created
+## Which emit style should I use?
 
-Parent-child links are recorded when you emit from inside a running handler context:
+Most handler code should use `await event.emit(ChildEvent(...))` in Python or `await event.emit(ChildEvent(...)).done()` in TypeScript. That is the "owned child work" style: the child is linked to the parent, runs immediately from the caller's point of view, and the parent cannot complete until the child completes.
 
-- Python: `event.emit(...)`
-- TypeScript: `event.emit(...)`
+Use the other styles only when you explicitly want linked background work or a fully detached top-level event.
 
-Use `event.emit(...)` when child work should keep ancestry metadata. Awaiting that emitted child from the same handler marks it as blocking parent completion.
-Leave `event.emit(...)` un-awaited for linked background work that should not hold the parent open. Use `bus.emit(...)` from a handler for detached root/background work with no parent link.
+| Style | `event_parent_id` | `event_blocks_parent_completion` | Blocks current handler? | Effect |
+| --- | --- | --- | --- | --- |
+| `await event.emit(ChildEvent(...))`<br />`await event.emit(ChildEvent(...)).done()` | Parent event id | `True` / `true` | Yes | Linked child work. The child can queue-jump, and parent completion waits for the child. |
+| `event.emit(ChildEvent(...))` without awaiting | Parent event id | `False` / `false` | No | Linked background child. It appears in ancestry/tree logs, but the parent can complete before the child finishes. |
+| `await bus.emit(TopLevelEvent(...))`<br />`await bus.emit(TopLevelEvent(...)).done()` | `None` / `null` | `False` / `false` because there is no linked parent to block | Yes | Detached top-level event that the current handler waits for naturally because it is awaited. It is not a child in hierarchy tracking. |
+| `bus.emit(TopLevelEvent(...))` without awaiting | `None` / `null` | `False` / `false` | No | True background event. It is queued for later processing and has no retained relationship to the event that emitted it. |
+
+In short: use `event.emit(...)` when you want parent-child lineage, and add `await` when that child work is part of the parent's completion. Use `bus.emit(...)` when the event should be treated as a separate top-level event.
 
 ## Works across forwarded buses too
 
@@ -43,18 +48,18 @@ Use `event.emit(...)` in handlers so the runtime can attach ancestry and ownersh
 
 See also: [Forwarding Between Buses](./forwarding-between-buses)
 
-## Queue-jumped vs normally queued children
+## Queue-jumped vs normally queued linked children
 
 Lineage tracking works in both execution styles:
 
 - Queue-jumped child events:
   - emitted inside a handler and immediately awaited (`await child` / `await child.done()`)
-  - child may execute right away (RPC-style), but still gets normal parent linkage metadata
+  - child may execute right away (RPC-style), gets normal parent linkage metadata, and sets `event_blocks_parent_completion=True`
 - Normally queued child events:
   - emitted inside a handler but not immediately awaited
-  - child runs later via normal queue scheduling, and still keeps the same `event_parent_id` ancestry link
+  - child runs later via normal queue scheduling, keeps the same `event_parent_id` ancestry link, and leaves `event_blocks_parent_completion=False`
 
-In short: queue-jump changes *when* the child executes, not *whether* parent-child tracking is recorded.
+In short: `event.emit(...)` records lineage. Awaiting the emitted event decides whether that lineage also blocks parent completion.
 
 See [Immediate Execution (RPC-style)](../concurrency/immediate-execution) for queue-jump behavior details.
 

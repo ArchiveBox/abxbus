@@ -1,6 +1,6 @@
 import { BaseEvent } from './base_event.js'
 import { EventResult } from './event_result.js'
-import { EventHandlerCancelledError, EventHandlerTimeoutError } from './event_handler.js'
+import { EventHandlerAbortedError, EventHandlerCancelledError, EventHandlerTimeoutError } from './event_handler.js'
 
 type LogTreeBus = {
   name: string
@@ -146,7 +146,16 @@ export const buildResultLine = (
   visited: Set<string>
 ): string => {
   const connector = is_last ? '└── ' : '├── '
-  const status_icon = result.status === 'completed' ? '✅' : result.status === 'error' ? '❌' : result.status === 'started' ? '🏃' : '⏳'
+  const status_icon =
+    result.status === 'completed'
+      ? '✅'
+      : result.status === 'error' && isCancellationControlError(result.error)
+        ? '🚫'
+        : result.status === 'error'
+          ? '❌'
+          : result.status === 'started'
+            ? '🏃'
+            : '⏳'
 
   const handler_label =
     result.handler_name && result.handler_name !== 'anonymous'
@@ -174,7 +183,9 @@ export const buildResultLine = (
     if (result.error instanceof EventHandlerTimeoutError) {
       line += ` ⏱️ Timeout: ${result.error.message}`
     } else if (result.error instanceof EventHandlerCancelledError) {
-      line += ` 🚫 Cancelled: ${result.error.message}`
+      line += ` Cancelled: ${result.error.message}`
+    } else if (result.error instanceof EventHandlerAbortedError) {
+      line += ` Aborted: ${result.error.message}`
     } else {
       const error_name = result.error instanceof Error ? result.error.name : 'Error'
       const error_message = result.error instanceof Error ? result.error.message : String(result.error)
@@ -212,6 +223,9 @@ export const buildResultLine = (
 
   return [line, ...child_lines].join('\n')
 }
+
+const isCancellationControlError = (error: unknown): boolean =>
+  error instanceof EventHandlerCancelledError || error instanceof EventHandlerAbortedError
 
 export const formatTimestamp = (value?: string): string => {
   if (!value) {

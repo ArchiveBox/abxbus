@@ -27,7 +27,7 @@ It's async native, has proper automatic nested event tracking, and powerful conc
 
 ♾️ It's inspired by the simplicity of async and events in `JS` but with baked-in features that allow to eliminate most of the tedious repetitive complexity in event-driven codebases:
 
-- correct timeout enforcement across multiple levels of events, if a parent times out it correctly aborts all child event processing
+- correct timeout enforcement across multiple levels of events, including cancellation of awaited/blocking child work when a parent times out
 - ability to strongly type hint and enforce the return type of event handlers at compile-time
 - ability to queue events on the bus, or inline await them for immediate execution like a normal function call
 - handles ~5,000 events/sec/core in both languages, with ~2kb/event RAM consumed per event during active processing
@@ -294,6 +294,17 @@ await bus.waitUntilIdle()   // this resolves once all three events have finished
 await bus.waitUntilIdle(5)  // wait up to 5 seconds, then continue even if work is still in-flight
 ```
 
+#### Emit styles from handlers
+
+Most handler code should use `await event.emit(ChildEvent({})).done()`. That creates a linked child and marks it as blocking parent completion.
+
+| Style | `event_parent_id` | `event_blocks_parent_completion` | Blocks current handler? | Effect |
+| --- | --- | --- | --- | --- |
+| `await event.emit(ChildEvent({})).done()` | Parent event id | `true` | Yes | Linked child work; parent completion waits too. |
+| `event.emit(ChildEvent({}))` without awaiting | Parent event id | `false` | No | Linked background child; visible in ancestry but parent completion does not wait. |
+| `await bus.emit(TopLevelEvent({})).done()` | `null` | `false` | Yes | Detached top-level event; the handler waits naturally because it is awaited. |
+| `bus.emit(TopLevelEvent({}))` without awaiting | `null` | `false` | No | True detached background event with no retained parent relationship. |
+
 #### Parent/child/event lookup helpers
 
 ```ts
@@ -389,6 +400,7 @@ Special configuration fields you can set on each event to control processing:
 - `event_path: string[]` (bus labels like `BusName#ab12`)
 - `event_parent_id: string | null`
 - `event_emitted_by_handler_id: string | null`
+- `event_blocks_parent_completion: boolean`
 - `event_status: 'pending' | 'started' | 'completed'`
 - `event_results: Map<string, EventResult>`
 - `event_pending_bus_count: number`

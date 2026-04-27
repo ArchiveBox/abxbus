@@ -32,7 +32,7 @@ async def main() -> None:
         async def on_child(event: ChildEvent) -> str:
             print(f'child handler start: {event.event_type}#{short_id(event.event_id)}')
 
-            grandchild = event.event_bus.emit(GrandchildEvent(note=f'spawned by {event.stage}'))
+            grandchild = event.emit(GrandchildEvent(note=f'spawned by {event.stage}'))
             print(
                 '  child dispatched grandchild: '
                 f'{grandchild.event_type}#{short_id(grandchild.event_id)} '
@@ -50,7 +50,7 @@ async def main() -> None:
         async def on_parent(event: ParentEvent) -> str:
             print(f'parent handler start: {event.event_type}#{short_id(event.event_id)} workflow="{event.workflow}"')
 
-            awaited_child = event.event_bus.emit(ChildEvent(stage='awaited-child'))
+            awaited_child = event.emit(ChildEvent(stage='awaited-child'))
             print(
                 '  parent emitted child: '
                 f'{awaited_child.event_type}#{short_id(awaited_child.event_id)} '
@@ -59,14 +59,14 @@ async def main() -> None:
             await awaited_child
             print(f'  parent resumed after awaited child: {short_id(awaited_child.event_id)}')
 
-            background_child = event.event_bus.emit(ChildEvent(stage='background-child'))
+            background_child = event.emit(ChildEvent(stage='background-child'))
             print(
-                '  parent dispatched second child: '
+                '  parent dispatched linked background child: '
                 f'{background_child.event_type}#{short_id(background_child.event_id)} '
                 f'parent_id={short_id(background_child.event_parent_id)}'
             )
 
-            direct_grandchild = event.event_bus.emit(GrandchildEvent(note='directly from parent'))
+            direct_grandchild = event.emit(GrandchildEvent(note='directly from parent'))
             print(
                 '  parent dispatched grandchild type directly: '
                 f'{direct_grandchild.event_type}#{short_id(direct_grandchild.event_id)} '

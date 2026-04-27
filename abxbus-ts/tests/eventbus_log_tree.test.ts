@@ -80,6 +80,36 @@ test('logTree: with handler errors', async () => {
   }
 })
 
+test('logTree: first-mode control cancellations use cancelled icon', async () => {
+  const bus = new EventBus('CancelledLogBus', { event_timeout: null, event_handler_concurrency: 'parallel' })
+  const TestEvent = BaseEvent.extend('CancelledLogEvent', { event_result_type: z.string() })
+  try {
+    async function fast_handler(_event: InstanceType<typeof TestEvent>): Promise<string> {
+      await delay(5)
+      return 'fast result'
+    }
+
+    async function slow_handler(_event: InstanceType<typeof TestEvent>): Promise<string> {
+      await delay(100)
+      return 'slow result'
+    }
+
+    bus.on(TestEvent, fast_handler)
+    await delay(2)
+    bus.on(TestEvent, slow_handler)
+
+    const event = bus.emit(TestEvent({}))
+    await event.first()
+    const output = bus.logTree()
+
+    assert.ok(output.includes(`🚫 ${bus.label}.slow_handler#`))
+    assert.ok(!output.includes(`❌ ${bus.label}.slow_handler#`))
+    assert.ok(output.includes('Aborted: Aborted: first() resolved'))
+  } finally {
+    bus.destroy()
+  }
+})
+
 test('logTree: complex nested', async () => {
   const bus = new EventBus('ComplexBus')
   try {

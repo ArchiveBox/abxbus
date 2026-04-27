@@ -34,7 +34,7 @@ It's async native, has proper automatic nested event tracking, and powerful conc
 
 ♾️ It's inspired by the simplicity of async and events in `JS` but with baked-in features that allow to eliminate most of the tedious repetitive complexity in event-driven codebases:
 
-- correct timeout enforcement across multiple levels of events, if a parent times out it correctly aborts all child event processing
+- correct timeout enforcement across multiple levels of events, including cancellation of awaited/blocking child work when a parent times out
 - ability to strongly type hint and enforce the return type of event handlers at compile-time
 - ability to queue events on the bus, or inline await them for immediate execution like a normal function call
 - handles thousands of events/sec/core in both languages; see the runtime matrix below for current measured numbers
@@ -255,10 +255,10 @@ def child_handler(event: SomeOtherEvent) -> str:
     return 'xzy123'
 
 def main_handler(event: MainEvent) -> str:
-    # emit an owned child event
+    # emit a linked child event
     child_event = event.emit(SomeOtherEvent())
 
-    # can also await child events to process immediately instead of adding to FIFO queue
+    # awaiting marks it as parent-completion-blocking and can queue-jump it
     completed_child_event = await child_event
     return f'result from awaiting child event: {await completed_child_event.event_result()}'  # 'xyz123'
 
@@ -282,22 +282,25 @@ You can also set [`event_concurrency='parallel'`](https://abxbus.archivebox.io/c
 
 ```python
 async def parent_handler(event: BaseEvent):
-    # handlers can emit owned child events
-    child = ChildEvent()
-    child_event_async = event.emit(child)
-    assert child.event_status != 'completed'
-    assert child_event_async.event_parent_id == event.event_id
-    await child_event_async
+    # Most handler code should use this: linked child work that blocks parent completion.
+    blocking_child = await event.emit(ChildEvent())
+    assert blocking_child.event_parent_id == event.event_id
+    assert blocking_child.event_blocks_parent_completion is True
 
-    # awaiting the child blocks until it finishes processing
-    # this recursively waits for all handlers, including if event is forwarded to other buses
-    # (note: awaiting an event from inside a handler jumps the FIFO queue and will process it immediately, before any other pending events)
-    child_event_sync = await event.emit(ChildEvent())
-    # ChildEvent handlers run immediately
-    assert child_event_sync.event_status == 'completed'
+    # Linked background work keeps ancestry but does not hold the parent open.
+    linked_background_child = event.emit(ChildEvent())
+    assert linked_background_child.event_parent_id == event.event_id
+    assert linked_background_child.event_blocks_parent_completion is False
 
-    # in all cases, parent-child relationships are automagically tracked
-    assert child_event_sync.event_parent_id == event.event_id
+    # Awaiting bus.emit(...) blocks this handler naturally, but creates a top-level event.
+    detached_blocking_event = await event.event_bus.emit(ChildEvent())
+    assert detached_blocking_event.event_parent_id is None
+    assert detached_blocking_event.event_blocks_parent_completion is False
+
+    # Un-awaited bus.emit(...) is a true detached background event.
+    detached_background_event = event.event_bus.emit(ChildEvent())
+    assert detached_background_event.event_parent_id is None
+    assert detached_background_event.event_blocks_parent_completion is False
 
 async def run_main():
     bus.on(ChildEvent, child_handler)
@@ -1038,7 +1041,7 @@ Shortcut to get the `EventBus` that is currently processing this event. Can be u
 bus = EventBus()
 
 async def some_handler(event: MyEvent):
-    # Awaited child work blocks parent completion.
+    # Most handler code should do this: linked child work that blocks parent completion.
     child_event = await event.emit(ChildEvent())
 
     # Un-awaited event.emit(...) keeps parentage without holding the parent open.

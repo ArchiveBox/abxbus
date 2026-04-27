@@ -64,6 +64,7 @@ Common event metadata fields available in both runtimes:
 - `event_created_at`, `event_started_at`, `event_completed_at`
 - `event_started_at` / `event_completed_at` are `None` (Python) / `null` (TypeScript) until set
 - `event_parent_id` and `event_emitted_by_handler_id` are `None` / `null` when unset
+- `event_blocks_parent_completion`: `True` / `true` only for linked children awaited from the handler that emitted them
 - `event_path`: buses traversed
 - `event_results`: per-handler result entries
 - Child-event tracking (`event_children`/descendants)
@@ -240,7 +241,7 @@ const restored = BaseEvent.fromJSON(payload)
   - Python: unknown `model_*` fields are rejected, but valid Pydantic namespace overrides (for example `model_config`) are allowed.
   - TypeScript: any `model_*` field is rejected.
 - `event_result_type` drives handler return validation in both runtimes.
-- Parent-child tracking is automatic when events are emitted from handlers.
+- Parent-child tracking is automatic for `event.emit(...)` inside handlers. `bus.emit(...)` creates a top-level event with no parent link.
 
 ## Reserved Fields
 

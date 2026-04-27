@@ -261,9 +261,10 @@ console.log(event.event_path)
 
 Parent-child tracking also works across forwarded flows:
 
-- if a forwarded event is handled on a downstream bus and that handler emits a child event, the child still links back to the parent via `event_parent_id`
+- if a forwarded event is handled on a downstream bus and that handler emits a child with `event.emit(...)`, the child still links back to the parent via `event_parent_id`
 - nested descendants emitted on downstream buses keep that lineage as they continue through forwarding
 - this remains true for both queue-jumped children (`await child`) and normally queued children (emitted but not immediately awaited)
+- `bus.emit(...)` inside a handler remains detached top-level work with no parent link
 
 See [Parent-Child Tracking](./parent-child-tracking) for a deeper walkthrough and tree-log example.
 See [Immediate Execution (RPC-style)](../concurrency/immediate-execution) for queue-jump execution behavior.

@@ -90,7 +90,7 @@ async def main() -> None:
             event.event_bus.emit(SiblingEvent(scenario=event.mode))
             log(f'[parent:{event.mode}] sibling queued')
 
-            child = event.event_bus.emit(ChildEvent(scenario=event.mode))
+            child = event.emit(ChildEvent(scenario=event.mode))
             log(f'[parent:{event.mode}] child queued')
 
             if event.mode == 'immediate':
