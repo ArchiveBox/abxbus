@@ -26,8 +26,8 @@ Parent-child links are recorded when you emit from inside a running handler cont
 - Python: `event.emit(...)`
 - TypeScript: `event.emit(...)`
 
-Use `event.emit(...)` for owned child work. It keeps ancestry metadata intact and marks the child as blocking parent completion.
-Use `bus.emit(...)` from a handler only for explicitly detached/background work that should keep ancestry but not hold the parent open unless later awaited.
+Use `event.emit(...)` when child work should keep ancestry metadata. Awaiting that emitted child from the same handler marks it as blocking parent completion.
+Leave `event.emit(...)` un-awaited for linked background work that should not hold the parent open. Use `bus.emit(...)` from a handler for detached root/background work with no parent link.
 
 ## Works across forwarded buses too
 

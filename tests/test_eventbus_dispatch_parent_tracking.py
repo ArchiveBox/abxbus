@@ -436,8 +436,8 @@ class TestParentEventTracking:
         finally:
             await bus2.stop(clear=True)
 
-    async def test_parent_completion_waits_for_all_children(self, eventbus: EventBus):
-        """Parent event completion should wait until explicitly-owned children complete."""
+    async def test_parent_completion_waits_for_awaited_children(self, eventbus: EventBus):
+        """Parent event completion should wait until awaited children complete."""
         completion_order: list[str] = []
         child_started = asyncio.Event()
         release_children = asyncio.Event()
@@ -445,8 +445,12 @@ class TestParentEventTracking:
         async def parent_handler(event: ParentEvent) -> str:
             child1 = ChildEvent(data='child1')
             child2 = ChildEvent(data='child2')
-            event.emit(child1)
-            event.emit(child2)
+            emitted_child1 = event.emit(child1)
+            emitted_child2 = event.emit(child2)
+            assert emitted_child1.event_blocks_parent_completion is False
+            assert emitted_child2.event_blocks_parent_completion is False
+            await emitted_child1
+            await emitted_child2
             completion_order.append('parent_handler')
             return 'parent'
 
@@ -477,6 +481,43 @@ class TestParentEventTracking:
         for child in parent.event_children:
             assert child.event_blocks_parent_completion is True
             assert child.event_status == 'completed'
+
+    async def test_event_emit_without_await_sets_parentage_without_blocking_completion(self, eventbus: EventBus):
+        """Un-awaited event.emit() children keep lineage but do not keep the parent open."""
+        child_started = asyncio.Event()
+        release_child = asyncio.Event()
+        captured_child: ChildEvent | None = None
+
+        async def parent_handler(event: ParentEvent) -> str:
+            nonlocal captured_child
+            captured_child = event.emit(ChildEvent(data='unawaited_owned'))
+            return 'parent'
+
+        async def child_handler(event: ChildEvent) -> str:
+            child_started.set()
+            await release_child.wait()
+            return f'handled_{event.data}'
+
+        eventbus.on('ParentEvent', parent_handler)
+        eventbus.on('ChildEvent', child_handler)
+
+        parent = ParentEvent(message='unawaited_owned_completion_test')
+        parent_event = eventbus.emit(parent)
+
+        await child_started.wait()
+        assert captured_child is not None
+        assert captured_child.event_parent_id == parent.event_id
+        assert captured_child.event_emitted_by_handler_id is not None
+        assert captured_child.event_blocks_parent_completion is False
+        assert captured_child in parent.event_children
+
+        await asyncio.wait_for(parent_event.event_completed(), timeout=1.0)
+        assert parent.event_status == 'completed'
+        assert captured_child.event_status != 'completed'
+
+        release_child.set()
+        await eventbus.wait_until_idle()
+        assert captured_child.event_status == 'completed'
 
     async def test_bus_emit_inside_handler_dispatches_detached_event_by_default(self, eventbus: EventBus):
         """bus.emit() inside a handler dispatches an independent event by default."""
@@ -515,12 +556,15 @@ class TestParentEventTracking:
         await eventbus.wait_until_idle()
         assert captured_child.event_status == 'completed'
 
-    async def test_event_emit_marks_child_as_parent_completion_blocking(self, eventbus: EventBus):
+    async def test_awaited_event_emit_marks_child_as_parent_completion_blocking(self, eventbus: EventBus):
         captured_child: ChildEvent | None = None
 
         async def parent_handler(event: ParentEvent) -> str:
             nonlocal captured_child
             captured_child = event.emit(ChildEvent(data='owned'))
+            assert captured_child.event_blocks_parent_completion is False
+            await captured_child
+            assert captured_child.event_blocks_parent_completion is True
             return 'parent'
 
         async def child_handler(event: ChildEvent) -> str:

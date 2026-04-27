@@ -671,9 +671,11 @@ for (const handler_mode of STEP1_HANDLER_MODES) {
     assert.ok(parent_result.error instanceof EventHandlerAbortedError)
 
     assert.ok(queued_sibling_ref)
-    assert.equal(queued_sibling_runs, 0)
+    assert.equal(queued_sibling_ref!.event_parent_id, dispatched_parent.event_id)
+    assert.equal(queued_sibling_ref!.event_blocks_parent_completion, false)
+    assert.equal(queued_sibling_runs, 1)
     const queued_sibling_results = Array.from(queued_sibling_ref!.event_results.values())
-    assert.ok(queued_sibling_results.some((result) => result.error instanceof EventHandlerCancelledError))
+    assert.ok(queued_sibling_results.every((result) => result.status === 'completed'))
 
     assert.equal(lock.in_use, baseline_in_use)
 
@@ -685,7 +687,7 @@ for (const handler_mode of STEP1_HANDLER_MODES) {
   })
 }
 
-test('parent timeout cancels pending child handler results under serial handler lock', async () => {
+test('parent timeout does not cancel unawaited child handler results under serial handler lock', async () => {
   const ParentEvent = BaseEvent.extend('TimeoutCancelParentEvent', {})
   const ChildEvent = BaseEvent.extend('TimeoutCancelChildEvent', {})
 
@@ -719,14 +721,17 @@ test('parent timeout cancels pending child handler results under serial handler 
 
   const child = parent.event_children[0]
   assert.ok(child)
+  assert.equal(child.event_parent_id, parent.event_id)
+  assert.equal(child.event_blocks_parent_completion, false)
 
-  assert.equal(child_runs, 0)
+  assert.equal(child_runs, 2)
 
-  const cancelled_results = Array.from(child.event_results.values()).filter((result) => result.error instanceof EventHandlerCancelledError)
-  assert.ok(cancelled_results.length > 0)
+  const child_results = Array.from(child.event_results.values())
+  assert.equal(child_results.length, 2)
+  assert.ok(child_results.every((result) => result.status === 'completed'))
 })
 
-test('retry timeout cancels pending child handler results', async () => {
+test('retry timeout does not cancel unawaited child handler results', async () => {
   const ParentEvent = BaseEvent.extend('RetryTimeoutCancelParentEvent', {})
   const ChildEvent = BaseEvent.extend('RetryTimeoutCancelChildEvent', {})
 
@@ -760,11 +765,14 @@ test('retry timeout cancels pending child handler results', async () => {
 
   const child = parent.event_children[0]
   assert.ok(child)
-  const cancelled_results = Array.from(child.event_results.values()).filter((result) => result.error instanceof EventHandlerCancelledError)
-  assert.ok(cancelled_results.length > 0)
+  assert.equal(child.event_parent_id, parent.event_id)
+  assert.equal(child.event_blocks_parent_completion, false)
+  const child_results = Array.from(child.event_results.values())
+  assert.equal(child_results.length, 1)
+  assert.ok(child_results.every((result) => result.status === 'completed'))
 })
 
-test('handler_timeout stops in-flight retries and cancels child events', async () => {
+test('handler_timeout stops in-flight retries without cancelling unawaited child events', async () => {
   const ParentEvent = BaseEvent.extend('RetryTimeoutHandlerTimeoutParentEvent', {})
   const ChildEvent = BaseEvent.extend('RetryTimeoutHandlerTimeoutChildEvent', {})
 
@@ -810,10 +818,10 @@ test('handler_timeout stops in-flight retries and cancels child events', async (
 
   assert.ok(child_ref)
   assert.ok(child_started > 0)
-  const cancelled_results = Array.from(child_ref!.event_results.values()).filter(
-    (result) => result.error instanceof EventHandlerCancelledError || result.error instanceof EventHandlerAbortedError
-  )
-  assert.ok(cancelled_results.length > 0)
+  assert.equal(child_ref!.event_blocks_parent_completion, false)
+  const child_results = Array.from(child_ref!.event_results.values())
+  assert.equal(child_results.length, 1)
+  assert.ok(child_results.every((result) => result.status === 'completed'))
 })
 
 test('event_timeout null falls back to bus default', async () => {
@@ -944,13 +952,10 @@ test('multi-level timeout cascade with mixed cancellations', async () => {
 
   assert.ok(queued_child)
   const queued_results = Array.from(queued_child!.event_results.values())
-  assert.equal(queued_child_runs, 0)
-  assert.ok(queued_results.length >= 2)
-  for (const result of queued_results) {
-    assert.equal(result.status, 'error')
-    assert.ok(result.error instanceof EventHandlerCancelledError)
-    assert.ok((result.error as EventHandlerCancelledError).cause instanceof EventHandlerTimeoutError)
-  }
+  assert.equal(queued_child!.event_blocks_parent_completion, false)
+  assert.equal(queued_child_runs, 2)
+  assert.equal(queued_results.length, 2)
+  assert.ok(queued_results.every((result) => result.status === 'completed'))
 
   assert.ok(awaited_child)
   const awaited_results = Array.from(awaited_child!.event_results.values())
@@ -973,9 +978,10 @@ test('multi-level timeout cascade with mixed cancellations', async () => {
 
   assert.ok(queued_grandchild)
   const queued_grandchild_results = Array.from(queued_grandchild!.event_results.values())
-  assert.equal(queued_grandchild_runs, 0)
-  const queued_cancelled = queued_grandchild_results.filter((result) => result.error instanceof EventHandlerCancelledError)
-  assert.ok(queued_cancelled.length >= 2)
+  assert.equal(queued_grandchild!.event_blocks_parent_completion, false)
+  assert.equal(queued_grandchild_runs, 2)
+  assert.equal(queued_grandchild_results.length, 2)
+  assert.ok(queued_grandchild_results.every((result) => result.status === 'completed'))
 })
 
 // =============================================================================
@@ -986,18 +992,18 @@ test('multi-level timeout cascade with mixed cancellations', async () => {
 //     ├── ChildEvent (80ms timeout) — awaited by top_handler_main
 //     │     ├── GrandchildEvent (35ms timeout) — awaited by child_handler
 //     │     │     └── 5 handlers (parallel): 3 slow (timeout), 2 fast (complete)
-//     │     └── QueuedGrandchildEvent — emitted but NOT awaited, stays in queue
-//     │           └── 1 handler: never runs, CANCELLED when child_handler times out
-//     └── SiblingEvent — emitted but NOT awaited, stays in queue
-//           └── 1 handler: never runs, CANCELLED when top_handler_main times out
+//     │     └── QueuedGrandchildEvent — emitted but NOT awaited
+//     │           └── 1 handler: runs independently after the parent timeout
+//     └── SiblingEvent — emitted but NOT awaited
+//           └── 1 handler: runs independently after the parent timeout
 //
 // KEY MECHANIC: When a child event is awaited via event.done() inside a handler,
 // it triggers "queue-jumping" via _processEventImmediately (cross-bus).
 // Queue-jumped events use yield-and-reacquire: the parent handler's lock is
 // temporarily released so child handlers can acquire it normally. This means
 // child handlers run SERIALLY on a serial handler bus (respecting concurrency limits).
-// Non-awaited child events stay in the pending_event_queue and are blocked by
-// immediate_processing_stack_depth > 0 (runloop is paused during queue-jump).
+// Non-awaited child events keep parentage but do not block parent completion or
+// participate in parent timeout cancellation.
 //
 // TIMEOUT BEHAVIOR: Each handler gets its OWN timeout window starting from when
 // that handler begins execution — NOT from when the event was dispatched.
@@ -1069,12 +1075,10 @@ test('three-level timeout cascade with per-level timeouts and cascading cancella
   }
 
   // ── QueuedGrandchildEvent handler ─────────────────────────────────────
-  // This event is emitted by child_handler but NOT awaited, so it sits in
-  // pending_event_queue. When child_handler times out at 80ms,
-  // bus._cancelPendingChildProcessing walks ChildEvent.event_children and finds
-  // this event still pending → its handler results are marked as cancelled.
+  // This event is emitted by child_handler but NOT awaited, so it keeps lineage
+  // but is allowed to run independently after the parent timeout.
   const queued_gc_handler = () => {
-    execution_log.push('queued_gc_start') // should never reach here
+    execution_log.push('queued_gc_start')
     return 'queued_gc_done'
   }
 
@@ -1096,11 +1100,10 @@ test('three-level timeout cascade with per-level timeouts and cascading cancella
   }
 
   // ── SiblingEvent handler ──────────────────────────────────────────────
-  // This event is emitted by top_handler_main but NOT awaited. Stays in
-  // pending_event_queue until top_handler_main times out at 250ms →
-  // cancelled by bus._cancelPendingChildProcessing.
+  // This event is emitted by top_handler_main but NOT awaited, so it keeps
+  // lineage but does not block or get cancelled by top_handler_main.
   const sibling_handler = () => {
-    execution_log.push('sibling_start') // should never reach here
+    execution_log.push('sibling_start')
     return 'sibling_done'
   }
 
@@ -1194,40 +1197,25 @@ test('three-level timeout cascade with per-level timeouts and cascading cancella
   )
   assert.equal(gc_cancelled_or_aborted.length, 5, 'Grandchild handlers should all be cancelled or aborted by hard event timeout')
 
-  // ── QueuedGrandchildEvent: CANCELLED by child_handler timeout ───────
-  // This event was emitted but never awaited. It sat in pending_event_queue
-  // until child_handler timed out, which triggered bus._cancelPendingChildProcessing
-  // to walk ChildEvent.event_children and cancel all pending handlers.
+  // ── QueuedGrandchildEvent: unawaited child keeps lineage but does not block/cancel ──
   assert.ok(queued_grandchild_ref, 'QueuedGrandchildEvent should have been emitted')
   assert.equal(queued_grandchild_ref!.event_status, 'completed')
+  assert.equal(queued_grandchild_ref!.event_blocks_parent_completion, false)
 
   const queued_gc_results = Array.from(queued_grandchild_ref!.event_results.values())
   assert.equal(queued_gc_results.length, 1, 'QueuedGC should have 1 handler result')
-  assert.equal(queued_gc_results[0].status, 'error')
-  assert.ok(
-    queued_gc_results[0].error instanceof EventHandlerCancelledError,
-    'QueuedGC handler should be EventHandlerCancelledError (not timeout — it never ran)'
-  )
-  // Verify the cancellation error chain: CancelledError.cause → TimeoutError
-  assert.ok(
-    (queued_gc_results[0].error as EventHandlerCancelledError).cause instanceof EventHandlerTimeoutError,
-    "QueuedGC cancellation should reference the child_handler's timeout as cause"
-  )
+  assert.equal(queued_gc_results[0].status, 'completed')
+  assert.equal(queued_gc_results[0].result, 'queued_gc_done')
 
-  // ── SiblingEvent: CANCELLED by top_handler_main timeout ─────────────
-  // Same pattern: emitted but never awaited, stays in queue, cancelled when
-  // top_handler_main times out and bus._cancelPendingChildProcessing runs.
+  // ── SiblingEvent: unawaited child keeps lineage but does not block/cancel ──
   assert.ok(sibling_ref, 'SiblingEvent should have been emitted')
   assert.equal(sibling_ref!.event_status, 'completed')
+  assert.equal(sibling_ref!.event_blocks_parent_completion, false)
 
   const sibling_results = Array.from(sibling_ref!.event_results.values())
   assert.equal(sibling_results.length, 1, 'SiblingEvent should have 1 handler result')
-  assert.equal(sibling_results[0].status, 'error')
-  assert.ok(sibling_results[0].error instanceof EventHandlerCancelledError, 'SiblingEvent handler should be EventHandlerCancelledError')
-  assert.ok(
-    (sibling_results[0].error as EventHandlerCancelledError).cause instanceof EventHandlerTimeoutError,
-    "SiblingEvent cancellation should reference top_handler_main's timeout as cause"
-  )
+  assert.equal(sibling_results[0].status, 'completed')
+  assert.equal(sibling_results[0].result, 'sibling_done')
 
   // ── Execution log: verify what ran and what didn't ──────────────────
   // These handlers started AND completed:
@@ -1253,9 +1241,9 @@ test('three-level timeout cascade with per-level timeouts and cascading cancella
   assert.ok(!execution_log.includes('child_end'), 'child should NOT have finished (timed out)')
   assert.ok(!execution_log.includes('top_main_end'), 'top_main should NOT have finished (timed out)')
 
-  // These handlers never ran at all (cancelled before starting):
-  assert.ok(!execution_log.includes('queued_gc_start'), 'queued_gc should never have started')
-  assert.ok(!execution_log.includes('sibling_start'), 'sibling should never have started')
+  // Unawaited children run independently after the parent timeout completes:
+  assert.ok(execution_log.includes('queued_gc_start'), 'queued_gc should have run independently')
+  assert.ok(execution_log.includes('sibling_start'), 'sibling should have run independently')
 
   // ── Parent-child tree structure ─────────────────────────────────────
   assert.ok(
@@ -1301,7 +1289,7 @@ test('three-level timeout cascade with per-level timeouts and cascading cancella
 // 2-level chain where each level's cancellation error can be inspected.
 // =============================================================================
 
-test('cancellation error chain preserves cause references through hierarchy', async () => {
+test('unawaited descendant preserves lineage and is not cancelled by ancestor timeout', async () => {
   const OuterEvent = BaseEvent.extend('ErrorChainOuter', {})
   const InnerEvent = BaseEvent.extend('ErrorChainInner', {})
   const DeepEvent = BaseEvent.extend('ErrorChainDeep', {})
@@ -1314,8 +1302,7 @@ test('cancellation error chain preserves cause references through hierarchy', as
   let inner_ref = null as InstanceType<typeof InnerEvent> | null
   let deep_ref = null as InstanceType<typeof DeepEvent> | null
 
-  // DeepEvent handler: sleeps long, will be still pending when inner times out
-  // Because DeepEvent is emitted but NOT awaited, it stays in the queue.
+  // DeepEvent handler: emitted but not awaited, so it should continue independently.
   const deep_handler = async () => {
     await delay(200)
     return 'deep_done'
@@ -1358,23 +1345,13 @@ test('cancellation error chain preserves cause references through hierarchy', as
   // Inner's abort is from InnerEvent's own event_timeout (40ms), not inherited from outer.
   assert.ok(inner_abort.message.includes('event timeout'), 'Inner abort should indicate event timeout')
 
-  // DeepEvent was cancelled when inner_handler timed out.
-  // The cancellation error should reference inner_handler's timeout (not outer's).
+  // DeepEvent was not awaited, so it keeps lineage but is not cancelled when inner_handler times out.
   assert.ok(deep_ref)
   const deep_result = Array.from(deep_ref!.event_results.values())[0]
-  assert.equal(deep_result.status, 'error')
-  assert.ok(
-    deep_result.error instanceof EventHandlerCancelledError,
-    'DeepEvent handler should be cancelled, not timed out (it never started)'
-  )
-  const deep_cancel = deep_result.error as EventHandlerCancelledError
-  assert.ok(deep_cancel.cause instanceof EventHandlerTimeoutError, 'Cancellation should reference parent timeout')
-  // The cause should be the INNER handler's timeout, because that's
-  // the handler whose bus._cancelPendingChildProcessing actually cancelled DeepEvent.
-  assert.ok(
-    deep_cancel.cause.message.includes('inner_handler') || deep_cancel.cause.message.includes('child_handler'),
-    'cause should reference the handler that directly caused cancellation'
-  )
+  assert.equal(deep_ref!.event_parent_id, inner_ref!.event_id)
+  assert.equal(deep_ref!.event_blocks_parent_completion, false)
+  assert.equal(deep_result.status, 'completed')
+  assert.equal(deep_result.result, 'deep_done')
 })
 
 // =============================================================================
@@ -1384,7 +1361,7 @@ test('cancellation error chain preserves cause references through hierarchy', as
 // This tests that cancellation works across timeout/no-timeout boundaries.
 // =============================================================================
 
-test('parent timeout cancels children that have no timeout of their own', async () => {
+test('parent timeout does not cancel unawaited children that have no timeout of their own', async () => {
   const ParentEvent = BaseEvent.extend('TimeoutBoundaryParent', {})
   const NoTimeoutChild = BaseEvent.extend('TimeoutBoundaryChild', {})
 
@@ -1397,7 +1374,7 @@ test('parent timeout cancels children that have no timeout of their own', async 
   let child_ref = null as InstanceType<typeof NoTimeoutChild> | null
   let child_handler_ran = false
 
-  // Child handler: would run forever but should be cancelled
+  // Child handler: runs independently because the parent does not await the child.
   const child_slow_handler = async () => {
     child_handler_ran = true
     await delay(500)
@@ -1407,7 +1384,6 @@ test('parent timeout cancels children that have no timeout of their own', async 
   // Parent handler: emits child (not awaited), then sleeps → parent times out
   const parent_handler = async (event: InstanceType<typeof ParentEvent>) => {
     // event_timeout: null means the child has no timeout of its own.
-    // It would run forever if the parent didn't cancel it.
     child_ref = event.emit(NoTimeoutChild({ event_timeout: null }))!
     await delay(200)
     return 'parent_done'
@@ -1425,15 +1401,15 @@ test('parent timeout cancels children that have no timeout of their own', async 
   assert.equal(parent_result.status, 'error')
   assert.ok(parent_result.error instanceof EventHandlerAbortedError)
 
-  // Child should exist and be cancelled (it was in the queue, never started)
+  // Child should exist and complete independently.
   assert.ok(child_ref, 'Child event should have been emitted')
   assert.equal(child_ref!.event_status, 'completed')
-  assert.equal(child_handler_ran, false, 'Child handler should never have started')
+  assert.equal(child_ref!.event_parent_id, parent.event_id)
+  assert.equal(child_ref!.event_blocks_parent_completion, false)
+  assert.equal(child_handler_ran, true, 'Child handler should have run independently')
 
   const child_results = Array.from(child_ref!.event_results.values())
   assert.equal(child_results.length, 1)
-  assert.ok(
-    child_results[0].error instanceof EventHandlerCancelledError,
-    'Child handler should be cancelled by parent timeout, even though it has no timeout'
-  )
+  assert.equal(child_results[0].status, 'completed')
+  assert.equal(child_results[0].result, 'child_done')
 })

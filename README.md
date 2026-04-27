@@ -1038,11 +1038,14 @@ Shortcut to get the `EventBus` that is currently processing this event. Can be u
 bus = EventBus()
 
 async def some_handler(event: MyEvent):
-    # Owned child work should use event.emit(...), which blocks parent completion.
+    # Awaited child work blocks parent completion.
     child_event = await event.emit(ChildEvent())
 
-    # Use bus.emit(...) only for detached background work.
-    detached_child = bus.emit(ChildEvent())
+    # Un-awaited event.emit(...) keeps parentage without holding the parent open.
+    background_child = event.emit(ChildEvent())
+
+    # Use bus.emit(...) for detached root/background work.
+    detached_event = bus.emit(ChildEvent())
 ```
 
 ---

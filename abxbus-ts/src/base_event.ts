@@ -185,7 +185,7 @@ export class BaseEvent {
   event_slow_timeout?: number | null // optional per-event slow warning threshold in seconds
   event_handler_timeout?: number | null // optional per-event handler timeout override in seconds
   event_handler_slow_timeout?: number | null // optional per-event slow handler warning threshold in seconds
-  event_blocks_parent_completion!: boolean // true only for explicitly owned children emitted via event.emit(child)
+  event_blocks_parent_completion!: boolean // true only for children explicitly awaited via done()/eventCompleted()
   event_parent_id!: string | null // id of the parent event that triggered this event, if this event was emitted during handling of another event, else null
   event_path!: string[] // list of bus labels (name#id) that the event has been dispatched to, including the current bus
   event_result_type?: z.ZodTypeAny // optional zod schema to enforce the shape of return values from handlers
@@ -671,7 +671,6 @@ export class BaseEvent {
   emit<T extends BaseEvent>(event: T): T {
     const original_parent = this._event_original ?? this
     const original_child = event._event_original ?? event
-    original_child.event_blocks_parent_completion = true
     if (!original_child.event_parent_id && original_child.event_id !== original_parent.event_id) {
       original_child.event_parent_id = original_parent.event_id
     }

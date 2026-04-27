@@ -434,7 +434,7 @@ test('event_children is empty when handlers do not emit children', async () => {
   assert.equal(parent.event_children.length, 0)
 })
 
-test('parent completion waits for all children', async () => {
+test('parent completion waits for awaited children', async () => {
   const bus = new EventBus('EventChildrenCompletionBus')
   const completion_order: string[] = []
   let child_started_resolve: (() => void) | null = null
@@ -449,10 +449,14 @@ test('parent completion waits for all children', async () => {
   })
   let child_started_signaled = false
 
-  bus.on(ParentEvent, (event) => {
-    event.emit(ChildEvent({ data: 'child_a' }))
-    event.emit(ChildEvent({ data: 'child_b' }))
+  bus.on(ParentEvent, async (event) => {
+    const child_a = event.emit(ChildEvent({ data: 'child_a' }))
+    const child_b = event.emit(ChildEvent({ data: 'child_b' }))
+    assert.equal(child_a.event_blocks_parent_completion, false)
+    assert.equal(child_b.event_blocks_parent_completion, false)
     completion_order.push('parent_handler')
+    await child_a.done()
+    await child_b.done()
     return 'parent'
   })
   bus.on(ChildEvent, async (event) => {
@@ -486,6 +490,52 @@ test('parent completion waits for all children', async () => {
     }
   } finally {
     release_children()
+  }
+})
+
+test('event.emit without await sets parentage without blocking parent completion', async () => {
+  const bus = new EventBus('UnawaitedEventEmitCompletionBus')
+  let child_started_resolve: (() => void) | null = null
+  const child_started = new Promise<void>((resolve) => {
+    child_started_resolve = resolve
+  })
+  let release_child!: () => void
+  const child_released = new Promise<void>((resolve) => {
+    release_child = () => resolve()
+  })
+  let child_ref: BaseEvent | undefined
+
+  bus.on(ParentEvent, (event) => {
+    child_ref = event.emit(ChildEvent({ data: 'unawaited_owned' }))
+    return 'parent'
+  })
+  bus.on(ChildEvent, async () => {
+    child_started_resolve?.()
+    await child_released
+    return 'child'
+  })
+
+  const parent = bus.emit(ParentEvent({ message: 'unawaited_owned' }))
+  try {
+    await child_started
+    assert.ok(child_ref)
+    assert.equal(child_ref.event_parent_id, parent.event_id)
+    assert.ok(child_ref.event_emitted_by_handler_id)
+    assert.equal(child_ref.event_blocks_parent_completion, false)
+    assert.equal(
+      parent.event_children.some((child) => child.event_id === child_ref?.event_id),
+      true
+    )
+
+    await parent.eventCompleted()
+    assert.equal(parent.event_status, 'completed')
+    assert.notEqual(child_ref.event_status, 'completed')
+
+    release_child()
+    await bus.waitUntilIdle()
+    assert.equal(child_ref.event_status, 'completed')
+  } finally {
+    release_child()
   }
 })
 

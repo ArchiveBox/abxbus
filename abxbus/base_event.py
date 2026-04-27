@@ -1690,10 +1690,9 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         return self.bus
 
     def emit(self, event: T_EmittedEvent) -> T_EmittedEvent:
-        """Emit an explicitly-owned child event that blocks this event's completion."""
+        """Emit a child event, preserving lineage and blocking parent completion only if awaited."""
         from abxbus.event_bus import get_current_event, get_current_handler_id
 
-        event.event_blocks_parent_completion = True
         if event.event_parent_id is None and event.event_id != self.event_id:
             event.event_parent_id = self.event_id
 
