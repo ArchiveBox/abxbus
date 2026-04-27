@@ -660,7 +660,7 @@ export class EventBus {
     options: Partial<EventHandler> = {}
   ): EventHandler {
     const normalized_key = normalizeEventPattern(event_pattern) // get string event_type or '*'
-    const handler_name = handler.name || 'anonymous' // get handler function name or 'anonymous' if the handler is an anonymous/arrow function
+    const handler_name = EventHandler.handlerNameFromCallable(handler as EventHandlerCallable)
     const handler_entry = new EventHandler({
       handler: handler as EventHandlerCallable,
       handler_name,

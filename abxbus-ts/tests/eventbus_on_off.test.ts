@@ -3,7 +3,7 @@ import { test } from 'node:test'
 
 import { z } from 'zod'
 
-import { BaseEvent, EventBus } from '../src/index.js'
+import { BaseEvent, EventBus, retry } from '../src/index.js'
 
 test('on stores EventHandler entry and indexes it by event key', async () => {
   const bus = new EventBus('RegistryBus')
@@ -137,4 +137,44 @@ test('_handler_async preserves typed arg/return contracts for async handlers', a
   const entry = bus.on(RegistryTypingEvent, typed_async_handler)
   const result = await entry._handler_async(RegistryTypingEvent({ required_token: 'async' }))
   assert.equal(result, 'async')
+})
+
+test('on normalizes bound function handler names', () => {
+  const bus = new EventBus('RegistryBoundNameBus')
+  const BoundNameEvent = BaseEvent.extend('RegistryBoundNameEvent', {})
+
+  class BoundNameService {
+    on_BoundNameEvent(_event: InstanceType<typeof BoundNameEvent>): string {
+      return 'ok'
+    }
+  }
+
+  const service = new BoundNameService()
+  const entry = bus.on(BoundNameEvent, service.on_BoundNameEvent.bind(service))
+
+  assert.equal(entry.handler_name, 'on_BoundNameEvent')
+})
+
+test('on names decorated bound handlers by the class that defined the method', () => {
+  const bus = new EventBus('RegistryDecoratedClassNameBus')
+  const DecoratedNameEvent = BaseEvent.extend('RegistryDecoratedNameEvent', {})
+
+  class OriginalHandlerClass {
+    entry?: ReturnType<EventBus['on']>
+
+    constructor(b: EventBus) {
+      this.entry = b.on(DecoratedNameEvent, this.on_DecoratedNameEvent.bind(this))
+    }
+
+    @retry({ max_attempts: 1 })
+    async on_DecoratedNameEvent(_event: InstanceType<typeof DecoratedNameEvent>): Promise<string> {
+      return 'ok'
+    }
+  }
+
+  class AttachedHandlerClass extends OriginalHandlerClass {}
+
+  const service = new AttachedHandlerClass(bus)
+
+  assert.equal(service.entry?.handler_name, 'OriginalHandlerClass.on_DecoratedNameEvent')
 })

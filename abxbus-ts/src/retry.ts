@@ -344,11 +344,58 @@ export function retry(options: RetryOptions = {}) {
     }
 
     Object.defineProperty(retryWrapper, 'name', { value: fn_name, configurable: true })
+    if (_context?.kind === 'method' && typeof _context.addInitializer === 'function') {
+      _context.addInitializer(function (this: unknown) {
+        const owner_name = findDecoratedMethodOwnerName(this, _context, retryWrapper)
+        if (owner_name) {
+          Object.defineProperty(retryWrapper, 'name', { value: `${owner_name}.${fn_name}`, configurable: true })
+        }
+      })
+    }
     return retryWrapper as unknown as T
   }
 }
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
+
+function findDecoratedMethodOwnerName(
+  context_this: unknown,
+  context: ClassMethodDecoratorContext,
+  replacement: (...args: any[]) => any
+): string | null {
+  const method_name = context.name
+  if (typeof method_name !== 'string') {
+    return null
+  }
+
+  if (context.static) {
+    let ctor = typeof context_this === 'function' ? context_this : null
+    while (ctor && ctor !== Function.prototype) {
+      const descriptor = Object.getOwnPropertyDescriptor(ctor, method_name)
+      if (descriptor?.value === replacement) {
+        return ctor.name || null
+      }
+      const parent = Object.getPrototypeOf(ctor)
+      ctor = typeof parent === 'function' ? parent : null
+    }
+    return null
+  }
+
+  if ((typeof context_this !== 'object' && typeof context_this !== 'function') || context_this === null) {
+    return null
+  }
+
+  let prototype = Object.getPrototypeOf(context_this)
+  while (prototype && prototype !== Object.prototype) {
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, method_name)
+    if (descriptor?.value === replacement) {
+      const ctor_name = (prototype as { constructor?: { name?: string } }).constructor?.name
+      return ctor_name || null
+    }
+    prototype = Object.getPrototypeOf(prototype)
+  }
+  return null
+}
 
 /**
  * Try to acquire a semaphore within a timeout. Returns true if acquired, false if timed out.

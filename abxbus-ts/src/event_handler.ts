@@ -7,6 +7,17 @@ import type { EventResult } from './event_result.js'
 import { monotonicDatetime } from './helpers.js'
 
 const HANDLER_ID_NAMESPACE = uuidv5('abxbus-handler', uuidv5.DNS)
+const BOUND_FUNCTION_PREFIX = 'bound '
+
+const normalizeCallableName = (name: string | undefined): string => {
+  if (!name) {
+    return 'anonymous'
+  }
+  if (name.startsWith(BOUND_FUNCTION_PREFIX) && name.length > BOUND_FUNCTION_PREFIX.length) {
+    return name.slice(BOUND_FUNCTION_PREFIX.length)
+  }
+  return name
+}
 
 export type EphemeralFindEventHandler = {
   // Similar to a handler, except it's for .find() calls.
@@ -139,6 +150,10 @@ export class EventHandler {
     return async (event: BaseEvent) => await handler(event)
   }
 
+  static handlerNameFromCallable(handler: EventHandlerCallable): string {
+    return normalizeCallableName(handler.name)
+  }
+
   // compute globally unique handler uuid as a hash of the bus name, handler name, handler file path, registered at timestamp, and event key
   static computeHandlerId(params: {
     eventbus_id: string
@@ -167,7 +182,7 @@ export class EventHandler {
     const entry = new EventHandler({
       id: params.id,
       handler: params.handler as EventHandlerCallable,
-      handler_name: params.handler.name || 'anonymous',
+      handler_name: EventHandler.handlerNameFromCallable(params.handler as EventHandlerCallable),
       handler_file_path: params.handler_file_path ?? null,
       handler_timeout: params.handler_timeout,
       handler_slow_timeout: params.handler_slow_timeout,
