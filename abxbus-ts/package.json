@@ -1,6 +1,6 @@
 {
   "name": "abxbus",
-  "version": "2.4.20",
+  "version": "2.4.22",
   "description": "Event bus library for browsers and ESM Node.js",
   "type": "module",
   "sideEffects": false,
@@ -58,6 +58,9 @@
   "packageManager": "pnpm@10.29.3",
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.215.0",
+    "@opentelemetry/resources": "^2.7.0",
+    "@opentelemetry/sdk-trace-base": "^2.7.0",
     "uuid": "^13.0.0",
     "zod": "^4.3.6"
   },

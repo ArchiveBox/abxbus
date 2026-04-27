@@ -8,7 +8,7 @@ export { monotonicDatetime } from './helpers.js'
 export type { EventBusMiddleware, EventBusMiddlewareCtor, EventBusMiddlewareInput } from './middlewares.js'
 export { OtelTracingMiddleware } from './middleware_otel_tracing.js'
 export type { OtelTracingMiddlewareOptions } from './middleware_otel_tracing.js'
-export type { OtelTracingSpanFactory, OtelTracingSpanFactoryInput } from './middleware_otel_tracing.js'
+export type { OtelTracingSpanFactory, OtelTracingSpanFactoryInput, OtelTracingSpanProvider } from './middleware_otel_tracing.js'
 export {
   EventHandlerTimeoutError,
   EventHandlerCancelledError,

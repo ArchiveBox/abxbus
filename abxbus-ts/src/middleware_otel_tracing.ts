@@ -1,5 +1,6 @@
 import {
   ROOT_CONTEXT,
+  SpanKind,
   SpanStatusCode,
   trace,
   type Context,
@@ -9,6 +10,11 @@ import {
   type SpanContext,
   type Tracer,
 } from '@opentelemetry/api'
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
+import { resourceFromAttributes } from '@opentelemetry/resources'
+import { BasicTracerProvider, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
+import type { SpanLimits, SpanProcessor } from '@opentelemetry/sdk-trace-base'
+import { SpanImpl } from '@opentelemetry/sdk-trace-base/build/src/Span.js'
 
 import type { BaseEvent } from './base_event.js'
 import type { EventBus } from './event_bus.js'
@@ -16,7 +22,7 @@ import type { EventResult } from './event_result.js'
 import type { EventBusMiddleware } from './middlewares.js'
 import type { EventStatus } from './types.js'
 
-type OpenTelemetryTraceApi = Pick<typeof trace, 'getTracer' | 'setSpan'>
+type OpenTelemetryTraceApi = Pick<typeof trace, 'getTracer' | 'setSpan'> & Partial<Pick<typeof trace, 'setSpanContext'>>
 
 export type OtelTracingSpanFactoryInput = {
   name: string
@@ -28,10 +34,25 @@ export type OtelTracingSpanFactoryInput = {
 
 export type OtelTracingSpanFactory = (input: OtelTracingSpanFactoryInput) => Span
 
+type OtelTracingSpanProviderInternals = {
+  _activeSpanProcessor?: SpanProcessor
+  _config?: {
+    resource?: unknown
+    spanLimits?: SpanLimits
+  }
+  _resource?: unknown
+}
+
+export type OtelTracingSpanProvider = object
+
 export type OtelTracingMiddlewareOptions = {
   tracer?: Tracer
   trace_api?: OpenTelemetryTraceApi
+  span_provider?: OtelTracingSpanProvider
   span_factory?: OtelTracingSpanFactory
+  otlp_endpoint?: string
+  service_name?: string
+  instrumentation_name?: string
   root_span_name?: string | ((eventbus: EventBus, event: BaseEvent) => string)
   root_span_attributes?: SpanAttributes | ((eventbus: EventBus, event: BaseEvent) => SpanAttributes)
 }
@@ -40,6 +61,7 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
   private readonly tracer: Tracer
   private readonly trace_api: OpenTelemetryTraceApi
   private readonly span_factory?: OtelTracingSpanFactory
+  private readonly span_provider?: OtelTracingSpanProvider
   private readonly root_span_name: OtelTracingMiddlewareOptions['root_span_name']
   private readonly root_span_attributes: OtelTracingMiddlewareOptions['root_span_attributes']
   private readonly root_spans = new Map<string, Span>()
@@ -52,7 +74,12 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
   constructor(options: OtelTracingMiddlewareOptions = {}) {
     this.trace_api = options.trace_api ?? trace
     this.tracer = options.tracer ?? this.trace_api.getTracer('abxbus')
-    this.span_factory = options.span_factory
+    this.span_provider = options.span_provider ?? (options.otlp_endpoint ? createOtlpSpanProvider(options) : undefined)
+    this.span_factory =
+      options.span_factory ??
+      (this.span_provider
+        ? createProviderSpanFactory(this.trace_api, this.span_provider, options.instrumentation_name ?? 'abxbus')
+        : undefined)
     this.root_span_name = options.root_span_name
     this.root_span_attributes = options.root_span_attributes
   }
@@ -313,6 +340,59 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
 
 function handlerSpanKey(event_id: string, handler_id: string): string {
   return `${event_id}:${handler_id}`
+}
+
+function createOtlpSpanProvider(options: OtelTracingMiddlewareOptions): OtelTracingSpanProvider {
+  return new BasicTracerProvider({
+    resource: resourceFromAttributes({
+      'service.name': options.service_name ?? 'abxbus',
+    }),
+    spanProcessors: [
+      new SimpleSpanProcessor(
+        new OTLPTraceExporter({
+          url: normalizeOtlpTracesEndpoint(options.otlp_endpoint!),
+        })
+      ),
+    ],
+  })
+}
+
+function createProviderSpanFactory(
+  trace_api: OpenTelemetryTraceApi,
+  provider: OtelTracingSpanProvider,
+  instrumentation_name: string
+): OtelTracingSpanFactory {
+  const provider_internals = provider as OtelTracingSpanProviderInternals
+  return (input: OtelTracingSpanFactoryInput): Span => {
+    const span_processor = provider_internals._activeSpanProcessor
+    const span_limits = provider_internals._config?.spanLimits
+    const resource = provider_internals._resource ?? provider_internals._config?.resource
+    if (!span_processor || !span_limits || !resource) {
+      throw new Error('OtelTracingMiddleware span_provider must be an OpenTelemetry SDK trace provider with active span internals')
+    }
+
+    const parent_context = input.parent_span_context
+      ? (trace_api.setSpanContext ?? trace.setSpanContext)(ROOT_CONTEXT, input.parent_span_context)
+      : ROOT_CONTEXT
+    return new SpanImpl({
+      resource,
+      scope: { name: instrumentation_name },
+      context: parent_context,
+      spanContext: input.span_context,
+      parentSpanContext: input.parent_span_context,
+      name: input.name,
+      kind: SpanKind.INTERNAL,
+      attributes: input.attributes,
+      startTime: input.start_time,
+      spanProcessor: span_processor,
+      spanLimits: span_limits,
+    } as ConstructorParameters<typeof SpanImpl>[0])
+  }
+}
+
+function normalizeOtlpTracesEndpoint(endpoint: string): string {
+  const trimmed = endpoint.replace(/\/+$/, '')
+  return trimmed.endsWith('/v1/traces') ? trimmed : `${trimmed}/v1/traces`
 }
 
 function eventSpanAttributes(eventbus: EventBus, event: BaseEvent): SpanAttributes {

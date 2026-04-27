@@ -3,6 +3,7 @@ import { test } from 'node:test'
 
 import {
   ROOT_CONTEXT,
+  SpanKind,
   type Context,
   type Span,
   type SpanAttributes,
@@ -13,6 +14,7 @@ import {
   type TimeInput,
   type Tracer,
 } from '@opentelemetry/api'
+import { BasicTracerProvider, SimpleSpanProcessor, type ReadableSpan, type SpanExporter } from '@opentelemetry/sdk-trace-base'
 
 import { BaseEvent, EventBus, OtelTracingMiddleware, type OtelTracingSpanFactoryInput } from '../src/index.js'
 
@@ -291,6 +293,73 @@ test('OtelTracingMiddleware span_factory mirrors abxbus ids into stable parent a
   assert.equal(child_event_span.attributes['abxbus.event.emitted_by_handler_id'], parent_handler_span.attributes['abxbus.handler.id'])
 
   bus.destroy()
+})
+
+test('OtelTracingMiddleware span_provider creates SDK spans with abxbus span contexts', async () => {
+  const exported_spans: ReadableSpan[] = []
+  const exporter: SpanExporter = {
+    export(spans, resultCallback) {
+      exported_spans.push(...spans)
+      resultCallback({ code: 0 })
+    },
+    shutdown: async () => undefined,
+  }
+  const provider = new BasicTracerProvider({
+    spanProcessors: [new SimpleSpanProcessor(exporter)],
+  })
+  const bus = new EventBus('OtelTracingProviderBus', {
+    middlewares: [
+      new OtelTracingMiddleware({
+        span_provider: provider,
+        instrumentation_name: 'abxbus-test',
+        root_span_name: () => 'StagehandSession provider-session',
+      }),
+    ],
+    max_history_size: null,
+  })
+  const ParentEvent = BaseEvent.extend('OtelTracingProviderParentEvent', {})
+  const ChildEvent = BaseEvent.extend('OtelTracingProviderChildEvent', {})
+
+  bus.on(ParentEvent, async (event) => {
+    await event.emit(ChildEvent({ event_timeout: 0.2 })).done()
+  })
+  bus.on(ChildEvent, () => 'child')
+
+  await bus.emit(ParentEvent({ event_timeout: 0.5 })).done()
+  await provider.forceFlush()
+  await flushHooks()
+
+  const root_span = exported_spans.find((span) => span.name === 'StagehandSession provider-session')
+  const parent_event_span = exported_spans.find((span) => span.name === 'abxbus.event OtelTracingProviderParentEvent')
+  const parent_handler_span = exported_spans.find((span) => span.name.startsWith('abxbus.handler OtelTracingProviderParentEvent '))
+  const child_event_span = exported_spans.find((span) => span.name === 'abxbus.event OtelTracingProviderChildEvent')
+  const child_handler_span = exported_spans.find((span) => span.name.startsWith('abxbus.handler OtelTracingProviderChildEvent '))
+
+  assert.ok(root_span)
+  assert.ok(parent_event_span)
+  assert.ok(parent_handler_span)
+  assert.ok(child_event_span)
+  assert.ok(child_handler_span)
+  assert.equal(root_span.kind, SpanKind.INTERNAL)
+  assert.equal(root_span.parentSpanContext, undefined)
+  assert.equal(parent_event_span.parentSpanContext?.spanId, root_span.spanContext().spanId)
+  assert.equal(parent_handler_span.parentSpanContext?.spanId, parent_event_span.spanContext().spanId)
+  assert.equal(child_event_span.parentSpanContext?.spanId, parent_handler_span.spanContext().spanId)
+  assert.equal(child_handler_span.parentSpanContext?.spanId, child_event_span.spanContext().spanId)
+  assert.equal(child_event_span.attributes['abxbus.event.parent_id'], parent_event_span.attributes['abxbus.event.id'])
+  assert.equal(child_event_span.attributes['abxbus.event.emitted_by_handler_id'], parent_handler_span.attributes['abxbus.handler.id'])
+
+  await provider.shutdown()
+  bus.destroy()
+})
+
+test('OtelTracingMiddleware accepts OTLP endpoint constructor options', () => {
+  const middleware = new OtelTracingMiddleware({
+    otlp_endpoint: 'http://localhost:4318',
+    service_name: 'stagehand-driver',
+    instrumentation_name: 'stagehand-driver.abxbus',
+  })
+  assert.ok(middleware)
 })
 
 function recordingContext(value: Context | undefined): RecordingContext {
