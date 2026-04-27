@@ -35,6 +35,7 @@ class RecordingSpan implements Span {
   status: SpanStatus | undefined
   exceptions: unknown[]
   ended: boolean
+  end_time: TimeInput | undefined
 
   constructor(name: string, options: SpanOptions | undefined, parent_context: Context | undefined) {
     this.name = name
@@ -48,6 +49,7 @@ class RecordingSpan implements Span {
     }
     this.exceptions = []
     this.ended = false
+    this.end_time = undefined
   }
 
   spanContext(): SpanContext {
@@ -94,8 +96,9 @@ class RecordingSpan implements Span {
     return this
   }
 
-  end(_end_time?: TimeInput): void {
+  end(end_time?: TimeInput): void {
     this.ended = true
+    this.end_time = end_time
   }
 
   isRecording(): boolean {
@@ -147,12 +150,15 @@ test('OtelTracingMiddleware creates event and handler spans with child event par
   const parent_handler_span = tracer.spans.find((span) => span.name.startsWith('abxbus.handler OtelTracingParentEvent '))
   const child_event_span = tracer.spans.find((span) => span.name === 'abxbus.event OtelTracingChildEvent')
   const child_handler_span = tracer.spans.find((span) => span.name.startsWith('abxbus.handler OtelTracingChildEvent '))
+  const root_span = tracer.spans.find((span) => span.name === 'abxbus.trace OtelTracingBus')
 
   assert.ok(parent_event_span)
   assert.ok(parent_handler_span)
   assert.ok(child_event_span)
   assert.ok(child_handler_span)
-  assert.equal(parent_event_span.parent_context, ROOT_CONTEXT)
+  assert.ok(root_span)
+  assert.equal(root_span.parent_context, ROOT_CONTEXT)
+  assert.equal(recordingContext(parent_event_span.parent_context).span, root_span)
   assert.equal(parent_event_span.ended, true)
   assert.equal(parent_handler_span.ended, true)
   assert.equal(child_event_span.ended, true)
@@ -160,6 +166,46 @@ test('OtelTracingMiddleware creates event and handler spans with child event par
   assert.equal(recordingContext(parent_handler_span.parent_context).span, parent_event_span)
   assert.equal(recordingContext(child_event_span.parent_context).span, parent_handler_span)
   assert.equal(recordingContext(child_handler_span.parent_context).span, child_event_span)
+
+  bus.destroy()
+})
+
+test('OtelTracingMiddleware supports named root spans with session attributes and non-zero duration', async () => {
+  const tracer = new RecordingTracer()
+  const trace_api = {
+    getTracer: () => tracer,
+    setSpan: (parent: Context, span: Span): Context => ({ parent, span }) as unknown as Context,
+  }
+  const bus = new EventBus('OtelTracingSessionBus', {
+    middlewares: [
+      new OtelTracingMiddleware({
+        tracer,
+        trace_api,
+        root_span_name: () => 'StagehandSession session-123',
+        root_span_attributes: { 'stagehand.session_id': 'session-123' },
+      }),
+    ],
+  })
+  const InstantEvent = BaseEvent.extend('OtelTracingInstantEvent', {})
+
+  await bus.emit(InstantEvent({ session_id: 'event-session-456', event_timeout: 0.2 } as any)).eventCompleted()
+  await flushHooks()
+
+  const root_span = tracer.spans.find((span) => span.name === 'StagehandSession session-123')
+  const event_span = tracer.spans.find((span) => span.name === 'abxbus.event OtelTracingInstantEvent')
+
+  assert.ok(root_span)
+  assert.ok(event_span)
+  assert.equal(root_span.attributes['stagehand.session_id'], 'session-123')
+  assert.equal(root_span.attributes['abxbus.root_event.session_id'], 'event-session-456')
+  assert.equal(event_span.attributes['abxbus.event.session_id'], 'event-session-456')
+  assert.equal(recordingContext(event_span.parent_context).span, root_span)
+  assert.ok(root_span.end_time instanceof Date)
+  assert.ok(event_span.end_time instanceof Date)
+  assert.ok(root_span.options?.startTime instanceof Date)
+  assert.ok(event_span.options?.startTime instanceof Date)
+  assert.ok(root_span.end_time.getTime() > root_span.options.startTime.getTime())
+  assert.ok(event_span.end_time.getTime() > event_span.options.startTime.getTime())
 
   bus.destroy()
 })

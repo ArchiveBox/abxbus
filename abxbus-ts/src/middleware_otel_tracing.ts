@@ -1,4 +1,13 @@
-import { ROOT_CONTEXT, SpanStatusCode, trace, type Context, type Span, type Tracer } from '@opentelemetry/api'
+import {
+  ROOT_CONTEXT,
+  SpanStatusCode,
+  trace,
+  type Context,
+  type Span,
+  type SpanAttributeValue,
+  type SpanAttributes,
+  type Tracer,
+} from '@opentelemetry/api'
 
 import type { BaseEvent } from './base_event.js'
 import type { EventBus } from './event_bus.js'
@@ -11,11 +20,17 @@ type OpenTelemetryTraceApi = Pick<typeof trace, 'getTracer' | 'setSpan'>
 export type OtelTracingMiddlewareOptions = {
   tracer?: Tracer
   trace_api?: OpenTelemetryTraceApi
+  root_span_name?: string | ((eventbus: EventBus, event: BaseEvent) => string)
+  root_span_attributes?: SpanAttributes | ((eventbus: EventBus, event: BaseEvent) => SpanAttributes)
 }
 
 export class OtelTracingMiddleware implements EventBusMiddleware {
   private readonly tracer: Tracer
   private readonly trace_api: OpenTelemetryTraceApi
+  private readonly root_span_name: OtelTracingMiddlewareOptions['root_span_name']
+  private readonly root_span_attributes: OtelTracingMiddlewareOptions['root_span_attributes']
+  private readonly root_spans = new Map<string, Span>()
+  private readonly root_contexts = new Map<string, Context>()
   private readonly event_spans = new Map<string, Span>()
   private readonly event_contexts = new Map<string, Context>()
   private readonly handler_spans = new Map<string, Span>()
@@ -24,6 +39,8 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
   constructor(options: OtelTracingMiddlewareOptions = {}) {
     this.trace_api = options.trace_api ?? trace
     this.tracer = options.tracer ?? this.trace_api.getTracer('abxbus')
+    this.root_span_name = options.root_span_name
+    this.root_span_attributes = options.root_span_attributes
   }
 
   onEventChange(eventbus: EventBus, event: BaseEvent, status: EventStatus): void {
@@ -54,7 +71,8 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
       return existing
     }
 
-    const parent_context = this.parentContextForEvent(event) ?? ROOT_CONTEXT
+    const parent_context = this.parentContextForEvent(event) ?? this.startRootSpan(eventbus, event)
+    const start_time = dateFromIso(event.event_started_at)
     const span = this.tracer.startSpan(
       `abxbus.event ${event.event_type}`,
       {
@@ -64,11 +82,12 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
           'abxbus.event.id': event.event_id,
           'abxbus.event.type': event.event_type,
           'abxbus.event.version': event.event_version,
+          'abxbus.event.session_id': stringValue((event as { session_id?: unknown }).session_id),
           'abxbus.event.parent_id': event.event_parent_id,
           'abxbus.event.emitted_by_handler_id': event.event_emitted_by_handler_id,
           'abxbus.event.path': event.event_path.join(' '),
         }),
-        startTime: dateFromIso(event.event_started_at),
+        startTime: start_time,
       },
       parent_context
     )
@@ -93,9 +112,12 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
         'abxbus.event.child_count': event.event_children.length,
       })
     )
-    span.end(dateFromIso(event.event_completed_at))
+    const start_time = dateFromIso(event.event_started_at)
+    const end_time = endTimeAfterStart(start_time, dateFromIso(event.event_completed_at))
+    span.end(end_time)
     this.event_spans.delete(event.event_id)
     this.event_contexts.delete(event.event_id)
+    this.completeRootSpan(event.event_id, start_time, end_time)
   }
 
   private startHandlerSpan(eventbus: EventBus, event: BaseEvent, event_result: EventResult): Span {
@@ -147,9 +169,51 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
         'abxbus.handler.child_count': event_result.event_children.length,
       })
     )
-    span.end(dateFromIso(event_result.completed_at))
+    span.end(endTimeAfterStart(dateFromIso(event_result.started_at), dateFromIso(event_result.completed_at)))
     this.handler_spans.delete(event_result.id)
     this.handler_contexts.delete(handlerSpanKey(event_result.event_id, event_result.handler_id))
+  }
+
+  private startRootSpan(eventbus: EventBus, event: BaseEvent): Context {
+    const existing = this.root_contexts.get(event.event_id)
+    if (existing) {
+      return existing
+    }
+
+    const session_id = stringValue((event as { session_id?: unknown }).session_id)
+    const root_attributes = resolveAttributes(this.root_span_attributes, eventbus, event)
+    const root_span = this.tracer.startSpan(
+      resolveRootSpanName(this.root_span_name, eventbus, event),
+      {
+        attributes: compactAttributes({
+          ...root_attributes,
+          'abxbus.trace.root': true,
+          'abxbus.bus.id': eventbus.id,
+          'abxbus.bus.name': eventbus.name,
+          'abxbus.root_event.id': event.event_id,
+          'abxbus.root_event.type': event.event_type,
+          'abxbus.root_event.session_id': session_id,
+        }),
+        startTime: dateFromIso(event.event_started_at),
+      },
+      ROOT_CONTEXT
+    )
+    const root_context = this.trace_api.setSpan(ROOT_CONTEXT, root_span)
+    this.root_spans.set(event.event_id, root_span)
+    this.root_contexts.set(event.event_id, root_context)
+    return root_context
+  }
+
+  private completeRootSpan(event_id: string, start_time: Date | undefined, end_time: Date | undefined): void {
+    const root_span = this.root_spans.get(event_id)
+    if (!root_span) {
+      return
+    }
+
+    root_span.setStatus({ code: SpanStatusCode.OK })
+    root_span.end(endTimeAfterStart(start_time, end_time))
+    this.root_spans.delete(event_id)
+    this.root_contexts.delete(event_id)
   }
 
   private parentContextForEvent(event: BaseEvent): Context | undefined {
@@ -176,10 +240,35 @@ function dateFromIso(value: string | null | undefined): Date | undefined {
   return Number.isNaN(date.getTime()) ? undefined : date
 }
 
-function compactAttributes(
-  attributes: Record<string, string | number | boolean | null | undefined>
-): Record<string, string | number | boolean> {
-  const compacted: Record<string, string | number | boolean> = {}
+function endTimeAfterStart(start_time: Date | undefined, end_time: Date | undefined): Date | undefined {
+  if (!start_time || !end_time) {
+    return end_time
+  }
+
+  return end_time.getTime() > start_time.getTime() ? end_time : new Date(start_time.getTime() + 1)
+}
+
+function resolveRootSpanName(root_span_name: OtelTracingMiddlewareOptions['root_span_name'], eventbus: EventBus, event: BaseEvent): string {
+  if (typeof root_span_name === 'function') {
+    return root_span_name(eventbus, event)
+  }
+  return root_span_name ?? `abxbus.trace ${eventbus.name}`
+}
+
+function resolveAttributes(
+  attributes: OtelTracingMiddlewareOptions['root_span_attributes'],
+  eventbus: EventBus,
+  event: BaseEvent
+): SpanAttributes {
+  return typeof attributes === 'function' ? attributes(eventbus, event) : (attributes ?? {})
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+function compactAttributes(attributes: Record<string, SpanAttributeValue | null | undefined>): SpanAttributes {
+  const compacted: SpanAttributes = {}
   for (const [key, value] of Object.entries(attributes)) {
     if (value !== null && value !== undefined) {
       compacted[key] = value
