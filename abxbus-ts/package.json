@@ -9,12 +9,14 @@
   "types": "./dist/types/index.d.ts",
   "exports": {
     ".": {
+      "source": "./src/index.ts",
       "types": "./dist/types/index.d.ts",
       "import": "./dist/esm/index.js",
       "require": "./dist/cjs/index.js",
       "default": "./dist/esm/index.js"
     },
     "./*": {
+      "source": "./src/*.ts",
       "types": "./dist/types/*.d.ts",
       "import": "./dist/esm/*.js",
       "require": "./dist/cjs/*.js",
@@ -22,6 +24,8 @@
     }
   },
   "files": [
+    "src/*.ts",
+    "!src/*.test.ts",
     "dist/cjs",
     "dist/esm",
     "dist/types"
