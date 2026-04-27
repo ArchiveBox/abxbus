@@ -1,0 +1,47 @@
+abxbus-ts/tests/eventbus_log_tree.test.ts
+  305ee7dbd16b3e44 83-112
+abxbus-ts/examples/parent_child_tracking.ts
+  305ee7dbd16b3e44 69-72
+abxbus-ts/examples/log_tree_demo.ts
+  305ee7dbd16b3e44 46
+docs/features/forwarding-between-buses.mdx
+  305ee7dbd16b3e44 264,267
+docs/features/parent-child-tracking.mdx
+  305ee7dbd16b3e44 17,22,24,26,28-35,51,57,60,62
+examples/immediate_event_processing.py
+  305ee7dbd16b3e44 93
+docs/concurrency/immediate-execution.mdx
+  305ee7dbd16b3e44 91,132
+README.md
+  305ee7dbd16b3e44 37,258,261,285-303,1044
+examples/parent_child_tracking.py
+  305ee7dbd16b3e44 35,53,62,64,69
+abxbus-ts/README.md
+  305ee7dbd16b3e44 30,297-307,403
+abxbus-ts/src/logging.ts
+  305ee7dbd16b3e44 3,149-158,186-188,227-228
+examples/log_tree_demo.py
+  305ee7dbd16b3e44 41,46,59
+docs/api/baseevent.mdx
+  305ee7dbd16b3e44 67,244
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "1796a252ae842cb49ee061bf35ab70060300c936",
+  "prompts": {
+    "305ee7dbd16b3e44": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dce22-d203-71d0-966d-c3304c639b70",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "messages": [],
+      "total_additions": 72,
+      "total_deletions": 52,
+      "accepted_lines": 163,
+      "overriden_lines": 0
+    }
+  }
+}
