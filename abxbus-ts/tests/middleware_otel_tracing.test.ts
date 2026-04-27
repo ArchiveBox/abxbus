@@ -158,10 +158,10 @@ test('OtelTracingMiddleware creates event and handler spans with child event par
   await bus.emit(ParentEvent({ event_timeout: 0.5 })).done()
   await flushHooks()
 
-  const parent_event_span = tracer.spans.find((span) => span.name === 'abxbus.event OtelTracingParentEvent')
-  const parent_handler_span = tracer.spans.find((span) => span.name.startsWith('abxbus.handler OtelTracingParentEvent '))
-  const child_event_span = tracer.spans.find((span) => span.name === 'abxbus.event OtelTracingChildEvent')
-  const child_handler_span = tracer.spans.find((span) => span.name.startsWith('abxbus.handler OtelTracingChildEvent '))
+  const parent_event_span = tracer.spans.find((span) => span.name === 'OtelTracingBus.emit(OtelTracingParentEvent)')
+  const parent_handler_span = tracer.spans.find((span) => span.name === 'anonymous(OtelTracingParentEvent)')
+  const child_event_span = tracer.spans.find((span) => span.name === 'OtelTracingBus.emit(OtelTracingChildEvent)')
+  const child_handler_span = tracer.spans.find((span) => span.name === 'anonymous(OtelTracingChildEvent)')
   const root_span = tracer.spans.find((span) => span.name === 'abxbus.trace OtelTracingBus')
 
   assert.ok(parent_event_span)
@@ -178,6 +178,29 @@ test('OtelTracingMiddleware creates event and handler spans with child event par
   assert.equal(recordingContext(parent_handler_span.parent_context).span, parent_event_span)
   assert.equal(recordingContext(child_event_span.parent_context).span, parent_handler_span)
   assert.equal(recordingContext(child_handler_span.parent_context).span, child_event_span)
+
+  bus.destroy()
+})
+
+test('OtelTracingMiddleware names event and handler spans for display', async () => {
+  const tracer = new RecordingTracer()
+  const trace_api = {
+    getTracer: () => tracer,
+    setSpan: (parent: Context, span: Span): Context => ({ parent, span }) as unknown as Context,
+  }
+  const bus = new EventBus('StagehandExtensionBackground', {
+    middlewares: [new OtelTracingMiddleware({ tracer, trace_api })],
+    max_history_size: null,
+  })
+  const CDPConnect = BaseEvent.extend('CDPConnect', {})
+
+  bus.on(CDPConnect, () => 'connected', { handler_name: 'DebuggerClient.on_CDPConnect' })
+
+  await bus.emit(CDPConnect({ event_timeout: 0.2 })).done()
+  await flushHooks()
+
+  assert.ok(tracer.spans.find((span) => span.name === 'StagehandExtensionBackground.emit(CDPConnect)'))
+  assert.ok(tracer.spans.find((span) => span.name === 'DebuggerClient.on_CDPConnect(CDPConnect)'))
 
   bus.destroy()
 })
@@ -204,7 +227,7 @@ test('OtelTracingMiddleware supports named root spans with session attributes an
   await flushHooks()
 
   const root_span = tracer.spans.find((span) => span.name === 'StagehandSession session-123')
-  const event_span = tracer.spans.find((span) => span.name === 'abxbus.event OtelTracingInstantEvent')
+  const event_span = tracer.spans.find((span) => span.name === 'OtelTracingSessionBus.emit(OtelTracingInstantEvent)')
 
   assert.ok(root_span)
   assert.ok(event_span)
@@ -261,10 +284,10 @@ test('OtelTracingMiddleware span_factory mirrors abxbus ids into stable parent a
   await flushHooks()
 
   const root_span = spans.find((span) => span.name === 'StagehandSession session-abc')
-  const parent_event_span = spans.find((span) => span.name === 'abxbus.event OtelTracingManualParentEvent')
-  const parent_handler_span = spans.find((span) => span.name.startsWith('abxbus.handler OtelTracingManualParentEvent '))
-  const child_event_span = spans.find((span) => span.name === 'abxbus.event OtelTracingManualChildEvent')
-  const child_handler_span = spans.find((span) => span.name.startsWith('abxbus.handler OtelTracingManualChildEvent '))
+  const parent_event_span = spans.find((span) => span.name === 'OtelTracingManualIdsBus.emit(OtelTracingManualParentEvent)')
+  const parent_handler_span = spans.find((span) => span.name === 'anonymous(OtelTracingManualParentEvent)')
+  const child_event_span = spans.find((span) => span.name === 'OtelTracingManualIdsBus.emit(OtelTracingManualChildEvent)')
+  const child_handler_span = spans.find((span) => span.name === 'anonymous(OtelTracingManualChildEvent)')
 
   assert.ok(root_span)
   assert.ok(parent_event_span)
@@ -330,10 +353,10 @@ test('OtelTracingMiddleware span_provider creates SDK spans with abxbus span con
   await flushHooks()
 
   const root_span = exported_spans.find((span) => span.name === 'StagehandSession provider-session')
-  const parent_event_span = exported_spans.find((span) => span.name === 'abxbus.event OtelTracingProviderParentEvent')
-  const parent_handler_span = exported_spans.find((span) => span.name.startsWith('abxbus.handler OtelTracingProviderParentEvent '))
-  const child_event_span = exported_spans.find((span) => span.name === 'abxbus.event OtelTracingProviderChildEvent')
-  const child_handler_span = exported_spans.find((span) => span.name.startsWith('abxbus.handler OtelTracingProviderChildEvent '))
+  const parent_event_span = exported_spans.find((span) => span.name === 'OtelTracingProviderBus.emit(OtelTracingProviderParentEvent)')
+  const parent_handler_span = exported_spans.find((span) => span.name === 'anonymous(OtelTracingProviderParentEvent)')
+  const child_event_span = exported_spans.find((span) => span.name === 'OtelTracingProviderBus.emit(OtelTracingProviderChildEvent)')
+  const child_handler_span = exported_spans.find((span) => span.name === 'anonymous(OtelTracingProviderChildEvent)')
 
   assert.ok(root_span)
   assert.ok(parent_event_span)
@@ -390,8 +413,8 @@ test('OtelTracingMiddleware records handler errors on handler and event spans', 
   await bus.emit(ErrorEvent({ event_timeout: 0.2 })).eventCompleted()
   await flushHooks()
 
-  const event_span = tracer.spans.find((span) => span.name === 'abxbus.event OtelTracingErrorEvent')
-  const handler_span = tracer.spans.find((span) => span.name.startsWith('abxbus.handler OtelTracingErrorEvent '))
+  const event_span = tracer.spans.find((span) => span.name === 'OtelTracingErrorBus.emit(OtelTracingErrorEvent)')
+  const handler_span = tracer.spans.find((span) => span.name === 'anonymous(OtelTracingErrorEvent)')
 
   assert.ok(event_span)
   assert.ok(handler_span)

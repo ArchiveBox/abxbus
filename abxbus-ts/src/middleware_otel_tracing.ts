@@ -121,7 +121,7 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
     const parent_context = this.parentContextForEvent(event) ?? this.startRootSpan(eventbus, event)
     const start_time = dateFromIso(event.event_started_at)
     const span = this.tracer.startSpan(
-      `abxbus.event ${event.event_type}`,
+      eventSpanName(eventbus, event),
       {
         attributes: compactAttributes({
           'abxbus.bus.id': eventbus.id,
@@ -181,7 +181,7 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
     const parent_context =
       this.event_contexts.get(event.event_id) ?? this.trace_api.setSpan(ROOT_CONTEXT, this.startEventSpan(eventbus, event))
     const span = this.tracer.startSpan(
-      `abxbus.handler ${event.event_type} ${event_result.handler_name}`,
+      handlerSpanName(event, event_result),
       {
         attributes: compactAttributes({
           'abxbus.bus.id': eventbus.id,
@@ -303,7 +303,7 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
     }
 
     const span = this.span_factory!({
-      name: `abxbus.event ${event.event_type}`,
+      name: eventSpanName(eventbus, event),
       span_context: event_context,
       parent_span_context: parentSpanContextForEvent(event, trace_id),
       attributes: eventSpanAttributes(eventbus, event),
@@ -322,7 +322,7 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
     const trace_id = traceIdForRootEvent(root_event.event_id)
     const start_time = dateFromIso(event_result.started_at)
     const span = this.span_factory!({
-      name: `abxbus.handler ${event.event_type} ${event_result.handler_name}`,
+      name: handlerSpanName(event, event_result),
       span_context: handlerSpanContext(trace_id, event_result.event_id, event_result.handler_id),
       parent_span_context: eventSpanContext(trace_id, event.event_id),
       attributes: handlerSpanAttributes(eventbus, event, event_result),
@@ -340,6 +340,14 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
 
 function handlerSpanKey(event_id: string, handler_id: string): string {
   return `${event_id}:${handler_id}`
+}
+
+function eventSpanName(eventbus: EventBus, event: BaseEvent): string {
+  return `${eventbus.name}.emit(${event.event_type})`
+}
+
+function handlerSpanName(event: BaseEvent, event_result: EventResult): string {
+  return `${event_result.handler_name}(${event.event_type})`
 }
 
 function createOtlpSpanProvider(options: OtelTracingMiddlewareOptions): OtelTracingSpanProvider {
