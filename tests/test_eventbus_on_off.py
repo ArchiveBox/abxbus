@@ -7,6 +7,7 @@ import pytest
 from abxbus.base_event import BaseEvent
 from abxbus.event_bus import EventBus
 from abxbus.event_handler import EventHandler, _normalize_handler_callable  # pyright: ignore[reportPrivateUsage]
+from abxbus.retry import retry
 
 if TYPE_CHECKING:
 
@@ -192,5 +193,72 @@ async def test_handler_async_preserves_typed_arg_return_contracts_for_async_hand
     result = await handler_async(RegistryTypingEvent(required_token='async'))
     assert isinstance(result, str)
     assert result == 'async'
+
+    await bus.stop(clear=True)
+
+
+@pytest.mark.asyncio
+async def test_on_names_bound_handlers_by_the_class_that_defined_the_method() -> None:
+    bus = EventBus(name='RegistryDefinedClassNameBus')
+
+    class DefinedClassNameEvent(BaseEvent[str]):
+        pass
+
+    class OriginalHandlerClass:
+        entry: EventHandler | None = None
+
+        def __init__(self, b: EventBus) -> None:
+            self.entry = b.on(DefinedClassNameEvent, self.on_DefinedClassNameEvent)
+
+        async def on_DefinedClassNameEvent(self, _event: DefinedClassNameEvent) -> str:
+            return 'ok'
+
+    class AttachedHandlerClass(OriginalHandlerClass):
+        pass
+
+    service = AttachedHandlerClass(bus)
+    assert service.entry is not None
+    assert service.entry.handler_name == 'OriginalHandlerClass.on_DefinedClassNameEvent'
+
+    completed = await bus.emit(DefinedClassNameEvent())
+    await completed
+    output = bus.log_tree()
+
+    assert f'{bus.name}#' in output
+    assert f'{service.entry.handler_name}#' in output
+
+    await bus.stop(clear=True)
+
+
+@pytest.mark.asyncio
+async def test_on_names_retry_decorated_bound_handlers_by_the_class_that_defined_the_method() -> None:
+    bus = EventBus(name='RegistryDecoratedDefinedClassNameBus')
+
+    class DecoratedDefinedClassNameEvent(BaseEvent[str]):
+        pass
+
+    class OriginalDecoratedHandlerClass:
+        entry: EventHandler | None = None
+
+        def __init__(self, b: EventBus) -> None:
+            self.entry = b.on(DecoratedDefinedClassNameEvent, self.on_DecoratedDefinedClassNameEvent)
+
+        @retry(max_attempts=1)
+        async def on_DecoratedDefinedClassNameEvent(self, _event: DecoratedDefinedClassNameEvent) -> str:
+            return 'ok'
+
+    class AttachedDecoratedHandlerClass(OriginalDecoratedHandlerClass):
+        pass
+
+    service = AttachedDecoratedHandlerClass(bus)
+    assert service.entry is not None
+    assert service.entry.handler_name == 'OriginalDecoratedHandlerClass.on_DecoratedDefinedClassNameEvent'
+
+    completed = await bus.emit(DecoratedDefinedClassNameEvent())
+    await completed
+    output = bus.log_tree()
+
+    assert f'{bus.name}#' in output
+    assert f'{service.entry.handler_name}#' in output
 
     await bus.stop(clear=True)

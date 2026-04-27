@@ -132,6 +132,21 @@ def _format_handler_source_path(path: str, line_no: int | None = None) -> str:
     return f'{display}:{line_no}' if line_no else display
 
 
+def _defined_class_method_name(target: Callable[..., Any]) -> str | None:
+    qualname = getattr(target, '__qualname__', None)
+    if not isinstance(qualname, str):
+        return None
+
+    parts = qualname.split('.')
+    if len(parts) < 2 or parts[-2] == '<locals>':
+        return None
+
+    class_name, method_name = parts[-2], parts[-1]
+    if class_name.isidentifier() and method_name.isidentifier():
+        return f'{class_name}.{method_name}'
+    return None
+
+
 class _HandlerCacheKey:
     __slots__ = ('handler_ref', 'handler_id', '_hash')
 
@@ -292,8 +307,14 @@ class EventHandler(BaseModel):
     def get_callable_handler_name(handler: Callable[..., Any]) -> str:
         assert hasattr(handler, '__name__'), f'Handler {handler} has no __name__ attribute!'
         if inspect.ismethod(handler):
+            defined_name = _defined_class_method_name(handler.__func__)
+            if defined_name:
+                return defined_name
             return f'{type(handler.__self__).__name__}.{handler.__name__}'
         if callable(handler):
+            defined_name = _defined_class_method_name(handler)
+            if defined_name:
+                return defined_name
             handler_module = getattr(handler, '__module__', '<unknown>')
             handler_name = getattr(handler, '__name__', type(handler).__name__)
             return f'{handler_module}.{handler_name}'
