@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import http from 'node:http'
 import { test } from 'node:test'
 
 import {
@@ -449,6 +450,67 @@ test('OtelTracingMiddleware span_provider creates SDK spans with abxbus span con
   }
 
   await provider.shutdown()
+  bus.destroy()
+})
+
+test('OtelTracingMiddleware OTLP endpoint batches a completed trace tree into one export request', async (t) => {
+  const payloads: Record<string, unknown>[] = []
+  const server = http.createServer((request, response) => {
+    const chunks: Buffer[] = []
+    request.on('data', (chunk: Buffer) => chunks.push(chunk))
+    request.on('end', () => {
+      payloads.push(JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>)
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end('{}')
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => {
+    server.close()
+  })
+  const address = server.address()
+  assert.ok(address && typeof address === 'object')
+
+  const bus = new EventBus('OtelTracingOtlpBatchBus', {
+    middlewares: [
+      new OtelTracingMiddleware({
+        otlp_endpoint: `http://127.0.0.1:${address.port}/v1/traces`,
+      }),
+    ],
+    max_history_size: null,
+  })
+  const ParentEvent = BaseEvent.extend('OtelTracingOtlpBatchParentEvent', {})
+  const ChildEvent = BaseEvent.extend('OtelTracingOtlpBatchChildEvent', {})
+
+  bus.on(ParentEvent, async (event) => {
+    await event.emit(ChildEvent({ event_timeout: 0.2 })).done()
+  })
+  bus.on(ChildEvent, () => 'child')
+
+  await bus.emit(ParentEvent({ event_timeout: 0.5 })).done()
+  for (let index = 0; index < 20 && payloads.length === 0; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+
+  assert.equal(payloads.length, 1)
+  const resource_spans = payloads[0].resourceSpans as Array<Record<string, unknown>>
+  const scope_spans = resource_spans.flatMap((resource_span) => resource_span.scopeSpans as Array<Record<string, unknown>>)
+  const spans = scope_spans.flatMap((scope_span) => scope_span.spans as Array<Record<string, string | undefined>>)
+  const parent_event_span = spans.find((span) => span.name === 'OtelTracingOtlpBatchBus.emit(OtelTracingOtlpBatchParentEvent)')
+  const parent_handler_span = spans.find((span) => span.name === 'anonymous(OtelTracingOtlpBatchParentEvent)')
+  const child_event_span = spans.find((span) => span.name === 'OtelTracingOtlpBatchBus.emit(OtelTracingOtlpBatchChildEvent)')
+  const child_handler_span = spans.find((span) => span.name === 'anonymous(OtelTracingOtlpBatchChildEvent)')
+
+  assert.ok(parent_event_span)
+  assert.ok(parent_handler_span)
+  assert.ok(child_event_span)
+  assert.ok(child_handler_span)
+  assert.equal(parent_event_span.parentSpanId, undefined)
+  assert.equal(parent_handler_span.parentSpanId, parent_event_span.spanId)
+  assert.equal(child_event_span.parentSpanId, parent_handler_span.spanId)
+  assert.equal(child_handler_span.parentSpanId, child_event_span.spanId)
+  assert.ok(spans.every((span) => span.traceId === parent_event_span.traceId))
+
   bus.destroy()
 })
 

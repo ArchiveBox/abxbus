@@ -13,7 +13,7 @@ import {
 } from '@opentelemetry/api'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
 import { resourceFromAttributes } from '@opentelemetry/resources'
-import { BasicTracerProvider, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
+import { BasicTracerProvider, BatchSpanProcessor } from '@opentelemetry/sdk-trace-base'
 import type { SpanLimits, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { SpanImpl } from '@opentelemetry/sdk-trace-base/build/src/Span.js'
 
@@ -301,10 +301,13 @@ function createOtlpSpanProvider(options: OtelTracingMiddlewareOptions): OtelTrac
       'service.name': options.service_name ?? 'abxbus',
     }),
     spanProcessors: [
-      new SimpleSpanProcessor(
+      new BatchSpanProcessor(
         new OTLPTraceExporter({
           url: normalizeOtlpTracesEndpoint(options.otlp_endpoint!),
-        })
+        }),
+        {
+          scheduledDelayMillis: 100,
+        }
       ),
     ],
   })
