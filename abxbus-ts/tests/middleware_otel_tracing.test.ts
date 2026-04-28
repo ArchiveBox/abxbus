@@ -24,6 +24,19 @@ const flushHooks = async (ticks: number = 4): Promise<void> => {
   }
 }
 
+function timeInputToNs(value: TimeInput | undefined): bigint | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+  if (value instanceof Date) {
+    return BigInt(value.getTime()) * 1_000_000n
+  }
+  if (Array.isArray(value)) {
+    return BigInt(value[0]) * 1_000_000_000n + BigInt(value[1])
+  }
+  return BigInt(Math.trunc(value * 1_000_000))
+}
+
 type RecordingContext = {
   parent: Context
   span: RecordingSpan
@@ -229,9 +242,11 @@ test('OtelTracingMiddleware marks top-level event spans as roots with session at
   assert.equal(event_span.attributes['stagehand.session_id'], 'session-123')
   assert.equal(event_span.attributes['abxbus.session_id'], 'event-session-456')
   assert.equal(event_span.attributes['abxbus.trace.root'], true)
-  assert.ok(event_span.end_time instanceof Date)
-  assert.ok(event_span.options?.startTime instanceof Date)
-  assert.ok(event_span.end_time.getTime() > event_span.options.startTime.getTime())
+  const start_time = timeInputToNs(event_span.options?.startTime)
+  const end_time = timeInputToNs(event_span.end_time)
+  assert.ok(start_time !== undefined)
+  assert.ok(end_time !== undefined)
+  assert.ok(end_time > start_time)
 
   bus.destroy()
 })
@@ -425,6 +440,13 @@ test('OtelTracingMiddleware span_provider creates SDK spans with abxbus span con
   assert.equal(child_handler_span.parentSpanContext?.spanId, child_event_span.spanContext().spanId)
   assert.equal(child_event_span.attributes['abxbus.event_parent_id'], parent_event_span.attributes['abxbus.event_id'])
   assert.equal(child_event_span.attributes['abxbus.event_emitted_by_handler_id'], parent_handler_span.attributes['abxbus.handler_id'])
+  for (const span of [parent_event_span, parent_handler_span, child_event_span, child_handler_span]) {
+    const start_time = timeInputToNs(span.startTime)
+    const end_time = timeInputToNs(span.endTime)
+    assert.ok(start_time !== undefined)
+    assert.ok(end_time !== undefined)
+    assert.ok(end_time > start_time)
+  }
 
   await provider.shutdown()
   bus.destroy()

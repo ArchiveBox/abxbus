@@ -8,6 +8,7 @@ import {
   type SpanAttributeValue,
   type SpanAttributes,
   type SpanContext,
+  type TimeInput,
   type Tracer,
 } from '@opentelemetry/api'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
@@ -29,7 +30,7 @@ export type OtelTracingSpanFactoryInput = {
   span_context: SpanContext
   parent_span_context?: SpanContext
   attributes: SpanAttributes
-  start_time?: Date
+  start_time?: TimeInput
 }
 
 export type OtelTracingSpanFactory = (input: OtelTracingSpanFactoryInput) => Span
@@ -114,7 +115,7 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
     }
 
     const parent_context = this.parentContextForEvent(event) ?? ROOT_CONTEXT
-    const start_time = dateFromIso(event.event_started_at)
+    const start_time = timeInputFromIso(event.event_started_at)
     const span = this.tracer.startSpan(
       eventSpanName(eventbus, event),
       {
@@ -146,8 +147,8 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
     span.setAttributes(
       event.event_parent_id ? eventSpanAttributes(eventbus, event) : topLevelEventSpanAttributes(this.root_span_attributes, eventbus, event)
     )
-    const start_time = dateFromIso(event.event_started_at)
-    const end_time = endTimeAfterStart(start_time, dateFromIso(event.event_completed_at))
+    const start_time = epochNsFromIso(event.event_started_at)
+    const end_time = endTimeAfterStart(start_time, epochNsFromIso(event.event_completed_at))
     span.end(end_time)
     this.event_spans.delete(event.event_id)
     this.event_contexts.delete(event.event_id)
@@ -165,7 +166,7 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
       handlerSpanName(event, event_result),
       {
         attributes: handlerSpanAttributes(eventbus, event, event_result),
-        startTime: dateFromIso(event_result.started_at),
+        startTime: timeInputFromIso(event_result.started_at),
       },
       parent_context
     )
@@ -191,7 +192,7 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
       span.setStatus({ code: SpanStatusCode.OK })
     }
     span.setAttributes(handlerSpanAttributes(eventbus, event, event_result))
-    span.end(endTimeAfterStart(dateFromIso(event_result.started_at), dateFromIso(event_result.completed_at)))
+    span.end(endTimeAfterStart(epochNsFromIso(event_result.started_at), epochNsFromIso(event_result.completed_at)))
     this.handler_spans.delete(event_result.id)
     this.handler_contexts.delete(handlerSpanKey(event_result.event_id, event_result.handler_id))
   }
@@ -230,7 +231,7 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
     }
     visited_event_ids.add(original_event.event_id)
 
-    const start_time = dateFromIso(original_event.event_started_at)
+    const start_time = epochNsFromIso(original_event.event_started_at)
     const span_context = eventSpanContext(trace_id, original_event.event_id)
     const span = this.span_factory!({
       name: eventSpanName(eventbus, original_event),
@@ -239,14 +240,14 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
       attributes: original_event.event_parent_id
         ? eventSpanAttributes(eventbus, original_event)
         : topLevelEventSpanAttributes(this.root_span_attributes, eventbus, original_event),
-      start_time,
+      start_time: timeInputFromEpochNs(start_time),
     })
     if (original_event.event_errors.length > 0) {
       recordSpanError(span, original_event.event_errors[0])
     } else {
       span.setStatus({ code: SpanStatusCode.OK })
     }
-    span.end(endTimeAfterStart(start_time, dateFromIso(original_event.event_completed_at)))
+    span.end(endTimeAfterStart(start_time, epochNsFromIso(original_event.event_completed_at)))
 
     for (const event_result of original_event.event_results.values()) {
       const handler_context = this.exportHandlerSpanWithFactory(eventbus, original_event, event_result, trace_id, span_context)
@@ -263,21 +264,21 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
     trace_id: string,
     parent_span_context: SpanContext
   ): SpanContext {
-    const start_time = dateFromIso(event_result.started_at)
+    const start_time = epochNsFromIso(event_result.started_at)
     const span_context = handlerSpanContext(trace_id, event_result.event_id, event_result.handler_id)
     const span = this.span_factory!({
       name: handlerSpanName(event, event_result),
       span_context,
       parent_span_context,
       attributes: handlerSpanAttributes(eventbus, event, event_result),
-      start_time,
+      start_time: timeInputFromEpochNs(start_time),
     })
     if (event_result.error !== undefined) {
       recordSpanError(span, event_result.error)
     } else {
       span.setStatus({ code: SpanStatusCode.OK })
     }
-    span.end(endTimeAfterStart(start_time, dateFromIso(event_result.completed_at)))
+    span.end(endTimeAfterStart(start_time, epochNsFromIso(event_result.completed_at)))
     return span_context
   }
 }
@@ -445,20 +446,45 @@ function fnv1a64Hex(input: string): string {
   return hash.toString(16).padStart(16, '0')
 }
 
-function dateFromIso(value: string | null | undefined): Date | undefined {
+const ISO_EPOCH_NS_REGEX = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/
+const NS_PER_SECOND = 1_000_000_000n
+const NS_PER_MS = 1_000_000n
+
+function epochNsFromIso(value: string | null | undefined): bigint | undefined {
   if (value == null) {
     return undefined
   }
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? undefined : date
+  const match = ISO_EPOCH_NS_REGEX.exec(value)
+  if (!match) {
+    return undefined
+  }
+  const [, base, fraction = '', timezone] = match
+  const base_ms = Date.parse(`${base}.000${timezone}`)
+  if (Number.isNaN(base_ms)) {
+    return undefined
+  }
+  return BigInt(base_ms) * NS_PER_MS + BigInt(fraction.padEnd(9, '0'))
 }
 
-function endTimeAfterStart(start_time: Date | undefined, end_time: Date | undefined): Date | undefined {
-  if (!start_time || !end_time) {
-    return end_time
+function timeInputFromIso(value: string | null | undefined): TimeInput | undefined {
+  return timeInputFromEpochNs(epochNsFromIso(value))
+}
+
+function timeInputFromEpochNs(epoch_ns: bigint | undefined): TimeInput | undefined {
+  if (epoch_ns === undefined) {
+    return undefined
+  }
+  const seconds = epoch_ns / NS_PER_SECOND
+  const nanos = epoch_ns % NS_PER_SECOND
+  return [Number(seconds), Number(nanos)]
+}
+
+function endTimeAfterStart(start_time: bigint | undefined, end_time: bigint | undefined): TimeInput | undefined {
+  if (start_time === undefined || end_time === undefined) {
+    return timeInputFromEpochNs(end_time)
   }
 
-  return end_time.getTime() > start_time.getTime() ? end_time : new Date(start_time.getTime() + 1)
+  return timeInputFromEpochNs(end_time > start_time ? end_time : start_time + 1n)
 }
 
 function resolveAttributes(
