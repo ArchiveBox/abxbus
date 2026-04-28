@@ -162,15 +162,12 @@ test('OtelTracingMiddleware creates event and handler spans with child event par
   const parent_handler_span = tracer.spans.find((span) => span.name === 'anonymous(OtelTracingParentEvent)')
   const child_event_span = tracer.spans.find((span) => span.name === 'OtelTracingBus.emit(OtelTracingChildEvent)')
   const child_handler_span = tracer.spans.find((span) => span.name === 'anonymous(OtelTracingChildEvent)')
-  const root_span = tracer.spans.find((span) => span.name === 'abxbus.trace OtelTracingBus')
 
   assert.ok(parent_event_span)
   assert.ok(parent_handler_span)
   assert.ok(child_event_span)
   assert.ok(child_handler_span)
-  assert.ok(root_span)
-  assert.equal(root_span.parent_context, ROOT_CONTEXT)
-  assert.equal(recordingContext(parent_event_span.parent_context).span, root_span)
+  assert.equal(parent_event_span.parent_context, ROOT_CONTEXT)
   assert.equal(parent_event_span.ended, true)
   assert.equal(parent_handler_span.ended, true)
   assert.equal(child_event_span.ended, true)
@@ -205,7 +202,7 @@ test('OtelTracingMiddleware names event and handler spans for display', async ()
   bus.destroy()
 })
 
-test('OtelTracingMiddleware supports named root spans with session attributes and non-zero duration', async () => {
+test('OtelTracingMiddleware marks top-level event spans as roots with session attributes and non-zero duration', async () => {
   const tracer = new RecordingTracer()
   const trace_api = {
     getTracer: () => tracer,
@@ -216,7 +213,6 @@ test('OtelTracingMiddleware supports named root spans with session attributes an
       new OtelTracingMiddleware({
         tracer,
         trace_api,
-        root_span_name: () => 'StagehandSession session-123',
         root_span_attributes: { 'stagehand.session_id': 'session-123' },
       }),
     ],
@@ -226,20 +222,15 @@ test('OtelTracingMiddleware supports named root spans with session attributes an
   await bus.emit(InstantEvent({ session_id: 'event-session-456', event_timeout: 0.2 } as any)).eventCompleted()
   await flushHooks()
 
-  const root_span = tracer.spans.find((span) => span.name === 'StagehandSession session-123')
   const event_span = tracer.spans.find((span) => span.name === 'OtelTracingSessionBus.emit(OtelTracingInstantEvent)')
 
-  assert.ok(root_span)
   assert.ok(event_span)
-  assert.equal(root_span.attributes['stagehand.session_id'], 'session-123')
-  assert.equal(root_span.attributes['abxbus.root_event.session_id'], 'event-session-456')
-  assert.equal(event_span.attributes['abxbus.event.session_id'], 'event-session-456')
-  assert.equal(recordingContext(event_span.parent_context).span, root_span)
-  assert.ok(root_span.end_time instanceof Date)
+  assert.equal(event_span.parent_context, ROOT_CONTEXT)
+  assert.equal(event_span.attributes['stagehand.session_id'], 'session-123')
+  assert.equal(event_span.attributes['abxbus.session_id'], 'event-session-456')
+  assert.equal(event_span.attributes['abxbus.trace.root'], true)
   assert.ok(event_span.end_time instanceof Date)
-  assert.ok(root_span.options?.startTime instanceof Date)
   assert.ok(event_span.options?.startTime instanceof Date)
-  assert.ok(root_span.end_time.getTime() > root_span.options.startTime.getTime())
   assert.ok(event_span.end_time.getTime() > event_span.options.startTime.getTime())
 
   bus.destroy()
@@ -265,7 +256,6 @@ test('OtelTracingMiddleware span_factory mirrors abxbus ids into stable parent a
     middlewares: [
       new OtelTracingMiddleware({
         span_factory,
-        root_span_name: () => 'StagehandSession session-abc',
         root_span_attributes: { 'stagehand.session_id': 'session-abc' },
       }),
     ],
@@ -283,27 +273,34 @@ test('OtelTracingMiddleware span_factory mirrors abxbus ids into stable parent a
   await bus.emit(ParentEvent({ session_id: 'session-abc', event_timeout: 0.5 } as any)).done()
   await flushHooks()
 
-  const root_span = spans.find((span) => span.name === 'StagehandSession session-abc')
   const parent_event_span = spans.find((span) => span.name === 'OtelTracingManualIdsBus.emit(OtelTracingManualParentEvent)')
   const parent_handler_span = spans.find((span) => span.name === 'anonymous(OtelTracingManualParentEvent)')
   const child_event_span = spans.find((span) => span.name === 'OtelTracingManualIdsBus.emit(OtelTracingManualChildEvent)')
   const child_handler_span = spans.find((span) => span.name === 'anonymous(OtelTracingManualChildEvent)')
 
-  assert.ok(root_span)
   assert.ok(parent_event_span)
   assert.ok(parent_handler_span)
   assert.ok(child_event_span)
   assert.ok(child_handler_span)
+  assert.deepEqual(
+    spans.map((span) => span.name),
+    [
+      'OtelTracingManualIdsBus.emit(OtelTracingManualParentEvent)',
+      'anonymous(OtelTracingManualParentEvent)',
+      'OtelTracingManualIdsBus.emit(OtelTracingManualChildEvent)',
+      'anonymous(OtelTracingManualChildEvent)',
+    ]
+  )
 
-  const trace_id = root_span.spanContext().traceId
+  const trace_id = parent_event_span.spanContext().traceId
   assert.match(trace_id, /^[0-9a-f]{32}$/)
-  assert.equal(parent_event_span.spanContext().traceId, trace_id)
   assert.equal(parent_handler_span.spanContext().traceId, trace_id)
   assert.equal(child_event_span.spanContext().traceId, trace_id)
   assert.equal(child_handler_span.spanContext().traceId, trace_id)
 
-  assert.equal(root_span.parent_span_context, undefined)
-  assert.equal(parent_event_span.parent_span_context?.spanId, root_span.spanContext().spanId)
+  assert.equal(parent_event_span.parent_span_context, undefined)
+  assert.equal(parent_event_span.attributes['stagehand.session_id'], 'session-abc')
+  assert.equal(parent_event_span.attributes['abxbus.trace.root'], true)
   assert.equal(parent_handler_span.parent_span_context?.spanId, parent_event_span.spanContext().spanId)
   assert.equal(child_event_span.parent_span_context?.spanId, parent_handler_span.spanContext().spanId)
   assert.equal(child_handler_span.parent_span_context?.spanId, child_event_span.spanContext().spanId)
@@ -311,9 +308,69 @@ test('OtelTracingMiddleware span_factory mirrors abxbus ids into stable parent a
   const span_ids = new Set(spans.map((span) => span.spanContext().spanId))
   assert.equal(span_ids.size, spans.length)
   assert.ok([...span_ids].every((span_id) => /^[0-9a-f]{16}$/.test(span_id) && span_id !== '0000000000000000'))
-  assert.equal(parent_event_span.attributes['abxbus.event.parent_id'], undefined)
-  assert.equal(child_event_span.attributes['abxbus.event.parent_id'], parent_event_span.attributes['abxbus.event.id'])
-  assert.equal(child_event_span.attributes['abxbus.event.emitted_by_handler_id'], parent_handler_span.attributes['abxbus.handler.id'])
+  assert.equal(parent_event_span.attributes['abxbus.event_parent_id'], undefined)
+  assert.equal(child_event_span.attributes['abxbus.event_parent_id'], parent_event_span.attributes['abxbus.event_id'])
+  assert.equal(child_event_span.attributes['abxbus.event_emitted_by_handler_id'], parent_handler_span.attributes['abxbus.handler_id'])
+
+  bus.destroy()
+})
+
+test('OtelTracingMiddleware span_factory waits until top-level event completion before exporting a trace tree', async () => {
+  const spans: RecordingSpan[] = []
+  const span_factory = (input: OtelTracingSpanFactoryInput): Span => {
+    const span = new RecordingSpan(
+      input.name,
+      {
+        attributes: input.attributes,
+        startTime: input.start_time,
+      },
+      undefined,
+      input.span_context,
+      input.parent_span_context
+    )
+    spans.push(span)
+    return span
+  }
+  const bus = new EventBus('OtelTracingRootStartBus', {
+    middlewares: [
+      new OtelTracingMiddleware({
+        span_factory,
+      }),
+    ],
+    max_history_size: null,
+  })
+  const RootEvent = BaseEvent.extend('OtelTracingRootStartEvent', {})
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+
+  bus.on(RootEvent, async () => {
+    await gate
+    return 'done'
+  })
+
+  const emission = bus.emit(RootEvent({ event_timeout: 0.5 }))
+  const completion = emission.done()
+  await flushHooks()
+
+  assert.equal(spans.length, 0)
+
+  release()
+  await completion
+  await flushHooks()
+
+  const event_span = spans.find((span) => span.name === 'OtelTracingRootStartBus.emit(OtelTracingRootStartEvent)')
+  const handler_span = spans.find((span) => span.name === 'anonymous(OtelTracingRootStartEvent)')
+  assert.ok(event_span)
+  assert.ok(handler_span)
+  assert.deepEqual(
+    spans.map((span) => span.name),
+    ['OtelTracingRootStartBus.emit(OtelTracingRootStartEvent)', 'anonymous(OtelTracingRootStartEvent)']
+  )
+  assert.equal(event_span.parent_span_context, undefined)
+  assert.equal(event_span.attributes['abxbus.trace.root'], true)
+  assert.equal(handler_span.parent_span_context?.spanId, event_span.spanContext().spanId)
 
   bus.destroy()
 })
@@ -335,7 +392,6 @@ test('OtelTracingMiddleware span_provider creates SDK spans with abxbus span con
       new OtelTracingMiddleware({
         span_provider: provider,
         instrumentation_name: 'abxbus-test',
-        root_span_name: () => 'StagehandSession provider-session',
       }),
     ],
     max_history_size: null,
@@ -352,25 +408,23 @@ test('OtelTracingMiddleware span_provider creates SDK spans with abxbus span con
   await provider.forceFlush()
   await flushHooks()
 
-  const root_span = exported_spans.find((span) => span.name === 'StagehandSession provider-session')
   const parent_event_span = exported_spans.find((span) => span.name === 'OtelTracingProviderBus.emit(OtelTracingProviderParentEvent)')
   const parent_handler_span = exported_spans.find((span) => span.name === 'anonymous(OtelTracingProviderParentEvent)')
   const child_event_span = exported_spans.find((span) => span.name === 'OtelTracingProviderBus.emit(OtelTracingProviderChildEvent)')
   const child_handler_span = exported_spans.find((span) => span.name === 'anonymous(OtelTracingProviderChildEvent)')
 
-  assert.ok(root_span)
   assert.ok(parent_event_span)
   assert.ok(parent_handler_span)
   assert.ok(child_event_span)
   assert.ok(child_handler_span)
-  assert.equal(root_span.kind, SpanKind.INTERNAL)
-  assert.equal(root_span.parentSpanContext, undefined)
-  assert.equal(parent_event_span.parentSpanContext?.spanId, root_span.spanContext().spanId)
+  assert.equal(parent_event_span.kind, SpanKind.INTERNAL)
+  assert.equal(parent_event_span.parentSpanContext, undefined)
+  assert.equal(parent_event_span.attributes['abxbus.trace.root'], true)
   assert.equal(parent_handler_span.parentSpanContext?.spanId, parent_event_span.spanContext().spanId)
   assert.equal(child_event_span.parentSpanContext?.spanId, parent_handler_span.spanContext().spanId)
   assert.equal(child_handler_span.parentSpanContext?.spanId, child_event_span.spanContext().spanId)
-  assert.equal(child_event_span.attributes['abxbus.event.parent_id'], parent_event_span.attributes['abxbus.event.id'])
-  assert.equal(child_event_span.attributes['abxbus.event.emitted_by_handler_id'], parent_handler_span.attributes['abxbus.handler.id'])
+  assert.equal(child_event_span.attributes['abxbus.event_parent_id'], parent_event_span.attributes['abxbus.event_id'])
+  assert.equal(child_event_span.attributes['abxbus.event_emitted_by_handler_id'], parent_handler_span.attributes['abxbus.handler_id'])
 
   await provider.shutdown()
   bus.destroy()

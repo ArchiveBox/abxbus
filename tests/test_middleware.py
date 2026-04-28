@@ -484,9 +484,11 @@ class TestHandlerMiddleware:
             pass
 
         class FakeSpan:
-            def __init__(self, name: str, context: Any = None):
+            def __init__(self, name: str, context: Any = None, start_time: int | None = None):
                 self.name = name
                 self.context = context
+                self.start_time = start_time
+                self.end_time: int | None = None
                 self.attrs: dict[str, Any] = {}
                 self.errors: list[str] = []
                 self.ended = False
@@ -497,15 +499,16 @@ class TestHandlerMiddleware:
             def record_exception(self, error: BaseException):
                 self.errors.append(type(error).__name__)
 
-            def end(self):
+            def end(self, end_time: int | None = None):
+                self.end_time = end_time
                 self.ended = True
 
         class FakeTracer:
             def __init__(self):
                 self.spans: list[FakeSpan] = []
 
-            def start_span(self, name: str, context: Any = None):
-                span = FakeSpan(name, context=context)
+            def start_span(self, name: str, context: Any = None, start_time: int | None = None):
+                span = FakeSpan(name, context=context, start_time=start_time)
                 self.spans.append(span)
                 return span
 
@@ -540,14 +543,29 @@ class TestHandlerMiddleware:
                 span for span in tracer.spans if str(span.attrs.get('abxbus.handler_name', '')).endswith('child_handler')
             )
 
+            assert [span.name for span in tracer.spans] == [
+                'TraceBus.emit(RootEvent)',
+                f'{root_handler_span.attrs["abxbus.handler_name"]}(RootEvent)',
+                'TraceBus.emit(ChildEvent)',
+                f'{child_handler_span.attrs["abxbus.handler_name"]}(ChildEvent)',
+            ]
+            assert root_event_span.context is None
+            assert root_event_span.attrs.get('abxbus.trace.root') is True
             assert root_handler_span.context['parent'] is root_event_span
             assert child_event_span.context['parent'] is root_handler_span
             assert child_handler_span.context['parent'] is child_event_span
-            assert root_event_span.attrs.get('abxbus.bus_name') == bus.label
-            assert root_handler_span.attrs.get('abxbus.bus_name') == bus.label
-            assert child_event_span.attrs.get('abxbus.bus_name') == bus.label
-            assert child_handler_span.attrs.get('abxbus.bus_name') == bus.label
+            assert root_event_span.attrs.get('abxbus.event_bus.name') == bus.name
+            assert root_handler_span.attrs.get('abxbus.event_bus.name') == bus.name
+            assert child_event_span.attrs.get('abxbus.event_bus.name') == bus.name
+            assert child_handler_span.attrs.get('abxbus.event_bus.name') == bus.name
+            assert child_event_span.attrs.get('abxbus.event_parent_id') == root_event_span.attrs.get('abxbus.event_id')
+            assert child_event_span.attrs.get('abxbus.event_emitted_by_handler_id') == root_handler_span.attrs.get(
+                'abxbus.handler_id'
+            )
             assert all(span.ended for span in tracer.spans)
+            assert all(span.start_time is not None for span in tracer.spans)
+            assert all(span.end_time is not None for span in tracer.spans)
+            assert all(span.end_time > span.start_time for span in tracer.spans if span.end_time and span.start_time)
         finally:
             await bus.stop()
 

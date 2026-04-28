@@ -7,6 +7,7 @@ import importlib
 import logging
 import sqlite3
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
@@ -88,8 +89,14 @@ class OtelTracingMiddleware(EventBusMiddleware):
     ```
     """
 
-    def __init__(self, tracer: Any | None = None, trace_api: Any | None = None):
+    def __init__(
+        self,
+        tracer: Any | None = None,
+        trace_api: Any | None = None,
+        root_span_attributes: dict[str, Any] | None = None,
+    ):
         self._trace_api = trace_api
+        self._root_span_attributes = root_span_attributes or {}
         self._status_cls = None
         self._status_code = None
         if self._trace_api is None:
@@ -112,69 +119,187 @@ class OtelTracingMiddleware(EventBusMiddleware):
         if tracer is None:
             raise ImportError('OpenTelemetry tracer unavailable')
         self._tracer = tracer
-        self._event_spans: dict[tuple[str, str], Any] = {}
-        self._handler_spans: dict[tuple[str, str, str], Any] = {}
 
     @staticmethod
-    def _event_key(eventbus: EventBus, event: BaseEvent[Any]) -> tuple[str, str]:
-        return (eventbus.id, event.event_id)
+    def _otel_timestamp(value: str | None) -> int | None:
+        if value is None:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        except ValueError:
+            return None
+        return int(parsed.astimezone(timezone.utc).timestamp() * 1_000_000_000)
 
     @staticmethod
-    def _handler_key(eventbus: EventBus, event: BaseEvent[Any], event_result: EventResult[Any]) -> tuple[str, str, str]:
-        return (eventbus.id, event.event_id, event_result.handler_id)
+    def _end_time_after_start(start_time: int | None, end_time: int | None) -> int | None:
+        if start_time is None or end_time is None or end_time > start_time:
+            return end_time
+        return start_time + 1
 
-    def _start_span(self, name: str, parent_span: Any | None = None) -> Any:
+    def _start_span(self, name: str, parent_span: Any | None = None, start_time: str | None = None) -> Any:
+        kwargs: dict[str, Any] = {}
         if parent_span is not None and self._trace_api is not None:
             try:
-                return self._tracer.start_span(name, context=self._trace_api.set_span_in_context(parent_span))
+                kwargs['context'] = self._trace_api.set_span_in_context(parent_span)
             except Exception:
                 pass
-        return self._tracer.start_span(name)
+        start_time_ns = self._otel_timestamp(start_time)
+        if start_time_ns is not None:
+            kwargs['start_time'] = start_time_ns
+        try:
+            return self._tracer.start_span(name, **kwargs)
+        except TypeError:
+            kwargs.pop('start_time', None)
+            return self._tracer.start_span(name, **kwargs)
 
-    def _find_parent_span(self, event: BaseEvent[Any]) -> Any | None:
-        if not event.event_parent_id:
+    @staticmethod
+    def _event_span_name(eventbus: EventBus, event: BaseEvent[Any]) -> str:
+        return f'{eventbus.name}.emit({event.event_type})'
+
+    @staticmethod
+    def _handler_span_name(event: BaseEvent[Any], event_result: EventResult[Any]) -> str:
+        return f'{event_result.handler_name}({event.event_type})'
+
+    @staticmethod
+    def _compact_attributes(attributes: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in attributes.items() if value is not None}
+
+    @staticmethod
+    def _status_value(status: Any) -> str:
+        return getattr(status, 'value', status)
+
+    def _event_span_attributes(self, eventbus: EventBus, event: BaseEvent[Any]) -> dict[str, Any]:
+        return self._compact_attributes(
+            {
+                'abxbus.event_bus.id': eventbus.id,
+                'abxbus.event_bus.name': eventbus.name,
+                'abxbus.event_id': event.event_id,
+                'abxbus.event_type': event.event_type,
+                'abxbus.event_version': event.event_version,
+                'abxbus.session_id': getattr(event, 'session_id', None),
+                'abxbus.event_parent_id': event.event_parent_id,
+                'abxbus.event_emitted_by_handler_id': event.event_emitted_by_handler_id,
+                'abxbus.event_path': ' '.join(event.event_path),
+                'abxbus.event_status': self._status_value(event.event_status),
+            }
+        )
+
+    def _top_level_event_span_attributes(self, eventbus: EventBus, event: BaseEvent[Any]) -> dict[str, Any]:
+        return {
+            **self._event_span_attributes(eventbus, event),
+            **self._root_span_attributes,
+            'abxbus.trace.root': True,
+        }
+
+    def _handler_span_attributes(
+        self, eventbus: EventBus, event: BaseEvent[Any], event_result: EventResult[Any]
+    ) -> dict[str, Any]:
+        return self._compact_attributes(
+            {
+                'abxbus.event_bus.id': eventbus.id,
+                'abxbus.event_bus.name': eventbus.name,
+                'abxbus.event_id': event.event_id,
+                'abxbus.event_type': event.event_type,
+                'abxbus.handler_id': event_result.handler_id,
+                'abxbus.handler_name': event_result.handler_name,
+                'abxbus.handler_file_path': event_result.handler.handler_file_path,
+                'abxbus.handler_event_pattern': event_result.handler.event_pattern,
+                'abxbus.event_result_id': event_result.id,
+                'abxbus.event_result_status': event_result.status,
+            }
+        )
+
+    @staticmethod
+    def _set_span_attributes(span: Any, attributes: dict[str, Any]) -> None:
+        for key, value in attributes.items():
+            span.set_attribute(key, value)
+
+    def _record_span_error(self, span: Any, error: BaseException | None) -> None:
+        if error is None:
+            return
+        span.record_exception(error)
+        if self._status_cls and self._status_code and hasattr(span, 'set_status'):
+            span.set_status(self._status_cls(self._status_code.ERROR, str(error)))
+
+    def _set_span_ok(self, span: Any) -> None:
+        if self._status_cls and self._status_code and hasattr(span, 'set_status'):
+            span.set_status(self._status_cls(self._status_code.OK))
+
+    def _end_span(self, span: Any, start_time: str | None = None, end_time: str | None = None) -> None:
+        start_time_ns = self._otel_timestamp(start_time)
+        end_time_ns = self._end_time_after_start(start_time_ns, self._otel_timestamp(end_time))
+        if end_time_ns is None:
+            span.end()
+            return
+        try:
+            span.end(end_time=end_time_ns)
+        except TypeError:
+            span.end()
+
+    def _export_handler_span(
+        self,
+        eventbus: EventBus,
+        event: BaseEvent[Any],
+        event_result: EventResult[Any],
+        parent_span: Any,
+    ) -> Any:
+        span = self._start_span(
+            self._handler_span_name(event, event_result),
+            parent_span=parent_span,
+            start_time=event_result.started_at,
+        )
+        self._set_span_attributes(span, self._handler_span_attributes(eventbus, event, event_result))
+        if event_result.error is not None:
+            self._record_span_error(span, event_result.error)
+        else:
+            self._set_span_ok(span)
+        self._end_span(span, start_time=event_result.started_at, end_time=event_result.completed_at)
+        return span
+
+    def _export_event_tree(
+        self,
+        eventbus: EventBus,
+        event: BaseEvent[Any],
+        parent_span: Any | None,
+        visited_event_ids: set[str],
+    ) -> Any | None:
+        if event.event_id in visited_event_ids:
             return None
-        from abxbus.event_bus import EventBus
+        visited_event_ids.add(event.event_id)
 
-        for bus in list(EventBus.all_instances):
-            if not bus or event.event_parent_id not in bus.event_history:
-                continue
-            parent_event = bus.event_history[event.event_parent_id]
-            for parent_result in parent_event.event_results.values():
-                if any(child.event_id == event.event_id for child in parent_result.event_children):
-                    parent_handler_span = self._handler_spans.get((bus.id, parent_event.event_id, parent_result.handler_id))
-                    if parent_handler_span is not None:
-                        return parent_handler_span
-            return self._event_spans.get((bus.id, parent_event.event_id))
-        return None
+        span = self._start_span(
+            self._event_span_name(eventbus, event),
+            parent_span=parent_span,
+            start_time=event.event_started_at,
+        )
+        attributes = (
+            self._event_span_attributes(eventbus, event)
+            if event.event_parent_id
+            else self._top_level_event_span_attributes(eventbus, event)
+        )
+        self._set_span_attributes(span, attributes)
+        first_error = next(
+            (event_result.error for event_result in event.event_results.values() if event_result.error is not None), None
+        )
+        if first_error is not None:
+            self._record_span_error(span, first_error)
+        else:
+            self._set_span_ok(span)
+        self._end_span(span, start_time=event.event_started_at, end_time=event.event_completed_at)
 
-    def _ensure_event_span(self, eventbus: EventBus, event: BaseEvent[Any]) -> Any:
-        key = self._event_key(eventbus, event)
-        existing = self._event_spans.get(key)
-        if existing is not None:
-            return existing
-        span = self._start_span(f'abxbus.event.{event.event_type}', parent_span=self._find_parent_span(event))
-        span.set_attribute('abxbus.kind', 'event')
-        span.set_attribute('abxbus.event_id', event.event_id)
-        span.set_attribute('abxbus.event_type', event.event_type)
-        span.set_attribute('abxbus.bus_id', eventbus.id)
-        span.set_attribute('abxbus.bus_name', eventbus.label)
-        if event.event_parent_id:
-            span.set_attribute('abxbus.event_parent_id', event.event_parent_id)
-        self._event_spans[key] = span
+        for event_result in event.event_results.values():
+            handler_span = self._export_handler_span(eventbus, event, event_result, parent_span=span)
+            for child_event in event_result.event_children:
+                self._export_event_tree(eventbus, child_event, handler_span, visited_event_ids)
+
         return span
 
     async def on_event_change(self, eventbus: EventBus, event: BaseEvent[Any], status: EventStatus) -> None:
-        if status == EventStatus.STARTED:
-            self._ensure_event_span(eventbus, event)
+        if status != EventStatus.COMPLETED:
             return
-        if status == EventStatus.COMPLETED:
-            key = self._event_key(eventbus, event)
-            span = self._event_spans.pop(key, None)
-            if span is None:
-                span = self._ensure_event_span(eventbus, event)
-                self._event_spans.pop(key, None)
-            span.end()
+        if event.event_parent_id:
+            return
+        self._export_event_tree(eventbus, event, parent_span=None, visited_event_ids=set())
 
     async def on_event_result_change(
         self,
@@ -183,32 +308,7 @@ class OtelTracingMiddleware(EventBusMiddleware):
         event_result: EventResult[Any],
         status: EventStatus,
     ) -> None:
-        key = self._handler_key(eventbus, event, event_result)
-        if status == EventStatus.STARTED:
-            if key in self._handler_spans:
-                return
-            parent_event_span = self._ensure_event_span(eventbus, event)
-            span = self._start_span(f'abxbus.handler.{event_result.handler_name}', parent_span=parent_event_span)
-            span.set_attribute('abxbus.kind', 'handler')
-            span.set_attribute('abxbus.event_id', event.event_id)
-            span.set_attribute('abxbus.event_type', event.event_type)
-            span.set_attribute('abxbus.handler_id', event_result.handler_id)
-            span.set_attribute('abxbus.handler_name', event_result.handler_name)
-            span.set_attribute('abxbus.bus_id', eventbus.id)
-            span.set_attribute('abxbus.bus_name', eventbus.label)
-            self._handler_spans[key] = span
-            return
-        if status != EventStatus.COMPLETED:
-            return
-        span = self._handler_spans.pop(key, None)
-        if span is None:
-            return
-        error = event_result.error
-        if error is not None:
-            span.record_exception(error)
-            if self._status_cls and self._status_code and hasattr(span, 'set_status'):
-                span.set_status(self._status_cls(self._status_code.ERROR, str(error)))
-        span.end()
+        return
 
 
 class BusHandlerRegisteredEvent(BaseEvent):

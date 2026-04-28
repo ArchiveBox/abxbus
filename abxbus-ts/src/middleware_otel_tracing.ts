@@ -53,7 +53,6 @@ export type OtelTracingMiddlewareOptions = {
   otlp_endpoint?: string
   service_name?: string
   instrumentation_name?: string
-  root_span_name?: string | ((eventbus: EventBus, event: BaseEvent) => string)
   root_span_attributes?: SpanAttributes | ((eventbus: EventBus, event: BaseEvent) => SpanAttributes)
 }
 
@@ -62,10 +61,7 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
   private readonly trace_api: OpenTelemetryTraceApi
   private readonly span_factory?: OtelTracingSpanFactory
   private readonly span_provider?: OtelTracingSpanProvider
-  private readonly root_span_name: OtelTracingMiddlewareOptions['root_span_name']
   private readonly root_span_attributes: OtelTracingMiddlewareOptions['root_span_attributes']
-  private readonly root_spans = new Map<string, Span>()
-  private readonly root_contexts = new Map<string, Context>()
   private readonly event_spans = new Map<string, Span>()
   private readonly event_contexts = new Map<string, Context>()
   private readonly handler_spans = new Map<string, Span>()
@@ -80,7 +76,6 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
       (this.span_provider
         ? createProviderSpanFactory(this.trace_api, this.span_provider, options.instrumentation_name ?? 'abxbus')
         : undefined)
-    this.root_span_name = options.root_span_name
     this.root_span_attributes = options.root_span_attributes
   }
 
@@ -118,22 +113,14 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
       return existing
     }
 
-    const parent_context = this.parentContextForEvent(event) ?? this.startRootSpan(eventbus, event)
+    const parent_context = this.parentContextForEvent(event) ?? ROOT_CONTEXT
     const start_time = dateFromIso(event.event_started_at)
     const span = this.tracer.startSpan(
       eventSpanName(eventbus, event),
       {
-        attributes: compactAttributes({
-          'abxbus.bus.id': eventbus.id,
-          'abxbus.bus.name': eventbus.name,
-          'abxbus.event.id': event.event_id,
-          'abxbus.event.type': event.event_type,
-          'abxbus.event.version': event.event_version,
-          'abxbus.event.session_id': stringValue((event as { session_id?: unknown }).session_id),
-          'abxbus.event.parent_id': event.event_parent_id,
-          'abxbus.event.emitted_by_handler_id': event.event_emitted_by_handler_id,
-          'abxbus.event.path': event.event_path.join(' '),
-        }),
+        attributes: event.event_parent_id
+          ? eventStartedSpanAttributes(eventbus, event)
+          : topLevelEventStartedSpanAttributes(this.root_span_attributes, eventbus, event),
         startTime: start_time,
       },
       parent_context
@@ -157,19 +144,13 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
       span.setStatus({ code: SpanStatusCode.OK })
     }
     span.setAttributes(
-      compactAttributes({
-        'abxbus.event.status': event.event_status,
-        'abxbus.event.result_count': event.event_results.size,
-        'abxbus.event.error_count': event.event_errors.length,
-        'abxbus.event.child_count': event.event_children.length,
-      })
+      event.event_parent_id ? eventSpanAttributes(eventbus, event) : topLevelEventSpanAttributes(this.root_span_attributes, eventbus, event)
     )
     const start_time = dateFromIso(event.event_started_at)
     const end_time = endTimeAfterStart(start_time, dateFromIso(event.event_completed_at))
     span.end(end_time)
     this.event_spans.delete(event.event_id)
     this.event_contexts.delete(event.event_id)
-    this.completeRootSpan(event.event_id, start_time, end_time)
   }
 
   private startHandlerSpan(eventbus: EventBus, event: BaseEvent, event_result: EventResult): Span {
@@ -183,17 +164,7 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
     const span = this.tracer.startSpan(
       handlerSpanName(event, event_result),
       {
-        attributes: compactAttributes({
-          'abxbus.bus.id': eventbus.id,
-          'abxbus.bus.name': eventbus.name,
-          'abxbus.event.id': event.event_id,
-          'abxbus.event.type': event.event_type,
-          'abxbus.handler.id': event_result.handler_id,
-          'abxbus.handler.name': event_result.handler_name,
-          'abxbus.handler.file_path': event_result.handler_file_path,
-          'abxbus.handler.event_pattern': event_result.handler.event_pattern,
-          'abxbus.event_result.id': event_result.id,
-        }),
+        attributes: handlerSpanAttributes(eventbus, event, event_result),
         startTime: dateFromIso(event_result.started_at),
       },
       parent_context
@@ -206,7 +177,6 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
 
   private completeHandlerSpan(eventbus: EventBus, event: BaseEvent, event_result: EventResult): void {
     if (this.span_factory) {
-      this.completeHandlerSpanWithFactory(eventbus, event, event_result)
       return
     }
 
@@ -220,57 +190,10 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
     } else {
       span.setStatus({ code: SpanStatusCode.OK })
     }
-    span.setAttributes(
-      compactAttributes({
-        'abxbus.event_result.status': event_result.status,
-        'abxbus.handler.child_count': event_result.event_children.length,
-      })
-    )
+    span.setAttributes(handlerSpanAttributes(eventbus, event, event_result))
     span.end(endTimeAfterStart(dateFromIso(event_result.started_at), dateFromIso(event_result.completed_at)))
     this.handler_spans.delete(event_result.id)
     this.handler_contexts.delete(handlerSpanKey(event_result.event_id, event_result.handler_id))
-  }
-
-  private startRootSpan(eventbus: EventBus, event: BaseEvent): Context {
-    const existing = this.root_contexts.get(event.event_id)
-    if (existing) {
-      return existing
-    }
-
-    const session_id = stringValue((event as { session_id?: unknown }).session_id)
-    const root_attributes = resolveAttributes(this.root_span_attributes, eventbus, event)
-    const root_span = this.tracer.startSpan(
-      resolveRootSpanName(this.root_span_name, eventbus, event),
-      {
-        attributes: compactAttributes({
-          ...root_attributes,
-          'abxbus.trace.root': true,
-          'abxbus.bus.id': eventbus.id,
-          'abxbus.bus.name': eventbus.name,
-          'abxbus.root_event.id': event.event_id,
-          'abxbus.root_event.type': event.event_type,
-          'abxbus.root_event.session_id': session_id,
-        }),
-        startTime: dateFromIso(event.event_started_at),
-      },
-      ROOT_CONTEXT
-    )
-    const root_context = this.trace_api.setSpan(ROOT_CONTEXT, root_span)
-    this.root_spans.set(event.event_id, root_span)
-    this.root_contexts.set(event.event_id, root_context)
-    return root_context
-  }
-
-  private completeRootSpan(event_id: string, start_time: Date | undefined, end_time: Date | undefined): void {
-    const root_span = this.root_spans.get(event_id)
-    if (!root_span) {
-      return
-    }
-
-    root_span.setStatus({ code: SpanStatusCode.OK })
-    root_span.end(endTimeAfterStart(start_time, end_time))
-    this.root_spans.delete(event_id)
-    this.root_contexts.delete(event_id)
   }
 
   private parentContextForEvent(event: BaseEvent): Context | undefined {
@@ -285,56 +208,77 @@ export class OtelTracingMiddleware implements EventBusMiddleware {
   }
 
   private completeEventSpanWithFactory(eventbus: EventBus, event: BaseEvent): void {
-    const root_event = rootEventForEvent(eventbus, event)
-    const trace_id = traceIdForRootEvent(root_event.event_id)
-    const event_context = eventSpanContext(trace_id, event.event_id)
-    const start_time = dateFromIso(event.event_started_at)
-    const end_time = endTimeAfterStart(start_time, dateFromIso(event.event_completed_at))
-
-    if (!event.event_parent_id) {
-      const root_span = this.span_factory!({
-        name: resolveRootSpanName(this.root_span_name, eventbus, event),
-        span_context: rootSpanContext(trace_id, event.event_id),
-        attributes: rootSpanAttributes(this.root_span_attributes, eventbus, event),
-        start_time,
-      })
-      root_span.setStatus({ code: SpanStatusCode.OK })
-      root_span.end(end_time)
+    if (event.event_parent_id) {
+      return
     }
 
+    const top_level_event = event._event_original ?? event
+    const trace_id = traceIdForRootEvent(top_level_event.event_id)
+    this.exportEventTreeWithFactory(eventbus, top_level_event, trace_id, undefined, new Set<string>())
+  }
+
+  private exportEventTreeWithFactory(
+    eventbus: EventBus,
+    event: BaseEvent,
+    trace_id: string,
+    parent_span_context: SpanContext | undefined,
+    visited_event_ids: Set<string>
+  ): void {
+    const original_event = event._event_original ?? event
+    if (visited_event_ids.has(original_event.event_id)) {
+      return
+    }
+    visited_event_ids.add(original_event.event_id)
+
+    const start_time = dateFromIso(original_event.event_started_at)
+    const span_context = eventSpanContext(trace_id, original_event.event_id)
     const span = this.span_factory!({
-      name: eventSpanName(eventbus, event),
-      span_context: event_context,
-      parent_span_context: parentSpanContextForEvent(event, trace_id),
-      attributes: eventSpanAttributes(eventbus, event),
+      name: eventSpanName(eventbus, original_event),
+      span_context,
+      parent_span_context,
+      attributes: original_event.event_parent_id
+        ? eventSpanAttributes(eventbus, original_event)
+        : topLevelEventSpanAttributes(this.root_span_attributes, eventbus, original_event),
       start_time,
     })
-    if (event.event_errors.length > 0) {
-      recordSpanError(span, event.event_errors[0])
+    if (original_event.event_errors.length > 0) {
+      recordSpanError(span, original_event.event_errors[0])
     } else {
       span.setStatus({ code: SpanStatusCode.OK })
     }
-    span.end(end_time)
+    span.end(endTimeAfterStart(start_time, dateFromIso(original_event.event_completed_at)))
+
+    for (const event_result of original_event.event_results.values()) {
+      const handler_context = this.exportHandlerSpanWithFactory(eventbus, original_event, event_result, trace_id, span_context)
+      for (const child of event_result.event_children) {
+        this.exportEventTreeWithFactory(eventbus, child, trace_id, handler_context, visited_event_ids)
+      }
+    }
   }
 
-  private completeHandlerSpanWithFactory(eventbus: EventBus, event: BaseEvent, event_result: EventResult): void {
-    const root_event = rootEventForEvent(eventbus, event)
-    const trace_id = traceIdForRootEvent(root_event.event_id)
+  private exportHandlerSpanWithFactory(
+    eventbus: EventBus,
+    event: BaseEvent,
+    event_result: EventResult,
+    trace_id: string,
+    parent_span_context: SpanContext
+  ): SpanContext {
     const start_time = dateFromIso(event_result.started_at)
+    const span_context = handlerSpanContext(trace_id, event_result.event_id, event_result.handler_id)
     const span = this.span_factory!({
       name: handlerSpanName(event, event_result),
-      span_context: handlerSpanContext(trace_id, event_result.event_id, event_result.handler_id),
-      parent_span_context: eventSpanContext(trace_id, event.event_id),
+      span_context,
+      parent_span_context,
       attributes: handlerSpanAttributes(eventbus, event, event_result),
       start_time,
     })
-
     if (event_result.error !== undefined) {
       recordSpanError(span, event_result.error)
     } else {
       span.setStatus({ code: SpanStatusCode.OK })
     }
     span.end(endTimeAfterStart(start_time, dateFromIso(event_result.completed_at)))
+    return span_context
   }
 }
 
@@ -403,92 +347,64 @@ function normalizeOtlpTracesEndpoint(endpoint: string): string {
   return trimmed.endsWith('/v1/traces') ? trimmed : `${trimmed}/v1/traces`
 }
 
+function eventStartedSpanAttributes(eventbus: EventBus, event: BaseEvent): SpanAttributes {
+  return compactAttributes({
+    'abxbus.event_bus.id': eventbus.id,
+    'abxbus.event_bus.name': eventbus.name,
+    'abxbus.event_id': event.event_id,
+    'abxbus.event_type': event.event_type,
+    'abxbus.event_version': event.event_version,
+    'abxbus.session_id': stringValue((event as { session_id?: unknown }).session_id),
+    'abxbus.event_parent_id': event.event_parent_id,
+    'abxbus.event_emitted_by_handler_id': event.event_emitted_by_handler_id,
+    'abxbus.event_path': event.event_path.join(' '),
+  })
+}
+
 function eventSpanAttributes(eventbus: EventBus, event: BaseEvent): SpanAttributes {
   return compactAttributes({
-    'abxbus.bus.id': eventbus.id,
-    'abxbus.bus.name': eventbus.name,
-    'abxbus.event.id': event.event_id,
-    'abxbus.event.type': event.event_type,
-    'abxbus.event.version': event.event_version,
-    'abxbus.event.session_id': stringValue((event as { session_id?: unknown }).session_id),
-    'abxbus.event.parent_id': event.event_parent_id,
-    'abxbus.event.emitted_by_handler_id': event.event_emitted_by_handler_id,
-    'abxbus.event.path': event.event_path.join(' '),
-    'abxbus.event.status': event.event_status,
-    'abxbus.event.result_count': event.event_results.size,
-    'abxbus.event.error_count': event.event_errors.length,
-    'abxbus.event.child_count': event.event_children.length,
+    ...eventStartedSpanAttributes(eventbus, event),
+    'abxbus.event_status': event.event_status,
   })
 }
 
 function handlerSpanAttributes(eventbus: EventBus, event: BaseEvent, event_result: EventResult): SpanAttributes {
   return compactAttributes({
-    'abxbus.bus.id': eventbus.id,
-    'abxbus.bus.name': eventbus.name,
-    'abxbus.event.id': event.event_id,
-    'abxbus.event.type': event.event_type,
-    'abxbus.handler.id': event_result.handler_id,
-    'abxbus.handler.name': event_result.handler_name,
-    'abxbus.handler.file_path': event_result.handler_file_path,
-    'abxbus.handler.event_pattern': event_result.handler.event_pattern,
-    'abxbus.event_result.id': event_result.id,
-    'abxbus.event_result.status': event_result.status,
-    'abxbus.handler.child_count': event_result.event_children.length,
+    'abxbus.event_bus.id': eventbus.id,
+    'abxbus.event_bus.name': eventbus.name,
+    'abxbus.event_id': event.event_id,
+    'abxbus.event_type': event.event_type,
+    'abxbus.handler_id': event_result.handler_id,
+    'abxbus.handler_name': event_result.handler_name,
+    'abxbus.handler_file_path': event_result.handler_file_path,
+    'abxbus.handler_event_pattern': event_result.handler.event_pattern,
+    'abxbus.event_result_id': event_result.id,
+    'abxbus.event_result_status': event_result.status,
   })
 }
 
-function rootSpanAttributes(
+function topLevelEventStartedSpanAttributes(
   root_span_attributes: OtelTracingMiddlewareOptions['root_span_attributes'],
   eventbus: EventBus,
   event: BaseEvent
 ): SpanAttributes {
-  const session_id = stringValue((event as { session_id?: unknown }).session_id)
   return compactAttributes({
+    ...eventStartedSpanAttributes(eventbus, event),
     ...resolveAttributes(root_span_attributes, eventbus, event),
     'abxbus.trace.root': true,
-    'abxbus.bus.id': eventbus.id,
-    'abxbus.bus.name': eventbus.name,
-    'abxbus.root_event.id': event.event_id,
-    'abxbus.root_event.type': event.event_type,
-    'abxbus.root_event.session_id': session_id,
-    'abxbus.root_event.status': event.event_status,
-    'abxbus.root_event.error_count': event.event_errors.length,
-    'abxbus.root_event.child_count': event.event_children.length,
   })
 }
 
-function rootEventForEvent(eventbus: EventBus, event: BaseEvent): BaseEvent {
-  let current = event._event_original ?? event
-  const seen = new Set<string>()
-  while (current.event_parent_id && !seen.has(current.event_id)) {
-    seen.add(current.event_id)
-    const parent = eventbus.findEventById(current.event_parent_id)
-    if (!parent) {
-      break
-    }
-    current = parent._event_original ?? parent
-  }
-  return current
-}
-
-function parentSpanContextForEvent(event: BaseEvent, trace_id: string): SpanContext {
-  if (!event.event_parent_id) {
-    return rootSpanContext(trace_id, event.event_id)
-  }
-
-  if (event.event_emitted_by_handler_id) {
-    return handlerSpanContext(trace_id, event.event_parent_id, event.event_emitted_by_handler_id)
-  }
-
-  return eventSpanContext(trace_id, event.event_parent_id)
-}
-
-function rootSpanContext(trace_id: string, event_id: string): SpanContext {
-  return {
-    traceId: trace_id,
-    spanId: deterministicSpanId(`abxbus.root:${event_id}`),
-    traceFlags: 1,
-  }
+function topLevelEventSpanAttributes(
+  root_span_attributes: OtelTracingMiddlewareOptions['root_span_attributes'],
+  eventbus: EventBus,
+  event: BaseEvent
+): SpanAttributes {
+  return compactAttributes({
+    ...eventSpanAttributes(eventbus, event),
+    ...resolveAttributes(root_span_attributes, eventbus, event),
+    'abxbus.trace.root': true,
+  })
 }
 
 function eventSpanContext(trace_id: string, event_id: string): SpanContext {
@@ -543,13 +459,6 @@ function endTimeAfterStart(start_time: Date | undefined, end_time: Date | undefi
   }
 
   return end_time.getTime() > start_time.getTime() ? end_time : new Date(start_time.getTime() + 1)
-}
-
-function resolveRootSpanName(root_span_name: OtelTracingMiddlewareOptions['root_span_name'], eventbus: EventBus, event: BaseEvent): string {
-  if (typeof root_span_name === 'function') {
-    return root_span_name(eventbus, event)
-  }
-  return root_span_name ?? `abxbus.trace ${eventbus.name}`
 }
 
 function resolveAttributes(
