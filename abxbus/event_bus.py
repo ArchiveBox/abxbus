@@ -397,9 +397,7 @@ class EventBus:
 
     @classmethod
     def _event_json_payload(cls, event: BaseEvent[Any]) -> dict[str, Any]:
-        payload = event.model_dump(mode='json')
-        payload['event_results'] = [result.model_dump(mode='json') for result in event.event_results.values()]
-        return payload
+        return event.model_dump(mode='json')
 
     @staticmethod
     def _normalize_json_object(value: Any) -> dict[str, Any] | None:
@@ -538,7 +536,6 @@ class EventBus:
             'event_handler_completion': str(self.event_handler_completion),
             'event_handler_slow_timeout': self.event_handler_slow_timeout,
             'event_handler_detect_file_paths': self.event_handler_detect_file_paths,
-            'warn_on_duplicate_handler_names': self.warn_on_duplicate_handler_names,
             'handlers': handlers_payload,
             'handlers_by_key': handlers_by_key_payload,
             'event_history': event_history_payload,
@@ -630,7 +627,9 @@ class EventBus:
             if event_payload_json is None:
                 continue
             event_payload: dict[str, Any] = dict(event_payload_json)
-            raw_event_results = event_payload.pop('event_results', [])
+            raw_event_results = event_payload.pop('event_results', {})
+            if not isinstance(raw_event_results, dict):
+                raise TypeError('EventBus.validate() expects event_results to be an id-keyed object')
             if 'event_id' not in event_payload or not isinstance(event_payload.get('event_id'), str):
                 event_payload['event_id'] = event_id_hint
             try:
@@ -640,13 +639,14 @@ class EventBus:
 
             hydrated_results: dict[PythonIdStr, EventResult[Any]] = {}
             result_items: list[dict[str, Any]] = []
-            if isinstance(raw_event_results, list):
-                raw_event_results_any = _as_any(raw_event_results)
-                for raw_item in raw_event_results_any:
-                    result_payload = cls._normalize_json_object(raw_item)
-                    if result_payload is None:
-                        continue
-                    result_items.append(dict(result_payload))
+            raw_event_results_any = _as_any(raw_event_results)
+            for raw_handler_id, raw_item in raw_event_results_any.items():
+                result_payload = cls._normalize_json_object(raw_item)
+                if result_payload is None:
+                    continue
+                item = dict(result_payload)
+                item.setdefault('handler_id', str(raw_handler_id))
+                result_items.append(item)
 
             for result_payload in result_items:
                 try:

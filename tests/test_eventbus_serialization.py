@@ -1,5 +1,5 @@
 from collections import deque
-from typing import Any, cast
+from typing import Any, TypeAlias, cast
 
 from abxbus.base_event import BaseEvent, EventResult
 from abxbus.event_bus import EventBus
@@ -8,6 +8,20 @@ from abxbus.helpers import CleanShutdownQueue
 
 class SerializableEvent(BaseEvent[str]):
     value: str = 'payload'
+
+
+JsonShape: TypeAlias = str | list['JsonShape'] | dict[str, 'JsonShape']
+
+
+def _json_shape(value: Any) -> JsonShape:
+    if isinstance(value, list):
+        return [_json_shape(item) for item in cast(list[Any], value)]
+    if isinstance(value, dict):
+        value_dict = cast(dict[Any, Any], value)
+        return {str(key): _json_shape(item) for key, item in value_dict.items()}
+    if value is None:
+        return 'null'
+    return type(value).__name__
 
 
 def _make_bus_with_pending_event() -> tuple[EventBus, SerializableEvent, str]:
@@ -59,6 +73,7 @@ def test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() -> None:
     assert all(event_id in payload['event_history'] for event_id in payload['pending_event_queue'])
 
     restored = EventBus.validate(bus.model_dump_json())
+    assert _json_shape(restored.model_dump()) == _json_shape(payload)
     assert restored.id == bus.id
     assert restored.name == bus.name
     assert restored.event_history.max_history_size == bus.event_history.max_history_size
@@ -81,6 +96,15 @@ def test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() -> None:
     queue = cast(deque[BaseEvent[Any]], getattr(restored.pending_event_queue, '_queue'))
     assert len(queue) == 1
     assert queue[0] is restored_event
+
+
+def test_baseevent_model_validate_roundtrips_runtime_json_shape() -> None:
+    bus, event, _handler_id = _make_bus_with_pending_event()
+    event_payload = bus.model_dump()['event_history'][event.event_id]
+
+    restored_payload = BaseEvent.model_validate(event_payload).model_dump(mode='json')
+    assert _json_shape(restored_payload) == _json_shape(event_payload)
+    assert restored_payload == event_payload
 
 
 def test_eventbus_validate_creates_missing_handler_entries_from_event_results() -> None:

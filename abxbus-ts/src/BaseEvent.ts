@@ -71,7 +71,7 @@ export const BaseEventSchema = z
     event_status: z.enum(['pending', 'started', 'completed']).optional(),
     event_started_at: z.string().datetime().nullable().optional(),
     event_completed_at: z.string().datetime().nullable().optional(),
-    event_results: z.array(z.unknown()).optional(),
+    event_results: z.record(z.string(), z.unknown()).optional(),
     event_concurrency: z.enum(EVENT_CONCURRENCY_MODES).nullable().optional(),
     event_handler_concurrency: z.enum(EVENT_HANDLER_CONCURRENCY_MODES).nullable().optional(),
     event_handler_completion: z.enum(EVENT_HANDLER_COMPLETION_MODES).nullable().optional(),
@@ -379,7 +379,9 @@ export class BaseEvent {
       if (value === undefined || typeof value === 'function') continue
       record[key] = value
     }
-    const event_results = Array.from(this.event_results.values()).map((result) => result.toJSON())
+    const event_results = Object.fromEntries(
+      Array.from(this.event_results.entries()).map(([handler_id, result]) => [handler_id, result.toJSON()])
+    )
 
     return {
       ...record,
@@ -411,7 +413,7 @@ export class BaseEvent {
       event_completed_at: this.event_completed_at ?? null,
 
       // mutable result state
-      ...(event_results.length > 0 ? { event_results } : {}),
+      ...(Object.keys(event_results).length > 0 ? { event_results } : {}),
     }
   }
 
@@ -1189,13 +1191,19 @@ export class BaseEvent {
 
 const hydrateEventResults = <TEvent extends BaseEvent>(event: TEvent, raw_event_results: unknown): Map<string, EventResult<TEvent>> => {
   const event_results = new Map<string, EventResult<TEvent>>()
-  if (!Array.isArray(raw_event_results)) {
+  if (raw_event_results == null) {
     return event_results
   }
-  for (const item of raw_event_results) {
-    const result = EventResult.fromJSON(event, item)
-    const map_key = typeof result.handler_id === 'string' && result.handler_id.length > 0 ? result.handler_id : result.id
-    event_results.set(map_key, result)
+  if (typeof raw_event_results !== 'object' || Array.isArray(raw_event_results)) {
+    throw new Error('BaseEvent.event_results must be an object keyed by handler id')
+  }
+  for (const [handler_id, item] of Object.entries(raw_event_results)) {
+    if (item == null || typeof item !== 'object' || Array.isArray(item)) continue
+    const result = EventResult.fromJSON(event, {
+      handler_id,
+      ...(item as Record<string, unknown>),
+    })
+    event_results.set(handler_id, result)
   }
   return event_results
 }

@@ -18,6 +18,44 @@ const EVENT_WAIT_TIMEOUT_MS = 15_000
 
 const jsonSafe = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
+const jsonShape = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(jsonShape)
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    if (typeof record.$schema === 'string' && typeof record.type === 'string') {
+      return { $schema: 'string', type: 'string' }
+    }
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, jsonShape(entry)]))
+  }
+  if (typeof value === 'number') return 'number'
+  return value === null ? 'null' : typeof value
+}
+
+const assertJsonShapeEqual = (actual: unknown, expected: unknown, context: string): void => {
+  const containsShape = (actual_shape: unknown, expected_shape: unknown): boolean => {
+    if (
+      actual_shape !== null &&
+      expected_shape !== null &&
+      typeof actual_shape === 'object' &&
+      typeof expected_shape === 'object' &&
+      !Array.isArray(actual_shape) &&
+      !Array.isArray(expected_shape)
+    ) {
+      const actual_record = actual_shape as Record<string, unknown>
+      return Object.entries(expected_shape as Record<string, unknown>).every(
+        ([key, value]) => key in actual_record && containsShape(actual_record[key], value)
+      )
+    }
+    if (Array.isArray(actual_shape) && Array.isArray(expected_shape)) {
+      return (
+        actual_shape.length === expected_shape.length && actual_shape.every((value, index) => containsShape(value, expected_shape[index]))
+      )
+    }
+    return actual_shape === expected_shape
+  }
+  assert.equal(containsShape(jsonShape(actual), jsonShape(expected)), true, `${context}: JSON shape changed`)
+}
+
 type ResultSemanticsCase = {
   event: BaseEvent
   valid_results: unknown[]
@@ -430,7 +468,13 @@ if not isinstance(raw, list):
 roundtripped: list[dict[str, Any]] = []
 for item in raw:
     event = BaseEvent[Any].model_validate(item)
-    roundtripped.append(event.model_dump(mode='json'))
+    event_dump = event.model_dump(mode='json')
+    if event.event_results:
+        event_dump['event_results'] = {
+            handler_id: event_result.model_dump(mode='json')
+            for handler_id, event_result in event.event_results.items()
+        }
+    roundtripped.append(event_dump)
 
 with open(output_path, 'w', encoding='utf-8') as f:
     json.dump(roundtripped, f, indent=2)
@@ -521,6 +565,8 @@ test('ts_to_python_roundtrip preserves event fields and result type semantics', 
     const semantics_case = roundtrip_cases_by_type.get(event_type)
     assert.ok(semantics_case, `missing semantics case for event_type=${event_type}`)
 
+    assertJsonShapeEqual(python_event, original, `python roundtrip ${event_type}`)
+
     for (const [key, value] of Object.entries(original)) {
       assert.ok(key in python_event, `missing key after python roundtrip: ${key}`)
       if (key === 'event_result_type') {
@@ -539,6 +585,8 @@ test('ts_to_python_roundtrip preserves event fields and result type semantics', 
 
     const restored = BaseEvent.fromJSON(python_event)
     const restored_dump = jsonSafe(restored.toJSON())
+
+    assertJsonShapeEqual(restored_dump, original, `ts reload ${event_type}`)
 
     for (const [key, value] of Object.entries(original)) {
       assert.ok(key in restored_dump, `missing key after ts reload: ${key}`)

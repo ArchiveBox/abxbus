@@ -62,6 +62,10 @@ def _normalize_roundtrip_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = _canonical(payload)
     normalized.pop('event_id', None)
     normalized.pop('event_path', None)
+    # The listener snapshots the event from inside its local handler, where the
+    # receiving bus has already attached handler bookkeeping that was not part
+    # of the bridge payload.
+    normalized.pop('event_results', None)
     # Dispatch now materializes event_concurrency defaults on the receiving bus.
     if normalized.get('event_concurrency') is None:
         normalized['event_concurrency'] = 'bus-serial'

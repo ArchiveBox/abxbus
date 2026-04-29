@@ -6,7 +6,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from types import NoneType
-from typing import Any
+from typing import Any, TypeAlias, cast
 
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -17,6 +17,7 @@ from abxbus.helpers import CleanShutdownQueue
 
 SUBPROCESS_TIMEOUT_SECONDS = 30
 EVENT_WAIT_TIMEOUT_SECONDS = 15
+JsonShape: TypeAlias = str | list['JsonShape'] | dict[str, 'JsonShape']
 
 
 class ScreenshotRegion(BaseModel):
@@ -108,6 +109,37 @@ def _value_repr(value: Any) -> str:
         return json.dumps(value, sort_keys=True)
     except TypeError:
         return repr(value)
+
+
+def _json_shape(value: Any) -> JsonShape:
+    if isinstance(value, list):
+        return [_json_shape(item) for item in cast(list[Any], value)]
+    if isinstance(value, dict):
+        value_dict = cast(dict[Any, Any], value)
+        if isinstance(value_dict.get('$schema'), str) and isinstance(value_dict.get('type'), str):
+            return {'$schema': 'str', 'type': 'str'}
+        return {str(key): _json_shape(item) for key, item in value_dict.items()}
+    if value is None:
+        return 'null'
+    if isinstance(value, bool):
+        return 'bool'
+    if isinstance(value, int | float):
+        return 'number'
+    return type(value).__name__
+
+
+def _json_shape_contains(actual: JsonShape, expected: JsonShape) -> bool:
+    if isinstance(actual, dict) and isinstance(expected, dict):
+        return all(key in actual and _json_shape_contains(actual[key], value) for key, value in expected.items())
+    if isinstance(actual, list) and isinstance(expected, list):
+        return len(actual) == len(expected) and all(
+            _json_shape_contains(actual_item, expected_item) for actual_item, expected_item in zip(actual, expected)
+        )
+    return actual == expected
+
+
+def _assert_json_shape_equal(actual: Any, expected: Any, context: str) -> None:
+    assert _json_shape_contains(_json_shape(actual), _json_shape(expected)), f'{context}: JSON shape changed'
 
 
 def _accepts_result_type(result_type: Any, value: Any) -> bool:
@@ -425,6 +457,8 @@ def test_python_to_ts_roundtrip_preserves_event_fields_and_result_type_semantics
         semantics_case = cases_by_type.get(event_type)
         assert semantics_case is not None, f'missing semantics case for event_type={event_type}'
 
+        _assert_json_shape_equal(ts_event, original, f'ts roundtrip {event_type}')
+
         # Every field Python emitted should survive through TS serialization.
         for key, value in original.items():
             assert key in ts_event, f'missing key after ts roundtrip: {key}'
@@ -443,6 +477,7 @@ def test_python_to_ts_roundtrip_preserves_event_fields_and_result_type_semantics
         # Verify we can load back into Python BaseEvent and keep the same payload/semantics.
         restored = BaseEvent[Any].model_validate(ts_event)
         restored_dump = restored.model_dump(mode='json')
+        _assert_json_shape_equal(restored_dump, original, f'python reload {event_type}')
         for key, value in original.items():
             assert key in restored_dump, f'missing key after python reload: {key}'
             if key == 'event_result_type':
@@ -559,8 +594,10 @@ async def test_python_to_ts_to_python_bus_roundtrip_rehydrates_and_resumes(tmp_p
 
     source_dump = source_bus.model_dump()
     ts_roundtripped = _ts_roundtrip_bus(source_dump, tmp_path)
+    _assert_json_shape_equal(ts_roundtripped, source_dump, 'python -> ts bus roundtrip')
     restored = EventBus.validate(ts_roundtripped)
     restored_dump = restored.model_dump()
+    _assert_json_shape_equal(restored_dump, source_dump, 'python -> ts -> python bus reload')
 
     assert restored_dump['handlers'] == source_dump['handlers']
     assert restored_dump['handlers_by_key'] == source_dump['handlers_by_key']

@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from enum import StrEnum
 from functools import partial
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Literal, Self, TypeAlias
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Literal, Self, TypeAlias, cast
 from uuid import UUID
 
 from pydantic import (
@@ -17,6 +17,7 @@ from pydantic import (
     ConfigDict,
     Field,
     PrivateAttr,
+    SkipValidation,
     computed_field,
     field_serializer,
     field_validator,
@@ -80,8 +81,13 @@ def validate_event_name(s: str) -> str:
 
 
 def validate_python_id_str(s: str) -> str:
-    assert str(s).replace('.', '').isdigit(), f'Invalid Python ID: {s}'
-    return str(s)
+    value = str(s)
+    if value.replace('.', '').isdigit():
+        return value
+    try:
+        return str(UUID(value))
+    except ValueError as err:
+        raise AssertionError(f'Invalid Python ID: {s}') from err
 
 
 def validate_event_path_entry_str(s: str) -> str:
@@ -188,7 +194,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
     id: str = Field(default_factory=uuid7str)
     status: Literal['pending', 'started', 'completed', 'error'] = 'pending'
     event_id: str
-    handler: EventHandler = Field(default_factory=EventHandler)
+    handler: SkipValidation[EventHandler] = Field(default_factory=EventHandler)
     result_type: Any = Field(default=None, exclude=True, repr=False)
     timeout: float | None = None
     started_at: str | None = None
@@ -203,6 +209,41 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
 
     # Child events emitted during handler execution
     event_children: list['BaseEvent[Any]'] = Field(default_factory=lambda: [])
+
+    @classmethod
+    def construct_pending_handler_result(
+        cls,
+        *,
+        event_id: str,
+        handler: EventHandler,
+        status: Literal['pending', 'started', 'completed', 'error'],
+        timeout: float | None,
+        result_type: Any,
+    ) -> Self:
+        """Construct bus-owned pending handler results without revalidating trusted fields."""
+        # Performance optimization for EventBus' hot dispatch path.
+        # This intentionally bypasses Pydantic validation because the caller is
+        # constructing a new EventResult from already-normalized runtime values:
+        # event_id is from BaseEvent, handler is an EventHandler instance whose
+        # identity is intentionally preserved, and status/timeout/result_type
+        # are resolved by EventBus/BaseEvent. Keep
+        # these fields exactly in sync with the normal EventResult(...) /
+        # EventResult.model_validate() setup above: defaults, private attrs,
+        # field names, and any future field/model validators must be reflected
+        # here, with tests proving serialized output and runtime behavior match.
+        return cls.model_construct(
+            id=uuid7str(),
+            status=status,
+            event_id=event_id,
+            handler=handler,
+            result_type=result_type,
+            timeout=timeout,
+            started_at=None,
+            result=None,
+            error=None,
+            completed_at=None,
+            event_children=[],
+        )
 
     @staticmethod
     def _serialize_datetime_json(value: str | datetime | None) -> str | None:
@@ -325,6 +366,15 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                 payload[at_key] = monotonic_datetime(str(raw_at_value))
 
         return payload
+
+    @field_validator('handler', mode='before')
+    @classmethod
+    def _hydrate_handler_field(cls, value: Any) -> EventHandler:
+        if isinstance(value, EventHandler):
+            return value
+        if isinstance(value, dict):
+            return EventHandler.model_validate(value)
+        return value
 
     @model_serializer(mode='plain', when_used='json')
     def _serialize_event_result_json(self) -> dict[str, Any]:
@@ -947,6 +997,16 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
         return wait_for_handlers_to_complete_then_return_event().__await__()
 
+    @classmethod
+    def model_validate(cls, obj: Any, **kwargs: Any) -> Self:
+        """Hydrate unparameterized runtime-event JSON without weakening BaseEvent's default result type."""
+        if cls is BaseEvent and isinstance(obj, dict):
+            payload = _normalize_any_dict(obj)
+            if payload.get('event_results'):
+                any_event_cls = cast(type['BaseEvent[Any]'], BaseEvent[Any])  # pyright: ignore[reportUnnecessaryCast]
+                return cast(Self, any_event_cls.model_validate(obj, **kwargs))
+        return super().model_validate(obj, **kwargs)
+
     async def event_completed(self) -> Self:
         """Queue-order await path (never queue-jumps), returns self."""
         self._mark_blocks_parent_completion_if_awaited_from_emitting_handler()
@@ -1002,6 +1062,19 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             else:
                 params[at_key] = monotonic_datetime(str(raw_value))
 
+        if 'event_results' in params:
+            raw_event_results = params['event_results']
+            if isinstance(raw_event_results, dict):
+                hydrated_event_results = {}
+                for raw_handler_id, raw_item in _normalize_any_dict(raw_event_results).items():
+                    if not isinstance(raw_item, dict):
+                        continue
+                    result_payload = _normalize_any_dict(raw_item)
+                    result_payload.setdefault('handler_id', raw_handler_id)
+                    event_result = EventResult[Any].model_validate(result_payload)
+                    hydrated_event_results[event_result.handler_id] = event_result
+                params['event_results'] = hydrated_event_results
+
         is_class_default_unchanged = cls.model_fields['event_type'].default == 'UndefinedEvent'
         is_event_type_not_provided = 'event_type' not in params or params['event_type'] == 'UndefinedEvent'
         if is_class_default_unchanged and is_event_type_not_provided:
@@ -1024,6 +1097,15 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                 params['event_result_type'] = extracted_type
 
         return params
+
+    @model_serializer(mode='wrap', when_used='json')
+    def _serialize_base_event_json(self, serializer: Callable[[Self], dict[str, Any]]) -> dict[str, Any]:
+        payload = serializer(self)
+        if self.event_results:
+            payload['event_results'] = {
+                handler_id: result.model_dump(mode='json') for handler_id, result in self.event_results.items()
+            }
+        return payload
 
     @model_validator(mode='after')
     def _hydrate_event_result_types_from_event(self) -> Self:
@@ -1450,7 +1532,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
         # Get or create EventResult
         if handler_id not in self.event_results:
-            self.event_results[handler_id] = EventResult[T_EventResultType](
+            self.event_results[handler_id] = EventResult[T_EventResultType].construct_pending_handler_result(
                 event_id=self.event_id,
                 handler=handler_entry,
                 status=kwargs.get('status', 'pending'),

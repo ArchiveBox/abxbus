@@ -1,6 +1,5 @@
-from uuid import uuid4
-
 import pytest
+from uuid_extensions import uuid7str
 
 from abxbus.base_event import BaseEvent, EventResult
 from abxbus.event_bus import EventBus
@@ -178,7 +177,7 @@ def test_event_result_update_keeps_consistent_ordering_semantics_for_status_resu
         eventbus_id='018f8e40-1234-7000-8000-000000001234',
     )
     event_result: EventResult[str] = EventResult(
-        event_id=str(uuid4()),
+        event_id=uuid7str(),
         handler=handler_entry,
         timeout=None,
         result_type=str,
@@ -195,6 +194,40 @@ def test_event_result_update_keeps_consistent_ordering_semantics_for_status_resu
     assert event_result.status == 'error'
 
 
+def test_construct_pending_handler_result_matches_pydantic_constructor() -> None:
+    def handler(event: StandaloneEvent) -> str:
+        return event.data
+
+    handler_entry = EventHandler.from_callable(
+        handler=handler,
+        event_pattern='StandaloneEvent',
+        eventbus_name='StandaloneBus',
+        eventbus_id='018f8e40-1234-7000-8000-000000001234',
+    )
+    event_id = uuid7str()
+    fast_result = EventResult[str].construct_pending_handler_result(
+        event_id=event_id,
+        handler=handler_entry,
+        status='pending',
+        timeout=1.25,
+        result_type=str,
+    )
+    validated_result = EventResult[str](
+        id=fast_result.id,
+        event_id=event_id,
+        handler=handler_entry,
+        status='pending',
+        timeout=1.25,
+        result_type=str,
+    )
+
+    assert fast_result.model_dump(mode='json') == validated_result.model_dump(mode='json')
+    assert fast_result.result_type is validated_result.result_type
+    assert fast_result.handler is handler_entry
+    assert validated_result.handler is handler_entry
+    assert fast_result.handler_completed_signal is validated_result.handler_completed_signal
+
+
 def test_event_result_serializes_handler_metadata_and_derived_fields() -> None:
     """EventResult stores handler metadata and derives convenience fields from it."""
 
@@ -209,7 +242,7 @@ def test_event_result_serializes_handler_metadata_and_derived_fields() -> None:
     )
 
     result = EventResult(
-        event_id=str(uuid4()),
+        event_id=uuid7str(),
         handler=entry,
     )
     payload = result.model_dump(mode='json')

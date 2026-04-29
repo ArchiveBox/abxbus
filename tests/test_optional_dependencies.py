@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -65,6 +66,7 @@ assert OtelTracingMiddleware.__name__ == 'OtelTracingMiddleware'
     result = subprocess.run(
         [sys.executable, '-c', code],
         cwd=_ROOT,
+        env={**os.environ, 'PYDANTIC_DISABLE_PLUGINS': '__all__'},
         capture_output=True,
         text=True,
         check=False,
