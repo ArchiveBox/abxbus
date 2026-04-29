@@ -1,17 +1,17 @@
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 
-import { EventBus } from './event_bus.js'
-import { EventResult } from './event_result.js'
-import { EventHandler, EventHandlerAbortedError, EventHandlerCancelledError, EventHandlerTimeoutError } from './event_handler.js'
-import type { EventConcurrencyMode, EventHandlerConcurrencyMode, EventHandlerCompletionMode, Deferred } from './lock_manager.js'
+import { EventBus } from './EventBus.js'
+import { EventResult } from './EventResult.js'
+import { EventHandler, EventHandlerAbortedError, EventHandlerCancelledError, EventHandlerTimeoutError } from './EventHandler.js'
+import type { EventConcurrencyMode, EventHandlerConcurrencyMode, EventHandlerCompletionMode, Deferred } from './LockManager.js'
 import {
   AsyncLock,
   EVENT_CONCURRENCY_MODES,
   EVENT_HANDLER_CONCURRENCY_MODES,
   EVENT_HANDLER_COMPLETION_MODES,
   withResolvers,
-} from './lock_manager.js'
+} from './LockManager.js'
 import { _runWithTimeout } from './timing.js'
 import { extractZodShape, normalizeEventResultType, toJsonSchema } from './types.js'
 import type { EventHandlerCallable, EventResultType } from './types.js'

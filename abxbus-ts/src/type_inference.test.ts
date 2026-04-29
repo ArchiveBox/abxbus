@@ -3,10 +3,10 @@
 
 import { z } from 'zod'
 
-import { BaseEvent } from './base_event.js'
-import { EventBus } from './event_bus.js'
+import { BaseEvent } from './BaseEvent.js'
+import { EventBus } from './EventBus.js'
 import { events_suck } from './events_suck.js'
-import type { EventResult } from './event_result.js'
+import type { EventResult } from './EventResult.js'
 import type { EventResultType } from './types.js'
 
 type IsEqual<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false

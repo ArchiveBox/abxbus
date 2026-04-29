@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { BaseEvent, EventBus } from '../src/index.js'
-import { GlobalEventBusRegistry } from '../src/event_bus.js'
-import { AsyncLock } from '../src/lock_manager.js'
+import { GlobalEventBusRegistry } from '../src/EventBus.js'
+import { AsyncLock } from '../src/LockManager.js'
 import { z } from 'zod'
 
 const delay = (ms: number): Promise<void> =>

@@ -1,38 +1,31 @@
-export { BaseEvent, BaseEventSchema } from './base_event.js'
-export { EventHistory } from './event_history.js'
-export type { EventHistoryFindOptions, EventHistoryTrimOptions } from './event_history.js'
-export { EventResult } from './event_result.js'
-export { EventBus } from './event_bus.js'
-export type { EventBusJSON, EventBusOptions } from './event_bus.js'
+export { BaseEvent, BaseEventSchema } from './BaseEvent.js'
+export { EventHistory } from './EventHistory.js'
+export type { EventHistoryFindOptions, EventHistoryTrimOptions } from './EventHistory.js'
+export { EventResult } from './EventResult.js'
+export { EventBus } from './EventBus.js'
+export type { EventBusJSON, EventBusOptions } from './EventBus.js'
+export { EventBridge } from './EventBridge.js'
+export { HTTPEventBridge } from './HTTPEventBridge.js'
+export type { HTTPEventBridgeOptions } from './HTTPEventBridge.js'
+export { SocketEventBridge } from './SocketEventBridge.js'
+export { JSONLEventBridge } from './JSONLEventBridge.js'
+export { SQLiteEventBridge } from './SQLiteEventBridge.js'
+export type { EventBusMiddleware, EventBusMiddlewareCtor, EventBusMiddlewareInput } from './EventBusMiddleware.js'
 export { monotonicDatetime } from './helpers.js'
-export type { EventBusMiddleware, EventBusMiddlewareCtor, EventBusMiddlewareInput } from './middlewares.js'
-export { OtelTracingMiddleware } from './middleware_otel_tracing.js'
-export type { OtelTracingMiddlewareOptions } from './middleware_otel_tracing.js'
-export type { OtelTracingSpanFactory, OtelTracingSpanFactoryInput, OtelTracingSpanProvider } from './middleware_otel_tracing.js'
 export {
   EventHandlerTimeoutError,
   EventHandlerCancelledError,
   EventHandlerAbortedError,
   EventHandlerResultSchemaError,
-} from './event_handler.js'
+} from './EventHandler.js'
 export type {
   EventConcurrencyMode,
   EventHandlerConcurrencyMode,
   EventHandlerCompletionMode,
   EventBusInterfaceForLockManager,
-} from './lock_manager.js'
+} from './LockManager.js'
 export type { EventClass, EventHandlerCallable as EventHandler, EventPattern, EventStatus, FindOptions, FindWindow } from './types.js'
 export { retry, clearSemaphoreRegistry, RetryTimeoutError, SemaphoreTimeoutError } from './retry.js'
 export type { RetryOptions } from './retry.js'
-export {
-  HTTPEventBridge,
-  SocketEventBridge,
-  NATSEventBridge,
-  RedisEventBridge,
-  PostgresEventBridge,
-  JSONLEventBridge,
-  SQLiteEventBridge,
-} from './bridges.js'
-export type { HTTPEventBridgeOptions } from './bridges.js'
 export { events_suck } from './events_suck.js'
 export type { EventsSuckClient, EventsSuckClientClass, GeneratedEvents } from './events_suck.js'

@@ -1,6 +1,6 @@
-import { BaseEvent, type BaseEventJSON } from './base_event.js'
-import { EventHistory } from './event_history.js'
-import { EventResult } from './event_result.js'
+import { BaseEvent, type BaseEventJSON } from './BaseEvent.js'
+import { EventHistory } from './EventHistory.js'
+import { EventResult } from './EventResult.js'
 import { captureAsyncContext } from './async_context.js'
 import { _runWithSlowMonitor, _runWithTimeout } from './timing.js'
 import {
@@ -9,7 +9,7 @@ import {
   type EventHandlerConcurrencyMode,
   type EventHandlerCompletionMode,
   LockManager,
-} from './lock_manager.js'
+} from './LockManager.js'
 import {
   EventHandler,
   EventHandlerAbortedError,
@@ -17,8 +17,8 @@ import {
   EventHandlerTimeoutError,
   type EphemeralFindEventHandler,
   type EventHandlerJSON,
-} from './event_handler.js'
-import type { EventBusMiddleware, EventBusMiddlewareCtor, EventBusMiddlewareInput } from './middlewares.js'
+} from './EventHandler.js'
+import type { EventBusMiddleware, EventBusMiddlewareCtor, EventBusMiddlewareInput } from './EventBusMiddleware.js'
 import { logTree } from './logging.js'
 import { v7 as uuidv7 } from 'uuid'
 import { monotonicDatetime } from './helpers.js'

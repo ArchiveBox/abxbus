@@ -1,6 +1,6 @@
 {
   "name": "abxbus",
-  "version": "2.4.26",
+  "version": "2.4.27",
   "description": "Event bus library for browsers and ESM Node.js",
   "type": "module",
   "sideEffects": false,
@@ -14,6 +14,18 @@
       "import": "./dist/esm/index.js",
       "require": "./dist/cjs/index.js",
       "default": "./dist/esm/index.js"
+    },
+    "./source": {
+      "source": "./src/index.ts",
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./source/*": {
+      "source": "./src/*.ts",
+      "types": "./src/*.ts",
+      "import": "./src/*.ts",
+      "default": "./src/*.ts"
     },
     "./*": {
       "source": "./src/*.ts",
@@ -57,23 +69,58 @@
   "license": "MIT",
   "packageManager": "pnpm@10.29.3",
   "dependencies": {
-    "@opentelemetry/api": "^1.9.1",
-    "@opentelemetry/exporter-trace-otlp-http": "^0.215.0",
-    "@opentelemetry/resources": "^2.7.0",
-    "@opentelemetry/sdk-trace-base": "^2.7.0",
     "uuid": "^13.0.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.215.0",
+    "@opentelemetry/resources": "^2.7.0",
+    "@opentelemetry/sdk-trace-base": "^2.7.0",
     "@types/node": "^25.2.3",
     "@typescript-eslint/eslint-plugin": "^8.55.0",
     "@typescript-eslint/parser": "^8.55.0",
     "esbuild": "^0.27.3",
     "eslint": "^9.39.2",
+    "ioredis": "^5.9.3",
+    "nats": "^2.29.3",
+    "pg": "^8.18.0",
     "prettier": "^3.8.1",
     "tsc-files": "^1.1.4",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.215.0",
+    "@opentelemetry/resources": "^2.7.0",
+    "@opentelemetry/sdk-trace-base": "^2.7.0",
+    "ioredis": "^5.9.3",
+    "nats": "^2.29.3",
+    "pg": "^8.18.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentelemetry/api": {
+      "optional": true
+    },
+    "@opentelemetry/exporter-trace-otlp-http": {
+      "optional": true
+    },
+    "@opentelemetry/resources": {
+      "optional": true
+    },
+    "@opentelemetry/sdk-trace-base": {
+      "optional": true
+    },
+    "ioredis": {
+      "optional": true
+    },
+    "nats": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    }
   },
   "repository": {
     "type": "git",
@@ -95,10 +142,5 @@
     "onlyBuiltDependencies": [
       "esbuild"
     ]
-  },
-  "optionalDependencies": {
-    "ioredis": "^5.9.3",
-    "nats": "^2.29.3",
-    "pg": "^8.18.0"
   }
 }

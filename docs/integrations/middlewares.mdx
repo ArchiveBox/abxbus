@@ -27,7 +27,8 @@ bus = EventBus(
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus, type EventBusMiddleware, type EventStatus } from 'abxbus'
+import { BaseEvent, EventBus, type EventStatus } from 'abxbus'
+import type { EventBusMiddleware } from 'abxbus/middlewares'
 
 class LoggingMiddleware implements EventBusMiddleware {
   async onEventChange(eventbus: EventBus, event: BaseEvent, status: EventStatus): Promise<void> {
@@ -81,7 +82,7 @@ Middleware hooks receive lifecycle statuses in strict order:
 </Tab>
 <Tab title="TypeScript">
 
-TypeScript currently exposes the middleware interface only. No built-in middleware classes are exported yet.
+- [OtelTracingMiddleware](./middleware-otel-tracing) via `abxbus/OtelTracingMiddleware`
 
 </Tab>
 </Tabs>

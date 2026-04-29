@@ -11,8 +11,8 @@
  * URL format:
  *   redis://user:pass@host:6379/<db>/<optional_channel>
  */
-import { BaseEvent } from './base_event.js'
-import { EventBus } from './event_bus.js'
+import { BaseEvent } from './BaseEvent.js'
+import { EventBus } from './EventBus.js'
 import { assertOptionalDependencyAvailable, importOptionalDependency, isNodeRuntime } from './optional_deps.js'
 import type { EventClass, EventHandlerCallable, EventPattern, UntypedEventHandlerFunction } from './types.js'
 

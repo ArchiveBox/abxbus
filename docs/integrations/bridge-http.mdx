@@ -15,7 +15,7 @@ description: Forward events over HTTP(S) endpoints.
 <Tab title="Python">
 
 ```python
-from abxbus import HTTPEventBridge
+from abxbus.bridges import HTTPEventBridge
 
 bridge = HTTPEventBridge(
     send_to='https://peer.example.com/abxbus_events',
@@ -28,7 +28,7 @@ bridge = HTTPEventBridge(
 <Tab title="TypeScript">
 
 ```ts
-import { HTTPEventBridge } from 'abxbus'
+import { HTTPEventBridge } from 'abxbus/bridges'
 
 const bridge = new HTTPEventBridge({
   send_to: 'https://peer.example.com/abxbus_events',
@@ -46,7 +46,8 @@ const bridge = new HTTPEventBridge({
 <Tab title="Python">
 
 ```python
-from abxbus import EventBus, HTTPEventBridge
+from abxbus import EventBus
+from abxbus.bridges import HTTPEventBridge
 
 bus = EventBus('AppBus')
 bridge = HTTPEventBridge(
@@ -62,7 +63,8 @@ bridge.on('*', bus.emit)
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus, HTTPEventBridge } from 'abxbus'
+import { EventBus } from 'abxbus'
+import { HTTPEventBridge } from 'abxbus/bridges'
 
 const bus = new EventBus('AppBus')
 const bridge = new HTTPEventBridge({

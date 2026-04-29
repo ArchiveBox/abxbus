@@ -8,8 +8,8 @@ import {
   EventHandlerCancelledError,
   EventHandlerResultSchemaError,
   EventHandlerTimeoutError,
-  type EventBusMiddleware,
 } from '../src/index.js'
+import type { EventBusMiddleware } from '../src/EventBusMiddleware.js'
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {

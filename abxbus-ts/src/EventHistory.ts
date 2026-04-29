@@ -1,4 +1,4 @@
-import { BaseEvent } from './base_event.js'
+import { BaseEvent } from './BaseEvent.js'
 import type { EventPattern, FindWindow } from './types.js'
 import { normalizeEventPattern } from './types.js'
 import { monotonicDatetime } from './helpers.js'

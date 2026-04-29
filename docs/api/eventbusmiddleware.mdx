@@ -71,7 +71,8 @@ bus = EventBus('AppBus', middlewares=[AnalyticsMiddleware])
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus, type EventBusMiddleware } from 'abxbus'
+import { EventBus } from 'abxbus'
+import type { EventBusMiddleware } from 'abxbus/middlewares'
 
 class AnalyticsMiddleware implements EventBusMiddleware {}
 
@@ -121,10 +122,10 @@ import {
   BaseEvent,
   EventBus,
   type EventHandler,
-  type EventBusMiddleware,
   type EventResult,
   type EventStatus,
 } from 'abxbus'
+import type { EventBusMiddleware } from 'abxbus/middlewares'
 
 class AnalyticsMiddleware implements EventBusMiddleware {
   async onEventResultChange(
@@ -170,7 +171,7 @@ const bus = new EventBus('AppBus', { middlewares: [AnalyticsMiddleware] })
 </Tab>
 <Tab title="TypeScript">
 
-TypeScript currently exports the middleware interface but no built-in middleware implementations.
+- `OtelTracingMiddleware` from `abxbus/OtelTracingMiddleware`
 
 </Tab>
 </Tabs>

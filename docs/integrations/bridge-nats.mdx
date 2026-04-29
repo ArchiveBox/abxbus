@@ -46,7 +46,7 @@ This bridge is Node.js-only.
 <Tab title="Python">
 
 ```python
-from abxbus import NATSEventBridge
+from abxbus.bridges import NATSEventBridge
 
 bridge = NATSEventBridge(
     'nats://localhost:4222',
@@ -59,7 +59,7 @@ bridge = NATSEventBridge(
 <Tab title="TypeScript">
 
 ```ts
-import { NATSEventBridge } from 'abxbus'
+import { NATSEventBridge } from 'abxbus/bridges'
 
 const bridge = new NATSEventBridge(
   'nats://localhost:4222',
@@ -77,7 +77,8 @@ const bridge = new NATSEventBridge(
 <Tab title="Python">
 
 ```python
-from abxbus import EventBus, NATSEventBridge
+from abxbus import EventBus
+from abxbus.bridges import NATSEventBridge
 
 bus = EventBus('AppBus')
 bridge = NATSEventBridge('nats://localhost:4222', 'abxbus_events')
@@ -90,7 +91,8 @@ bridge.on('*', bus.emit)
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus, NATSEventBridge } from 'abxbus'
+import { EventBus } from 'abxbus'
+import { NATSEventBridge } from 'abxbus/bridges'
 
 const bus = new EventBus('AppBus')
 const bridge = new NATSEventBridge('nats://localhost:4222', 'abxbus_events')

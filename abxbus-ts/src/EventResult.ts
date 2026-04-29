@@ -2,11 +2,11 @@ import { v7 as uuidv7 } from 'uuid'
 
 import { z } from 'zod'
 
-import { BaseEvent } from './base_event.js'
-import type { EventBus } from './event_bus.js'
-import { EventHandler, EventHandlerCancelledError, EventHandlerResultSchemaError, EventHandlerTimeoutError } from './event_handler.js'
-import { withResolvers, type HandlerLock } from './lock_manager.js'
-import type { Deferred } from './lock_manager.js'
+import { BaseEvent } from './BaseEvent.js'
+import type { EventBus } from './EventBus.js'
+import { EventHandler, EventHandlerCancelledError, EventHandlerResultSchemaError, EventHandlerTimeoutError } from './EventHandler.js'
+import { withResolvers, type HandlerLock } from './LockManager.js'
+import type { Deferred } from './LockManager.js'
 import type { EventHandlerCallable, EventResultType } from './types.js'
 import { isZodSchema } from './types.js'
 import { _runWithAsyncContext } from './async_context.js'
@@ -87,7 +87,9 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
   }
 
   get bus(): EventBus {
-    return this.event.event_bus!
+    const original_event = this.event._event_original ?? this.event
+    const dispatch_bus = original_event.event_bus ?? this.event.event_bus!
+    return dispatch_bus.all_instances.findBusById(this.handler.eventbus_id) ?? dispatch_bus
   }
 
   get handler_id(): string {

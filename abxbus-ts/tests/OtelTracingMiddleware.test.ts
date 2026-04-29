@@ -17,7 +17,8 @@ import {
 } from '@opentelemetry/api'
 import { BasicTracerProvider, SimpleSpanProcessor, type ReadableSpan, type SpanExporter } from '@opentelemetry/sdk-trace-base'
 
-import { BaseEvent, EventBus, OtelTracingMiddleware, type OtelTracingSpanFactoryInput } from '../src/index.js'
+import { OtelTracingMiddleware, type OtelTracingSpanFactoryInput } from '../src/OtelTracingMiddleware.js'
+import { BaseEvent, EventBus } from '../src/index.js'
 
 const flushHooks = async (ticks: number = 4): Promise<void> => {
   for (let i = 0; i < ticks; i += 1) {

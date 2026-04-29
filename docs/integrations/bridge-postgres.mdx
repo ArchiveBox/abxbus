@@ -46,7 +46,7 @@ This bridge is Node.js-only.
 <Tab title="Python">
 
 ```python
-from abxbus import PostgresEventBridge
+from abxbus.bridges import PostgresEventBridge
 
 bridge = PostgresEventBridge(
     'postgresql://user:pass@localhost:5432/mydb/abxbus_events',
@@ -59,7 +59,7 @@ bridge = PostgresEventBridge(
 <Tab title="TypeScript">
 
 ```ts
-import { PostgresEventBridge } from 'abxbus'
+import { PostgresEventBridge } from 'abxbus/bridges'
 
 const bridge = new PostgresEventBridge(
   'postgresql://user:pass@localhost:5432/mydb/abxbus_events',
@@ -77,7 +77,8 @@ const bridge = new PostgresEventBridge(
 <Tab title="Python">
 
 ```python
-from abxbus import EventBus, PostgresEventBridge
+from abxbus import EventBus
+from abxbus.bridges import PostgresEventBridge
 
 bus = EventBus('AppBus')
 bridge = PostgresEventBridge('postgresql://user:pass@localhost:5432/mydb/abxbus_events')
@@ -90,7 +91,8 @@ bridge.on('*', bus.emit)
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus, PostgresEventBridge } from 'abxbus'
+import { EventBus } from 'abxbus'
+import { PostgresEventBridge } from 'abxbus/bridges'
 
 const bus = new EventBus('AppBus')
 const bridge = new PostgresEventBridge('postgresql://user:pass@localhost:5432/mydb/abxbus_events')

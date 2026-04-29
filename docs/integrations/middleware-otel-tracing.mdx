@@ -12,6 +12,9 @@ description: Emit OpenTelemetry spans for events and handlers.
 
 ## Setup with EventBus
 
+<Tabs>
+<Tab title="Python">
+
 ```python
 from abxbus import EventBus
 from abxbus.middlewares import OtelTracingMiddleware
@@ -21,6 +24,21 @@ bus = EventBus(
     middlewares=[OtelTracingMiddleware()],
 )
 ```
+
+</Tab>
+<Tab title="TypeScript">
+
+```ts
+import { EventBus } from 'abxbus'
+import { OtelTracingMiddleware } from 'abxbus/OtelTracingMiddleware'
+
+const bus = new EventBus('AppBus', {
+  middlewares: [new OtelTracingMiddleware()],
+})
+```
+
+</Tab>
+</Tabs>
 
 ## Setup with Sentry
 

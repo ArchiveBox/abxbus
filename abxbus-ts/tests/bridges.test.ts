@@ -9,16 +9,8 @@ import { test } from 'node:test'
 
 import { z } from 'zod'
 
-import {
-  BaseEvent,
-  HTTPEventBridge,
-  JSONLEventBridge,
-  NATSEventBridge,
-  PostgresEventBridge,
-  RedisEventBridge,
-  SQLiteEventBridge,
-  SocketEventBridge,
-} from '../src/index.js'
+import { NATSEventBridge, PostgresEventBridge, RedisEventBridge } from '../src/bridges.js'
+import { BaseEvent, EventBridge, HTTPEventBridge, JSONLEventBridge, SQLiteEventBridge, SocketEventBridge } from '../src/index.js'
 
 const tests_dir = dirname(fileURLToPath(import.meta.url))
 const TEST_RUN_ID = `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
@@ -272,7 +264,7 @@ const assertRoundtrip = async (kind: string, config: Record<string, string>): Pr
 
   const sender = makeSenderBridge(kind, config)
 
-  const worker = spawn(process.execPath, ['--import', 'tsx', join(tests_dir, 'bridge_listener_worker.ts'), config_path], {
+  const worker = spawn(process.execPath, ['--import', 'tsx', join(tests_dir, 'EventBridge_listener_worker.ts'), config_path], {
     cwd: tests_dir,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -303,6 +295,7 @@ const assertRoundtrip = async (kind: string, config: Record<string, string>): Pr
 }
 
 test('HTTPEventBridge roundtrip between processes', async () => {
+  assert.ok(HTTPEventBridge.prototype instanceof EventBridge)
   const endpoint = `http://127.0.0.1:${await getFreePort()}/events`
   await assertRoundtrip('http', { endpoint })
   const latency_ms = await measureWarmLatencyMs('http', { endpoint })

@@ -15,7 +15,7 @@ description: Forward events through newline-delimited JSON files.
 <Tab title="Python">
 
 ```python
-from abxbus import JSONLEventBridge
+from abxbus.bridges import JSONLEventBridge
 
 bridge = JSONLEventBridge(
     '/tmp/abxbus_events.jsonl',
@@ -28,7 +28,7 @@ bridge = JSONLEventBridge(
 <Tab title="TypeScript">
 
 ```ts
-import { JSONLEventBridge } from 'abxbus'
+import { JSONLEventBridge } from 'abxbus/bridges'
 
 const bridge = new JSONLEventBridge('/tmp/abxbus_events.jsonl', 0.25, 'JsonlBridge')
 ```
@@ -42,7 +42,8 @@ const bridge = new JSONLEventBridge('/tmp/abxbus_events.jsonl', 0.25, 'JsonlBrid
 <Tab title="Python">
 
 ```python
-from abxbus import EventBus, JSONLEventBridge
+from abxbus import EventBus
+from abxbus.bridges import JSONLEventBridge
 
 bus = EventBus('AppBus')
 bridge = JSONLEventBridge('/tmp/abxbus_events.jsonl')
@@ -55,7 +56,8 @@ bridge.on('*', bus.emit)
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus, JSONLEventBridge } from 'abxbus'
+import { EventBus } from 'abxbus'
+import { JSONLEventBridge } from 'abxbus/bridges'
 
 const bus = new EventBus('AppBus')
 const bridge = new JSONLEventBridge('/tmp/abxbus_events.jsonl')

@@ -2,8 +2,8 @@ import { z } from 'zod'
 import { v5 as uuidv5 } from 'uuid'
 
 import { normalizeEventPattern, type EventHandlerCallable, type EventPattern } from './types.js'
-import { BaseEvent } from './base_event.js'
-import type { EventResult } from './event_result.js'
+import { BaseEvent } from './BaseEvent.js'
+import type { EventResult } from './EventResult.js'
 import { monotonicDatetime } from './helpers.js'
 
 const HANDLER_ID_NAMESPACE = uuidv5('abxbus-handler', uuidv5.DNS)

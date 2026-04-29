@@ -14,7 +14,7 @@ description: Forward events through Unix domain sockets.
 <Tab title="Python">
 
 ```python
-from abxbus import SocketEventBridge
+from abxbus.bridges import SocketEventBridge
 
 bridge = SocketEventBridge('/tmp/abxbus_events.sock', name='SocketBridge')
 ```
@@ -23,7 +23,7 @@ bridge = SocketEventBridge('/tmp/abxbus_events.sock', name='SocketBridge')
 <Tab title="TypeScript">
 
 ```ts
-import { SocketEventBridge } from 'abxbus'
+import { SocketEventBridge } from 'abxbus/bridges'
 
 const bridge = new SocketEventBridge('/tmp/abxbus_events.sock', 'SocketBridge')
 ```
@@ -37,7 +37,8 @@ const bridge = new SocketEventBridge('/tmp/abxbus_events.sock', 'SocketBridge')
 <Tab title="Python">
 
 ```python
-from abxbus import EventBus, SocketEventBridge
+from abxbus import EventBus
+from abxbus.bridges import SocketEventBridge
 
 bus = EventBus('AppBus')
 bridge = SocketEventBridge('/tmp/abxbus_events.sock')
@@ -50,7 +51,8 @@ bridge.on('*', bus.emit)
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus, SocketEventBridge } from 'abxbus'
+import { EventBus } from 'abxbus'
+import { SocketEventBridge } from 'abxbus/bridges'
 
 const bus = new EventBus('AppBus')
 const bridge = new SocketEventBridge('/tmp/abxbus_events.sock')

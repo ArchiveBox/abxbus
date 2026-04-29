@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { AsyncLock, HandlerLock, LockManager, runWithLock } from '../src/lock_manager.js'
+import { AsyncLock, HandlerLock, LockManager, runWithLock } from '../src/LockManager.js'
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 

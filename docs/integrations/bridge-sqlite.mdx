@@ -16,7 +16,7 @@ description: Forward events through a local SQLite table with polling.
 <Tab title="Python">
 
 ```python
-from abxbus import SQLiteEventBridge
+from abxbus.bridges import SQLiteEventBridge
 
 bridge = SQLiteEventBridge(
     '/tmp/abxbus_events.sqlite3',
@@ -30,7 +30,7 @@ bridge = SQLiteEventBridge(
 <Tab title="TypeScript">
 
 ```ts
-import { SQLiteEventBridge } from 'abxbus'
+import { SQLiteEventBridge } from 'abxbus/bridges'
 
 const bridge = new SQLiteEventBridge('/tmp/abxbus_events.sqlite3', 'abxbus_events', 0.25, 'SqliteBridge')
 ```
@@ -44,7 +44,8 @@ const bridge = new SQLiteEventBridge('/tmp/abxbus_events.sqlite3', 'abxbus_event
 <Tab title="Python">
 
 ```python
-from abxbus import EventBus, SQLiteEventBridge
+from abxbus import EventBus
+from abxbus.bridges import SQLiteEventBridge
 
 bus = EventBus('AppBus')
 bridge = SQLiteEventBridge('/tmp/abxbus_events.sqlite3')
@@ -57,7 +58,8 @@ bridge.on('*', bus.emit)
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus, SQLiteEventBridge } from 'abxbus'
+import { EventBus } from 'abxbus'
+import { SQLiteEventBridge } from 'abxbus/bridges'
 
 const bus = new EventBus('AppBus')
 const bridge = new SQLiteEventBridge('/tmp/abxbus_events.sqlite3')

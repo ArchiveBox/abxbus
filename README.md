@@ -679,7 +679,7 @@ await bus.emit(SecondEventAbc(some_key="banana"))
 # will persist all events to sqlite + events.jsonl + events.log
 ```
 
-Built-in middlewares you can import from `abxbus.middlewares.*`:
+Built-in middlewares you can import from `abxbus.middlewares`:
 
 - `AutoErrorEventMiddleware`: on handler error, fire-and-forget emits `OriginalEventTypeErrorEvent` with `{error, error_type}` (skips `*ErrorEvent`/`*ResultEvent` sources). Useful when downstream/remote consumers only see events and need explicit failure notifications.
 - `AutoReturnEventMiddleware`: on non-`None` handler return, fire-and-forget emits `OriginalEventTypeResultEvent` with `{data}` (skips `*ErrorEvent`/`*ResultEvent` sources). Useful for bridges/remote systems since handler return values do not cross bridge boundaries, but events do.

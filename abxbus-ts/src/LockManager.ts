@@ -1,5 +1,5 @@
-import type { BaseEvent } from './base_event.js'
-import type { EventResult } from './event_result.js'
+import type { BaseEvent } from './BaseEvent.js'
+import type { EventResult } from './EventResult.js'
 import { createAsyncLocalStorage, type AsyncLocalStorageLike } from './async_context.js'
 
 // ─── Deferred / withResolvers ────────────────────────────────────────────────

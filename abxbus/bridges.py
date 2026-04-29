@@ -16,33 +16,32 @@ from anyio import Path as AnyPath
 from uuid_extensions import uuid7str
 
 from abxbus.base_event import BaseEvent
+from abxbus.bridge_jsonl import JSONLEventBridge
+from abxbus.bridge_sqlite import SQLiteEventBridge
 from abxbus.event_bus import EventBus, EventPatternType, in_handler_context
 
 logger = logging.getLogger('abxbus.bridges')
 UNIX_SOCKET_MAX_PATH_CHARS = 90
 __all__ = [
+    'EventBridge',
     'HTTPEventBridge',
     'SocketEventBridge',
+    'JSONLEventBridge',
+    'SQLiteEventBridge',
     'NATSEventBridge',
     'RedisEventBridge',
     'PostgresEventBridge',
-    'JSONLEventBridge',
-    'SQLiteEventBridge',
 ]
 
 if TYPE_CHECKING:
-    from .bridge_jsonl import JSONLEventBridge
     from .bridge_nats import NATSEventBridge
     from .bridge_postgres import PostgresEventBridge
     from .bridge_redis import RedisEventBridge
-    from .bridge_sqlite import SQLiteEventBridge
 
 _LAZY_BRIDGE_MODULES: dict[str, str] = {
     'NATSEventBridge': '.bridge_nats',
     'RedisEventBridge': '.bridge_redis',
     'PostgresEventBridge': '.bridge_postgres',
-    'JSONLEventBridge': '.bridge_jsonl',
-    'SQLiteEventBridge': '.bridge_sqlite',
 }
 
 

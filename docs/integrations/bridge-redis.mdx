@@ -46,7 +46,7 @@ This bridge is Node.js-only.
 <Tab title="Python">
 
 ```python
-from abxbus import RedisEventBridge
+from abxbus.bridges import RedisEventBridge
 
 bridge = RedisEventBridge(
     'redis://user:pass@localhost:6379/1/abxbus_events',
@@ -58,7 +58,7 @@ bridge = RedisEventBridge(
 <Tab title="TypeScript">
 
 ```ts
-import { RedisEventBridge } from 'abxbus'
+import { RedisEventBridge } from 'abxbus/bridges'
 
 const bridge = new RedisEventBridge(
   'redis://user:pass@localhost:6379/1/abxbus_events',
@@ -76,7 +76,8 @@ const bridge = new RedisEventBridge(
 <Tab title="Python">
 
 ```python
-from abxbus import EventBus, RedisEventBridge
+from abxbus import EventBus
+from abxbus.bridges import RedisEventBridge
 
 bus = EventBus('AppBus')
 bridge = RedisEventBridge('redis://localhost:6379/0/abxbus_events')
@@ -89,7 +90,8 @@ bridge.on('*', bus.emit)
 <Tab title="TypeScript">
 
 ```ts
-import { EventBus, RedisEventBridge } from 'abxbus'
+import { EventBus } from 'abxbus'
+import { RedisEventBridge } from 'abxbus/bridges'
 
 const bus = new EventBus('AppBus')
 const bridge = new RedisEventBridge('redis://localhost:6379/0/abxbus_events')

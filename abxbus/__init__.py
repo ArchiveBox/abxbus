@@ -12,7 +12,7 @@ from .base_event import (
     PythonIdStr,
     UUIDStr,
 )
-from .bridges import HTTPEventBridge, SocketEventBridge
+from .bridges import EventBridge, HTTPEventBridge, JSONLEventBridge, SocketEventBridge, SQLiteEventBridge
 from .event_bus import EventBus
 from .event_handler import (
     EventHandler,
@@ -31,7 +31,6 @@ from .middlewares import (
     BusHandlerUnregisteredEvent,
     EventBusMiddleware,
     LoggerEventBusMiddleware,
-    OtelTracingMiddleware,
     SQLiteHistoryMirrorMiddleware,
     WALEventBusMiddleware,
 )
@@ -41,10 +40,12 @@ __all__ = [
     'EventBusMiddleware',
     'BusHandlerRegisteredEvent',
     'BusHandlerUnregisteredEvent',
+    'EventBridge',
     'HTTPEventBridge',
     'SocketEventBridge',
+    'JSONLEventBridge',
+    'SQLiteEventBridge',
     'LoggerEventBusMiddleware',
-    'OtelTracingMiddleware',
     'SQLiteHistoryMirrorMiddleware',
     'AutoErrorEventMiddleware',
     'AutoHandlerChangeEventMiddleware',

@@ -17,10 +17,10 @@ import { BasicTracerProvider, BatchSpanProcessor } from '@opentelemetry/sdk-trac
 import type { SpanLimits, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { SpanImpl } from '@opentelemetry/sdk-trace-base/build/src/Span.js'
 
-import type { BaseEvent } from './base_event.js'
-import type { EventBus } from './event_bus.js'
-import type { EventResult } from './event_result.js'
-import type { EventBusMiddleware } from './middlewares.js'
+import type { BaseEvent } from './BaseEvent.js'
+import type { EventBus } from './EventBus.js'
+import type { EventResult } from './EventResult.js'
+import type { EventBusMiddleware } from './EventBusMiddleware.js'
 import type { EventStatus } from './types.js'
 
 type OpenTelemetryTraceApi = Pick<typeof trace, 'getTracer' | 'setSpan'> & Partial<Pick<typeof trace, 'setSpanContext'>>

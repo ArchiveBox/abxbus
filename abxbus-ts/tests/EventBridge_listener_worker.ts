@@ -1,14 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 
-import {
-  HTTPEventBridge,
-  JSONLEventBridge,
-  NATSEventBridge,
-  PostgresEventBridge,
-  RedisEventBridge,
-  SQLiteEventBridge,
-  SocketEventBridge,
-} from '../src/index.js'
+import { NATSEventBridge, PostgresEventBridge, RedisEventBridge } from '../src/bridges.js'
+import { HTTPEventBridge, JSONLEventBridge, SQLiteEventBridge, SocketEventBridge } from '../src/index.js'
 
 type WorkerConfig = {
   kind: string

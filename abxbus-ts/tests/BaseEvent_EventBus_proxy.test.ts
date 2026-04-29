@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { BaseEvent, EventBus } from '../src/index.js'
+import { BaseEvent, EventBus, EventResult } from '../src/index.js'
 
 const MainEvent = BaseEvent.extend('MainEvent', {})
 const ChildEvent = BaseEvent.extend('ChildEvent', {})
@@ -160,6 +160,36 @@ test('event.event_bus in nested handlers sees the same bus', async () => {
 
   assert.equal(outer_bus_name, 'MainBus')
   assert.equal(inner_bus_name, 'MainBus')
+})
+
+test('event.emit awaited children pass explicit handler context to immediate processing', async () => {
+  const bus = new EventBus('ExplicitEventEmitHandlerContextBus', {
+    event_concurrency: 'bus-serial',
+    event_handler_concurrency: 'serial',
+  })
+  const child_process_handler_contexts: boolean[] = []
+  const original_process_event_immediately = EventBus.prototype._processEventImmediately
+
+  EventBus.prototype._processEventImmediately = function <T extends BaseEvent>(event: T, handler_result?: EventResult): Promise<T> {
+    if (event.event_type === 'ChildEvent') {
+      child_process_handler_contexts.push(handler_result?.status === 'started')
+    }
+    return original_process_event_immediately.call(this, event, handler_result) as Promise<T>
+  }
+
+  try {
+    bus.on(MainEvent, async (event) => {
+      const child = event.emit(ChildEvent({}))
+      await child.done()
+    })
+    bus.on(ChildEvent, () => 'child-ok')
+
+    await bus.emit(MainEvent({})).done()
+  } finally {
+    EventBus.prototype._processEventImmediately = original_process_event_immediately
+  }
+
+  assert.deepEqual(child_process_handler_contexts, [true])
 })
 
 test('event.emit sets parent-child relationships through 3 levels', async () => {

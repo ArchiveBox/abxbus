@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { BaseEvent } from './base_event.js'
+import type { BaseEvent } from './BaseEvent.js'
 
 export type EventStatus = 'pending' | 'started' | 'completed'
 

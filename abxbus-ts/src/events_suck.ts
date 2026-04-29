@@ -1,5 +1,5 @@
-import { EventBus } from './event_bus.js'
-import { BaseEvent } from './base_event.js'
+import { EventBus } from './EventBus.js'
+import { BaseEvent } from './BaseEvent.js'
 
 import type { EventClass, EventResultType } from './types.js'
 

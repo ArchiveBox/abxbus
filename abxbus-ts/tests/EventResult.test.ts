@@ -4,9 +4,9 @@ import { test } from 'node:test'
 import { z } from 'zod'
 
 import { BaseEvent, EventBus, EventHandlerResultSchemaError } from '../src/index.js'
-import { EventHandler } from '../src/event_handler.js'
-import { EventResult } from '../src/event_result.js'
-import { withResolvers } from '../src/lock_manager.js'
+import { EventHandler } from '../src/EventHandler.js'
+import { EventResult } from '../src/EventResult.js'
+import { withResolvers } from '../src/LockManager.js'
 
 const StringResultEvent = BaseEvent.extend('StringResultEvent', {
   event_result_type: z.string(),
