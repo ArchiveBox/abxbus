@@ -88,6 +88,85 @@ async def test_await_event_queue_jumps_inside_handler():
     await bus.stop()
 
 
+async def test_parallel_event_concurrency_plus_immediate_execution_races_child_events_inside_handlers():
+    class ParentEvent(BaseEvent[None]):
+        pass
+
+    class SomeChildEvent1(BaseEvent[str]):
+        pass
+
+    class SomeChildEvent2(BaseEvent[str]):
+        pass
+
+    class SomeChildEvent3(BaseEvent[str]):
+        pass
+
+    bus = EventBus(
+        name='ParallelImmediateRaceBus',
+        event_concurrency='parallel',
+        event_handler_concurrency='serial',
+    )
+    order: list[str] = []
+    release = asyncio.Event()
+    all_started = asyncio.Event()
+    in_flight = 0
+    max_in_flight = 0
+
+    async def track_child(label: str) -> str:
+        nonlocal in_flight, max_in_flight
+        order.append(f'{label}_start')
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        if in_flight == 3:
+            all_started.set()
+        await release.wait()
+        order.append(f'{label}_end')
+        in_flight -= 1
+        return label
+
+    async def on_parent(event: ParentEvent) -> None:
+        order.append('parent_start')
+        settled = await asyncio.gather(
+            event.emit(SomeChildEvent1()),
+            event.emit(SomeChildEvent2()),
+            event.emit(SomeChildEvent3()),
+            return_exceptions=True,
+        )
+        order.append('parent_end')
+        assert len(settled) == 3
+        assert all(isinstance(item, BaseEvent) for item in settled)
+
+    async def on_child_1(_: SomeChildEvent1) -> str:
+        return await track_child('child1')
+
+    async def on_child_2(_: SomeChildEvent2) -> str:
+        return await track_child('child2')
+
+    async def on_child_3(_: SomeChildEvent3) -> str:
+        return await track_child('child3')
+
+    bus.on(ParentEvent, on_parent)
+    bus.on(SomeChildEvent1, on_child_1)
+    bus.on(SomeChildEvent2, on_child_2)
+    bus.on(SomeChildEvent3, on_child_3)
+
+    parent = bus.emit(ParentEvent())
+    await asyncio.wait_for(all_started.wait(), timeout=1.0)
+    assert max_in_flight >= 3
+    assert 'parent_end' not in order
+
+    release.set()
+    await parent
+    await bus.wait_until_idle()
+
+    parent_end_index = order.index('parent_end')
+    for label in ('child1', 'child2', 'child3'):
+        assert order.index(f'{label}_start') < parent_end_index
+        assert order.index(f'{label}_end') < parent_end_index
+
+    await bus.stop()
+
+
 async def test_event_completed_waits_in_queue_order_inside_handler():
     class ParentEvent(BaseEvent[None]):
         pass

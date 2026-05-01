@@ -122,6 +122,81 @@ test('await event.done() queue-jumps child processing inside handlers', async ()
   bus.destroy()
 })
 
+test('parallel event concurrency plus immediate execution races child events inside handlers', async () => {
+  const ParentEvent = BaseEvent.extend('BaseEventParallelImmediateParentEvent', {})
+  const SomeChildEvent1 = BaseEvent.extend('BaseEventParallelImmediateChildEvent1', {})
+  const SomeChildEvent2 = BaseEvent.extend('BaseEventParallelImmediateChildEvent2', {})
+  const SomeChildEvent3 = BaseEvent.extend('BaseEventParallelImmediateChildEvent3', {})
+
+  const bus = new EventBus('BaseEventParallelImmediateRaceBus', {
+    event_concurrency: 'parallel',
+    event_handler_concurrency: 'serial',
+  })
+  const order: string[] = []
+  let in_flight = 0
+  let max_in_flight = 0
+
+  let release_resolve: (() => void) | undefined
+  const release = new Promise<void>((resolve) => {
+    release_resolve = resolve
+  })
+
+  let all_started_resolve: (() => void) | undefined
+  const all_started = new Promise<void>((resolve) => {
+    all_started_resolve = resolve
+  })
+
+  const trackChild = async (label: string): Promise<string> => {
+    order.push(`${label}_start`)
+    in_flight += 1
+    max_in_flight = Math.max(max_in_flight, in_flight)
+    if (in_flight === 3) {
+      all_started_resolve?.()
+    }
+    await release
+    order.push(`${label}_end`)
+    in_flight -= 1
+    return label
+  }
+
+  bus.on(ParentEvent, async (event) => {
+    order.push('parent_start')
+    const settled = await Promise.allSettled([
+      event.emit(SomeChildEvent1({})).done(),
+      event.emit(SomeChildEvent2({})).done(),
+      event.emit(SomeChildEvent3({})).done(),
+    ])
+    order.push('parent_end')
+    assert.equal(settled.length, 3)
+    assert.equal(
+      settled.every((result) => result.status === 'fulfilled'),
+      true
+    )
+  })
+
+  bus.on(SomeChildEvent1, async () => trackChild('child1'))
+  bus.on(SomeChildEvent2, async () => trackChild('child2'))
+  bus.on(SomeChildEvent3, async () => trackChild('child3'))
+
+  const parent = bus.emit(ParentEvent({}))
+  await all_started
+  assert.ok(max_in_flight >= 3)
+  assert.equal(order.includes('parent_end'), false)
+
+  assert.ok(release_resolve)
+  release_resolve()
+  await parent.done()
+  await bus.waitUntilIdle()
+
+  const parent_end_index = order.indexOf('parent_end')
+  for (const label of ['child1', 'child2', 'child3']) {
+    assert.ok(order.indexOf(`${label}_start`) < parent_end_index)
+    assert.ok(order.indexOf(`${label}_end`) < parent_end_index)
+  }
+
+  bus.destroy()
+})
+
 test('await event.eventCompleted() preserves normal queue order inside handlers', async () => {
   const ParentEvent = BaseEvent.extend('BaseEventQueuedParentEvent', {})
   const ChildEvent = BaseEvent.extend('BaseEventQueuedChildEvent', {})

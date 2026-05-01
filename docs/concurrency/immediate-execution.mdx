@@ -64,6 +64,83 @@ bus.on(ChildEvent, async () => 'child response')
 </Tab>
 </Tabs>
 
+## Parallel fan-out inside a handler
+
+If the parent bus/event uses `event_concurrency='parallel'`, you can queue-jump multiple child calls at once and wait for them as a group.
+
+<Tabs>
+<Tab title="Python">
+
+```python
+import asyncio
+
+from abxbus import BaseEvent, EventBus
+
+class ParentEvent(BaseEvent[None]):
+    pass
+
+class SomeChildEvent1(BaseEvent[str]):
+    pass
+
+class SomeChildEvent2(BaseEvent[str]):
+    pass
+
+class SomeChildEvent3(BaseEvent[str]):
+    pass
+
+bus = EventBus('ParallelRpcBus', event_concurrency='parallel')
+
+async def on_parent(event: ParentEvent) -> None:
+    settled = await asyncio.gather(
+        event.emit(SomeChildEvent1()),
+        event.emit(SomeChildEvent2()),
+        event.emit(SomeChildEvent3()),
+        return_exceptions=True,
+    )
+
+    for item in settled:
+        if isinstance(item, Exception):
+            print(f'child failed: {item}')
+        else:
+            print(f'child completed: {item.event_type}')
+```
+
+</Tab>
+<Tab title="TypeScript">
+
+```ts
+import { BaseEvent, EventBus } from 'abxbus'
+import { z } from 'zod'
+
+const ParentEvent = BaseEvent.extend('ParentEvent', {})
+const SomeChildEvent1 = BaseEvent.extend('SomeChildEvent1', { event_result_type: z.string() })
+const SomeChildEvent2 = BaseEvent.extend('SomeChildEvent2', { event_result_type: z.string() })
+const SomeChildEvent3 = BaseEvent.extend('SomeChildEvent3', { event_result_type: z.string() })
+
+const bus = new EventBus('ParallelRpcBus', { event_concurrency: 'parallel' })
+
+bus.on(ParentEvent, async (event) => {
+  const settled = await Promise.allSettled([
+    event.emit(SomeChildEvent1({})).done(),
+    event.emit(SomeChildEvent2({})).done(),
+    event.emit(SomeChildEvent3({})).done(),
+  ])
+
+  for (const result of settled) {
+    if (result.status === 'rejected') {
+      console.error('child failed:', result.reason)
+    } else {
+      console.log('child completed:', result.value.event_type)
+    }
+  }
+})
+```
+
+</Tab>
+</Tabs>
+
+Python note: `asyncio.gather(..., return_exceptions=True)` is the closest `Promise.allSettled(...)` equivalent here. Each direct `await` on the emitted child events still uses the immediate queue-jump path.
+
 ## Execution order example
 
 In this pattern, sibling work can already be queued, but the awaited child still runs first.
