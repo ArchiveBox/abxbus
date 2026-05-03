@@ -153,6 +153,9 @@ class TachyonEventBridge:
                 bus_ready.set()
                 return
             self._listener_bus = bus
+            # Bus.listen returning means *this* thread completed the bind+handshake;
+            # only now can we safely claim socket ownership for close()'s unlink path.
+            self._acted_as_listener = True
             self._running = True
             bus_ready.set()
             try:
@@ -175,11 +178,11 @@ class TachyonEventBridge:
         while time.monotonic() < deadline:
             if self._listener_init_error is not None:
                 raise RuntimeError(f'TachyonEventBridge failed to listen on {self.path}') from self._listener_init_error
+            # Path-existence is what peers need to know to call Bus.connect; the thread
+            # itself sets _acted_as_listener once Bus.listen has actually completed the
+            # bind+handshake, so a startup race where another process beats our thread to
+            # the path can't trick close() into unlinking a socket we never owned.
             if os.path.exists(self.path):
-                # Only flag listener-ownership of the path after we've confirmed *this* thread
-                # actually bound it; otherwise a failed startup followed by another process
-                # binding the same path could trick close() into unlinking a socket we never owned.
-                self._acted_as_listener = True
                 return
             time.sleep(0.005)
         if self._listener_init_error is not None:

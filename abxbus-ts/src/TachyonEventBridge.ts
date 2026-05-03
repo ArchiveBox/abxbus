@@ -262,7 +262,11 @@ export class TachyonEventBridge {
       workerData: { path: this.path, capacity: this.capacity },
     })
     worker.on('message', (msg: { type: string; data?: Uint8Array; typeId?: number; message?: string }) => {
-      if (msg.type === 'message' && msg.data) {
+      if (msg.type === 'ready') {
+        // Bus.listen returning means *this* worker completed the bind+handshake; only
+        // now can we safely claim socket ownership for close()'s unlink path.
+        this.acted_as_listener = true
+      } else if (msg.type === 'message' && msg.data) {
         try {
           const text = Buffer.from(msg.data).toString('utf-8')
           const payload = JSON.parse(text)
@@ -290,13 +294,12 @@ export class TachyonEventBridge {
     const wait_buffer = new Int32Array(new SharedArrayBuffer(4))
     const deadline = Date.now() + TACHYON_LISTEN_TIMEOUT_MS
     while (Date.now() < deadline) {
-      if (existsSync(this.path)) {
-        // Only flag listener-ownership of the path after we've confirmed *this* worker
-        // actually bound it; otherwise a failed startup followed by another process
-        // binding the same path could trick close() into unlinking a socket we never owned.
-        this.acted_as_listener = true
-        return
-      }
+      // Path-existence is what peers need to know to call Bus.connect; the worker
+      // itself sets acted_as_listener (via the 'ready' message above) once Bus.listen
+      // has actually completed the bind+handshake, so a startup race where another
+      // process beats our worker to the path can't trick close() into unlinking a
+      // socket we never owned.
+      if (existsSync(this.path)) return
       Atomics.wait(wait_buffer, 0, 0, 5)
     }
     // Listener never bound the socket; tear down the dead worker so a retry on()
