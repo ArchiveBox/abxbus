@@ -20,8 +20,11 @@ const tachyonAvailable = async (): Promise<boolean> => {
   try {
     await dynamic_import('@tachyon-ipc/core')
     return true
-  } catch {
-    return false
+  } catch (error: unknown) {
+    if (typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === 'ERR_MODULE_NOT_FOUND') {
+      return false
+    }
+    throw error
   }
 }
 const TACHYON_AVAILABLE = await tachyonAvailable()
