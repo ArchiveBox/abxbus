@@ -102,5 +102,5 @@ bus.on('*', outbound.emit)
 
 - Tachyon is SPSC: a single producer is paired with a single consumer per session. Use a separate bridge instance per direction if you need bidirectional forwarding.
 - The producer disconnects from the Unix socket immediately after the SHM handshake; reconnecting after the consumer has accepted is not supported by Tachyon.
-- In TypeScript, `close()` flushes a reserved `SHUTDOWN_TYPE_ID` sentinel from the producer so the consumer can exit its blocking `recv` loop. In Python, `close()` releases sender resources only; a listener blocked in `recv` is left as a daemon thread until process exit. Only the listener side unlinks the socket on disk.
+- `close()` on the producer side flushes a reserved `SHUTDOWN_TYPE_ID` sentinel before tearing down its bus so the consumer can exit its blocking `recv` loop without an orphaned thread; the same shutdown wire-format is used in both runtimes, so a Python producer can cleanly stop a TS listener and vice versa. Only the listener side unlinks the socket on disk.
 - Runtime requirements: a Linux/macOS host with futex/`__ulock_wait` support; Python needs `tachyon-ipc`, TypeScript needs `@tachyon-ipc/core` and Node.js.

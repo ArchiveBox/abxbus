@@ -37,6 +37,13 @@ from abxbus.event_bus import EventBus, EventPatternType, in_handler_context
 
 _DEFAULT_TACHYON_CAPACITY = 1 << 20
 _TACHYON_SOCKET_WAIT_TIMEOUT = 5.0
+# Tachyon recv() blocks on a futex with no external interrupt; the producer signals
+# graceful shutdown by emitting one final message with this reserved type id, which
+# lets the consumer break out of its recv loop. Mirrors TACHYON_SHUTDOWN_TYPE_ID
+# in abxbus-ts/src/TachyonEventBridge.ts so producers and consumers can be mixed
+# across runtimes.
+_TACHYON_SHUTDOWN_TYPE_ID = 0xDEAD
+_TACHYON_DATA_TYPE_ID = 1
 
 
 class TachyonEventBridge:
@@ -66,7 +73,7 @@ class TachyonEventBridge:
         payload = event.model_dump(mode='json')
         encoded = json.dumps(payload, separators=(',', ':')).encode('utf-8')
         assert self._send_bus is not None
-        await asyncio.to_thread(self._send_bus.send, encoded, 1)
+        await asyncio.to_thread(self._send_bus.send, encoded, _TACHYON_DATA_TYPE_ID)
         if in_handler_context():
             return None
         return event
@@ -79,21 +86,30 @@ class TachyonEventBridge:
         return
 
     async def close(self, *, clear: bool = True) -> None:
-        # The listener thread is daemon and blocked on an uninterruptible recv;
-        # we orphan it (it dies at process exit) rather than risk a deadlocked join.
         self._running = False
         if self._send_bus is not None:
+            # Flush a shutdown sentinel so a peer listener (this process or another)
+            # can exit its blocking recv loop without an orphaned thread.
+            try:
+                await asyncio.to_thread(self._send_bus.send, b'', _TACHYON_SHUTDOWN_TYPE_ID)
+            except Exception:
+                pass
             try:
                 self._send_bus.__exit__(None, None, None)
             except Exception:
                 pass
             self._send_bus = None
-        was_listener = self._listener_thread is not None
+        listener_thread = self._listener_thread
         self._listener_bus = None
         self._listener_thread = None
+        # The listener exits naturally once its recv() consumes a shutdown sentinel;
+        # join it briefly so the thread is reaped instead of orphaned for the
+        # symmetric case where another producer (or this bridge instance) sent one.
+        if listener_thread is not None and listener_thread.is_alive():
+            listener_thread.join(timeout=0.5)
         # Only the side that bound the socket (the listener) owns the path on disk.
         # Sender-only instances must leave it alone so other senders/listeners can keep using it.
-        if was_listener:
+        if listener_thread is not None:
             socket_path = AnyPath(self.path)
             if await socket_path.exists():
                 try:
@@ -131,7 +147,7 @@ class TachyonEventBridge:
             bus_ready.set()
             try:
                 for msg in bus:
-                    if not self._running:
+                    if not self._running or msg.type_id == _TACHYON_SHUTDOWN_TYPE_ID:
                         break
                     try:
                         payload = json.loads(bytes(msg.data).decode('utf-8'))
