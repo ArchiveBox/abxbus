@@ -21,7 +21,12 @@ const tachyonAvailable = async (): Promise<boolean> => {
     await dynamic_import('@tachyon-ipc/core')
     return true
   } catch (error: unknown) {
-    if (typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === 'ERR_MODULE_NOT_FOUND') {
+    const code = typeof error === 'object' && error !== null && 'code' in error ? (error as { code?: string }).code : undefined
+    const message = error instanceof Error ? error.message : ''
+    // Treat both "package not installed" and "native binary missing" (the cmake-js
+    // build step was skipped) as legitimate "not available" signals; rethrow anything
+    // else so a real integration breakage still fails the test file.
+    if (code === 'ERR_MODULE_NOT_FOUND' || message.includes('tachyon_node.node not found')) {
       return false
     }
     throw error
