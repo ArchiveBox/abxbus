@@ -126,6 +126,9 @@ export class TachyonEventBridge {
 
   private readonly inbound_bus: EventBus
   private listener_worker: Worker | null
+  // Sticky: `listener_worker` may be cleared mid-session (graceful exit, retry path),
+  // but the socket on disk is still ours to unlink in close().
+  private acted_as_listener: boolean
   private sender_worker: Worker | null
   private sender_ready_promise: Promise<void> | null
   private send_seq: number
@@ -144,6 +147,7 @@ export class TachyonEventBridge {
     this.name = name ?? `TachyonEventBridge_${randomSuffix()}`
     this.inbound_bus = new EventBus(this.name, { max_history_size: 0 })
     this.listener_worker = null
+    this.acted_as_listener = false
     this.sender_worker = null
     this.sender_ready_promise = null
     this.send_seq = 0
@@ -208,7 +212,6 @@ export class TachyonEventBridge {
       }
       this.sender_worker = null
     }
-    const was_listener = this.listener_worker !== null
     if (this.listener_worker) {
       // The listener exits naturally once it consumes the shutdown sentinel.
       const listener_exited = new Promise<void>((resolve) => {
@@ -228,7 +231,7 @@ export class TachyonEventBridge {
     this.pending_sends.clear()
     // Only the side that bound the socket (the listener) owns the path on disk.
     // Sender-only instances must leave it alone so other senders/listeners can keep using it.
-    if (was_listener && existsSync(this.path)) {
+    if (this.acted_as_listener && existsSync(this.path)) {
       try {
         unlinkSync(this.path)
       } catch {
@@ -278,6 +281,7 @@ export class TachyonEventBridge {
       if (this.listener_worker === worker) this.listener_worker = null
     })
     this.listener_worker = worker
+    this.acted_as_listener = true
 
     // Block until the worker has bound the unix socket so peers calling Bus.connect(path)
     // immediately after on() do not race the worker's async startup.
@@ -295,6 +299,7 @@ export class TachyonEventBridge {
       // ignore
     }
     if (this.listener_worker === worker) this.listener_worker = null
+    this.acted_as_listener = false
     throw new Error(`TachyonEventBridge listener did not bind socket ${this.path} within ${TACHYON_LISTEN_TIMEOUT_MS}ms`)
   }
 

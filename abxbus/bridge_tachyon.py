@@ -62,6 +62,9 @@ class TachyonEventBridge:
         self._listener_thread: threading.Thread | None = None
         self._listener_loop: asyncio.AbstractEventLoop | None = None
         self._listener_init_error: BaseException | None = None
+        # Sticky: the listener thread reference may be cleared mid-session (graceful
+        # exit, retry path), but the socket on disk is still ours to unlink in close().
+        self._acted_as_listener = False
         self._running = False
 
     def on(self, event_pattern: EventPatternType, handler: Callable[[BaseEvent[Any]], Any]) -> None:
@@ -109,7 +112,7 @@ class TachyonEventBridge:
             listener_thread.join(timeout=0.5)
         # Only the side that bound the socket (the listener) owns the path on disk.
         # Sender-only instances must leave it alone so other senders/listeners can keep using it.
-        if listener_thread is not None:
+        if self._acted_as_listener:
             socket_path = AnyPath(self.path)
             if await socket_path.exists():
                 try:
@@ -167,6 +170,7 @@ class TachyonEventBridge:
         thread = threading.Thread(target=_run, daemon=True, name='TachyonEventBridge-listener')
         thread.start()
         self._listener_thread = thread
+        self._acted_as_listener = True
 
         deadline = time.monotonic() + _TACHYON_SOCKET_WAIT_TIMEOUT
         while time.monotonic() < deadline:
