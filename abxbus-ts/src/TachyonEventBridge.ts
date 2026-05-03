@@ -27,6 +27,7 @@ import type { EventClass, EventHandlerCallable, EventPattern, UntypedEventHandle
 const randomSuffix = (): string => Math.random().toString(36).slice(2, 10)
 const DEFAULT_TACHYON_CAPACITY = 1 << 20
 const TACHYON_CONNECT_TIMEOUT_MS = 5000
+const TACHYON_LISTEN_TIMEOUT_MS = 5000
 // Tachyon recv() blocks on a futex that worker.terminate() cannot preempt; the
 // producer signals graceful shutdown by emitting one final message with this
 // reserved type id, which lets the consumer break out of its recv loop.
@@ -207,6 +208,7 @@ export class TachyonEventBridge {
       }
       this.sender_worker = null
     }
+    const was_listener = this.listener_worker !== null
     if (this.listener_worker) {
       // The listener exits naturally once it consumes the shutdown sentinel.
       const listener_exited = new Promise<void>((resolve) => {
@@ -224,7 +226,9 @@ export class TachyonEventBridge {
       pending.reject(new Error('TachyonEventBridge closed'))
     }
     this.pending_sends.clear()
-    if (existsSync(this.path)) {
+    // Only the side that bound the socket (the listener) owns the path on disk.
+    // Sender-only instances must leave it alone so other senders/listeners can keep using it.
+    if (was_listener && existsSync(this.path)) {
       try {
         unlinkSync(this.path)
       } catch {
@@ -235,6 +239,7 @@ export class TachyonEventBridge {
   }
 
   private ensureListenerStarted(): void {
+    if (this.closed) throw new Error('TachyonEventBridge is closed')
     if (this.listener_worker) return
     if (!isNodeRuntime()) {
       throw new Error('TachyonEventBridge is only supported in Node.js runtimes')
@@ -268,6 +273,16 @@ export class TachyonEventBridge {
       console.error('[abxbus] TachyonEventBridge listener worker crashed:', err)
     })
     this.listener_worker = worker
+
+    // Block until the worker has bound the unix socket so peers calling Bus.connect(path)
+    // immediately after on() do not race the worker's async startup.
+    const wait_buffer = new Int32Array(new SharedArrayBuffer(4))
+    const deadline = Date.now() + TACHYON_LISTEN_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      if (existsSync(this.path)) return
+      Atomics.wait(wait_buffer, 0, 0, 5)
+    }
+    throw new Error(`TachyonEventBridge listener did not bind socket ${this.path} within ${TACHYON_LISTEN_TIMEOUT_MS}ms`)
   }
 
   private async ensureSenderConnected(): Promise<void> {
@@ -278,7 +293,7 @@ export class TachyonEventBridge {
     if (!isNodeRuntime()) {
       throw new Error('TachyonEventBridge is only supported in Node.js runtimes')
     }
-    this.sender_ready_promise = new Promise<void>((resolve, reject) => {
+    const promise = new Promise<void>((resolve, reject) => {
       const worker = new Worker(TACHYON_SENDER_WORKER_CODE, {
         eval: true,
         workerData: { path: this.path, connect_timeout_ms: TACHYON_CONNECT_TIMEOUT_MS },
@@ -319,8 +334,36 @@ export class TachyonEventBridge {
         if (!resolved) reject(err instanceof Error ? err : new Error(String(err)))
         else console.error('[abxbus] TachyonEventBridge sender worker crashed:', err)
       })
+      worker.on('exit', (code) => {
+        // The sender worker exits with code 0 only when responding to our `close`
+        // message; any other exit means the worker died unexpectedly and pending
+        // sends would otherwise hang forever.
+        if (code === 0 && this.closed) return
+        const err = new Error(`TachyonEventBridge sender worker exited with code ${code}`)
+        for (const pending of this.pending_sends.values()) pending.reject(err)
+        this.pending_sends.clear()
+        if (this.sender_worker === worker) {
+          this.sender_worker = null
+          this.sender_ready_promise = null
+        }
+      })
       this.sender_worker = worker
     })
-    await this.sender_ready_promise
+    this.sender_ready_promise = promise
+    try {
+      await promise
+    } catch (err) {
+      // Allow a later emit() to retry once the listener becomes available.
+      this.sender_ready_promise = null
+      if (this.sender_worker) {
+        try {
+          await this.sender_worker.terminate()
+        } catch {
+          /* ignore */
+        }
+        this.sender_worker = null
+      }
+      throw err
+    }
   }
 }

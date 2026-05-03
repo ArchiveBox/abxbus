@@ -27,14 +27,10 @@ nats = [
 redis = [
     "redis>=7.1.1",
 ]
-tachyon = [
-    "tachyon-ipc>=0.4.2",
-]
 bridges = [
     "asyncpg>=0.31.0",
     "nats-py>=2.13.1",
     "redis>=7.1.1",
-    "tachyon-ipc>=0.4.2",
 ]
 
 [project.urls]

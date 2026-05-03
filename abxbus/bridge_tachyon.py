@@ -29,6 +29,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from anyio import Path as AnyPath
 from uuid_extensions import uuid7str
 
 from abxbus.base_event import BaseEvent
@@ -87,13 +88,18 @@ class TachyonEventBridge:
             except Exception:
                 pass
             self._send_bus = None
+        was_listener = self._listener_thread is not None
         self._listener_bus = None
         self._listener_thread = None
-        if os.path.exists(self.path):
-            try:
-                os.unlink(self.path)
-            except OSError:
-                pass
+        # Only the side that bound the socket (the listener) owns the path on disk.
+        # Sender-only instances must leave it alone so other senders/listeners can keep using it.
+        if was_listener:
+            socket_path = AnyPath(self.path)
+            if await socket_path.exists():
+                try:
+                    await socket_path.unlink()
+                except OSError:
+                    pass
         await self._inbound_bus.stop(clear=clear)
 
     def _ensure_listener_started(self) -> None:
@@ -146,6 +152,9 @@ class TachyonEventBridge:
             if os.path.exists(self.path):
                 return
             time.sleep(0.005)
+        if self._listener_init_error is not None:
+            raise RuntimeError(f'TachyonEventBridge failed to listen on {self.path}') from self._listener_init_error
+        raise TimeoutError(f'TachyonEventBridge listener did not bind socket {self.path} within {_TACHYON_SOCKET_WAIT_TIMEOUT}s')
 
     async def _ensure_sender_connected(self) -> None:
         if self._send_bus is not None:

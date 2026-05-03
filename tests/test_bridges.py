@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import socket
 import sqlite3
@@ -27,6 +28,8 @@ from abxbus.bridge_postgres import PostgresEventBridge
 from abxbus.bridge_redis import RedisEventBridge
 from abxbus.bridge_sqlite import SQLiteEventBridge
 from abxbus.bridge_tachyon import TachyonEventBridge
+
+_TACHYON_AVAILABLE = importlib.util.find_spec('tachyon') is not None
 
 
 class IPCPingEvent(BaseEvent):
@@ -410,6 +413,7 @@ async def test_nats_event_bridge_roundtrip_between_processes() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not _TACHYON_AVAILABLE, reason='tachyon-ipc not installed')
 async def test_tachyon_event_bridge_roundtrip_between_processes() -> None:
     socket_path = Path('/tmp') / f'bb-tachyon-{_TEST_RUN_ID}-{uuid7str()[-8:]}.sock'
     try:
