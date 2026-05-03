@@ -27,7 +27,6 @@ import type { EventClass, EventHandlerCallable, EventPattern, UntypedEventHandle
 const randomSuffix = (): string => Math.random().toString(36).slice(2, 10)
 const DEFAULT_TACHYON_CAPACITY = 1 << 20
 const TACHYON_CONNECT_TIMEOUT_MS = 5000
-const TACHYON_LISTEN_TIMEOUT_MS = 5000
 // Tachyon recv() blocks on a futex that worker.terminate() cannot preempt; the
 // producer signals graceful shutdown by emitting one final message with this
 // reserved type id, which lets the consumer break out of its recv loop.
@@ -288,29 +287,10 @@ export class TachyonEventBridge {
       if (this.listener_worker === worker) this.listener_worker = null
     })
     this.listener_worker = worker
-
-    // Block until the worker has bound the unix socket so peers calling Bus.connect(path)
-    // immediately after on() do not race the worker's async startup.
-    const wait_buffer = new Int32Array(new SharedArrayBuffer(4))
-    const deadline = Date.now() + TACHYON_LISTEN_TIMEOUT_MS
-    while (Date.now() < deadline) {
-      // Path-existence is what peers need to know to call Bus.connect; the worker
-      // itself sets acted_as_listener (via the 'ready' message above) once Bus.listen
-      // has actually completed the bind+handshake, so a startup race where another
-      // process beats our worker to the path can't trick close() into unlinking a
-      // socket we never owned.
-      if (existsSync(this.path)) return
-      Atomics.wait(wait_buffer, 0, 0, 5)
-    }
-    // Listener never bound the socket; tear down the dead worker so a retry on()
-    // doesn't short-circuit on a permanently unhealthy reference.
-    try {
-      void worker.terminate()
-    } catch {
-      // ignore
-    }
-    if (this.listener_worker === worker) this.listener_worker = null
-    throw new Error(`TachyonEventBridge listener did not bind socket ${this.path} within ${TACHYON_LISTEN_TIMEOUT_MS}ms`)
+    // on() returns immediately so the Node event loop isn't frozen on startup; peers
+    // that try Bus.connect before this worker finishes binding are covered by the
+    // sender-side connect retry loop (see TACHYON_CONNECT_TIMEOUT_MS) and by the
+    // worker's 'ready' message which flips acted_as_listener once bind completes.
   }
 
   private async ensureSenderConnected(): Promise<void> {

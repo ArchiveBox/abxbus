@@ -102,6 +102,7 @@ class TachyonEventBridge:
             except Exception:
                 pass
             self._send_bus = None
+        listener_bus = self._listener_bus
         listener_thread = self._listener_thread
         self._listener_bus = None
         self._listener_thread = None
@@ -110,6 +111,15 @@ class TachyonEventBridge:
         # symmetric case where another producer (or this bridge instance) sent one.
         if listener_thread is not None and listener_thread.is_alive():
             listener_thread.join(timeout=0.5)
+        # Always destroy the listener-side bus so a listener-only instance (or one whose
+        # peer left without sending a sentinel) doesn't leak shm fds / native resources.
+        # If the recv thread is still parked the destroy makes it unsafe to touch the bus
+        # again, but the thread is daemon-mode and dies with the process anyway.
+        if listener_bus is not None:
+            try:
+                listener_bus.__exit__(None, None, None)
+            except Exception:
+                pass
         # Only the side that bound the socket (the listener) owns the path on disk.
         # Sender-only instances must leave it alone so other senders/listeners can keep using it.
         if self._acted_as_listener:
