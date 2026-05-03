@@ -119,8 +119,15 @@ class TachyonEventBridge:
         await self._inbound_bus.stop(clear=clear)
 
     def _ensure_listener_started(self) -> None:
-        if self._listener_thread is not None:
+        # If a previous attempt's thread already exited (init error, listen() failure,
+        # peer crash, etc.), drop the stale reference so this on() can retry. Without
+        # this reset a transient failure permanently bricks the bridge instance.
+        thread = self._listener_thread
+        if thread is not None and thread.is_alive() and self._listener_init_error is None:
             return
+        self._listener_thread = None
+        self._listener_bus = None
+        self._listener_init_error = None
         try:
             self._listener_loop = asyncio.get_running_loop()
         except RuntimeError:

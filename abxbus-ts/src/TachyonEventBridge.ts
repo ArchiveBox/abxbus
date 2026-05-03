@@ -272,6 +272,11 @@ export class TachyonEventBridge {
     worker.on('error', (err: unknown) => {
       console.error('[abxbus] TachyonEventBridge listener worker crashed:', err)
     })
+    // Drop the cached reference if the worker dies (crash, init failure, or natural exit
+    // after consuming a shutdown sentinel) so a subsequent on() call can spin up a fresh one.
+    worker.on('exit', () => {
+      if (this.listener_worker === worker) this.listener_worker = null
+    })
     this.listener_worker = worker
 
     // Block until the worker has bound the unix socket so peers calling Bus.connect(path)
@@ -282,6 +287,14 @@ export class TachyonEventBridge {
       if (existsSync(this.path)) return
       Atomics.wait(wait_buffer, 0, 0, 5)
     }
+    // Listener never bound the socket; tear down the dead worker so a retry on()
+    // doesn't short-circuit on a permanently unhealthy reference.
+    try {
+      void worker.terminate()
+    } catch {
+      // ignore
+    }
+    if (this.listener_worker === worker) this.listener_worker = null
     throw new Error(`TachyonEventBridge listener did not bind socket ${this.path} within ${TACHYON_LISTEN_TIMEOUT_MS}ms`)
   }
 
