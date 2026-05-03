@@ -30,6 +30,9 @@ importers:
       '@opentelemetry/sdk-trace-base':
         specifier: ^2.7.0
         version: 2.7.0(@opentelemetry/api@1.9.1)
+      '@tachyon-ipc/core':
+        specifier: ^0.4.2
+        version: 0.4.2
       '@types/node':
         specifier: ^25.2.3
         version: 25.2.3
@@ -372,6 +375,10 @@ packages:
   '@protobufjs/utf8@1.1.1':
     resolution: {integrity: sha512-oOAWABowe8EAbMyWKM0tYDKi8Yaox52D+HWZhAIJqQXbqe0xI/GV7FhLWqlEKreMkfDjshR5FKgi3mnle0h6Eg==}
 
+  '@tachyon-ipc/core@0.4.2':
+    resolution: {integrity: sha512-cQ+RvgoQWjhUy5DDl6KKYDfIKbkqG+TqW/0m0YUycOcdXj77EeeYQLzm3+NIzLFB1x764XT3lx1O62EEidaJvw==}
+    engines: {node: '>=20.0.0'}
+
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
 
@@ -706,6 +713,10 @@ packages:
   nkeys.js@1.1.0:
     resolution: {integrity: sha512-tB/a0shZL5UZWSwsoeyqfTszONTt4k2YS0tuQioMOD180+MbombYVgzDUYHlx+gejYK6rgf08n/2Df99WY0Sxg==}
     engines: {node: '>=10.0.0'}
+
+  node-addon-api@8.7.0:
+    resolution: {integrity: sha512-9MdFxmkKaOYVTV+XVRG8ArDwwQ77XIgIPyKASB1k3JPq3M8fGQQQE3YpMOrKm6g//Ktx8ivZr8xo1Qmtqub+GA==}
+    engines: {node: ^18 || ^20 || >= 21}
 
   optionator@0.9.4:
     resolution: {integrity: sha512-6IpQ7mKUxRcZNLIObR0hz7lxsapSSIYNZJwXPGeF0mTVqGKFIXj1DQcMoT22S3ROcLyY/rz0PWaWZ9ayWmad9g==}
@@ -1136,6 +1147,10 @@ snapshots:
 
   '@protobufjs/utf8@1.1.1': {}
 
+  '@tachyon-ipc/core@0.4.2':
+    dependencies:
+      node-addon-api: 8.7.0
+
   '@types/estree@1.0.8': {}
 
   '@types/json-schema@7.0.15': {}
@@ -1519,6 +1534,8 @@ snapshots:
   nkeys.js@1.1.0:
     dependencies:
       tweetnacl: 1.0.3
+
+  node-addon-api@8.7.0: {}
 
   optionator@0.9.4:
     dependencies:

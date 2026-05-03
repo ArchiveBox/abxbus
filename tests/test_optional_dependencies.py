@@ -26,6 +26,7 @@ def test_bridge_modules_do_not_eager_import_optional_packages() -> None:
         _ROOT / 'abxbus' / 'bridge_postgres.py': {'asyncpg'},
         _ROOT / 'abxbus' / 'bridge_nats.py': {'nats'},
         _ROOT / 'abxbus' / 'bridge_redis.py': {'redis'},
+        _ROOT / 'abxbus' / 'bridge_tachyon.py': {'tachyon'},
     }
 
     for path, forbidden_roots in bridge_modules.items():
@@ -49,17 +50,20 @@ assert hasattr(abxbus, 'SQLiteEventBridge')
 assert not hasattr(abxbus, 'PostgresEventBridge')
 assert not hasattr(abxbus, 'RedisEventBridge')
 assert not hasattr(abxbus, 'NATSEventBridge')
+assert not hasattr(abxbus, 'TachyonEventBridge')
 assert not hasattr(abxbus, 'OtelTracingMiddleware')
 
 assert 'asyncpg' not in sys.modules
 assert 'redis' not in sys.modules
 assert 'nats' not in sys.modules
+assert 'tachyon' not in sys.modules
 assert not any(name == 'opentelemetry' or name.startswith('opentelemetry.') for name in sys.modules)
 
-from abxbus.bridges import PostgresEventBridge
+from abxbus.bridges import PostgresEventBridge, TachyonEventBridge
 from abxbus.middlewares import OtelTracingMiddleware
 
 assert PostgresEventBridge.__name__ == 'PostgresEventBridge'
+assert TachyonEventBridge.__name__ == 'TachyonEventBridge'
 assert OtelTracingMiddleware.__name__ == 'OtelTracingMiddleware'
 """
 

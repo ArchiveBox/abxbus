@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 
-import { NATSEventBridge, PostgresEventBridge, RedisEventBridge } from '../src/bridges.js'
+import { NATSEventBridge, PostgresEventBridge, RedisEventBridge, TachyonEventBridge } from '../src/bridges.js'
 import { HTTPEventBridge, JSONLEventBridge, SQLiteEventBridge, SocketEventBridge } from '../src/index.js'
 
 type WorkerConfig = {
@@ -23,6 +23,7 @@ const makeListenerBridge = (config: WorkerConfig): any => {
   if (config.kind === 'redis') return new RedisEventBridge(config.url ?? '')
   if (config.kind === 'nats') return new NATSEventBridge(config.server ?? '', config.subject ?? '')
   if (config.kind === 'postgres') return new PostgresEventBridge(config.url ?? '')
+  if (config.kind === 'tachyon') return new TachyonEventBridge(config.path ?? '')
   throw new Error(`Unsupported bridge kind: ${config.kind}`)
 }
 
