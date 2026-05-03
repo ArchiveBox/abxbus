@@ -171,8 +171,11 @@ export class TachyonEventBridge {
   }
 
   async emit<T extends BaseEvent>(event: T): Promise<void> {
+    // Fail fast before spawning a sender worker / connecting to the listener so a
+    // post-close emit() doesn't leak an extra worker for an instance that is going away.
+    if (this.closed) throw new Error('TachyonEventBridge is closed')
     await this.ensureSenderConnected()
-    if (!this.sender_worker || this.closed) {
+    if (this.closed || !this.sender_worker) {
       throw new Error('TachyonEventBridge is closed')
     }
     const payload = Buffer.from(JSON.stringify(event.toJSON()))
@@ -281,14 +284,19 @@ export class TachyonEventBridge {
       if (this.listener_worker === worker) this.listener_worker = null
     })
     this.listener_worker = worker
-    this.acted_as_listener = true
 
     // Block until the worker has bound the unix socket so peers calling Bus.connect(path)
     // immediately after on() do not race the worker's async startup.
     const wait_buffer = new Int32Array(new SharedArrayBuffer(4))
     const deadline = Date.now() + TACHYON_LISTEN_TIMEOUT_MS
     while (Date.now() < deadline) {
-      if (existsSync(this.path)) return
+      if (existsSync(this.path)) {
+        // Only flag listener-ownership of the path after we've confirmed *this* worker
+        // actually bound it; otherwise a failed startup followed by another process
+        // binding the same path could trick close() into unlinking a socket we never owned.
+        this.acted_as_listener = true
+        return
+      }
       Atomics.wait(wait_buffer, 0, 0, 5)
     }
     // Listener never bound the socket; tear down the dead worker so a retry on()
@@ -299,7 +307,6 @@ export class TachyonEventBridge {
       // ignore
     }
     if (this.listener_worker === worker) this.listener_worker = null
-    this.acted_as_listener = false
     throw new Error(`TachyonEventBridge listener did not bind socket ${this.path} within ${TACHYON_LISTEN_TIMEOUT_MS}ms`)
   }
 

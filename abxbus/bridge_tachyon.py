@@ -170,13 +170,16 @@ class TachyonEventBridge:
         thread = threading.Thread(target=_run, daemon=True, name='TachyonEventBridge-listener')
         thread.start()
         self._listener_thread = thread
-        self._acted_as_listener = True
 
         deadline = time.monotonic() + _TACHYON_SOCKET_WAIT_TIMEOUT
         while time.monotonic() < deadline:
             if self._listener_init_error is not None:
                 raise RuntimeError(f'TachyonEventBridge failed to listen on {self.path}') from self._listener_init_error
             if os.path.exists(self.path):
+                # Only flag listener-ownership of the path after we've confirmed *this* thread
+                # actually bound it; otherwise a failed startup followed by another process
+                # binding the same path could trick close() into unlinking a socket we never owned.
+                self._acted_as_listener = True
                 return
             time.sleep(0.005)
         if self._listener_init_error is not None:
