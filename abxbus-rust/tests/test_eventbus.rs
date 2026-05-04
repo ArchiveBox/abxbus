@@ -1,14 +1,15 @@
 use std::{
     collections::BTreeSet,
     sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Mutex,
     },
     thread,
     time::Duration,
 };
 
 use abxbus_rust::{
+    base_event::BaseEvent,
     event_bus::{EventBus, EventBusOptions},
     event_result::EventResultStatus,
     typed::{EventSpec, TypedEvent},
@@ -148,6 +149,13 @@ fn expected_event_bus_json_keys() -> BTreeSet<String> {
     ])
 }
 
+fn base_event(event_type: &str, payload: Value) -> Arc<BaseEvent> {
+    let Value::Object(payload) = payload else {
+        panic!("test payload must be an object");
+    };
+    BaseEvent::new(event_type, payload)
+}
+
 #[test]
 fn test_event_bus_initializes_with_correct_defaults() {
     let bus = EventBus::new(Some("DefaultsBus".to_string()));
@@ -168,6 +176,496 @@ fn test_event_bus_initializes_with_correct_defaults() {
     assert_eq!(bus.event_history_size(), 0);
     assert!(EventBus::all_instances_contains(&bus));
     assert!(block_on(bus.wait_until_idle(None)));
+    bus.stop();
+}
+
+#[test]
+fn test_dispatch_returns_pending_event_with_correct_initial_state() {
+    let bus = EventBus::new(Some("LifecycleBus".to_string()));
+    let event = bus.emit_base(base_event("TestEvent", json!({"data": "hello"})));
+
+    {
+        let inner = event.inner.lock();
+        assert_eq!(inner.event_type, "TestEvent");
+        assert!(!inner.event_id.is_empty());
+        assert!(!inner.event_created_at.is_empty());
+        assert_eq!(inner.payload.get("data"), Some(&json!("hello")));
+        assert!(inner.event_path.contains(&bus.label()));
+    }
+
+    assert!(block_on(bus.wait_until_idle(None)));
+    bus.stop();
+}
+
+#[test]
+fn test_event_transitions_through_pending_started_completed() {
+    let bus = EventBus::new(Some("StatusBus".to_string()));
+    let status_during_handler = Arc::new(Mutex::new(None));
+    let status_for_handler = status_during_handler.clone();
+
+    bus.on("StatusLifecycleEvent", "handler", move |event| {
+        let status_for_handler = status_for_handler.clone();
+        async move {
+            *status_for_handler.lock().expect("status lock") =
+                Some(event.inner.lock().event_status);
+            Ok(json!("done"))
+        }
+    });
+
+    let event = bus.emit_base(base_event("StatusLifecycleEvent", json!({})));
+    block_on(event.event_completed());
+
+    assert_eq!(
+        *status_during_handler.lock().expect("status lock"),
+        Some(EventStatus::Started)
+    );
+    let inner = event.inner.lock();
+    assert_eq!(inner.event_status, EventStatus::Completed);
+    assert!(inner.event_started_at.is_some());
+    assert!(inner.event_completed_at.is_some());
+    drop(inner);
+    bus.stop();
+}
+
+#[test]
+fn test_event_with_no_handlers_completes_immediately() {
+    let bus = EventBus::new(Some("NoHandlerBus".to_string()));
+    let event = bus.emit_base(base_event("OrphanEvent", json!({})));
+    block_on(event.event_completed());
+
+    let inner = event.inner.lock();
+    assert_eq!(inner.event_status, EventStatus::Completed);
+    assert_eq!(inner.event_results.len(), 0);
+    drop(inner);
+    bus.stop();
+}
+
+#[test]
+fn test_dispatched_events_appear_in_event_history() {
+    let bus = EventBus::new(Some("HistoryBus".to_string()));
+    let event_a = bus.emit_base(base_event("EventA", json!({})));
+    let event_b = bus.emit_base(base_event("EventB", json!({})));
+    block_on(event_a.event_completed());
+    block_on(event_b.event_completed());
+    assert!(block_on(bus.wait_until_idle(None)));
+
+    assert_eq!(bus.event_history_size(), 2);
+    let history_ids = bus.event_history_ids();
+    assert_eq!(history_ids.len(), 2);
+    assert_eq!(history_ids[0], event_a.inner.lock().event_id);
+    assert_eq!(history_ids[1], event_b.inner.lock().event_id);
+    let runtime = bus.runtime_payload_for_test();
+    assert_eq!(runtime[&history_ids[0]].inner.lock().event_type, "EventA");
+    assert_eq!(runtime[&history_ids[1]].inner.lock().event_type, "EventB");
+    bus.stop();
+}
+
+#[test]
+fn test_history_is_trimmed_to_max_history_size_completed_events_removed_first() {
+    let bus = EventBus::new_with_options(
+        Some("TrimBus".to_string()),
+        EventBusOptions {
+            max_history_size: Some(5),
+            max_history_drop: true,
+            ..EventBusOptions::default()
+        },
+    );
+    bus.on(
+        "TrimEvent",
+        "handler",
+        |_event| async move { Ok(json!("ok")) },
+    );
+
+    for seq in 0..10 {
+        let event = bus.emit_base(base_event("TrimEvent", json!({"seq": seq})));
+        block_on(event.event_completed());
+    }
+    assert!(block_on(bus.wait_until_idle(None)));
+
+    assert!(bus.event_history_size() <= 5);
+    let runtime = bus.runtime_payload_for_test();
+    let seqs: Vec<i64> = bus
+        .event_history_ids()
+        .iter()
+        .map(|event_id| {
+            runtime[event_id].inner.lock().payload["seq"]
+                .as_i64()
+                .expect("seq")
+        })
+        .collect();
+    assert!(seqs.windows(2).all(|pair| pair[1] > pair[0]));
+    assert_eq!(seqs.last().copied(), Some(9));
+    bus.stop();
+}
+
+#[test]
+fn test_unlimited_history_max_history_size_null_keeps_all_events() {
+    let bus = EventBus::new_with_options(
+        Some("UnlimitedHistBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            ..EventBusOptions::default()
+        },
+    );
+    bus.on(
+        "PingEvent",
+        "handler",
+        |_event| async move { Ok(json!("pong")) },
+    );
+
+    for _ in 0..150 {
+        let event = bus.emit_base(base_event("PingEvent", json!({})));
+        block_on(event.event_completed());
+    }
+    assert!(block_on(bus.wait_until_idle(None)));
+
+    assert_eq!(bus.event_history_size(), 150);
+    assert!(bus
+        .runtime_payload_for_test()
+        .values()
+        .all(|event| event.inner.lock().event_status == EventStatus::Completed));
+    bus.stop();
+}
+
+#[test]
+fn test_max_history_size_0_keeps_in_flight_events_and_drops_them_on_completion() {
+    let bus = EventBus::new_with_options(
+        Some("ZeroHistBus".to_string()),
+        EventBusOptions {
+            max_history_size: Some(0),
+            ..EventBusOptions::default()
+        },
+    );
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let release_rx = Arc::new(Mutex::new(release_rx));
+
+    bus.on("SlowEvent", "handler", move |_event| {
+        let started_tx = started_tx.clone();
+        let release_rx = release_rx.clone();
+        async move {
+            let _ = started_tx.send(());
+            release_rx
+                .lock()
+                .expect("release lock")
+                .recv_timeout(Duration::from_secs(2))
+                .expect("release signal");
+            Ok(json!("ok"))
+        }
+    });
+
+    let first = bus.emit_base(base_event("SlowEvent", json!({})));
+    started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("first handler should start");
+    let second = bus.emit_base(base_event("SlowEvent", json!({})));
+    let first_id = first.inner.lock().event_id.clone();
+    let second_id = second.inner.lock().event_id.clone();
+
+    let runtime = bus.runtime_payload_for_test();
+    assert!(runtime.contains_key(&first_id));
+    assert!(runtime.contains_key(&second_id));
+
+    release_tx.send(()).expect("release first");
+    started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("second handler should start");
+    release_tx.send(()).expect("release second");
+    block_on(first.event_completed());
+    block_on(second.event_completed());
+    assert!(block_on(bus.wait_until_idle(None)));
+
+    assert_eq!(bus.event_history_size(), 0);
+    assert!(bus.runtime_payload_for_test().is_empty());
+    bus.stop();
+}
+
+#[test]
+fn test_handler_registration_by_string_matches_extend_name() {
+    let bus = EventBus::new(Some("StringMatchBus".to_string()));
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let received_for_handler = received.clone();
+
+    bus.on("NamedEvent", "string_handler", move |_event| {
+        let received = received_for_handler.clone();
+        async move {
+            received
+                .lock()
+                .expect("received lock")
+                .push("string_handler".to_string());
+            Ok(json!(null))
+        }
+    });
+
+    let event = bus.emit_base(base_event("NamedEvent", json!({})));
+    block_on(event.event_completed());
+
+    assert_eq!(
+        received.lock().expect("received lock").as_slice(),
+        &["string_handler".to_string()]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_wildcard_handler_receives_all_events() {
+    let bus = EventBus::new(Some("WildcardBus".to_string()));
+    let types = Arc::new(Mutex::new(Vec::new()));
+    let types_for_handler = types.clone();
+
+    bus.on("*", "wildcard", move |event| {
+        let types = types_for_handler.clone();
+        async move {
+            types
+                .lock()
+                .expect("types lock")
+                .push(event.inner.lock().event_type.clone());
+            Ok(json!(null))
+        }
+    });
+
+    let event_a = bus.emit_base(base_event("EventA", json!({})));
+    let event_b = bus.emit_base(base_event("EventB", json!({})));
+    block_on(event_a.event_completed());
+    block_on(event_b.event_completed());
+
+    assert_eq!(
+        types.lock().expect("types lock").as_slice(),
+        &["EventA".to_string(), "EventB".to_string()]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_handler_error_is_captured_without_crashing_the_bus() {
+    let bus = EventBus::new(Some("ErrorBus".to_string()));
+    bus.on("ErrorEvent", "throws", |_event| async move {
+        Err("handler blew up".to_string())
+    });
+
+    let event = bus.emit_base(base_event("ErrorEvent", json!({})));
+    block_on(event.event_completed());
+
+    assert_eq!(event.inner.lock().event_status, EventStatus::Completed);
+    let errors = event.event_errors();
+    assert_eq!(errors.len(), 1);
+    let result = event
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("result");
+    assert_eq!(result.status, EventResultStatus::Error);
+    assert!(result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("handler blew up"));
+    bus.stop();
+}
+
+#[test]
+fn test_one_handler_error_does_not_prevent_other_handlers_from_running() {
+    let bus = EventBus::new(Some("ErrorIsolationBus".to_string()));
+    let second_ran = Arc::new(AtomicBool::new(false));
+    let second_ran_for_handler = second_ran.clone();
+
+    bus.on("ErrorIsolationEvent", "bad", |_event| async move {
+        Err("bad handler".to_string())
+    });
+    bus.on("ErrorIsolationEvent", "good", move |_event| {
+        let second_ran = second_ran_for_handler.clone();
+        async move {
+            second_ran.store(true, Ordering::SeqCst);
+            Ok(json!("ok"))
+        }
+    });
+
+    let event = bus.emit_base(base_event("ErrorIsolationEvent", json!({})));
+    block_on(event.event_completed());
+
+    assert!(second_ran.load(Ordering::SeqCst));
+    let results = event.inner.lock().event_results.clone();
+    assert_eq!(results.len(), 2);
+    assert!(results
+        .values()
+        .any(|result| result.status == EventResultStatus::Error));
+    assert!(results
+        .values()
+        .any(|result| result.status == EventResultStatus::Completed));
+    bus.stop();
+}
+
+#[test]
+fn test_many_events_dispatched_concurrently_all_complete() {
+    let bus = EventBus::new_with_options(
+        Some("ConcurrentDispatchBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::Parallel,
+            ..EventBusOptions::default()
+        },
+    );
+    let count = Arc::new(AtomicUsize::new(0));
+    let count_for_handler = count.clone();
+    bus.on("ConcurrentEvent", "handler", move |_event| {
+        let count = count_for_handler.clone();
+        async move {
+            count.fetch_add(1, Ordering::SeqCst);
+            Ok(json!("ok"))
+        }
+    });
+
+    let mut joins = Vec::new();
+    for i in 0..25 {
+        let bus = bus.clone();
+        joins.push(thread::spawn(move || {
+            bus.emit_base(base_event("ConcurrentEvent", json!({"seq": i})))
+        }));
+    }
+    let events: Vec<_> = joins
+        .into_iter()
+        .map(|join| join.join().expect("emit thread"))
+        .collect();
+    for event in &events {
+        block_on(event.event_completed());
+        assert_eq!(event.inner.lock().event_status, EventStatus::Completed);
+    }
+    assert_eq!(count.load(Ordering::SeqCst), 25);
+    bus.stop();
+}
+
+#[test]
+fn test_dispatch_leaves_event_timeout_unset_and_processing_uses_bus_timeout_default() {
+    let bus = EventBus::new_with_options(
+        Some("TimeoutDefaultDispatchBus".to_string()),
+        EventBusOptions {
+            event_timeout: Some(10.0),
+            ..EventBusOptions::default()
+        },
+    );
+    bus.on("TimeoutDefaultEvent", "handler", |_event| async move {
+        Ok(json!("ok"))
+    });
+
+    let event = base_event("TimeoutDefaultEvent", json!({}));
+    assert_eq!(event.inner.lock().event_timeout, None);
+    let event = bus.emit_base(event);
+    assert_eq!(event.inner.lock().event_timeout, None);
+    block_on(event.event_completed());
+    let result = event
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("result");
+    assert_eq!(result.timeout, Some(10.0));
+    bus.stop();
+}
+
+#[test]
+fn test_event_with_explicit_timeout_is_not_overridden_by_bus_default() {
+    let bus = EventBus::new_with_options(
+        Some("ExplicitTimeoutDispatchBus".to_string()),
+        EventBusOptions {
+            event_timeout: Some(10.0),
+            ..EventBusOptions::default()
+        },
+    );
+    bus.on("ExplicitTimeoutEvent", "handler", |_event| async move {
+        Ok(json!("ok"))
+    });
+
+    let event = base_event("ExplicitTimeoutEvent", json!({}));
+    event.inner.lock().event_timeout = Some(2.0);
+    let event = bus.emit_base(event);
+    block_on(event.event_completed());
+    let result = event
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("result");
+    assert_eq!(event.inner.lock().event_timeout, Some(2.0));
+    assert_eq!(result.timeout, Some(2.0));
+    bus.stop();
+}
+
+#[test]
+fn test_eventbus_all_instances_tracks_all_created_buses() {
+    let bus_a = EventBus::new(Some("AllInstancesBusA".to_string()));
+    let bus_b = EventBus::new(Some("AllInstancesBusB".to_string()));
+
+    assert!(EventBus::all_instances_contains(&bus_a));
+    assert!(EventBus::all_instances_contains(&bus_b));
+    bus_a.stop();
+    bus_b.stop();
+}
+
+#[test]
+fn test_reset_creates_a_fresh_pending_event_for_cross_bus_dispatch() {
+    let bus_a = EventBus::new(Some("ResetBusA".to_string()));
+    let bus_b = EventBus::new(Some("ResetBusB".to_string()));
+    bus_a.on(
+        "ResetEvent",
+        "handler_a",
+        |_event| async move { Ok(json!("a")) },
+    );
+    bus_b.on(
+        "ResetEvent",
+        "handler_b",
+        |_event| async move { Ok(json!("b")) },
+    );
+
+    let completed = bus_a.emit_base(base_event("ResetEvent", json!({"label": "hello"})));
+    block_on(completed.event_completed());
+    assert_eq!(completed.inner.lock().event_status, EventStatus::Completed);
+    assert_eq!(completed.inner.lock().event_results.len(), 1);
+
+    let fresh = completed.event_reset();
+    assert_ne!(fresh.inner.lock().event_id, completed.inner.lock().event_id);
+    assert_eq!(fresh.inner.lock().event_status, EventStatus::Pending);
+    assert!(fresh.inner.lock().event_started_at.is_none());
+    assert!(fresh.inner.lock().event_completed_at.is_none());
+    assert_eq!(fresh.inner.lock().event_results.len(), 0);
+
+    let forwarded = bus_b.emit_base(fresh);
+    block_on(forwarded.event_completed());
+    assert_eq!(forwarded.inner.lock().event_status, EventStatus::Completed);
+    assert_eq!(forwarded.inner.lock().event_results.len(), 1);
+    let event_path = forwarded.inner.lock().event_path.clone();
+    assert!(event_path.iter().any(|path| path.starts_with("ResetBusA#")));
+    assert!(event_path.iter().any(|path| path.starts_with("ResetBusB#")));
+    bus_a.stop();
+    bus_b.stop();
+}
+
+#[test]
+fn test_max_history_size_0_prunes_previously_completed_events_on_later_dispatch() {
+    let bus = EventBus::new_with_options(
+        Some("ZeroHistPruneBus".to_string()),
+        EventBusOptions {
+            max_history_size: Some(0),
+            ..EventBusOptions::default()
+        },
+    );
+    bus.on("ZeroHistPruneEvent", "handler", |_event| async move {
+        Ok(json!("ok"))
+    });
+
+    let first = bus.emit_base(base_event("ZeroHistPruneEvent", json!({"seq": 1})));
+    block_on(first.event_completed());
+    assert_eq!(bus.event_history_size(), 0);
+
+    let second = bus.emit_base(base_event("ZeroHistPruneEvent", json!({"seq": 2})));
+    block_on(second.event_completed());
+    assert_eq!(bus.event_history_size(), 0);
+    assert!(bus.runtime_payload_for_test().is_empty());
     bus.stop();
 }
 
