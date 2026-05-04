@@ -982,6 +982,627 @@ fn test_zero_history_size_keeps_inflight_and_drops_on_completion() {
 }
 
 #[test]
+fn test_dispatch_returns_event_results() {
+    let bus = EventBus::new(Some("DispatchReturnsEventResultsBus".to_string()));
+
+    bus.on("UserActionEvent", "test_handler", |_event| async move {
+        Ok(json!({"result": "test_result"}))
+    });
+
+    let event = bus.emit::<UserActionEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(event.wait_completed());
+    let all_results = block_on(
+        event
+            .inner
+            .event_results_list(EventResultsOptions::default()),
+    )
+    .expect("event results list");
+
+    assert_eq!(all_results, vec![json!({"result": "test_result"})]);
+
+    let result_no_handlers = bus.emit_base(base_event("NoHandlersEvent", json!({})));
+    block_on(result_no_handlers.event_completed());
+    assert_eq!(result_no_handlers.inner.lock().event_results.len(), 0);
+    bus.stop();
+}
+
+#[test]
+fn test_handler() {
+    let bus = EventBus::new(Some("HandlerResultBus".to_string()));
+
+    bus.on("TestEvent", "test_handler", |_event| async move {
+        Ok(json!({"result": "test_result"}))
+    });
+
+    let event = bus.emit_base(base_event("TestEvent", json!({})));
+    block_on(event.event_completed());
+
+    let all_results = block_on(event.event_results_list(EventResultsOptions::default()))
+        .expect("event results list");
+    assert_eq!(all_results, vec![json!({"result": "test_result"})]);
+
+    let no_handlers = bus.emit_base(base_event("NoHandlersEvent", json!({})));
+    block_on(no_handlers.event_completed());
+    assert_eq!(no_handlers.inner.lock().event_results.len(), 0);
+    bus.stop();
+}
+
+#[test]
+fn test_event_results_indexing() {
+    let bus = EventBus::new(Some("EventResultsIndexingBus".to_string()));
+    let order = Arc::new(Mutex::new(Vec::new()));
+
+    for (handler_name, value, index) in [
+        ("handler1", "first", 1),
+        ("handler2", "second", 2),
+        ("handler3", "third", 3),
+    ] {
+        let order = order.clone();
+        bus.on("TestEvent", handler_name, move |_event| {
+            let order = order.clone();
+            async move {
+                order.lock().expect("order lock").push(index);
+                Ok(json!(value))
+            }
+        });
+    }
+
+    let event = bus.emit_base(base_event("TestEvent", json!({})));
+    block_on(event.event_completed());
+    let event_results = event.inner.lock().event_results.clone();
+
+    assert_eq!(
+        event_results
+            .values()
+            .find(|result| result.handler.handler_name == "handler1")
+            .and_then(|result| result.result.clone()),
+        Some(json!("first"))
+    );
+    assert_eq!(
+        event_results
+            .values()
+            .find(|result| result.handler.handler_name == "handler2")
+            .and_then(|result| result.result.clone()),
+        Some(json!("second"))
+    );
+    assert_eq!(
+        event_results
+            .values()
+            .find(|result| result.handler.handler_name == "handler3")
+            .and_then(|result| result.result.clone()),
+        Some(json!("third"))
+    );
+    assert_eq!(order.lock().expect("order lock").as_slice(), &[1, 2, 3]);
+    bus.stop();
+}
+
+#[test]
+fn test_manual_dict_merge() {
+    let bus = EventBus::new(Some("ManualDictMergeBus".to_string()));
+
+    bus.on("GetConfig", "config_base", |_event| async move {
+        Ok(json!({"debug": false, "port": 8080, "name": "base"}))
+    });
+    bus.on("GetConfig", "config_override", |_event| async move {
+        Ok(json!({"debug": true, "timeout": 30, "name": "override"}))
+    });
+
+    let event = bus.emit_base(base_event("GetConfig", json!({})));
+    block_on(event.event_completed());
+    let dict_results = block_on(event.event_results_list_with_filter(
+        EventResultsOptions {
+            raise_if_any: false,
+            raise_if_none: true,
+        },
+        |result| result.result.as_ref().is_some_and(Value::is_object),
+    ))
+    .expect("dict results");
+    let mut merged = serde_json::Map::new();
+    for result in dict_results {
+        merged.extend(result.as_object().expect("dict result").clone());
+    }
+    assert_eq!(
+        Value::Object(merged),
+        json!({"debug": true, "port": 8080, "timeout": 30, "name": "override"})
+    );
+
+    bus.on("BadConfig", "bad_handler", |_event| async move {
+        Ok(json!("not a dict"))
+    });
+    let event_bad = bus.emit_base(base_event("BadConfig", json!({})));
+    block_on(event_bad.event_completed());
+    let merged_bad = block_on(event_bad.event_results_list_with_filter(
+        EventResultsOptions {
+            raise_if_any: false,
+            raise_if_none: false,
+        },
+        |result| result.result.as_ref().is_some_and(Value::is_object),
+    ))
+    .expect("empty dict results");
+    assert!(merged_bad.is_empty());
+    bus.stop();
+}
+
+#[test]
+fn test_manual_dict_merge_conflicts_last_write_wins() {
+    let bus = EventBus::new(Some("ManualDictConflictBus".to_string()));
+
+    bus.on("ConflictEvent", "handler_one", |_event| async move {
+        Ok(json!({"shared": 1, "unique1": "a"}))
+    });
+    bus.on("ConflictEvent", "handler_two", |_event| async move {
+        Ok(json!({"shared": 2, "unique2": "b"}))
+    });
+
+    let event = bus.emit_base(base_event("ConflictEvent", json!({})));
+    block_on(event.event_completed());
+    let dict_results = block_on(event.event_results_list_with_filter(
+        EventResultsOptions {
+            raise_if_any: false,
+            raise_if_none: true,
+        },
+        |result| result.result.as_ref().is_some_and(Value::is_object),
+    ))
+    .expect("dict results");
+    let mut merged = serde_json::Map::new();
+    for result in dict_results {
+        merged.extend(result.as_object().expect("dict result").clone());
+    }
+
+    assert_eq!(merged.get("shared"), Some(&json!(2)));
+    assert_eq!(merged.get("unique1"), Some(&json!("a")));
+    assert_eq!(merged.get("unique2"), Some(&json!("b")));
+    bus.stop();
+}
+
+#[test]
+fn test_manual_list_flatten() {
+    let bus = EventBus::new(Some("ManualListFlattenBus".to_string()));
+
+    bus.on("GetErrors", "errors1", |_event| async move {
+        Ok(json!(["error1", "error2"]))
+    });
+    bus.on("GetErrors", "errors2", |_event| async move {
+        Ok(json!(["error3"]))
+    });
+    bus.on("GetErrors", "errors3", |_event| async move {
+        Ok(json!(["error4", "error5"]))
+    });
+
+    let event = bus.emit_base(base_event("GetErrors", json!({})));
+    block_on(event.event_completed());
+    let list_results = block_on(event.event_results_list_with_filter(
+        EventResultsOptions {
+            raise_if_any: false,
+            raise_if_none: true,
+        },
+        |result| result.result.as_ref().is_some_and(Value::is_array),
+    ))
+    .expect("list results");
+    let flattened: Vec<Value> = list_results
+        .iter()
+        .flat_map(|result| result.as_array().expect("list result").iter().cloned())
+        .collect();
+    assert_eq!(
+        flattened,
+        vec![
+            json!("error1"),
+            json!("error2"),
+            json!("error3"),
+            json!("error4"),
+            json!("error5")
+        ]
+    );
+
+    bus.on("GetSingle", "single_value", |_event| async move {
+        Ok(json!("single"))
+    });
+    let event_single = bus.emit_base(base_event("GetSingle", json!({})));
+    block_on(event_single.event_completed());
+    let single_lists = block_on(event_single.event_results_list_with_filter(
+        EventResultsOptions {
+            raise_if_any: false,
+            raise_if_none: false,
+        },
+        |result| result.result.as_ref().is_some_and(Value::is_array),
+    ))
+    .expect("empty list results");
+    assert!(single_lists.is_empty());
+    bus.stop();
+}
+
+#[test]
+fn test_by_handler_name_access() {
+    let bus = EventBus::new(Some("ByHandlerNameAccessBus".to_string()));
+
+    bus.on("TestEvent", "handler_a", |_event| async move {
+        Ok(json!("result_a"))
+    });
+    bus.on("TestEvent", "handler_b", |_event| async move {
+        Ok(json!("result_b"))
+    });
+
+    let event = bus.emit_base(base_event("TestEvent", json!({})));
+    block_on(event.event_completed());
+    let event_results = event.inner.lock().event_results.clone();
+
+    assert_eq!(
+        event_results
+            .values()
+            .find(|result| result.handler.handler_name == "handler_a")
+            .and_then(|result| result.result.clone()),
+        Some(json!("result_a"))
+    );
+    assert_eq!(
+        event_results
+            .values()
+            .find(|result| result.handler.handler_name == "handler_b")
+            .and_then(|result| result.result.clone()),
+        Some(json!("result_b"))
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_forwarding_flattens_results() {
+    let bus1 = EventBus::new(Some("Bus1".to_string()));
+    let bus2 = EventBus::new(Some("Bus2".to_string()));
+    let bus3 = EventBus::new(Some("Bus3".to_string()));
+    let execution_order = Arc::new(Mutex::new(Vec::new()));
+
+    let order = execution_order.clone();
+    bus1.on("TestEvent", "bus1_handler", move |_event| {
+        let order = order.clone();
+        async move {
+            order.lock().expect("order lock").push("bus1".to_string());
+            Ok(json!("from_bus1"))
+        }
+    });
+    let order = execution_order.clone();
+    bus2.on("TestEvent", "bus2_handler", move |_event| {
+        let order = order.clone();
+        async move {
+            order.lock().expect("order lock").push("bus2".to_string());
+            Ok(json!("from_bus2"))
+        }
+    });
+    let order = execution_order.clone();
+    bus3.on("TestEvent", "bus3_handler", move |_event| {
+        let order = order.clone();
+        async move {
+            order.lock().expect("order lock").push("bus3".to_string());
+            Ok(json!("from_bus3"))
+        }
+    });
+
+    let bus2_for_forward = bus2.clone();
+    bus1.on("*", "forward_to_bus2", move |event| {
+        let bus2 = bus2_for_forward.clone();
+        async move {
+            bus2.emit_base(event);
+            Ok(json!(null))
+        }
+    });
+    let bus3_for_forward = bus3.clone();
+    bus2.on("*", "forward_to_bus3", move |event| {
+        let bus3 = bus3_for_forward.clone();
+        async move {
+            bus3.emit_base(event);
+            Ok(json!(null))
+        }
+    });
+
+    let event = bus1.emit_base(base_event("TestEvent", json!({})));
+    block_on(event.event_completed());
+    block_on(bus1.wait_until_idle(None));
+    block_on(bus2.wait_until_idle(None));
+    block_on(bus3.wait_until_idle(None));
+
+    let event_results = event.inner.lock().event_results.clone();
+    for (handler_name, expected_result) in [
+        ("bus1_handler", json!("from_bus1")),
+        ("bus2_handler", json!("from_bus2")),
+        ("bus3_handler", json!("from_bus3")),
+    ] {
+        let result = event_results
+            .values()
+            .find(|result| result.handler.handler_name == handler_name)
+            .expect("forwarded handler result");
+        assert_eq!(result.status, EventResultStatus::Completed);
+        assert_eq!(result.result, Some(expected_result));
+    }
+    assert_eq!(
+        execution_order.lock().expect("order lock").as_slice(),
+        &["bus1".to_string(), "bus2".to_string(), "bus3".to_string()]
+    );
+    assert_eq!(
+        event.inner.lock().event_path,
+        vec![bus1.label(), bus2.label(), bus3.label()]
+    );
+    bus1.stop();
+    bus2.stop();
+    bus3.stop();
+}
+
+#[test]
+fn test_by_eventbus_id_and_path() {
+    let bus1 = EventBus::new(Some("MainBus".to_string()));
+    let bus2 = EventBus::new(Some("PluginBus".to_string()));
+
+    bus1.on("DataEvent", "main_handler", |_event| async move {
+        Ok(json!("main_result"))
+    });
+    bus2.on("DataEvent", "plugin_handler1", |_event| async move {
+        Ok(json!("plugin_result1"))
+    });
+    bus2.on("DataEvent", "plugin_handler2", |_event| async move {
+        Ok(json!("plugin_result2"))
+    });
+
+    let bus2_for_forward = bus2.clone();
+    bus1.on("*", "forward_to_plugin", move |event| {
+        let bus2 = bus2_for_forward.clone();
+        async move {
+            bus2.emit_base(event);
+            Ok(json!(null))
+        }
+    });
+
+    let event = bus1.emit_base(base_event("DataEvent", json!({})));
+    block_on(event.event_completed());
+    block_on(bus1.wait_until_idle(None));
+    block_on(bus2.wait_until_idle(None));
+
+    let event_results = event.inner.lock().event_results.clone();
+    let main_results: Vec<_> = event_results
+        .values()
+        .filter(|result| {
+            result.handler.eventbus_id == bus1.id
+                && result.result.as_ref().is_some_and(|value| !value.is_null())
+        })
+        .collect();
+    let plugin_results: Vec<_> = event_results
+        .values()
+        .filter(|result| {
+            result.handler.eventbus_id == bus2.id
+                && result.result.as_ref().is_some_and(|value| !value.is_null())
+        })
+        .collect();
+
+    assert_eq!(main_results.len(), 1);
+    assert_eq!(main_results[0].result, Some(json!("main_result")));
+    assert_eq!(plugin_results.len(), 2);
+    assert!(plugin_results
+        .iter()
+        .any(|result| result.result == Some(json!("plugin_result1"))));
+    assert!(plugin_results
+        .iter()
+        .any(|result| result.result == Some(json!("plugin_result2"))));
+    assert_eq!(
+        event.inner.lock().event_path,
+        vec![bus1.label(), bus2.label()]
+    );
+    bus1.stop();
+    bus2.stop();
+}
+
+#[test]
+fn test_complex_multi_bus_scenario() {
+    let app_bus = EventBus::new(Some("AppBus".to_string()));
+    let auth_bus = EventBus::new(Some("AuthBus".to_string()));
+    let data_bus = EventBus::new(Some("DataBus".to_string()));
+
+    app_bus.on("ValidationRequest", "validate", |_event| async move {
+        Ok(json!({"app_valid": true, "timestamp": 1000}))
+    });
+    auth_bus.on("ValidationRequest", "validate", |_event| async move {
+        Ok(json!({"auth_valid": true, "user": "alice"}))
+    });
+    auth_bus.on("ValidationRequest", "process", |_event| async move {
+        Ok(json!(["auth_log_1", "auth_log_2"]))
+    });
+    data_bus.on("ValidationRequest", "validate", |_event| async move {
+        Ok(json!({"data_valid": true, "schema": "v2"}))
+    });
+    data_bus.on("ValidationRequest", "process", |_event| async move {
+        Ok(json!(["data_log_1", "data_log_2", "data_log_3"]))
+    });
+
+    let auth_for_forward = auth_bus.clone();
+    app_bus.on("*", "forward_to_auth", move |event| {
+        let auth_bus = auth_for_forward.clone();
+        async move {
+            auth_bus.emit_base(event);
+            Ok(json!(null))
+        }
+    });
+    let data_for_forward = data_bus.clone();
+    auth_bus.on("*", "forward_to_data", move |event| {
+        let data_bus = data_for_forward.clone();
+        async move {
+            data_bus.emit_base(event);
+            Ok(json!(null))
+        }
+    });
+
+    let event = app_bus.emit_base(base_event("ValidationRequest", json!({})));
+    block_on(event.event_completed());
+    block_on(app_bus.wait_until_idle(None));
+    block_on(auth_bus.wait_until_idle(None));
+    block_on(data_bus.wait_until_idle(None));
+
+    let results = event.inner.lock().event_results.clone();
+    let validate_results: Vec<_> = results
+        .values()
+        .filter(|result| result.handler.handler_name == "validate")
+        .collect();
+    let process_results: Vec<_> = results
+        .values()
+        .filter(|result| result.handler.handler_name == "process")
+        .collect();
+    assert_eq!(validate_results.len(), 3);
+    assert_eq!(process_results.len(), 2);
+    assert_eq!(
+        event.inner.lock().event_path,
+        vec![app_bus.label(), auth_bus.label(), data_bus.label()]
+    );
+
+    let dict_results = block_on(event.event_results_list_with_filter(
+        EventResultsOptions {
+            raise_if_any: false,
+            raise_if_none: true,
+        },
+        |result| result.result.as_ref().is_some_and(Value::is_object),
+    ))
+    .expect("dict results");
+    let mut merged = serde_json::Map::new();
+    for result in dict_results {
+        merged.extend(result.as_object().expect("dict result").clone());
+    }
+    assert_eq!(merged.get("app_valid"), Some(&json!(true)));
+    assert_eq!(merged.get("auth_valid"), Some(&json!(true)));
+    assert_eq!(merged.get("data_valid"), Some(&json!(true)));
+
+    let list_results = block_on(event.event_results_list_with_filter(
+        EventResultsOptions {
+            raise_if_any: false,
+            raise_if_none: true,
+        },
+        |result| result.result.as_ref().is_some_and(Value::is_array),
+    ))
+    .expect("list results");
+    let flattened: Vec<Value> = list_results
+        .iter()
+        .flat_map(|result| result.as_array().expect("list result").iter().cloned())
+        .collect();
+    assert_eq!(
+        flattened,
+        vec![
+            json!("auth_log_1"),
+            json!("auth_log_2"),
+            json!("data_log_1"),
+            json!("data_log_2"),
+            json!("data_log_3")
+        ]
+    );
+    app_bus.stop();
+    auth_bus.stop();
+    data_bus.stop();
+}
+
+#[test]
+fn test_event_result_type_enforcement_with_dict() {
+    let bus = EventBus::new(Some("DictResultTypeBus".to_string()));
+
+    for (handler_name, value) in [
+        ("dict_handler1", json!({"key1": "value1"})),
+        ("dict_handler2", json!({"key2": "value2"})),
+        ("string_handler", json!("this is a string, not a dict")),
+        ("int_handler", json!(42)),
+        ("list_handler", json!([1, 2, 3])),
+    ] {
+        bus.on("DictResultEvent", handler_name, move |_event| {
+            let value = value.clone();
+            async move { Ok(value) }
+        });
+    }
+
+    let event = base_event("DictResultEvent", json!({}));
+    event.inner.lock().event_result_type = Some(json!({"type": "object"}));
+    let event = bus.emit_base(event);
+    block_on(event.event_completed());
+    let event_results = event.inner.lock().event_results.clone();
+
+    for handler_name in ["dict_handler1", "dict_handler2"] {
+        let result = event_results
+            .values()
+            .find(|result| result.handler.handler_name == handler_name)
+            .expect("dict handler result");
+        assert_eq!(result.status, EventResultStatus::Completed);
+        assert!(result.result.as_ref().is_some_and(Value::is_object));
+    }
+    for handler_name in ["string_handler", "int_handler", "list_handler"] {
+        let result = event_results
+            .values()
+            .find(|result| result.handler.handler_name == handler_name)
+            .expect("wrong type handler result");
+        assert_eq!(result.status, EventResultStatus::Error);
+        let error = result.error.as_deref().unwrap_or_default();
+        assert!(error.contains("did not match event_result_type"), "{error}");
+        assert!(error.contains("expected object"), "{error}");
+    }
+    bus.stop();
+}
+
+#[test]
+fn test_event_result_type_enforcement_with_list() {
+    let bus = EventBus::new(Some("ListResultTypeBus".to_string()));
+
+    for (handler_name, value) in [
+        ("list_handler1", json!([1, 2, 3])),
+        ("list_handler2", json!(["a", "b", "c"])),
+        ("dict_handler", json!({"key": "value"})),
+        ("string_handler", json!("not a list")),
+        ("int_handler", json!(99)),
+    ] {
+        bus.on("ListResultEvent", handler_name, move |_event| {
+            let value = value.clone();
+            async move { Ok(value) }
+        });
+    }
+
+    let event = base_event("ListResultEvent", json!({}));
+    event.inner.lock().event_result_type = Some(json!({"type": "array"}));
+    let event = bus.emit_base(event);
+    block_on(event.event_completed());
+    let event_results = event.inner.lock().event_results.clone();
+
+    for handler_name in ["list_handler1", "list_handler2"] {
+        let result = event_results
+            .values()
+            .find(|result| result.handler.handler_name == handler_name)
+            .expect("list handler result");
+        assert_eq!(result.status, EventResultStatus::Completed);
+        assert!(result.result.as_ref().is_some_and(Value::is_array));
+    }
+    for handler_name in ["dict_handler", "string_handler", "int_handler"] {
+        let result = event_results
+            .values()
+            .find(|result| result.handler.handler_name == handler_name)
+            .expect("wrong type handler result");
+        assert_eq!(result.status, EventResultStatus::Error);
+        let error = result.error.as_deref().unwrap_or_default();
+        assert!(error.contains("did not match event_result_type"), "{error}");
+        assert!(error.contains("expected array"), "{error}");
+    }
+
+    let list_results = block_on(event.event_results_list_with_filter(
+        EventResultsOptions {
+            raise_if_any: false,
+            raise_if_none: false,
+        },
+        |result| result.result.as_ref().is_some_and(Value::is_array),
+    ))
+    .expect("list results");
+    let flattened: Vec<Value> = list_results
+        .iter()
+        .flat_map(|result| result.as_array().expect("list result").iter().cloned())
+        .collect();
+    assert_eq!(
+        flattened,
+        vec![
+            json!(1),
+            json!(2),
+            json!(3),
+            json!("a"),
+            json!("b"),
+            json!("c")
+        ]
+    );
+    bus.stop();
+}
+
+#[test]
 fn test_handler_error_is_captured_without_crashing_the_bus() {
     let bus = EventBus::new(Some("ErrorBus".to_string()));
     bus.on("ErrorEvent", "throws", |_event| async move {
