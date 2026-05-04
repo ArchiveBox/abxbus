@@ -61,9 +61,13 @@ const main = async () => {
   } catch (firstErr) {
     // The bind failed because the path is in use. If a live listener owns it, propagate
     // the error so the user can resolve the conflict; if it's a stale socket from a
-    // previous crash, unlink it and retry exactly once.
+    // previous crash, unlink it and retry exactly once. Refuse to unlink anything that
+    // isn't a unix socket — we have no business deleting an unrelated regular file.
     const alive = await probeListenerAlive(path)
     if (alive || !fs.existsSync(path)) throw firstErr
+    let st
+    try { st = fs.statSync(path) } catch { throw firstErr }
+    if (!st.isSocket()) throw firstErr
     try { fs.unlinkSync(path) } catch {}
     bus = Bus.listen(path, capacity)
   }
@@ -223,9 +227,22 @@ export class TachyonEventBridge {
     const worker = this.listener_worker
     if (!worker) return
     const deadline = Date.now() + TACHYON_LISTEN_TIMEOUT_MS
+    let path_first_seen_at: number | null = null
     while (Date.now() < deadline) {
       if (this.listener_startup_error) throw this.listener_startup_error
-      if (existsSync(this.path)) return
+      // acted_as_listener is set when the worker posts 'ready' — the only signal that
+      // *we* (not some other process) actually own the socket file at `path`.
+      if (this.acted_as_listener) return
+      if (existsSync(this.path)) {
+        if (path_first_seen_at === null) {
+          path_first_seen_at = Date.now()
+        } else if (Date.now() - path_first_seen_at >= 200) {
+          // The path exists, but it might belong to another process. After a brief
+          // grace window with no startup error and no ready signal, assume our worker
+          // bound it (it would otherwise have raised EADDRINUSE almost immediately).
+          return
+        }
+      }
       await new Promise((resolve) => setTimeout(resolve, 5))
     }
     if (this.listener_startup_error) throw this.listener_startup_error

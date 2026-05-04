@@ -25,6 +25,7 @@ import importlib
 import json
 import os
 import socket as _socket
+import stat as _stat
 import threading
 import time
 from collections.abc import Callable
@@ -98,11 +99,24 @@ class TachyonEventBridge:
             self._listener_loop = asyncio.get_running_loop()
         socket_path = AnyPath(self.path)
         deadline = time.monotonic() + _TACHYON_SOCKET_WAIT_TIMEOUT
+        path_first_seen_at: float | None = None
         while time.monotonic() < deadline:
             if self._listener_init_error is not None:
                 raise RuntimeError(f'TachyonEventBridge failed to listen on {self.path}') from self._listener_init_error
-            if await socket_path.exists():
+            # _acted_as_listener is set inside the worker thread the moment Bus.listen
+            # returns successfully — the only signal that *we* (not some other process)
+            # actually own the socket file at `path`.
+            if self._acted_as_listener:
                 return
+            if await socket_path.exists():
+                if path_first_seen_at is None:
+                    path_first_seen_at = time.monotonic()
+                # The path exists, but it might belong to another process. Give our
+                # worker thread a brief grace window to either confirm a successful
+                # bind (acted_as_listener) or surface a startup error (e.g. EADDRINUSE
+                # because the path was alive) before we report readiness.
+                elif time.monotonic() - path_first_seen_at >= 0.2:
+                    return
             await asyncio.sleep(0.005)
         if self._listener_init_error is not None:
             raise RuntimeError(f'TachyonEventBridge failed to listen on {self.path}') from self._listener_init_error
@@ -173,9 +187,11 @@ class TachyonEventBridge:
         tachyon_module = self._load_tachyon()
         if os.path.exists(self.path) and not self._is_listener_alive(self.path):
             # Only clear truly stale socket files; an `unlink` of a live listener's
-            # bound path would silently break that listener for any future producers.
+            # bound path would silently break that listener for any future producers,
+            # and a regular file at this path is something we have no business deleting.
             try:
-                os.unlink(self.path)
+                if _stat.S_ISSOCK(os.stat(self.path).st_mode):
+                    os.unlink(self.path)
             except OSError:
                 pass
 
