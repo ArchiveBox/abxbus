@@ -31,17 +31,20 @@ __all__ = [
     'NATSEventBridge',
     'RedisEventBridge',
     'PostgresEventBridge',
+    'TachyonEventBridge',
 ]
 
 if TYPE_CHECKING:
     from .bridge_nats import NATSEventBridge
     from .bridge_postgres import PostgresEventBridge
     from .bridge_redis import RedisEventBridge
+    from .bridge_tachyon import TachyonEventBridge
 
 _LAZY_BRIDGE_MODULES: dict[str, str] = {
     'NATSEventBridge': '.bridge_nats',
     'RedisEventBridge': '.bridge_redis',
     'PostgresEventBridge': '.bridge_postgres',
+    'TachyonEventBridge': '.bridge_tachyon',
 }
 
 

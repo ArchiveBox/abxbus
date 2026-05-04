@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +26,7 @@ from abxbus.bridge_nats import NATSEventBridge
 from abxbus.bridge_postgres import PostgresEventBridge
 from abxbus.bridge_redis import RedisEventBridge
 from abxbus.bridge_sqlite import SQLiteEventBridge
+from abxbus.bridge_tachyon import TachyonEventBridge
 
 
 class IPCPingEvent(BaseEvent):
@@ -84,7 +85,7 @@ def _normalize_roundtrip_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 @asynccontextmanager
-async def _running_process(command: list[str], *, cwd: Path | None = None) -> AsyncIterator[subprocess.Popen[str]]:
+async def _running_process(command: list[str], *, cwd: Path | None = None) -> AsyncGenerator[subprocess.Popen[str]]:
     process = subprocess.Popen(
         command,
         cwd=str(cwd) if cwd else None,
@@ -148,6 +149,8 @@ def _make_sender_bridge(kind: str, config: dict[str, Any], *, low_latency: bool 
         return NATSEventBridge(str(config['server']), str(config['subject']))
     if kind == 'postgres':
         return PostgresEventBridge(str(config['url']))
+    if kind == 'tachyon':
+        return TachyonEventBridge(str(config['path']))
     raise ValueError(f'Unsupported bridge kind: {kind}')
 
 
@@ -170,6 +173,8 @@ def _make_listener_bridge(kind: str, config: dict[str, Any], *, low_latency: boo
         return NATSEventBridge(str(config['server']), str(config['subject']))
     if kind == 'postgres':
         return PostgresEventBridge(str(config['url']))
+    if kind == 'tachyon':
+        return TachyonEventBridge(str(config['path']))
     raise ValueError(f'Unsupported bridge kind: {kind}')
 
 
@@ -402,6 +407,21 @@ async def test_nats_event_bridge_roundtrip_between_processes() -> None:
         latency_ms = await _measure_warm_latency_ms('nats', {'server': f'nats://127.0.0.1:{port}', 'subject': 'abxbus_events'})
         print(f'LATENCY python nats {latency_ms:.3f}ms')
         assert nats_process.poll() is None
+
+
+@pytest.mark.asyncio
+async def test_tachyon_event_bridge_roundtrip_between_processes() -> None:
+    socket_path = Path('/tmp') / f'bb-tachyon-{_TEST_RUN_ID}-{uuid7str()[-8:]}.sock'
+    try:
+        await _assert_roundtrip('tachyon', {'path': str(socket_path)})
+        latency_ms = await _measure_warm_latency_ms('tachyon', {'path': str(socket_path)})
+        print(f'LATENCY python tachyon {latency_ms:.3f}ms')
+    finally:
+        if socket_path.exists():
+            try:
+                socket_path.unlink()
+            except OSError:
+                pass
 
 
 @pytest.mark.asyncio

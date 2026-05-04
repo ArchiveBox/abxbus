@@ -95,6 +95,7 @@
     "@opentelemetry/exporter-trace-otlp-http": "^0.215.0",
     "@opentelemetry/resources": "^2.7.0",
     "@opentelemetry/sdk-trace-base": "^2.7.0",
+    "@tachyon-ipc/core": "^0.4.2",
     "ioredis": "^5.9.3",
     "nats": "^2.29.3",
     "pg": "^8.18.0"
@@ -110,6 +111,9 @@
       "optional": true
     },
     "@opentelemetry/sdk-trace-base": {
+      "optional": true
+    },
+    "@tachyon-ipc/core": {
       "optional": true
     },
     "ioredis": {

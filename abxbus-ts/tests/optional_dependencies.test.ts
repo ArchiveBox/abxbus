@@ -30,6 +30,7 @@ test('bridge and optional middleware dependencies are optional peers in package.
     'ioredis',
     'nats',
     'pg',
+    '@tachyon-ipc/core',
     '@opentelemetry/api',
     '@opentelemetry/exporter-trace-otlp-http',
     '@opentelemetry/resources',
@@ -88,6 +89,7 @@ test('bridge and middleware implementation filenames match exported class names'
     'RedisEventBridge.ts',
     'NATSEventBridge.ts',
     'PostgresEventBridge.ts',
+    'TachyonEventBridge.ts',
     'EventBusMiddleware.ts',
     'OtelTracingMiddleware.ts',
   ]) {
@@ -116,6 +118,11 @@ test('bridge modules do not statically import optional bridge packages', () => {
       forbidden_patterns: [/from\s+['"]pg['"]/, /import\s+['"]pg['"]/],
       required_pattern: /importOptionalDependency\('PostgresEventBridge', 'pg'\)/,
     },
+    {
+      path: join(src_dir, 'TachyonEventBridge.ts'),
+      forbidden_patterns: [/from\s+['"]@tachyon-ipc\/core['"]/, /import\s+['"]@tachyon-ipc\/core['"]/],
+      required_pattern: /assertOptionalDependencyAvailable\('TachyonEventBridge', '@tachyon-ipc\/core'\)/,
+    },
   ]
 
   for (const bridge_module of bridge_modules) {
@@ -133,11 +140,13 @@ test('root import excludes peer-backed integrations while namespaced imports res
     'PostgresEventBridge',
     'RedisEventBridge',
     'NATSEventBridge',
+    'TachyonEventBridge',
     'OtelTracingMiddleware',
     '@opentelemetry',
     'ioredis',
     'nats',
     'pg',
+    '@tachyon-ipc/core',
   ]) {
     assert.equal(root_source.includes(forbidden_import), false, `root index pulls in ${forbidden_import}`)
   }
@@ -147,12 +156,13 @@ test('root import excludes peer-backed integrations while namespaced imports res
   for (const root_export of ['EventBus', 'EventBridge', 'HTTPEventBridge', 'JSONLEventBridge', 'SQLiteEventBridge']) {
     assert.equal(root_export in root, true, `missing root export ${root_export}`)
   }
-  for (const peer_export of ['PostgresEventBridge', 'RedisEventBridge', 'NATSEventBridge', 'OtelTracingMiddleware']) {
+  for (const peer_export of ['PostgresEventBridge', 'RedisEventBridge', 'NATSEventBridge', 'TachyonEventBridge', 'OtelTracingMiddleware']) {
     assert.equal(peer_export in root, false, `peer-backed export leaked into root: ${peer_export}`)
   }
 
   const bridges = await import('../src/bridges.js')
   const otel = await import('../src/OtelTracingMiddleware.js')
   assert.equal(typeof bridges.PostgresEventBridge, 'function')
+  assert.equal(typeof bridges.TachyonEventBridge, 'function')
   assert.equal(typeof otel.OtelTracingMiddleware, 'function')
 })

@@ -9,7 +9,7 @@ import { test } from 'node:test'
 
 import { z } from 'zod'
 
-import { NATSEventBridge, PostgresEventBridge, RedisEventBridge } from '../src/bridges.js'
+import { NATSEventBridge, PostgresEventBridge, RedisEventBridge, TachyonEventBridge } from '../src/bridges.js'
 import { BaseEvent, EventBridge, HTTPEventBridge, JSONLEventBridge, SQLiteEventBridge, SocketEventBridge } from '../src/index.js'
 
 const tests_dir = dirname(fileURLToPath(import.meta.url))
@@ -145,6 +145,7 @@ const makeSenderBridge = (kind: string, config: Record<string, string>, low_late
   if (kind === 'redis') return new RedisEventBridge(config.url)
   if (kind === 'nats') return new NATSEventBridge(config.server, config.subject)
   if (kind === 'postgres') return new PostgresEventBridge(config.url)
+  if (kind === 'tachyon') return new TachyonEventBridge(config.path)
   throw new Error(`unsupported bridge kind: ${kind}`)
 }
 
@@ -156,6 +157,7 @@ const makeListenerBridge = (kind: string, config: Record<string, string>, low_la
   if (kind === 'redis') return new RedisEventBridge(config.url)
   if (kind === 'nats') return new NATSEventBridge(config.server, config.subject)
   if (kind === 'postgres') return new PostgresEventBridge(config.url)
+  if (kind === 'tachyon') return new TachyonEventBridge(config.path)
   throw new Error(`unsupported bridge kind: ${kind}`)
 }
 
@@ -397,6 +399,23 @@ test('NATSEventBridge roundtrip between processes', async () => {
     console.log(`LATENCY ts nats ${latency_ms.toFixed(3)}ms`)
   } finally {
     await stopProcess(nats)
+  }
+})
+
+test('TachyonEventBridge roundtrip between processes', async () => {
+  const socket_path = `/tmp/bb-tachyon-${TEST_RUN_ID}-${Math.random().toString(16).slice(2)}.sock`
+  try {
+    await assertRoundtrip('tachyon', { path: socket_path })
+    const latency_ms = await measureWarmLatencyMs('tachyon', { path: socket_path })
+    console.log(`LATENCY ts tachyon ${latency_ms.toFixed(3)}ms`)
+  } finally {
+    if (existsSync(socket_path)) {
+      try {
+        rmSync(socket_path, { force: true })
+      } catch {
+        // ignore
+      }
+    }
   }
 })
 

@@ -21,7 +21,7 @@ jobs:
         with:
           enable-cache: true
           activate-environment: true
-      - run: uv sync --all-extras --all-groups --no-cache
+      - run: uv sync --all-extras --all-groups --no-cache --no-extra tachyon
       - run: uv pip install fastapi
 
       - uses: pnpm/action-setup@v4

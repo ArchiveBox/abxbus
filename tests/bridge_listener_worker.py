@@ -13,6 +13,7 @@ from abxbus.bridge_nats import NATSEventBridge
 from abxbus.bridge_postgres import PostgresEventBridge
 from abxbus.bridge_redis import RedisEventBridge
 from abxbus.bridge_sqlite import SQLiteEventBridge
+from abxbus.bridge_tachyon import TachyonEventBridge
 
 
 def _make_listener_bridge(config: dict[str, Any]) -> Any:
@@ -31,6 +32,8 @@ def _make_listener_bridge(config: dict[str, Any]) -> Any:
         return NATSEventBridge(str(config['server']), str(config['subject']))
     if kind == 'postgres':
         return PostgresEventBridge(str(config['url']))
+    if kind == 'tachyon':
+        return TachyonEventBridge(str(config['path']))
     raise ValueError(f'Unsupported bridge kind: {kind}')
 
 

@@ -92,7 +92,8 @@
                   "integrations/bridge-nats",
                   "integrations/bridge-postgres",
                   "integrations/bridge-jsonl",
-                  "integrations/bridge-sqlite"
+                  "integrations/bridge-sqlite",
+                  "integrations/bridge-tachyon"
                 ]
               }
             ]

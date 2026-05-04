@@ -3,7 +3,7 @@ import contextvars
 import inspect
 import logging
 import os
-from collections.abc import AsyncIterator, Callable, Coroutine, Generator
+from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -589,7 +589,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             await cancel_and_await(handler_task, timeout=0.1)
 
     @asynccontextmanager
-    async def _run_with_timeout(self, event: 'BaseEvent[T_EventResultType]') -> AsyncIterator[None]:
+    async def _run_with_timeout(self, event: 'BaseEvent[T_EventResultType]') -> AsyncGenerator[None]:
         """Apply handler timeout and normalize timeout expiry to EventHandlerTimeoutError."""
         timeout_scope = asyncio.timeout(self.timeout)
         try:

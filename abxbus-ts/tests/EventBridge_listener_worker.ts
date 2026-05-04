@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 
-import { NATSEventBridge, PostgresEventBridge, RedisEventBridge } from '../src/bridges.js'
+import { NATSEventBridge, PostgresEventBridge, RedisEventBridge, TachyonEventBridge } from '../src/bridges.js'
 import { HTTPEventBridge, JSONLEventBridge, SQLiteEventBridge, SocketEventBridge } from '../src/index.js'
 
 type WorkerConfig = {
@@ -23,6 +23,7 @@ const makeListenerBridge = (config: WorkerConfig): any => {
   if (config.kind === 'redis') return new RedisEventBridge(config.url ?? '')
   if (config.kind === 'nats') return new NATSEventBridge(config.server ?? '', config.subject ?? '')
   if (config.kind === 'postgres') return new PostgresEventBridge(config.url ?? '')
+  if (config.kind === 'tachyon') return new TachyonEventBridge(config.path ?? '')
   throw new Error(`Unsupported bridge kind: ${config.kind}`)
 }
 
@@ -36,11 +37,14 @@ const main = async (): Promise<void> => {
     resolve_done = resolve
   })
 
-  await bridge.start()
   bridge.on('*', (event: { toJSON: () => unknown }) => {
     writeFileSync(config.output_path, JSON.stringify(event.toJSON()), 'utf8')
     resolve_done?.()
   })
+  // Awaiting start() AFTER on() lets bridges with deferred readiness signals
+  // (e.g. Tachyon's bind handshake) signal "actually bound" before we tell the
+  // parent the listener is ready to accept connections.
+  await bridge.start()
   writeFileSync(config.ready_path, 'ready', 'utf8')
   await Promise.race([done, new Promise((_, reject) => setTimeout(() => reject(new Error('worker timeout')), 30000))])
   await bridge.close()

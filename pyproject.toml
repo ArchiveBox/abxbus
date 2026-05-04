@@ -27,6 +27,12 @@ nats = [
 redis = [
     "redis>=7.1.1",
 ]
+# Tachyon's native core requires GCC 14+ / Clang 17+ to compile, so it's exposed
+# as its own extra and intentionally excluded from `bridges` to keep that
+# aggregate installable on stock CI/runtimes. Install with `abxbus[tachyon]`.
+tachyon = [
+    "tachyon-ipc>=0.4.2",
+]
 bridges = [
     "asyncpg>=0.31.0",
     "nats-py>=2.13.1",
@@ -67,6 +73,10 @@ build-backend = "uv_build"
 
 [tool.uv]
 exclude-newer = "14 days"
+# tachyon-ipc 0.4.2 was published within the 14-day exclusion window above
+# but is the lowest version with the API this bridge targets, so override
+# the cutoff for that package only.
+exclude-newer-package = { "tachyon-ipc" = "2026-04-26" }
 
 [tool.uv.build-backend]
 module-name = "abxbus"

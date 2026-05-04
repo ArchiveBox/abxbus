@@ -1,0 +1,112 @@
+---
+title: TachyonEventBridge
+description: Same-machine SPSC IPC bridge over a shared-memory ring buffer.
+---
+
+`TachyonEventBridge` forwards events between processes on the same machine via a single-producer/single-consumer shared-memory ring buffer (Unix-socket handshake, futex-backed wait). Tachyon's SPSC handshake pairs one producer with one consumer, so deployments typically use one bridge instance for sending and a separate one for receiving; calling both `emit()` and `on()` on the same instance creates a self-loop on the same path.
+
+## Optional dependencies
+
+The native Tachyon core requires GCC 14+ or Clang 17+ at install time, so it's exposed as its own extra and intentionally left out of the `bridges` aggregate (which would otherwise fail to install on stock environments). Install it explicitly when you want this bridge.
+
+<Tabs>
+<Tab title="Python">
+
+```bash
+pip install "abxbus[tachyon]"
+```
+
+Equivalent direct install:
+
+```bash
+pip install tachyon-ipc
+```
+
+</Tab>
+<Tab title="TypeScript">
+
+```bash
+npm install @tachyon-ipc/core
+```
+
+This bridge is Node.js-only. Blocking `listen`/`recv`/`connect` calls run inside `node:worker_threads` so the main event loop stays responsive.
+
+</Tab>
+</Tabs>
+
+## Constructor params
+
+- `path`: Unix socket path used for the SHM handshake (e.g. `/tmp/abxbus.sock`)
+- `capacity`: ring buffer size in bytes; must be a positive power of two (default `1 << 20`)
+- `name`: optional bridge label
+
+<Tabs>
+<Tab title="Python">
+
+```python
+from abxbus.bridges import TachyonEventBridge
+
+bridge = TachyonEventBridge('/tmp/abxbus.sock', capacity=1 << 20, name='TachyonBridge')
+```
+
+</Tab>
+<Tab title="TypeScript">
+
+```ts
+import { TachyonEventBridge } from 'abxbus/bridges'
+
+const bridge = new TachyonEventBridge('/tmp/abxbus.sock', 1 << 20, 'TachyonBridge')
+```
+
+</Tab>
+</Tabs>
+
+## Setup with a bus
+
+The listener side must call `on(...)` before any sender connects so the SHM arena/socket exist on disk.
+
+<Tabs>
+<Tab title="Python">
+
+```python
+from abxbus import EventBus
+from abxbus.bridges import TachyonEventBridge
+
+bus = EventBus('AppBus')
+
+# listener process
+inbound = TachyonEventBridge('/tmp/abxbus.sock')
+inbound.on('*', bus.emit)
+
+# sender process (separate instance / process)
+outbound = TachyonEventBridge('/tmp/abxbus.sock')
+bus.on('*', outbound.emit)
+```
+
+</Tab>
+<Tab title="TypeScript">
+
+```ts
+import { EventBus } from 'abxbus'
+import { TachyonEventBridge } from 'abxbus/bridges'
+
+const bus = new EventBus('AppBus')
+
+// listener process
+const inbound = new TachyonEventBridge('/tmp/abxbus.sock')
+inbound.on('*', bus.emit)
+
+// sender process (separate instance / process)
+const outbound = new TachyonEventBridge('/tmp/abxbus.sock')
+bus.on('*', outbound.emit)
+```
+
+</Tab>
+</Tabs>
+
+## Behavior
+
+- Tachyon is SPSC: a single producer is paired with a single consumer per session. Use a separate bridge instance per direction if you need bidirectional forwarding.
+- The producer disconnects from the Unix socket immediately after the SHM handshake; reconnecting after the consumer has accepted is not supported by Tachyon.
+- `close()` on the producer side flushes a reserved `SHUTDOWN_TYPE_ID` sentinel before tearing down its bus so the consumer can exit its blocking `recv` loop without an orphaned thread; the same shutdown wire-format is used in both runtimes, so a Python producer can cleanly stop a TS listener and vice versa. Only the listener side unlinks the socket on disk.
+- Runtime requirements: a Linux/macOS host with futex/`__ulock_wait` support; Python needs `tachyon-ipc`, TypeScript needs `@tachyon-ipc/core` and Node.js.
