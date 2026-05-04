@@ -88,7 +88,7 @@ def _normalize_roundtrip_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 @asynccontextmanager
-async def _running_process(command: list[str], *, cwd: Path | None = None) -> AsyncGenerator[subprocess.Popen[str], None]:
+async def _running_process(command: list[str], *, cwd: Path | None = None) -> AsyncGenerator[subprocess.Popen[str]]:
     process = subprocess.Popen(
         command,
         cwd=str(cwd) if cwd else None,

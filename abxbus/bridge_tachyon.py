@@ -90,6 +90,11 @@ class TachyonEventBridge:
         # (peers about to connect, tests writing a ready_path file) can rely on it.
         if self._listener_thread is None:
             return
+        # If on() ran before any event loop existed, the listener thread has no loop
+        # to dispatch into and would silently drop every inbound message. Now that
+        # we're inside an async context, capture the running loop.
+        if self._listener_loop is None or self._listener_loop.is_closed():
+            self._listener_loop = asyncio.get_running_loop()
         socket_path = AnyPath(self.path)
         deadline = time.monotonic() + _TACHYON_SOCKET_WAIT_TIMEOUT
         while time.monotonic() < deadline:

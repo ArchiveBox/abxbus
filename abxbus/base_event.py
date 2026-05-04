@@ -589,7 +589,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             await cancel_and_await(handler_task, timeout=0.1)
 
     @asynccontextmanager
-    async def _run_with_timeout(self, event: 'BaseEvent[T_EventResultType]') -> AsyncGenerator[None, None]:
+    async def _run_with_timeout(self, event: 'BaseEvent[T_EventResultType]') -> AsyncGenerator[None]:
         """Apply handler timeout and normalize timeout expiry to EventHandlerTimeoutError."""
         timeout_scope = asyncio.timeout(self.timeout)
         try:
