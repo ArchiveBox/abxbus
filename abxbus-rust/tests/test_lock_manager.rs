@@ -2,7 +2,7 @@ use std::{
     panic::AssertUnwindSafe,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, Mutex,
+        mpsc, Arc, Mutex,
     },
     thread,
     time::Duration,
@@ -11,7 +11,7 @@ use std::{
 use abxbus_rust::{
     base_event::BaseEvent,
     event_bus::{EventBus, EventBusOptions},
-    lock_manager::{LockManager, ReentrantLock},
+    lock_manager::{run_with_lock, AsyncLock, HandlerLock, LockManager, ReentrantLock},
     types::{EventConcurrencyMode, EventHandlerConcurrencyMode},
 };
 use futures::executor::block_on;
@@ -42,15 +42,265 @@ fn register_active_handler(
 }
 
 #[test]
+fn test_asynclock_1_releasing_to_a_queued_waiter_does_not_allow_a_new_acquire_to_slip_in() {
+    let lock = AsyncLock::new(1);
+    let initial_holder = lock.acquire();
+
+    let waiter_lock = lock.clone();
+    let (waiter_acquired_tx, waiter_acquired_rx) = mpsc::channel();
+    let (release_waiter_tx, release_waiter_rx) = mpsc::channel();
+    let waiter = thread::spawn(move || {
+        let _guard = waiter_lock.acquire();
+        waiter_acquired_tx.send(()).expect("waiter acquired send");
+        release_waiter_rx.recv().expect("release waiter");
+    });
+
+    while lock.waiters_len() != 1 {
+        thread::sleep(Duration::from_millis(1));
+    }
+    drop(initial_holder);
+
+    let contender_lock = lock.clone();
+    let contender_acquired = Arc::new(AtomicBool::new(false));
+    let contender_acquired_for_thread = contender_acquired.clone();
+    let contender = thread::spawn(move || {
+        let _guard = contender_lock.acquire();
+        contender_acquired_for_thread.store(true, Ordering::SeqCst);
+    });
+
+    waiter_acquired_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("queued waiter should receive the handoff first");
+    thread::sleep(Duration::from_millis(20));
+    assert!(!contender_acquired.load(Ordering::SeqCst));
+    assert_eq!(lock.waiters_len(), 1);
+
+    release_waiter_tx.send(()).expect("release waiter send");
+    waiter.join().expect("waiter joins");
+    contender.join().expect("contender joins");
+    assert_eq!(lock.in_use(), 0);
+    assert_eq!(lock.waiters_len(), 0);
+}
+
+#[test]
+fn test_asynclock_infinity_acquire_release_is_a_no_op_bypass() {
+    let lock = AsyncLock::infinite();
+    let first = lock.acquire();
+    let second = lock.acquire();
+    let third = lock.acquire();
+
+    assert_eq!(lock.in_use(), 0);
+    assert_eq!(lock.waiters_len(), 0);
+    drop(first);
+    drop(second);
+    drop(third);
+    lock.release();
+    assert_eq!(lock.in_use(), 0);
+    assert_eq!(lock.waiters_len(), 0);
+}
+
+#[test]
+fn test_asynclock_size_1_enforces_semaphore_concurrency_limit() {
+    let lock = Arc::new(AsyncLock::new(2));
+    let active = Arc::new(AtomicUsize::new(0));
+    let max_active = Arc::new(AtomicUsize::new(0));
+    let mut handles = Vec::new();
+
+    for _ in 0..6 {
+        let lock = lock.clone();
+        let active = active.clone();
+        let max_active = max_active.clone();
+        handles.push(thread::spawn(move || {
+            let _guard = lock.acquire();
+            let now_active = active.fetch_add(1, Ordering::SeqCst) + 1;
+            max_active.fetch_max(now_active, Ordering::SeqCst);
+            thread::sleep(Duration::from_millis(5));
+            active.fetch_sub(1, Ordering::SeqCst);
+        }));
+    }
+
+    for handle in handles {
+        handle.join().expect("worker joins");
+    }
+    assert_eq!(max_active.load(Ordering::SeqCst), 2);
+    assert_eq!(lock.in_use(), 0);
+    assert_eq!(lock.waiters_len(), 0);
+}
+
+#[test]
+fn test_runwithlock_null_executes_function_directly_and_preserves_errors() {
+    let called = Arc::new(AtomicUsize::new(0));
+    let called_for_success = called.clone();
+    let value = run_with_lock(None, || {
+        called_for_success.fetch_add(1, Ordering::SeqCst);
+        Ok::<_, &'static str>("ok")
+    })
+    .expect("run without lock");
+    assert_eq!(value, "ok");
+    assert_eq!(called.load(Ordering::SeqCst), 1);
+
+    let error = run_with_lock::<(), _>(None, || Err("boom")).expect_err("error preserved");
+    assert_eq!(error, "boom");
+}
+
+#[test]
+fn test_handlerlock_reclaimhandlerlockifrunning_releases_reclaimed_permit_if_handler_exits_while_waiting(
+) {
+    let lock = AsyncLock::new(1);
+    let guard = lock.acquire();
+    let handler_lock = Arc::new(HandlerLock::new_held(lock.clone(), guard));
+
+    assert!(handler_lock.yield_handler_lock_for_child_run());
+    let occupying_guard = lock.acquire();
+
+    let handler_for_reclaim = handler_lock.clone();
+    let (reclaim_started_tx, reclaim_started_rx) = mpsc::channel();
+    let reclaim = thread::spawn(move || {
+        reclaim_started_tx.send(()).expect("reclaim started");
+        handler_for_reclaim.reclaim_handler_lock_if_running()
+    });
+    reclaim_started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("reclaim starts");
+    while lock.waiters_len() != 1 {
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    handler_lock.exit_handler_run();
+    drop(occupying_guard);
+
+    assert!(!reclaim.join().expect("reclaim joins"));
+    assert_eq!(lock.in_use(), 0);
+    assert_eq!(lock.waiters_len(), 0);
+}
+
+#[test]
+fn test_handlerlock_runqueuejump_yields_permit_during_child_run_and_reacquires_before_returning() {
+    let lock = AsyncLock::new(1);
+    let guard = lock.acquire();
+    let handler_lock = HandlerLock::new_held(lock.clone(), guard);
+
+    let contender_acquired = Arc::new(AtomicBool::new(false));
+    let contender_acquired_for_thread = contender_acquired.clone();
+    let (release_contender_tx, release_contender_rx) = mpsc::channel();
+    let contender_lock = lock.clone();
+    let contender = thread::spawn(move || {
+        let _guard = contender_lock.acquire();
+        contender_acquired_for_thread.store(true, Ordering::SeqCst);
+        release_contender_rx.recv().expect("release contender");
+    });
+
+    while lock.waiters_len() != 1 {
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    let result = handler_lock.run_queue_jump(|| {
+        while !contender_acquired.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(1));
+        }
+        release_contender_tx.send(()).expect("release contender");
+        "child-ok"
+    });
+
+    assert_eq!(result, "child-ok");
+    assert_eq!(lock.in_use(), 1);
+    handler_lock.exit_handler_run();
+    contender.join().expect("contender joins");
+    assert_eq!(lock.in_use(), 0);
+}
+
+#[test]
+fn test_lockmanager_pause_is_re_entrant_and_resumes_waiters_only_at_depth_zero() {
+    let locks = Arc::new(LockManager::default());
+    let mut release_a = locks.request_runloop_pause();
+    let mut release_b = locks.request_runloop_pause();
+    assert!(locks.is_paused());
+
+    let resumed = Arc::new(AtomicBool::new(false));
+    let resumed_for_thread = resumed.clone();
+    let locks_for_waiter = locks.clone();
+    let waiter = thread::spawn(move || {
+        locks_for_waiter.wait_until_runloop_resumed();
+        resumed_for_thread.store(true, Ordering::SeqCst);
+    });
+
+    thread::sleep(Duration::from_millis(20));
+    assert!(!resumed.load(Ordering::SeqCst));
+    release_a.release();
+    thread::sleep(Duration::from_millis(20));
+    assert!(!resumed.load(Ordering::SeqCst));
+    assert!(locks.is_paused());
+
+    release_b.release();
+    waiter.join().expect("waiter joins");
+    assert!(resumed.load(Ordering::SeqCst));
+    assert!(!locks.is_paused());
+
+    release_a.release();
+    release_b.release();
+}
+
+#[test]
+fn test_lockmanager_waitforidle_uses_two_check_stability_and_supports_timeout() {
+    let locks = LockManager::default();
+    assert!(!locks.wait_for_idle(Some(Duration::from_millis(10)), || false));
+
+    let checks = Arc::new(AtomicUsize::new(0));
+    let checks_for_idle = checks.clone();
+    let became_idle = locks.wait_for_idle(Some(Duration::from_millis(200)), || {
+        checks_for_idle.fetch_add(1, Ordering::SeqCst);
+        true
+    });
+    assert!(became_idle);
+    assert!(checks.load(Ordering::SeqCst) >= 2);
+}
+
+#[test]
 fn test_reentrant_lock_nested_context_reuses_single_permit() {
     let lock = ReentrantLock::default();
+    assert!(!lock.locked());
+    assert_eq!(lock.depth(), 0);
+
     let outer = lock.lock();
+    assert!(lock.locked());
+    assert_eq!(lock.depth(), 1);
     let inner = lock.lock();
+    assert!(lock.locked());
+    assert_eq!(lock.depth(), 2);
     drop(inner);
+    assert!(lock.locked());
+    assert_eq!(lock.depth(), 1);
     drop(outer);
+    assert!(!lock.locked());
+    assert_eq!(lock.depth(), 0);
 
     let after_nested = lock.lock();
     drop(after_nested);
+}
+
+#[test]
+fn test_handler_dispatch_context_marks_and_restores_lock_depth() {
+    let lock = ReentrantLock::default();
+
+    assert_eq!(lock.depth(), 0);
+    assert!(!lock.locked());
+
+    {
+        let _dispatch_context = lock.mark_held_in_current_context();
+        assert_eq!(lock.depth(), 1);
+        assert!(!lock.locked());
+
+        {
+            let _nested = lock.lock();
+            assert_eq!(lock.depth(), 2);
+            assert!(!lock.locked());
+        }
+
+        assert_eq!(lock.depth(), 1);
+    }
+
+    assert_eq!(lock.depth(), 0);
+    assert!(!lock.locked());
 }
 
 #[test]
@@ -98,6 +348,70 @@ fn test_reentrant_lock_releases_and_reraises_on_exception() {
     });
     handle.join().expect("lock should be released after panic");
     assert!(acquired_after_panic.load(Ordering::SeqCst));
+}
+
+#[test]
+fn test_run_with_event_lock_releases_and_reraises_on_exception() {
+    let lock = Arc::new(ReentrantLock::default());
+    let lock_for_panic = lock.clone();
+
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let _guard = lock_for_panic.lock();
+        assert!(lock_for_panic.locked());
+        assert_eq!(lock_for_panic.depth(), 1);
+        panic!("event-lock-error");
+    }));
+
+    assert!(result.is_err());
+    assert!(!lock.locked());
+    assert_eq!(lock.depth(), 0);
+
+    let acquired_after_panic = Arc::new(AtomicBool::new(false));
+    let flag = acquired_after_panic.clone();
+    let lock_for_thread = lock.clone();
+    let handle = thread::spawn(move || {
+        let _guard = lock_for_thread.lock();
+        flag.store(true, Ordering::SeqCst);
+    });
+    handle.join().expect("event lock should be released");
+    assert!(acquired_after_panic.load(Ordering::SeqCst));
+}
+
+#[test]
+fn test_run_with_handler_lock_releases_and_reraises_on_exception() {
+    let lock = Arc::new(ReentrantLock::default());
+    let lock_for_panic = lock.clone();
+
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let _guard = lock_for_panic.lock();
+        assert!(lock_for_panic.locked());
+        assert_eq!(lock_for_panic.depth(), 1);
+        panic!("handler-lock-error");
+    }));
+
+    assert!(result.is_err());
+    assert!(!lock.locked());
+    assert_eq!(lock.depth(), 0);
+
+    let reacquired = lock.lock();
+    assert!(lock.locked());
+    drop(reacquired);
+    assert!(!lock.locked());
+}
+
+#[test]
+fn test_handler_dispatch_context_restores_depth_and_reraises_on_exception() {
+    let lock = ReentrantLock::default();
+
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let _dispatch_context = lock.mark_held_in_current_context();
+        assert_eq!(lock.depth(), 1);
+        panic!("dispatch-context-error");
+    }));
+
+    assert!(result.is_err());
+    assert_eq!(lock.depth(), 0);
+    assert!(!lock.locked());
 }
 
 #[test]

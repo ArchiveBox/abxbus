@@ -1660,11 +1660,7 @@ impl EventBus {
             .lock()
             .event_handler_concurrency
             .unwrap_or(self.event_handler_concurrency);
-        let handler_completion = event
-            .inner
-            .lock()
-            .event_handler_completion
-            .unwrap_or(self.event_handler_completion);
+        let handler_completion = self.handler_completion_for_event(&event);
 
         let event_timeout = event.inner.lock().event_timeout.or(self.event_timeout);
         self.create_pending_handler_results(&event, &handlers, event_timeout);
@@ -1679,7 +1675,9 @@ impl EventBus {
                         self.cancel_remaining_timeout_results(&event, &handlers[index + 1..]);
                         break;
                     }
-                    if handler_completion == EventHandlerCompletionMode::First {
+                    if self.handler_completion_for_event(&event)
+                        == EventHandlerCompletionMode::First
+                    {
                         let winner_id = self.winning_handler_id(&event);
                         if winner_id.is_some() {
                             self.cancel_remaining_first_mode_results(
@@ -1867,6 +1865,14 @@ impl EventBus {
             (None, Some(b)) => Some(b),
             (None, None) => None,
         }
+    }
+
+    fn handler_completion_for_event(&self, event: &Arc<BaseEvent>) -> EventHandlerCompletionMode {
+        event
+            .inner
+            .lock()
+            .event_handler_completion
+            .unwrap_or(self.event_handler_completion)
     }
 
     fn winning_handler_id(&self, event: &Arc<BaseEvent>) -> Option<String> {
