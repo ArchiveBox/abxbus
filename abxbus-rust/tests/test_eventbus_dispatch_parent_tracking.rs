@@ -632,3 +632,230 @@ fn test_bus_emit_inside_handler_dispatches_root_event_by_default() {
     assert!(result.event_children.is_empty());
     bus.stop();
 }
+
+#[test]
+fn test_outside_wait_completed_of_bus_emit_child_keeps_it_independent_of_active_handler() {
+    let bus = EventBus::new(Some("RootChildExternalDoneBus".to_string()));
+    let bus_for_handler = bus.clone();
+    let child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
+    let child_ref_for_handler = child_ref.clone();
+    let (parent_holding_tx, parent_holding_rx) = std::sync::mpsc::channel();
+    let (release_parent_tx, release_parent_rx) = std::sync::mpsc::channel();
+    let release_parent_rx = Arc::new(Mutex::new(release_parent_rx));
+    let (release_child_tx, release_child_rx) = std::sync::mpsc::channel();
+    let release_child_rx = Arc::new(Mutex::new(release_child_rx));
+
+    bus.on("ParentEvent", "parent_handler", move |_event| {
+        let bus = bus_for_handler.clone();
+        let child_ref = child_ref_for_handler.clone();
+        let parent_holding_tx = parent_holding_tx.clone();
+        let release_parent_rx = release_parent_rx.clone();
+        async move {
+            let child = bus.emit::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            let _ = parent_holding_tx.send(());
+            release_parent_rx
+                .lock()
+                .expect("release parent lock")
+                .recv_timeout(Duration::from_secs(2))
+                .expect("release parent");
+            Ok(json!("parent"))
+        }
+    });
+    bus.on("ChildEvent", "child_handler", move |_event| {
+        let release_child_rx = release_child_rx.clone();
+        async move {
+            release_child_rx
+                .lock()
+                .expect("release child lock")
+                .recv_timeout(Duration::from_secs(2))
+                .expect("release child");
+            Ok(json!("child"))
+        }
+    });
+
+    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    parent_holding_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("parent holding");
+    let child = child_ref
+        .lock()
+        .expect("child ref lock")
+        .clone()
+        .expect("child ref");
+    assert_eq!(child.inner.lock().event_parent_id, None);
+    assert_eq!(child.inner.lock().event_emitted_by_handler_id, None);
+    assert!(!child.inner.lock().event_blocks_parent_completion);
+
+    let child_for_wait = child.clone();
+    let wait_thread = thread::spawn(move || {
+        block_on(child_for_wait.wait_completed());
+    });
+    thread::sleep(Duration::from_millis(10));
+    assert!(!child.inner.lock().event_blocks_parent_completion);
+
+    release_parent_tx.send(()).expect("release parent send");
+    block_on(parent.wait_completed());
+    assert_eq!(
+        parent.inner.inner.lock().event_status,
+        EventStatus::Completed
+    );
+    assert_ne!(child.inner.lock().event_status, EventStatus::Completed);
+
+    release_child_tx.send(()).expect("release child send");
+    wait_thread.join().expect("child wait thread");
+    block_on(bus.wait_until_idle(Some(2.0)));
+    assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
+    bus.stop();
+}
+
+#[test]
+fn test_outside_event_completed_wait_of_bus_emit_child_keeps_it_independent_of_active_handler() {
+    let bus = EventBus::new(Some("RootChildExternalEventCompletedBus".to_string()));
+    let bus_for_handler = bus.clone();
+    let child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
+    let child_ref_for_handler = child_ref.clone();
+    let (parent_holding_tx, parent_holding_rx) = std::sync::mpsc::channel();
+    let (release_parent_tx, release_parent_rx) = std::sync::mpsc::channel();
+    let release_parent_rx = Arc::new(Mutex::new(release_parent_rx));
+    let (release_child_tx, release_child_rx) = std::sync::mpsc::channel();
+    let release_child_rx = Arc::new(Mutex::new(release_child_rx));
+
+    bus.on("ParentEvent", "parent_handler", move |_event| {
+        let bus = bus_for_handler.clone();
+        let child_ref = child_ref_for_handler.clone();
+        let parent_holding_tx = parent_holding_tx.clone();
+        let release_parent_rx = release_parent_rx.clone();
+        async move {
+            let child = bus.emit::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            let _ = parent_holding_tx.send(());
+            release_parent_rx
+                .lock()
+                .expect("release parent lock")
+                .recv_timeout(Duration::from_secs(2))
+                .expect("release parent");
+            Ok(json!("parent"))
+        }
+    });
+    bus.on("ChildEvent", "child_handler", move |_event| {
+        let release_child_rx = release_child_rx.clone();
+        async move {
+            release_child_rx
+                .lock()
+                .expect("release child lock")
+                .recv_timeout(Duration::from_secs(2))
+                .expect("release child");
+            Ok(json!("child"))
+        }
+    });
+
+    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    parent_holding_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("parent holding");
+    let child = child_ref
+        .lock()
+        .expect("child ref lock")
+        .clone()
+        .expect("child ref");
+    assert_eq!(child.inner.lock().event_parent_id, None);
+    assert_eq!(child.inner.lock().event_emitted_by_handler_id, None);
+    assert!(!child.inner.lock().event_blocks_parent_completion);
+
+    let child_for_wait = child.clone();
+    let wait_thread = thread::spawn(move || {
+        block_on(child_for_wait.event_completed());
+    });
+    thread::sleep(Duration::from_millis(10));
+    assert!(!child.inner.lock().event_blocks_parent_completion);
+
+    release_parent_tx.send(()).expect("release parent send");
+    block_on(parent.wait_completed());
+    assert_eq!(
+        parent.inner.inner.lock().event_status,
+        EventStatus::Completed
+    );
+    assert_ne!(child.inner.lock().event_status, EventStatus::Completed);
+
+    release_child_tx.send(()).expect("release child send");
+    wait_thread.join().expect("child wait thread");
+    block_on(bus.wait_until_idle(Some(2.0)));
+    assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
+    bus.stop();
+}
+
+#[test]
+fn test_awaited_bus_emit_child_remains_independent_and_does_not_block_parent_completion() {
+    let bus = EventBus::new(Some("AwaitedBusEmitRootBus".to_string()));
+    let bus_for_handler = bus.clone();
+    let child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
+    let child_ref_for_handler = child_ref.clone();
+
+    bus.on("ParentEvent", "parent_handler", move |_event| {
+        let bus = bus_for_handler.clone();
+        let child_ref = child_ref_for_handler.clone();
+        async move {
+            let child = bus.emit::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            assert_eq!(child.inner.inner.lock().event_parent_id, None);
+            assert_eq!(child.inner.inner.lock().event_emitted_by_handler_id, None);
+            assert!(!child.inner.inner.lock().event_blocks_parent_completion);
+            child.wait_completed().await;
+            assert!(!child.inner.inner.lock().event_blocks_parent_completion);
+            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            Ok(json!("parent"))
+        }
+    });
+    bus.on("ChildEvent", "child_handler", |_event| async move {
+        Ok(json!("child"))
+    });
+
+    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(parent.wait_completed());
+    let child = child_ref
+        .lock()
+        .expect("child ref lock")
+        .clone()
+        .expect("child ref");
+    assert_eq!(child.inner.lock().event_parent_id, None);
+    assert!(!child.inner.lock().event_blocks_parent_completion);
+    let parent_inner = parent.inner.inner.lock();
+    let result = parent_inner
+        .event_results
+        .values()
+        .next()
+        .expect("parent result");
+    assert!(result.event_children.is_empty());
+    bus.stop();
+}
+
+#[test]
+fn test_forwarded_events_are_not_counted_as_parent_event_children() {
+    let bus_1 = EventBus::new(Some("ForwardBus1".to_string()));
+    let bus_2 = EventBus::new(Some("ForwardBus2".to_string()));
+    let bus_2_for_forward = bus_2.clone();
+
+    bus_1.on("*", "forward_to_bus2", move |event| {
+        let bus_2 = bus_2_for_forward.clone();
+        async move {
+            bus_2.emit_base(event);
+            Ok(json!(null))
+        }
+    });
+
+    let parent = bus_1.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(async {
+        bus_1.wait_until_idle(None).await;
+        bus_2.wait_until_idle(None).await;
+        parent.wait_completed().await;
+    });
+
+    let parent_inner = parent.inner.inner.lock();
+    assert!(parent_inner
+        .event_results
+        .values()
+        .all(|result| result.event_children.is_empty()));
+    assert_eq!(parent_inner.event_parent_id, None);
+    bus_1.stop();
+    bus_2.stop();
+}
