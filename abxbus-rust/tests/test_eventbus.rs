@@ -276,6 +276,59 @@ fn test_event_with_no_handlers_completes_immediately() {
 }
 
 #[test]
+fn test_auto_start_and_stop() {
+    let bus = EventBus::new(Some("AutoStartStopBus".to_string()));
+    assert!(!bus.is_running_for_test());
+
+    let event = bus.emit::<UserActionEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(event.wait_completed());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+    assert!(bus.is_running_for_test());
+
+    bus.stop();
+    assert!(!bus.is_running_for_test());
+    assert!(bus.is_stopped_for_test());
+}
+
+#[test]
+fn test_wait_until_idle_recovers_when_idle_flag_was_cleared() {
+    let bus = EventBus::new(Some("IdleRecoveryBus".to_string()));
+
+    bus.on("UserActionEvent", "handler", |_event| async move {
+        Ok(json!(null))
+    });
+
+    let event = bus.emit::<UserActionEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(event.wait_completed());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+    bus.stop();
+    bus.stop();
+    assert!(bus.is_stopped_for_test());
+}
+
+#[test]
+fn test_stop_with_pending_events() {
+    let bus = EventBus::new(Some("StopPendingBus".to_string()));
+    bus.on("*", "slow_handler", |_event| async move {
+        thread::sleep(Duration::from_millis(100));
+        Ok(json!("done"))
+    });
+
+    for action in 0..5 {
+        bus.emit_base(base_event(
+            "UserActionEvent",
+            json!({"action": format!("action_{action}")}),
+        ));
+    }
+
+    bus.stop();
+    assert!(!bus.is_running_for_test());
+    assert!(bus.is_stopped_for_test());
+}
+
+#[test]
 fn test_emit_and_result() {
     let bus = EventBus::new(Some("EmitAndResultBus".to_string()));
     let (started_tx, started_rx) = std::sync::mpsc::channel();
@@ -1223,6 +1276,197 @@ fn test_multiple_handlers_parallel() {
         result.handler.handler_name == "slow_handler_2"
             && result.result == Some(json!("slow_handler_2"))
     }));
+    bus.stop();
+}
+
+#[test]
+fn test_handler_can_be_sync_or_async() {
+    let bus = EventBus::new(Some("SyncAsyncHandlersBus".to_string()));
+
+    bus.on_sync("TestEvent", "sync_handler", |_event| Ok(json!("sync")));
+    bus.on("TestEvent", "async_handler", |_event| async move {
+        Ok(json!("async"))
+    });
+
+    assert_eq!(
+        bus.to_json_value()["handlers_by_key"]["TestEvent"]
+            .as_array()
+            .expect("handler ids")
+            .len(),
+        2
+    );
+
+    let event = bus.emit_base(base_event("TestEvent", json!({})));
+    block_on(event.event_completed());
+    let results: Vec<Value> = event
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .filter_map(|result| result.result.clone())
+        .collect();
+    assert!(results.contains(&json!("sync")));
+    assert!(results.contains(&json!("async")));
+    bus.stop();
+}
+
+#[test]
+fn test_class_and_instance_method_handlers() {
+    struct EventProcessor {
+        name: String,
+        value: i64,
+    }
+
+    impl EventProcessor {
+        fn sync_method_handler(&self, event: Arc<BaseEvent>) -> Result<Value, String> {
+            Ok(json!({
+                "processor": self.name,
+                "value": self.value,
+                "action": event.inner.lock().payload["action"].clone(),
+            }))
+        }
+
+        async fn async_method_handler(&self, event: Arc<BaseEvent>) -> Result<Value, String> {
+            thread::sleep(Duration::from_millis(10));
+            Ok(json!({
+                "processor": self.name,
+                "value": self.value * 2,
+                "action": event.inner.lock().payload["action"].clone(),
+            }))
+        }
+
+        fn class_method_handler(_event: Arc<BaseEvent>) -> Result<Value, String> {
+            Ok(json!("Handled by EventProcessor"))
+        }
+
+        fn static_method_handler(_event: Arc<BaseEvent>) -> Result<Value, String> {
+            Ok(json!("Handled by static method"))
+        }
+    }
+
+    let bus = EventBus::new(Some("ClassAndInstanceHandlersBus".to_string()));
+    let results_seen = Arc::new(Mutex::new(Vec::new()));
+    let processor1 = Arc::new(EventProcessor {
+        name: "Processor1".to_string(),
+        value: 10,
+    });
+    let processor2 = Arc::new(EventProcessor {
+        name: "Processor2".to_string(),
+        value: 20,
+    });
+
+    let seen = results_seen.clone();
+    let processor = processor1.clone();
+    bus.on_sync(
+        "UserActionEvent",
+        "Processor1.sync_method_handler",
+        move |event| {
+            seen.lock()
+                .expect("results seen lock")
+                .push("Processor1_sync".to_string());
+            processor.sync_method_handler(event)
+        },
+    );
+
+    let seen = results_seen.clone();
+    let processor = processor1.clone();
+    bus.on(
+        "UserActionEvent",
+        "Processor1.async_method_handler",
+        move |event| {
+            let seen = seen.clone();
+            let processor = processor.clone();
+            async move {
+                seen.lock()
+                    .expect("results seen lock")
+                    .push("Processor1_async".to_string());
+                processor.async_method_handler(event).await
+            }
+        },
+    );
+
+    let seen = results_seen.clone();
+    let processor = processor2.clone();
+    bus.on_sync(
+        "UserActionEvent",
+        "Processor2.sync_method_handler",
+        move |event| {
+            seen.lock()
+                .expect("results seen lock")
+                .push("Processor2_sync".to_string());
+            processor.sync_method_handler(event)
+        },
+    );
+
+    let seen = results_seen.clone();
+    bus.on_sync(
+        "UserActionEvent",
+        "EventProcessor.class_method_handler",
+        move |event| {
+            seen.lock()
+                .expect("results seen lock")
+                .push("classmethod".to_string());
+            EventProcessor::class_method_handler(event)
+        },
+    );
+
+    let seen = results_seen.clone();
+    bus.on_sync(
+        "UserActionEvent",
+        "EventProcessor.static_method_handler",
+        move |event| {
+            seen.lock()
+                .expect("results seen lock")
+                .push("staticmethod".to_string());
+            EventProcessor::static_method_handler(event)
+        },
+    );
+
+    let event = bus.emit_base(base_event(
+        "UserActionEvent",
+        json!({
+            "action": "test_methods",
+            "user_id": "dab45f48-9e3a-7042-80f8-ac8f07b6cfe3"
+        }),
+    ));
+    block_on(event.event_completed());
+
+    let seen = results_seen.lock().expect("results seen lock").clone();
+    assert_eq!(seen.len(), 5);
+    for expected in [
+        "Processor1_sync",
+        "Processor1_async",
+        "Processor2_sync",
+        "classmethod",
+        "staticmethod",
+    ] {
+        assert!(seen.contains(&expected.to_string()));
+    }
+
+    let results: Vec<Value> = event
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .filter_map(|result| result.result.clone())
+        .collect();
+    assert!(results.iter().any(|result| {
+        result["processor"] == "Processor1"
+            && result["value"] == 10
+            && result["action"] == "test_methods"
+    }));
+    assert!(results.iter().any(|result| {
+        result["processor"] == "Processor1"
+            && result["value"] == 20
+            && result["action"] == "test_methods"
+    }));
+    assert!(results.iter().any(|result| {
+        result["processor"] == "Processor2"
+            && result["value"] == 20
+            && result["action"] == "test_methods"
+    }));
+    assert!(results.contains(&json!("Handled by EventProcessor")));
+    assert!(results.contains(&json!("Handled by static method")));
     bus.stop();
 }
 
@@ -2329,6 +2573,7 @@ fn test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() {
             event_slow_timeout: Some(34.0),
             event_handler_slow_timeout: Some(12.0),
             event_handler_detect_file_paths: false,
+            max_handler_recursion_depth: 2,
         },
     );
     let handler = bus.on(
@@ -2597,6 +2842,115 @@ fn test_eventbus_accepts_custom_id() {
 
     assert_eq!(bus.id, custom_id);
     assert!(bus.label().ends_with("#1234"));
+    bus.stop();
+}
+
+#[test]
+fn test_eventbus_accepts_custom_handler_recursion_depth() {
+    let bus = EventBus::new_with_options(
+        Some("CustomRecursionConfigBus".to_string()),
+        EventBusOptions {
+            max_handler_recursion_depth: 5,
+            ..EventBusOptions::default()
+        },
+    );
+
+    assert_eq!(bus.max_handler_recursion_depth, 5);
+    bus.stop();
+}
+
+#[test]
+fn test_custom_handler_recursion_depth_allows_deeper_nested_handlers() {
+    let bus = EventBus::new_with_options(
+        Some("CustomRecursionDepthBus".to_string()),
+        EventBusOptions {
+            max_handler_recursion_depth: 5,
+            ..EventBusOptions::default()
+        },
+    );
+    let seen_levels = Arc::new(Mutex::new(Vec::new()));
+    let bus_for_handler = bus.clone();
+    let seen_for_handler = seen_levels.clone();
+
+    bus.on("RecursiveEvent", "recursive_handler", move |event| {
+        let bus = bus_for_handler.clone();
+        let seen_levels = seen_for_handler.clone();
+        async move {
+            let payload = event.inner.lock().payload.clone();
+            let level = payload["level"].as_i64().expect("level");
+            let max_level = payload["max_level"].as_i64().expect("max_level");
+            seen_levels.lock().expect("seen levels lock").push(level);
+            if level < max_level {
+                let child = bus.emit_child_base(base_event(
+                    "RecursiveEvent",
+                    json!({"level": level + 1, "max_level": max_level}),
+                ));
+                child.wait_completed().await;
+            }
+            Ok(json!(null))
+        }
+    });
+
+    let event = bus.emit_base(base_event(
+        "RecursiveEvent",
+        json!({"level": 0, "max_level": 5}),
+    ));
+    block_on(event.event_completed());
+    assert_eq!(
+        seen_levels.lock().expect("seen levels lock").as_slice(),
+        &[0, 1, 2, 3, 4, 5]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_default_handler_recursion_depth_still_catches_runaway_loops() {
+    let bus = EventBus::new(Some("DefaultRecursionDepthBus".to_string()));
+    let bus_for_handler = bus.clone();
+
+    bus.on("RecursiveEvent", "recursive_handler", move |event| {
+        let bus = bus_for_handler.clone();
+        async move {
+            let payload = event.inner.lock().payload.clone();
+            let level = payload["level"].as_i64().expect("level");
+            let max_level = payload["max_level"].as_i64().expect("max_level");
+            if level < max_level {
+                let child = bus.emit_child_base(base_event(
+                    "RecursiveEvent",
+                    json!({"level": level + 1, "max_level": max_level}),
+                ));
+                child.wait_completed().await;
+            }
+            Ok(json!(null))
+        }
+    });
+
+    let event = bus.emit_base(base_event(
+        "RecursiveEvent",
+        json!({"level": 0, "max_level": 3}),
+    ));
+    block_on(event.event_completed());
+
+    let has_recursion_error = bus
+        .runtime_payload_for_test()
+        .values()
+        .flat_map(|event| {
+            event
+                .inner
+                .lock()
+                .event_results
+                .values()
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .any(|result| {
+            result.status == EventResultStatus::Error
+                && result
+                    .error
+                    .as_deref()
+                    .is_some_and(|error| error.contains("Infinite loop detected"))
+        });
+    assert!(has_recursion_error);
     bus.stop();
 }
 

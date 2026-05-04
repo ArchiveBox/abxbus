@@ -65,6 +65,7 @@ pub struct EventBus {
     pub event_handler_completion: EventHandlerCompletionMode,
     pub event_handler_slow_timeout: Option<f64>,
     pub event_handler_detect_file_paths: bool,
+    pub max_handler_recursion_depth: usize,
     handlers: Arc<Mutex<HashMap<String, Vec<EventHandler>>>>,
     runtime: Arc<BusRuntime>,
     bus_serial_lock: Arc<ReentrantLock>,
@@ -91,6 +92,7 @@ pub struct EventBusOptions {
     pub event_handler_completion: EventHandlerCompletionMode,
     pub event_handler_slow_timeout: Option<f64>,
     pub event_handler_detect_file_paths: bool,
+    pub max_handler_recursion_depth: usize,
 }
 
 #[derive(Clone, Default)]
@@ -130,6 +132,7 @@ impl Default for EventBusOptions {
             event_handler_completion: EventHandlerCompletionMode::All,
             event_handler_slow_timeout: Some(30.0),
             event_handler_detect_file_paths: true,
+            max_handler_recursion_depth: 2,
         }
     }
 }
@@ -186,7 +189,7 @@ impl EventBus {
     }
 
     pub fn new_with_options(name: Option<String>, options: EventBusOptions) -> Arc<Self> {
-        Self::new_with_options_and_loop(name, options, true)
+        Self::new_with_options_and_loop(name, options, false)
     }
 
     fn new_with_options_and_loop(
@@ -230,6 +233,7 @@ impl EventBus {
             event_handler_completion: options.event_handler_completion,
             event_handler_slow_timeout: options.event_handler_slow_timeout,
             event_handler_detect_file_paths: options.event_handler_detect_file_paths,
+            max_handler_recursion_depth: options.max_handler_recursion_depth,
             handlers: Arc::new(Mutex::new(HashMap::new())),
             runtime: Arc::new(BusRuntime {
                 queue: Mutex::new(VecDeque::new()),
@@ -390,6 +394,14 @@ impl EventBus {
             status == EventStatus::Completed
         });
         queue_empty && all_completed
+    }
+
+    pub fn is_running_for_test(&self) -> bool {
+        *self.runtime.loop_started.lock() && !*self.runtime.stop.lock()
+    }
+
+    pub fn is_stopped_for_test(&self) -> bool {
+        *self.runtime.stop.lock()
     }
 
     pub fn runtime_payload_for_test(&self) -> HashMap<String, Arc<BaseEvent>> {
@@ -790,6 +802,7 @@ impl EventBus {
                 .get("event_handler_detect_file_paths")
                 .and_then(Value::as_bool)
                 .unwrap_or(true),
+            max_handler_recursion_depth: 2,
         };
         let name = payload
             .get("name")
@@ -915,6 +928,61 @@ impl EventBus {
             options.handler_file_path = Some(format!("{}:{}", caller.file(), caller.line()));
         }
         let callable: EventHandlerCallable = Arc::new(move |event| Box::pin(handler_fn(event)));
+        self.register_callable(pattern, handler_name, options, callable)
+    }
+
+    #[track_caller]
+    pub fn on_sync<F>(&self, pattern: &str, handler_name: &str, handler_fn: F) -> EventHandler
+    where
+        F: Fn(Arc<BaseEvent>) -> Result<Value, String> + Send + Sync + 'static,
+    {
+        self.on_sync_with_options(
+            pattern,
+            handler_name,
+            EventHandlerOptions::default(),
+            handler_fn,
+        )
+    }
+
+    #[track_caller]
+    pub fn on_sync_with_options<F>(
+        &self,
+        pattern: &str,
+        handler_name: &str,
+        mut options: EventHandlerOptions,
+        handler_fn: F,
+    ) -> EventHandler
+    where
+        F: Fn(Arc<BaseEvent>) -> Result<Value, String> + Send + Sync + 'static,
+    {
+        if let Some(timeout) = options.handler_timeout {
+            assert!(timeout > 0.0, "handler_timeout must be > 0 or None");
+        }
+        if let Some(timeout) = options.handler_slow_timeout {
+            assert!(timeout > 0.0, "handler_slow_timeout must be > 0 or None");
+        }
+        let detect_handler_file_path = options
+            .detect_handler_file_path
+            .unwrap_or(self.event_handler_detect_file_paths);
+        options.detect_handler_file_path = Some(detect_handler_file_path);
+        if detect_handler_file_path && options.handler_file_path.is_none() {
+            let caller = std::panic::Location::caller();
+            options.handler_file_path = Some(format!("{}:{}", caller.file(), caller.line()));
+        }
+        let callable: EventHandlerCallable = Arc::new(move |event| {
+            let result = handler_fn(event);
+            Box::pin(async move { result })
+        });
+        self.register_callable(pattern, handler_name, options, callable)
+    }
+
+    fn register_callable(
+        &self,
+        pattern: &str,
+        handler_name: &str,
+        options: EventHandlerOptions,
+        callable: EventHandlerCallable,
+    ) -> EventHandler {
         let entry = EventHandler::from_callable_with_options(
             pattern.to_string(),
             handler_name.to_string(),
@@ -1925,6 +1993,61 @@ impl EventBus {
         self.cancel_children(event, "first() resolved");
     }
 
+    fn handler_dispatched_ancestor(&self, event: &Arc<BaseEvent>, handler_id: &str) -> usize {
+        Self::handler_dispatched_ancestor_inner(
+            event,
+            handler_id,
+            &mut std::collections::HashSet::new(),
+            0,
+        )
+    }
+
+    fn handler_dispatched_ancestor_inner(
+        event: &Arc<BaseEvent>,
+        handler_id: &str,
+        visited: &mut std::collections::HashSet<String>,
+        depth: usize,
+    ) -> usize {
+        let (event_id, parent_id) = {
+            let inner = event.inner.lock();
+            (inner.event_id.clone(), inner.event_parent_id.clone())
+        };
+        if !visited.insert(event_id) {
+            return depth;
+        }
+        let Some(parent_id) = parent_id else {
+            return depth;
+        };
+
+        let parent_event = Self::live_instances()
+            .into_iter()
+            .find_map(|bus| bus.runtime.events.lock().get(&parent_id).cloned());
+        let Some(parent_event) = parent_event else {
+            return depth;
+        };
+
+        let parent_result_status = parent_event
+            .inner
+            .lock()
+            .event_results
+            .get(handler_id)
+            .map(|result| result.status);
+        let next_depth = if matches!(
+            parent_result_status,
+            Some(
+                EventResultStatus::Pending
+                    | EventResultStatus::Started
+                    | EventResultStatus::Completed
+            )
+        ) {
+            depth + 1
+        } else {
+            depth
+        };
+
+        Self::handler_dispatched_ancestor_inner(&parent_event, handler_id, visited, next_depth)
+    }
+
     async fn run_handler_with_context(
         &self,
         event: Arc<BaseEvent>,
@@ -1980,6 +2103,38 @@ impl EventBus {
         {
             return false;
         }
+
+        let recursion_depth = self.handler_dispatched_ancestor(&event, &handler.id);
+        if recursion_depth > self.max_handler_recursion_depth {
+            let mut result = existing_result.unwrap_or_else(|| {
+                EventResult::new(
+                    event.inner.lock().event_id.clone(),
+                    handler.clone(),
+                    result_timeout,
+                )
+            });
+            result.status = EventResultStatus::Error;
+            result.result = None;
+            result.error = Some(format!(
+                "Infinite loop detected: Handler {}.{} has recursively processed {} levels of events. Current event: {}, Handler: {}",
+                handler.eventbus_name,
+                handler.handler_name,
+                recursion_depth,
+                event.inner.lock().event_id,
+                handler.id
+            ));
+            if result.started_at.is_none() {
+                result.started_at = Some(now_iso());
+            }
+            result.completed_at = Some(now_iso());
+            event
+                .inner
+                .lock()
+                .event_results
+                .insert(handler.id.clone(), result);
+            return false;
+        }
+
         let mut result = existing_result.unwrap_or_else(|| {
             EventResult::new(
                 event.inner.lock().event_id.clone(),

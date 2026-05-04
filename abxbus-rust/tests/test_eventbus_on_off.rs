@@ -1,4 +1,5 @@
 use abxbus_rust::{
+    base_event::BaseEvent,
     event_bus::EventBus,
     event_handler::EventHandlerOptions,
     event_result::EventResultStatus,
@@ -183,15 +184,12 @@ fn test_on_accepts_handlers_and_dispatch_captures_return_values() {
     let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let calls_for_handler = calls.clone();
 
-    let entry = bus.on("work", "sync_handler", move |event| {
-        let calls = calls_for_handler.clone();
-        async move {
-            calls
-                .lock()
-                .expect("calls lock")
-                .push(event.inner.lock().event_id.clone());
-            Ok(json!("normalized"))
-        }
+    let entry = bus.on_sync("work", "sync_handler", move |event| {
+        calls_for_handler
+            .lock()
+            .expect("calls lock")
+            .push(event.inner.lock().event_id.clone());
+        Ok(json!("normalized"))
     });
 
     let dispatched = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
@@ -205,7 +203,90 @@ fn test_on_accepts_handlers_and_dispatch_captures_return_values() {
 }
 
 #[test]
-fn test_handler_async_preserves_typed_arg_return_contracts_for_typed_handlers() {
+fn test_on_normalizes_sync_handler_to_async_callable() {
+    let bus = EventBus::new(Some("RegistryNormalizeSyncBus".to_string()));
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let calls_for_handler = calls.clone();
+
+    let entry = bus.on_sync("work", "sync_handler", move |event| {
+        calls_for_handler
+            .lock()
+            .expect("calls lock")
+            .push(event.inner.lock().event_id.clone());
+        Ok(json!("normalized"))
+    });
+
+    let direct_event = BaseEvent::new("work", Default::default());
+    let direct_result = block_on((entry.callable.as_ref().expect("callable"))(
+        direct_event.clone(),
+    ))
+    .expect("direct sync wrapper");
+    assert_eq!(direct_result, json!("normalized"));
+
+    let dispatched = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(dispatched.wait_completed());
+    let result = dispatched.inner.inner.lock().event_results[&entry.id].clone();
+
+    assert_eq!(result.status, EventResultStatus::Completed);
+    assert_eq!(result.result, Some(json!("normalized")));
+    assert_eq!(calls.lock().expect("calls lock").len(), 2);
+    bus.stop();
+}
+
+#[test]
+fn test_on_keeps_async_handlers_normalized_through_handler_async() {
+    let bus = EventBus::new(Some("RegistryAsyncNormalizeBus".to_string()));
+    let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let calls_for_handler = calls.clone();
+
+    let entry = bus.on("work", "async_handler", move |event| {
+        let calls = calls_for_handler.clone();
+        async move {
+            calls
+                .lock()
+                .expect("calls lock")
+                .push(event.inner.lock().event_id.clone());
+            Ok(json!("async_normalized"))
+        }
+    });
+
+    let direct_event = BaseEvent::new("work", Default::default());
+    let direct_result = block_on((entry.callable.as_ref().expect("callable"))(direct_event))
+        .expect("direct async handler");
+    assert_eq!(direct_result, json!("async_normalized"));
+
+    let dispatched = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(dispatched.wait_completed());
+    let result = dispatched.inner.inner.lock().event_results[&entry.id].clone();
+
+    assert_eq!(result.status, EventResultStatus::Completed);
+    assert_eq!(result.result, Some(json!("async_normalized")));
+    assert_eq!(calls.lock().expect("calls lock").len(), 2);
+    bus.stop();
+}
+
+#[test]
+fn test_handler_async_preserves_typed_arg_return_contracts_for_sync_handlers() {
+    let bus = EventBus::new(Some("RegistryTypingSyncBus".to_string()));
+
+    let entry = bus.on_typed_sync::<RegistryTypingEvent, _>("typed_sync_handler", |event| {
+        Ok(event.payload().required_token)
+    });
+
+    let event = bus.emit::<RegistryTypingEvent>(TypedEvent::new(TokenPayload {
+        required_token: "sync".to_string(),
+    }));
+    block_on(event.wait_completed());
+
+    let result = event.inner.inner.lock().event_results[&entry.id].clone();
+    assert_eq!(result.status, EventResultStatus::Completed);
+    assert_eq!(result.result, Some(json!("sync")));
+    assert_eq!(event.first_result().as_deref(), Some("sync"));
+    bus.stop();
+}
+
+#[test]
+fn test_handler_async_preserves_typed_arg_return_contracts_for_async_handlers() {
     let bus = EventBus::new(Some("RegistryTypingSyncBus".to_string()));
 
     let entry = bus

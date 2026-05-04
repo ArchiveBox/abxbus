@@ -259,6 +259,35 @@ impl EventBus {
         })
     }
 
+    pub fn on_typed_sync<E, F>(&self, handler_name: &str, handler_fn: F) -> EventHandler
+    where
+        E: EventSpec,
+        F: Fn(TypedEvent<E>) -> Result<E::Result, String> + Send + Sync + 'static,
+    {
+        self.on_typed_sync_with_options::<E, _>(
+            handler_name,
+            EventHandlerOptions::default(),
+            handler_fn,
+        )
+    }
+
+    pub fn on_typed_sync_with_options<E, F>(
+        &self,
+        handler_name: &str,
+        options: EventHandlerOptions,
+        handler_fn: F,
+    ) -> EventHandler
+    where
+        E: EventSpec,
+        F: Fn(TypedEvent<E>) -> Result<E::Result, String> + Send + Sync + 'static,
+    {
+        self.on_sync_with_options(E::EVENT_TYPE, handler_name, options, move |event| {
+            let typed = TypedEvent::<E>::from_base_event(event);
+            let result = handler_fn(typed)?;
+            serde_json::to_value(result).map_err(|error| error.to_string())
+        })
+    }
+
     pub async fn find_typed<E: EventSpec>(
         &self,
         past: bool,
