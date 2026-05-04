@@ -230,6 +230,7 @@ impl EventBus {
                                 thread::spawn(move || {
                                     block_on(bus_for_task.process_event(event));
                                 });
+                                thread::sleep(Duration::from_millis(1));
                             }
                             EventConcurrencyMode::GlobalSerial
                             | EventConcurrencyMode::BusSerial => {
