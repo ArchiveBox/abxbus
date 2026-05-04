@@ -1473,24 +1473,53 @@ impl EventBus {
             }
             EventHandlerConcurrencyMode::Parallel => {
                 let mut join_handles = Vec::new();
-                for handler in handlers {
-                    let bus = self.clone();
-                    let event_clone = event.clone();
-                    join_handles.push(thread::spawn(move || {
-                        block_on(bus.run_handler_with_context(
-                            event_clone,
-                            handler,
-                            started_at,
-                            event_timeout,
-                        ))
-                    }));
-                }
-                for handle in join_handles {
-                    let _ = handle.join();
-                }
                 if handler_completion == EventHandlerCompletionMode::First {
-                    if let Some(winner_id) = self.winning_handler_id(&event) {
-                        self.cancel_parallel_first_mode_losers(&event, &winner_id);
+                    let (tx, rx) = std_mpsc::channel();
+                    let handler_count = handlers.len();
+                    for handler in handlers {
+                        let bus = self.clone();
+                        let event_clone = event.clone();
+                        let handler_id = handler.id.clone();
+                        let tx = tx.clone();
+                        thread::spawn(move || {
+                            let timed_out = block_on(bus.run_handler_with_context(
+                                event_clone,
+                                handler,
+                                started_at,
+                                event_timeout,
+                            ));
+                            let _ = tx.send((handler_id, timed_out));
+                        });
+                    }
+                    drop(tx);
+
+                    for _ in 0..handler_count {
+                        let Ok((_handler_id, timed_out)) = rx.recv() else {
+                            break;
+                        };
+                        if timed_out {
+                            break;
+                        }
+                        if let Some(winner_id) = self.winning_handler_id(&event) {
+                            self.cancel_parallel_first_mode_losers(&event, &winner_id);
+                            break;
+                        }
+                    }
+                } else {
+                    for handler in handlers {
+                        let bus = self.clone();
+                        let event_clone = event.clone();
+                        join_handles.push(thread::spawn(move || {
+                            block_on(bus.run_handler_with_context(
+                                event_clone,
+                                handler,
+                                started_at,
+                                event_timeout,
+                            ))
+                        }));
+                    }
+                    for handle in join_handles {
+                        let _ = handle.join();
                     }
                 }
             }
@@ -1627,6 +1656,10 @@ impl EventBus {
                 if result.status == EventResultStatus::Completed
                     && result.error.is_none()
                     && !matches!(result.result, None | Some(Value::Null))
+                    && !result
+                        .result
+                        .as_ref()
+                        .is_some_and(|value| BaseEvent::is_base_event_json(value))
                 {
                     Some((handler_id.clone(), result.clone()))
                 } else {
@@ -1710,6 +1743,8 @@ impl EventBus {
             }
             result.completed_at = Some(now_iso());
         }
+        drop(inner);
+        self.cancel_children(event, "first() resolved");
     }
 
     async fn run_handler_with_context(

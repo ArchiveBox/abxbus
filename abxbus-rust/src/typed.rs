@@ -130,7 +130,7 @@ impl<E: EventSpec> TypedEvent<E> {
         for result in ordered_results {
             if result.error.is_none() {
                 if let Some(value) = &result.result {
-                    if value.is_null() {
+                    if value.is_null() || BaseEvent::is_base_event_json(value) {
                         continue;
                     }
                     let decoded: E::Result =

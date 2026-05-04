@@ -256,7 +256,16 @@ impl BaseEvent {
     fn default_result_include(result: &EventResult) -> bool {
         result.status == EventResultStatus::Completed
             && result.error.is_none()
-            && result.result.as_ref().is_some_and(|value| !value.is_null())
+            && result
+                .result
+                .as_ref()
+                .is_some_and(|value| !value.is_null() && !Self::is_base_event_json(value))
+    }
+
+    pub(crate) fn is_base_event_json(value: &Value) -> bool {
+        value.as_object().is_some_and(|object| {
+            object.contains_key("event_type") && object.contains_key("event_id")
+        })
     }
 
     fn ordered_event_results(&self) -> Vec<EventResult> {

@@ -1,13 +1,21 @@
-use std::{thread, time::Duration};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    thread,
+    time::{Duration, Instant},
+};
 
 use abxbus_rust::{
+    base_event::BaseEvent,
     event_bus::EventBus,
     typed::{EventSpec, TypedEvent},
     types::{EventHandlerCompletionMode, EventHandlerConcurrencyMode},
 };
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 #[derive(Clone, Serialize, Deserialize)]
 struct EmptyPayload {}
@@ -238,6 +246,60 @@ fn test_event_handler_first_parallel_returns_earliest_completed_non_null_result(
 }
 
 #[test]
+fn test_event_first_parallel_returns_before_slow_loser_finishes() {
+    let bus = EventBus::new(Some("BusFirstParallelEarlyReturn".to_string()));
+    let slow_completed = Arc::new(AtomicBool::new(false));
+
+    bus.on("value", "fast_winner", |_event| async move {
+        thread::sleep(Duration::from_millis(10));
+        Ok(json!("fast"))
+    });
+
+    let slow_completed_for_handler = slow_completed.clone();
+    bus.on("value", "slow_loser", move |_event| {
+        let slow_completed = slow_completed_for_handler.clone();
+        async move {
+            thread::sleep(Duration::from_millis(400));
+            slow_completed.store(true, Ordering::SeqCst);
+            Ok(json!("slow"))
+        }
+    });
+
+    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    {
+        let mut inner = event.inner.inner.lock();
+        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
+        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
+    }
+    let event = bus.emit(event);
+
+    let started = Instant::now();
+    let result = block_on(event.first());
+
+    assert_eq!(result, Some(json!("fast")));
+    assert!(
+        started.elapsed() < Duration::from_millis(200),
+        "first() should resolve without waiting for slow losers"
+    );
+    assert!(!slow_completed.load(Ordering::SeqCst));
+    let results = event.inner.inner.lock().event_results.clone();
+    let slow_result = results
+        .values()
+        .find(|result| result.handler.handler_name == "slow_loser")
+        .expect("slow result");
+    assert_eq!(
+        slow_result.status,
+        abxbus_rust::event_result::EventResultStatus::Error
+    );
+    assert!(slow_result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("first() resolved"));
+    bus.stop();
+}
+
+#[test]
 fn test_event_first_returns_zero_as_valid_first_result() {
     let bus = EventBus::new(Some("BusFirstZero".to_string()));
 
@@ -254,5 +316,89 @@ fn test_event_first_returns_zero_as_valid_first_result() {
     block_on(event.wait_completed());
 
     assert_eq!(event.first_result(), Some(json!(0)));
+    bus.stop();
+}
+
+#[test]
+fn test_event_first_returns_none_when_all_handlers_return_null() {
+    let bus = EventBus::new(Some("BusFirstAllNull".to_string()));
+
+    bus.on("value", "null_a", |_event| async move { Ok(Value::Null) });
+    bus.on("value", "null_b", |_event| async move { Ok(Value::Null) });
+
+    let result = block_on(
+        bus.emit::<ValueEvent>(TypedEvent::new(EmptyPayload {}))
+            .first(),
+    );
+
+    assert_eq!(result, None);
+    bus.stop();
+}
+
+#[test]
+fn test_event_first_works_with_single_handler() {
+    let bus = EventBus::new(Some("BusFirstSingle".to_string()));
+
+    bus.on("value", "single", |_event| async move { Ok(json!(42)) });
+
+    let result = block_on(
+        bus.emit::<ValueEvent>(TypedEvent::new(EmptyPayload {}))
+            .first(),
+    );
+
+    assert_eq!(result, Some(json!(42)));
+    bus.stop();
+}
+
+#[test]
+fn test_event_first_skips_base_event_json_result_and_uses_next_winner() {
+    let bus = EventBus::new(Some("BusFirstSkipsBaseEventJson".to_string()));
+    let third_handler_called = Arc::new(AtomicBool::new(false));
+
+    bus.on("value", "base_event_result", |_event| async move {
+        Ok(BaseEvent::new("FirstBaseEventSkipChild", Map::new()).to_json_value())
+    });
+    bus.on(
+        "value",
+        "winner",
+        |_event| async move { Ok(json!("winner")) },
+    );
+    let third_called_for_handler = third_handler_called.clone();
+    bus.on("value", "third", move |_event| {
+        let third_handler_called = third_called_for_handler.clone();
+        async move {
+            third_handler_called.store(true, Ordering::SeqCst);
+            Ok(json!("third"))
+        }
+    });
+
+    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    {
+        let mut inner = event.inner.inner.lock();
+        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
+        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
+    }
+    let event = bus.emit(event);
+    block_on(event.wait_completed());
+
+    assert_eq!(event.first_result(), Some(json!("winner")));
+    assert!(!third_handler_called.load(Ordering::SeqCst));
+    let results = event.inner.inner.lock().event_results.clone();
+    assert!(results
+        .values()
+        .any(|result| result.handler.handler_name == "base_event_result"
+            && result.status == abxbus_rust::event_result::EventResultStatus::Completed
+            && result.result.as_ref().is_some_and(
+                |value| value.get("event_type") == Some(&json!("FirstBaseEventSkipChild"))
+            )));
+    assert!(results.values().any(|result| {
+        result.handler.handler_name == "third"
+            && result.status == abxbus_rust::event_result::EventResultStatus::Error
+            && result
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Cancelled: first() resolved")
+    }));
     bus.stop();
 }
