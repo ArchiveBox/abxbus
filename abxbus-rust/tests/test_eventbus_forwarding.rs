@@ -144,6 +144,106 @@ fn test_events_forward_between_buses_without_duplication() {
 }
 
 #[test]
+fn test_tresultsee_level_hierarchy_bubbling() {
+    let parent_bus = EventBus::new(Some("ParentBus".to_string()));
+    let child_bus = EventBus::new(Some("ChildBus".to_string()));
+    let subchild_bus = EventBus::new(Some("SubchildBus".to_string()));
+
+    let events_at_parent = Arc::new(Mutex::new(Vec::new()));
+    let events_at_child = Arc::new(Mutex::new(Vec::new()));
+    let events_at_subchild = Arc::new(Mutex::new(Vec::new()));
+
+    for (bus, seen, handler_name) in [
+        (parent_bus.clone(), events_at_parent.clone(), "parent_seen"),
+        (child_bus.clone(), events_at_child.clone(), "child_seen"),
+        (
+            subchild_bus.clone(),
+            events_at_subchild.clone(),
+            "subchild_seen",
+        ),
+    ] {
+        bus.on("PingEvent", handler_name, move |event| {
+            let seen = seen.clone();
+            async move {
+                seen.lock()
+                    .expect("seen lock")
+                    .push(event.inner.lock().event_id.clone());
+                Ok(json!(null))
+            }
+        });
+    }
+
+    let parent_for_forward = parent_bus.clone();
+    child_bus.on("*", "forward_to_parent", move |event| {
+        let parent_bus = parent_for_forward.clone();
+        async move {
+            parent_bus.emit_base(event);
+            Ok(json!(null))
+        }
+    });
+    let child_for_forward = child_bus.clone();
+    subchild_bus.on("*", "forward_to_child", move |event| {
+        let child_bus = child_for_forward.clone();
+        async move {
+            child_bus.emit_base(event);
+            Ok(json!(null))
+        }
+    });
+
+    let bottom = subchild_bus.emit::<PingEvent>(TypedEvent::new(PingPayload { value: 1 }));
+    block_on(bottom.wait_completed());
+    block_on(subchild_bus.wait_until_idle(None));
+    block_on(child_bus.wait_until_idle(None));
+    block_on(parent_bus.wait_until_idle(None));
+
+    let bottom_id = bottom.inner.inner.lock().event_id.clone();
+    assert_eq!(
+        events_at_subchild.lock().expect("subchild lock").as_slice(),
+        &[bottom_id.clone()]
+    );
+    assert_eq!(
+        events_at_child.lock().expect("child lock").as_slice(),
+        &[bottom_id.clone()]
+    );
+    assert_eq!(
+        events_at_parent.lock().expect("parent lock").as_slice(),
+        &[bottom_id]
+    );
+    assert_eq!(
+        bottom.inner.inner.lock().event_path,
+        vec![subchild_bus.label(), child_bus.label(), parent_bus.label()]
+    );
+
+    events_at_parent.lock().expect("parent lock").clear();
+    events_at_child.lock().expect("child lock").clear();
+    events_at_subchild.lock().expect("subchild lock").clear();
+
+    let middle = child_bus.emit::<PingEvent>(TypedEvent::new(PingPayload { value: 2 }));
+    block_on(middle.wait_completed());
+    block_on(child_bus.wait_until_idle(None));
+    block_on(parent_bus.wait_until_idle(None));
+
+    let middle_id = middle.inner.inner.lock().event_id.clone();
+    assert!(events_at_subchild.lock().expect("subchild lock").is_empty());
+    assert_eq!(
+        events_at_child.lock().expect("child lock").as_slice(),
+        &[middle_id.clone()]
+    );
+    assert_eq!(
+        events_at_parent.lock().expect("parent lock").as_slice(),
+        &[middle_id]
+    );
+    assert_eq!(
+        middle.inner.inner.lock().event_path,
+        vec![child_bus.label(), parent_bus.label()]
+    );
+
+    parent_bus.stop();
+    child_bus.stop();
+    subchild_bus.stop();
+}
+
+#[test]
 fn test_forwarding_disambiguates_buses_that_share_the_same_name() {
     let bus_a = EventBus::new(Some("SharedName".to_string()));
     let bus_b = EventBus::new(Some("SharedName".to_string()));
@@ -205,7 +305,7 @@ fn test_forwarding_disambiguates_buses_that_share_the_same_name() {
 }
 
 #[test]
-fn test_circular_forwarding_a_to_b_to_c_to_a_does_not_loop() {
+fn test_circular_subscription_prevention() {
     let peer1 = EventBus::new(Some("Peer1".to_string()));
     let peer2 = EventBus::new(Some("Peer2".to_string()));
     let peer3 = EventBus::new(Some("Peer3".to_string()));
@@ -278,9 +378,104 @@ fn test_circular_forwarding_a_to_b_to_c_to_a_does_not_loop() {
         event.inner.inner.lock().event_path,
         vec![peer1.label(), peer2.label(), peer3.label()]
     );
+
+    events_at_peer1.lock().expect("peer1 lock").clear();
+    events_at_peer2.lock().expect("peer2 lock").clear();
+    events_at_peer3.lock().expect("peer3 lock").clear();
+
+    let event2 = peer2.emit::<PingEvent>(TypedEvent::new(PingPayload { value: 99 }));
+    block_on(event2.wait_completed());
+    block_on(peer1.wait_until_idle(None));
+    block_on(peer2.wait_until_idle(None));
+    block_on(peer3.wait_until_idle(None));
+
+    let event2_id = event2.inner.inner.lock().event_id.clone();
+    assert_eq!(
+        events_at_peer1.lock().expect("peer1 lock").as_slice(),
+        &[event2_id.clone()]
+    );
+    assert_eq!(
+        events_at_peer2.lock().expect("peer2 lock").as_slice(),
+        &[event2_id.clone()]
+    );
+    assert_eq!(
+        events_at_peer3.lock().expect("peer3 lock").as_slice(),
+        &[event2_id]
+    );
+    assert_eq!(
+        event2.inner.inner.lock().event_path,
+        vec![peer2.label(), peer3.label(), peer1.label()]
+    );
     peer1.stop();
     peer2.stop();
     peer3.stop();
+}
+
+#[test]
+fn test_forwarding_loop_prevention() {
+    let bus_a = EventBus::new(Some("ForwardBusA".to_string()));
+    let bus_b = EventBus::new(Some("ForwardBusB".to_string()));
+    let bus_c = EventBus::new(Some("ForwardBusC".to_string()));
+
+    let seen_a = Arc::new(Mutex::new(0));
+    let seen_b = Arc::new(Mutex::new(0));
+    let seen_c = Arc::new(Mutex::new(0));
+
+    for (bus, seen, handler_name) in [
+        (bus_a.clone(), seen_a.clone(), "seen_a"),
+        (bus_b.clone(), seen_b.clone(), "seen_b"),
+        (bus_c.clone(), seen_c.clone(), "seen_c"),
+    ] {
+        bus.on("PingEvent", handler_name, move |_event| {
+            let seen = seen.clone();
+            async move {
+                *seen.lock().expect("seen lock") += 1;
+                Ok(json!(null))
+            }
+        });
+    }
+
+    let bus_b_for_forward = bus_b.clone();
+    bus_a.on("*", "forward_to_b", move |event| {
+        let bus_b = bus_b_for_forward.clone();
+        async move {
+            bus_b.emit_base(event);
+            Ok(json!(null))
+        }
+    });
+    let bus_c_for_forward = bus_c.clone();
+    bus_b.on("*", "forward_to_c", move |event| {
+        let bus_c = bus_c_for_forward.clone();
+        async move {
+            bus_c.emit_base(event);
+            Ok(json!(null))
+        }
+    });
+    let bus_a_for_forward = bus_a.clone();
+    bus_c.on("*", "forward_to_a", move |event| {
+        let bus_a = bus_a_for_forward.clone();
+        async move {
+            bus_a.emit_base(event);
+            Ok(json!(null))
+        }
+    });
+
+    let event = bus_a.emit::<PingEvent>(TypedEvent::new(PingPayload { value: 7 }));
+    block_on(event.wait_completed());
+    block_on(bus_a.wait_until_idle(None));
+    block_on(bus_b.wait_until_idle(None));
+    block_on(bus_c.wait_until_idle(None));
+
+    assert_eq!(*seen_a.lock().expect("seen_a lock"), 1);
+    assert_eq!(*seen_b.lock().expect("seen_b lock"), 1);
+    assert_eq!(*seen_c.lock().expect("seen_c lock"), 1);
+    assert_eq!(
+        event.inner.inner.lock().event_path,
+        vec![bus_a.label(), bus_b.label(), bus_c.label()]
+    );
+    bus_a.stop();
+    bus_b.stop();
+    bus_c.stop();
 }
 
 #[test]

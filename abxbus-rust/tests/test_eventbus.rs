@@ -48,6 +48,41 @@ impl EventSpec for UserActionEvent {
     const EVENT_TYPE: &'static str = "UserActionEvent";
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+struct VersionPayload {
+    data: String,
+}
+
+struct VersionedEvent;
+impl EventSpec for VersionedEvent {
+    type Payload = VersionPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "VersionedEvent";
+    const EVENT_VERSION: &'static str = "1.2.3";
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct CreateAgentTaskPayload {
+    user_id: String,
+    agent_session_id: String,
+    llm_model: String,
+    task: String,
+}
+
+struct CreateAgentTaskEvent;
+impl EventSpec for CreateAgentTaskEvent {
+    type Payload = CreateAgentTaskPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "CreateAgentTaskEvent";
+}
+
+struct ExplicitOverrideEvent;
+impl EventSpec for ExplicitOverrideEvent {
+    type Payload = VersionPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "CustomEventType";
+}
+
 struct RuntimeSerializationEvent;
 impl EventSpec for RuntimeSerializationEvent {
     type Payload = EmptyPayload;
@@ -241,6 +276,76 @@ fn test_event_with_no_handlers_completes_immediately() {
 }
 
 #[test]
+fn test_emit_and_result() {
+    let bus = EventBus::new(Some("EmitAndResultBus".to_string()));
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let release_rx = Arc::new(Mutex::new(release_rx));
+
+    bus.on("UserActionEvent", "user_action_handler", move |_event| {
+        let started_tx = started_tx.clone();
+        let release_rx = release_rx.clone();
+        async move {
+            let _ = started_tx.send(());
+            release_rx
+                .lock()
+                .expect("release lock")
+                .recv_timeout(Duration::from_secs(2))
+                .expect("release signal");
+            Ok(json!("handled"))
+        }
+    });
+
+    let event = base_event(
+        "UserActionEvent",
+        json!({
+            "action": "login",
+            "user_id": "50d357df-e68c-7111-8a6c-7018569514b0"
+        }),
+    );
+    event.inner.lock().event_timeout = Some(1.0);
+    let queued = bus.emit_base(event.clone());
+
+    assert!(Arc::ptr_eq(&queued, &event));
+    {
+        let inner = queued.inner.lock();
+        assert_eq!(inner.event_type, "UserActionEvent");
+        assert_eq!(inner.event_version, "0.0.1");
+        assert_eq!(inner.payload["action"], json!("login"));
+        assert_eq!(
+            inner.payload["user_id"],
+            json!("50d357df-e68c-7111-8a6c-7018569514b0")
+        );
+        assert!(!inner.event_id.is_empty());
+        assert!(!inner.event_created_at.is_empty());
+        assert!(inner.event_completed_at.is_none());
+        assert_eq!(inner.event_timeout, Some(1.0));
+    }
+
+    started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("handler should start");
+    {
+        let inner = queued.inner.lock();
+        assert_eq!(inner.event_status, EventStatus::Started);
+        assert!(inner.event_started_at.is_some());
+        assert!(inner.event_completed_at.is_none());
+    }
+
+    release_tx.send(()).expect("release handler");
+    block_on(queued.event_completed());
+
+    let inner = queued.inner.lock();
+    assert_eq!(inner.event_status, EventStatus::Completed);
+    assert!(inner.event_started_at.is_some());
+    assert!(inner.event_completed_at.is_some());
+    assert_eq!(inner.event_results.len(), 1);
+    drop(inner);
+    assert_eq!(bus.event_history_size(), 1);
+    bus.stop();
+}
+
+#[test]
 fn test_dispatched_events_appear_in_event_history() {
     let bus = EventBus::new(Some("HistoryBus".to_string()));
     let event_a = bus.emit_base(base_event("EventA", json!({})));
@@ -257,6 +362,48 @@ fn test_dispatched_events_appear_in_event_history() {
     let runtime = bus.runtime_payload_for_test();
     assert_eq!(runtime[&history_ids[0]].inner.lock().event_type, "EventA");
     assert_eq!(runtime[&history_ids[1]].inner.lock().event_type, "EventB");
+    bus.stop();
+}
+
+#[test]
+fn test_write_ahead_log_captures_all_events() {
+    let bus = EventBus::new(Some("WriteAheadLogBus".to_string()));
+    bus.on("UserActionEvent", "handler", |_event| async move {
+        Ok(json!("done"))
+    });
+
+    for action in 0..5 {
+        bus.emit_base(base_event(
+            "UserActionEvent",
+            json!({"action": format!("action_{action}")}),
+        ));
+    }
+
+    assert!(block_on(bus.wait_until_idle(Some(2.0))));
+
+    let history_ids = bus.event_history_ids();
+    let runtime = bus.runtime_payload_for_test();
+    assert_eq!(history_ids.len(), 5);
+
+    let mut completed = 0;
+    let mut pending = 0;
+    let mut started = 0;
+    for (index, event_id) in history_ids.iter().enumerate() {
+        let event = runtime.get(event_id).expect("history event");
+        let inner = event.inner.lock();
+        assert_eq!(inner.event_type, "UserActionEvent");
+        assert_eq!(inner.payload["action"], json!(format!("action_{index}")));
+        match inner.event_status {
+            EventStatus::Completed => completed += 1,
+            EventStatus::Pending => pending += 1,
+            EventStatus::Started => started += 1,
+        }
+    }
+
+    assert_eq!(completed + pending + started, 5);
+    assert_eq!(completed, 5);
+    assert_eq!(pending, 0);
+    assert_eq!(started, 0);
     bus.stop();
 }
 
@@ -403,6 +550,56 @@ fn test_handler_registration_by_string_matches_extend_name() {
     assert_eq!(
         received.lock().expect("received lock").as_slice(),
         &["string_handler".to_string()]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_class_matcher_matches_generic_base_event_by_event_type() {
+    let bus = EventBus::new(Some("GenericClassMatcherBus".to_string()));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+
+    for (handler_name, prefix) in [("class_handler", "class"), ("string_handler", "string")] {
+        let seen = seen.clone();
+        bus.on("DifferentNameFromClass", handler_name, move |event| {
+            let seen = seen.clone();
+            async move {
+                seen.lock()
+                    .expect("seen lock")
+                    .push(format!("{prefix}:{}", event.inner.lock().event_type));
+                Ok(json!(null))
+            }
+        });
+    }
+
+    let seen_for_wildcard = seen.clone();
+    bus.on("*", "wildcard_handler", move |event| {
+        let seen = seen_for_wildcard.clone();
+        async move {
+            seen.lock()
+                .expect("seen lock")
+                .push(format!("wildcard:{}", event.inner.lock().event_type));
+            Ok(json!(null))
+        }
+    });
+
+    let event = bus.emit_base(base_event("DifferentNameFromClass", json!({})));
+    block_on(event.event_completed());
+
+    assert_eq!(
+        seen.lock().expect("seen lock").as_slice(),
+        &[
+            "class:DifferentNameFromClass".to_string(),
+            "string:DifferentNameFromClass".to_string(),
+            "wildcard:DifferentNameFromClass".to_string(),
+        ]
+    );
+    assert_eq!(
+        bus.to_json_value()["handlers_by_key"]["DifferentNameFromClass"]
+            .as_array()
+            .expect("handler ids")
+            .len(),
+        2
     );
     bus.stop();
 }
@@ -802,6 +999,179 @@ fn test_handler_registration() {
 }
 
 #[test]
+fn test_event_subclass_type() {
+    let bus = EventBus::new(Some("EventSubclassTypeBus".to_string()));
+    let event = TypedEvent::<CreateAgentTaskEvent>::new(CreateAgentTaskPayload {
+        user_id: "371bbd3c-5231-7ff0-8aef-e63732a8d40f".to_string(),
+        agent_session_id: "12345678-1234-5678-1234-567812345678".to_string(),
+        llm_model: "test-model".to_string(),
+        task: "test task".to_string(),
+    });
+
+    let result = bus.emit(event);
+    assert_eq!(result.inner.inner.lock().event_type, "CreateAgentTaskEvent");
+    block_on(result.wait_completed());
+    bus.stop();
+}
+
+#[test]
+fn test_event_type_and_version_identity_fields() {
+    let bus = EventBus::new(Some("IdentityFieldsBus".to_string()));
+
+    let base = base_event("TestEvent", json!({}));
+    assert_eq!(base.inner.lock().event_type, "TestEvent");
+    assert_eq!(base.inner.lock().event_version, "0.0.1");
+
+    let task = TypedEvent::<CreateAgentTaskEvent>::new(CreateAgentTaskPayload {
+        user_id: "371bbd3c-5231-7ff0-8aef-e63732a8d40f".to_string(),
+        agent_session_id: "12345678-1234-5678-1234-567812345678".to_string(),
+        llm_model: "test-model".to_string(),
+        task: "test task".to_string(),
+    });
+    assert_eq!(task.inner.inner.lock().event_type, "CreateAgentTaskEvent");
+    assert_eq!(task.inner.inner.lock().event_version, "0.0.1");
+
+    let expected_type = task.inner.inner.lock().event_type.clone();
+    let expected_version = task.inner.inner.lock().event_version.clone();
+    let emitted = bus.emit(task);
+    assert_eq!(emitted.inner.inner.lock().event_type, expected_type);
+    assert_eq!(emitted.inner.inner.lock().event_version, expected_version);
+    block_on(emitted.wait_completed());
+    bus.stop();
+}
+
+#[test]
+fn test_event_version_defaults_and_overrides() {
+    let bus = EventBus::new(Some("VersionFieldsBus".to_string()));
+
+    let base = base_event("TestVersionEvent", json!({}));
+    assert_eq!(base.inner.lock().event_version, "0.0.1");
+
+    let class_default = TypedEvent::<VersionedEvent>::new(VersionPayload {
+        data: "x".to_string(),
+    });
+    assert_eq!(class_default.inner.inner.lock().event_version, "1.2.3");
+
+    let runtime_override = TypedEvent::<VersionedEvent>::new(VersionPayload {
+        data: "x".to_string(),
+    });
+    runtime_override.inner.inner.lock().event_version = "9.9.9".to_string();
+    assert_eq!(runtime_override.inner.inner.lock().event_version, "9.9.9");
+
+    let dispatched = bus.emit(TypedEvent::<VersionedEvent>::new(VersionPayload {
+        data: "queued".to_string(),
+    }));
+    assert_eq!(dispatched.inner.inner.lock().event_version, "1.2.3");
+    block_on(dispatched.wait_completed());
+
+    let restored = BaseEvent::from_json_value(dispatched.inner.to_json_value());
+    assert_eq!(restored.inner.lock().event_version, "1.2.3");
+    assert_eq!(restored.inner.lock().event_type, "VersionedEvent");
+    assert_eq!(restored.inner.lock().payload["data"], json!("queued"));
+    bus.stop();
+}
+
+#[test]
+fn test_automatic_event_type_derivation() {
+    let bus = EventBus::new(Some("AutomaticEventTypeBus".to_string()));
+    let received = Arc::new(Mutex::new(Vec::new()));
+
+    let user = TypedEvent::<UserActionEvent>::new(EmptyPayload {});
+    assert_eq!(user.inner.inner.lock().event_type, "UserActionEvent");
+    let system = TypedEvent::<RuntimeSerializationEvent>::new(EmptyPayload {});
+    assert_eq!(
+        system.inner.inner.lock().event_type,
+        "RuntimeSerializationEvent"
+    );
+
+    let received_for_user = received.clone();
+    bus.on("UserActionEvent", "user_handler", move |event| {
+        let received = received_for_user.clone();
+        async move {
+            received
+                .lock()
+                .expect("received lock")
+                .push(event.inner.lock().event_type.clone());
+            Ok(json!(null))
+        }
+    });
+    let received_for_system = received.clone();
+    bus.on(
+        "RuntimeSerializationEvent",
+        "system_handler",
+        move |event| {
+            let received = received_for_system.clone();
+            async move {
+                received
+                    .lock()
+                    .expect("received lock")
+                    .push(event.inner.lock().event_type.clone());
+                Ok(json!(null))
+            }
+        },
+    );
+
+    let user = bus.emit(user);
+    let system = bus.emit(system);
+    block_on(async {
+        user.wait_completed().await;
+        system.wait_completed().await;
+        assert!(bus.wait_until_idle(Some(1.0)).await);
+    });
+
+    assert_eq!(
+        received.lock().expect("received lock").as_slice(),
+        &[
+            "UserActionEvent".to_string(),
+            "RuntimeSerializationEvent".to_string(),
+        ]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_explicit_event_type_override() {
+    let bus = EventBus::new(Some("ExplicitEventTypeBus".to_string()));
+    let received = Arc::new(Mutex::new(Vec::new()));
+
+    let received_for_custom = received.clone();
+    bus.on("CustomEventType", "custom_handler", move |event| {
+        let received = received_for_custom.clone();
+        async move {
+            received
+                .lock()
+                .expect("received lock")
+                .push(event.inner.lock().event_type.clone());
+            Ok(json!(null))
+        }
+    });
+    let received_for_default = received.clone();
+    bus.on("ExplicitOverrideEvent", "default_handler", move |event| {
+        let received = received_for_default.clone();
+        async move {
+            received
+                .lock()
+                .expect("received lock")
+                .push(event.inner.lock().event_type.clone());
+            Ok(json!(null))
+        }
+    });
+
+    let event = TypedEvent::<ExplicitOverrideEvent>::new(VersionPayload {
+        data: "test".to_string(),
+    });
+    assert_eq!(event.inner.inner.lock().event_type, "CustomEventType");
+    let event = bus.emit(event);
+    block_on(event.wait_completed());
+
+    assert_eq!(
+        received.lock().expect("received lock").as_slice(),
+        &["CustomEventType".to_string()]
+    );
+    bus.stop();
+}
+
+#[test]
 fn test_multiple_handlers_parallel() {
     let bus = EventBus::new_with_options(
         Some("MultipleHandlersParallelBus".to_string()),
@@ -897,8 +1267,7 @@ fn test_concurrent_emit_calls() {
     bus.stop();
 }
 
-#[test]
-fn test_mixed_delay_handlers_maintain_order() {
+fn assert_mixed_delay_handlers_maintain_order() {
     let bus = EventBus::new(Some("MixedDelayOrderBus".to_string()));
     let collected_orders = Arc::new(Mutex::new(Vec::new()));
     let handler_start_orders = Arc::new(Mutex::new(Vec::new()));
@@ -950,6 +1319,16 @@ fn test_mixed_delay_handlers_maintain_order() {
         expected.as_slice()
     );
     bus.stop();
+}
+
+#[test]
+fn test_fifo_with_varying_handler_delays() {
+    assert_mixed_delay_handlers_maintain_order();
+}
+
+#[test]
+fn test_mixed_delay_handlers_maintain_order() {
+    assert_mixed_delay_handlers_maintain_order();
 }
 
 #[test]

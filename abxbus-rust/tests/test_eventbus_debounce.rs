@@ -124,7 +124,7 @@ fn test_simple_debounce_with_child_of_reuses_recent_event() {
 }
 
 #[test]
-fn test_advanced_debounce_prefers_history_then_waits_future_then_dispatches() {
+fn test_debounce_uses_future_match_before_dispatch_fallback() {
     let bus = EventBus::new(Some("AdvancedDebounceBus".to_string()));
     let bus_for_find = bus.clone();
     let bus_for_emit = bus.clone();
@@ -155,7 +155,7 @@ fn test_advanced_debounce_prefers_history_then_waits_future_then_dispatches() {
 }
 
 #[test]
-fn test_returns_existing_fresh_event() {
+fn test_debounce_prefers_recent_history() {
     let bus = EventBus::new(Some("DebounceFreshBus".to_string()));
     bus.on("ScreenshotEvent", "complete", |_event| async move {
         Ok(json!("done"))
@@ -190,7 +190,7 @@ fn test_returns_existing_fresh_event() {
 }
 
 #[test]
-fn test_dispatches_new_when_no_match() {
+fn test_debounce_dispatches_when_recent_missing() {
     let bus = EventBus::new(Some("DebounceNoMatchBus".to_string()));
     bus.on("ScreenshotEvent", "complete", |_event| async move {
         Ok(json!("done"))

@@ -400,6 +400,10 @@ impl EventBus {
         self.runtime.history_order.lock().iter().cloned().collect()
     }
 
+    pub fn find_waiter_count_for_test(&self) -> usize {
+        self.runtime.find_waiters.lock().len()
+    }
+
     pub fn to_json_value(&self) -> Value {
         let handlers_by_pattern = self.handlers.lock().clone();
         let mut handlers = Map::new();

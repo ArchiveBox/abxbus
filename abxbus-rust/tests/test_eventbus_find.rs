@@ -421,7 +421,7 @@ fn test_find_past_result_retains_origin_bus_label_in_event_path() {
 }
 
 #[test]
-fn test_find_past_float_filters_by_time_window() {
+fn test_find_past_respects_time_window() {
     let bus = EventBus::new(Some("FindPastFloatBus".to_string()));
     bus.on("work", "complete", |_event| async move { Ok(json!("ok")) });
 
@@ -479,7 +479,7 @@ fn test_find_past_returns_null_when_all_events_are_too_old() {
 }
 
 #[test]
-fn test_find_future_waits_for_new_event() {
+fn test_find_future_basic() {
     let bus = EventBus::new(Some("FindFutureBus".to_string()));
     let bus_for_emit = bus.clone();
 
@@ -509,7 +509,7 @@ fn test_find_future_works_with_string_event_keys() {
 }
 
 #[test]
-fn test_future_class_pattern_matches_generic_base_event_by_event_type() {
+fn test_find_future_with_model_class() {
     let bus = EventBus::new(Some("FindFutureClassPatternBus".to_string()));
     let bus_for_emit = bus.clone();
 
@@ -605,7 +605,7 @@ fn test_find_future_ignores_already_dispatched_in_flight_events_when_past_false(
 }
 
 #[test]
-fn test_find_future_times_out_when_no_event_arrives() {
+fn test_find_future_timeout() {
     let bus = EventBus::new(Some("FindFutureTimeoutBus".to_string()));
 
     let start = Instant::now();
@@ -613,6 +613,36 @@ fn test_find_future_times_out_when_no_event_arrives() {
 
     assert!(found.is_none());
     assert!(start.elapsed() >= Duration::from_millis(30));
+    bus.stop();
+}
+
+#[test]
+fn test_find_waiter_cleanup() {
+    let bus = EventBus::new(Some("FindWaiterCleanupBus".to_string()));
+    let initial_waiters = bus.find_waiter_count_for_test();
+
+    let missing = block_on(bus.find("missing", false, Some(0.05), None));
+    assert!(missing.is_none());
+    assert_eq!(bus.find_waiter_count_for_test(), initial_waiters);
+
+    let bus_for_find = bus.clone();
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let found = block_on(bus_for_find.find("work", false, Some(0.5), None));
+        tx.send(found.map(|event| event.inner.lock().event_id.clone()))
+            .expect("send find result");
+    });
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(bus.find_waiter_count_for_test(), initial_waiters + 1);
+
+    let event = bus.emit::<WorkEvent>(TypedEvent::<WorkEvent>::new(EmptyPayload {}));
+    let found_id = rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("find should finish")
+        .expect("find should match");
+    assert_eq!(found_id, event.inner.inner.lock().event_id);
+    assert_eq!(bus.find_waiter_count_for_test(), initial_waiters);
+    block_on(event.wait_completed());
     bus.stop();
 }
 
@@ -946,7 +976,7 @@ fn test_find_where_filter_works_with_future_waiting() {
 }
 
 #[test]
-fn test_find_with_include_style_filter() {
+fn test_find_future_with_predicate() {
     let bus = EventBus::new(Some("FindIncludeFilterBus".to_string()));
     let bus_for_emit = bus.clone();
 
@@ -980,6 +1010,53 @@ fn test_find_with_include_style_filter() {
         found.inner.lock().payload.get("value"),
         Some(&json!("included"))
     );
+    bus.stop();
+}
+
+#[test]
+fn test_find_with_complex_predicate() {
+    let bus = EventBus::new(Some("FindComplexPredicateBus".to_string()));
+    let bus_for_emit = bus.clone();
+    let events_seen = Arc::new(Mutex::new(Vec::new()));
+    let events_seen_for_predicate = events_seen.clone();
+
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(20));
+        for (value, category) in [
+            ("first", "ignored"),
+            ("second", "ignored"),
+            ("target", "early"),
+            ("target", "final"),
+        ] {
+            bus_for_emit.emit::<FilterEvent>(TypedEvent::new(FilterPayload {
+                value: value.to_string(),
+                category: category.to_string(),
+            }));
+        }
+    });
+
+    let found = block_on(bus.find_with_options(
+        "filter_event",
+        FindOptions {
+            past: false,
+            future: Some(0.5),
+            where_predicate: Some(Arc::new(move |event| {
+                let value = payload_string(event, "value").unwrap_or_default();
+                let mut seen = events_seen_for_predicate.lock().expect("seen lock");
+                let matches = seen.len() >= 3 && value == "target";
+                seen.push(value);
+                matches
+            })),
+            ..FindOptions::default()
+        },
+    ))
+    .expect("complex predicate should match");
+
+    assert_eq!(
+        found.inner.lock().payload.get("category"),
+        Some(&json!("final"))
+    );
+    assert_eq!(events_seen.lock().expect("seen lock").len(), 4);
     bus.stop();
 }
 
@@ -1141,7 +1218,7 @@ fn test_find_wildcard_with_where_filter_works_for_future_waiting() {
 }
 
 #[test]
-fn test_find_with_multiple_concurrent_waiters_resolves_correct_events() {
+fn test_multiple_concurrent_future_finds() {
     let bus = EventBus::new(Some("FindConcurrentBus".to_string()));
     let bus_normal = bus.clone();
     let bus_special = bus.clone();
@@ -1579,7 +1656,7 @@ fn test_find_catches_child_event_that_fired_during_parent_handler() {
 }
 
 #[test]
-fn test_find_past_includes_in_progress_dispatched_events() {
+fn test_find_past_can_match_incomplete_events() {
     let bus = EventBus::new(Some("FindDispatchedPastBus".to_string()));
 
     bus.on("work", "slow", |_event| async move {
@@ -1661,7 +1738,7 @@ fn test_most_recent_wins_across_completed_and_inflight() {
 }
 
 #[test]
-fn test_find_future_resolves_on_dispatch_before_completion() {
+fn test_find_future_receives_dispatched_event_before_completion() {
     let bus = EventBus::new(Some("FindOnDispatchBus".to_string()));
     let bus_for_emit = bus.clone();
 
