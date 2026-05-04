@@ -174,6 +174,43 @@ fn test_find_past_result_retains_origin_bus_label_in_event_path() {
 }
 
 #[test]
+fn test_find_past_float_filters_by_time_window() {
+    let bus = EventBus::new(Some("FindPastFloatBus".to_string()));
+    bus.on("work", "complete", |_event| async move { Ok(json!("ok")) });
+
+    let old_event = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(old_event.wait_completed());
+    old_event.inner.inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
+
+    let stale = block_on(bus.find_with_options(
+        "work",
+        FindOptions {
+            past: true,
+            past_window: Some(0.01),
+            ..FindOptions::default()
+        },
+    ));
+    assert!(stale.is_none());
+
+    let fresh_event = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(fresh_event.wait_completed());
+
+    let fresh = block_on(bus.find_with_options(
+        "work",
+        FindOptions {
+            past: true,
+            past_window: Some(1.0),
+            ..FindOptions::default()
+        },
+    ))
+    .expect("fresh event should be within window");
+    let found_id = fresh.inner.lock().event_id.clone();
+    let fresh_event_id = fresh_event.inner.inner.lock().event_id.clone();
+    assert_eq!(found_id, fresh_event_id);
+    bus.stop();
+}
+
+#[test]
 fn test_find_future_waits_for_new_event() {
     let bus = EventBus::new(Some("FindFutureBus".to_string()));
     let bus_for_emit = bus.clone();
@@ -526,6 +563,55 @@ fn test_find_child_of_returns_grandchild_event() {
         grandchild.inner.lock().event_parent_id,
         child_id.lock().expect("child id lock").clone()
     );
+    bus.stop();
+}
+
+#[test]
+fn test_find_with_child_of_and_past_float() {
+    let bus = EventBus::new(Some("FindChildPastFloatBus".to_string()));
+    let bus_for_parent = bus.clone();
+
+    bus.on("parent", "emit_child", move |_event| {
+        let bus = bus_for_parent.clone();
+        async move {
+            let child = bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            child.wait_completed().await;
+            Ok(json!("parent"))
+        }
+    });
+    bus.on("child", "complete_child", |_event| async move {
+        Ok(json!("child"))
+    });
+
+    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(parent.wait_completed());
+
+    let found = block_on(bus.find_with_options(
+        "child",
+        FindOptions {
+            past: true,
+            past_window: Some(1.0),
+            child_of: Some(parent.inner.clone()),
+            ..FindOptions::default()
+        },
+    ))
+    .expect("child should be within past window");
+    assert_eq!(
+        found.inner.lock().event_parent_id.as_deref(),
+        Some(parent.inner.inner.lock().event_id.as_str())
+    );
+
+    found.inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
+    let stale = block_on(bus.find_with_options(
+        "child",
+        FindOptions {
+            past: true,
+            past_window: Some(0.01),
+            child_of: Some(parent.inner.clone()),
+            ..FindOptions::default()
+        },
+    ));
+    assert!(stale.is_none());
     bus.stop();
 }
 

@@ -92,6 +92,7 @@ pub struct EventBusOptions {
 #[derive(Clone, Default)]
 pub struct FindOptions {
     pub past: bool,
+    pub past_window: Option<f64>,
     pub future: Option<f64>,
     pub child_of: Option<Arc<BaseEvent>>,
     pub where_filter: Option<HashMap<String, Value>>,
@@ -836,6 +837,7 @@ impl EventBus {
             pattern,
             FindOptions {
                 past,
+                past_window: None,
                 future,
                 child_of,
                 where_filter: None,
@@ -879,6 +881,7 @@ impl EventBus {
                     pattern,
                     child_of_event_id.as_deref(),
                     options.where_filter.as_ref(),
+                    options.past_window,
                 ) {
                     self.runtime
                         .find_waiters
@@ -892,6 +895,7 @@ impl EventBus {
                 pattern,
                 child_of_event_id.as_deref(),
                 options.where_filter.as_ref(),
+                options.past_window,
             );
         }
 
@@ -914,12 +918,16 @@ impl EventBus {
         pattern: &str,
         child_of_event_id: Option<&str>,
         where_filter: Option<&HashMap<String, Value>>,
+        past_window: Option<f64>,
     ) -> Option<Arc<BaseEvent>> {
         let history = self.runtime.history_order.lock().clone();
         for event_id in history.iter().rev() {
             let Some(event) = self.runtime.events.lock().get(event_id).cloned() else {
                 continue;
             };
+            if !Self::is_within_past_window(&event, past_window) {
+                continue;
+            }
             if !self.matches_pattern(&event, pattern) {
                 continue;
             }
@@ -935,6 +943,20 @@ impl EventBus {
             return Some(event);
         }
         None
+    }
+
+    fn is_within_past_window(event: &Arc<BaseEvent>, past_window: Option<f64>) -> bool {
+        let Some(past_window) = past_window else {
+            return true;
+        };
+        let created_at = event.inner.lock().event_created_at.clone();
+        let Ok(created_at) = chrono::DateTime::parse_from_rfc3339(&created_at) else {
+            return false;
+        };
+        let age = chrono::Utc::now().signed_duration_since(created_at.with_timezone(&chrono::Utc));
+        age.num_nanoseconds()
+            .map(|nanos| (nanos as f64) / 1_000_000_000.0 <= past_window)
+            .unwrap_or(false)
     }
 
     fn matches_pattern(&self, event: &Arc<BaseEvent>, pattern: &str) -> bool {
@@ -1179,10 +1201,6 @@ impl EventBus {
             }
             done
         };
-        if should_complete {
-            event.mark_completed_without_notify();
-        }
-
         if self.runtime.max_history_size == Some(0) {
             let event_id = event.inner.lock().event_id.clone();
             self.runtime.events.lock().remove(&event_id);
@@ -1195,7 +1213,7 @@ impl EventBus {
         }
 
         if should_complete {
-            event.notify_completed();
+            event.mark_completed();
         }
     }
 
