@@ -701,6 +701,287 @@ fn test_string_indexing() {
 }
 
 #[test]
+fn test_emit_alias_dispatches_event() {
+    let bus = EventBus::new(Some("EmitAliasBus".to_string()));
+    let handled_event_ids = Arc::new(Mutex::new(Vec::new()));
+
+    let handled_for_handler = handled_event_ids.clone();
+    bus.on("UserActionEvent", "user_handler", move |event| {
+        let handled_event_ids = handled_for_handler.clone();
+        async move {
+            handled_event_ids
+                .lock()
+                .expect("handled ids lock")
+                .push(event.inner.lock().event_id.clone());
+            Ok(json!("handled"))
+        }
+    });
+
+    let event = bus.emit::<UserActionEvent>(TypedEvent::new(EmptyPayload {}));
+    let event_id = event.inner.inner.lock().event_id.clone();
+    block_on(event.wait_completed());
+
+    assert_eq!(
+        handled_event_ids
+            .lock()
+            .expect("handled ids lock")
+            .as_slice(),
+        &[event_id.clone()]
+    );
+    assert_eq!(
+        event.inner.inner.lock().event_status,
+        EventStatus::Completed
+    );
+    assert!(event.inner.inner.lock().event_path.contains(&bus.label()));
+    bus.stop();
+}
+
+#[test]
+fn test_handler_registration() {
+    let bus = EventBus::new(Some("HandlerRegistrationBus".to_string()));
+    let specific = Arc::new(Mutex::new(Vec::new()));
+    let model = Arc::new(Mutex::new(Vec::new()));
+    let universal = Arc::new(Mutex::new(Vec::new()));
+
+    let specific_for_handler = specific.clone();
+    bus.on("UserActionEvent", "user_handler", move |event| {
+        let specific = specific_for_handler.clone();
+        async move {
+            specific
+                .lock()
+                .expect("specific lock")
+                .push(event.inner.lock().payload["action"].clone());
+            Ok(json!("user_handled"))
+        }
+    });
+
+    let model_for_handler = model.clone();
+    bus.on_typed::<RuntimeSerializationEvent, _, _>("system_handler", move |_event| {
+        let model = model_for_handler.clone();
+        async move {
+            model
+                .lock()
+                .expect("model lock")
+                .push("startup".to_string());
+            Ok("system_handled".to_string())
+        }
+    });
+
+    let universal_for_handler = universal.clone();
+    bus.on("*", "universal_handler", move |event| {
+        let universal = universal_for_handler.clone();
+        async move {
+            universal
+                .lock()
+                .expect("universal lock")
+                .push(event.inner.lock().event_type.clone());
+            Ok(json!("universal"))
+        }
+    });
+
+    let user = bus.emit_base(base_event("UserActionEvent", json!({"action": "login"})));
+    let system = bus.emit::<RuntimeSerializationEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(async {
+        user.event_completed().await;
+        system.wait_completed().await;
+        assert!(bus.wait_until_idle(Some(1.0)).await);
+    });
+
+    assert_eq!(
+        specific.lock().expect("specific lock").as_slice(),
+        &[json!("login")]
+    );
+    assert_eq!(
+        model.lock().expect("model lock").as_slice(),
+        &["startup".to_string()]
+    );
+    let universal_values = universal.lock().expect("universal lock").clone();
+    assert!(universal_values.contains(&"UserActionEvent".to_string()));
+    assert!(universal_values.contains(&"RuntimeSerializationEvent".to_string()));
+    bus.stop();
+}
+
+#[test]
+fn test_multiple_handlers_parallel() {
+    let bus = EventBus::new_with_options(
+        Some("MultipleHandlersParallelBus".to_string()),
+        EventBusOptions {
+            event_handler_concurrency: EventHandlerConcurrencyMode::Parallel,
+            ..EventBusOptions::default()
+        },
+    );
+    let starts = Arc::new(Mutex::new(Vec::new()));
+    let ends = Arc::new(Mutex::new(Vec::new()));
+
+    for handler_name in ["slow_handler_1", "slow_handler_2"] {
+        let starts = starts.clone();
+        let ends = ends.clone();
+        bus.on("UserActionEvent", handler_name, move |_event| {
+            let starts = starts.clone();
+            let ends = ends.clone();
+            async move {
+                starts
+                    .lock()
+                    .expect("starts lock")
+                    .push((handler_name.to_string(), std::time::Instant::now()));
+                thread::sleep(Duration::from_millis(100));
+                ends.lock()
+                    .expect("ends lock")
+                    .push((handler_name.to_string(), std::time::Instant::now()));
+                Ok(json!(handler_name))
+            }
+        });
+    }
+
+    let start = std::time::Instant::now();
+    let event = bus.emit::<UserActionEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(event.wait_completed());
+    let duration = start.elapsed();
+
+    assert!(
+        duration < Duration::from_millis(180),
+        "duration={duration:?}"
+    );
+    assert_eq!(starts.lock().expect("starts lock").len(), 2);
+    assert_eq!(ends.lock().expect("ends lock").len(), 2);
+    let event_results = event.inner.inner.lock().event_results.clone();
+    assert!(event_results.values().any(|result| {
+        result.handler.handler_name == "slow_handler_1"
+            && result.result == Some(json!("slow_handler_1"))
+    }));
+    assert!(event_results.values().any(|result| {
+        result.handler.handler_name == "slow_handler_2"
+            && result.result == Some(json!("slow_handler_2"))
+    }));
+    bus.stop();
+}
+
+#[test]
+fn test_batch_emit_with_gather() {
+    let bus = EventBus::new(Some("BatchEmitBus".to_string()));
+
+    let events = [
+        bus.emit_base(base_event("UserActionEvent", json!({"action": "login"}))),
+        bus.emit_base(base_event("SystemEventModel", json!({"name": "startup"}))),
+        bus.emit_base(base_event("UserActionEvent", json!({"action": "logout"}))),
+    ];
+
+    for event in &events {
+        block_on(event.event_completed());
+    }
+
+    assert_eq!(events.len(), 3);
+    assert!(events
+        .iter()
+        .all(|event| event.inner.lock().event_completed_at.is_some()));
+    bus.stop();
+}
+
+#[test]
+fn test_concurrent_emit_calls() {
+    let bus = EventBus::new(Some("ConcurrentEmitCallsBus".to_string()));
+    let mut events = Vec::new();
+
+    for index in 0..100 {
+        events.push(bus.emit_base(base_event(
+            "UserActionEvent",
+            json!({"action": format!("concurrent_{index}")}),
+        )));
+    }
+
+    for event in &events {
+        block_on(event.event_completed());
+    }
+    assert!(block_on(bus.wait_until_idle(Some(2.0))));
+    assert_eq!(bus.event_history_size(), 100);
+    bus.stop();
+}
+
+#[test]
+fn test_mixed_delay_handlers_maintain_order() {
+    let bus = EventBus::new(Some("MixedDelayOrderBus".to_string()));
+    let collected_orders = Arc::new(Mutex::new(Vec::new()));
+    let handler_start_orders = Arc::new(Mutex::new(Vec::new()));
+
+    let collected_for_handler = collected_orders.clone();
+    let starts_for_handler = handler_start_orders.clone();
+    bus.on("UserActionEvent", "handler", move |event| {
+        let collected_orders = collected_for_handler.clone();
+        let handler_start_orders = starts_for_handler.clone();
+        async move {
+            let order = event.inner.lock().payload["order"]
+                .as_i64()
+                .expect("order payload");
+            handler_start_orders
+                .lock()
+                .expect("handler start lock")
+                .push(order);
+            if order % 2 == 0 {
+                thread::sleep(Duration::from_millis(10));
+            } else {
+                thread::sleep(Duration::from_millis(2));
+            }
+            collected_orders
+                .lock()
+                .expect("collected order lock")
+                .push(order);
+            Ok(json!(format!("handled_{order}")))
+        }
+    });
+
+    for order in 0..20 {
+        bus.emit_base(base_event("UserActionEvent", json!({"order": order})));
+    }
+    assert!(block_on(bus.wait_until_idle(Some(3.0))));
+
+    let expected: Vec<i64> = (0..20).collect();
+    assert_eq!(
+        collected_orders
+            .lock()
+            .expect("collected order lock")
+            .as_slice(),
+        expected.as_slice()
+    );
+    assert_eq!(
+        handler_start_orders
+            .lock()
+            .expect("handler start lock")
+            .as_slice(),
+        expected.as_slice()
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_event_with_complex_data() {
+    let bus = EventBus::new(Some("ComplexDataBus".to_string()));
+    let event = bus.emit_base(base_event(
+        "SystemEventModel",
+        json!({
+            "name": "complex",
+            "details": {
+                "nested": {
+                    "list": [1, 2, {"inner": "value"}],
+                    "none": null
+                }
+            }
+        }),
+    ));
+    block_on(event.event_completed());
+
+    assert_eq!(
+        event.inner.lock().payload["details"]["nested"]["list"][2]["inner"],
+        json!("value")
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_zero_history_size_keeps_inflight_and_drops_on_completion() {
+    test_max_history_size_0_keeps_in_flight_events_and_drops_them_on_completion();
+}
+
+#[test]
 fn test_handler_error_is_captured_without_crashing_the_bus() {
     let bus = EventBus::new(Some("ErrorBus".to_string()));
     bus.on("ErrorEvent", "throws", |_event| async move {
