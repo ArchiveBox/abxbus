@@ -1,9 +1,17 @@
-use std::collections::BTreeSet;
+use std::{
+    collections::BTreeSet,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
+    thread,
+    time::Duration,
+};
 
 use abxbus_rust::{
-    base_event::EventResultsOptions,
+    base_event::{BaseEvent, EventResultsOptions},
     event_bus::EventBus,
-    event_handler::EventHandler,
+    event_handler::{EventHandler, HandlerFuture},
     event_result::{EventResult, EventResultStatus},
     typed::{EventSpec, TypedEvent},
 };
@@ -50,6 +58,30 @@ impl EventSpec for AccessorEvent {
     type Payload = EmptyPayload;
     type Result = Value;
     const EVENT_TYPE: &'static str = "AccessorEvent";
+}
+
+struct StringResultEvent;
+impl EventSpec for StringResultEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "StringResultEvent";
+}
+
+fn schema_event(event_type: &str, schema: Option<Value>) -> Arc<BaseEvent> {
+    let event = BaseEvent::new(event_type, serde_json::Map::new());
+    event.inner.lock().event_result_type = schema;
+    event
+}
+
+fn first_result(event: &Arc<BaseEvent>) -> EventResult {
+    event
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("expected one event result")
 }
 
 #[test]
@@ -116,6 +148,121 @@ fn test_event_result_serializes_handler_metadata_and_derived_fields() {
 }
 
 #[test]
+fn test_event_results_capture_handler_return_values() {
+    let bus = EventBus::new(Some("ResultCaptureBus".to_string()));
+    bus.on("StringResultEvent", "handler", |_event| async move {
+        Ok(json!("ok"))
+    });
+
+    let event = bus.emit::<StringResultEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(event.wait_completed());
+
+    let results = event.inner.inner.lock().event_results.clone();
+    assert_eq!(results.len(), 1);
+    let result = results.values().next().expect("result");
+    assert_eq!(result.status, EventResultStatus::Completed);
+    assert_eq!(result.result, Some(json!("ok")));
+    bus.stop();
+}
+
+#[test]
+fn test_event_result_type_validates_handler_results() {
+    let bus = EventBus::new(Some("ResultSchemaBus".to_string()));
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "value": {"type": "string"},
+            "count": {"type": "number"}
+        },
+        "required": ["value", "count"]
+    });
+
+    bus.on("ObjectResultEvent", "handler", |_event| async move {
+        Ok(json!({"value": "hello", "count": 2}))
+    });
+
+    let event = bus.emit_base(schema_event("ObjectResultEvent", Some(schema)));
+    block_on(event.event_completed());
+
+    let result = first_result(&event);
+    assert_eq!(result.status, EventResultStatus::Completed);
+    assert_eq!(result.result, Some(json!({"value": "hello", "count": 2})));
+    bus.stop();
+}
+
+#[test]
+fn test_event_result_type_allows_null_handler_return_values() {
+    let bus = EventBus::new(Some("ResultSchemaUndefinedBus".to_string()));
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "value": {"type": "string"},
+            "count": {"type": "number"}
+        },
+        "required": ["value", "count"]
+    });
+
+    bus.on("ObjectResultEvent", "handler", |_event| async move {
+        Ok(Value::Null)
+    });
+
+    let event = bus.emit_base(schema_event("ObjectResultEvent", Some(schema)));
+    block_on(event.event_completed());
+
+    let result = first_result(&event);
+    assert_eq!(result.status, EventResultStatus::Completed);
+    assert_eq!(result.result, Some(Value::Null));
+    bus.stop();
+}
+
+#[test]
+fn test_invalid_result_marks_handler_error() {
+    let bus = EventBus::new(Some("ResultSchemaErrorBus".to_string()));
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "value": {"type": "string"},
+            "count": {"type": "number"}
+        },
+        "required": ["value", "count"]
+    });
+
+    bus.on("ObjectResultEvent", "handler", |_event| async move {
+        Ok(json!({"value": "bad", "count": "nope"}))
+    });
+
+    let event = bus.emit_base(schema_event("ObjectResultEvent", Some(schema)));
+    block_on(event.event_completed());
+
+    let result = first_result(&event);
+    assert_eq!(result.status, EventResultStatus::Error);
+    assert!(result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("EventHandlerResultSchemaError"));
+    assert!(!event.event_errors().is_empty());
+    bus.stop();
+}
+
+#[test]
+fn test_event_with_no_result_schema_stores_raw_values() {
+    let bus = EventBus::new(Some("NoSchemaBus".to_string()));
+
+    bus.on("NoResultSchemaEvent", "handler", |_event| async move {
+        Ok(json!({"raw": true}))
+    });
+
+    let event = bus.emit_base(schema_event("NoResultSchemaEvent", None));
+    block_on(event.event_completed());
+
+    let result = first_result(&event);
+    assert_eq!(result.status, EventResultStatus::Completed);
+    assert_eq!(result.result, Some(json!({"raw": true})));
+    bus.stop();
+}
+
+#[test]
 fn test_event_result_update_keeps_consistent_ordering_semantics_for_status_result_error() {
     let handler = EventHandler {
         id: "h1".into(),
@@ -144,6 +291,127 @@ fn test_event_result_update_keeps_consistent_ordering_semantics_for_status_resul
     );
     assert_eq!(result.result, Some(json!("seeded")));
     assert_eq!(result.status, EventResultStatus::Error);
+}
+
+#[test]
+fn test_run_handler_is_a_no_op_for_already_settled_results() {
+    let handler_calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_handler = handler_calls.clone();
+    let handler = EventHandler {
+        id: "h1".into(),
+        event_pattern: "RunHandlerSettledEvent".into(),
+        handler_name: "handler".into(),
+        handler_file_path: None,
+        handler_timeout: None,
+        handler_slow_timeout: None,
+        handler_registered_at: "2026-01-01T00:00:00.000Z".into(),
+        eventbus_name: "RunHandlerSettledBus".into(),
+        eventbus_id: "018f8e40-1234-7000-8000-000000001234".into(),
+        callable: Some(Arc::new(move |_event| -> HandlerFuture {
+            let calls = calls_for_handler.clone();
+            Box::pin(async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(json!("ok"))
+            })
+        })),
+    };
+    let event = schema_event("RunHandlerSettledEvent", None);
+    let mut result = EventResult::new(event.inner.lock().event_id.clone(), handler, None);
+    result.status = EventResultStatus::Completed;
+    result.result = Some(json!("settled"));
+
+    let value = block_on(result.run_handler(event, None)).expect("settled result");
+
+    assert_eq!(handler_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(result.status, EventResultStatus::Completed);
+    assert_eq!(value, json!("settled"));
+}
+
+#[test]
+fn test_handler_result_stays_pending_while_waiting_for_handler_lock_entry() {
+    let bus = EventBus::new_with_options(
+        Some("RunHandlerLockWaitBus".to_string()),
+        abxbus_rust::event_bus::EventBusOptions {
+            event_handler_concurrency: abxbus_rust::types::EventHandlerConcurrencyMode::Serial,
+            ..abxbus_rust::event_bus::EventBusOptions::default()
+        },
+    );
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let release_rx = Arc::new(Mutex::new(release_rx));
+
+    let release_for_first = release_rx.clone();
+    bus.on("RunHandlerLockWaitEvent", "first_handler", move |_event| {
+        let started_tx = started_tx.clone();
+        let release_rx = release_for_first.clone();
+        async move {
+            let _ = started_tx.send(());
+            release_rx
+                .lock()
+                .expect("release lock")
+                .recv_timeout(Duration::from_secs(2))
+                .expect("release signal");
+            Ok(json!("first"))
+        }
+    });
+    bus.on(
+        "RunHandlerLockWaitEvent",
+        "second_handler",
+        |_event| async move {
+            thread::sleep(Duration::from_millis(1));
+            Ok(json!("second"))
+        },
+    );
+
+    let event = bus.emit_base(schema_event("RunHandlerLockWaitEvent", None));
+    started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("first handler should start");
+
+    let results = event.inner.lock().event_results.clone();
+    assert_eq!(results.len(), 2);
+    let first_result = results
+        .values()
+        .find(|result| result.handler.handler_name == "first_handler")
+        .expect("first result");
+    let second_result = results
+        .values()
+        .find(|result| result.handler.handler_name == "second_handler")
+        .expect("second result");
+    assert_eq!(first_result.status, EventResultStatus::Started);
+    assert_eq!(second_result.status, EventResultStatus::Pending);
+
+    thread::sleep(Duration::from_millis(20));
+    let second_status = event
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .find(|result| result.handler.handler_name == "second_handler")
+        .expect("second result")
+        .status;
+    assert_eq!(second_status, EventResultStatus::Pending);
+
+    release_tx.send(()).expect("release send");
+    block_on(event.event_completed());
+    let completed_results = event.inner.lock().event_results.clone();
+    assert_eq!(
+        completed_results
+            .values()
+            .find(|result| result.handler.handler_name == "first_handler")
+            .expect("first result")
+            .status,
+        EventResultStatus::Completed
+    );
+    assert_eq!(
+        completed_results
+            .values()
+            .find(|result| result.handler.handler_name == "second_handler")
+            .expect("second result")
+            .status,
+        EventResultStatus::Completed
+    );
+    bus.stop();
 }
 
 #[test]

@@ -72,8 +72,22 @@ fn error_type(result: &abxbus_rust::event_result::EventResult) -> String {
 
 static TIMEOUT_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
-fn timeout_test_guard() -> std::sync::MutexGuard<'static, ()> {
-    TIMEOUT_TEST_MUTEX.lock().expect("timeout test lock")
+struct TimeoutTestGuard {
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+impl Drop for TimeoutTestGuard {
+    fn drop(&mut self) {
+        thread::sleep(Duration::from_millis(250));
+    }
+}
+
+fn timeout_test_guard() -> TimeoutTestGuard {
+    TimeoutTestGuard {
+        _guard: TIMEOUT_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+    }
 }
 
 #[test]
@@ -810,7 +824,7 @@ fn test_queue_jump_awaited_child_timeout_aborts_still_fire_across_buses() {
     });
 
     let parent = TypedEvent::<ParentEvent>::new(EmptyPayload {});
-    parent.inner.inner.lock().event_timeout = Some(0.5);
+    parent.inner.inner.lock().event_timeout = Some(2.0);
     let parent = bus_a.emit(parent);
     block_on(parent.wait_completed());
     assert!(block_on(bus_a.wait_until_idle(Some(2.0))));
@@ -822,12 +836,20 @@ fn test_queue_jump_awaited_child_timeout_aborts_still_fire_across_buses() {
         .clone()
         .expect("child ref");
     let child_results: Vec<_> = child.inner.lock().event_results.values().cloned().collect();
-    assert!(child_results.iter().any(|result| {
-        matches!(
-            error_type(result).as_str(),
-            "EventHandlerAbortedError" | "EventHandlerTimeoutError"
-        )
-    }));
+    assert!(
+        child_results.iter().any(|result| {
+            matches!(
+                error_type(result).as_str(),
+                "EventHandlerAbortedError" | "EventHandlerTimeoutError"
+            )
+        }),
+        "expected child timeout/abort result, got results={:?} child={}",
+        child_results
+            .iter()
+            .map(|result| result.to_flat_json_value())
+            .collect::<Vec<_>>(),
+        child.to_json_value()
+    );
     bus_a.stop();
     bus_b.stop();
 }

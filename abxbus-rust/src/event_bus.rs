@@ -1089,9 +1089,20 @@ impl EventBus {
                 false
             }
         };
-        if !removed {
+        if !removed && !bypass_event_lock {
             return;
         }
+
+        let event_type = event.inner.lock().event_type.clone();
+        let mut handlers = self
+            .handlers
+            .lock()
+            .get(&event_type)
+            .cloned()
+            .unwrap_or_default();
+        handlers.extend(self.handlers.lock().get("*").cloned().unwrap_or_default());
+        let event_timeout = event.inner.lock().event_timeout.or(self.event_timeout);
+        self.create_pending_handler_results(&event, &handlers, event_timeout);
 
         let bus = self.clone();
         thread::spawn(move || {
@@ -1401,6 +1412,9 @@ impl EventBus {
     }
 
     async fn process_event(&self, event: Arc<BaseEvent>) {
+        if event.inner.lock().event_status == EventStatus::Completed {
+            return;
+        }
         let mode = event
             .inner
             .lock()
@@ -1411,10 +1425,16 @@ impl EventBus {
                 let _guard = GLOBAL_SERIAL_LOCK
                     .get_or_init(|| Arc::new(ReentrantLock::default()))
                     .lock();
+                if event.inner.lock().event_status == EventStatus::Completed {
+                    return;
+                }
                 self.process_event_inner(event).await;
             }
             EventConcurrencyMode::BusSerial => {
                 let _guard = self.bus_serial_lock.lock();
+                if event.inner.lock().event_status == EventStatus::Completed {
+                    return;
+                }
                 self.process_event_inner(event).await;
             }
             EventConcurrencyMode::Parallel => {
