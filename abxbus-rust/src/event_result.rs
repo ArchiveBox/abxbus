@@ -1,7 +1,14 @@
+use std::{sync::mpsc as std_mpsc, sync::Arc, thread, time::Duration};
+
+use futures::executor::block_on;
 use serde::{ser::SerializeStruct, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Value};
 
-use crate::{event_handler::EventHandler, id::uuid_v7_string};
+use crate::{
+    base_event::{now_iso, BaseEvent},
+    event_handler::EventHandler,
+    id::uuid_v7_string,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -112,6 +119,17 @@ impl EventResult {
         }
     }
 
+    pub fn construct_pending_handler_result(
+        event_id: String,
+        handler: EventHandler,
+        status: EventResultStatus,
+        timeout: Option<f64>,
+    ) -> Self {
+        let mut result = Self::new(event_id, handler, timeout);
+        result.status = status;
+        result
+    }
+
     pub fn update(
         &mut self,
         status: Option<EventResultStatus>,
@@ -128,6 +146,70 @@ impl EventResult {
             self.status = status;
         }
         self
+    }
+
+    pub async fn run_handler(
+        &mut self,
+        event: Arc<BaseEvent>,
+        timeout: Option<f64>,
+    ) -> Result<Value, String> {
+        if self.status != EventResultStatus::Pending {
+            return Ok(self.result.clone().unwrap_or(Value::Null));
+        }
+
+        self.status = EventResultStatus::Started;
+        self.started_at = Some(now_iso());
+
+        let Some(callable) = self.handler.callable.as_ref().cloned() else {
+            let error = "EventHandlerError: handler callable missing".to_string();
+            self.status = EventResultStatus::Error;
+            self.error = Some(error.clone());
+            self.completed_at = Some(now_iso());
+            return Err(error);
+        };
+
+        let (tx, rx) = std_mpsc::channel();
+        thread::spawn(move || {
+            let _ = tx.send(block_on(callable(event)));
+        });
+
+        let call_result = if let Some(timeout_secs) = timeout {
+            match rx.recv_timeout(Duration::from_secs_f64(timeout_secs)) {
+                Ok(result) => result,
+                Err(_) => {
+                    let error = "EventHandlerTimeoutError: timeout".to_string();
+                    self.status = EventResultStatus::Error;
+                    self.error = Some(error.clone());
+                    self.completed_at = Some(now_iso());
+                    return Err(error);
+                }
+            }
+        } else {
+            match rx.recv() {
+                Ok(result) => result,
+                Err(_) => {
+                    let error = "EventHandlerAbortedError: handler channel closed".to_string();
+                    self.status = EventResultStatus::Error;
+                    self.error = Some(error.clone());
+                    self.completed_at = Some(now_iso());
+                    return Err(error);
+                }
+            }
+        };
+
+        self.completed_at = Some(now_iso());
+        match call_result {
+            Ok(value) => {
+                self.status = EventResultStatus::Completed;
+                self.result = Some(value.clone());
+                Ok(value)
+            }
+            Err(error) => {
+                self.status = EventResultStatus::Error;
+                self.error = Some(error.clone());
+                Err(error)
+            }
+        }
     }
 
     pub fn to_flat_json_value(&self) -> Value {

@@ -761,6 +761,7 @@ impl EventBus {
         bus
     }
 
+    #[track_caller]
     pub fn on<F, Fut>(&self, pattern: &str, handler_name: &str, handler_fn: F) -> EventHandler
     where
         F: Fn(Arc<BaseEvent>) -> Fut + Send + Sync + 'static,
@@ -774,11 +775,12 @@ impl EventBus {
         )
     }
 
+    #[track_caller]
     pub fn on_with_options<F, Fut>(
         &self,
         pattern: &str,
         handler_name: &str,
-        options: EventHandlerOptions,
+        mut options: EventHandlerOptions,
         handler_fn: F,
     ) -> EventHandler
     where
@@ -790,6 +792,14 @@ impl EventBus {
         }
         if let Some(timeout) = options.handler_slow_timeout {
             assert!(timeout > 0.0, "handler_slow_timeout must be > 0 or None");
+        }
+        let detect_handler_file_path = options
+            .detect_handler_file_path
+            .unwrap_or(self.event_handler_detect_file_paths);
+        options.detect_handler_file_path = Some(detect_handler_file_path);
+        if detect_handler_file_path && options.handler_file_path.is_none() {
+            let caller = std::panic::Location::caller();
+            options.handler_file_path = Some(format!("{}:{}", caller.file(), caller.line()));
         }
         let callable: EventHandlerCallable = Arc::new(move |event| Box::pin(handler_fn(event)));
         let entry = EventHandler::from_callable_with_options(

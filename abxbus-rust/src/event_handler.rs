@@ -16,6 +16,7 @@ pub struct EventHandlerOptions {
     pub handler_timeout: Option<f64>,
     pub handler_slow_timeout: Option<f64>,
     pub handler_registered_at: Option<String>,
+    pub detect_handler_file_path: Option<bool>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -34,6 +35,7 @@ pub struct EventHandler {
 }
 
 impl EventHandler {
+    #[track_caller]
     pub fn from_callable(
         event_pattern: String,
         handler_name: String,
@@ -51,6 +53,7 @@ impl EventHandler {
         )
     }
 
+    #[track_caller]
     pub fn from_callable_with_options(
         event_pattern: String,
         handler_name: String,
@@ -59,6 +62,11 @@ impl EventHandler {
         callable: EventHandlerCallable,
         options: EventHandlerOptions,
     ) -> Self {
+        let mut handler_file_path = options.handler_file_path;
+        if handler_file_path.is_none() && options.detect_handler_file_path.unwrap_or(true) {
+            let caller = std::panic::Location::caller();
+            handler_file_path = Some(format!("{}:{}", caller.file(), caller.line()));
+        }
         let handler_registered_at = options
             .handler_registered_at
             .unwrap_or_else(crate::base_event::now_iso);
@@ -66,7 +74,7 @@ impl EventHandler {
             compute_handler_id(
                 &eventbus_id,
                 &handler_name,
-                options.handler_file_path.as_deref(),
+                handler_file_path.as_deref(),
                 &handler_registered_at,
                 &event_pattern,
             )
@@ -75,7 +83,7 @@ impl EventHandler {
             id,
             event_pattern,
             handler_name,
-            handler_file_path: options.handler_file_path,
+            handler_file_path,
             handler_timeout: options.handler_timeout,
             handler_slow_timeout: options.handler_slow_timeout,
             handler_registered_at,

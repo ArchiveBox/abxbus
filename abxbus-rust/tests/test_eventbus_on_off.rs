@@ -132,6 +132,7 @@ fn test_on_with_options_supports_id_override_and_handler_file_path() {
             handler_timeout: Some(0.5),
             handler_slow_timeout: Some(0.25),
             handler_registered_at: Some("2025-01-02T03:04:05.678901000Z".to_string()),
+            ..EventHandlerOptions::default()
         },
         |_event| async move { Ok(json!("ok")) },
     );
