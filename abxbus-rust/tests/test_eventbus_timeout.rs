@@ -1,7 +1,7 @@
 use std::{
     sync::{Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use abxbus_rust::{
@@ -222,8 +222,7 @@ fn test_event_timeouts_abort_handlers_across_concurrency_modes() {
     }
 }
 
-#[test]
-fn test_event_timeout_does_not_relabel_preexisting_handler_timeout() {
+fn assert_event_timeout_does_not_relabel_preexisting_handler_timeout() {
     let _guard = timeout_test_guard();
     let bus = EventBus::new_with_options(
         Some("EventTimeoutPreservesHandlerTimeoutBus".to_string()),
@@ -272,6 +271,16 @@ fn test_event_timeout_does_not_relabel_preexisting_handler_timeout() {
         .iter()
         .any(|result| error_type(result) == "EventHandlerAbortedError"));
     bus.stop();
+}
+
+#[test]
+fn test_event_timeout_does_not_relabel_preexisting_handler_timeout() {
+    assert_event_timeout_does_not_relabel_preexisting_handler_timeout();
+}
+
+#[test]
+fn test_event_timeout_does_not_relabel_pre_existing_handler_timeout_errors() {
+    assert_event_timeout_does_not_relabel_preexisting_handler_timeout();
 }
 
 #[test]
@@ -324,6 +333,57 @@ fn test_timeout_still_marks_event_failed_when_other_handlers_finish() {
         completed.lock().expect("completed lock").as_slice(),
         &["fast"]
     );
+    bus.stop();
+}
+
+#[test]
+fn test_event_timeout_is_hard_cap_in_parallel_mode() {
+    let _guard = timeout_test_guard();
+    let bus = EventBus::new_with_options(
+        Some("HardCapParallelBus".to_string()),
+        EventBusOptions {
+            event_handler_concurrency: EventHandlerConcurrencyMode::Parallel,
+            ..EventBusOptions::default()
+        },
+    );
+
+    bus.on("timeout", "slow_a", |_event| async move {
+        thread::sleep(Duration::from_millis(100));
+        Ok(json!("a"))
+    });
+    bus.on("timeout", "slow_b", |_event| async move {
+        thread::sleep(Duration::from_millis(100));
+        Ok(json!("b"))
+    });
+
+    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    {
+        let mut inner = event.inner.inner.lock();
+        inner.event_timeout = Some(0.02);
+        inner.event_concurrency = Some(EventConcurrencyMode::Parallel);
+        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
+    }
+
+    let started = Instant::now();
+    let event = bus.emit(event);
+    block_on(event.wait_completed());
+    assert!(started.elapsed() < Duration::from_millis(90));
+
+    let results: Vec<_> = event
+        .inner
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .cloned()
+        .collect();
+    assert_eq!(results.len(), 2);
+    assert!(results
+        .iter()
+        .all(|result| result.status == EventResultStatus::Error));
+    assert!(results
+        .iter()
+        .all(|result| error_type(result) == "EventHandlerAbortedError"));
     bus.stop();
 }
 
@@ -747,6 +807,80 @@ fn test_parent_timeout_does_not_cancel_unawaited_child_with_own_timeout() {
         .values()
         .any(|r| r.status == EventResultStatus::Completed);
     assert!(is_completed);
+    bus.stop();
+}
+
+#[test]
+fn test_parent_timeout_does_not_cancel_unawaited_children_that_have_no_timeout_of_their_own() {
+    let _guard = timeout_test_guard();
+    let bus = EventBus::new_with_options(
+        Some("TimeoutBoundaryBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            event_timeout: None,
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_for_parent = bus.clone();
+    let child_ref = Arc::new(Mutex::new(None::<Arc<abxbus_rust::base_event::BaseEvent>>));
+    let child_ref_for_parent = child_ref.clone();
+
+    bus.on("child", "child_slow_handler", |_event| async move {
+        thread::sleep(Duration::from_millis(80));
+        Ok(json!("child_done"))
+    });
+    bus.on("parent", "parent_handler", move |_event| {
+        let bus = bus_for_parent.clone();
+        let child_ref = child_ref_for_parent.clone();
+        async move {
+            let child = TypedEvent::<ChildEvent>::new(EmptyPayload {});
+            child.inner.inner.lock().event_timeout = None;
+            let child = bus.emit_child(child);
+            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            thread::sleep(Duration::from_millis(80));
+            Ok(json!("parent_done"))
+        }
+    });
+
+    let parent = TypedEvent::<ParentEvent>::new(EmptyPayload {});
+    parent.inner.inner.lock().event_timeout = Some(0.03);
+    let parent = bus.emit(parent);
+    block_on(parent.wait_completed());
+    assert!(block_on(bus.wait_until_idle(Some(2.0))));
+
+    let parent_result = parent
+        .inner
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("parent result");
+    assert_eq!(parent_result.status, EventResultStatus::Error);
+    assert_eq!(error_type(&parent_result), "EventHandlerAbortedError");
+
+    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let child = child_ref
+        .lock()
+        .expect("child ref lock")
+        .clone()
+        .expect("child event");
+    let child_inner = child.inner.lock();
+    assert_eq!(
+        child_inner.event_status,
+        abxbus_rust::types::EventStatus::Completed
+    );
+    assert_eq!(
+        child_inner.event_parent_id.as_deref(),
+        Some(parent_id.as_str())
+    );
+    assert!(!child_inner.event_blocks_parent_completion);
+    let child_results: Vec<_> = child_inner.event_results.values().cloned().collect();
+    assert_eq!(child_results.len(), 1);
+    assert_eq!(child_results[0].status, EventResultStatus::Completed);
+    assert_eq!(child_results[0].result, Some(json!("child_done")));
     bus.stop();
 }
 
@@ -1236,5 +1370,22 @@ fn test_handler_timeout_resolution_matches_ts_precedence() {
         .values()
         .all(|result| result.timeout == Some(0.08)));
 
+    bus.stop();
+}
+
+#[test]
+fn test_event_handler_detect_file_paths_toggle() {
+    let bus = EventBus::new_with_options(
+        Some("NoDetectPathsBus".to_string()),
+        EventBusOptions {
+            event_handler_detect_file_paths: false,
+            ..EventBusOptions::default()
+        },
+    );
+
+    let entry = bus.on("timeout_defaults", "handler", |_event| async move {
+        Ok(json!("ok"))
+    });
+    assert_eq!(entry.handler_file_path, None);
     bus.stop();
 }
