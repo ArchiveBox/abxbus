@@ -33,16 +33,12 @@ fn test_max_history_drop_true_keeps_recent_entries() {
 }
 
 #[test]
+#[should_panic(expected = "history limit reached")]
 fn test_max_history_drop_false_rejects_new_emit_when_full() {
     let bus = EventBus::new_with_history(Some("HistoryRejectBus".to_string()), Some(1), false);
 
     let first = bus.emit::<HistoryEvent>(TypedEvent::<HistoryEvent>::new(EmptyPayload {}));
     block_on(first.wait_completed());
 
-    let second = TypedEvent::<HistoryEvent>::new(EmptyPayload {});
-    let second = bus.emit(second);
-    block_on(second.wait_completed());
-
-    assert_eq!(second.inner.inner.lock().event_path.len(), 0);
-    bus.stop();
+    bus.emit::<HistoryEvent>(TypedEvent::<HistoryEvent>::new(EmptyPayload {}));
 }

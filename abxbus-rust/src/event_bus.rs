@@ -897,8 +897,10 @@ impl EventBus {
         }
 
         if !self.register_in_history(event.clone()) {
-            event.mark_completed();
-            return event;
+            panic!(
+                "EventBus history limit reached: max_history_size={} and max_history_drop=false",
+                self.runtime.max_history_size.unwrap_or(0)
+            );
         }
 
         {
