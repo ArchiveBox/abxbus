@@ -70,16 +70,15 @@ fn error_type(result: &abxbus_rust::event_result::EventResult) -> String {
         .to_string()
 }
 
-static GLOBAL_SERIAL_TIMEOUT_TEST_MUTEX: Mutex<()> = Mutex::new(());
+static TIMEOUT_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
-fn global_serial_timeout_test_guard() -> std::sync::MutexGuard<'static, ()> {
-    GLOBAL_SERIAL_TIMEOUT_TEST_MUTEX
-        .lock()
-        .expect("global serial timeout test lock")
+fn timeout_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    TIMEOUT_TEST_MUTEX.lock().expect("timeout test lock")
 }
 
 #[test]
 fn test_event_timeout_aborts_in_flight_handler_result() {
+    let _guard = timeout_test_guard();
     let bus = EventBus::new(Some("TimeoutBus".to_string()));
 
     bus.on("timeout", "slow", |_event| async move {
@@ -120,6 +119,7 @@ fn test_event_timeout_aborts_in_flight_handler_result() {
 
 #[test]
 fn test_handler_completes_within_timeout() {
+    let _guard = timeout_test_guard();
     let bus = EventBus::new(Some("TimeoutOkBus".to_string()));
 
     bus.on("timeout", "fast", |_event| async move {
@@ -149,7 +149,7 @@ fn test_handler_completes_within_timeout() {
 
 #[test]
 fn test_event_timeouts_abort_handlers_across_concurrency_modes() {
-    let _global_serial_guard = global_serial_timeout_test_guard();
+    let _guard = timeout_test_guard();
     let event_modes = [
         EventConcurrencyMode::GlobalSerial,
         EventConcurrencyMode::BusSerial,
@@ -210,6 +210,7 @@ fn test_event_timeouts_abort_handlers_across_concurrency_modes() {
 
 #[test]
 fn test_event_timeout_does_not_relabel_preexisting_handler_timeout() {
+    let _guard = timeout_test_guard();
     let bus = EventBus::new_with_options(
         Some("EventTimeoutPreservesHandlerTimeoutBus".to_string()),
         EventBusOptions {
@@ -261,6 +262,7 @@ fn test_event_timeout_does_not_relabel_preexisting_handler_timeout() {
 
 #[test]
 fn test_timeout_still_marks_event_failed_when_other_handlers_finish() {
+    let _guard = timeout_test_guard();
     let bus = EventBus::new_with_options(
         Some("TimeoutParallelHandlers".to_string()),
         EventBusOptions {
@@ -313,6 +315,7 @@ fn test_timeout_still_marks_event_failed_when_other_handlers_finish() {
 
 #[test]
 fn test_event_level_timeout_marks_started_parallel_handlers_as_aborted_or_timed_out() {
+    let _guard = timeout_test_guard();
     let bus = EventBus::new_with_options(
         Some("TimeoutParallelAbortedOnlyBus".to_string()),
         EventBusOptions {
@@ -376,6 +379,7 @@ fn test_event_level_timeout_marks_started_parallel_handlers_as_aborted_or_timed_
 
 #[test]
 fn test_event_timeout_is_hard_cap_across_serial_handlers() {
+    let _guard = timeout_test_guard();
     let bus = EventBus::new_with_options(
         Some("EventHardCapBus".to_string()),
         EventBusOptions {
@@ -434,6 +438,7 @@ fn test_event_timeout_is_hard_cap_across_serial_handlers() {
 
 #[test]
 fn test_handler_timeout_marks_error_and_other_handlers_still_complete() {
+    let _guard = timeout_test_guard();
     let bus = EventBus::new_with_options(
         Some("TimeoutFocusedBus".to_string()),
         EventBusOptions {
@@ -482,6 +487,7 @@ fn test_handler_timeout_marks_error_and_other_handlers_still_complete() {
 
 #[test]
 fn test_parent_timeout_does_not_cancel_unawaited_child_with_own_timeout() {
+    let _guard = timeout_test_guard();
     let bus = EventBus::new(Some("ParentTimeoutBus".to_string()));
     let bus_for_handler = bus.clone();
 
@@ -539,6 +545,7 @@ fn test_parent_timeout_does_not_cancel_unawaited_child_with_own_timeout() {
 
 #[test]
 fn test_parent_timeout_does_not_cancel_unawaited_child_handler_results_under_serial_handler_lock() {
+    let _guard = timeout_test_guard();
     let bus = EventBus::new_with_options(
         Some("TimeoutCancelBus".to_string()),
         EventBusOptions {
@@ -612,6 +619,7 @@ fn test_parent_timeout_does_not_cancel_unawaited_child_handler_results_under_ser
 
 #[test]
 fn test_parent_timeout_cancels_awaited_child_handler_results() {
+    let _guard = timeout_test_guard();
     let bus = EventBus::new_with_options(
         Some("TimeoutAwaitedChildCancelBus".to_string()),
         EventBusOptions {
@@ -679,6 +687,7 @@ fn test_parent_timeout_cancels_awaited_child_handler_results() {
 
 #[test]
 fn test_multi_bus_timeout_is_recorded_on_target_bus() {
+    let _guard = timeout_test_guard();
     let bus_a = EventBus::new(Some("MultiTimeoutA".to_string()));
     let bus_b = EventBus::new(Some("MultiTimeoutB".to_string()));
 
@@ -710,6 +719,7 @@ fn test_multi_bus_timeout_is_recorded_on_target_bus() {
 
 #[test]
 fn test_forwarded_event_timeout_aborts_apply_across_buses() {
+    let _guard = timeout_test_guard();
     let bus_a = EventBus::new_with_options(
         Some("TimeoutForwardA".to_string()),
         EventBusOptions {
@@ -757,7 +767,7 @@ fn test_forwarded_event_timeout_aborts_apply_across_buses() {
 
 #[test]
 fn test_queue_jump_awaited_child_timeout_aborts_still_fire_across_buses() {
-    let _global_serial_guard = global_serial_timeout_test_guard();
+    let _guard = timeout_test_guard();
     let bus_a = EventBus::new_with_options(
         Some("TimeoutQueueJumpA".to_string()),
         EventBusOptions {
@@ -824,6 +834,7 @@ fn test_queue_jump_awaited_child_timeout_aborts_still_fire_across_buses() {
 
 #[test]
 fn test_followup_event_runs_after_parent_timeout_in_queue_jump_path() {
+    let _guard = timeout_test_guard();
     let bus = EventBus::new(Some("TimeoutQueueJumpFollowupBus".to_string()));
     let bus_for_parent = bus.clone();
     let tail_runs = Arc::new(Mutex::new(0usize));
@@ -884,6 +895,7 @@ fn test_followup_event_runs_after_parent_timeout_in_queue_jump_path() {
 
 #[test]
 fn test_event_timeout_null_falls_back_to_bus_default() {
+    let _guard = timeout_test_guard();
     let bus = EventBus::new_with_options(
         Some("TimeoutDefaultBus".to_string()),
         EventBusOptions {
@@ -918,6 +930,7 @@ fn test_event_timeout_null_falls_back_to_bus_default() {
 
 #[test]
 fn test_bus_default_null_disables_timeouts_when_event_timeout_is_null() {
+    let _guard = timeout_test_guard();
     let bus = EventBus::new_with_options(
         Some("TimeoutDisabledBus".to_string()),
         EventBusOptions {
@@ -952,6 +965,7 @@ fn test_bus_default_null_disables_timeouts_when_event_timeout_is_null() {
 
 #[test]
 fn test_handler_timeout_resolution_matches_ts_precedence() {
+    let _guard = timeout_test_guard();
     let bus = EventBus::new_with_options(
         Some("TimeoutPrecedenceBus".to_string()),
         EventBusOptions {
