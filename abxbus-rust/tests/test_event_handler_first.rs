@@ -191,6 +191,73 @@ fn test_event_first_shortcut_sets_mode_and_returns_winner() {
 }
 
 #[test]
+fn test_first_event_handler_completion_is_set_to_first_after_calling_first() {
+    let bus = EventBus::new(Some("FirstFieldBus".to_string()));
+
+    bus.on("value", "result_handler", |_event| async move {
+        Ok(json!("result"))
+    });
+
+    let event = bus.emit::<ValueEvent>(TypedEvent::<ValueEvent>::new(EmptyPayload {}));
+    assert_eq!(event.inner.inner.lock().event_handler_completion, None);
+
+    let result = block_on(event.first());
+
+    assert_eq!(result, Some(json!("result")));
+    assert_eq!(
+        event.inner.inner.lock().event_handler_completion,
+        Some(EventHandlerCompletionMode::First)
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_first_event_handler_completion_appears_in_tojson_output() {
+    let bus = EventBus::new(Some("FirstJsonBus".to_string()));
+
+    bus.on("value", "json_handler", |_event| async move {
+        Ok(json!("json result"))
+    });
+
+    let event = bus.emit::<ValueEvent>(TypedEvent::<ValueEvent>::new(EmptyPayload {}));
+    block_on(event.first());
+
+    let payload = event.inner.to_json_value();
+    assert_eq!(payload["event_handler_completion"], "first");
+    bus.stop();
+}
+
+#[test]
+fn test_first_event_handler_completion_can_be_set_via_event_constructor() {
+    let bus = EventBus::new(Some("FirstCtorBus".to_string()));
+
+    bus.on("value", "slow_handler", |_event| async move {
+        thread::sleep(Duration::from_millis(80));
+        Ok(json!("slow handler"))
+    });
+    bus.on("value", "fast_handler", |_event| async move {
+        thread::sleep(Duration::from_millis(10));
+        Ok(json!("fast handler"))
+    });
+
+    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    {
+        let mut inner = event.inner.inner.lock();
+        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
+        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
+    }
+    let event = bus.emit(event);
+    let result = block_on(event.first());
+
+    assert_eq!(result, Some(json!("fast handler")));
+    assert_eq!(
+        event.inner.inner.lock().event_handler_completion,
+        Some(EventHandlerCompletionMode::First)
+    );
+    bus.stop();
+}
+
+#[test]
 fn test_event_handler_first_parallel_returns_earliest_completed_non_null_result() {
     let bus = EventBus::new(Some("BusFirstParallelWinner".to_string()));
 
@@ -300,6 +367,19 @@ fn test_event_first_parallel_returns_before_slow_loser_finishes() {
 }
 
 #[test]
+fn test_first_returns_undefined_when_no_handlers_are_registered() {
+    let bus = EventBus::new(Some("FirstNoHandlerBus".to_string()));
+
+    let result = block_on(
+        bus.emit::<ValueEvent>(TypedEvent::new(EmptyPayload {}))
+            .first(),
+    );
+
+    assert_eq!(result, None);
+    bus.stop();
+}
+
+#[test]
 fn test_event_first_returns_zero_as_valid_first_result() {
     let bus = EventBus::new(Some("BusFirstZero".to_string()));
 
@@ -316,6 +396,44 @@ fn test_event_first_returns_zero_as_valid_first_result() {
     block_on(event.wait_completed());
 
     assert_eq!(event.first_result(), Some(json!(0)));
+    bus.stop();
+}
+
+#[test]
+fn test_first_returns_empty_string_as_a_valid_first_result() {
+    let bus = EventBus::new(Some("FirstEmptyBus".to_string()));
+
+    bus.on(
+        "value",
+        "empty_winner",
+        |_event| async move { Ok(json!("")) },
+    );
+
+    let result = block_on(
+        bus.emit::<ValueEvent>(TypedEvent::new(EmptyPayload {}))
+            .first(),
+    );
+
+    assert_eq!(result, Some(json!("")));
+    bus.stop();
+}
+
+#[test]
+fn test_first_returns_false_as_a_valid_first_result() {
+    let bus = EventBus::new(Some("FirstFalseBus".to_string()));
+
+    bus.on(
+        "value",
+        "false_winner",
+        |_event| async move { Ok(json!(false)) },
+    );
+
+    let result = block_on(
+        bus.emit::<ValueEvent>(TypedEvent::new(EmptyPayload {}))
+            .first(),
+    );
+
+    assert_eq!(result, Some(json!(false)));
     bus.stop();
 }
 
