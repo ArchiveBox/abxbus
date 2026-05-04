@@ -85,6 +85,18 @@ impl EventSpec for OtherFilterEvent {
     type Result = EmptyResult;
     const EVENT_TYPE: &'static str = "other_filter_event";
 }
+struct SystemEvent;
+impl EventSpec for SystemEvent {
+    type Payload = EmptyPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "SystemEvent";
+}
+struct UserActionEvent;
+impl EventSpec for UserActionEvent {
+    type Payload = FilterPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "UserActionEvent";
+}
 #[derive(Clone, Serialize, Deserialize)]
 struct NavigatePayload {
     url: String,
@@ -118,6 +130,24 @@ fn test_find_past_match_returns_event() {
     assert!(found.is_some());
     assert_eq!(found.expect("missing").inner.lock().event_type, "work");
 
+    bus.stop();
+}
+
+#[test]
+fn test_find_past_returns_most_recent_dispatched_event() {
+    let bus = EventBus::new(Some("FindPastMostRecentBus".to_string()));
+    bus.on("work", "complete", |_event| async move { Ok(json!("ok")) });
+
+    let first = bus.emit::<WorkEvent>(TypedEvent::<WorkEvent>::new(EmptyPayload {}));
+    block_on(first.wait_completed());
+    thread::sleep(Duration::from_millis(20));
+    let second = bus.emit::<WorkEvent>(TypedEvent::<WorkEvent>::new(EmptyPayload {}));
+    block_on(second.wait_completed());
+
+    let found = block_on(bus.find("work", true, None, None)).expect("most recent event");
+    let found_id = found.inner.lock().event_id.clone();
+    let second_id = second.inner.inner.lock().event_id.clone();
+    assert_eq!(found_id, second_id);
     bus.stop();
 }
 
@@ -371,6 +401,49 @@ fn test_find_supports_metadata_filters_like_event_status() {
 }
 
 #[test]
+fn test_find_supports_metadata_equality_filters_like_event_id_and_event_timeout() {
+    let bus = EventBus::new(Some("FindEventFieldFilterBus".to_string()));
+
+    let event_a = TypedEvent::<WorkEvent>::new(EmptyPayload {});
+    event_a.inner.inner.lock().event_timeout = Some(11.0);
+    let event_a = bus.emit(event_a);
+    let event_b = TypedEvent::<WorkEvent>::new(EmptyPayload {});
+    event_b.inner.inner.lock().event_timeout = Some(22.0);
+    let event_b = bus.emit(event_b);
+    block_on(event_a.wait_completed());
+    block_on(event_b.wait_completed());
+
+    let event_a_id = event_a.inner.inner.lock().event_id.clone();
+    let found_a = block_on(bus.find_with_options(
+        "work",
+        FindOptions {
+            past: true,
+            where_filter: Some(HashMap::from([
+                ("event_id".to_string(), json!(event_a_id.clone())),
+                ("event_timeout".to_string(), json!(11.0)),
+            ])),
+            ..FindOptions::default()
+        },
+    ))
+    .expect("event_a should match metadata filter");
+    assert_eq!(found_a.inner.lock().event_id, event_a_id);
+
+    let mismatch = block_on(bus.find_with_options(
+        "work",
+        FindOptions {
+            past: true,
+            where_filter: Some(HashMap::from([
+                ("event_id".to_string(), json!(event_a_id)),
+                ("event_timeout".to_string(), json!(22.0)),
+            ])),
+            ..FindOptions::default()
+        },
+    ));
+    assert!(mismatch.is_none());
+    bus.stop();
+}
+
+#[test]
 fn test_find_supports_non_event_data_field_equality_filters() {
     let bus = EventBus::new(Some("FindPayloadBus".to_string()));
     let _old = bus.emit::<FilterEvent>(TypedEvent::new(FilterPayload {
@@ -468,6 +541,128 @@ fn test_find_wildcard_with_where_filter_matches_across_event_types_in_history() 
     let found_id = found.inner.lock().event_id.clone();
     let target_id = target.inner.inner.lock().event_id.clone();
     assert_eq!(found_id, target_id);
+    bus.stop();
+}
+
+#[test]
+fn test_find_wildcard_with_where_filter_works_for_future_waiting() {
+    let bus = EventBus::new(Some("FindWildcardFutureBus".to_string()));
+    let bus_for_emit = bus.clone();
+
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(40));
+        bus_for_emit.emit::<SystemEvent>(TypedEvent::new(EmptyPayload {}));
+        bus_for_emit.emit::<UserActionEvent>(TypedEvent::new(FilterPayload {
+            value: "normal".to_string(),
+            category: "user".to_string(),
+        }));
+        bus_for_emit.emit::<UserActionEvent>(TypedEvent::new(FilterPayload {
+            value: "special".to_string(),
+            category: "user".to_string(),
+        }));
+    });
+
+    let found = block_on(bus.find_with_options(
+        "*",
+        FindOptions {
+            past: false,
+            future: Some(0.5),
+            where_filter: Some(HashMap::from([("value".to_string(), json!("special"))])),
+            ..FindOptions::default()
+        },
+    ))
+    .expect("future wildcard match");
+
+    assert_eq!(found.inner.lock().event_type, "UserActionEvent");
+    assert_eq!(
+        found.inner.lock().payload.get("value"),
+        Some(&json!("special"))
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_find_with_multiple_concurrent_waiters_resolves_correct_events() {
+    let bus = EventBus::new(Some("FindConcurrentBus".to_string()));
+    let bus_normal = bus.clone();
+    let bus_special = bus.clone();
+    let bus_system = bus.clone();
+    let (tx, rx) = mpsc::channel();
+
+    let tx_normal = tx.clone();
+    thread::spawn(move || {
+        let found = block_on(bus_normal.find_with_options(
+            "UserActionEvent",
+            FindOptions {
+                past: false,
+                future: Some(0.5),
+                where_filter: Some(HashMap::from([("value".to_string(), json!("normal"))])),
+                ..FindOptions::default()
+            },
+        ))
+        .expect("normal event");
+        tx_normal
+            .send(("normal".to_string(), found.inner.lock().event_id.clone()))
+            .expect("send normal");
+    });
+
+    let tx_special = tx.clone();
+    thread::spawn(move || {
+        let found = block_on(bus_special.find_with_options(
+            "UserActionEvent",
+            FindOptions {
+                past: false,
+                future: Some(0.5),
+                where_filter: Some(HashMap::from([("value".to_string(), json!("special"))])),
+                ..FindOptions::default()
+            },
+        ))
+        .expect("special event");
+        tx_special
+            .send(("special".to_string(), found.inner.lock().event_id.clone()))
+            .expect("send special");
+    });
+
+    let tx_system = tx.clone();
+    thread::spawn(move || {
+        let found =
+            block_on(bus_system.find("SystemEvent", false, Some(0.5), None)).expect("system event");
+        tx_system
+            .send(("system".to_string(), found.inner.lock().event_id.clone()))
+            .expect("send system");
+    });
+
+    thread::sleep(Duration::from_millis(50));
+    let normal = bus.emit::<UserActionEvent>(TypedEvent::new(FilterPayload {
+        value: "normal".to_string(),
+        category: "user".to_string(),
+    }));
+    let system = bus.emit::<SystemEvent>(TypedEvent::new(EmptyPayload {}));
+    let special = bus.emit::<UserActionEvent>(TypedEvent::new(FilterPayload {
+        value: "special".to_string(),
+        category: "user".to_string(),
+    }));
+
+    let mut resolved = HashMap::new();
+    for _ in 0..3 {
+        let (label, event_id) = rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("waiter should resolve");
+        resolved.insert(label, event_id);
+    }
+
+    assert_eq!(
+        resolved.get("normal"),
+        Some(&normal.inner.inner.lock().event_id.clone())
+    );
+    assert_eq!(
+        resolved.get("system"),
+        Some(&system.inner.inner.lock().event_id.clone())
+    );
+    assert_eq!(
+        resolved.get("special"),
+        Some(&special.inner.inner.lock().event_id.clone())
+    );
     bus.stop();
 }
 
@@ -731,5 +926,110 @@ fn test_find_catches_child_event_that_fired_during_parent_handler() {
         block_on(bus.find("tab_created", true, None, Some(nav.inner.clone()))).expect("found tab");
     let found_tab_id = found_tab.inner.lock().event_id.clone();
     assert_eq!(found_tab_id, emitted_tab_id);
+    bus.stop();
+}
+
+#[test]
+fn test_find_past_includes_in_progress_dispatched_events() {
+    let bus = EventBus::new(Some("FindDispatchedPastBus".to_string()));
+
+    bus.on("work", "slow", |_event| async move {
+        thread::sleep(Duration::from_millis(80));
+        Ok(json!("done"))
+    });
+
+    let dispatched = bus.emit::<WorkEvent>(TypedEvent::<WorkEvent>::new(EmptyPayload {}));
+    thread::sleep(Duration::from_millis(10));
+
+    let found = block_on(bus.find("work", true, None, None)).expect("in-progress event");
+    let found_id = found.inner.lock().event_id.clone();
+    let dispatched_id = dispatched.inner.inner.lock().event_id.clone();
+    assert_eq!(found_id, dispatched_id);
+    let found_status = found.inner.lock().event_status;
+    assert_ne!(found_status, abxbus_rust::types::EventStatus::Completed);
+
+    block_on(dispatched.wait_completed());
+    bus.stop();
+}
+
+#[test]
+fn test_find_future_resolves_on_dispatch_before_completion() {
+    let bus = EventBus::new(Some("FindOnDispatchBus".to_string()));
+    let bus_for_emit = bus.clone();
+
+    bus.on("work", "slow", |_event| async move {
+        thread::sleep(Duration::from_millis(80));
+        Ok(json!("done"))
+    });
+
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(20));
+        bus_for_emit.emit::<WorkEvent>(TypedEvent::<WorkEvent>::new(EmptyPayload {}));
+    });
+
+    let found =
+        block_on(bus.find("work", false, Some(0.5), None)).expect("future dispatched event");
+    assert_eq!(
+        found.inner.lock().event_status,
+        abxbus_rust::types::EventStatus::Pending
+    );
+
+    block_on(found.event_completed());
+    assert_eq!(
+        found.inner.lock().event_status,
+        abxbus_rust::types::EventStatus::Completed
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_find_with_all_parameters_combined() {
+    let bus = EventBus::new(Some("FindAllParamsBus".to_string()));
+    let bus_for_parent = bus.clone();
+    let child_id = Arc::new(Mutex::new(None::<String>));
+    let child_id_for_parent = child_id.clone();
+
+    bus.on("parent", "emit_child", move |_event| {
+        let bus = bus_for_parent.clone();
+        let child_id = child_id_for_parent.clone();
+        async move {
+            let child = bus.emit_child::<FilterEvent>(TypedEvent::new(FilterPayload {
+                value: "target-child".to_string(),
+                category: "screenshot".to_string(),
+            }));
+            *child_id.lock().expect("child id lock") =
+                Some(child.inner.inner.lock().event_id.clone());
+            child.wait_completed().await;
+            Ok(json!("parent"))
+        }
+    });
+    bus.on("filter_event", "complete_child", |_event| async move {
+        Ok(json!("child"))
+    });
+
+    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(parent.wait_completed());
+    let expected_child_id = child_id
+        .lock()
+        .expect("child id lock")
+        .clone()
+        .expect("captured child id");
+
+    let found = block_on(bus.find_with_options(
+        "filter_event",
+        FindOptions {
+            past: true,
+            past_window: Some(5.0),
+            future: None,
+            child_of: Some(parent.inner.clone()),
+            where_filter: Some(HashMap::from([(
+                "value".to_string(),
+                json!("target-child"),
+            )])),
+        },
+    ))
+    .expect("combined find match");
+
+    assert_eq!(found.inner.lock().event_id, expected_child_id);
     bus.stop();
 }
