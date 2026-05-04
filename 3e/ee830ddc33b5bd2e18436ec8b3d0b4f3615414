@@ -1,0 +1,23 @@
+abxbus-rust/tests/test_lock_manager.rs
+  6a8c07f028b30c43 11-42,141-375
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "3eee830ddc33b5bd2e18436ec8b3d0b4f3615414",
+  "prompts": {
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "messages": [],
+      "total_additions": 1719,
+      "total_deletions": 1451,
+      "accepted_lines": 20270,
+      "overriden_lines": 0
+    }
+  }
+}
