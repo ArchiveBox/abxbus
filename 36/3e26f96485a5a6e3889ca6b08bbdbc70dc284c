@@ -1,0 +1,23 @@
+abxbus-rust/tests/test_eventbus_dispatch_parent_tracking.rs
+  6a8c07f028b30c43 9,11,133-223,277-323,358-448
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "363e26f96485a5a6e3889ca6b08bbdbc70dc284c",
+  "prompts": {
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "messages": [],
+      "total_additions": 1628,
+      "total_deletions": 1396,
+      "accepted_lines": 20283,
+      "overriden_lines": 0
+    }
+  }
+}
