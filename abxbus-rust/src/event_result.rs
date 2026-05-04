@@ -265,6 +265,61 @@ impl EventResult {
         })
     }
 
+    pub fn error_metadata_json(&self, event: &BaseEvent) -> Option<Value> {
+        self.error.as_ref().map(|raw_message| {
+            let (error_type, message) = Self::error_type_and_message(raw_message);
+            let event_data = event.inner.lock();
+            json!({
+                "type": error_type,
+                "message": message,
+                "event_result_id": self.id,
+                "event_id": self.event_id,
+                "event_type": event_data.event_type,
+                "event_timeout": event_data.event_timeout,
+                "timeout_seconds": self.timeout.or(event_data.event_timeout),
+                "handler_id": self.handler.id,
+                "handler_name": self.handler.handler_name,
+                "cause": Self::error_cause_json_value(error_type, message),
+            })
+        })
+    }
+
+    fn error_cause_json_value(error_type: &str, message: &str) -> Value {
+        if error_type == "EventHandlerTimeoutError" {
+            return json!({
+                "type": "TimeoutError",
+                "message": message,
+            });
+        }
+        if error_type == "EventHandlerAbortedError" && message == "timeout" {
+            return json!({
+                "type": "EventHandlerTimeoutError",
+                "message": message,
+            });
+        }
+        if let Some(reason) = message
+            .strip_prefix("Aborted running handler due to parent error: ")
+            .or_else(|| message.strip_prefix("Cancelled pending handler due to parent error: "))
+        {
+            let cause_type = if reason.contains("timed out") {
+                "EventHandlerTimeoutError"
+            } else {
+                "Error"
+            };
+            return json!({
+                "type": cause_type,
+                "message": reason,
+            });
+        }
+        if message.contains("first() resolved") {
+            return json!({
+                "type": "Error",
+                "message": "first() resolved",
+            });
+        }
+        Value::Null
+    }
+
     fn error_type_and_message(raw_message: &str) -> (&str, &str) {
         for error_type in [
             "EventHandlerAbortedError",

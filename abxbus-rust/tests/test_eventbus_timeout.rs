@@ -89,6 +89,17 @@ fn result_by_handler(event: &Arc<BaseEvent>, handler_name: &str) -> EventResult 
         .unwrap_or_else(|| panic!("missing handler result {handler_name}"))
 }
 
+fn first_result_for_event(event: &Arc<BaseEvent>) -> EventResult {
+    event
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("missing event result")
+}
+
 static TIMEOUT_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
 struct TimeoutTestGuard {
@@ -284,6 +295,194 @@ fn test_event_timeouts_abort_handlers_across_concurrency_modes() {
             bus.stop();
         }
     }
+}
+
+#[test]
+fn test_event_handler_errors_expose_event_result_cause_and_timeout_metadata() {
+    let _guard = timeout_test_guard();
+    let bus = EventBus::new_with_options(
+        Some("ErrorMetadataBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            ..EventBusOptions::default()
+        },
+    );
+
+    bus.on(
+        "ErrorMetadataTimeout",
+        "slow_timeout",
+        |_event| async move {
+            thread::sleep(Duration::from_millis(60));
+            Ok(json!("slow"))
+        },
+    );
+
+    let timed_out_event = bus.emit_base(timeout_event("ErrorMetadataTimeout", Some(0.02)));
+    block_on(timed_out_event.wait_completed());
+
+    let timeout_result = result_by_handler(&timed_out_event, "slow_timeout");
+    let timeout_metadata = timeout_result
+        .error_metadata_json(&timed_out_event)
+        .expect("timeout metadata");
+    assert_eq!(timeout_metadata["type"], "EventHandlerAbortedError");
+    assert_eq!(
+        timeout_metadata["cause"]["type"],
+        "EventHandlerTimeoutError"
+    );
+    assert_eq!(
+        timeout_metadata["event_result_id"],
+        json!(timeout_result.id)
+    );
+    assert_eq!(
+        timeout_metadata["event_id"],
+        json!(timed_out_event.inner.lock().event_id.clone())
+    );
+    assert_eq!(timeout_metadata["event_type"], "ErrorMetadataTimeout");
+    assert_eq!(timeout_metadata["handler_name"], "slow_timeout");
+    assert_eq!(
+        timeout_metadata["handler_id"],
+        json!(timeout_result.handler.id)
+    );
+    assert_eq!(timeout_metadata["event_timeout"], json!(0.02));
+    assert_eq!(timeout_metadata["timeout_seconds"], json!(0.02));
+    assert_eq!(
+        timeout_result.to_flat_json_value()["error"],
+        json!({
+            "type": "EventHandlerAbortedError",
+            "message": "timeout",
+        })
+    );
+
+    bus.on(
+        "ErrorMetadataAwaitedChild",
+        "awaited_child_slow",
+        |_event| async move {
+            thread::sleep(Duration::from_millis(120));
+            Ok(json!("awaited_child"))
+        },
+    );
+
+    let awaited_child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
+    let bus_for_awaited_parent = bus.clone();
+    let awaited_child_ref_for_handler = awaited_child_ref.clone();
+    bus.on(
+        "ErrorMetadataAwaitedParent",
+        "awaits_child",
+        move |_event| {
+            let bus = bus_for_awaited_parent.clone();
+            let awaited_child_ref = awaited_child_ref_for_handler.clone();
+            async move {
+                let child =
+                    bus.emit_child_base(timeout_event("ErrorMetadataAwaitedChild", Some(0.5)));
+                *awaited_child_ref.lock().expect("awaited child ref") = Some(child.clone());
+                child.wait_completed().await;
+                Ok(json!("parent"))
+            }
+        },
+    );
+
+    let awaited_parent = bus.emit_base(timeout_event("ErrorMetadataAwaitedParent", Some(0.05)));
+    block_on(awaited_parent.wait_completed());
+    assert!(block_on(bus.wait_until_idle(Some(2.0))));
+
+    let awaited_child = awaited_child_ref
+        .lock()
+        .expect("awaited child ref")
+        .clone()
+        .expect("awaited child should be emitted");
+    assert!(awaited_child.inner.lock().event_blocks_parent_completion);
+
+    let awaited_parent_result = result_by_handler(&awaited_parent, "awaits_child");
+    let parent_metadata = awaited_parent_result
+        .error_metadata_json(&awaited_parent)
+        .expect("parent timeout metadata");
+    assert_eq!(parent_metadata["type"], "EventHandlerAbortedError");
+    assert_eq!(parent_metadata["cause"]["type"], "EventHandlerTimeoutError");
+    assert_eq!(parent_metadata["event_type"], "ErrorMetadataAwaitedParent");
+    assert_eq!(parent_metadata["handler_name"], "awaits_child");
+    assert_eq!(parent_metadata["event_timeout"], json!(0.05));
+
+    let awaited_child_result = result_by_handler(&awaited_child, "awaited_child_slow");
+    let child_metadata = awaited_child_result
+        .error_metadata_json(&awaited_child)
+        .expect("awaited child error metadata");
+    assert_eq!(child_metadata["type"], "EventHandlerAbortedError");
+    assert_eq!(child_metadata["cause"]["type"], "EventHandlerTimeoutError");
+    assert!(child_metadata["cause"]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("parent event timed out after 0.05s"));
+    assert_eq!(
+        child_metadata["event_result_id"],
+        json!(awaited_child_result.id)
+    );
+    assert_eq!(
+        child_metadata["event_id"],
+        json!(awaited_child.inner.lock().event_id.clone())
+    );
+    assert_eq!(child_metadata["event_type"], "ErrorMetadataAwaitedChild");
+    assert_eq!(child_metadata["handler_name"], "awaited_child_slow");
+    assert_eq!(
+        child_metadata["handler_id"],
+        json!(awaited_child_result.handler.id)
+    );
+    assert_eq!(child_metadata["event_timeout"], json!(0.5));
+    assert_eq!(child_metadata["timeout_seconds"], json!(0.5));
+
+    bus.on(
+        "ErrorMetadataUnawaitedChild",
+        "unawaited_child_fast",
+        |_event| async move {
+            thread::sleep(Duration::from_millis(10));
+            Ok(json!("unawaited_child"))
+        },
+    );
+
+    let unawaited_child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
+    let bus_for_unawaited_parent = bus.clone();
+    let unawaited_child_ref_for_handler = unawaited_child_ref.clone();
+    bus.on(
+        "ErrorMetadataUnawaitedParent",
+        "emits_unawaited_child",
+        move |_event| {
+            let bus = bus_for_unawaited_parent.clone();
+            let unawaited_child_ref = unawaited_child_ref_for_handler.clone();
+            async move {
+                let child =
+                    bus.emit_child_base(timeout_event("ErrorMetadataUnawaitedChild", Some(0.5)));
+                *unawaited_child_ref.lock().expect("unawaited child ref") = Some(child);
+                thread::sleep(Duration::from_millis(80));
+                Ok(json!("parent"))
+            }
+        },
+    );
+
+    let unawaited_parent = bus.emit_base(timeout_event("ErrorMetadataUnawaitedParent", Some(0.02)));
+    block_on(unawaited_parent.wait_completed());
+    assert!(block_on(bus.wait_until_idle(Some(2.0))));
+
+    let unawaited_child = unawaited_child_ref
+        .lock()
+        .expect("unawaited child ref")
+        .clone()
+        .expect("unawaited child should be emitted");
+    assert!(!unawaited_child.inner.lock().event_blocks_parent_completion);
+    assert_eq!(
+        unawaited_child.inner.lock().event_status,
+        EventStatus::Completed
+    );
+    let unawaited_child_result = first_result_for_event(&unawaited_child);
+    assert_eq!(unawaited_child_result.status, EventResultStatus::Completed);
+    assert_eq!(
+        unawaited_child_result.result,
+        Some(json!("unawaited_child"))
+    );
+    assert!(unawaited_child_result
+        .error_metadata_json(&unawaited_child)
+        .is_none());
+
+    bus.stop();
 }
 
 fn assert_event_timeout_does_not_relabel_preexisting_handler_timeout() {
