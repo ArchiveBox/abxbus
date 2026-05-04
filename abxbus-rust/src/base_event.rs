@@ -133,6 +133,10 @@ impl BaseEvent {
         crate::event_bus::EventBus::event_bus_for_event(self)
     }
 
+    pub fn bus(self: &Arc<Self>) -> Option<Arc<crate::event_bus::EventBus>> {
+        self.event_bus()
+    }
+
     pub(crate) fn set_runtime_eventbus_id(&self, eventbus_id: Option<String>) {
         *self.runtime_eventbus_id.lock() = eventbus_id;
     }

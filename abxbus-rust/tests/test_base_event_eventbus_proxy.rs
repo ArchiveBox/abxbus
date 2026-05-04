@@ -98,6 +98,47 @@ fn test_legacy_bus_property_is_not_exposed_inside_handlers() {
 }
 
 #[test]
+fn test_event_bus_aliases_bus_property() {
+    let bus = EventBus::new(Some("AliasBus".to_string()));
+    let seen_bus_id = Arc::new(Mutex::new(None::<String>));
+    let seen_event_bus_id = Arc::new(Mutex::new(None::<String>));
+
+    let seen_bus_id_for_handler = seen_bus_id.clone();
+    let seen_event_bus_id_for_handler = seen_event_bus_id.clone();
+    bus.on("MainEvent", "handler", move |event| {
+        let seen_bus_id = seen_bus_id_for_handler.clone();
+        let seen_event_bus_id = seen_event_bus_id_for_handler.clone();
+        async move {
+            *seen_bus_id.lock().expect("seen bus id") = event.bus().map(|bus| bus.id.clone());
+            *seen_event_bus_id.lock().expect("seen event bus id") =
+                event.event_bus().map(|bus| bus.id.clone());
+            Ok(json!(null))
+        }
+    });
+
+    let event = bus.emit_base(base_event("MainEvent", json!({})));
+    block_on(event.event_completed());
+
+    assert_eq!(
+        seen_bus_id.lock().expect("seen bus id").as_deref(),
+        Some(bus.id.as_str())
+    );
+    assert_eq!(
+        seen_event_bus_id
+            .lock()
+            .expect("seen event bus id")
+            .as_deref(),
+        Some(bus.id.as_str())
+    );
+    assert!(!event
+        .to_json_value()
+        .as_object()
+        .unwrap()
+        .contains_key("bus"));
+    bus.stop();
+}
+
+#[test]
 fn test_event_event_bus_is_set_for_child_events_emitted_in_handler() {
     let bus = EventBus::new(Some("EventBusPropertyFallbackBus".to_string()));
     let child_bus_name = Arc::new(Mutex::new(None::<String>));
