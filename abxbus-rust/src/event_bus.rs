@@ -35,6 +35,7 @@ struct FindWaiter {
     pattern: String,
     child_of_event_id: Option<String>,
     where_filter: Option<HashMap<String, Value>>,
+    where_predicate: Option<FindPredicate>,
     sender: std_mpsc::Sender<Arc<BaseEvent>>,
 }
 
@@ -97,7 +98,10 @@ pub struct FindOptions {
     pub future: Option<f64>,
     pub child_of: Option<Arc<BaseEvent>>,
     pub where_filter: Option<HashMap<String, Value>>,
+    pub where_predicate: Option<FindPredicate>,
 }
+
+pub type FindPredicate = Arc<dyn Fn(&Arc<BaseEvent>) -> bool + Send + Sync>;
 
 impl Default for EventBusOptions {
     fn default() -> Self {
@@ -1177,6 +1181,7 @@ impl EventBus {
                 future,
                 child_of,
                 where_filter: None,
+                where_predicate: None,
             },
         )
         .await
@@ -1207,6 +1212,7 @@ impl EventBus {
                 pattern: pattern.to_string(),
                 child_of_event_id: child_of_event_id.clone(),
                 where_filter: options.where_filter.clone(),
+                where_predicate: options.where_predicate.clone(),
                 sender: tx,
             });
             waiter_id = Some(id);
@@ -1217,6 +1223,7 @@ impl EventBus {
                     pattern,
                     child_of_event_id.as_deref(),
                     options.where_filter.as_ref(),
+                    options.where_predicate.as_ref(),
                     options.past_window,
                 ) {
                     self.runtime
@@ -1231,6 +1238,7 @@ impl EventBus {
                 pattern,
                 child_of_event_id.as_deref(),
                 options.where_filter.as_ref(),
+                options.where_predicate.as_ref(),
                 options.past_window,
             );
         }
@@ -1254,6 +1262,7 @@ impl EventBus {
         pattern: &str,
         child_of_event_id: Option<&str>,
         where_filter: Option<&HashMap<String, Value>>,
+        where_predicate: Option<&FindPredicate>,
         past_window: Option<f64>,
     ) -> Option<Arc<BaseEvent>> {
         let history = self.runtime.history_order.lock().clone();
@@ -1274,6 +1283,9 @@ impl EventBus {
                 }
             }
             if !Self::matches_where_filter(&event, where_filter) {
+                continue;
+            }
+            if !Self::matches_where_predicate(&event, where_predicate) {
                 continue;
             }
             return Some(event);
@@ -1321,6 +1333,9 @@ impl EventBus {
                 if !Self::matches_where_filter(&event, waiter.where_filter.as_ref()) {
                     continue;
                 }
+                if !Self::matches_where_predicate(&event, waiter.where_predicate.as_ref()) {
+                    continue;
+                }
                 matched_waiter_ids.push(waiter.id);
                 matched_senders.push(waiter.sender.clone());
             }
@@ -1354,6 +1369,15 @@ impl EventBus {
         where_filter
             .iter()
             .all(|(key, expected)| record.get(key) == Some(expected))
+    }
+
+    fn matches_where_predicate(
+        event: &Arc<BaseEvent>,
+        where_predicate: Option<&FindPredicate>,
+    ) -> bool {
+        where_predicate
+            .map(|predicate| predicate(event))
+            .unwrap_or(true)
     }
 
     pub fn event_is_child_of(

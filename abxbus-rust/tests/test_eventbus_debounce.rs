@@ -104,6 +104,7 @@ fn test_simple_debounce_with_child_of_reuses_recent_event() {
             future: None,
             child_of: Some(parent.inner.clone()),
             where_filter: None,
+            where_predicate: None,
         },
     ))
     .unwrap_or_else(|| {
