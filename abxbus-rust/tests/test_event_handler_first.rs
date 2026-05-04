@@ -148,3 +148,36 @@ fn test_event_first_preserves_false_and_empty_string_results() {
     assert_eq!(empty_event.inner.inner.lock().event_results.len(), 2);
     empty_bus.stop();
 }
+
+#[test]
+fn test_event_first_shortcut_sets_mode_and_returns_winner() {
+    let bus = EventBus::new(Some("BusFirstShortcut".to_string()));
+
+    bus.on(
+        "value",
+        "null_result",
+        |_event| async move { Ok(Value::Null) },
+    );
+    bus.on(
+        "value",
+        "winner",
+        |_event| async move { Ok(json!("winner")) },
+    );
+    bus.on("value", "late", |_event| async move { Ok(json!("late")) });
+
+    let event = bus.emit::<ValueEvent>(TypedEvent::<ValueEvent>::new(EmptyPayload {}));
+    assert_eq!(event.inner.inner.lock().event_handler_completion, None);
+    let result = block_on(event.first());
+
+    assert_eq!(result, Some(json!("winner")));
+    assert_eq!(
+        event.inner.inner.lock().event_handler_completion,
+        Some(EventHandlerCompletionMode::First)
+    );
+    assert!(event
+        .inner
+        .to_json_value()
+        .get("event_handler_completion")
+        .is_some_and(|value| value == "first"));
+    bus.stop();
+}
