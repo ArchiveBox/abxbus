@@ -54,6 +54,19 @@ fn expected_event_result_json_keys() -> BTreeSet<String> {
 #[derive(Clone, Serialize, Deserialize)]
 struct EmptyPayload {}
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct ScreenshotEventResult {
+    screenshot_base64: Option<String>,
+    error: Option<String>,
+}
+
+struct ScreenshotEvent;
+impl EventSpec for ScreenshotEvent {
+    type Payload = EmptyPayload;
+    type Result = ScreenshotEventResult;
+    const EVENT_TYPE: &'static str = "ScreenshotEvent";
+}
+
 struct AccessorEvent;
 impl EventSpec for AccessorEvent {
     type Payload = EmptyPayload;
@@ -66,6 +79,27 @@ impl EventSpec for StringResultEvent {
     type Payload = EmptyPayload;
     type Result = String;
     const EVENT_TYPE: &'static str = "StringResultEvent";
+}
+
+struct IntEvent;
+impl EventSpec for IntEvent {
+    type Payload = EmptyPayload;
+    type Result = i64;
+    const EVENT_TYPE: &'static str = "IntEvent";
+}
+
+struct NormalEvent;
+impl EventSpec for NormalEvent {
+    type Payload = EmptyPayload;
+    type Result = Value;
+    const EVENT_TYPE: &'static str = "NormalEvent";
+}
+
+struct ForwardingTypedEvent;
+impl EventSpec for ForwardingTypedEvent {
+    type Payload = EmptyPayload;
+    type Result = i64;
+    const EVENT_TYPE: &'static str = "ForwardingTypedEvent";
 }
 
 fn schema_event(event_type: &str, schema: Option<Value>) -> Arc<BaseEvent> {
@@ -83,6 +117,149 @@ fn first_result(event: &Arc<BaseEvent>) -> EventResult {
         .next()
         .cloned()
         .expect("expected one event result")
+}
+
+#[test]
+fn test_pydantic_model_result_casting() {
+    let bus = EventBus::new(Some("pydantic_test_bus".to_string()));
+
+    bus.on(
+        "ScreenshotEvent",
+        "screenshot_handler",
+        |_event| async move {
+            Ok(json!({
+                "screenshot_base64": "fake_screenshot_data",
+                "error": null
+            }))
+        },
+    );
+
+    let event = bus.emit::<ScreenshotEvent>(TypedEvent::new(EmptyPayload {}));
+    let result = block_on(event.event_result(EventResultsOptions::default()))
+        .expect("typed event_result")
+        .expect("handler result");
+
+    assert_eq!(
+        result,
+        ScreenshotEventResult {
+            screenshot_base64: Some("fake_screenshot_data".to_string()),
+            error: None,
+        }
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_builtin_type_casting() {
+    let bus = EventBus::new(Some("builtin_test_bus".to_string()));
+
+    bus.on("StringResultEvent", "string_handler", |_event| async move {
+        Ok(json!("42"))
+    });
+    bus.on(
+        "IntEvent",
+        "int_handler",
+        |_event| async move { Ok(json!(123)) },
+    );
+
+    let string_event = bus.emit::<StringResultEvent>(TypedEvent::new(EmptyPayload {}));
+    let string_result = block_on(string_event.event_result(EventResultsOptions::default()))
+        .expect("string result")
+        .expect("string handler result");
+    assert_eq!(string_result, "42");
+
+    let int_event = bus.emit::<IntEvent>(TypedEvent::new(EmptyPayload {}));
+    let int_result = block_on(int_event.event_result(EventResultsOptions::default()))
+        .expect("int result")
+        .expect("int handler result");
+    assert_eq!(int_result, 123);
+    bus.stop();
+}
+
+#[test]
+fn test_casting_failure_handling() {
+    let bus = EventBus::new(Some("failure_test_bus".to_string()));
+
+    bus.on("IntEvent", "bad_handler", |_event| async move {
+        Ok(json!("not_a_number"))
+    });
+
+    let event = bus.emit::<IntEvent>(TypedEvent::new(EmptyPayload {}));
+    let typed_error = block_on(event.event_result(EventResultsOptions {
+        raise_if_any: false,
+        raise_if_none: false,
+    }))
+    .expect_err("typed accessor should reject invalid integer result");
+    assert!(typed_error.contains("invalid type") || typed_error.contains("i64"));
+
+    let stored_result = event
+        .inner
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("event result");
+    assert_eq!(stored_result.status, EventResultStatus::Completed);
+    assert_eq!(stored_result.error, None);
+    assert_eq!(stored_result.result, Some(json!("not_a_number")));
+    bus.stop();
+}
+
+#[test]
+fn test_no_casting_when_no_result_type() {
+    let bus = EventBus::new(Some("normal_test_bus".to_string()));
+
+    bus.on("NormalEvent", "normal_handler", |_event| async move {
+        Ok(json!({"raw": "data"}))
+    });
+
+    let event = bus.emit::<NormalEvent>(TypedEvent::new(EmptyPayload {}));
+    let result = block_on(event.event_result(EventResultsOptions::default()))
+        .expect("raw result")
+        .expect("handler result");
+
+    assert_eq!(result, json!({"raw": "data"}));
+    assert_eq!(event.inner.inner.lock().event_result_type, None);
+    bus.stop();
+}
+
+#[test]
+fn test_typed_accessors_normalize_forwarded_event_results_to_none() {
+    let bus = EventBus::new(Some("forwarded_result_normalization_bus".to_string()));
+
+    bus.on(
+        "ForwardingTypedEvent",
+        "forward_handler",
+        |_event| async move {
+            Ok(BaseEvent::new("ForwardedEventFromHandler", serde_json::Map::new()).to_json_value())
+        },
+    );
+
+    let event = bus.emit::<ForwardingTypedEvent>(TypedEvent::new(EmptyPayload {}));
+
+    let result = block_on(event.event_result(EventResultsOptions {
+        raise_if_any: false,
+        raise_if_none: false,
+    }))
+    .expect("typed event_result");
+    let results_list = block_on(event.event_results_list(EventResultsOptions {
+        raise_if_any: false,
+        raise_if_none: false,
+    }))
+    .expect("typed event_results_list");
+    assert_eq!(result, None);
+    assert!(results_list.is_empty());
+
+    let raw_results = event.inner.inner.lock().event_results.clone();
+    assert!(raw_results.values().any(|result| result
+        .result
+        .as_ref()
+        .is_some_and(|value| value.get("event_type")
+            == Some(&json!("ForwardedEventFromHandler"))
+            && value.get("event_id").is_some())));
+    bus.stop();
 }
 
 #[test]
