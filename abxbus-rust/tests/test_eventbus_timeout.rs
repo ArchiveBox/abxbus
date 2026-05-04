@@ -183,7 +183,7 @@ fn test_event_timeouts_abort_handlers_across_concurrency_modes() {
 }
 
 #[test]
-fn test_parent_timeout_cancels_pending_or_started_children() {
+fn test_parent_timeout_does_not_cancel_unawaited_child_with_own_timeout() {
     let bus = EventBus::new(Some("ParentTimeoutBus".to_string()));
     let bus_for_handler = bus.clone();
 
@@ -230,15 +230,152 @@ fn test_parent_timeout_cancels_pending_or_started_children() {
         .expect("missing child event");
 
     let child_inner = child.inner.lock();
-    let has_error = child_inner
-        .event_results
-        .values()
-        .any(|r| r.status == EventResultStatus::Error);
+    assert!(!child_inner.event_blocks_parent_completion);
     let is_completed = child_inner
         .event_results
         .values()
         .any(|r| r.status == EventResultStatus::Completed);
-    assert!(has_error || is_completed);
+    assert!(is_completed);
+    bus.stop();
+}
+
+#[test]
+fn test_parent_timeout_does_not_cancel_unawaited_child_handler_results_under_serial_handler_lock() {
+    let bus = EventBus::new_with_options(
+        Some("TimeoutCancelBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            event_timeout: None,
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_for_handler = bus.clone();
+
+    bus.on("child", "child_first", |_event| async move {
+        thread::sleep(Duration::from_millis(30));
+        Ok(json!("first"))
+    });
+    bus.on("child", "child_second", |_event| async move {
+        thread::sleep(Duration::from_millis(10));
+        Ok(json!("second"))
+    });
+
+    bus.on("parent", "emit_unawaited_child", move |_event| {
+        let bus = bus_for_handler.clone();
+        async move {
+            let child = TypedEvent::<ChildEvent>::new(EmptyPayload {});
+            child.inner.inner.lock().event_timeout = Some(0.2);
+            let child = bus.emit_child(child);
+            assert!(!child.inner.inner.lock().event_blocks_parent_completion);
+            thread::sleep(Duration::from_millis(50));
+            Ok(json!("parent"))
+        }
+    });
+
+    let parent = TypedEvent::<ParentEvent>::new(EmptyPayload {});
+    parent.inner.inner.lock().event_timeout = Some(0.01);
+    let parent = bus.emit(parent);
+    block_on(parent.wait_completed());
+    assert!(block_on(bus.wait_until_idle(Some(2.0))));
+
+    let parent_result = parent
+        .inner
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("missing parent result");
+    assert_eq!(parent_result.status, EventResultStatus::Error);
+
+    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let payload = bus.runtime_payload_for_test();
+    let child = payload
+        .values()
+        .find(|event| event.inner.lock().event_parent_id.as_deref() == Some(parent_id.as_str()))
+        .cloned()
+        .expect("missing child event");
+
+    let child_inner = child.inner.lock();
+    assert!(!child_inner.event_blocks_parent_completion);
+    let child_results: Vec<EventResultStatus> = child_inner
+        .event_results
+        .values()
+        .map(|result| result.status)
+        .collect();
+    assert_eq!(child_results.len(), 2);
+    assert!(child_results
+        .iter()
+        .all(|status| *status == EventResultStatus::Completed));
+    bus.stop();
+}
+
+#[test]
+fn test_parent_timeout_cancels_awaited_child_handler_results() {
+    let bus = EventBus::new_with_options(
+        Some("TimeoutAwaitedChildCancelBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            event_timeout: None,
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_for_handler = bus.clone();
+
+    bus.on("child", "child_slow", |_event| async move {
+        thread::sleep(Duration::from_millis(80));
+        Ok(json!("child"))
+    });
+
+    bus.on("parent", "emit_awaited_child", move |_event| {
+        let bus = bus_for_handler.clone();
+        async move {
+            let child = TypedEvent::<ChildEvent>::new(EmptyPayload {});
+            child.inner.inner.lock().event_timeout = Some(1.0);
+            let child = bus.emit_child(child);
+            child.wait_completed().await;
+            Ok(json!("parent"))
+        }
+    });
+
+    let parent = TypedEvent::<ParentEvent>::new(EmptyPayload {});
+    parent.inner.inner.lock().event_timeout = Some(0.01);
+    let parent = bus.emit(parent);
+    block_on(parent.wait_completed());
+    assert!(block_on(bus.wait_until_idle(Some(2.0))));
+
+    let parent_result = parent
+        .inner
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("missing parent result");
+    assert_eq!(parent_result.status, EventResultStatus::Error);
+
+    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let payload = bus.runtime_payload_for_test();
+    let child = payload
+        .values()
+        .find(|event| event.inner.lock().event_parent_id.as_deref() == Some(parent_id.as_str()))
+        .cloned()
+        .expect("missing child event");
+
+    let child_inner = child.inner.lock();
+    assert!(child_inner.event_blocks_parent_completion);
+    let child_results: Vec<_> = child_inner.event_results.values().cloned().collect();
+    assert_eq!(child_results.len(), 1);
+    assert_eq!(child_results[0].status, EventResultStatus::Error);
+    assert!(child_results[0]
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("EventHandlerAbortedError"));
     bus.stop();
 }
 

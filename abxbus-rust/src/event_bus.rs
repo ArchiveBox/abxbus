@@ -1509,12 +1509,22 @@ impl EventBus {
         for result in results.values() {
             for child_id in &result.event_children {
                 if let Some(child) = self.runtime.events.lock().get(child_id).cloned() {
+                    if !child.inner.lock().event_blocks_parent_completion {
+                        continue;
+                    }
+                    self.cancel_children(&child, reason);
                     for child_result in child.inner.lock().event_results.values_mut() {
-                        if child_result.status == EventResultStatus::Pending
-                            || child_result.status == EventResultStatus::Started
-                        {
+                        if child_result.status == EventResultStatus::Pending {
                             child_result.status = EventResultStatus::Error;
-                            child_result.error = Some(format!("cancelled: {reason}"));
+                            child_result.error = Some(format!(
+                                "EventHandlerCancelledError: Cancelled pending handler due to parent error: {reason}"
+                            ));
+                            child_result.completed_at = Some(now_iso());
+                        } else if child_result.status == EventResultStatus::Started {
+                            child_result.status = EventResultStatus::Error;
+                            child_result.error = Some(format!(
+                                "EventHandlerAbortedError: Aborted running handler due to parent error: {reason}"
+                            ));
                             child_result.completed_at = Some(now_iso());
                         }
                     }
@@ -1711,6 +1721,12 @@ impl EventBus {
         };
 
         let existing_result = { event.inner.lock().event_results.get(&handler.id).cloned() };
+        if existing_result
+            .as_ref()
+            .is_some_and(|result| result.status != EventResultStatus::Pending)
+        {
+            return false;
+        }
         let mut result = existing_result.unwrap_or_else(|| {
             EventResult::new(
                 event.inner.lock().event_id.clone(),
@@ -1762,6 +1778,9 @@ impl EventBus {
             .get(&handler.id)
             .cloned()
             .expect("missing result row");
+        if current.status != EventResultStatus::Started {
+            return false;
+        }
 
         match call_result {
             Ok(Ok(value)) => {
