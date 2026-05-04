@@ -53,6 +53,13 @@ impl EventSpec for IdleTimeoutCoverageEvent {
     const EVENT_TYPE: &'static str = "IdleTimeoutCoverageEvent";
 }
 
+struct StopCoverageEvent;
+impl EventSpec for StopCoverageEvent {
+    type Payload = EmptyPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "StopCoverageEvent";
+}
+
 #[test]
 fn test_event_reset_creates_fresh_pending_event_for_cross_bus_dispatch() {
     let bus_a = EventBus::new(Some("ResetCoverageBusA".to_string()));
@@ -181,6 +188,56 @@ fn test_wait_until_idle_timeout_path_recovers_after_inflight_handler_finishes() 
         EventStatus::Completed
     );
     bus.stop();
+}
+
+#[test]
+fn test_stop_timeout_zero_clears_running_bus_and_releases_name() {
+    let bus_name = "StopCoverageBus".to_string();
+    let bus = EventBus::new(Some(bus_name.clone()));
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Arc::new(Mutex::new(release_rx));
+
+    bus.on("StopCoverageEvent", "slow_handler", move |_event| {
+        let started_tx = started_tx.clone();
+        let release_rx = release_rx.clone();
+        async move {
+            let _ = started_tx.send(());
+            let _ = release_rx
+                .lock()
+                .expect("release lock")
+                .recv_timeout(Duration::from_millis(200));
+            Ok(json!(null))
+        }
+    });
+
+    let _pending =
+        bus.emit::<StopCoverageEvent>(TypedEvent::<StopCoverageEvent>::new(EmptyPayload {}));
+    started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("handler should start");
+
+    let start = Instant::now();
+    bus.stop();
+    let elapsed = start.elapsed();
+    assert!(elapsed < Duration::from_millis(500));
+    assert!(bus.is_stopped_for_test());
+    assert!(!EventBus::all_instances_contains(&bus));
+
+    release_tx.send(()).expect("release handler");
+
+    let replacement = EventBus::new(Some(bus_name));
+    replacement.on("StopCoverageEvent", "handler", |_event| async move {
+        Ok(json!(null))
+    });
+    let event = replacement
+        .emit::<StopCoverageEvent>(TypedEvent::<StopCoverageEvent>::new(EmptyPayload {}));
+    block_on(event.wait_completed());
+    assert_eq!(
+        event.inner.inner.lock().event_status,
+        EventStatus::Completed
+    );
+    replacement.stop();
 }
 
 #[test]

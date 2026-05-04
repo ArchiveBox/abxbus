@@ -200,13 +200,14 @@ impl EventBus {
     }
 
     pub fn new_with_options(name: Option<String>, options: EventBusOptions) -> Arc<Self> {
-        Self::new_with_options_and_loop(name, options, false)
+        Self::new_with_options_and_loop(name, options, false, true)
     }
 
     fn new_with_options_and_loop(
         name: Option<String>,
         options: EventBusOptions,
         start_loop: bool,
+        enforce_unique_name: bool,
     ) -> Arc<Self> {
         if let Some(timeout) = options.event_timeout {
             assert!(timeout > 0.0, "event_timeout must be > 0 or None");
@@ -222,18 +223,26 @@ impl EventBus {
         }
 
         let id = options.id.unwrap_or_else(uuid_v7_string);
-        let resolved_name = name.unwrap_or_else(|| "EventBus".to_string());
+        let requested_name =
+            name.unwrap_or_else(|| format!("EventBus_{}", &id[id.len().saturating_sub(8)..]));
         assert!(
-            resolved_name
+            requested_name
                 .chars()
                 .next()
                 .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
-                && resolved_name
+                && requested_name
                     .chars()
                     .all(|ch| ch == '_' || ch.is_ascii_alphanumeric()),
-            "EventBus name must be a unique identifier string, got: {resolved_name}"
+            "EventBus name must be a unique identifier string, got: {requested_name}"
         );
 
+        let mut instances = ALL_INSTANCES.get_or_init(|| Mutex::new(Vec::new())).lock();
+        instances.retain(|entry| entry.upgrade().is_some());
+        let resolved_name = if enforce_unique_name {
+            Self::resolve_unique_name(&requested_name, &id, &instances)
+        } else {
+            requested_name
+        };
         let bus = Arc::new(Self {
             name: resolved_name,
             id,
@@ -262,17 +271,43 @@ impl EventBus {
             }),
             bus_serial_lock: Arc::new(ReentrantLock::default()),
         });
-        Self::register_instance(&bus);
+        instances.push(Arc::downgrade(&bus));
+        drop(instances);
         if start_loop {
             bus.ensure_loop_started();
         }
         bus
     }
 
-    fn register_instance(bus: &Arc<Self>) {
+    fn resolve_unique_name(requested_name: &str, id: &str, instances: &[Weak<EventBus>]) -> String {
+        let has_conflict = |candidate: &str| {
+            instances
+                .iter()
+                .filter_map(Weak::upgrade)
+                .any(|existing| existing.name == candidate)
+        };
+        if !has_conflict(requested_name) {
+            return requested_name.to_string();
+        }
+
+        let suffix = &id[id.len().saturating_sub(8)..];
+        let mut candidate = format!("{requested_name}_{suffix}");
+        let mut attempt = 2usize;
+        while has_conflict(&candidate) {
+            candidate = format!("{requested_name}_{suffix}_{attempt}");
+            attempt += 1;
+        }
+        candidate
+    }
+
+    fn unregister_instance(&self) {
         let mut instances = ALL_INSTANCES.get_or_init(|| Mutex::new(Vec::new())).lock();
-        instances.retain(|entry| entry.upgrade().is_some());
-        instances.push(Arc::downgrade(bus));
+        let self_ptr = self as *const Self;
+        instances.retain(|entry| {
+            entry
+                .upgrade()
+                .is_some_and(|bus| !std::ptr::eq(Arc::as_ptr(&bus), self_ptr))
+        });
     }
 
     pub fn all_instances_contains(bus: &Arc<Self>) -> bool {
@@ -352,6 +387,7 @@ impl EventBus {
 
     pub fn stop(&self) {
         *self.runtime.stop.lock() = true;
+        self.unregister_instance();
         self.runtime.queue_notify.notify(usize::MAX);
     }
 
@@ -831,7 +867,7 @@ impl EventBus {
             .get("name")
             .and_then(Value::as_str)
             .map(ToString::to_string);
-        let bus = Self::new_with_options_and_loop(name, options, false);
+        let bus = Self::new_with_options_and_loop(name, options, false, false);
 
         let mut handlers_by_id = HashMap::new();
         if let Some(Value::Object(raw_handlers)) = payload.get("handlers") {

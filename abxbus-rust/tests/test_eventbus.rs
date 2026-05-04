@@ -3124,7 +3124,11 @@ fn test_event_bus_with_null_event_timeout_disables_timeouts() {
 #[test]
 fn test_event_bus_auto_generates_name_when_not_provided() {
     let bus = EventBus::new(None);
-    assert_eq!(bus.name, "EventBus");
+    assert!(bus.name.starts_with("EventBus_"));
+    assert_eq!(
+        bus.name,
+        format!("EventBus_{}", &bus.id[bus.id.len() - 8..])
+    );
     bus.stop();
 }
 
