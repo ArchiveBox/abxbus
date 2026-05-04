@@ -8,6 +8,7 @@ use std::{
 };
 
 use abxbus_rust::{
+    base_event::BaseEvent,
     event_bus::{EventBus, EventBusOptions},
     typed::{EventSpec, TypedEvent},
     types::{EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode},
@@ -29,8 +30,7 @@ impl EventSpec for SerializableEvent {
     const EVENT_TYPE: &'static str = "SerializableEvent";
 }
 
-#[test]
-fn test_eventbus_to_json_from_json_roundtrip_uses_id_keyed_structures() {
+fn assert_eventbus_json_roundtrip_uses_id_keyed_structures() {
     let bus = EventBus::new_with_options(
         Some("SerializableBus".to_string()),
         EventBusOptions {
@@ -91,7 +91,38 @@ fn test_eventbus_to_json_from_json_roundtrip_uses_id_keyed_structures() {
 }
 
 #[test]
-fn test_eventbus_from_json_recreates_missing_handler_entries_from_event_result_metadata() {
+fn test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() {
+    assert_eventbus_json_roundtrip_uses_id_keyed_structures();
+}
+
+#[test]
+fn test_eventbus_to_json_from_json_roundtrip_uses_id_keyed_structures() {
+    assert_eventbus_json_roundtrip_uses_id_keyed_structures();
+}
+
+#[test]
+fn test_baseevent_model_validate_roundtrips_runtime_json_shape() {
+    let bus = EventBus::new_with_options(
+        Some("SerializableBaseEventBus".to_string()),
+        EventBusOptions {
+            event_handler_detect_file_paths: false,
+            ..EventBusOptions::default()
+        },
+    );
+
+    bus.on("SerializableEvent", "handler", |_event| async move {
+        Ok(json!("ok"))
+    });
+    let event = bus.emit::<SerializableEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(event.wait_completed());
+
+    let payload = event.inner.to_json_value();
+    let restored_payload = BaseEvent::from_json_value(payload.clone()).to_json_value();
+    assert_eq!(restored_payload, payload);
+    bus.stop();
+}
+
+fn assert_eventbus_recreates_missing_handler_entries_from_event_result_metadata() {
     let bus = EventBus::new_with_options(
         Some("MissingHandlerHydrationBus".to_string()),
         EventBusOptions {
@@ -125,7 +156,16 @@ fn test_eventbus_from_json_recreates_missing_handler_entries_from_event_result_m
 }
 
 #[test]
-fn test_eventbus_to_json_promotes_pending_events_into_event_history_snapshot() {
+fn test_eventbus_validate_creates_missing_handler_entries_from_event_results() {
+    assert_eventbus_recreates_missing_handler_entries_from_event_result_metadata();
+}
+
+#[test]
+fn test_eventbus_from_json_recreates_missing_handler_entries_from_event_result_metadata() {
+    assert_eventbus_recreates_missing_handler_entries_from_event_result_metadata();
+}
+
+fn assert_eventbus_promotes_pending_events_into_event_history() {
     let bus = EventBus::new(Some("ModelDumpPendingBus".to_string()));
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let sent_started = Arc::new(AtomicBool::new(false));
@@ -160,4 +200,14 @@ fn test_eventbus_to_json_promotes_pending_events_into_event_history_snapshot() {
     block_on(first.wait_completed());
     block_on(pending.wait_completed());
     bus.stop();
+}
+
+#[test]
+fn test_eventbus_model_dump_promotes_pending_events_into_event_history() {
+    assert_eventbus_promotes_pending_events_into_event_history();
+}
+
+#[test]
+fn test_eventbus_to_json_promotes_pending_events_into_event_history_snapshot() {
+    assert_eventbus_promotes_pending_events_into_event_history();
 }
