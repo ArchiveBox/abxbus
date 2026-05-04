@@ -1146,6 +1146,82 @@ fn test_bug_queue_jump_two_bus_serial_handlers_should_serialize_on_each_bus() {
 }
 
 #[test]
+fn test_bug_queue_jump_two_bus_global_handler_lock_should_serialize_across_both_buses() {
+    let bus_a = new_bus_with_concurrency(
+        "QJ2GS_A",
+        EventConcurrencyMode::BusSerial,
+        EventHandlerConcurrencyMode::Serial,
+        EventHandlerCompletionMode::All,
+    );
+    let bus_b = new_bus_with_concurrency(
+        "QJ2GS_B",
+        EventConcurrencyMode::BusSerial,
+        EventHandlerConcurrencyMode::Serial,
+        EventHandlerCompletionMode::All,
+    );
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let global_handler_lock = Arc::new(Mutex::new(()));
+
+    let bus_a_for_trigger = bus_a.clone();
+    let bus_b_for_trigger = bus_b.clone();
+    bus_a.on("Event1", "trigger_handler", move |_event| {
+        let bus_a = bus_a_for_trigger.clone();
+        let bus_b = bus_b_for_trigger.clone();
+        async move {
+            let child = bus_a.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            bus_b.emit_base(child.inner.clone());
+            child.wait_completed().await;
+            Ok(json!(null))
+        }
+    });
+
+    for (bus, first_start, first_end, second_start, second_end) in [
+        (bus_a.clone(), "a1_start", "a1_end", "a2_start", "a2_end"),
+        (bus_b.clone(), "b1_start", "b1_end", "b2_start", "b2_end"),
+    ] {
+        let log_first = log.clone();
+        let lock_first = global_handler_lock.clone();
+        bus.on_sync("ChildEvent", first_start, move |_event| {
+            let _guard = lock_first.lock().expect("global handler lock");
+            push(&log_first, first_start);
+            thread::sleep(Duration::from_millis(15));
+            push(&log_first, first_end);
+            Ok(json!(null))
+        });
+        let log_second = log.clone();
+        let lock_second = global_handler_lock.clone();
+        bus.on_sync("ChildEvent", second_start, move |_event| {
+            let _guard = lock_second.lock().expect("global handler lock");
+            push(&log_second, second_start);
+            thread::sleep(Duration::from_millis(5));
+            push(&log_second, second_end);
+            Ok(json!(null))
+        });
+    }
+
+    let top = bus_a.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    block_on(top.wait_completed());
+    block_on(bus_a.wait_until_idle(Some(2.0)));
+    block_on(bus_b.wait_until_idle(Some(2.0)));
+
+    let log = log.lock().expect("log lock").clone();
+    assert!(
+        index_of(&log, "a1_end") < index_of(&log, "a2_start"),
+        "global lock: a1 should finish before a2 starts. Got: {log:?}"
+    );
+    assert!(
+        index_of(&log, "b1_end") < index_of(&log, "b2_start"),
+        "global lock: b1 should finish before b2 starts. Got: {log:?}"
+    );
+    assert!(
+        index_of(&log, "a2_end") < index_of(&log, "b1_start"),
+        "global lock: bus_a should finish before bus_b starts. Got: {log:?}"
+    );
+    bus_a.stop();
+    bus_b.stop();
+}
+
+#[test]
 fn test_bug_queue_jump_two_bus_mixed_bus_a_serial_bus_b_parallel() {
     let bus_a = new_bus_with_concurrency(
         "QJ2Mix1_A",

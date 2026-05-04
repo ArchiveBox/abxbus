@@ -301,6 +301,17 @@ impl EventBus {
         Self::start_loop(bus);
     }
 
+    fn is_inside_handler_context() -> bool {
+        CURRENT_HANDLER_ID.with(|handler_id| handler_id.borrow().is_some())
+    }
+
+    fn notify_all_queues() {
+        for bus in Self::live_instances() {
+            bus.ensure_loop_started();
+            bus.runtime.queue_notify.notify(usize::MAX);
+        }
+    }
+
     fn start_loop(bus: Self) {
         thread::spawn(move || {
             block_on(async move {
@@ -1132,8 +1143,10 @@ impl EventBus {
         }
 
         self.notify_find_waiters(event.clone());
-        self.ensure_loop_started();
-        self.runtime.queue_notify.notify(1);
+        if queue_jump || !Self::is_inside_handler_context() {
+            self.ensure_loop_started();
+            self.runtime.queue_notify.notify(1);
+        }
         event
     }
 
@@ -1281,13 +1294,16 @@ impl EventBus {
         self.create_pending_handler_results(&event, &handlers, event_timeout);
 
         let bus = self.clone();
-        thread::spawn(move || {
+        let handle = thread::spawn(move || {
             if bypass_event_lock {
                 block_on(bus.process_event_inner(event));
             } else {
                 block_on(bus.process_event(event));
             }
         });
+        handle
+            .join()
+            .expect("immediate event processing thread panicked");
     }
 
     fn register_in_history(&self, event: Arc<BaseEvent>) -> bool {
@@ -2202,6 +2218,7 @@ impl EventBus {
         } else {
             rx.recv().map_err(|_| "handler channel closed".to_string())
         };
+        Self::notify_all_queues();
 
         let mut current = event
             .inner
