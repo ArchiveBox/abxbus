@@ -154,7 +154,7 @@ fn test_advanced_debounce_prefers_history_then_waits_future_then_dispatches() {
 }
 
 #[test]
-fn test_debounce_returns_existing_fresh_event() {
+fn test_returns_existing_fresh_event() {
     let bus = EventBus::new(Some("DebounceFreshBus".to_string()));
     bus.on("ScreenshotEvent", "complete", |_event| async move {
         Ok(json!("done"))
@@ -189,7 +189,7 @@ fn test_debounce_returns_existing_fresh_event() {
 }
 
 #[test]
-fn test_debounce_dispatches_new_when_no_match() {
+fn test_dispatches_new_when_no_match() {
     let bus = EventBus::new(Some("DebounceNoMatchBus".to_string()));
     bus.on("ScreenshotEvent", "complete", |_event| async move {
         Ok(json!("done"))
@@ -220,7 +220,7 @@ fn test_debounce_dispatches_new_when_no_match() {
 }
 
 #[test]
-fn test_debounce_dispatches_new_when_existing_is_stale() {
+fn test_dispatches_new_when_stale() {
     let bus = EventBus::new(Some("DebounceStaleBus".to_string()));
     bus.on("ScreenshotEvent", "complete", |_event| async move {
         Ok(json!("done"))
@@ -257,7 +257,113 @@ fn test_debounce_dispatches_new_when_existing_is_stale() {
 }
 
 #[test]
-fn test_debounce_or_chain_handles_sequential_lookups_without_blocking() {
+fn test_find_past_only_returns_immediately_without_waiting() {
+    let bus = EventBus::new(Some("DebouncePastOnlyBus".to_string()));
+
+    let start = Instant::now();
+    let result = block_on(bus.find("ParentEvent", true, None, None));
+    let elapsed = start.elapsed();
+
+    assert!(result.is_none());
+    assert!(elapsed < Duration::from_millis(50));
+    bus.stop();
+}
+
+#[test]
+fn test_find_past_float_returns_immediately_without_waiting() {
+    let bus = EventBus::new(Some("DebouncePastWindowBus".to_string()));
+
+    let start = Instant::now();
+    let result = block_on(bus.find_with_options(
+        "ParentEvent",
+        FindOptions {
+            past: true,
+            past_window: Some(5.0),
+            future: None,
+            ..FindOptions::default()
+        },
+    ));
+    let elapsed = start.elapsed();
+
+    assert!(result.is_none());
+    assert!(elapsed < Duration::from_millis(50));
+    bus.stop();
+}
+
+#[test]
+fn test_or_chain_without_waiting_finds_existing() {
+    let bus = EventBus::new(Some("DebounceOrChainExistingBus".to_string()));
+    bus.on("ScreenshotEvent", "complete", |_event| async move {
+        Ok(json!("done"))
+    });
+
+    let original = bus.emit::<ScreenshotEvent>(TypedEvent::new(ScreenshotPayload {
+        target_id: TARGET_ID_1.to_string(),
+    }));
+    block_on(original.wait_completed());
+
+    let start = Instant::now();
+    let result = block_on(bus.find_with_options(
+        "ScreenshotEvent",
+        FindOptions {
+            past: true,
+            future: None,
+            where_filter: Some(target_filter(TARGET_ID_1)),
+            ..FindOptions::default()
+        },
+    ))
+    .unwrap_or_else(|| {
+        bus.emit::<ScreenshotEvent>(TypedEvent::new(ScreenshotPayload {
+            target_id: TARGET_ID_1.to_string(),
+        }))
+        .inner
+    });
+    block_on(result.event_completed());
+    let elapsed = start.elapsed();
+
+    let result_id = result.inner.lock().event_id.clone();
+    let original_id = original.inner.inner.lock().event_id.clone();
+    assert_eq!(result_id, original_id);
+    assert!(elapsed < Duration::from_millis(100));
+    bus.stop();
+}
+
+#[test]
+fn test_or_chain_without_waiting_dispatches_when_no_match() {
+    let bus = EventBus::new(Some("DebounceOrChainNoMatchBus".to_string()));
+    bus.on("ScreenshotEvent", "complete", |_event| async move {
+        Ok(json!("done"))
+    });
+
+    let start = Instant::now();
+    let result = block_on(bus.find_with_options(
+        "ScreenshotEvent",
+        FindOptions {
+            past: true,
+            future: None,
+            where_filter: Some(target_filter(TARGET_ID_1)),
+            ..FindOptions::default()
+        },
+    ))
+    .unwrap_or_else(|| {
+        bus.emit::<ScreenshotEvent>(TypedEvent::new(ScreenshotPayload {
+            target_id: TARGET_ID_1.to_string(),
+        }))
+        .inner
+    });
+    block_on(result.event_completed());
+    let elapsed = start.elapsed();
+
+    assert_eq!(
+        result.inner.lock().payload.get("target_id"),
+        Some(&json!(TARGET_ID_1))
+    );
+    assert!(elapsed < Duration::from_millis(100));
+    bus.stop();
+}
+
+#[test]
+fn test_or_chain_multiple_sequential_lookups() {
     let bus = EventBus::new(Some("DebounceSequentialBus".to_string()));
     bus.on("ScreenshotEvent", "complete", |_event| async move {
         Ok(json!("done"))
