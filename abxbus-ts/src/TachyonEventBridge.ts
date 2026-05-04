@@ -206,11 +206,11 @@ export class TachyonEventBridge {
     }
     if (this.listener_startup_error) throw this.listener_startup_error
     // Tear down the worker that never bound so a later on() can spawn a fresh one.
-    try {
-      void worker.terminate()
-    } catch {
-      // ignore
-    }
+    // Use .catch() so a terminate() rejection doesn't bubble up as an unhandled
+    // promise rejection (which crashes Node by default in newer versions).
+    worker.terminate().catch(() => {
+      /* ignore */
+    })
     if (this.listener_worker === worker) this.listener_worker = null
     throw new Error(`TachyonEventBridge listener did not bind socket ${this.path} within ${TACHYON_LISTEN_TIMEOUT_MS}ms`)
   }

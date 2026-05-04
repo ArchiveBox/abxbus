@@ -100,6 +100,10 @@ class TachyonEventBridge:
             await asyncio.sleep(0.005)
         if self._listener_init_error is not None:
             raise RuntimeError(f'TachyonEventBridge failed to listen on {self.path}') from self._listener_init_error
+        # Drop the cached references so a later on() can spin up a fresh listener thread
+        # instead of short-circuiting on this dead one.
+        self._listener_bus = None
+        self._listener_thread = None
         raise TimeoutError(f'TachyonEventBridge listener did not bind socket {self.path} within {_TACHYON_SOCKET_WAIT_TIMEOUT}s')
 
     async def close(self, *, clear: bool = True) -> None:

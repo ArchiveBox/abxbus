@@ -120,7 +120,7 @@ jobs:
         if: matrix.task.kind == 'test' && matrix.task.name == 'test_bridges'
         run: |
           sudo apt-get update
-          sudo apt-get install -y redis-server nats-server postgresql sqlite3
+          sudo apt-get install -y redis-server nats-server postgresql sqlite3 gcc-14 g++-14
 
           PG_INITDB_PATH="$(find /usr/lib/postgresql -type f -name initdb | head -n 1)"
           PG_BINDIR="$(dirname "${PG_INITDB_PATH}")"
@@ -136,8 +136,16 @@ jobs:
           initdb --version
           postgres --version
           sqlite3 --version
+          gcc-14 --version
 
       - run: uv sync --dev --all-extras --no-extra tachyon
+
+      - name: Install Tachyon (compiled with gcc-14) for the bridges roundtrip test
+        if: matrix.task.kind == 'test' && matrix.task.name == 'test_bridges'
+        env:
+          CC: gcc-14
+          CXX: g++-14
+        run: uv pip install tachyon-ipc
 
       - name: Build TypeScript ESM bundle for cross-runtime roundtrip tests
         if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'

@@ -115,7 +115,7 @@ jobs:
         if: matrix.task.kind == 'test' && matrix.task.name == 'bridges'
         run: |
           sudo apt-get update
-          sudo apt-get install -y redis-server nats-server postgresql sqlite3
+          sudo apt-get install -y redis-server nats-server postgresql sqlite3 gcc-14 g++-14
 
           PG_INITDB_PATH="$(find /usr/lib/postgresql -type f -name initdb | head -n 1)"
           PG_BINDIR="$(dirname "${PG_INITDB_PATH}")"
@@ -131,8 +131,37 @@ jobs:
           initdb --version
           postgres --version
           sqlite3 --version
+          gcc-14 --version
+
+      - name: Install modern CMake (>=3.31 required by @tachyon-ipc/core)
+        if: matrix.task.kind == 'test' && matrix.task.name == 'bridges'
+        run: |
+          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null \
+            | gpg --dearmor \
+            | sudo tee /usr/share/keyrings/kitware-archive-keyring.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ noble main" \
+            | sudo tee /etc/apt/sources.list.d/kitware.list
+          sudo apt-get update
+          sudo apt-get install -y cmake
+          cmake --version
 
       - run: pnpm install --frozen-lockfile
+
+      - name: Build @tachyon-ipc/core native binding
+        if: matrix.task.kind == 'test' && matrix.task.name == 'bridges'
+        env:
+          CC: gcc-14
+          CXX: g++-14
+        run: |
+          # pnpm doesn't run @tachyon-ipc/core's `install` lifecycle script by default
+          # (onlyBuiltDependencies gate), so build it manually and copy the native
+          # binding to the path bus.js expects (`@tachyon-ipc/build/Release/...`).
+          TACHYON_PKG_DIR="$(node -p "path.dirname(require.resolve('@tachyon-ipc/core/package.json'))")"
+          TACHYON_PARENT_DIR="$(dirname "${TACHYON_PKG_DIR}")"
+          (cd "${TACHYON_PKG_DIR}" && npx --yes cmake-js compile)
+          mkdir -p "${TACHYON_PARENT_DIR}/build/Release"
+          cp "${TACHYON_PKG_DIR}/build/Release/tachyon_node.node" "${TACHYON_PARENT_DIR}/build/Release/tachyon_node.node"
+          node -e "const m = require('@tachyon-ipc/core'); console.log('tachyon-ipc loaded:', typeof m.Bus)"
 
       - uses: astral-sh/setup-uv@v6
         if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
