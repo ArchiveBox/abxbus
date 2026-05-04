@@ -1796,7 +1796,8 @@ impl EventBus {
         let results = event.inner.lock().event_results.clone();
         for result in results.values() {
             for child_id in &result.event_children {
-                if let Some(child) = self.runtime.events.lock().get(child_id).cloned() {
+                let child = { self.runtime.events.lock().get(child_id).cloned() };
+                if let Some(child) = child {
                     if !child.inner.lock().event_blocks_parent_completion {
                         continue;
                     }

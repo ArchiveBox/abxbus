@@ -6,11 +6,12 @@ use std::{
 };
 
 use abxbus_rust::{
+    base_event::BaseEvent,
     event_bus::{EventBus, EventBusOptions},
     event_handler::EventHandlerOptions,
-    event_result::EventResultStatus,
+    event_result::{EventResult, EventResultStatus},
     typed::{EventSpec, TypedEvent},
-    types::{EventConcurrencyMode, EventHandlerConcurrencyMode},
+    types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
@@ -69,6 +70,23 @@ fn error_type(result: &abxbus_rust::event_result::EventResult) -> String {
         .as_str()
         .unwrap_or_default()
         .to_string()
+}
+
+fn timeout_event(event_type: &str, timeout: Option<f64>) -> Arc<BaseEvent> {
+    let event = BaseEvent::new(event_type, serde_json::Map::new());
+    event.inner.lock().event_timeout = timeout;
+    event
+}
+
+fn result_by_handler(event: &Arc<BaseEvent>, handler_name: &str) -> EventResult {
+    event
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .find(|result| result.handler.handler_name == handler_name)
+        .cloned()
+        .unwrap_or_else(|| panic!("missing handler result {handler_name}"))
 }
 
 static TIMEOUT_TEST_MUTEX: Mutex<()> = Mutex::new(());
@@ -1360,6 +1378,689 @@ fn test_bus_default_null_disables_timeouts_when_event_timeout_is_null() {
         .expect("result");
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("ok")));
+    bus.stop();
+}
+
+#[test]
+fn test_multi_level_timeout_cascade_with_mixed_cancellations() {
+    let _guard = timeout_test_guard();
+    let bus = EventBus::new_with_options(
+        Some("TimeoutCascadeBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            event_timeout: None,
+            ..EventBusOptions::default()
+        },
+    );
+
+    let queued_child_ref = Arc::new(Mutex::new(None));
+    let awaited_child_ref = Arc::new(Mutex::new(None));
+    let immediate_grandchild_ref = Arc::new(Mutex::new(None));
+    let queued_grandchild_ref = Arc::new(Mutex::new(None));
+    let queued_child_runs = Arc::new(Mutex::new(0usize));
+    let immediate_grandchild_runs = Arc::new(Mutex::new(0usize));
+    let queued_grandchild_runs = Arc::new(Mutex::new(0usize));
+
+    for (name, delay_ms) in [("queued_child_fast", 5_u64), ("queued_child_slow", 50_u64)] {
+        let runs = queued_child_runs.clone();
+        bus.on("TimeoutCascadeQueuedChild", name, move |_event| {
+            let runs = runs.clone();
+            async move {
+                *runs.lock().expect("queued child runs") += 1;
+                thread::sleep(Duration::from_millis(delay_ms));
+                Ok(json!(name))
+            }
+        });
+    }
+
+    bus.on(
+        "TimeoutCascadeAwaitedChild",
+        "awaited_child_fast",
+        |_event| async move {
+            thread::sleep(Duration::from_millis(5));
+            Ok(json!("awaited_fast"))
+        },
+    );
+    let bus_for_awaited = bus.clone();
+    let immediate_ref_for_handler = immediate_grandchild_ref.clone();
+    let queued_gc_ref_for_handler = queued_grandchild_ref.clone();
+    bus.on(
+        "TimeoutCascadeAwaitedChild",
+        "awaited_child_slow",
+        move |_event| {
+            let bus = bus_for_awaited.clone();
+            let immediate_ref = immediate_ref_for_handler.clone();
+            let queued_gc_ref = queued_gc_ref_for_handler.clone();
+            async move {
+                let queued_grandchild = timeout_event("TimeoutCascadeQueuedGrandchild", Some(0.2));
+                let immediate_grandchild =
+                    timeout_event("TimeoutCascadeImmediateGrandchild", Some(0.2));
+                bus.emit_child_base(queued_grandchild.clone());
+                bus.emit_child_base(immediate_grandchild.clone());
+                *queued_gc_ref.lock().expect("queued grandchild ref") = Some(queued_grandchild);
+                *immediate_ref.lock().expect("immediate grandchild ref") =
+                    Some(immediate_grandchild.clone());
+                immediate_grandchild.wait_completed().await;
+                thread::sleep(Duration::from_millis(100));
+                Ok(json!("awaited_slow"))
+            }
+        },
+    );
+
+    for (name, delay_ms) in [
+        ("immediate_grandchild_slow", 50_u64),
+        ("immediate_grandchild_fast", 10_u64),
+    ] {
+        let runs = immediate_grandchild_runs.clone();
+        bus.on("TimeoutCascadeImmediateGrandchild", name, move |_event| {
+            let runs = runs.clone();
+            async move {
+                *runs.lock().expect("immediate grandchild runs") += 1;
+                thread::sleep(Duration::from_millis(delay_ms));
+                Ok(json!(name))
+            }
+        });
+    }
+
+    for (name, delay_ms) in [
+        ("queued_grandchild_slow", 50_u64),
+        ("queued_grandchild_fast", 10_u64),
+    ] {
+        let runs = queued_grandchild_runs.clone();
+        bus.on("TimeoutCascadeQueuedGrandchild", name, move |_event| {
+            let runs = runs.clone();
+            async move {
+                *runs.lock().expect("queued grandchild runs") += 1;
+                thread::sleep(Duration::from_millis(delay_ms));
+                Ok(json!(name))
+            }
+        });
+    }
+
+    let bus_for_top = bus.clone();
+    let queued_child_ref_for_top = queued_child_ref.clone();
+    let awaited_child_ref_for_top = awaited_child_ref.clone();
+    bus.on("TimeoutCascadeTop", "top_handler", move |_event| {
+        let bus = bus_for_top.clone();
+        let queued_child_ref = queued_child_ref_for_top.clone();
+        let awaited_child_ref = awaited_child_ref_for_top.clone();
+        async move {
+            let queued_child = timeout_event("TimeoutCascadeQueuedChild", Some(0.2));
+            let awaited_child = timeout_event("TimeoutCascadeAwaitedChild", Some(0.03));
+            bus.emit_child_base(queued_child.clone());
+            bus.emit_child_base(awaited_child.clone());
+            *queued_child_ref.lock().expect("queued child ref") = Some(queued_child);
+            *awaited_child_ref.lock().expect("awaited child ref") = Some(awaited_child.clone());
+            awaited_child.wait_completed().await;
+            thread::sleep(Duration::from_millis(80));
+            Ok(json!(null))
+        }
+    });
+
+    let top = timeout_event("TimeoutCascadeTop", Some(0.04));
+    bus.emit_base(top.clone());
+    block_on(top.wait_completed());
+    assert!(block_on(bus.wait_until_idle(Some(2.0))));
+
+    let top_result = top
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("top result");
+    assert_eq!(top_result.status, EventResultStatus::Error);
+    assert_eq!(error_type(&top_result), "EventHandlerAbortedError");
+
+    let queued_child = queued_child_ref
+        .lock()
+        .expect("queued child ref")
+        .clone()
+        .expect("queued child");
+    let queued_results: Vec<_> = queued_child
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .cloned()
+        .collect();
+    assert!(!queued_child.inner.lock().event_blocks_parent_completion);
+    assert_eq!(*queued_child_runs.lock().expect("queued child runs"), 2);
+    assert_eq!(queued_results.len(), 2);
+    assert!(queued_results
+        .iter()
+        .all(|result| result.status == EventResultStatus::Completed));
+
+    let awaited_child = awaited_child_ref
+        .lock()
+        .expect("awaited child ref")
+        .clone()
+        .expect("awaited child");
+    let awaited_results: Vec<_> = awaited_child
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .cloned()
+        .collect();
+    assert_eq!(
+        awaited_results
+            .iter()
+            .filter(|result| result.status == EventResultStatus::Completed)
+            .count(),
+        1
+    );
+    assert_eq!(
+        awaited_results
+            .iter()
+            .filter(|result| error_type(result) == "EventHandlerAbortedError")
+            .count(),
+        1
+    );
+
+    let immediate_grandchild = immediate_grandchild_ref
+        .lock()
+        .expect("immediate grandchild ref")
+        .clone()
+        .expect("immediate grandchild");
+    let immediate_results: Vec<_> = immediate_grandchild
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .cloned()
+        .collect();
+    assert_eq!(
+        *immediate_grandchild_runs
+            .lock()
+            .expect("immediate grandchild runs"),
+        1
+    );
+    assert_eq!(
+        immediate_results
+            .iter()
+            .filter(|result| error_type(result) == "EventHandlerAbortedError")
+            .count(),
+        1
+    );
+    assert_eq!(
+        immediate_results
+            .iter()
+            .filter(|result| error_type(result) == "EventHandlerCancelledError")
+            .count(),
+        1
+    );
+
+    let queued_grandchild = queued_grandchild_ref
+        .lock()
+        .expect("queued grandchild ref")
+        .clone()
+        .expect("queued grandchild");
+    let queued_grandchild_results: Vec<_> = queued_grandchild
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .cloned()
+        .collect();
+    assert!(
+        !queued_grandchild
+            .inner
+            .lock()
+            .event_blocks_parent_completion
+    );
+    assert_eq!(
+        *queued_grandchild_runs
+            .lock()
+            .expect("queued grandchild runs"),
+        2
+    );
+    assert_eq!(queued_grandchild_results.len(), 2);
+    assert!(queued_grandchild_results
+        .iter()
+        .all(|result| result.status == EventResultStatus::Completed));
+
+    bus.stop();
+}
+
+#[test]
+fn test_unawaited_descendant_preserves_lineage_and_is_not_cancelled_by_ancestor_timeout() {
+    let _guard = timeout_test_guard();
+    let bus = EventBus::new_with_options(
+        Some("ErrorChainBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            event_timeout: None,
+            ..EventBusOptions::default()
+        },
+    );
+
+    let inner_ref = Arc::new(Mutex::new(None));
+    let deep_ref = Arc::new(Mutex::new(None));
+
+    bus.on("ErrorChainDeep", "deep_handler", |_event| async move {
+        thread::sleep(Duration::from_millis(200));
+        Ok(json!("deep_done"))
+    });
+
+    let bus_for_inner = bus.clone();
+    let deep_ref_for_inner = deep_ref.clone();
+    bus.on("ErrorChainInner", "inner_handler", move |_event| {
+        let bus = bus_for_inner.clone();
+        let deep_ref = deep_ref_for_inner.clone();
+        async move {
+            let deep = timeout_event("ErrorChainDeep", Some(0.5));
+            bus.emit_child_base(deep.clone());
+            *deep_ref.lock().expect("deep ref") = Some(deep);
+            thread::sleep(Duration::from_millis(200));
+            Ok(json!("inner_done"))
+        }
+    });
+
+    let bus_for_outer = bus.clone();
+    let inner_ref_for_outer = inner_ref.clone();
+    bus.on("ErrorChainOuter", "outer_handler", move |_event| {
+        let bus = bus_for_outer.clone();
+        let inner_ref = inner_ref_for_outer.clone();
+        async move {
+            let inner = timeout_event("ErrorChainInner", Some(0.04));
+            bus.emit_child_base(inner.clone());
+            *inner_ref.lock().expect("inner ref") = Some(inner.clone());
+            inner.wait_completed().await;
+            thread::sleep(Duration::from_millis(200));
+            Ok(json!("outer_done"))
+        }
+    });
+
+    let outer = timeout_event("ErrorChainOuter", Some(0.15));
+    bus.emit_base(outer.clone());
+    block_on(outer.wait_completed());
+    assert!(block_on(bus.wait_until_idle(Some(2.0))));
+
+    let outer_result = outer
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("outer result");
+    assert_eq!(outer_result.status, EventResultStatus::Error);
+    assert_eq!(error_type(&outer_result), "EventHandlerAbortedError");
+
+    let inner = inner_ref
+        .lock()
+        .expect("inner ref")
+        .clone()
+        .expect("inner event");
+    let inner_result = inner
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("inner result");
+    assert_eq!(inner_result.status, EventResultStatus::Error);
+    assert_eq!(error_type(&inner_result), "EventHandlerAbortedError");
+
+    let deep = deep_ref
+        .lock()
+        .expect("deep ref")
+        .clone()
+        .expect("deep event");
+    let deep_inner = deep.inner.lock();
+    let inner_id = inner.inner.lock().event_id.clone();
+    assert_eq!(
+        deep_inner.event_parent_id.as_deref(),
+        Some(inner_id.as_str())
+    );
+    assert!(!deep_inner.event_blocks_parent_completion);
+    let deep_result = deep_inner
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("deep result");
+    assert_eq!(deep_result.status, EventResultStatus::Completed);
+    assert_eq!(deep_result.result, Some(json!("deep_done")));
+
+    bus.stop();
+}
+
+#[test]
+fn test_three_level_timeout_cascade_with_per_level_timeouts_and_cascading_cancellation() {
+    let _guard = timeout_test_guard();
+    let bus = EventBus::new_with_options(
+        Some("Cascade3LevelBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            event_timeout: None,
+            ..EventBusOptions::default()
+        },
+    );
+
+    let execution_log = Arc::new(Mutex::new(Vec::<String>::new()));
+    let child_ref = Arc::new(Mutex::new(None));
+    let grandchild_ref = Arc::new(Mutex::new(None));
+    let queued_grandchild_ref = Arc::new(Mutex::new(None));
+    let sibling_ref = Arc::new(Mutex::new(None));
+
+    let log = execution_log.clone();
+    bus.on("Cascade3LGrandchild", "gc_handler_a", move |_event| {
+        let log = log.clone();
+        async move {
+            log.lock()
+                .expect("execution log")
+                .push("gc_a_start".to_string());
+            thread::sleep(Duration::from_millis(500));
+            log.lock()
+                .expect("execution log")
+                .push("gc_a_end".to_string());
+            Ok(json!("gc_a_done"))
+        }
+    });
+    let log = execution_log.clone();
+    bus.on("Cascade3LGrandchild", "gc_handler_b", move |_event| {
+        let log = log.clone();
+        async move {
+            log.lock()
+                .expect("execution log")
+                .push("gc_b_complete".to_string());
+            Ok(json!("gc_b_done"))
+        }
+    });
+    for handler_name in ["gc_handler_c", "gc_handler_e"] {
+        let log = execution_log.clone();
+        bus.on("Cascade3LGrandchild", handler_name, move |_event| {
+            let log = log.clone();
+            async move {
+                log.lock()
+                    .expect("execution log")
+                    .push(format!("{handler_name}_start"));
+                thread::sleep(Duration::from_millis(500));
+                log.lock()
+                    .expect("execution log")
+                    .push(format!("{handler_name}_end"));
+                Ok(json!(handler_name))
+            }
+        });
+    }
+    let log = execution_log.clone();
+    bus.on("Cascade3LGrandchild", "gc_handler_d", move |_event| {
+        let log = log.clone();
+        async move {
+            log.lock()
+                .expect("execution log")
+                .push("gc_d_start".to_string());
+            thread::sleep(Duration::from_millis(10));
+            log.lock()
+                .expect("execution log")
+                .push("gc_d_complete".to_string());
+            Ok(json!("gc_d_done"))
+        }
+    });
+
+    let log = execution_log.clone();
+    bus.on("Cascade3LQueuedGC", "queued_gc_handler", move |_event| {
+        let log = log.clone();
+        async move {
+            log.lock()
+                .expect("execution log")
+                .push("queued_gc_start".to_string());
+            Ok(json!("queued_gc_done"))
+        }
+    });
+
+    let bus_for_child = bus.clone();
+    let log = execution_log.clone();
+    let grandchild_ref_for_child = grandchild_ref.clone();
+    let queued_gc_ref_for_child = queued_grandchild_ref.clone();
+    bus.on("Cascade3LChild", "child_handler", move |_event| {
+        let bus = bus_for_child.clone();
+        let log = log.clone();
+        let grandchild_ref = grandchild_ref_for_child.clone();
+        let queued_gc_ref = queued_gc_ref_for_child.clone();
+        async move {
+            log.lock()
+                .expect("execution log")
+                .push("child_start".to_string());
+            let grandchild = timeout_event("Cascade3LGrandchild", Some(0.035));
+            let queued_grandchild = timeout_event("Cascade3LQueuedGC", Some(0.5));
+            bus.emit_child_base(grandchild.clone());
+            bus.emit_child_base(queued_grandchild.clone());
+            *grandchild_ref.lock().expect("grandchild ref") = Some(grandchild.clone());
+            *queued_gc_ref.lock().expect("queued gc ref") = Some(queued_grandchild);
+            grandchild.wait_completed().await;
+            log.lock()
+                .expect("execution log")
+                .push("child_after_grandchild".to_string());
+            thread::sleep(Duration::from_millis(300));
+            log.lock()
+                .expect("execution log")
+                .push("child_end".to_string());
+            Ok(json!("child_done"))
+        }
+    });
+
+    let log = execution_log.clone();
+    bus.on("Cascade3LSibling", "sibling_handler", move |_event| {
+        let log = log.clone();
+        async move {
+            log.lock()
+                .expect("execution log")
+                .push("sibling_start".to_string());
+            Ok(json!("sibling_done"))
+        }
+    });
+
+    let log = execution_log.clone();
+    bus.on("Cascade3LTop", "top_handler_fast", move |_event| {
+        let log = log.clone();
+        async move {
+            log.lock()
+                .expect("execution log")
+                .push("top_fast_start".to_string());
+            thread::sleep(Duration::from_millis(2));
+            log.lock()
+                .expect("execution log")
+                .push("top_fast_complete".to_string());
+            Ok(json!("top_fast_done"))
+        }
+    });
+
+    let bus_for_top = bus.clone();
+    let log = execution_log.clone();
+    let child_ref_for_top = child_ref.clone();
+    let sibling_ref_for_top = sibling_ref.clone();
+    bus.on("Cascade3LTop", "top_handler_main", move |_event| {
+        let bus = bus_for_top.clone();
+        let log = log.clone();
+        let child_ref = child_ref_for_top.clone();
+        let sibling_ref = sibling_ref_for_top.clone();
+        async move {
+            log.lock()
+                .expect("execution log")
+                .push("top_main_start".to_string());
+            let child = timeout_event("Cascade3LChild", Some(0.15));
+            let sibling = timeout_event("Cascade3LSibling", Some(0.5));
+            bus.emit_child_base(child.clone());
+            bus.emit_child_base(sibling.clone());
+            *child_ref.lock().expect("child ref") = Some(child.clone());
+            *sibling_ref.lock().expect("sibling ref") = Some(sibling);
+            child.wait_completed().await;
+            log.lock()
+                .expect("execution log")
+                .push("top_main_after_child".to_string());
+            thread::sleep(Duration::from_millis(300));
+            log.lock()
+                .expect("execution log")
+                .push("top_main_end".to_string());
+            Ok(json!("top_main_done"))
+        }
+    });
+
+    let top = timeout_event("Cascade3LTop", Some(0.25));
+    bus.emit_base(top.clone());
+    block_on(top.wait_completed());
+    assert!(block_on(bus.wait_until_idle(Some(3.0))));
+
+    let (top_status, top_result_count) = {
+        let top_inner = top.inner.lock();
+        (top_inner.event_status, top_inner.event_results.len())
+    };
+    assert_eq!(top_status, EventStatus::Completed);
+    assert!(!top.event_errors().is_empty());
+    assert_eq!(top_result_count, 2);
+
+    let top_fast = result_by_handler(&top, "top_handler_fast");
+    assert_eq!(top_fast.status, EventResultStatus::Completed);
+    assert_eq!(top_fast.result, Some(json!("top_fast_done")));
+    let top_main = result_by_handler(&top, "top_handler_main");
+    assert_eq!(top_main.status, EventResultStatus::Error);
+    assert_eq!(error_type(&top_main), "EventHandlerAbortedError");
+
+    let child = child_ref
+        .lock()
+        .expect("child ref")
+        .clone()
+        .expect("child event");
+    let child_result = result_by_handler(&child, "child_handler");
+    assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
+    assert_eq!(child_result.status, EventResultStatus::Error);
+    assert_eq!(error_type(&child_result), "EventHandlerAbortedError");
+
+    let grandchild = grandchild_ref
+        .lock()
+        .expect("grandchild ref")
+        .clone()
+        .expect("grandchild event");
+    assert_eq!(grandchild.inner.lock().event_status, EventStatus::Completed);
+    let grandchild_results: Vec<_> = grandchild
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .cloned()
+        .collect();
+    assert_eq!(grandchild_results.len(), 5);
+    assert_eq!(
+        grandchild_results
+            .iter()
+            .filter(|result| error_type(result) == "EventHandlerAbortedError")
+            .count(),
+        1
+    );
+    assert_eq!(
+        error_type(&result_by_handler(&grandchild, "gc_handler_a")),
+        "EventHandlerAbortedError"
+    );
+    assert_eq!(
+        grandchild_results
+            .iter()
+            .filter(|result| {
+                matches!(
+                    error_type(result).as_str(),
+                    "EventHandlerCancelledError" | "EventHandlerAbortedError"
+                )
+            })
+            .count(),
+        5
+    );
+
+    let queued_grandchild = queued_grandchild_ref
+        .lock()
+        .expect("queued grandchild ref")
+        .clone()
+        .expect("queued grandchild");
+    assert_eq!(
+        queued_grandchild.inner.lock().event_status,
+        EventStatus::Completed
+    );
+    assert!(
+        !queued_grandchild
+            .inner
+            .lock()
+            .event_blocks_parent_completion
+    );
+    let queued_gc_result = result_by_handler(&queued_grandchild, "queued_gc_handler");
+    assert_eq!(queued_gc_result.status, EventResultStatus::Completed);
+    assert_eq!(queued_gc_result.result, Some(json!("queued_gc_done")));
+
+    let sibling = sibling_ref
+        .lock()
+        .expect("sibling ref")
+        .clone()
+        .expect("sibling event");
+    assert_eq!(sibling.inner.lock().event_status, EventStatus::Completed);
+    assert!(!sibling.inner.lock().event_blocks_parent_completion);
+    let sibling_result = result_by_handler(&sibling, "sibling_handler");
+    assert_eq!(sibling_result.status, EventResultStatus::Completed);
+    assert_eq!(sibling_result.result, Some(json!("sibling_done")));
+
+    let log = execution_log.lock().expect("execution log").clone();
+    assert!(log.contains(&"top_fast_start".to_string()));
+    assert!(log.contains(&"top_fast_complete".to_string()));
+    assert!(log.contains(&"gc_a_start".to_string()));
+    assert!(!log.contains(&"gc_a_end".to_string()));
+    assert!(!log.contains(&"gc_b_complete".to_string()));
+    assert!(!log.contains(&"gc_d_start".to_string()));
+    assert!(!log.contains(&"gc_d_complete".to_string()));
+    assert!(log.contains(&"top_main_start".to_string()));
+    assert!(log.contains(&"child_start".to_string()));
+    assert!(log.contains(&"child_after_grandchild".to_string()));
+    assert!(log.contains(&"top_main_after_child".to_string()));
+    assert!(!log.contains(&"child_end".to_string()));
+    assert!(!log.contains(&"top_main_end".to_string()));
+    assert!(log.contains(&"queued_gc_start".to_string()));
+    assert!(log.contains(&"sibling_start".to_string()));
+
+    let top_children: Vec<_> = top
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .flat_map(|result| result.event_children.clone())
+        .collect();
+    let child_id = child.inner.lock().event_id.clone();
+    let sibling_id = sibling.inner.lock().event_id.clone();
+    assert!(top_children.contains(&child_id));
+    assert!(top_children.contains(&sibling_id));
+
+    let child_children: Vec<_> = child
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .flat_map(|result| result.event_children.clone())
+        .collect();
+    let grandchild_id = grandchild.inner.lock().event_id.clone();
+    let queued_grandchild_id = queued_grandchild.inner.lock().event_id.clone();
+    assert!(child_children.contains(&grandchild_id));
+    assert!(child_children.contains(&queued_grandchild_id));
+
+    for event in [&top, &child, &grandchild, &queued_grandchild, &sibling] {
+        assert!(
+            event.inner.lock().event_completed_at.is_some(),
+            "{} should have event_completed_at",
+            event.inner.lock().event_type
+        );
+    }
+    for result in top.inner.lock().event_results.values() {
+        assert!(result.started_at.is_some());
+        assert!(result.completed_at.is_some());
+    }
+    for result in grandchild.inner.lock().event_results.values() {
+        if error_type(result) != "EventHandlerCancelledError" {
+            assert!(result.started_at.is_some());
+        }
+        assert!(result.completed_at.is_some());
+    }
+
     bus.stop();
 }
 
