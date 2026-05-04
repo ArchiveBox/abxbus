@@ -57,6 +57,59 @@ fn test_python_serialized_at_fields_are_strings() {
 }
 
 #[test]
+fn test_event_at_fields_are_recognized() {
+    let event = BaseEvent::from_json_value(json!({
+        "event_id": "018f8e40-1234-7000-8000-000000001240",
+        "event_created_at": "2025-01-02T03:04:05.678901234Z",
+        "event_started_at": "2025-01-02T03:04:06.100000000Z",
+        "event_completed_at": "2025-01-02T03:04:07.200000000Z",
+        "event_type": "AtFieldRecognitionEvent",
+        "event_timeout": null,
+        "event_slow_timeout": 1.5,
+        "event_emitted_by_handler_id": "018f8e40-1234-7000-8000-000000000301",
+        "event_pending_bus_count": 2
+    }));
+
+    let serialized = event.to_json_value();
+    assert_eq!(
+        serialized["event_created_at"],
+        "2025-01-02T03:04:05.678901234Z"
+    );
+    assert_eq!(
+        serialized["event_started_at"],
+        "2025-01-02T03:04:06.100000000Z"
+    );
+    assert_eq!(
+        serialized["event_completed_at"],
+        "2025-01-02T03:04:07.200000000Z"
+    );
+    assert_eq!(serialized["event_slow_timeout"], 1.5);
+    assert_eq!(
+        serialized["event_emitted_by_handler_id"],
+        "018f8e40-1234-7000-8000-000000000301"
+    );
+    assert_eq!(serialized["event_pending_bus_count"], 2);
+}
+
+#[test]
+fn test_event_status_is_serialized_and_stateful() {
+    let event = mk_event("SerializeStatusEvent");
+
+    let pending_payload = event.to_json_value();
+    assert_eq!(pending_payload["event_status"], "pending");
+
+    event.mark_started();
+    let started_payload = event.to_json_value();
+    assert_eq!(started_payload["event_status"], "started");
+    assert!(started_payload["event_started_at"].is_string());
+
+    event.mark_completed();
+    let completed_payload = event.to_json_value();
+    assert_eq!(completed_payload["event_status"], "completed");
+    assert!(completed_payload["event_completed_at"].is_string());
+}
+
+#[test]
 fn test_reserved_runtime_fields_are_rejected() {
     for field in ["bus", "emit", "first", "toString", "toJSON", "fromJSON"] {
         let mut payload = Map::new();
