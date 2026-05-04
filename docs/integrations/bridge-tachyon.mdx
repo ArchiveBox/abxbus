@@ -7,10 +7,16 @@ description: Same-machine SPSC IPC bridge over a shared-memory ring buffer.
 
 ## Optional dependencies
 
-The native Tachyon core requires GCC 14+ or Clang 17+ at install time. It is not pulled in by default; install it explicitly when you want this bridge.
+The native Tachyon core requires GCC 14+ or Clang 17+ at install time, so it's exposed as its own extra and intentionally left out of the `bridges` aggregate (which would otherwise fail to install on stock environments). Install it explicitly when you want this bridge.
 
 <Tabs>
 <Tab title="Python">
+
+```bash
+pip install "abxbus[tachyon]"
+```
+
+Equivalent direct install:
 
 ```bash
 pip install tachyon-ipc

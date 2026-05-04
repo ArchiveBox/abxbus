@@ -85,8 +85,22 @@ class TachyonEventBridge:
         return await self.emit(event)
 
     async def start(self) -> None:
-        # Role is committed lazily on first on() / emit(); start() is a no-op.
-        return
+        # Role is committed lazily on first on() / emit(). For listener-side bridges,
+        # await the underlying socket bind so callers that need fail-fast readiness
+        # (peers about to connect, tests writing a ready_path file) can rely on it.
+        if self._listener_thread is None:
+            return
+        socket_path = AnyPath(self.path)
+        deadline = time.monotonic() + _TACHYON_SOCKET_WAIT_TIMEOUT
+        while time.monotonic() < deadline:
+            if self._listener_init_error is not None:
+                raise RuntimeError(f'TachyonEventBridge failed to listen on {self.path}') from self._listener_init_error
+            if await socket_path.exists():
+                return
+            await asyncio.sleep(0.005)
+        if self._listener_init_error is not None:
+            raise RuntimeError(f'TachyonEventBridge failed to listen on {self.path}') from self._listener_init_error
+        raise TimeoutError(f'TachyonEventBridge listener did not bind socket {self.path} within {_TACHYON_SOCKET_WAIT_TIMEOUT}s')
 
     async def close(self, *, clear: bool = True) -> None:
         self._running = False

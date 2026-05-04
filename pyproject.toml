@@ -27,6 +27,12 @@ nats = [
 redis = [
     "redis>=7.1.1",
 ]
+# Tachyon's native core requires GCC 14+ / Clang 17+ to compile, so it's exposed
+# as its own extra and intentionally excluded from `bridges` to keep that
+# aggregate installable on stock CI/runtimes. Install with `abxbus[tachyon]`.
+tachyon = [
+    "tachyon-ipc>=0.4.2",
+]
 bridges = [
     "asyncpg>=0.31.0",
     "nats-py>=2.13.1",

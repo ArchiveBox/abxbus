@@ -37,11 +37,14 @@ const main = async (): Promise<void> => {
     resolve_done = resolve
   })
 
-  await bridge.start()
   bridge.on('*', (event: { toJSON: () => unknown }) => {
     writeFileSync(config.output_path, JSON.stringify(event.toJSON()), 'utf8')
     resolve_done?.()
   })
+  // Awaiting start() AFTER on() lets bridges with deferred readiness signals
+  // (e.g. Tachyon's bind handshake) signal "actually bound" before we tell the
+  // parent the listener is ready to accept connections.
+  await bridge.start()
   writeFileSync(config.ready_path, 'ready', 'utf8')
   await Promise.race([done, new Promise((_, reject) => setTimeout(() => reject(new Error('worker timeout')), 30000))])
   await bridge.close()

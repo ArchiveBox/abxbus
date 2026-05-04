@@ -28,7 +28,7 @@ jobs:
           enable-cache: true
           activate-environment: true
 
-      - run: uv sync --dev --all-extras
+      - run: uv sync --dev --all-extras --no-extra tachyon
       - run: uv pip install fastapi
       - run: uv run ruff format --check
       - run: uv run ruff check
@@ -137,7 +137,7 @@ jobs:
           postgres --version
           sqlite3 --version
 
-      - run: uv sync --dev --all-extras
+      - run: uv sync --dev --all-extras --no-extra tachyon
 
       - name: Build TypeScript ESM bundle for cross-runtime roundtrip tests
         if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
@@ -196,7 +196,7 @@ jobs:
           enable-cache: true
           activate-environment: true
 
-      - run: uv sync --dev --all-extras
+      - run: uv sync --dev --all-extras --no-extra tachyon
 
       - name: Download all coverage data
         uses: actions/download-artifact@v4
@@ -258,7 +258,7 @@ jobs:
           enable-cache: true
           activate-environment: true
 
-      - run: uv sync --dev --all-extras
+      - run: uv sync --dev --all-extras --no-extra tachyon
       - run: uv run pytest -x tests/test_eventbus_performance.py
       - name: Run Python runtime perf
         run: uv run python tests/performance_runtime.py | tee python_perf.log

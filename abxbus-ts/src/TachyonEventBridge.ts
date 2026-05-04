@@ -27,6 +27,7 @@ import type { EventClass, EventHandlerCallable, EventPattern, UntypedEventHandle
 const randomSuffix = (): string => Math.random().toString(36).slice(2, 10)
 const DEFAULT_TACHYON_CAPACITY = 1 << 20
 const TACHYON_CONNECT_TIMEOUT_MS = 5000
+const TACHYON_LISTEN_TIMEOUT_MS = 5000
 // Tachyon recv() blocks on a futex that worker.terminate() cannot preempt; the
 // producer signals graceful shutdown by emitting one final message with this
 // reserved type id, which lets the consumer break out of its recv loop.
@@ -128,6 +129,7 @@ export class TachyonEventBridge {
   // Sticky: `listener_worker` may be cleared mid-session (graceful exit, retry path),
   // but the socket on disk is still ours to unlink in close().
   private acted_as_listener: boolean
+  private listener_startup_error: Error | null
   private sender_worker: Worker | null
   private sender_ready_promise: Promise<void> | null
   private send_seq: number
@@ -147,6 +149,7 @@ export class TachyonEventBridge {
     this.inbound_bus = new EventBus(this.name, { max_history_size: 0 })
     this.listener_worker = null
     this.acted_as_listener = false
+    this.listener_startup_error = null
     this.sender_worker = null
     this.sender_ready_promise = null
     this.send_seq = 0
@@ -190,7 +193,26 @@ export class TachyonEventBridge {
   }
 
   async start(): Promise<void> {
-    return
+    // Role is committed lazily on first on() / emit(). For listener-side bridges,
+    // await the underlying socket bind so callers that need fail-fast readiness
+    // (peers about to connect, tests writing a ready_path file) can rely on it.
+    const worker = this.listener_worker
+    if (!worker) return
+    const deadline = Date.now() + TACHYON_LISTEN_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      if (this.listener_startup_error) throw this.listener_startup_error
+      if (existsSync(this.path)) return
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    if (this.listener_startup_error) throw this.listener_startup_error
+    // Tear down the worker that never bound so a later on() can spawn a fresh one.
+    try {
+      void worker.terminate()
+    } catch {
+      // ignore
+    }
+    if (this.listener_worker === worker) this.listener_worker = null
+    throw new Error(`TachyonEventBridge listener did not bind socket ${this.path} within ${TACHYON_LISTEN_TIMEOUT_MS}ms`)
   }
 
   async close(): Promise<void> {
@@ -215,17 +237,20 @@ export class TachyonEventBridge {
       this.sender_worker = null
     }
     if (this.listener_worker) {
+      const listener = this.listener_worker
+      this.listener_worker = null
       // The listener exits naturally once it consumes the shutdown sentinel.
       const listener_exited = new Promise<void>((resolve) => {
-        this.listener_worker!.once('exit', () => resolve())
+        listener.once('exit', () => resolve())
       })
       await Promise.race([listener_exited, new Promise((resolve) => setTimeout(resolve, 1000))])
-      try {
-        await this.listener_worker.terminate()
-      } catch {
-        // ignore
-      }
-      this.listener_worker = null
+      // worker.terminate() cannot preempt a futex-blocked Tachyon recv() (see the
+      // SHUTDOWN_TYPE_ID comment above), so a listener-only instance that never
+      // received a sentinel would hang forever if we awaited it. Fire-and-forget the
+      // terminate and bound how long we'll wait for it to come back; either way the
+      // worker is daemon-mode and dies with the process.
+      const terminate_promise = listener.terminate().catch(() => undefined)
+      await Promise.race([terminate_promise, new Promise((resolve) => setTimeout(resolve, 500))])
     }
     for (const pending of this.pending_sends.values()) {
       pending.reject(new Error('TachyonEventBridge closed'))
@@ -260,6 +285,7 @@ export class TachyonEventBridge {
       eval: true,
       workerData: { path: this.path, capacity: this.capacity },
     })
+    this.listener_startup_error = null
     worker.on('message', (msg: { type: string; data?: Uint8Array; typeId?: number; message?: string }) => {
       if (msg.type === 'ready') {
         // Bus.listen returning means *this* worker completed the bind+handshake; only
@@ -275,16 +301,26 @@ export class TachyonEventBridge {
           // ignore malformed payloads
         }
       } else if (msg.type === 'error') {
+        // Surface the failure so a concurrent start() can fail fast instead of
+        // hanging until the bind-wait deadline.
+        this.listener_startup_error = new Error(msg.message ?? 'TachyonEventBridge listener error')
         console.error('[abxbus] TachyonEventBridge listener error:', msg.message)
       }
     })
     worker.on('error', (err: unknown) => {
+      this.listener_startup_error = err instanceof Error ? err : new Error(String(err))
       console.error('[abxbus] TachyonEventBridge listener worker crashed:', err)
     })
     // Drop the cached reference if the worker dies (crash, init failure, or natural exit
     // after consuming a shutdown sentinel) so a subsequent on() call can spin up a fresh one.
     worker.on('exit', () => {
       if (this.listener_worker === worker) this.listener_worker = null
+      // Only flag a startup error if we never confirmed a bind AND the bridge isn't
+      // shutting down; a normal shutdown exit (close(), or recv loop after consuming a
+      // sentinel) shouldn't poison future start() calls.
+      if (!this.acted_as_listener && !this.listener_startup_error && !this.closed) {
+        this.listener_startup_error = new Error('TachyonEventBridge listener worker exited before binding')
+      }
     })
     this.listener_worker = worker
     // on() returns immediately so the Node event loop isn't frozen on startup; peers

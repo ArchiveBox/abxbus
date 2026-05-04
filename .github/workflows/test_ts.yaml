@@ -144,7 +144,7 @@ jobs:
         if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
         run: |
           cd ..
-          uv sync --dev --all-extras
+          uv sync --dev --all-extras --no-extra tachyon
 
       - name: Verify bridge optional Node deps
         if: matrix.task.kind == 'test' && matrix.task.name == 'bridges'
