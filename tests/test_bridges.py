@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -88,7 +88,7 @@ def _normalize_roundtrip_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 @asynccontextmanager
-async def _running_process(command: list[str], *, cwd: Path | None = None) -> AsyncIterator[subprocess.Popen[str]]:
+async def _running_process(command: list[str], *, cwd: Path | None = None) -> AsyncGenerator[subprocess.Popen[str], None]:
     process = subprocess.Popen(
         command,
         cwd=str(cwd) if cwd else None,
