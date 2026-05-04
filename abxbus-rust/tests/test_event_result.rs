@@ -185,13 +185,13 @@ fn test_casting_failure_handling() {
     });
 
     let event = bus.emit::<IntEvent>(TypedEvent::new(EmptyPayload {}));
-    let typed_error = block_on(event.event_result(EventResultsOptions {
+    let typed_result = block_on(event.event_result(EventResultsOptions {
         raise_if_any: false,
         raise_if_none: false,
         timeout: None,
     }))
-    .expect_err("typed accessor should reject invalid integer result");
-    assert!(typed_error.contains("invalid type") || typed_error.contains("i64"));
+    .expect("suppressed schema error");
+    assert_eq!(typed_result, None);
 
     let stored_result = event
         .inner
@@ -202,9 +202,13 @@ fn test_casting_failure_handling() {
         .next()
         .cloned()
         .expect("event result");
-    assert_eq!(stored_result.status, EventResultStatus::Completed);
-    assert_eq!(stored_result.error, None);
-    assert_eq!(stored_result.result, Some(json!("not_a_number")));
+    assert_eq!(stored_result.status, EventResultStatus::Error);
+    assert!(stored_result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("EventHandlerResultSchemaError"));
+    assert_eq!(stored_result.result, None);
     bus.stop();
 }
 
@@ -475,7 +479,10 @@ fn test_event_result_json_omits_result_type_and_derives_from_parent_event() {
     assert!(payload["eventbus_name"].is_string());
     assert!(payload["eventbus_id"].is_string());
     assert!(payload["handler_registered_at"].is_string());
-    assert_eq!(event.inner.inner.lock().event_result_type, None);
+    assert_eq!(
+        event.inner.inner.lock().event_result_type,
+        Some(json!({"type": "string"}))
+    );
     bus.stop();
 }
 

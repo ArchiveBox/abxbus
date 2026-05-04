@@ -138,6 +138,150 @@ fn test_simple_typed_result_model_roundtrip_and_status() {
     bus.stop();
 }
 
+struct BuiltinStringEvent;
+impl abxbus_rust::typed::EventSpec for BuiltinStringEvent {
+    type Payload = Map<String, Value>;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "BuiltinStringEvent";
+}
+
+struct BuiltinIntEvent;
+impl abxbus_rust::typed::EventSpec for BuiltinIntEvent {
+    type Payload = Map<String, Value>;
+    type Result = i64;
+    const EVENT_TYPE: &'static str = "BuiltinIntEvent";
+}
+
+struct BuiltinFloatEvent;
+impl abxbus_rust::typed::EventSpec for BuiltinFloatEvent {
+    type Payload = Map<String, Value>;
+    type Result = f64;
+    const EVENT_TYPE: &'static str = "BuiltinFloatEvent";
+}
+
+struct PlainSchemaEvent;
+impl abxbus_rust::typed::EventSpec for PlainSchemaEvent {
+    type Payload = Map<String, Value>;
+    type Result = Value;
+    const EVENT_TYPE: &'static str = "PlainSchemaEvent";
+}
+
+struct NoneSchemaEvent;
+impl abxbus_rust::typed::EventSpec for NoneSchemaEvent {
+    type Payload = Map<String, Value>;
+    type Result = ();
+    const EVENT_TYPE: &'static str = "NoneSchemaEvent";
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct ModuleLevelResult {
+    result_id: String,
+    data: Map<String, Value>,
+    success: bool,
+}
+
+struct RuntimeSchemaEvent;
+impl abxbus_rust::typed::EventSpec for RuntimeSchemaEvent {
+    type Payload = Map<String, Value>;
+    type Result = ModuleLevelResult;
+    const EVENT_TYPE: &'static str = "RuntimeSchemaEvent";
+    const EVENT_RESULT_TYPE: Option<&'static str> = Some(
+        r#"{
+            "type": "object",
+            "properties": {
+                "result_id": {"type": "string"},
+                "data": {"type": "object"},
+                "success": {"type": "boolean"}
+            },
+            "required": ["result_id", "data", "success"],
+            "additionalProperties": false
+        }"#,
+    );
+}
+
+#[test]
+fn test_builtin_types_auto_extraction() {
+    let string_event = abxbus_rust::typed::TypedEvent::<BuiltinStringEvent>::new(Map::new());
+    let int_event = abxbus_rust::typed::TypedEvent::<BuiltinIntEvent>::new(Map::new());
+    let float_event = abxbus_rust::typed::TypedEvent::<BuiltinFloatEvent>::new(Map::new());
+
+    assert_eq!(
+        string_event.inner.inner.lock().event_result_type,
+        Some(json!({"type": "string"}))
+    );
+    assert_eq!(
+        int_event.inner.inner.lock().event_result_type,
+        Some(json!({"type": "integer"}))
+    );
+    assert_eq!(
+        float_event.inner.inner.lock().event_result_type,
+        Some(json!({"type": "number"}))
+    );
+}
+
+#[test]
+fn test_no_generic_parameter() {
+    let plain_event = abxbus_rust::typed::TypedEvent::<PlainSchemaEvent>::new(Map::new());
+
+    assert_eq!(plain_event.inner.inner.lock().event_result_type, None);
+}
+
+#[test]
+fn test_none_generic_parameter() {
+    let none_event = abxbus_rust::typed::TypedEvent::<NoneSchemaEvent>::new(Map::new());
+
+    assert_eq!(none_event.inner.inner.lock().event_result_type, None);
+}
+
+#[test]
+fn test_eventspec_result_schema_runtime_enforcement() {
+    let bus = EventBus::new(Some("runtime_test_bus".to_string()));
+
+    bus.on(
+        "RuntimeSchemaEvent",
+        "correct_handler",
+        |_event| async move {
+            Ok(json!({
+                "result_id": "e1bb315c-472f-7bd1-8e72-c8502e1a9a36",
+                "data": {"key": "value"},
+                "success": true
+            }))
+        },
+    );
+
+    let event = bus.emit(abxbus_rust::typed::TypedEvent::<RuntimeSchemaEvent>::new(
+        Map::new(),
+    ));
+    wait(&event.inner);
+    let result = first_result(&event.inner);
+    assert_eq!(result.status, EventResultStatus::Completed);
+    let typed: ModuleLevelResult =
+        serde_json::from_value(result.result.expect("result")).expect("typed result");
+    assert_eq!(typed.result_id, "e1bb315c-472f-7bd1-8e72-c8502e1a9a36");
+    assert_eq!(typed.data.get("key"), Some(&json!("value")));
+    assert!(typed.success);
+
+    bus.off("RuntimeSchemaEvent", None);
+    bus.on(
+        "RuntimeSchemaEvent",
+        "incorrect_handler",
+        |_event| async move { Ok(json!({"wrong": "format"})) },
+    );
+
+    let invalid_event = bus.emit(abxbus_rust::typed::TypedEvent::<RuntimeSchemaEvent>::new(
+        Map::new(),
+    ));
+    wait(&invalid_event.inner);
+    let invalid_result = first_result(&invalid_event.inner);
+    assert_eq!(invalid_result.status, EventResultStatus::Error);
+    assert!(invalid_result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("EventHandlerResultSchemaError"));
+    bus.stop();
+}
+
 #[test]
 fn test_built_in_result_schemas_validate_handler_results() {
     let bus = EventBus::new(Some("BuiltinResultBus".to_string()));

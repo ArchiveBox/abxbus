@@ -1,7 +1,7 @@
-use std::{collections::HashMap, marker::PhantomData, sync::Arc};
+use std::{any::TypeId, collections::HashMap, marker::PhantomData, sync::Arc};
 
 use serde::{de::DeserializeOwned, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 use crate::types::{EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode};
 use crate::{
@@ -24,6 +24,42 @@ pub trait EventSpec: Send + Sync + 'static {
     const EVENT_HANDLER_CONCURRENCY: Option<EventHandlerConcurrencyMode> = None;
     const EVENT_HANDLER_COMPLETION: Option<EventHandlerCompletionMode> = None;
     const EVENT_BLOCKS_PARENT_COMPLETION: bool = false;
+    const EVENT_RESULT_TYPE: Option<&'static str> = None;
+
+    fn event_result_type_json() -> Option<Value> {
+        if let Some(schema) = Self::EVENT_RESULT_TYPE {
+            return Some(
+                serde_json::from_str(schema)
+                    .expect("EVENT_RESULT_TYPE must be valid JSON Schema JSON"),
+            );
+        }
+        primitive_result_type_schema::<Self::Result>()
+    }
+}
+
+fn primitive_result_type_schema<T: 'static>() -> Option<Value> {
+    let type_id = TypeId::of::<T>();
+    if type_id == TypeId::of::<String>() {
+        Some(json!({"type": "string"}))
+    } else if type_id == TypeId::of::<bool>() {
+        Some(json!({"type": "boolean"}))
+    } else if type_id == TypeId::of::<i8>()
+        || type_id == TypeId::of::<i16>()
+        || type_id == TypeId::of::<i32>()
+        || type_id == TypeId::of::<i64>()
+        || type_id == TypeId::of::<isize>()
+        || type_id == TypeId::of::<u8>()
+        || type_id == TypeId::of::<u16>()
+        || type_id == TypeId::of::<u32>()
+        || type_id == TypeId::of::<u64>()
+        || type_id == TypeId::of::<usize>()
+    {
+        Some(json!({"type": "integer"}))
+    } else if type_id == TypeId::of::<f32>() || type_id == TypeId::of::<f64>() {
+        Some(json!({"type": "number"}))
+    } else {
+        None
+    }
 }
 
 #[derive(Clone)]
@@ -51,6 +87,7 @@ impl<E: EventSpec> TypedEvent<E> {
             event.event_handler_concurrency = E::EVENT_HANDLER_CONCURRENCY;
             event.event_handler_completion = E::EVENT_HANDLER_COMPLETION;
             event.event_blocks_parent_completion = E::EVENT_BLOCKS_PARENT_COMPLETION;
+            event.event_result_type = E::event_result_type_json();
         }
 
         Self {
