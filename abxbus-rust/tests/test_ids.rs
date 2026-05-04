@@ -1,4 +1,4 @@
-use bubus_rust::{
+use abxbus_rust::{
     event_bus::EventBus,
     event_handler::EventHandler,
     id::{compute_handler_id, handler_id_namespace},
@@ -12,7 +12,7 @@ fn test_bus_and_event_ids_are_uuid_v7() {
     let bus_id = Uuid::parse_str(&bus.id).expect("bus id must parse");
     assert_eq!(bus_id.get_version_num(), 7);
 
-    let event = bubus_rust::base_event::BaseEvent::new("work", Map::new());
+    let event = abxbus_rust::base_event::BaseEvent::new("work", Map::new());
     let event_id = Uuid::parse_str(&event.inner.lock().event_id).expect("event id must parse");
     assert_eq!(event_id.get_version_num(), 7);
 }

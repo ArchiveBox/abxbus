@@ -1,4 +1,4 @@
-use bubus_rust::{
+use abxbus_rust::{
     event_bus::EventBus,
     typed::{EventSpec, TypedEvent},
 };

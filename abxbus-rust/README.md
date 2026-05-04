@@ -1,6 +1,6 @@
-# bubus-rust
+# abxbus-rust
 
-Idiomatic Rust implementation of `bubus`, matching the Python/TypeScript event JSON surface and execution semantics as closely as possible.
+Idiomatic Rust implementation of `abxbus`, matching the Python/TypeScript event JSON surface and execution semantics as closely as possible.
 
 ## Current scope
 
@@ -19,7 +19,7 @@ Not yet implemented in this crate revision:
 ## Quickstart
 
 ```rust
-use bubus_rust::{base_event, event_bus};
+use abxbus_rust::{base_event, event_bus};
 use futures::executor::block_on;
 use serde_json::{Map, json};
 

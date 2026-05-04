@@ -1,5 +1,5 @@
 [package]
-name = "bubus-rust"
+name = "abxbus-rust"
 version = "0.1.0"
 edition = "2021"
 
@@ -10,5 +10,6 @@ uuid = { version = "1", features = ["v4", "v5", "v7", "serde"] }
 futures = { version = "0.3", features = ["executor", "thread-pool"] }
 event-listener = "5"
 parking_lot = "0.12"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [dev-dependencies]

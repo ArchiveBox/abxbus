@@ -3,13 +3,27 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{Map, Value};
 
-use crate::{base_event::BaseEvent, event_bus::EventBus};
+use crate::types::{EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode};
+use crate::{
+    base_event::BaseEvent,
+    event_bus::EventBus,
+    event_handler::{EventHandler, EventHandlerOptions},
+};
 
 pub trait EventSpec: Send + Sync + 'static {
     type Payload: Serialize + DeserializeOwned + Clone + Send + Sync + 'static;
     type Result: Serialize + DeserializeOwned + Clone + Send + Sync + 'static;
 
     const EVENT_TYPE: &'static str;
+    const EVENT_VERSION: &'static str = "0.0.1";
+    const EVENT_TIMEOUT: Option<f64> = None;
+    const EVENT_SLOW_TIMEOUT: Option<f64> = None;
+    const EVENT_CONCURRENCY: Option<EventConcurrencyMode> = None;
+    const EVENT_HANDLER_TIMEOUT: Option<f64> = None;
+    const EVENT_HANDLER_SLOW_TIMEOUT: Option<f64> = None;
+    const EVENT_HANDLER_CONCURRENCY: Option<EventHandlerConcurrencyMode> = None;
+    const EVENT_HANDLER_COMPLETION: Option<EventHandlerCompletionMode> = None;
+    const EVENT_BLOCKS_PARENT_COMPLETION: bool = false;
 }
 
 #[derive(Clone)]
@@ -25,8 +39,22 @@ impl<E: EventSpec> TypedEvent<E> {
             panic!("typed payload must serialize to a JSON object");
         };
 
+        let inner = BaseEvent::new(E::EVENT_TYPE, payload_map);
+        {
+            let mut event = inner.inner.lock();
+            event.event_version = E::EVENT_VERSION.to_string();
+            event.event_timeout = E::EVENT_TIMEOUT;
+            event.event_slow_timeout = E::EVENT_SLOW_TIMEOUT;
+            event.event_concurrency = E::EVENT_CONCURRENCY;
+            event.event_handler_timeout = E::EVENT_HANDLER_TIMEOUT;
+            event.event_handler_slow_timeout = E::EVENT_HANDLER_SLOW_TIMEOUT;
+            event.event_handler_concurrency = E::EVENT_HANDLER_CONCURRENCY;
+            event.event_handler_completion = E::EVENT_HANDLER_COMPLETION;
+            event.event_blocks_parent_completion = E::EVENT_BLOCKS_PARENT_COMPLETION;
+        }
+
         Self {
-            inner: BaseEvent::new(E::EVENT_TYPE, payload_map),
+            inner,
             marker: PhantomData,
         }
     }
@@ -59,6 +87,9 @@ impl<E: EventSpec> TypedEvent<E> {
             };
             if result.error.is_none() {
                 if let Some(value) = &result.result {
+                    if value.is_null() {
+                        continue;
+                    }
                     let decoded: E::Result =
                         serde_json::from_value(value.clone()).expect("typed result decode failed");
                     return Some(decoded);
@@ -84,17 +115,45 @@ impl EventBus {
         TypedEvent::from_base_event(emitted)
     }
 
-    pub fn on_typed<E, F, Fut>(
+    pub fn emit_child<E: EventSpec>(&self, event: TypedEvent<E>) -> TypedEvent<E> {
+        let emitted = self.enqueue_child_base(event.inner.clone());
+        TypedEvent::from_base_event(emitted)
+    }
+
+    pub fn emit_child_with_options<E: EventSpec>(
         &self,
-        handler_name: &str,
-        handler_fn: F,
-    ) -> crate::event_handler::EventHandler
+        event: TypedEvent<E>,
+        queue_jump: bool,
+    ) -> TypedEvent<E> {
+        let emitted = self.enqueue_child_base_with_options(event.inner.clone(), queue_jump);
+        TypedEvent::from_base_event(emitted)
+    }
+
+    pub fn on_typed<E, F, Fut>(&self, handler_name: &str, handler_fn: F) -> EventHandler
     where
         E: EventSpec,
         F: Fn(TypedEvent<E>) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<E::Result, String>> + Send + 'static,
     {
-        self.on(E::EVENT_TYPE, handler_name, move |event| {
+        self.on_typed_with_options::<E, _, _>(
+            handler_name,
+            EventHandlerOptions::default(),
+            handler_fn,
+        )
+    }
+
+    pub fn on_typed_with_options<E, F, Fut>(
+        &self,
+        handler_name: &str,
+        options: EventHandlerOptions,
+        handler_fn: F,
+    ) -> EventHandler
+    where
+        E: EventSpec,
+        F: Fn(TypedEvent<E>) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<E::Result, String>> + Send + 'static,
+    {
+        self.on_with_options(E::EVENT_TYPE, handler_name, options, move |event| {
             let typed = TypedEvent::<E>::from_base_event(event);
             let fut = handler_fn(typed);
             async move {

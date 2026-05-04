@@ -5,7 +5,7 @@ pub fn uuid_v7_string() -> String {
 }
 
 pub fn handler_id_namespace() -> Uuid {
-    Uuid::new_v5(&Uuid::NAMESPACE_DNS, b"bubus-handler")
+    Uuid::new_v5(&Uuid::NAMESPACE_DNS, b"abxbus-handler")
 }
 
 pub fn compute_handler_id(

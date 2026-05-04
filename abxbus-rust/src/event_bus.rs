@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{mpsc as std_mpsc, Arc, OnceLock},
+    sync::{mpsc as std_mpsc, Arc, OnceLock, Weak},
     thread,
     time::{Duration, Instant},
 };
@@ -8,12 +8,12 @@ use std::{
 use event_listener::Event;
 use futures::executor::block_on;
 use parking_lot::Mutex;
-use serde::Serialize;
-use serde_json::Value;
+use serde::{Serialize, Serializer};
+use serde_json::{json, Map, Value};
 
 use crate::{
     base_event::{now_iso, BaseEvent},
-    event_handler::{EventHandler, EventHandlerCallable},
+    event_handler::{EventHandler, EventHandlerCallable, EventHandlerOptions},
     event_result::{EventResult, EventResultStatus},
     id::uuid_v7_string,
     lock_manager::ReentrantLock,
@@ -23,7 +23,9 @@ use crate::{
 };
 
 static GLOBAL_SERIAL_LOCK: OnceLock<Arc<ReentrantLock>> = OnceLock::new();
+static ALL_INSTANCES: OnceLock<Mutex<Vec<Weak<EventBus>>>> = OnceLock::new();
 thread_local! {
+    static CURRENT_BUS_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     static CURRENT_EVENT_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     static CURRENT_HANDLER_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
@@ -32,6 +34,7 @@ struct FindWaiter {
     id: u64,
     pattern: String,
     child_of_event_id: Option<String>,
+    where_filter: Option<HashMap<String, Value>>,
     sender: std_mpsc::Sender<Arc<BaseEvent>>,
 }
 
@@ -47,7 +50,7 @@ struct BusRuntime {
     next_waiter_id: Mutex<u64>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone)]
 pub struct EventBus {
     pub name: String,
     pub id: String,
@@ -57,17 +60,63 @@ pub struct EventBus {
     pub event_handler_concurrency: EventHandlerConcurrencyMode,
     pub event_handler_completion: EventHandlerCompletionMode,
     pub event_handler_slow_timeout: Option<f64>,
-    #[serde(skip)]
+    pub event_handler_detect_file_paths: bool,
     handlers: Arc<Mutex<HashMap<String, Vec<EventHandler>>>>,
-    #[serde(skip)]
     runtime: Arc<BusRuntime>,
-    #[serde(skip)]
     bus_serial_lock: Arc<ReentrantLock>,
+}
+
+impl Serialize for EventBus {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.to_json_value().serialize(serializer)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EventBusOptions {
+    pub id: Option<String>,
+    pub max_history_size: Option<usize>,
+    pub max_history_drop: bool,
+    pub event_concurrency: EventConcurrencyMode,
+    pub event_timeout: Option<f64>,
+    pub event_slow_timeout: Option<f64>,
+    pub event_handler_concurrency: EventHandlerConcurrencyMode,
+    pub event_handler_completion: EventHandlerCompletionMode,
+    pub event_handler_slow_timeout: Option<f64>,
+    pub event_handler_detect_file_paths: bool,
+}
+
+#[derive(Clone, Default)]
+pub struct FindOptions {
+    pub past: bool,
+    pub future: Option<f64>,
+    pub child_of: Option<Arc<BaseEvent>>,
+    pub where_filter: Option<HashMap<String, Value>>,
+}
+
+impl Default for EventBusOptions {
+    fn default() -> Self {
+        Self {
+            id: None,
+            max_history_size: Some(100),
+            max_history_drop: false,
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_timeout: Some(60.0),
+            event_slow_timeout: Some(300.0),
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            event_handler_completion: EventHandlerCompletionMode::All,
+            event_handler_slow_timeout: Some(30.0),
+            event_handler_detect_file_paths: true,
+        }
+    }
 }
 
 impl EventBus {
     pub fn new(name: Option<String>) -> Arc<Self> {
-        Self::new_with_history(name, Some(100), false)
+        Self::new_with_options(name, EventBusOptions::default())
     }
 
     pub fn new_with_history(
@@ -75,15 +124,53 @@ impl EventBus {
         max_history_size: Option<usize>,
         max_history_drop: bool,
     ) -> Arc<Self> {
+        Self::new_with_options(
+            name,
+            EventBusOptions {
+                max_history_size,
+                max_history_drop,
+                ..EventBusOptions::default()
+            },
+        )
+    }
+
+    pub fn new_with_options(name: Option<String>, options: EventBusOptions) -> Arc<Self> {
+        if let Some(timeout) = options.event_timeout {
+            assert!(timeout > 0.0, "event_timeout must be > 0 or None");
+        }
+        if let Some(timeout) = options.event_slow_timeout {
+            assert!(timeout > 0.0, "event_slow_timeout must be > 0 or None");
+        }
+        if let Some(timeout) = options.event_handler_slow_timeout {
+            assert!(
+                timeout > 0.0,
+                "event_handler_slow_timeout must be > 0 or None"
+            );
+        }
+
+        let id = options.id.unwrap_or_else(uuid_v7_string);
+        let resolved_name = name.unwrap_or_else(|| "EventBus".to_string());
+        assert!(
+            resolved_name
+                .chars()
+                .next()
+                .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+                && resolved_name
+                    .chars()
+                    .all(|ch| ch == '_' || ch.is_ascii_alphanumeric()),
+            "EventBus name must be a unique identifier string, got: {resolved_name}"
+        );
+
         let bus = Arc::new(Self {
-            name: name.unwrap_or_else(|| "EventBus".to_string()),
-            id: uuid_v7_string(),
-            event_concurrency: EventConcurrencyMode::BusSerial,
-            event_timeout: Some(60.0),
-            event_slow_timeout: Some(300.0),
-            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
-            event_handler_completion: EventHandlerCompletionMode::All,
-            event_handler_slow_timeout: Some(30.0),
+            name: resolved_name,
+            id,
+            event_concurrency: options.event_concurrency,
+            event_timeout: options.event_timeout,
+            event_slow_timeout: options.event_slow_timeout,
+            event_handler_concurrency: options.event_handler_concurrency,
+            event_handler_completion: options.event_handler_completion,
+            event_handler_slow_timeout: options.event_handler_slow_timeout,
+            event_handler_detect_file_paths: options.event_handler_detect_file_paths,
             handlers: Arc::new(Mutex::new(HashMap::new())),
             runtime: Arc::new(BusRuntime {
                 queue: Mutex::new(VecDeque::new()),
@@ -91,26 +178,47 @@ impl EventBus {
                 stop: Mutex::new(false),
                 events: Mutex::new(HashMap::new()),
                 history_order: Mutex::new(VecDeque::new()),
-                max_history_size,
-                max_history_drop,
+                max_history_size: options.max_history_size,
+                max_history_drop: options.max_history_drop,
                 find_waiters: Mutex::new(Vec::new()),
                 next_waiter_id: Mutex::new(0),
             }),
             bus_serial_lock: Arc::new(ReentrantLock::default()),
         });
+        Self::register_instance(&bus);
         Self::start_loop(bus.clone());
         bus
+    }
+
+    fn register_instance(bus: &Arc<Self>) {
+        let mut instances = ALL_INSTANCES.get_or_init(|| Mutex::new(Vec::new())).lock();
+        instances.retain(|entry| entry.upgrade().is_some());
+        instances.push(Arc::downgrade(bus));
+    }
+
+    pub fn all_instances_contains(bus: &Arc<Self>) -> bool {
+        let mut instances = ALL_INSTANCES.get_or_init(|| Mutex::new(Vec::new())).lock();
+        instances.retain(|entry| entry.upgrade().is_some());
+        instances
+            .iter()
+            .filter_map(Weak::upgrade)
+            .any(|entry| Arc::ptr_eq(&entry, bus))
+    }
+
+    pub fn all_instances_len() -> usize {
+        let mut instances = ALL_INSTANCES.get_or_init(|| Mutex::new(Vec::new())).lock();
+        instances.retain(|entry| entry.upgrade().is_some());
+        instances.len()
     }
 
     fn start_loop(bus: Arc<Self>) {
         thread::spawn(move || {
             block_on(async move {
                 loop {
-                    if !bus.runtime.queue.lock().is_empty() {
-                        thread::sleep(Duration::from_millis(1));
-                    }
+                    let listener = bus.runtime.queue_notify.listen();
                     let next_event = bus.runtime.queue.lock().pop_front();
                     if let Some(event) = next_event {
+                        drop(listener);
                         let bus_for_task = bus.clone();
                         let mode = event
                             .inner
@@ -134,7 +242,7 @@ impl EventBus {
                     if *bus.runtime.stop.lock() {
                         break;
                     }
-                    bus.runtime.queue_notify.listen().await;
+                    listener.await;
                 }
             });
         });
@@ -145,6 +253,35 @@ impl EventBus {
         self.runtime.queue_notify.notify(usize::MAX);
     }
 
+    pub fn label(&self) -> String {
+        format!(
+            "{}#{}",
+            self.name,
+            &self.id[self.id.len().saturating_sub(4)..]
+        )
+    }
+
+    pub fn max_history_size(&self) -> Option<usize> {
+        self.runtime.max_history_size
+    }
+
+    pub fn max_history_drop(&self) -> bool {
+        self.runtime.max_history_drop
+    }
+
+    pub fn event_history_size(&self) -> usize {
+        self.runtime.history_order.lock().len()
+    }
+
+    pub fn is_idle_and_queue_empty(&self) -> bool {
+        let queue_empty = self.runtime.queue.lock().is_empty();
+        let all_completed = self.runtime.events.lock().values().all(|event| {
+            let status = event.inner.lock().event_status;
+            status == EventStatus::Completed
+        });
+        queue_empty && all_completed
+    }
+
     pub fn runtime_payload_for_test(&self) -> HashMap<String, Arc<BaseEvent>> {
         self.runtime.events.lock().clone()
     }
@@ -153,18 +290,229 @@ impl EventBus {
         self.runtime.history_order.lock().iter().cloned().collect()
     }
 
+    pub fn to_json_value(&self) -> Value {
+        let handlers_by_pattern = self.handlers.lock().clone();
+        let mut handlers = Map::new();
+        let mut handlers_by_key = Map::new();
+        for (pattern, entries) in handlers_by_pattern {
+            let mut ids = Vec::new();
+            for handler in entries {
+                ids.push(Value::String(handler.id.clone()));
+                handlers.insert(handler.id.clone(), handler.to_json_value());
+            }
+            handlers_by_key.insert(pattern, Value::Array(ids));
+        }
+
+        let mut event_history = Map::new();
+        let events = self.runtime.events.lock().clone();
+        for event_id in self.runtime.history_order.lock().iter() {
+            if let Some(event) = events.get(event_id) {
+                event_history.insert(event_id.clone(), event.to_json_value());
+            }
+        }
+
+        let mut pending_event_queue = Vec::new();
+        for event in self.runtime.queue.lock().iter() {
+            let event_id = event.inner.lock().event_id.clone();
+            if !event_history.contains_key(&event_id) {
+                event_history.insert(event_id.clone(), event.to_json_value());
+            }
+            pending_event_queue.push(Value::String(event_id));
+        }
+
+        json!({
+            "id": self.id,
+            "name": self.name,
+            "max_history_size": self.runtime.max_history_size,
+            "max_history_drop": self.runtime.max_history_drop,
+            "event_concurrency": self.event_concurrency,
+            "event_timeout": self.event_timeout,
+            "event_slow_timeout": self.event_slow_timeout,
+            "event_handler_concurrency": self.event_handler_concurrency,
+            "event_handler_completion": self.event_handler_completion,
+            "event_handler_slow_timeout": self.event_handler_slow_timeout,
+            "event_handler_detect_file_paths": self.event_handler_detect_file_paths,
+            "handlers": handlers,
+            "handlers_by_key": handlers_by_key,
+            "event_history": event_history,
+            "pending_event_queue": pending_event_queue,
+        })
+    }
+
+    pub fn from_json_value(value: Value) -> Arc<Self> {
+        let Value::Object(payload) = value else {
+            panic!("EventBus.from_json_value(data) requires an object");
+        };
+
+        let options = EventBusOptions {
+            id: payload
+                .get("id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            max_history_size: match payload.get("max_history_size") {
+                Some(Value::Null) => None,
+                Some(value) => value.as_u64().map(|value| value as usize),
+                None => Some(100),
+            },
+            max_history_drop: payload
+                .get("max_history_drop")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            event_concurrency: payload
+                .get("event_concurrency")
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok())
+                .unwrap_or(EventConcurrencyMode::BusSerial),
+            event_timeout: match payload.get("event_timeout") {
+                Some(Value::Null) => None,
+                Some(value) => value.as_f64(),
+                None => Some(60.0),
+            },
+            event_slow_timeout: match payload.get("event_slow_timeout") {
+                Some(Value::Null) => None,
+                Some(value) => value.as_f64(),
+                None => Some(300.0),
+            },
+            event_handler_concurrency: payload
+                .get("event_handler_concurrency")
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok())
+                .unwrap_or(EventHandlerConcurrencyMode::Serial),
+            event_handler_completion: payload
+                .get("event_handler_completion")
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok())
+                .unwrap_or(EventHandlerCompletionMode::All),
+            event_handler_slow_timeout: match payload.get("event_handler_slow_timeout") {
+                Some(Value::Null) => None,
+                Some(value) => value.as_f64(),
+                None => Some(30.0),
+            },
+            event_handler_detect_file_paths: payload
+                .get("event_handler_detect_file_paths")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+        };
+        let name = payload
+            .get("name")
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+        let bus = Self::new_with_options(name, options);
+
+        let mut handlers_by_id = HashMap::new();
+        if let Some(Value::Object(raw_handlers)) = payload.get("handlers") {
+            for (handler_id, handler_value) in raw_handlers {
+                let mut handler = EventHandler::from_json_value(handler_value.clone());
+                if handler.id.is_empty() {
+                    handler.id = handler_id.clone();
+                }
+                handlers_by_id.insert(handler.id.clone(), handler);
+            }
+        }
+
+        {
+            let mut handlers = bus.handlers.lock();
+            handlers.clear();
+            if let Some(Value::Object(raw_handlers_by_key)) = payload.get("handlers_by_key") {
+                for (pattern, raw_ids) in raw_handlers_by_key {
+                    let Some(ids) = raw_ids.as_array() else {
+                        continue;
+                    };
+                    for handler_id in ids.iter().filter_map(Value::as_str) {
+                        if let Some(handler) = handlers_by_id.get(handler_id).cloned() {
+                            handlers.entry(pattern.clone()).or_default().push(handler);
+                        }
+                    }
+                }
+            } else {
+                for handler in handlers_by_id.values().cloned() {
+                    handlers
+                        .entry(handler.event_pattern.clone())
+                        .or_default()
+                        .push(handler);
+                }
+            }
+        }
+
+        bus.runtime.events.lock().clear();
+        bus.runtime.history_order.lock().clear();
+        if let Some(Value::Object(raw_event_history)) = payload.get("event_history") {
+            for (event_id_hint, event_value) in raw_event_history {
+                let event = BaseEvent::from_json_value(event_value.clone());
+                let event_id = event.inner.lock().event_id.clone();
+                if event_id.is_empty() {
+                    event.inner.lock().event_id = event_id_hint.clone();
+                }
+                for result in event.inner.lock().event_results.values() {
+                    let handler = result.handler.clone();
+                    let mut handlers = bus.handlers.lock();
+                    let exists = handlers
+                        .get(&handler.event_pattern)
+                        .map(|entries| entries.iter().any(|entry| entry.id == handler.id))
+                        .unwrap_or(false);
+                    if !exists {
+                        handlers
+                            .entry(handler.event_pattern.clone())
+                            .or_default()
+                            .push(handler);
+                    }
+                }
+                let event_id = event.inner.lock().event_id.clone();
+                bus.runtime.events.lock().insert(event_id.clone(), event);
+                bus.runtime.history_order.lock().push_back(event_id);
+            }
+        }
+
+        bus.runtime.queue.lock().clear();
+        if let Some(Value::Array(raw_pending_ids)) = payload.get("pending_event_queue") {
+            for event_id in raw_pending_ids.iter().filter_map(Value::as_str) {
+                if let Some(event) = bus.runtime.events.lock().get(event_id).cloned() {
+                    bus.runtime.queue.lock().push_back(event);
+                }
+            }
+        }
+
+        bus
+    }
+
     pub fn on<F, Fut>(&self, pattern: &str, handler_name: &str, handler_fn: F) -> EventHandler
     where
         F: Fn(Arc<BaseEvent>) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<Value, String>> + Send + 'static,
     {
+        self.on_with_options(
+            pattern,
+            handler_name,
+            EventHandlerOptions::default(),
+            handler_fn,
+        )
+    }
+
+    pub fn on_with_options<F, Fut>(
+        &self,
+        pattern: &str,
+        handler_name: &str,
+        options: EventHandlerOptions,
+        handler_fn: F,
+    ) -> EventHandler
+    where
+        F: Fn(Arc<BaseEvent>) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<Value, String>> + Send + 'static,
+    {
+        if let Some(timeout) = options.handler_timeout {
+            assert!(timeout > 0.0, "handler_timeout must be > 0 or None");
+        }
+        if let Some(timeout) = options.handler_slow_timeout {
+            assert!(timeout > 0.0, "handler_slow_timeout must be > 0 or None");
+        }
         let callable: EventHandlerCallable = Arc::new(move |event| Box::pin(handler_fn(event)));
-        let entry = EventHandler::from_callable(
+        let entry = EventHandler::from_callable_with_options(
             pattern.to_string(),
             handler_name.to_string(),
             self.name.clone(),
             self.id.clone(),
             callable,
+            options,
         );
         self.handlers
             .lock()
@@ -185,6 +533,10 @@ impl EventBus {
         }
     }
 
+    pub fn emit_base(&self, event: Arc<BaseEvent>) -> Arc<BaseEvent> {
+        self.enqueue_base(event)
+    }
+
     pub(crate) fn enqueue_base(&self, event: Arc<BaseEvent>) -> Arc<BaseEvent> {
         self.enqueue_base_with_options(event, false)
     }
@@ -194,6 +546,32 @@ impl EventBus {
         event: Arc<BaseEvent>,
         queue_jump: bool,
     ) -> Arc<BaseEvent> {
+        self.enqueue_base_with_relation(event, queue_jump, false)
+    }
+
+    pub(crate) fn enqueue_child_base(&self, event: Arc<BaseEvent>) -> Arc<BaseEvent> {
+        self.enqueue_child_base_with_options(event, false)
+    }
+
+    pub(crate) fn enqueue_child_base_with_options(
+        &self,
+        event: Arc<BaseEvent>,
+        queue_jump: bool,
+    ) -> Arc<BaseEvent> {
+        self.enqueue_base_with_relation(event, queue_jump, true)
+    }
+
+    fn enqueue_base_with_relation(
+        &self,
+        event: Arc<BaseEvent>,
+        queue_jump: bool,
+        track_child: bool,
+    ) -> Arc<BaseEvent> {
+        let bus_label = self.label();
+        if event.inner.lock().event_path.contains(&bus_label) {
+            return event;
+        }
+
         if !self.register_in_history(event.clone()) {
             event.mark_completed();
             return event;
@@ -202,10 +580,8 @@ impl EventBus {
         {
             let mut inner = event.inner.lock();
             inner.event_pending_bus_count += 1;
-            inner
-                .event_path
-                .push(format!("{}#{}", self.name, &self.id[0..4]));
-            if inner.event_parent_id.is_none() {
+            inner.event_path.push(bus_label);
+            if track_child && inner.event_parent_id.is_none() {
                 CURRENT_EVENT_ID.with(|id| {
                     let current_parent = id.borrow().clone();
                     if current_parent.as_deref() != Some(inner.event_id.as_str()) {
@@ -213,33 +589,36 @@ impl EventBus {
                     }
                 });
             }
-            if inner.event_emitted_by_handler_id.is_none() {
+            if track_child && inner.event_emitted_by_handler_id.is_none() {
                 CURRENT_HANDLER_ID.with(|id| {
                     inner.event_emitted_by_handler_id = id.borrow().clone();
                 });
             }
         }
 
-        let emitted_child_id = event.inner.lock().event_id.clone();
-        CURRENT_EVENT_ID.with(|current_event_id| {
-            CURRENT_HANDLER_ID.with(|current_handler_id| {
-                let Some(parent_id) = current_event_id.borrow().clone() else {
-                    return;
-                };
-                let Some(handler_id) = current_handler_id.borrow().clone() else {
-                    return;
-                };
-                let Some(parent_event) = self.runtime.events.lock().get(&parent_id).cloned() else {
-                    return;
-                };
-                let mut parent_inner = parent_event.inner.lock();
-                if let Some(result) = parent_inner.event_results.get_mut(&handler_id) {
-                    if !result.event_children.contains(&emitted_child_id) {
-                        result.event_children.push(emitted_child_id.clone());
+        if track_child {
+            let emitted_child_id = event.inner.lock().event_id.clone();
+            CURRENT_EVENT_ID.with(|current_event_id| {
+                CURRENT_HANDLER_ID.with(|current_handler_id| {
+                    let Some(parent_id) = current_event_id.borrow().clone() else {
+                        return;
+                    };
+                    let Some(handler_id) = current_handler_id.borrow().clone() else {
+                        return;
+                    };
+                    let Some(parent_event) = self.runtime.events.lock().get(&parent_id).cloned()
+                    else {
+                        return;
+                    };
+                    let mut parent_inner = parent_event.inner.lock();
+                    if let Some(result) = parent_inner.event_results.get_mut(&handler_id) {
+                        if !result.event_children.contains(&emitted_child_id) {
+                            result.event_children.push(emitted_child_id.clone());
+                        }
                     }
-                }
+                });
             });
-        });
+        }
 
         {
             let mut queue = self.runtime.queue.lock();
@@ -253,6 +632,136 @@ impl EventBus {
         self.notify_find_waiters(event.clone());
         self.runtime.queue_notify.notify(1);
         event
+    }
+
+    pub fn queue_jump_if_waited(event: Arc<BaseEvent>) {
+        let context = CURRENT_BUS_ID.with(|bus_id| {
+            CURRENT_EVENT_ID.with(|event_id| {
+                CURRENT_HANDLER_ID.with(|handler_id| {
+                    Some((
+                        bus_id.borrow().clone()?,
+                        event_id.borrow().clone()?,
+                        handler_id.borrow().clone()?,
+                    ))
+                })
+            })
+        });
+        let Some((current_bus_id, current_event_id, current_handler_id)) = context else {
+            return;
+        };
+
+        {
+            let mut inner = event.inner.lock();
+            if inner.event_parent_id.as_deref() == Some(current_event_id.as_str())
+                && inner.event_emitted_by_handler_id.as_deref() == Some(current_handler_id.as_str())
+                && inner.event_id != current_event_id
+            {
+                let is_linked_child = ALL_INSTANCES
+                    .get_or_init(|| Mutex::new(Vec::new()))
+                    .lock()
+                    .iter()
+                    .filter_map(Weak::upgrade)
+                    .filter_map(|bus| bus.runtime.events.lock().get(&current_event_id).cloned())
+                    .any(|parent| {
+                        parent
+                            .inner
+                            .lock()
+                            .event_results
+                            .get(&current_handler_id)
+                            .is_some_and(|result| result.event_children.contains(&inner.event_id))
+                    });
+                if is_linked_child {
+                    inner.event_blocks_parent_completion = true;
+                }
+            }
+        }
+
+        let event_path = event.inner.lock().event_path.clone();
+        if event_path.is_empty() {
+            return;
+        }
+
+        let mut instances = ALL_INSTANCES.get_or_init(|| Mutex::new(Vec::new())).lock();
+        instances.retain(|entry| entry.upgrade().is_some());
+        let live_buses: Vec<Arc<EventBus>> = instances.iter().filter_map(Weak::upgrade).collect();
+        drop(instances);
+
+        let mut ordered = Vec::new();
+        for label in event_path {
+            for bus in &live_buses {
+                if bus.label() == label
+                    && !ordered
+                        .iter()
+                        .any(|entry: &Arc<EventBus>| Arc::ptr_eq(entry, bus))
+                {
+                    ordered.push(bus.clone());
+                }
+            }
+        }
+
+        let initiating_mode = ordered
+            .iter()
+            .find(|bus| bus.id == current_bus_id)
+            .map(|bus| {
+                event
+                    .inner
+                    .lock()
+                    .event_concurrency
+                    .unwrap_or(bus.event_concurrency)
+            });
+
+        for bus in ordered {
+            let bus_mode = event
+                .inner
+                .lock()
+                .event_concurrency
+                .unwrap_or(bus.event_concurrency);
+            let bypass_event_lock = bus.id == current_bus_id
+                || (initiating_mode == Some(EventConcurrencyMode::GlobalSerial)
+                    && bus_mode == EventConcurrencyMode::GlobalSerial);
+            bus.process_event_immediately_if_queued(event.clone(), bypass_event_lock);
+        }
+    }
+
+    fn process_event_immediately_if_queued(&self, event: Arc<BaseEvent>, bypass_event_lock: bool) {
+        let event_id = event.inner.lock().event_id.clone();
+        if event.inner.lock().event_status == EventStatus::Completed {
+            return;
+        }
+        if event
+            .inner
+            .lock()
+            .event_results
+            .values()
+            .any(|result| result.handler.eventbus_id == self.id)
+        {
+            return;
+        }
+
+        let removed = {
+            let mut queue = self.runtime.queue.lock();
+            if let Some(index) = queue
+                .iter()
+                .position(|queued| queued.inner.lock().event_id == event_id)
+            {
+                queue.remove(index);
+                true
+            } else {
+                false
+            }
+        };
+        if !removed {
+            return;
+        }
+
+        let bus = self.clone();
+        thread::spawn(move || {
+            if bypass_event_lock {
+                block_on(bus.process_event_inner(event));
+            } else {
+                block_on(bus.process_event(event));
+            }
+        });
     }
 
     fn register_in_history(&self, event: Arc<BaseEvent>) -> bool {
@@ -310,14 +819,32 @@ impl EventBus {
         future: Option<f64>,
         child_of: Option<Arc<BaseEvent>>,
     ) -> Option<Arc<BaseEvent>> {
-        let child_of_event_id = child_of
+        self.find_with_options(
+            pattern,
+            FindOptions {
+                past,
+                future,
+                child_of,
+                where_filter: None,
+            },
+        )
+        .await
+    }
+
+    pub async fn find_with_options(
+        &self,
+        pattern: &str,
+        options: FindOptions,
+    ) -> Option<Arc<BaseEvent>> {
+        let child_of_event_id = options
+            .child_of
             .as_ref()
             .map(|event| event.inner.lock().event_id.clone());
 
         let mut waiter_id: Option<u64> = None;
         let mut waiter_rx: Option<std_mpsc::Receiver<Arc<BaseEvent>>> = None;
 
-        if future.is_some() {
+        if options.future.is_some() {
             let (tx, rx) = std_mpsc::channel();
             let id = {
                 let mut next = self.runtime.next_waiter_id.lock();
@@ -328,13 +855,18 @@ impl EventBus {
                 id,
                 pattern: pattern.to_string(),
                 child_of_event_id: child_of_event_id.clone(),
+                where_filter: options.where_filter.clone(),
                 sender: tx,
             });
             waiter_id = Some(id);
             waiter_rx = Some(rx);
 
-            if past {
-                if let Some(matched) = self.find_in_history(pattern, child_of_event_id.as_deref()) {
+            if options.past {
+                if let Some(matched) = self.find_in_history(
+                    pattern,
+                    child_of_event_id.as_deref(),
+                    options.where_filter.as_ref(),
+                ) {
                     self.runtime
                         .find_waiters
                         .lock()
@@ -342,11 +874,15 @@ impl EventBus {
                     return Some(matched);
                 }
             }
-        } else if past {
-            return self.find_in_history(pattern, child_of_event_id.as_deref());
+        } else if options.past {
+            return self.find_in_history(
+                pattern,
+                child_of_event_id.as_deref(),
+                options.where_filter.as_ref(),
+            );
         }
 
-        let timeout = future?;
+        let timeout = options.future?;
         let result =
             waiter_rx.and_then(|rx| rx.recv_timeout(Duration::from_secs_f64(timeout)).ok());
 
@@ -364,6 +900,7 @@ impl EventBus {
         &self,
         pattern: &str,
         child_of_event_id: Option<&str>,
+        where_filter: Option<&HashMap<String, Value>>,
     ) -> Option<Arc<BaseEvent>> {
         let history = self.runtime.history_order.lock().clone();
         for event_id in history.iter().rev() {
@@ -377,6 +914,9 @@ impl EventBus {
                 if !self.event_is_child_of_ids(&event.inner.lock().event_id, parent_id) {
                     continue;
                 }
+            }
+            if !Self::matches_where_filter(&event, where_filter) {
+                continue;
             }
             return Some(event);
         }
@@ -406,6 +946,9 @@ impl EventBus {
                         continue;
                     }
                 }
+                if !Self::matches_where_filter(&event, waiter.where_filter.as_ref()) {
+                    continue;
+                }
                 matched_waiter_ids.push(waiter.id);
                 matched_senders.push(waiter.sender.clone());
             }
@@ -420,6 +963,25 @@ impl EventBus {
                 let _ = sender.send(event.clone());
             }
         }
+    }
+
+    fn matches_where_filter(
+        event: &Arc<BaseEvent>,
+        where_filter: Option<&HashMap<String, Value>>,
+    ) -> bool {
+        let Some(where_filter) = where_filter else {
+            return true;
+        };
+        if where_filter.is_empty() {
+            return true;
+        }
+
+        let Value::Object(record) = event.to_json_value() else {
+            return false;
+        };
+        where_filter
+            .iter()
+            .all(|(key, expected)| record.get(key) == Some(expected))
     }
 
     pub fn event_is_child_of(
@@ -464,12 +1026,7 @@ impl EventBus {
     pub async fn wait_until_idle(&self, timeout: Option<f64>) -> bool {
         let start = Instant::now();
         loop {
-            let queue_empty = self.runtime.queue.lock().is_empty();
-            let all_completed = self.runtime.events.lock().values().all(|event| {
-                let status = event.inner.lock().event_status;
-                status == EventStatus::Completed
-            });
-            if queue_empty && all_completed {
+            if self.is_idle_and_queue_empty() {
                 return true;
             }
 
@@ -637,7 +1194,7 @@ impl EventBus {
         event.inner.lock().event_results.values().any(|result| {
             result.status == EventResultStatus::Completed
                 && result.error.is_none()
-                && result.result.is_some()
+                && !matches!(result.result, None | Some(Value::Null))
         })
     }
 
@@ -649,6 +1206,7 @@ impl EventBus {
         event_timeout: Option<f64>,
     ) -> bool {
         let handler_id = handler.id.clone();
+        CURRENT_BUS_ID.with(|id| *id.borrow_mut() = Some(self.id.clone()));
         CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = Some(event.inner.lock().event_id.clone()));
         CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = Some(handler_id.clone()));
         let timed_out = self
@@ -656,6 +1214,7 @@ impl EventBus {
             .await;
         CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = None);
         CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = None);
+        CURRENT_BUS_ID.with(|id| *id.borrow_mut() = None);
         timed_out
     }
 
@@ -666,17 +1225,24 @@ impl EventBus {
         event_started_at: Instant,
         event_timeout: Option<f64>,
     ) -> bool {
-        let handler_timeout = handler
+        let resolved_handler_timeout = handler
             .handler_timeout
             .or(event.inner.lock().event_handler_timeout)
-            .or(event_timeout);
+            .or(self.event_timeout);
+
+        let result_timeout = match (resolved_handler_timeout, event_timeout) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
 
         let remaining_event_timeout = event_timeout.map(|timeout| {
             let elapsed = event_started_at.elapsed().as_secs_f64();
             (timeout - elapsed).max(0.0)
         });
 
-        let timeout = match (handler_timeout, remaining_event_timeout) {
+        let call_timeout = match (resolved_handler_timeout, remaining_event_timeout) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (Some(a), None) => Some(a),
             (None, Some(b)) => Some(b),
@@ -686,7 +1252,7 @@ impl EventBus {
         let mut result = EventResult::new(
             event.inner.lock().event_id.clone(),
             handler.clone(),
-            timeout,
+            result_timeout,
         );
         result.status = EventResultStatus::Started;
         result.started_at = Some(now_iso());
@@ -703,19 +1269,22 @@ impl EventBus {
             .clone();
         let (tx, rx) = std_mpsc::channel();
         let event_clone = event.clone();
+        let context_bus_id = self.id.clone();
         let context_event_id = event.inner.lock().event_id.clone();
         let context_handler_id = handler.id.clone();
         thread::spawn(move || {
+            CURRENT_BUS_ID.with(|id| *id.borrow_mut() = Some(context_bus_id));
             CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = Some(context_event_id));
             CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = Some(context_handler_id));
             let response = block_on(call(event_clone));
             CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = None);
             CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = None);
+            CURRENT_BUS_ID.with(|id| *id.borrow_mut() = None);
             let _ = tx.send(response);
         });
 
         let call_started = Instant::now();
-        let call_result = if let Some(timeout_secs) = timeout {
+        let call_result = if let Some(timeout_secs) = call_timeout {
             rx.recv_timeout(Duration::from_secs_f64(timeout_secs))
                 .map_err(|_| "timeout".to_string())
         } else {

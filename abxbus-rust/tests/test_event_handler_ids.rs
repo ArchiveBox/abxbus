@@ -1,4 +1,4 @@
-use bubus_rust::id::compute_handler_id;
+use abxbus_rust::id::compute_handler_id;
 use uuid::Uuid;
 
 #[test]
@@ -17,7 +17,7 @@ fn test_compute_handler_id_matches_uuidv5_seed_algorithm() {
         event_pattern,
     );
 
-    let namespace = Uuid::new_v5(&Uuid::NAMESPACE_DNS, b"bubus-handler");
+    let namespace = Uuid::new_v5(&Uuid::NAMESPACE_DNS, b"abxbus-handler");
     let seed = format!(
         "{}|{}|{}|{}|{}",
         eventbus_id,
