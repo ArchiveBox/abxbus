@@ -348,7 +348,7 @@ impl BaseEvent {
         if value.is_null() || Self::is_base_event_json(&value) {
             return Ok(value);
         }
-        Self::validate_json_schema_value(&schema, &value, "$")
+        Self::validate_json_schema_value(&schema, &schema, &value, "$")
             .map(|_| value.clone())
             .map_err(|error| {
                 let preview = serde_json::to_string(&value)
@@ -362,12 +362,25 @@ impl BaseEvent {
             })
     }
 
-    fn validate_json_schema_value(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
+    fn validate_json_schema_value(
+        root_schema: &Value,
+        schema: &Value,
+        value: &Value,
+        path: &str,
+    ) -> Result<(), String> {
+        if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
+            let resolved = Self::resolve_json_schema_ref(root_schema, reference)
+                .ok_or_else(|| format!("{path} unresolved schema reference {reference}"))?;
+            Self::validate_json_schema_value(root_schema, resolved, value, path)?;
+            if schema.as_object().is_some_and(|object| object.len() == 1) {
+                return Ok(());
+            }
+        }
+
         if let Some(any_of) = schema.get("anyOf").and_then(Value::as_array) {
-            if any_of
-                .iter()
-                .any(|branch| Self::validate_json_schema_value(branch, value, path).is_ok())
-            {
+            if any_of.iter().any(|branch| {
+                Self::validate_json_schema_value(root_schema, branch, value, path).is_ok()
+            }) {
                 return Ok(());
             }
             return Err(format!("{path} did not match anyOf schema"));
@@ -379,7 +392,7 @@ impl BaseEvent {
                 .iter()
                 .any(|schema_type| Self::json_schema_type_matches(schema_type, value))
             {
-                return Self::validate_json_schema_children(schema, value, path);
+                return Self::validate_json_schema_children(root_schema, schema, value, path);
             }
             return Err(format!("{path} did not match any allowed type"));
         }
@@ -400,7 +413,16 @@ impl BaseEvent {
             }
         }
 
-        Self::validate_json_schema_children(schema, value, path)
+        Self::validate_json_schema_children(root_schema, schema, value, path)
+    }
+
+    fn resolve_json_schema_ref<'a>(root_schema: &'a Value, reference: &str) -> Option<&'a Value> {
+        let pointer = reference.strip_prefix('#')?;
+        if pointer.is_empty() {
+            Some(root_schema)
+        } else {
+            root_schema.pointer(pointer)
+        }
     }
 
     fn json_schema_type_matches(schema_type: &Value, value: &Value) -> bool {
@@ -419,6 +441,7 @@ impl BaseEvent {
     }
 
     fn validate_json_schema_children(
+        root_schema: &Value,
         schema: &Value,
         value: &Value,
         path: &str,
@@ -427,6 +450,7 @@ impl BaseEvent {
             if let Some(items) = value.as_array() {
                 for (index, item) in items.iter().enumerate() {
                     Self::validate_json_schema_value(
+                        root_schema,
                         items_schema,
                         item,
                         &format!("{path}[{index}]"),
@@ -452,6 +476,7 @@ impl BaseEvent {
             for (key, property_schema) in properties {
                 if let Some(property_value) = object.get(key) {
                     Self::validate_json_schema_value(
+                        root_schema,
                         property_schema,
                         property_value,
                         &format!("{path}.{key}"),
@@ -476,6 +501,7 @@ impl BaseEvent {
                         continue;
                     }
                     Self::validate_json_schema_value(
+                        root_schema,
                         additional_schema,
                         item,
                         &format!("{path}.{key}"),

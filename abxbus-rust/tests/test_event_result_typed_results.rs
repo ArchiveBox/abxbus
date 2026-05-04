@@ -283,6 +283,47 @@ fn test_eventspec_result_schema_runtime_enforcement() {
 }
 
 #[test]
+fn test_module_level_types_auto_extraction() {
+    let schema = <RuntimeSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json()
+        .expect("module-level schema");
+    assert_eq!(schema["type"], "object");
+    assert!(schema["properties"].get("result_id").is_some());
+    assert!(schema["properties"].get("data").is_some());
+    assert!(schema["properties"].get("success").is_some());
+}
+
+#[test]
+fn test_complex_module_level_generics() {
+    for schema in [
+        json!({
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "result_id": {"type": "string"},
+                    "data": {"type": "object"},
+                    "success": {"type": "boolean"}
+                },
+                "required": ["result_id", "data", "success"]
+            }
+        }),
+        json!({
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "properties": {
+                    "items": {"type": "array", "items": {"type": "string"}},
+                    "metadata": {"type": "object", "additionalProperties": {"type": "integer"}}
+                },
+                "required": ["items", "metadata"]
+            }
+        }),
+    ] {
+        assert_schema_roundtrips(schema);
+    }
+}
+
+#[test]
 fn test_built_in_result_schemas_validate_handler_results() {
     let bus = EventBus::new(Some("BuiltinResultBus".to_string()));
 
@@ -598,6 +639,157 @@ fn test_json_schema_primitive_deserialization() {
 }
 
 #[test]
+fn test_custom_pydantic_models_auto_extraction() {
+    let event = abxbus_rust::typed::TypedEvent::<RuntimeSchemaEvent>::new(Map::new());
+    assert_eq!(
+        event.inner.inner.lock().event_result_type,
+        Some(
+            <RuntimeSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json()
+                .expect("runtime schema")
+        )
+    );
+}
+
+#[test]
+fn test_complex_generic_types_auto_extraction() {
+    for schema in [
+        json!({"type": "array", "items": {"type": "string"}}),
+        json!({"type": "object", "additionalProperties": {"type": "integer"}}),
+        json!({"type": "array", "uniqueItems": true, "items": {"type": "integer"}}),
+    ] {
+        assert_schema_roundtrips(schema);
+    }
+}
+
+#[test]
+fn test_json_schema_list_of_models_deserialization() {
+    let bus = EventBus::new(Some("SchemaListOfModelsBus".to_string()));
+    let schema = json!({
+        "type": "array",
+        "items": {"$ref": "#/$defs/UserData"},
+        "$defs": {
+            "UserData": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "age": {"type": "integer"}
+                },
+                "required": ["name", "age"],
+                "additionalProperties": false
+            }
+        }
+    });
+    assert_schema_roundtrips(schema.clone());
+
+    bus.on("ListOfModelsValidEvent", "handler", |_event| async move {
+        Ok(json!([{"name": "alice", "age": 33}]))
+    });
+    let valid_event = bus.emit_base(schema_event("ListOfModelsValidEvent", Some(schema.clone())));
+    wait(&valid_event);
+    let valid_result = first_result(&valid_event);
+    assert_eq!(valid_result.status, EventResultStatus::Completed);
+    assert_eq!(
+        valid_result.result,
+        Some(json!([{"name": "alice", "age": 33}]))
+    );
+
+    bus.on("ListOfModelsInvalidEvent", "handler", |_event| async move {
+        Ok(json!([{"name": "alice", "age": "bad"}]))
+    });
+    let invalid_event = bus.emit_base(schema_event("ListOfModelsInvalidEvent", Some(schema)));
+    wait(&invalid_event);
+    assert_eq!(
+        first_result(&invalid_event).status,
+        EventResultStatus::Error
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_complex_generic_with_custom_types() {
+    test_json_schema_list_of_models_deserialization();
+}
+
+#[test]
+fn test_json_schema_nested_object_collection_deserialization() {
+    let bus = EventBus::new(Some("SchemaNestedObjectCollectionBus".to_string()));
+    let schema = json!({
+        "type": "object",
+        "additionalProperties": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/TaskResult"}
+        },
+        "$defs": {
+            "TaskResult": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "status": {"type": "string"}
+                },
+                "required": ["task_id", "status"],
+                "additionalProperties": false
+            }
+        }
+    });
+    assert_schema_roundtrips(schema.clone());
+
+    bus.on("NestedObjectValidEvent", "handler", |_event| async move {
+        Ok(json!({"batch_a": [{"task_id": "6b2e9266-87c4-7d4a-81e5-a6026165e14b", "status": "ok"}]}))
+    });
+    let valid_event = bus.emit_base(schema_event("NestedObjectValidEvent", Some(schema.clone())));
+    wait(&valid_event);
+    assert_eq!(
+        first_result(&valid_event).status,
+        EventResultStatus::Completed
+    );
+
+    bus.on("NestedObjectInvalidEvent", "handler", |_event| async move {
+        Ok(json!({"batch_a": [{"task_id": "6b2e9266-87c4-7d4a-81e5-a6026165e14b", "status": 404}]}))
+    });
+    let invalid_event = bus.emit_base(schema_event("NestedObjectInvalidEvent", Some(schema)));
+    wait(&invalid_event);
+    assert_eq!(
+        first_result(&invalid_event).status,
+        EventResultStatus::Error
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_type_adapter_validation() {
+    let bus = EventBus::new(Some("TypeAdapterValidationBus".to_string()));
+    let schema = json!({"type": "object", "additionalProperties": {"type": "integer"}});
+
+    bus.on(
+        "TypeAdapterValidEvent",
+        "valid_handler",
+        |_event| async move { Ok(json!({"abc": 123, "def": 456})) },
+    );
+    let valid_event = bus.emit_base(schema_event("TypeAdapterValidEvent", Some(schema.clone())));
+    wait(&valid_event);
+    assert_eq!(
+        first_result(&valid_event).status,
+        EventResultStatus::Completed
+    );
+
+    bus.on(
+        "TypeAdapterInvalidEvent",
+        "invalid_handler",
+        |_event| async move { Ok(json!({"abc": "badvalue"})) },
+    );
+    let invalid_event = bus.emit_base(schema_event("TypeAdapterInvalidEvent", Some(schema)));
+    wait(&invalid_event);
+    let invalid_result = first_result(&invalid_event);
+    assert_eq!(invalid_result.status, EventResultStatus::Error);
+    assert!(invalid_result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("integer"));
+    bus.stop();
+}
+
+#[test]
 fn test_json_schema_top_level_shape_deserialization_matrix() {
     for schema in [
         json!({"type": "array", "items": {"type": "string"}}),
@@ -611,6 +803,29 @@ fn test_json_schema_top_level_shape_deserialization_matrix() {
     ] {
         assert_schema_roundtrips(schema);
     }
+}
+
+#[test]
+fn test_json_schema_typed_dict_rehydrates_to_pydantic_model() {
+    let bus = EventBus::new(Some("TypedDictSchemaBus".to_string()));
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "user_id": {"type": "string"},
+            "active": {"type": "boolean"},
+            "score": {"type": "integer"}
+        },
+        "required": ["user_id", "active", "score"],
+        "additionalProperties": false
+    });
+
+    bus.on("TypedDictValidEvent", "handler", |_event| async move {
+        Ok(json!({"user_id": "e692b6cb-ae63-773b-8557-3218f7ce5ced", "active": true, "score": 9}))
+    });
+    let event = bus.emit_base(schema_event("TypedDictValidEvent", Some(schema)));
+    wait(&event);
+    assert_eq!(first_result(&event).status, EventResultStatus::Completed);
+    bus.stop();
 }
 
 #[test]
@@ -636,6 +851,53 @@ fn test_json_schema_optional_typed_dict_is_lax_on_missing_fields() {
         wait(&event);
         assert_eq!(first_result(&event).status, EventResultStatus::Completed);
     }
+    bus.stop();
+}
+
+#[test]
+fn test_json_schema_dataclass_rehydrates_to_pydantic_model() {
+    let bus = EventBus::new(Some("DataclassSchemaBus".to_string()));
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "task_id": {"type": "string"},
+            "priority": {"type": "integer"}
+        },
+        "required": ["task_id", "priority"],
+        "additionalProperties": false
+    });
+
+    bus.on("DataclassValidEvent", "handler", |_event| async move {
+        Ok(json!({"task_id": "16272e4a-6936-7e87-872b-0eadeb911f9d", "priority": 2}))
+    });
+    let event = bus.emit_base(schema_event("DataclassValidEvent", Some(schema)));
+    wait(&event);
+    assert_eq!(first_result(&event).status, EventResultStatus::Completed);
+    bus.stop();
+}
+
+#[test]
+fn test_json_schema_list_of_dataclass_rehydrates_to_list_of_models() {
+    let bus = EventBus::new(Some("DataclassListSchemaBus".to_string()));
+    let schema = json!({
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string"},
+                "priority": {"type": "integer"}
+            },
+            "required": ["task_id", "priority"],
+            "additionalProperties": false
+        }
+    });
+
+    bus.on("DataclassListValidEvent", "handler", |_event| async move {
+        Ok(json!([{"task_id": "78cfaa39-d697-7ef5-8e62-19b94b2cb48e", "priority": 5}]))
+    });
+    let event = bus.emit_base(schema_event("DataclassListValidEvent", Some(schema)));
+    wait(&event);
+    assert_eq!(first_result(&event).status, EventResultStatus::Completed);
     bus.stop();
 }
 
