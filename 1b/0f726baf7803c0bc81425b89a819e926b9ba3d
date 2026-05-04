@@ -1,0 +1,23 @@
+abxbus-rust/tests/test_comprehensive_patterns.rs
+  6a8c07f028b30c43 8,10-12,84-144,156-559,852-1400
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "1b0f726baf7803c0bc81425b89a819e926b9ba3d",
+  "prompts": {
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "messages": [],
+      "total_additions": 2475,
+      "total_deletions": 1458,
+      "accepted_lines": 21020,
+      "overriden_lines": 0
+    }
+  }
+}
