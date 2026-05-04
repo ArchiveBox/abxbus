@@ -1,0 +1,100 @@
+abxbus-rust/src/event_bus.rs
+  6a8c07f028b30c43 3,11-12,16,26,28,37,53,63,69-116,119,127-163,165-173,181-182,188,193-213,218,221,245,256-284,293-477,489-507,509,515,536-539,549-574,583-584,592,599-617,619,621,637-766,822-840,847,858,864-869,877-882,885,903,918-920,949-951,968-986,1029,1197,1209,1217,1232,1272,1276,1282
+  60f9f93049b86d73 483-488,1228,1231,1233-1238,1245,1255,1287
+abxbus-rust/src/lib.rs
+  6a8c07f028b30c43 1-10
+abxbus-rust/tests/test_eventbus_dispatch_parent_tracking.rs
+  60f9f93049b86d73 1-6,8,11,52,88,95,141-142,199,234-398
+  6a8c07f028b30c43 7,9-10,12-51,53-87,89-94,96-140,143-198,200-233,399-402
+abxbus-rust/tests/test_eventbus_timeout.rs
+  60f9f93049b86d73 4-5,8,36-43,104,146-205
+  6a8c07f028b30c43 1-3,6-7,9-35,44-103,105-145,206-207
+abxbus-rust/tests/test_eventbus_edge_cases.rs
+  6a8c07f028b30c43 1,3,14-16,19,21-28,31,35-37,41-56,58-61,66-73,75,77-81
+abxbus-rust/src/id.rs
+  6a8c07f028b30c43 1-24
+abxbus-rust/tests/test_eventbus_on_off.rs
+  6a8c07f028b30c43 1,10,12,15-16,21-27,29-32
+abxbus-rust/tests/test_event_result.rs
+  6a8c07f028b30c43 1-3,7-38,59-101
+abxbus-rust/src/event_result.rs
+  6a8c07f028b30c43 1-245
+abxbus-rust/tests/test_event_handler_first.rs
+  6a8c07f028b30c43 1-134
+abxbus-rust/tests/test_base_event.rs
+  6a8c07f028b30c43 3-6,8,16-22,41-146
+abxbus-rust/tests/test_ids.rs
+  6a8c07f028b30c43 1-48
+abxbus-rust/README.md
+  6a8c07f028b30c43 1-40
+abxbus-rust/tests/test_eventbus_locking.rs
+  6a8c07f028b30c43 1-1077
+abxbus-rust/tests/test_eventbus_error_handling.rs
+  6a8c07f028b30c43 1-226
+abxbus-rust/tests/test_typed_events.rs
+  6a8c07f028b30c43 1-58
+abxbus-rust/tests/test_eventbus_forwarding.rs
+  6a8c07f028b30c43 1-442
+abxbus-rust/src/types.rs
+  6a8c07f028b30c43 3-9,12-15,18-22,25-30
+abxbus-rust/Cargo.toml
+  6a8c07f028b30c43 1-15
+abxbus-rust/tests/test_eventbus_find.rs
+  6a8c07f028b30c43 1-202
+abxbus-rust/src/lock_manager.rs
+  6a8c07f028b30c43 1-29
+abxbus-rust/src/base_event.rs
+  6a8c07f028b30c43 5,17,31,52-60,63-74,76,85,100-137,172-201,204-288
+  60f9f93049b86d73 141
+abxbus-rust/tests/test_event_history_store.rs
+  6a8c07f028b30c43 1,12-14,17,21-22,24-27,29-31,36-37,39-40,42-44,46
+abxbus-rust/tests/test_event_handler_ids.rs
+  6a8c07f028b30c43 1-32
+abxbus-rust/src/event_handler.rs
+  6a8c07f028b30c43 12-20,44-64,78-80,87-94
+  60f9f93049b86d73 65-73
+abxbus-rust/tests/event_bus_tests.rs
+  6a8c07f028b30c43 3,6,13-16,19,21,24,30-41,43-51,53,56,59-60,64
+abxbus-rust/tests/test_eventbus_dispatch_defaults.rs
+  60f9f93049b86d73 2,4,25-57,72-153,162-195,198-224
+  6a8c07f028b30c43 1,3,5-24,58-71,154-161,196-197,225
+abxbus-rust/tests/test_eventbus.rs
+  6a8c07f028b30c43 1-215,217-584
+  60f9f93049b86d73 216
+abxbus-rust/src/typed.rs
+  6a8c07f028b30c43 1-5,7-117,133-181
+  60f9f93049b86d73 6,118-132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "ddfe01d10629a78516795c906418934cbe25e1d1",
+  "prompts": {
+    "60f9f93049b86d73": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1c3-a846-79e3-90aa-0bd6ba4adc72",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "messages": [],
+      "total_additions": 491,
+      "total_deletions": 50,
+      "accepted_lines": 484,
+      "overriden_lines": 0
+    },
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "messages": [],
+      "total_additions": 27637,
+      "total_deletions": 354,
+      "accepted_lines": 30339,
+      "overriden_lines": 0
+    }
+  }
+}
