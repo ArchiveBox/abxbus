@@ -138,12 +138,24 @@ impl EventResult {
     ) -> &mut Self {
         if let Some(result) = result {
             self.result = result;
+            self.status = EventResultStatus::Completed;
         }
         if let Some(error) = error {
             self.error = error;
+            self.status = EventResultStatus::Error;
         }
         if let Some(status) = status {
             self.status = status;
+        }
+        if self.status != EventResultStatus::Pending && self.started_at.is_none() {
+            self.started_at = Some(now_iso());
+        }
+        if matches!(
+            self.status,
+            EventResultStatus::Completed | EventResultStatus::Error
+        ) && self.completed_at.is_none()
+        {
+            self.completed_at = Some(now_iso());
         }
         self
     }

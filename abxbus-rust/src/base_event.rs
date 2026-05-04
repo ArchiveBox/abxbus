@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Map, Value};
 
 use crate::{
+    event_handler::EventHandler,
     event_result::{EventResult, EventResultStatus},
     id::uuid_v7_string,
     types::{
@@ -499,6 +500,59 @@ impl BaseEvent {
             .values()
             .filter_map(|result| result.error.clone())
             .collect()
+    }
+
+    pub fn event_result_update(
+        &self,
+        handler: &EventHandler,
+        status: Option<EventResultStatus>,
+        result: Option<Option<Value>>,
+        error: Option<Option<String>>,
+        timeout: Option<Option<f64>>,
+    ) -> EventResult {
+        let mut event = self.inner.lock();
+        let handler_id = handler.id.clone();
+        let event_id = event.event_id.clone();
+        let initial_status = status.unwrap_or(EventResultStatus::Pending);
+        let initial_timeout = timeout.unwrap_or(event.event_timeout);
+
+        let (updated, updated_status, updated_started_at) = {
+            let event_result = event.event_results.entry(handler_id).or_insert_with(|| {
+                EventResult::construct_pending_handler_result(
+                    event_id,
+                    handler.clone(),
+                    initial_status,
+                    initial_timeout,
+                )
+            });
+            event_result.handler = handler.clone();
+            event_result.update(status, result, error);
+            if let Some(timeout) = timeout {
+                event_result.timeout = timeout;
+            }
+            (
+                event_result.clone(),
+                event_result.status,
+                event_result.started_at.clone(),
+            )
+        };
+
+        if updated_status == EventResultStatus::Started {
+            if let Some(started_at) = updated_started_at {
+                if event.event_started_at.is_none() {
+                    event.event_started_at = Some(started_at);
+                }
+                event.event_status = EventStatus::Started;
+            }
+        }
+        if matches!(
+            updated_status,
+            EventResultStatus::Pending | EventResultStatus::Started
+        ) {
+            event.event_completed_at = None;
+        }
+
+        updated
     }
 
     pub fn from_json_value(mut value: Value) -> Arc<Self> {

@@ -1,11 +1,126 @@
-use std::sync::Arc;
+use std::{
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc, Arc, Mutex,
+    },
+    thread,
+    time::Duration,
+};
 
 use abxbus_rust::{
-    base_event::{now_iso, BaseEvent},
-    types::EventStatus,
+    base_event::{now_iso, BaseEvent, EventResultsOptions},
+    event_bus::{EventBus, EventBusOptions},
+    event_result::EventResultStatus,
+    typed::{EventSpec, TypedEvent},
+    types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+
+#[derive(Clone, Serialize, Deserialize)]
+struct EmptyPayload {}
+
+struct BaseEventDoneRaisesFirstErrorEvent;
+impl EventSpec for BaseEventDoneRaisesFirstErrorEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "BaseEventDoneRaisesFirstErrorEvent";
+}
+
+struct BaseEventEventResultUpdateEvent;
+impl EventSpec for BaseEventEventResultUpdateEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "BaseEventEventResultUpdateEvent";
+}
+
+struct BaseEventEventResultUpdateStatusOnlyEvent;
+impl EventSpec for BaseEventEventResultUpdateStatusOnlyEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "BaseEventEventResultUpdateStatusOnlyEvent";
+}
+
+struct BaseEventAllowedEventConfigEvent;
+impl EventSpec for BaseEventAllowedEventConfigEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "BaseEventAllowedEventConfigEvent";
+    const EVENT_TIMEOUT: Option<f64> = Some(123.0);
+    const EVENT_SLOW_TIMEOUT: Option<f64> = Some(9.0);
+    const EVENT_HANDLER_TIMEOUT: Option<f64> = Some(45.0);
+}
+
+struct BaseEventImmediateParentEvent;
+impl EventSpec for BaseEventImmediateParentEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "BaseEventImmediateParentEvent";
+}
+
+struct BaseEventImmediateChildEvent;
+impl EventSpec for BaseEventImmediateChildEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "BaseEventImmediateChildEvent";
+}
+
+struct BaseEventImmediateSiblingEvent;
+impl EventSpec for BaseEventImmediateSiblingEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "BaseEventImmediateSiblingEvent";
+}
+
+struct BaseEventParallelImmediateParentEvent;
+impl EventSpec for BaseEventParallelImmediateParentEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "BaseEventParallelImmediateParentEvent";
+}
+
+struct BaseEventParallelImmediateChildEvent1;
+impl EventSpec for BaseEventParallelImmediateChildEvent1 {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "BaseEventParallelImmediateChildEvent1";
+}
+
+struct BaseEventParallelImmediateChildEvent2;
+impl EventSpec for BaseEventParallelImmediateChildEvent2 {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "BaseEventParallelImmediateChildEvent2";
+}
+
+struct BaseEventParallelImmediateChildEvent3;
+impl EventSpec for BaseEventParallelImmediateChildEvent3 {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "BaseEventParallelImmediateChildEvent3";
+}
+
+struct BaseEventQueuedParentEvent;
+impl EventSpec for BaseEventQueuedParentEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "BaseEventQueuedParentEvent";
+}
+
+struct BaseEventQueuedChildEvent;
+impl EventSpec for BaseEventQueuedChildEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "BaseEventQueuedChildEvent";
+}
+
+struct BaseEventQueuedSiblingEvent;
+impl EventSpec for BaseEventQueuedSiblingEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "BaseEventQueuedSiblingEvent";
+}
 
 fn mk_event(event_type: &str) -> Arc<BaseEvent> {
     let mut payload = Map::new();
@@ -18,6 +133,17 @@ fn unwrap_event_error(result: Result<Arc<BaseEvent>, String>) -> String {
         Ok(_) => panic!("expected BaseEvent construction to fail"),
         Err(error) => error,
     }
+}
+
+fn push(order: &Arc<Mutex<Vec<String>>>, value: &str) {
+    order.lock().expect("order lock").push(value.to_string());
+}
+
+fn index_of(order: &[String], value: &str) -> usize {
+    order
+        .iter()
+        .position(|entry| entry == value)
+        .unwrap_or_else(|| panic!("missing {value} in {order:?}"))
 }
 
 #[test]
@@ -35,6 +161,360 @@ fn test_baseevent_lifecycle_transitions_are_explicit_and_awaitable() {
     assert_eq!(event.inner.lock().event_status, EventStatus::Completed);
     assert!(event.inner.lock().event_completed_at.is_some());
     block_on(event.event_completed());
+}
+
+#[test]
+fn test_event_result_re_raises_first_processing_exception_after_completion() {
+    let bus = EventBus::new_with_options(
+        Some("BaseEventDoneRaisesFirstErrorBus".to_string()),
+        EventBusOptions {
+            event_handler_concurrency: EventHandlerConcurrencyMode::Parallel,
+            event_timeout: None,
+            ..EventBusOptions::default()
+        },
+    );
+
+    bus.on(
+        "BaseEventDoneRaisesFirstErrorEvent",
+        "first_failure",
+        |_event| async {
+            thread::sleep(Duration::from_millis(1));
+            Err("first failure".to_string())
+        },
+    );
+    bus.on(
+        "BaseEventDoneRaisesFirstErrorEvent",
+        "second_failure",
+        |_event| async {
+            thread::sleep(Duration::from_millis(10));
+            Err("second failure".to_string())
+        },
+    );
+
+    let event = bus.emit::<BaseEventDoneRaisesFirstErrorEvent>(TypedEvent::new(EmptyPayload {}));
+    let error = block_on(event.inner.event_result(EventResultsOptions::default()))
+        .expect_err("handler error should be surfaced");
+
+    assert!(error.contains("first failure"));
+    assert_eq!(
+        event.inner.inner.lock().event_status,
+        EventStatus::Completed
+    );
+    let results = event.inner.inner.lock().event_results.clone();
+    assert_eq!(results.len(), 2);
+    assert!(results
+        .values()
+        .all(|result| result.status == EventResultStatus::Error));
+    bus.stop();
+}
+
+#[test]
+fn test_event_result_update_creates_and_updates_typed_handler_results() {
+    let bus = EventBus::new(Some("BaseEventEventResultUpdateBus".to_string()));
+    let event = TypedEvent::<BaseEventEventResultUpdateEvent>::new(EmptyPayload {});
+    let handler_entry = bus.on(
+        "BaseEventEventResultUpdateEvent",
+        "handler",
+        |_event| async { Ok(json!("ok")) },
+    );
+
+    let pending = event.inner.event_result_update(
+        &handler_entry,
+        Some(EventResultStatus::Pending),
+        None,
+        None,
+        None,
+    );
+    assert_eq!(
+        event
+            .inner
+            .inner
+            .lock()
+            .event_results
+            .get(&handler_entry.id)
+            .expect("pending result")
+            .id,
+        pending.id
+    );
+    assert_eq!(pending.status, EventResultStatus::Pending);
+
+    let completed = event.inner.event_result_update(
+        &handler_entry,
+        Some(EventResultStatus::Completed),
+        Some(Some(json!("seeded"))),
+        None,
+        None,
+    );
+    assert_eq!(completed.id, pending.id);
+    assert_eq!(completed.status, EventResultStatus::Completed);
+    assert_eq!(completed.result, Some(json!("seeded")));
+    assert!(completed.started_at.is_some());
+    assert!(completed.completed_at.is_some());
+    bus.stop();
+}
+
+#[test]
+fn test_event_result_update_status_only_preserves_existing_error_and_result() {
+    let bus = EventBus::new(Some("BaseEventEventResultUpdateStatusOnlyBus".to_string()));
+    let event = TypedEvent::<BaseEventEventResultUpdateStatusOnlyEvent>::new(EmptyPayload {});
+    let handler_entry = bus.on(
+        "BaseEventEventResultUpdateStatusOnlyEvent",
+        "handler",
+        |_event| async { Ok(json!("ok")) },
+    );
+
+    let errored = event.inner.event_result_update(
+        &handler_entry,
+        None,
+        None,
+        Some(Some("RuntimeError: seeded error".to_string())),
+        None,
+    );
+    assert_eq!(errored.status, EventResultStatus::Error);
+    assert_eq!(errored.error.as_deref(), Some("RuntimeError: seeded error"));
+
+    let status_only = event.inner.event_result_update(
+        &handler_entry,
+        Some(EventResultStatus::Pending),
+        None,
+        None,
+        None,
+    );
+    assert_eq!(status_only.status, EventResultStatus::Pending);
+    assert_eq!(
+        status_only.error.as_deref(),
+        Some("RuntimeError: seeded error")
+    );
+    assert_eq!(status_only.result, None);
+    bus.stop();
+}
+
+#[test]
+fn test_await_event_queue_jumps_inside_handler() {
+    let bus = EventBus::new_with_options(
+        Some("BaseEventImmediateQueueJumpBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+
+    let bus_for_parent = bus.clone();
+    let order_for_parent = order.clone();
+    bus.on("BaseEventImmediateParentEvent", "parent", move |_event| {
+        let bus = bus_for_parent.clone();
+        let order = order_for_parent.clone();
+        async move {
+            push(&order, "parent_start");
+            bus.emit::<BaseEventImmediateSiblingEvent>(TypedEvent::new(EmptyPayload {}));
+            let child =
+                bus.emit_child::<BaseEventImmediateChildEvent>(TypedEvent::new(EmptyPayload {}));
+            child.wait_completed().await;
+            push(&order, "parent_end");
+            Ok(json!("parent"))
+        }
+    });
+
+    let order_for_child = order.clone();
+    bus.on("BaseEventImmediateChildEvent", "child", move |_event| {
+        let order = order_for_child.clone();
+        async move {
+            push(&order, "child");
+            Ok(json!("child"))
+        }
+    });
+
+    let order_for_sibling = order.clone();
+    bus.on("BaseEventImmediateSiblingEvent", "sibling", move |_event| {
+        let order = order_for_sibling.clone();
+        async move {
+            push(&order, "sibling");
+            Ok(json!("sibling"))
+        }
+    });
+
+    let parent = bus.emit::<BaseEventImmediateParentEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(parent.wait_completed());
+    block_on(bus.wait_until_idle(Some(2.0)));
+
+    assert_eq!(
+        order.lock().expect("order lock").as_slice(),
+        ["parent_start", "child", "parent_end", "sibling"]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_parallel_event_concurrency_plus_immediate_execution_races_child_events_inside_handlers() {
+    let bus = EventBus::new_with_options(
+        Some("BaseEventParallelImmediateRaceBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::Parallel,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let release = Arc::new(AtomicBool::new(false));
+    let in_flight = Arc::new(AtomicUsize::new(0));
+    let max_in_flight = Arc::new(AtomicUsize::new(0));
+    let (all_started_tx, all_started_rx) = mpsc::channel();
+
+    let track_child = move |label: &'static str,
+                            order: Arc<Mutex<Vec<String>>>,
+                            release: Arc<AtomicBool>,
+                            in_flight: Arc<AtomicUsize>,
+                            max_in_flight: Arc<AtomicUsize>,
+                            all_started_tx: mpsc::Sender<()>| async move {
+        push(&order, &format!("{label}_start"));
+        let active = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        max_in_flight.fetch_max(active, Ordering::SeqCst);
+        if active == 3 {
+            let _ = all_started_tx.send(());
+        }
+        while !release.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(1));
+        }
+        push(&order, &format!("{label}_end"));
+        in_flight.fetch_sub(1, Ordering::SeqCst);
+        Ok(json!(label))
+    };
+
+    let bus_for_parent = bus.clone();
+    let order_for_parent = order.clone();
+    bus.on(
+        "BaseEventParallelImmediateParentEvent",
+        "parent",
+        move |_event| {
+            let bus = bus_for_parent.clone();
+            let order = order_for_parent.clone();
+            async move {
+                push(&order, "parent_start");
+                let child1 = bus.emit_child::<BaseEventParallelImmediateChildEvent1>(
+                    TypedEvent::new(EmptyPayload {}),
+                );
+                let child2 = bus.emit_child::<BaseEventParallelImmediateChildEvent2>(
+                    TypedEvent::new(EmptyPayload {}),
+                );
+                let child3 = bus.emit_child::<BaseEventParallelImmediateChildEvent3>(
+                    TypedEvent::new(EmptyPayload {}),
+                );
+                child1.wait_completed().await;
+                child2.wait_completed().await;
+                child3.wait_completed().await;
+                push(&order, "parent_end");
+                Ok(json!("parent"))
+            }
+        },
+    );
+
+    for (event_type, label) in [
+        ("BaseEventParallelImmediateChildEvent1", "child1"),
+        ("BaseEventParallelImmediateChildEvent2", "child2"),
+        ("BaseEventParallelImmediateChildEvent3", "child3"),
+    ] {
+        let order = order.clone();
+        let release = release.clone();
+        let in_flight = in_flight.clone();
+        let max_in_flight = max_in_flight.clone();
+        let all_started_tx = all_started_tx.clone();
+        let track_child = track_child.clone();
+        bus.on(event_type, label, move |_event| {
+            track_child(
+                label,
+                order.clone(),
+                release.clone(),
+                in_flight.clone(),
+                max_in_flight.clone(),
+                all_started_tx.clone(),
+            )
+        });
+    }
+
+    let parent =
+        bus.emit::<BaseEventParallelImmediateParentEvent>(TypedEvent::new(EmptyPayload {}));
+    all_started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("all child handlers should start before release");
+    assert!(max_in_flight.load(Ordering::SeqCst) >= 3);
+    assert!(!order
+        .lock()
+        .expect("order lock")
+        .contains(&"parent_end".to_string()));
+
+    release.store(true, Ordering::SeqCst);
+    block_on(parent.wait_completed());
+    block_on(bus.wait_until_idle(Some(2.0)));
+
+    let order = order.lock().expect("order lock").clone();
+    let parent_end_index = index_of(&order, "parent_end");
+    for label in ["child1", "child2", "child3"] {
+        assert!(index_of(&order, &format!("{label}_start")) < parent_end_index);
+        assert!(index_of(&order, &format!("{label}_end")) < parent_end_index);
+    }
+    bus.stop();
+}
+
+#[test]
+fn test_event_completed_waits_in_queue_order_inside_handler() {
+    let bus = EventBus::new_with_options(
+        Some("BaseEventQueueOrderBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::Parallel,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Parallel,
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+
+    let bus_for_parent = bus.clone();
+    let order_for_parent = order.clone();
+    bus.on("BaseEventQueuedParentEvent", "parent", move |_event| {
+        let bus = bus_for_parent.clone();
+        let order = order_for_parent.clone();
+        async move {
+            push(&order, "parent_start");
+            bus.emit::<BaseEventQueuedSiblingEvent>(TypedEvent::new(EmptyPayload {}));
+            let child =
+                bus.emit_child::<BaseEventQueuedChildEvent>(TypedEvent::new(EmptyPayload {}));
+            child.event_completed().await;
+            push(&order, "parent_end");
+            Ok(json!("parent"))
+        }
+    });
+
+    let order_for_child = order.clone();
+    bus.on("BaseEventQueuedChildEvent", "child", move |_event| {
+        let order = order_for_child.clone();
+        async move {
+            push(&order, "child_start");
+            thread::sleep(Duration::from_millis(5));
+            push(&order, "child_end");
+            Ok(json!("child"))
+        }
+    });
+
+    let order_for_sibling = order.clone();
+    bus.on("BaseEventQueuedSiblingEvent", "sibling", move |_event| {
+        let order = order_for_sibling.clone();
+        async move {
+            push(&order, "sibling_start");
+            thread::sleep(Duration::from_millis(5));
+            push(&order, "sibling_end");
+            Ok(json!("sibling"))
+        }
+    });
+
+    let parent = bus.emit::<BaseEventQueuedParentEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(parent.wait_completed());
+    block_on(bus.wait_until_idle(Some(2.0)));
+
+    let order = order.lock().expect("order lock").clone();
+    assert!(index_of(&order, "sibling_start") < index_of(&order, "child_start"));
+    assert!(index_of(&order, "child_end") < index_of(&order, "parent_end"));
+    bus.stop();
 }
 
 #[test]
@@ -198,6 +678,16 @@ fn test_model_prefixed_field_rejected_in_payload() {
 
     let error = unwrap_event_error(BaseEvent::try_new("ModelFieldEvent", payload));
     assert!(error.contains("model_config"));
+}
+
+#[test]
+fn test_builtin_event_prefixed_override_is_allowed() {
+    let event = TypedEvent::<BaseEventAllowedEventConfigEvent>::new(EmptyPayload {});
+    let event = event.inner.inner.lock();
+
+    assert_eq!(event.event_timeout, Some(123.0));
+    assert_eq!(event.event_slow_timeout, Some(9.0));
+    assert_eq!(event.event_handler_timeout, Some(45.0));
 }
 
 #[test]
