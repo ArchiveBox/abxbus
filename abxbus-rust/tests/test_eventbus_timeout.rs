@@ -45,6 +45,18 @@ impl EventSpec for TailEvent {
     type Result = EmptyResult;
     const EVENT_TYPE: &'static str = "tail";
 }
+struct GrandchildEvent;
+impl EventSpec for GrandchildEvent {
+    type Payload = EmptyPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "grandchild";
+}
+struct QueuedSiblingEvent;
+impl EventSpec for QueuedSiblingEvent {
+    type Payload = EmptyPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "queued_sibling";
+}
 struct TimeoutDefaultsEvent;
 impl EventSpec for TimeoutDefaultsEvent {
     type Payload = EmptyPayload;
@@ -1506,6 +1518,202 @@ fn test_followup_event_runs_after_parent_timeout_in_queue_jump_path() {
         tail.inner.inner.lock().event_status,
         abxbus_rust::types::EventStatus::Completed
     );
+    assert_eq!(*tail_runs.lock().expect("tail runs lock"), 1);
+    bus.stop();
+}
+
+#[test]
+fn test_regression_parent_timeout_while_reacquire_waits_behind_third_serial_handler_is_lock_safe_handler_mode_label(
+) {
+    let _guard = timeout_test_guard();
+    let bus = EventBus::new_with_options(
+        Some("TimeoutContentionBusSerial".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            ..EventBusOptions::default()
+        },
+    );
+    let tail_runs = Arc::new(Mutex::new(0usize));
+
+    bus.on("child", "child_handler", |_event| async move {
+        thread::sleep(Duration::from_millis(20));
+        Ok(json!("child_done"))
+    });
+
+    let bus_for_parent = bus.clone();
+    bus.on("parent", "parent_main", move |_event| {
+        let bus = bus_for_parent.clone();
+        async move {
+            let child = TypedEvent::<ChildEvent>::new(EmptyPayload {});
+            child.inner.inner.lock().event_timeout = Some(0.2);
+            let child = bus.emit_child(child);
+            child.wait_completed().await;
+            thread::sleep(Duration::from_millis(40));
+            Ok(json!("parent_main"))
+        }
+    });
+    bus.on("parent", "parent_blocker", |_event| async move {
+        thread::sleep(Duration::from_millis(40));
+        Ok(json!("parent_blocker"))
+    });
+
+    let tail_runs_for_handler = tail_runs.clone();
+    bus.on("tail", "tail_handler", move |_event| {
+        let tail_runs = tail_runs_for_handler.clone();
+        async move {
+            *tail_runs.lock().expect("tail runs lock") += 1;
+            Ok(json!("tail_done"))
+        }
+    });
+
+    let parent = TypedEvent::<ParentEvent>::new(EmptyPayload {});
+    parent.inner.inner.lock().event_timeout = Some(0.01);
+    let parent = bus.emit(parent);
+    block_on(parent.wait_completed());
+    assert!(block_on(bus.wait_until_idle(Some(2.0))));
+
+    let parent_results: Vec<_> = parent
+        .inner
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .cloned()
+        .collect();
+    assert!(parent_results.iter().any(|result| {
+        result.status == EventResultStatus::Error
+            && error_type(result) == "EventHandlerAbortedError"
+    }));
+
+    let tail = TypedEvent::<TailEvent>::new(EmptyPayload {});
+    tail.inner.inner.lock().event_timeout = Some(0.05);
+    let tail = bus.emit(tail);
+    block_on(tail.wait_completed());
+    assert_eq!(tail.inner.inner.lock().event_status, EventStatus::Completed);
+    assert_eq!(*tail_runs.lock().expect("tail runs lock"), 1);
+    bus.stop();
+}
+
+#[test]
+fn test_regression_nested_queue_jump_with_timeout_cancellation_remains_lock_safe_handler_mode_label(
+) {
+    let _guard = timeout_test_guard();
+    let bus = EventBus::new_with_options(
+        Some("NestedPermitBusSerial".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            ..EventBusOptions::default()
+        },
+    );
+    let queued_sibling_runs = Arc::new(Mutex::new(0usize));
+    let tail_runs = Arc::new(Mutex::new(0usize));
+    let queued_sibling_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
+
+    bus.on("grandchild", "grandchild_handler", |_event| async move {
+        thread::sleep(Duration::from_millis(1));
+        Ok(json!("grandchild_done"))
+    });
+
+    let bus_for_child = bus.clone();
+    bus.on("child", "child_handler", move |_event| {
+        let bus = bus_for_child.clone();
+        async move {
+            let grandchild = TypedEvent::<GrandchildEvent>::new(EmptyPayload {});
+            grandchild.inner.inner.lock().event_timeout = Some(0.2);
+            let grandchild = bus.emit_child(grandchild);
+            grandchild.wait_completed().await;
+            thread::sleep(Duration::from_millis(40));
+            Ok(json!("child_done"))
+        }
+    });
+
+    let queued_sibling_runs_for_handler = queued_sibling_runs.clone();
+    bus.on("queued_sibling", "queued_sibling_handler", move |_event| {
+        let queued_sibling_runs = queued_sibling_runs_for_handler.clone();
+        async move {
+            *queued_sibling_runs
+                .lock()
+                .expect("queued sibling runs lock") += 1;
+            Ok(json!("queued_sibling_done"))
+        }
+    });
+
+    let bus_for_parent = bus.clone();
+    let queued_sibling_ref_for_parent = queued_sibling_ref.clone();
+    bus.on("parent", "parent_handler", move |_event| {
+        let bus = bus_for_parent.clone();
+        let queued_sibling_ref = queued_sibling_ref_for_parent.clone();
+        async move {
+            let queued_sibling = TypedEvent::<QueuedSiblingEvent>::new(EmptyPayload {});
+            queued_sibling.inner.inner.lock().event_timeout = Some(0.2);
+            let queued_sibling = bus.emit_child(queued_sibling);
+            *queued_sibling_ref.lock().expect("queued sibling ref lock") =
+                Some(queued_sibling.inner.clone());
+
+            let child = TypedEvent::<ChildEvent>::new(EmptyPayload {});
+            child.inner.inner.lock().event_timeout = Some(0.02);
+            let child = bus.emit_child(child);
+            child.wait_completed().await;
+            thread::sleep(Duration::from_millis(40));
+            Ok(json!(null))
+        }
+    });
+
+    let tail_runs_for_handler = tail_runs.clone();
+    bus.on("tail", "tail_handler", move |_event| {
+        let tail_runs = tail_runs_for_handler.clone();
+        async move {
+            *tail_runs.lock().expect("tail runs lock") += 1;
+            Ok(json!("tail_done"))
+        }
+    });
+
+    let parent = TypedEvent::<ParentEvent>::new(EmptyPayload {});
+    parent.inner.inner.lock().event_timeout = Some(0.03);
+    let parent = bus.emit(parent);
+    block_on(parent.wait_completed());
+    assert!(block_on(bus.wait_until_idle(Some(2.0))));
+
+    let parent_result = first_result_for_event(&parent.inner);
+    assert_eq!(parent_result.status, EventResultStatus::Error);
+    assert_eq!(error_type(&parent_result), "EventHandlerAbortedError");
+
+    let queued_sibling = queued_sibling_ref
+        .lock()
+        .expect("queued sibling ref lock")
+        .clone()
+        .expect("queued sibling ref");
+    assert_eq!(
+        queued_sibling.inner.lock().event_parent_id,
+        Some(parent.inner.inner.lock().event_id.clone())
+    );
+    assert!(!queued_sibling.inner.lock().event_blocks_parent_completion);
+    assert_eq!(*queued_sibling_runs.lock().expect("runs lock"), 1);
+    let queued_sibling_results: Vec<_> = queued_sibling
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .cloned()
+        .collect();
+    assert!(
+        queued_sibling_results
+            .iter()
+            .all(|result| result.status == EventResultStatus::Completed),
+        "queued sibling results should complete: {:?}",
+        queued_sibling_results
+            .iter()
+            .map(|result| result.to_flat_json_value())
+            .collect::<Vec<_>>()
+    );
+
+    let tail = TypedEvent::<TailEvent>::new(EmptyPayload {});
+    tail.inner.inner.lock().event_timeout = Some(0.05);
+    let tail = bus.emit(tail);
+    block_on(tail.wait_completed());
+    assert_eq!(tail.inner.inner.lock().event_status, EventStatus::Completed);
     assert_eq!(*tail_runs.lock().expect("tail runs lock"), 1);
     bus.stop();
 }
