@@ -226,3 +226,26 @@ await event.done()
 - To wait for handler completion, await the returned event (`await event` in Python, `await event.done()` in TypeScript).
 - If no match is found (or `future` times out), `find()` returns `None` / `null`.
 - If both `past` and `future` are `false`, it returns immediately with no match.
+
+## Returning multiple matches: `filter()`
+
+`filter()` takes the same arguments as `find()` but returns the list of all matching events
+(ordered newest to oldest), plus an optional `limit` argument to cap the number of results.
+`find()` is equivalent to `filter(..., limit=1)` returning the first match (or `None` / `null`).
+
+<Tabs>
+<Tab title="Python">
+
+```python
+recent = await bus.filter(ResponseEvent, past=10, future=False, limit=5)
+```
+
+</Tab>
+<Tab title="TypeScript">
+
+```ts
+const recent = await bus.filter(ResponseEvent, { past: 10, future: false, limit: 5 })
+```
+
+</Tab>
+</Tabs>

@@ -134,6 +134,89 @@ class EventHistory(dict[UUIDStr, BaseEventT], Generic[BaseEventT]):
         | None = None,
         **event_fields: Any,
     ) -> BaseEvent[Any] | None:
+        results = await self.filter(
+            event_type,
+            where=where,
+            child_of=child_of,
+            past=past,
+            future=future,
+            event_is_child_of=event_is_child_of,
+            wait_for_future_match=wait_for_future_match,
+            limit=1,
+            **event_fields,
+        )
+        return results[0] if results else None
+
+    @overload
+    async def filter(
+        self,
+        event_type: type[TExpectedEvent],
+        where: None = None,
+        child_of: BaseEvent[Any] | None = None,
+        past: bool | float | timedelta | None = None,
+        future: bool | float | None = None,
+        event_is_child_of: Callable[[BaseEvent[Any], BaseEvent[Any]], bool] | None = None,
+        wait_for_future_match: Callable[
+            [str, Callable[[BaseEvent[Any]], bool], bool | float],
+            Awaitable[BaseEvent[Any] | None],
+        ]
+        | None = None,
+        limit: int | None = None,
+        **event_fields: Any,
+    ) -> list[TExpectedEvent]: ...
+
+    @overload
+    async def filter(
+        self,
+        event_type: type[TExpectedEvent],
+        where: Callable[[TExpectedEvent], bool],
+        child_of: BaseEvent[Any] | None = None,
+        past: bool | float | timedelta | None = None,
+        future: bool | float | None = None,
+        event_is_child_of: Callable[[BaseEvent[Any], BaseEvent[Any]], bool] | None = None,
+        wait_for_future_match: Callable[
+            [str, Callable[[BaseEvent[Any]], bool], bool | float],
+            Awaitable[BaseEvent[Any] | None],
+        ]
+        | None = None,
+        limit: int | None = None,
+        **event_fields: Any,
+    ) -> list[TExpectedEvent]: ...
+
+    @overload
+    async def filter(
+        self,
+        event_type: str | Literal['*'],
+        where: Callable[[BaseEvent[Any]], bool] | None = None,
+        child_of: BaseEvent[Any] | None = None,
+        past: bool | float | timedelta | None = None,
+        future: bool | float | None = None,
+        event_is_child_of: Callable[[BaseEvent[Any], BaseEvent[Any]], bool] | None = None,
+        wait_for_future_match: Callable[
+            [str, Callable[[BaseEvent[Any]], bool], bool | float],
+            Awaitable[BaseEvent[Any] | None],
+        ]
+        | None = None,
+        limit: int | None = None,
+        **event_fields: Any,
+    ) -> list[BaseEvent[Any]]: ...
+
+    async def filter(
+        self,
+        event_type: EventPatternType,
+        where: Callable[[Any], bool] | None = None,
+        child_of: BaseEvent[Any] | None = None,
+        past: bool | float | timedelta | None = None,
+        future: bool | float | None = None,
+        event_is_child_of: Callable[[BaseEvent[Any], BaseEvent[Any]], bool] | None = None,
+        wait_for_future_match: Callable[
+            [str, Callable[[BaseEvent[Any]], bool], bool | float],
+            Awaitable[BaseEvent[Any] | None],
+        ]
+        | None = None,
+        limit: int | None = None,
+        **event_fields: Any,
+    ) -> list[BaseEvent[Any]]:
         resolved_past_input = True if past is None else past
         if isinstance(resolved_past_input, timedelta):
             resolved_past: bool | float = max(0.0, resolved_past_input.total_seconds())
@@ -149,7 +232,7 @@ class EventHistory(dict[UUIDStr, BaseEventT], Generic[BaseEventT]):
             resolved_future = max(0.0, float(resolved_future_input))
 
         if resolved_past is False and resolved_future is False:
-            return None
+            return []
 
         event_key = self.normalize_event_pattern(event_type)
         where_predicate: Callable[[BaseEvent[Any]], bool]
@@ -175,18 +258,24 @@ class EventHistory(dict[UUIDStr, BaseEventT], Generic[BaseEventT]):
                 and where_predicate(event)
             )
 
+        results: list[BaseEvent[Any]] = []
         if resolved_past is not False:
             events = list(self.values())
             for event in reversed(events):
                 if cutoff is not None and event.event_created_at < cutoff:
                     continue
                 if matches(event):
-                    return event
+                    results.append(event)
+                    if limit is not None and len(results) >= limit:
+                        return results
 
         if resolved_future is False or wait_for_future_match is None:
-            return None
+            return results
 
-        return await wait_for_future_match(event_key, matches, resolved_future)
+        future_match = await wait_for_future_match(event_key, matches, resolved_future)
+        if future_match is not None:
+            results.append(future_match)
+        return results
 
     def trim_event_history(
         self,

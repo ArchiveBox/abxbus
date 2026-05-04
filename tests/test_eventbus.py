@@ -1363,6 +1363,140 @@ class TestFindPastMethod:
         assert match.event_id == pending_event.event_id
 
 
+class TestFilterMethod:
+    """Tests for filter() which returns all matching events newest-to-oldest."""
+
+    async def test_filter_past_returns_all_matches_newest_first(self, eventbus):
+        first = eventbus.emit(UserActionEvent(action='first', user_id='e692b6cb-ae63-773b-8557-3218f7ce5ced'))
+        second = eventbus.emit(UserActionEvent(action='second', user_id='2a312e4d-3035-7883-86b9-578ce47046b2'))
+        third = eventbus.emit(UserActionEvent(action='third', user_id='6eb8a717-e19d-728b-8905-97f7e20c002e'))
+        await eventbus.wait_until_idle()
+
+        matches = await eventbus.filter('UserActionEvent', past=10, future=False)
+        assert [m.event_id for m in matches] == [third.event_id, second.event_id, first.event_id]
+
+    async def test_filter_returns_empty_list_when_no_matches(self, eventbus):
+        result = await eventbus.filter('NonExistentEvent', past=True, future=False)
+        assert result == []
+
+    async def test_filter_respects_limit(self, eventbus):
+        eventbus.emit(UserActionEvent(action='a', user_id='e692b6cb-ae63-773b-8557-3218f7ce5ced'))
+        second = eventbus.emit(UserActionEvent(action='b', user_id='2a312e4d-3035-7883-86b9-578ce47046b2'))
+        third = eventbus.emit(UserActionEvent(action='c', user_id='6eb8a717-e19d-728b-8905-97f7e20c002e'))
+        await eventbus.wait_until_idle()
+
+        matches = await eventbus.filter('UserActionEvent', past=10, future=False, limit=2)
+        assert [m.event_id for m in matches] == [third.event_id, second.event_id]
+
+    async def test_filter_with_where_predicate(self, eventbus):
+        eventbus.emit(UserActionEvent(action='login', user_id='e692b6cb-ae63-773b-8557-3218f7ce5ced'))
+        target = eventbus.emit(UserActionEvent(action='logout', user_id='2a312e4d-3035-7883-86b9-578ce47046b2'))
+        eventbus.emit(UserActionEvent(action='login', user_id='6eb8a717-e19d-728b-8905-97f7e20c002e'))
+        await eventbus.wait_until_idle()
+
+        matches = await eventbus.filter('UserActionEvent', where=lambda e: e.action == 'logout', past=10, future=False)
+        assert [m.event_id for m in matches] == [target.event_id]
+
+    async def test_filter_with_field_equality(self, eventbus):
+        eventbus.emit(UserActionEvent(action='a', user_id='e692b6cb-ae63-773b-8557-3218f7ce5ced'))
+        target = eventbus.emit(UserActionEvent(action='b', user_id='2a312e4d-3035-7883-86b9-578ce47046b2'))
+        await eventbus.wait_until_idle()
+
+        matches = await eventbus.filter('UserActionEvent', past=10, future=False, action='b')
+        assert [m.event_id for m in matches] == [target.event_id]
+
+    async def test_filter_with_model_class(self, eventbus):
+        eventbus.emit(UserActionEvent(action='ignore', user_id='e692b6cb-ae63-773b-8557-3218f7ce5ced'))
+        sys1 = eventbus.emit(SystemEventModel(name='one'))
+        sys2 = eventbus.emit(SystemEventModel(name='two'))
+        await eventbus.wait_until_idle()
+
+        matches = await eventbus.filter(SystemEventModel, past=10, future=False)
+        assert [m.event_id for m in matches] == [sys2.event_id, sys1.event_id]
+        assert all(isinstance(m, SystemEventModel) for m in matches)
+
+    async def test_filter_wildcard_matches_all_event_types(self, eventbus):
+        ev_a = eventbus.emit(UserActionEvent(action='a', user_id='e692b6cb-ae63-773b-8557-3218f7ce5ced'))
+        ev_b = eventbus.emit(SystemEventModel(name='b'))
+        await eventbus.wait_until_idle()
+
+        matches = await eventbus.filter('*', past=10, future=False)
+        assert [m.event_id for m in matches] == [ev_b.event_id, ev_a.event_id]
+
+    async def test_filter_past_respects_time_window(self, eventbus):
+        old = eventbus.emit(UserActionEvent(action='old', user_id='e692b6cb-ae63-773b-8557-3218f7ce5ced'))
+        await eventbus.wait_until_idle()
+        old_created_at = datetime.fromisoformat(old.event_created_at) - timedelta(seconds=30)
+        old.event_created_at = monotonic_datetime(old_created_at.isoformat().replace('+00:00', 'Z'))
+        recent = eventbus.emit(UserActionEvent(action='recent', user_id='2a312e4d-3035-7883-86b9-578ce47046b2'))
+        await eventbus.wait_until_idle()
+
+        matches = await eventbus.filter('UserActionEvent', past=10, future=False)
+        assert [m.event_id for m in matches] == [recent.event_id]
+
+    async def test_filter_past_false_future_false_returns_empty(self, eventbus):
+        eventbus.emit(UserActionEvent(action='x', user_id='e692b6cb-ae63-773b-8557-3218f7ce5ced'))
+        await eventbus.wait_until_idle()
+        result = await eventbus.filter('UserActionEvent', past=False, future=False)
+        assert result == []
+
+    async def test_filter_future_appends_match(self, eventbus):
+        prior = eventbus.emit(UserActionEvent(action='past', user_id='e692b6cb-ae63-773b-8557-3218f7ce5ced'))
+        await eventbus.wait_until_idle()
+
+        async def emit_after_delay():
+            await asyncio.sleep(0.02)
+            return eventbus.emit(UserActionEvent(action='future', user_id='2a312e4d-3035-7883-86b9-578ce47046b2'))
+
+        emit_task = asyncio.create_task(emit_after_delay())
+        matches = await eventbus.filter('UserActionEvent', past=True, future=0.5)
+        future_event = await emit_task
+
+        # Past match comes first (returned immediately since limit not specified means we still look),
+        # but with no limit and future set, we collect past matches then wait for one future event.
+        assert len(matches) == 2
+        assert matches[0].event_id == prior.event_id
+        assert matches[1].event_id == future_event.event_id
+
+    async def test_filter_limit_short_circuits_future_wait(self, eventbus):
+        first = eventbus.emit(UserActionEvent(action='a', user_id='e692b6cb-ae63-773b-8557-3218f7ce5ced'))
+        await eventbus.wait_until_idle()
+
+        start = time.monotonic()
+        matches = await eventbus.filter('UserActionEvent', past=True, future=2.0, limit=1)
+        elapsed = time.monotonic() - start
+
+        assert [m.event_id for m in matches] == [first.event_id]
+        assert elapsed < 0.5
+
+    async def test_filter_future_only_returns_dispatched_event(self, eventbus):
+        async def emit_after_delay():
+            await asyncio.sleep(0.02)
+            return eventbus.emit(UserActionEvent(action='future', user_id='2a312e4d-3035-7883-86b9-578ce47046b2'))
+
+        emit_task = asyncio.create_task(emit_after_delay())
+        matches = await eventbus.filter('UserActionEvent', past=False, future=0.5)
+        dispatched = await emit_task
+
+        assert [m.event_id for m in matches] == [dispatched.event_id]
+
+    async def test_filter_future_only_times_out(self, eventbus):
+        matches = await eventbus.filter('NonExistentEvent', past=False, future=0.05)
+        assert matches == []
+
+    async def test_find_returns_first_filter_result(self, eventbus):
+        eventbus.emit(UserActionEvent(action='first', user_id='e692b6cb-ae63-773b-8557-3218f7ce5ced'))
+        latest = eventbus.emit(UserActionEvent(action='second', user_id='2a312e4d-3035-7883-86b9-578ce47046b2'))
+        await eventbus.wait_until_idle()
+
+        find_match = await eventbus.find('UserActionEvent', past=10, future=False)
+        filter_matches = await eventbus.filter('UserActionEvent', past=10, future=False, limit=1)
+
+        assert find_match is not None
+        assert len(filter_matches) == 1
+        assert find_match.event_id == filter_matches[0].event_id == latest.event_id
+
+
 class TestDebouncePatterns:
     """End-to-end scenarios for debounce-style flows."""
 

@@ -234,7 +234,9 @@ type FindOptions = {
 ```
 
 `bus.find()` returns the first matching event (in emit timestamp order).
-To find multiple matching events, iterate through `bus.event_history.filter((event) => ...some condition...)` manually.
+To return all matching events (newest to oldest) instead of just the first, use
+`bus.filter(...)` — same arguments as `find()` plus an optional `limit` cap on
+the number of results.
 
 `where` behavior:
 Any filter predicate function in the form of `(event) => true | false`, returning true to consider the event a match.
@@ -271,6 +273,25 @@ Debouncing expensive events with `find()`:
 ```ts
 const some_expensive_event = (await bus.find(ExpensiveEvent, { past: 15, future: 5 })) ?? bus.emit(ExpensiveEvent({}))
 await some_expensive_event.done()
+```
+
+#### `filter()`
+
+```ts
+filter<T extends BaseEvent>(event_pattern: EventPattern<T> | '*', options?: FilterOptions): Promise<T[]>
+filter<T extends BaseEvent>(
+  event_pattern: EventPattern<T> | '*',
+  where: (event: T) => boolean,
+  options?: FilterOptions
+): Promise<T[]>
+```
+
+Same arguments as `find()` (`FilterOptions` extends `FindOptions` with `limit?: number | null`),
+but returns the list of all matching events ordered newest to oldest. `find()` is equivalent to
+`filter(..., { limit: 1 })` returning the first result or `null`.
+
+```ts
+const recent = await bus.filter(ResponseEvent, { past: 10, future: false, limit: 5 })
 ```
 
 Important semantics:

@@ -1294,7 +1294,69 @@ class EventBus:
         Returns:
             Matching event or None if not found/timeout
         """
-        return await self.event_history.find(
+        results = await self.filter(
+            event_type,
+            where=where,
+            child_of=child_of,
+            past=past,
+            future=future,
+            limit=1,
+            **event_fields,
+        )
+        return results[0] if results else None
+
+    @overload
+    async def filter(
+        self,
+        event_type: type[T_ExpectedEvent],
+        where: None = None,
+        child_of: BaseEvent[Any] | None = None,
+        past: bool | float | timedelta | None = None,
+        future: bool | float | None = None,
+        limit: int | None = None,
+        **event_fields: Any,
+    ) -> list[T_ExpectedEvent]: ...
+
+    @overload
+    async def filter(
+        self,
+        event_type: type[T_ExpectedEvent],
+        where: Callable[[T_ExpectedEvent], bool],
+        child_of: BaseEvent[Any] | None = None,
+        past: bool | float | timedelta | None = None,
+        future: bool | float | None = None,
+        limit: int | None = None,
+        **event_fields: Any,
+    ) -> list[T_ExpectedEvent]: ...
+
+    @overload
+    async def filter(
+        self,
+        event_type: PythonIdentifierStr | Literal['*'],
+        where: Callable[[BaseEvent[Any]], bool] | None = None,
+        child_of: BaseEvent[Any] | None = None,
+        past: bool | float | timedelta | None = None,
+        future: bool | float | None = None,
+        limit: int | None = None,
+        **event_fields: Any,
+    ) -> list[BaseEvent[Any]]: ...
+
+    async def filter(
+        self,
+        event_type: EventPatternType,
+        where: Callable[[Any], bool] | None = None,
+        child_of: BaseEvent[Any] | None = None,
+        past: bool | float | timedelta | None = None,
+        future: bool | float | None = None,
+        limit: int | None = None,
+        **event_fields: Any,
+    ) -> list[BaseEvent[Any]]:
+        """
+        Same as :meth:`find` but returns the list of all matching events
+        (newest to oldest) instead of just the first match. Accepts an
+        additional ``limit`` argument to cap the number of results.
+        """
+        return await self.event_history.filter(
             event_type,
             where=where,
             child_of=child_of,
@@ -1302,6 +1364,7 @@ class EventBus:
             future=future,
             event_is_child_of=self.event_is_child_of,
             wait_for_future_match=self._wait_for_future_match,
+            limit=limit,
             **event_fields,
         )
 

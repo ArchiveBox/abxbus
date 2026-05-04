@@ -67,6 +67,7 @@ Both runtimes expose explicit accessors in addition to mapping methods.
 - `remove_event(event_id)`
 - `has_event(event_id)`
 - `find(...)`
+- `filter(...)`
 - `trim_event_history(...)`
 
 </Tab>
@@ -77,6 +78,7 @@ Both runtimes expose explicit accessors in addition to mapping methods.
 - `removeEvent(event_id)`
 - `hasEvent(event_id)`
 - `find(...)`
+- `filter(...)`
 - `trimEventHistory(...)`
 
 </Tab>
@@ -93,6 +95,13 @@ Both runtimes expose explicit accessors in addition to mapping methods.
 - `child_of` constraints
 
 `EventBus.find(...)` delegates to `event_history.find(...)`. Future waiter ownership remains on `EventBus`; the bus injects the callback used for future waits.
+
+## `filter(...)`
+
+Same as `find(...)` but returns the list of all matching events (newest to oldest)
+instead of just the first match. Accepts an additional `limit` argument to cap the
+result count. `find(...)` is implemented as `filter(..., limit=1)` returning the first
+result or `None` / `null`.
 
 ## Retention and trim methods
 

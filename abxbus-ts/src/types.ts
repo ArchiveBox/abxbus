@@ -50,6 +50,8 @@ export type FindOptions<T extends BaseEvent = BaseEvent> = {
 } & EventFilterFields<T> &
   Record<string, unknown>
 
+export type FilterOptions<T extends BaseEvent = BaseEvent> = FindOptions<T> & { limit?: number | null }
+
 export const normalizeEventPattern = (event_pattern: EventPattern | '*'): string | '*' => {
   if (event_pattern === '*') {
     return '*'

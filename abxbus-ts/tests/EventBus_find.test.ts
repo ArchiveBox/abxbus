@@ -765,3 +765,176 @@ test('find returns promise that can be awaited later', async () => {
   const found_event = await find_promise
   assert.ok(found_event)
 })
+
+test('filter past returns all matches newest first', async () => {
+  const bus = new EventBus('FilterAllBus')
+
+  const first = bus.emit(ParentEvent({}))
+  const second = bus.emit(ParentEvent({}))
+  const third = bus.emit(ParentEvent({}))
+  await first.done()
+  await second.done()
+  await third.done()
+
+  const matches = await bus.filter(ParentEvent, { past: true, future: false })
+  assert.equal(matches.length, 3)
+  assert.deepEqual(
+    matches.map((e) => e.event_id),
+    [third.event_id, second.event_id, first.event_id]
+  )
+})
+
+test('filter returns empty array when no matches', async () => {
+  const bus = new EventBus('FilterEmptyBus')
+  const matches = await bus.filter(ParentEvent, { past: true, future: false })
+  assert.deepEqual(matches, [])
+})
+
+test('filter respects limit', async () => {
+  const bus = new EventBus('FilterLimitBus')
+
+  bus.emit(ParentEvent({}))
+  const second = bus.emit(ParentEvent({}))
+  const third = bus.emit(ParentEvent({}))
+  await bus.waitUntilIdle()
+
+  const matches = await bus.filter(ParentEvent, { past: true, future: false, limit: 2 })
+  assert.deepEqual(
+    matches.map((e) => e.event_id),
+    [third.event_id, second.event_id]
+  )
+})
+
+test('filter respects where predicate', async () => {
+  const bus = new EventBus('FilterWhereBus')
+
+  const a = bus.emit(ScreenshotEvent({ target_id: FIND_TARGET_A }))
+  bus.emit(ScreenshotEvent({ target_id: FIND_TARGET_B }))
+  const a2 = bus.emit(ScreenshotEvent({ target_id: FIND_TARGET_A }))
+  await bus.waitUntilIdle()
+
+  const matches = await bus.filter(ScreenshotEvent, (event) => event.target_id === FIND_TARGET_A, { past: true, future: false })
+  assert.deepEqual(
+    matches.map((e) => e.event_id),
+    [a2.event_id, a.event_id]
+  )
+})
+
+test('filter supports field equality filters', async () => {
+  const bus = new EventBus('FilterFieldBus')
+
+  bus.emit(UserActionEvent({ action: 'login', user_id: FIND_USER_1 }))
+  const target = bus.emit(UserActionEvent({ action: 'logout', user_id: FIND_USER_2 }))
+  await bus.waitUntilIdle()
+
+  const matches = await bus.filter(UserActionEvent, { past: true, future: false, action: 'logout' })
+  assert.deepEqual(
+    matches.map((e) => e.event_id),
+    [target.event_id]
+  )
+})
+
+test('filter wildcard matches all event types newest first', async () => {
+  const bus = new EventBus('FilterWildcardBus')
+
+  const user_event = bus.emit(UserActionEvent({ action: 'login', user_id: FIND_USER_1 }))
+  const system_event = bus.emit(SystemEvent({}))
+  await bus.waitUntilIdle()
+
+  const matches = await bus.filter('*', { past: true, future: false })
+  assert.deepEqual(
+    matches.map((e) => e.event_id),
+    [system_event.event_id, user_event.event_id]
+  )
+})
+
+test('filter past time window filters by age', async () => {
+  const bus = new EventBus('FilterPastWindowBus')
+
+  const old_event = bus.emit(ParentEvent({}))
+  await old_event.done()
+  await delay(120)
+  const new_event = bus.emit(ParentEvent({}))
+  await new_event.done()
+
+  const matches = await bus.filter(ParentEvent, { past: 0.1, future: false })
+  assert.deepEqual(
+    matches.map((e) => e.event_id),
+    [new_event.event_id]
+  )
+})
+
+test('filter past=false future=false returns empty array', async () => {
+  const bus = new EventBus('FilterNeitherBus')
+  bus.emit(ParentEvent({}))
+  await bus.waitUntilIdle()
+
+  const matches = await bus.filter(ParentEvent, { past: false, future: false })
+  assert.deepEqual(matches, [])
+})
+
+test('filter future appends match after past results', async () => {
+  const bus = new EventBus('FilterFutureAppendBus')
+
+  const past_event = bus.emit(ParentEvent({}))
+  await past_event.done()
+
+  const find_promise = bus.filter(ParentEvent, { past: true, future: 0.5 })
+  setTimeout(() => {
+    bus.emit(ParentEvent({}))
+  }, 20)
+
+  const matches = await find_promise
+  assert.equal(matches.length, 2)
+  assert.equal(matches[0].event_id, past_event.event_id)
+})
+
+test('filter limit short-circuits future wait', async () => {
+  const bus = new EventBus('FilterLimitShortCircuitBus')
+
+  const past_event = bus.emit(ParentEvent({}))
+  await past_event.done()
+
+  const start = Date.now()
+  const matches = await bus.filter(ParentEvent, { past: true, future: 2.0, limit: 1 })
+  const elapsed_ms = Date.now() - start
+
+  assert.equal(matches.length, 1)
+  assert.equal(matches[0].event_id, past_event.event_id)
+  assert.ok(elapsed_ms < 200)
+})
+
+test('filter future only returns dispatched event', async () => {
+  const bus = new EventBus('FilterFutureOnlyBus')
+
+  const find_promise = bus.filter(ParentEvent, { past: false, future: 0.5 })
+  setTimeout(() => {
+    bus.emit(ParentEvent({}))
+  }, 30)
+
+  const matches = await find_promise
+  assert.equal(matches.length, 1)
+  assert.equal(matches[0].event_type, 'ParentEvent')
+})
+
+test('filter future only times out to empty array', async () => {
+  const bus = new EventBus('FilterFutureTimeoutBus')
+  const matches = await bus.filter(ParentEvent, { past: false, future: 0.05 })
+  assert.deepEqual(matches, [])
+})
+
+test('find returns first filter result', async () => {
+  const bus = new EventBus('FindEqualsFilterFirstBus')
+
+  bus.emit(ParentEvent({}))
+  const second = bus.emit(ParentEvent({}))
+  await bus.waitUntilIdle()
+
+  const found = await bus.find(ParentEvent, { past: true, future: false })
+  const filtered = await bus.filter(ParentEvent, { past: true, future: false, limit: 1 })
+
+  assert.ok(found)
+  assert.equal(filtered.length, 1)
+  assert.equal(found.event_id, filtered[0].event_id)
+  assert.equal(found.event_id, second.event_id)
+})
