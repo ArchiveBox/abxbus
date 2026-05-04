@@ -924,7 +924,8 @@ impl EventBus {
                 continue;
             }
             if let Some(parent_id) = child_of_event_id {
-                if !self.event_is_child_of_ids(&event.inner.lock().event_id, parent_id) {
+                let event_id = event.inner.lock().event_id.clone();
+                if !self.event_is_child_of_ids(&event_id, parent_id) {
                     continue;
                 }
             }

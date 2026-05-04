@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::mpsc,
+    sync::{mpsc, Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
@@ -12,6 +12,20 @@ use abxbus_rust::{
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+
+fn wait_for_string(slot: &Arc<Mutex<Option<String>>>) -> String {
+    let start = Instant::now();
+    loop {
+        if let Some(value) = slot.lock().expect("slot lock").clone() {
+            return value;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "timed out waiting for value"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 struct EmptyPayload {}
@@ -28,6 +42,30 @@ impl EventSpec for FutureEvent {
     type Payload = EmptyPayload;
     type Result = EmptyResult;
     const EVENT_TYPE: &'static str = "future_event";
+}
+struct ParentEvent;
+impl EventSpec for ParentEvent {
+    type Payload = EmptyPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "parent";
+}
+struct ChildEvent;
+impl EventSpec for ChildEvent {
+    type Payload = EmptyPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "child";
+}
+struct GrandchildEvent;
+impl EventSpec for GrandchildEvent {
+    type Payload = EmptyPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "grandchild";
+}
+struct UnrelatedEvent;
+impl EventSpec for UnrelatedEvent {
+    type Payload = EmptyPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "unrelated";
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -46,6 +84,26 @@ impl EventSpec for OtherFilterEvent {
     type Payload = FilterPayload;
     type Result = EmptyResult;
     const EVENT_TYPE: &'static str = "other_filter_event";
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct NavigatePayload {
+    url: String,
+}
+struct NavigateEvent;
+impl EventSpec for NavigateEvent {
+    type Payload = NavigatePayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "navigate";
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct TabPayload {
+    tab_id: String,
+}
+struct TabCreatedEvent;
+impl EventSpec for TabCreatedEvent {
+    type Payload = TabPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "tab_created";
 }
 
 #[test]
@@ -373,5 +431,219 @@ fn test_find_wildcard_with_where_filter_matches_across_event_types_in_history() 
     let found_id = found.inner.lock().event_id.clone();
     let target_id = target.inner.inner.lock().event_id.clone();
     assert_eq!(found_id, target_id);
+    bus.stop();
+}
+
+#[test]
+fn test_find_child_of_returns_child_event() {
+    let bus = EventBus::new(Some("FindChildBus".to_string()));
+    let bus_for_parent = bus.clone();
+    let child_id = Arc::new(Mutex::new(None::<String>));
+    let child_id_for_parent = child_id.clone();
+
+    bus.on("parent", "emit_child", move |_event| {
+        let bus = bus_for_parent.clone();
+        let child_id = child_id_for_parent.clone();
+        async move {
+            let child = bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            *child_id.lock().expect("child id lock") =
+                Some(child.inner.inner.lock().event_id.clone());
+            Ok(json!("parent"))
+        }
+    });
+    bus.on("child", "complete_child", |_event| async move {
+        Ok(json!("child"))
+    });
+
+    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let emitted_child_id = wait_for_string(&child_id);
+
+    let child =
+        block_on(bus.find("child", true, None, Some(parent.inner.clone()))).expect("child event");
+    let found_child_id = child.inner.lock().event_id.clone();
+    assert_eq!(found_child_id, emitted_child_id);
+    assert_eq!(
+        child.inner.lock().event_parent_id.as_deref(),
+        Some(parent.inner.inner.lock().event_id.as_str())
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_find_child_of_returns_null_for_non_child() {
+    let bus = EventBus::new(Some("FindNonChildBus".to_string()));
+
+    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let unrelated = bus.emit::<UnrelatedEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(bus.wait_until_idle(Some(2.0)));
+
+    let found = block_on(bus.find("unrelated", true, None, Some(parent.inner.clone())));
+    assert!(found.is_none());
+    assert_ne!(
+        unrelated.inner.inner.lock().event_parent_id.as_deref(),
+        Some(parent.inner.inner.lock().event_id.as_str())
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_find_child_of_returns_grandchild_event() {
+    let bus = EventBus::new(Some("FindGrandchildBus".to_string()));
+    let bus_for_parent = bus.clone();
+    let bus_for_child = bus.clone();
+    let child_id = Arc::new(Mutex::new(None::<String>));
+    let child_id_for_parent = child_id.clone();
+
+    bus.on("parent", "emit_child", move |_event| {
+        let bus = bus_for_parent.clone();
+        let child_id = child_id_for_parent.clone();
+        async move {
+            let child = bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            *child_id.lock().expect("child id lock") =
+                Some(child.inner.inner.lock().event_id.clone());
+            child.wait_completed().await;
+            Ok(json!("parent"))
+        }
+    });
+    bus.on("child", "emit_grandchild", move |_event| {
+        let bus = bus_for_child.clone();
+        async move {
+            let grandchild = bus.emit_child::<GrandchildEvent>(TypedEvent::new(EmptyPayload {}));
+            grandchild.wait_completed().await;
+            Ok(json!("child"))
+        }
+    });
+    bus.on("grandchild", "complete_grandchild", |_event| async move {
+        Ok(json!("grandchild"))
+    });
+
+    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(parent.wait_completed());
+
+    let grandchild = block_on(bus.find("grandchild", true, None, Some(parent.inner.clone())))
+        .expect("grandchild event");
+    assert_eq!(
+        grandchild.inner.lock().event_parent_id,
+        child_id.lock().expect("child id lock").clone()
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_find_child_of_filters_to_correct_parent_among_siblings() {
+    let bus = EventBus::new(Some("FindCorrectParentBus".to_string()));
+    let bus_for_nav = bus.clone();
+
+    bus.on("navigate", "create_tab", move |event| {
+        let bus = bus_for_nav.clone();
+        async move {
+            let url = event
+                .inner
+                .lock()
+                .payload
+                .get("url")
+                .and_then(|value| value.as_str())
+                .expect("url")
+                .to_string();
+            let child = bus.emit_child::<TabCreatedEvent>(TypedEvent::new(TabPayload {
+                tab_id: format!("tab_for_{url}"),
+            }));
+            child.wait_completed().await;
+            Ok(json!("nav"))
+        }
+    });
+    bus.on("tab_created", "complete_tab", |_event| async move {
+        Ok(json!("tab"))
+    });
+
+    let nav_1 = bus.emit::<NavigateEvent>(TypedEvent::new(NavigatePayload {
+        url: "site1".to_string(),
+    }));
+    let nav_2 = bus.emit::<NavigateEvent>(TypedEvent::new(NavigatePayload {
+        url: "site2".to_string(),
+    }));
+    block_on(nav_1.wait_completed());
+    block_on(nav_2.wait_completed());
+
+    let tab_1 =
+        block_on(bus.find("tab_created", true, None, Some(nav_1.inner.clone()))).expect("tab 1");
+    let tab_2 =
+        block_on(bus.find("tab_created", true, None, Some(nav_2.inner.clone()))).expect("tab 2");
+
+    assert_eq!(
+        tab_1.inner.lock().payload.get("tab_id"),
+        Some(&json!("tab_for_site1"))
+    );
+    assert_eq!(
+        tab_2.inner.lock().payload.get("tab_id"),
+        Some(&json!("tab_for_site2"))
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_find_future_with_child_of_waits_for_matching_child() {
+    let bus = EventBus::new(Some("FindFutureChildBus".to_string()));
+    let bus_for_parent = bus.clone();
+
+    bus.on("parent", "delayed_child", move |_event| {
+        let bus = bus_for_parent.clone();
+        async move {
+            thread::sleep(Duration::from_millis(30));
+            let child = bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            child.wait_completed().await;
+            Ok(json!("parent"))
+        }
+    });
+    bus.on("child", "complete_child", |_event| async move {
+        Ok(json!("child"))
+    });
+
+    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let child = block_on(bus.find("child", false, Some(0.5), Some(parent.inner.clone())))
+        .expect("future child");
+
+    assert_eq!(
+        child.inner.lock().event_parent_id.as_deref(),
+        Some(parent.inner.inner.lock().event_id.as_str())
+    );
+    block_on(parent.wait_completed());
+    bus.stop();
+}
+
+#[test]
+fn test_find_catches_child_event_that_fired_during_parent_handler() {
+    let bus = EventBus::new(Some("FindRaceConditionBus".to_string()));
+    let bus_for_nav = bus.clone();
+    let tab_event_id = Arc::new(Mutex::new(None::<String>));
+    let tab_event_id_for_nav = tab_event_id.clone();
+
+    bus.on("navigate", "create_tab", move |_event| {
+        let bus = bus_for_nav.clone();
+        let tab_event_id = tab_event_id_for_nav.clone();
+        async move {
+            let tab = bus.emit_child::<TabCreatedEvent>(TypedEvent::new(TabPayload {
+                tab_id: "06bee4cf-9f51-7e5d-82d3-65f35169329c".to_string(),
+            }));
+            *tab_event_id.lock().expect("tab id lock") =
+                Some(tab.inner.inner.lock().event_id.clone());
+            tab.wait_completed().await;
+            Ok(json!("nav"))
+        }
+    });
+    bus.on("tab_created", "complete_tab", |_event| async move {
+        Ok(json!("tab"))
+    });
+
+    let nav = bus.emit::<NavigateEvent>(TypedEvent::new(NavigatePayload {
+        url: "https://example.com".to_string(),
+    }));
+    block_on(nav.wait_completed());
+    let emitted_tab_id = wait_for_string(&tab_event_id);
+
+    let found_tab =
+        block_on(bus.find("tab_created", true, None, Some(nav.inner.clone()))).expect("found tab");
+    let found_tab_id = found_tab.inner.lock().event_id.clone();
+    assert_eq!(found_tab_id, emitted_tab_id);
     bus.stop();
 }
