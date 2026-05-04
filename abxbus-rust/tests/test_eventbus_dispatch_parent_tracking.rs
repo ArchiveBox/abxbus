@@ -41,6 +41,24 @@ impl EventSpec for GrandchildEvent {
     const EVENT_TYPE: &'static str = "GrandchildEvent";
 }
 
+fn child_ids_for(event: &Arc<BaseEvent>) -> Vec<String> {
+    event
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .flat_map(|result| result.event_children.clone())
+        .collect()
+}
+
+fn event_children_for(bus: &EventBus, event: &Arc<BaseEvent>) -> Vec<Arc<BaseEvent>> {
+    let payload = bus.runtime_payload_for_test();
+    child_ids_for(event)
+        .into_iter()
+        .filter_map(|child_id| payload.get(&child_id).cloned())
+        .collect()
+}
+
 #[test]
 fn test_basic_parent_tracking_child_events_get_event_parent_id() {
     let bus = EventBus::new(Some("ParentTrackingBus".to_string()));
@@ -222,6 +240,67 @@ fn test_parallel_parent_handlers_preserve_parent_tracking() {
 }
 
 #[test]
+fn test_sync_handler_parent_tracking() {
+    let bus = EventBus::new(Some("SyncParentTrackingBus".to_string()));
+    let child_events = Arc::new(Mutex::new(Vec::new()));
+
+    let bus_for_sync = bus.clone();
+    let child_events_for_sync = child_events.clone();
+    bus.on_sync("ParentEvent", "sync_handler", move |_event| {
+        let child = bus_for_sync.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+        child_events_for_sync
+            .lock()
+            .expect("child events lock")
+            .push(child.inner.clone());
+        Ok(json!("sync_handled"))
+    });
+
+    let bus_for_failing = bus.clone();
+    let child_events_for_failing = child_events.clone();
+    bus.on_sync("ParentEvent", "failing_handler", move |_event| {
+        let child = bus_for_failing.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+        child_events_for_failing
+            .lock()
+            .expect("child events lock")
+            .push(child.inner.clone());
+        Err("expected parent-tracking error path".to_string())
+    });
+
+    let bus_for_success = bus.clone();
+    let child_events_for_success = child_events.clone();
+    bus.on_sync("ParentEvent", "success_handler", move |_event| {
+        let child = bus_for_success.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+        child_events_for_success
+            .lock()
+            .expect("child events lock")
+            .push(child.inner.clone());
+        Ok(json!("success"))
+    });
+
+    bus.on_sync("ChildEvent", "child_handler", |_event| {
+        Ok(json!("child_handled"))
+    });
+
+    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(parent.wait_completed());
+    block_on(bus.wait_until_idle(None));
+
+    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let child_events = child_events.lock().expect("child events lock").clone();
+    assert_eq!(child_events.len(), 3);
+    for child in child_events {
+        assert_eq!(
+            child.inner.lock().event_parent_id.as_deref(),
+            Some(parent_id.as_str())
+        );
+    }
+    let parent_errors = parent.inner.event_errors();
+    assert_eq!(parent_errors.len(), 1);
+    assert!(parent_errors[0].contains("expected parent-tracking error path"));
+    bus.stop();
+}
+
+#[test]
 fn test_event_children_tracks_multiple_children_from_a_single_handler() {
     let bus = EventBus::new(Some("EventChildrenBus".to_string()));
     let bus_for_handler = bus.clone();
@@ -230,18 +309,14 @@ fn test_event_children_tracks_multiple_children_from_a_single_handler() {
         let bus = bus_for_handler.clone();
         async move {
             bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
-            bus.emit_child::<GrandchildEvent>(TypedEvent::new(EmptyPayload {}));
+            bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
             Ok(json!("parent"))
         }
     });
     bus.on("ChildEvent", "child_handler", |_event| async move {
         Ok(json!("child"))
     });
-    bus.on(
-        "GrandchildEvent",
-        "grandchild_handler",
-        |_event| async move { Ok(json!("grandchild")) },
-    );
 
     let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
     block_on(bus.wait_until_idle(None));
@@ -255,22 +330,36 @@ fn test_event_children_tracks_multiple_children_from_a_single_handler() {
             .event_children
             .clone()
     };
-    assert_eq!(event_children.len(), 2);
+    assert_eq!(event_children.len(), 3);
 
     let payload = bus.runtime_payload_for_test();
-    let child_ids: Vec<String> = payload
+    let children: Vec<_> = payload
         .values()
-        .filter(|event| {
-            matches!(
-                event.inner.lock().event_type.as_str(),
-                "ChildEvent" | "GrandchildEvent"
-            )
-        })
-        .map(|event| event.inner.lock().event_id.clone())
+        .filter(|event| event.inner.lock().event_type == "ChildEvent")
+        .cloned()
         .collect();
-    for child_id in child_ids {
+    assert_eq!(children.len(), 3);
+    let parent_id = parent.inner.inner.lock().event_id.clone();
+    for child in &children {
+        let child_inner = child.inner.lock();
+        assert_eq!(
+            child_inner.event_parent_id.as_deref(),
+            Some(parent_id.as_str())
+        );
+        assert_eq!(child_inner.event_status, EventStatus::Completed);
+    }
+    for child_id in children
+        .iter()
+        .map(|child| child.inner.lock().event_id.clone())
+        .collect::<Vec<_>>()
+    {
         assert!(event_children.contains(&child_id));
     }
+    let parent_event_children = event_children_for(&bus, &parent.inner);
+    assert_eq!(parent_event_children.len(), 3);
+    assert!(parent_event_children
+        .iter()
+        .all(|child| child.inner.lock().event_type == "ChildEvent"));
     bus.stop();
 }
 
@@ -327,6 +416,12 @@ fn test_event_children_tracks_direct_and_nested_descendants() {
         .event_children
         .clone();
     assert_eq!(parent_children, vec![child_id.clone()]);
+    let parent_event_children = event_children_for(&bus, &parent.inner);
+    assert_eq!(parent_event_children.len(), 1);
+    assert_eq!(
+        parent_event_children[0].inner.lock().event_id.as_str(),
+        child_id.as_str()
+    );
 
     let child_children = child
         .inner
@@ -336,7 +431,17 @@ fn test_event_children_tracks_direct_and_nested_descendants() {
         .expect("child result")
         .event_children
         .clone();
-    assert_eq!(child_children, vec![grandchild_id]);
+    assert_eq!(child_children, vec![grandchild_id.clone()]);
+    let child_event_children = event_children_for(&bus, &child);
+    assert_eq!(child_event_children.len(), 1);
+    assert_eq!(
+        child_event_children[0].inner.lock().event_id.as_str(),
+        grandchild_id.as_str()
+    );
+    assert_eq!(
+        child_event_children[0].inner.lock().event_type,
+        "GrandchildEvent"
+    );
     bus.stop();
 }
 
@@ -384,6 +489,12 @@ fn test_multiple_parent_handlers_contribute_to_one_event_children_list() {
     assert_eq!(handler_1_children.len(), 1);
     assert_eq!(handler_2_children.len(), 2);
     assert_eq!(handler_1_children.len() + handler_2_children.len(), 3);
+    drop(parent_inner);
+    let parent_event_children = event_children_for(&bus, &parent.inner);
+    assert_eq!(parent_event_children.len(), 3);
+    assert!(parent_event_children
+        .iter()
+        .all(|child| child.inner.lock().event_type == "ChildEvent"));
     bus.stop();
 }
 
@@ -655,6 +766,8 @@ fn test_event_children_is_empty_when_handlers_do_not_emit_children() {
         .get(&handler.id)
         .expect("parent result");
     assert!(result.event_children.is_empty());
+    drop(parent_inner);
+    assert!(event_children_for(&bus, &parent.inner).is_empty());
     bus.stop();
 }
 
@@ -793,6 +906,11 @@ fn test_event_emit_without_await_sets_parentage_without_blocking_parent_completi
     );
     assert!(child.inner.lock().event_emitted_by_handler_id.is_some());
     assert!(!child.inner.lock().event_blocks_parent_completion);
+    let parent_event_children = event_children_for(&bus, &parent.inner);
+    assert_eq!(parent_event_children.len(), 1);
+    let parent_child_id = parent_event_children[0].inner.lock().event_id.clone();
+    let child_id = child.inner.lock().event_id.clone();
+    assert_eq!(parent_child_id, child_id);
     assert_ne!(child.inner.lock().event_status, EventStatus::Completed);
 
     release_child_tx.send(()).expect("release child send");
@@ -853,6 +971,11 @@ fn test_awaited_event_emit_child_blocks_parent_completion_and_queue_jumps() {
         .clone()
         .expect("child ref");
     assert!(child.inner.lock().event_blocks_parent_completion);
+    let parent_event_children = event_children_for(&bus, &parent.inner);
+    assert_eq!(parent_event_children.len(), 1);
+    let parent_child_id = parent_event_children[0].inner.lock().event_id.clone();
+    let child_id = child.inner.lock().event_id.clone();
+    assert_eq!(parent_child_id, child_id);
     release_child_tx.send(()).expect("release child send");
     block_on(parent.wait_completed());
     assert_eq!(
@@ -899,6 +1022,8 @@ fn test_bus_emit_inside_handler_dispatches_root_event_by_default() {
         .next()
         .expect("parent result");
     assert!(result.event_children.is_empty());
+    drop(parent_inner);
+    assert!(event_children_for(&bus, &parent.inner).is_empty());
     bus.stop();
 }
 
@@ -964,6 +1089,7 @@ fn test_bus_emit_inside_handler_does_not_link_parent_when_not_using_event_emit()
         .map(|result| result.event_children.len())
         .sum();
     assert_eq!(parent_children, 0);
+    assert!(event_children_for(&bus, &parent.inner).is_empty());
 
     release_child_tx.send(()).expect("release child send");
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
@@ -1164,6 +1290,8 @@ fn test_awaited_bus_emit_child_remains_independent_and_does_not_block_parent_com
         .next()
         .expect("parent result");
     assert!(result.event_children.is_empty());
+    drop(parent_inner);
+    assert!(event_children_for(&bus, &parent.inner).is_empty());
     bus.stop();
 }
 
@@ -1194,6 +1322,88 @@ fn test_forwarded_events_are_not_counted_as_parent_event_children() {
         .values()
         .all(|result| result.event_children.is_empty()));
     assert_eq!(parent_inner.event_parent_id, None);
+    drop(parent_inner);
+    assert!(event_children_for(&bus_1, &parent.inner).is_empty());
     bus_1.stop();
     bus_2.stop();
+}
+
+#[test]
+fn test_multiple_children_same_parent() {
+    test_multiple_children_from_same_parent_keep_same_event_parent_id();
+}
+
+#[test]
+fn test_basic_parent_tracking() {
+    test_basic_parent_tracking_child_events_get_event_parent_id();
+}
+
+#[test]
+fn test_multi_level_parent_tracking() {
+    test_multi_level_parent_tracking_preserves_lineage();
+}
+
+#[test]
+fn test_parallel_handler_concurrency_parent_tracking() {
+    test_parallel_parent_handlers_preserve_parent_tracking();
+}
+
+#[test]
+fn test_explicit_parent_not_overridden() {
+    test_explicit_event_parent_id_is_not_overridden();
+}
+
+#[test]
+fn test_cross_eventbus_parent_tracking() {
+    test_cross_eventbus_dispatch_preserves_parent_tracking();
+}
+
+#[test]
+fn test_error_handler_parent_tracking() {
+    test_erroring_parent_handlers_still_preserve_child_event_parent_id();
+}
+
+#[test]
+fn test_event_children_tracking() {
+    test_event_children_tracks_multiple_children_from_a_single_handler();
+}
+
+#[test]
+fn test_nested_event_children_tracking() {
+    test_event_children_tracks_direct_and_nested_descendants();
+}
+
+#[test]
+fn test_multiple_handlers_event_children() {
+    test_multiple_parent_handlers_contribute_to_one_event_children_list();
+}
+
+#[test]
+fn test_event_children_empty_when_no_children() {
+    test_event_children_is_empty_when_handlers_do_not_emit_children();
+}
+
+#[test]
+fn test_forwarded_events_not_counted_as_children() {
+    test_forwarded_events_are_not_counted_as_parent_event_children();
+}
+
+#[test]
+fn test_event_emit_without_await_sets_parentage_without_blocking_completion() {
+    test_event_emit_without_await_sets_parentage_without_blocking_parent_completion();
+}
+
+#[test]
+fn test_bus_emit_inside_handler_dispatches_detached_event_by_default() {
+    test_bus_emit_inside_handler_does_not_link_parent_when_not_using_event_emit();
+}
+
+#[test]
+fn test_awaited_event_emit_marks_child_as_parent_completion_blocking() {
+    test_awaited_event_emit_child_blocks_parent_completion_and_queue_jumps();
+}
+
+#[test]
+fn test_awaiting_bus_emitted_child_keeps_independent_parentage() {
+    test_awaited_bus_emit_child_remains_independent_and_does_not_block_parent_completion();
 }

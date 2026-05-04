@@ -1751,16 +1751,18 @@ impl EventBus {
             }
         }
 
-        if let Some(slow) = event
-            .inner
-            .lock()
-            .event_slow_timeout
-            .or(self.event_slow_timeout)
-        {
+        let (event_type, event_slow_timeout) = {
+            let inner = event.inner.lock();
+            (
+                inner.event_type.clone(),
+                inner.event_slow_timeout.or(self.event_slow_timeout),
+            )
+        };
+        if let Some(slow) = event_slow_timeout {
             if started_at.elapsed() > Duration::from_secs_f64(slow) {
                 eprintln!(
-                    "slow event warning: {} took {:?}",
-                    event.inner.lock().event_type,
+                    "Slow event processing: {} took {:?}",
+                    event_type,
                     started_at.elapsed()
                 );
             }
@@ -2242,7 +2244,7 @@ impl EventBus {
         {
             if call_started.elapsed() > Duration::from_secs_f64(slow_timeout) {
                 eprintln!(
-                    "slow handler warning: {} took {:?}",
+                    "Slow event handler: {} took {:?}",
                     handler.handler_name,
                     call_started.elapsed()
                 );

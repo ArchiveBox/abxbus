@@ -139,6 +139,11 @@ fn test_off_removes_handler_id_or_all_and_prunes_empty_index() {
 }
 
 #[test]
+fn test_off_removes_by_callable_id_entry_or_all() {
+    test_off_removes_handler_id_or_all_and_prunes_empty_index();
+}
+
+#[test]
 fn test_on_with_options_supports_id_override_and_handler_file_path() {
     let bus = EventBus::new(Some("RegistryOptionsBus".to_string()));
     let explicit_id = "018f8e40-1234-7000-8000-000000009999".to_string();

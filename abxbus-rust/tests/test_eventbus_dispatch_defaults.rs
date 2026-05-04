@@ -198,6 +198,11 @@ fn test_handler_class_override_beats_bus_defaults() {
 }
 
 #[test]
+fn test_handler_class_override_beats_bus_default() {
+    test_handler_class_override_beats_bus_defaults();
+}
+
+#[test]
 fn test_event_instance_override_beats_typed_event_defaults() {
     let event = TypedEvent::<ConcurrencyOverrideEvent>::new(Payload { value: 1 });
     assert_eq!(

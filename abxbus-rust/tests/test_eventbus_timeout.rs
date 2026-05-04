@@ -1,4 +1,5 @@
 use std::{
+    process::Command,
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -88,6 +89,51 @@ fn timeout_test_guard() -> TimeoutTestGuard {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()),
     }
+}
+
+fn slow_warning_child_enabled() -> bool {
+    std::env::var("ABXBUS_RUN_SLOW_WARNING_CHILD").as_deref() == Ok("1")
+}
+
+fn run_slow_warning_child(test_name: &str) -> String {
+    let output = Command::new(std::env::current_exe().expect("current test binary"))
+        .arg("--exact")
+        .arg(test_name)
+        .arg("--nocapture")
+        .env("ABXBUS_RUN_SLOW_WARNING_CHILD", "1")
+        .output()
+        .expect("run slow warning child test");
+    assert!(
+        output.status.success(),
+        "child test {test_name} failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stderr).to_string()
+}
+
+fn run_slow_warning_event(
+    event_slow_timeout: Option<f64>,
+    event_handler_slow_timeout: Option<f64>,
+) {
+    let _guard = timeout_test_guard();
+    let bus = EventBus::new_with_options(
+        Some("SlowWarningChildBus".to_string()),
+        EventBusOptions {
+            event_timeout: Some(0.5),
+            event_slow_timeout,
+            event_handler_slow_timeout,
+            ..EventBusOptions::default()
+        },
+    );
+    bus.on("timeout_defaults", "slow_handler", |_event| async move {
+        thread::sleep(Duration::from_millis(30));
+        Ok(json!("ok"))
+    });
+
+    let event = bus.emit::<TimeoutDefaultsEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(event.wait_completed());
+    bus.stop();
 }
 
 #[test]
@@ -1027,6 +1073,11 @@ fn test_parent_timeout_cancels_awaited_child_handler_results() {
 }
 
 #[test]
+fn test_nested_timeout_scenario_from_issue() {
+    test_parent_timeout_cancels_awaited_child_handler_results();
+}
+
+#[test]
 fn test_multi_bus_timeout_is_recorded_on_target_bus() {
     let _guard = timeout_test_guard();
     let bus_a = EventBus::new(Some("MultiTimeoutA".to_string()));
@@ -1388,4 +1439,67 @@ fn test_event_handler_detect_file_paths_toggle() {
     });
     assert_eq!(entry.handler_file_path, None);
     bus.stop();
+}
+
+#[test]
+fn test_handler_slow_warning_uses_event_handler_slow_timeout() {
+    let stderr = run_slow_warning_child("__abxbus_slow_handler_warning_child");
+    assert!(
+        stderr.to_lowercase().contains("slow event handler"),
+        "expected slow handler warning in stderr, got: {stderr}"
+    );
+    assert!(
+        !stderr.to_lowercase().contains("slow event processing"),
+        "handler-only slow warning should not also emit event warning, got: {stderr}"
+    );
+}
+
+#[test]
+fn test_event_slow_warning_uses_event_slow_timeout() {
+    let stderr = run_slow_warning_child("__abxbus_slow_event_warning_child");
+    assert!(
+        stderr.to_lowercase().contains("slow event processing"),
+        "expected slow event warning in stderr, got: {stderr}"
+    );
+    assert!(
+        !stderr.to_lowercase().contains("slow event handler"),
+        "event-only slow warning should not also emit handler warning, got: {stderr}"
+    );
+}
+
+#[test]
+fn test_slow_handler_and_slow_event_warnings_can_both_fire() {
+    let stderr = run_slow_warning_child("__abxbus_slow_handler_and_event_warning_child");
+    assert!(
+        stderr.to_lowercase().contains("slow event handler"),
+        "expected slow handler warning in stderr, got: {stderr}"
+    );
+    assert!(
+        stderr.to_lowercase().contains("slow event processing"),
+        "expected slow event warning in stderr, got: {stderr}"
+    );
+}
+
+#[test]
+fn __abxbus_slow_handler_warning_child() {
+    if !slow_warning_child_enabled() {
+        return;
+    }
+    run_slow_warning_event(None, Some(0.01));
+}
+
+#[test]
+fn __abxbus_slow_event_warning_child() {
+    if !slow_warning_child_enabled() {
+        return;
+    }
+    run_slow_warning_event(Some(0.01), None);
+}
+
+#[test]
+fn __abxbus_slow_handler_and_event_warning_child() {
+    if !slow_warning_child_enabled() {
+        return;
+    }
+    run_slow_warning_event(Some(0.01), Some(0.01));
 }
