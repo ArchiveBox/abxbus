@@ -1,0 +1,23 @@
+abxbus-rust/tests/test_eventbus_timeout.rs
+  6a8c07f028b30c43 92-102,300-485
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "6c92c1a23631ad1a9cc012a4be14bcf6ecc1a2ab",
+  "prompts": {
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "messages": [],
+      "total_additions": 1679,
+      "total_deletions": 0,
+      "accepted_lines": 20200,
+      "overriden_lines": 0
+    }
+  }
+}
