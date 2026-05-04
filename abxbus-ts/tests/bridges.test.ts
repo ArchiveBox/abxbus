@@ -15,25 +15,6 @@ import { BaseEvent, EventBridge, HTTPEventBridge, JSONLEventBridge, SQLiteEventB
 const tests_dir = dirname(fileURLToPath(import.meta.url))
 const TEST_RUN_ID = `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 
-const tachyonAvailable = async (): Promise<boolean> => {
-  const dynamic_import = Function('module_name', 'return import(module_name)') as (module_name: string) => Promise<unknown>
-  try {
-    await dynamic_import('@tachyon-ipc/core')
-    return true
-  } catch (error: unknown) {
-    const code = typeof error === 'object' && error !== null && 'code' in error ? (error as { code?: string }).code : undefined
-    const message = error instanceof Error ? error.message : ''
-    // Treat both "package not installed" and "native binary missing" (the cmake-js
-    // build step was skipped) as legitimate "not available" signals; rethrow anything
-    // else so a real integration breakage still fails the test file.
-    if (code === 'ERR_MODULE_NOT_FOUND' || message.includes('tachyon_node.node not found')) {
-      return false
-    }
-    throw error
-  }
-}
-const TACHYON_AVAILABLE = await tachyonAvailable()
-
 const makeTempDir = (prefix: string): string => mkdtempSync(join(tmpdir(), `${prefix}-${TEST_RUN_ID}-`))
 
 const IPCPingEvent = BaseEvent.extend('IPCPingEvent', {
@@ -421,7 +402,7 @@ test('NATSEventBridge roundtrip between processes', async () => {
   }
 })
 
-test('TachyonEventBridge roundtrip between processes', { skip: !TACHYON_AVAILABLE && '@tachyon-ipc/core not installed' }, async () => {
+test('TachyonEventBridge roundtrip between processes', async () => {
   const socket_path = `/tmp/bb-tachyon-${TEST_RUN_ID}-${Math.random().toString(16).slice(2)}.sock`
   try {
     await assertRoundtrip('tachyon', { path: socket_path })
