@@ -42,6 +42,7 @@ struct BusRuntime {
     queue: Mutex<VecDeque<Arc<BaseEvent>>>,
     queue_notify: Event,
     stop: Mutex<bool>,
+    loop_started: Mutex<bool>,
     events: Mutex<HashMap<String, Arc<BaseEvent>>>,
     history_order: Mutex<VecDeque<String>>,
     max_history_size: Option<usize>,
@@ -136,6 +137,14 @@ impl EventBus {
     }
 
     pub fn new_with_options(name: Option<String>, options: EventBusOptions) -> Arc<Self> {
+        Self::new_with_options_and_loop(name, options, true)
+    }
+
+    fn new_with_options_and_loop(
+        name: Option<String>,
+        options: EventBusOptions,
+        start_loop: bool,
+    ) -> Arc<Self> {
         if let Some(timeout) = options.event_timeout {
             assert!(timeout > 0.0, "event_timeout must be > 0 or None");
         }
@@ -177,6 +186,7 @@ impl EventBus {
                 queue: Mutex::new(VecDeque::new()),
                 queue_notify: Event::new(),
                 stop: Mutex::new(false),
+                loop_started: Mutex::new(false),
                 events: Mutex::new(HashMap::new()),
                 history_order: Mutex::new(VecDeque::new()),
                 max_history_size: options.max_history_size,
@@ -187,7 +197,9 @@ impl EventBus {
             bus_serial_lock: Arc::new(ReentrantLock::default()),
         });
         Self::register_instance(&bus);
-        Self::start_loop(bus.clone());
+        if start_loop {
+            bus.ensure_loop_started();
+        }
         bus
     }
 
@@ -212,7 +224,18 @@ impl EventBus {
         instances.len()
     }
 
-    fn start_loop(bus: Arc<Self>) {
+    fn ensure_loop_started(&self) {
+        let mut started = self.runtime.loop_started.lock();
+        if *started {
+            return;
+        }
+        *started = true;
+        let bus = self.clone();
+        drop(started);
+        Self::start_loop(bus);
+    }
+
+    fn start_loop(bus: Self) {
         thread::spawn(move || {
             block_on(async move {
                 loop {
@@ -683,7 +706,7 @@ impl EventBus {
             .get("name")
             .and_then(Value::as_str)
             .map(ToString::to_string);
-        let bus = Self::new_with_options(name, options);
+        let bus = Self::new_with_options_and_loop(name, options, false);
 
         let mut handlers_by_id = HashMap::new();
         if let Some(Value::Object(raw_handlers)) = payload.get("handlers") {
@@ -810,11 +833,13 @@ impl EventBus {
             callable,
             options,
         );
-        self.handlers
-            .lock()
-            .entry(pattern.to_string())
-            .or_default()
-            .push(entry.clone());
+        let mut handlers = self.handlers.lock();
+        let entries = handlers.entry(pattern.to_string()).or_default();
+        if let Some(existing) = entries.iter_mut().find(|handler| handler.id == entry.id) {
+            *existing = entry.clone();
+        } else {
+            entries.push(entry.clone());
+        }
         entry
     }
 
@@ -929,6 +954,7 @@ impl EventBus {
         }
 
         self.notify_find_waiters(event.clone());
+        self.ensure_loop_started();
         self.runtime.queue_notify.notify(1);
         event
     }
