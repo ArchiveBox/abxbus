@@ -341,6 +341,290 @@ impl EventBus {
         })
     }
 
+    pub fn log_tree(&self) -> String {
+        let events = self.runtime.events.lock().clone();
+        let history_order = self.runtime.history_order.lock().clone();
+        let mut children_by_parent: HashMap<String, Vec<Arc<BaseEvent>>> = HashMap::new();
+        for event in events.values() {
+            let parent_id = event.inner.lock().event_parent_id.clone();
+            if let Some(parent_id) = parent_id {
+                if parent_id != event.inner.lock().event_id && events.contains_key(&parent_id) {
+                    children_by_parent
+                        .entry(parent_id)
+                        .or_default()
+                        .push(event.clone());
+                }
+            }
+        }
+        for children in children_by_parent.values_mut() {
+            children.sort_by(|left, right| {
+                left.inner
+                    .lock()
+                    .event_created_at
+                    .cmp(&right.inner.lock().event_created_at)
+            });
+        }
+
+        let mut roots = Vec::new();
+        for event_id in history_order {
+            let Some(event) = events.get(&event_id).cloned() else {
+                continue;
+            };
+            let inner = event.inner.lock();
+            let is_root = inner.event_parent_id.as_ref().is_none_or(|parent_id| {
+                parent_id == &inner.event_id || !events.contains_key(parent_id)
+            });
+            drop(inner);
+            if is_root {
+                roots.push(event);
+            }
+        }
+        if roots.is_empty() {
+            return "(No events in history)".to_string();
+        }
+
+        let mut lines = Vec::new();
+        lines.push(format!("📊 Event History Tree for {}", self.label()));
+        lines.push("=".repeat(80));
+        let mut visited = std::collections::HashSet::new();
+        for (index, event) in roots.iter().enumerate() {
+            let is_last = index == roots.len() - 1;
+            self.push_log_event_lines(
+                &mut lines,
+                event.clone(),
+                "",
+                is_last,
+                &children_by_parent,
+                &events,
+                &mut visited,
+            );
+        }
+        lines.push("=".repeat(80));
+        lines.join("\n")
+    }
+
+    fn push_log_event_lines(
+        &self,
+        lines: &mut Vec<String>,
+        event: Arc<BaseEvent>,
+        indent: &str,
+        is_last: bool,
+        children_by_parent: &HashMap<String, Vec<Arc<BaseEvent>>>,
+        events: &HashMap<String, Arc<BaseEvent>>,
+        visited: &mut std::collections::HashSet<String>,
+    ) {
+        let event_data = event.inner.lock().clone();
+        let connector = if is_last { "└── " } else { "├── " };
+        let status_icon = match event_data.event_status {
+            EventStatus::Completed => "✅",
+            EventStatus::Started => "🏃",
+            EventStatus::Pending => "⏳",
+        };
+        let mut timing = format!(
+            "[{}",
+            Self::format_log_timestamp(&event_data.event_created_at)
+        );
+        if let Some(completed_at) = &event_data.event_completed_at {
+            if let Some(duration) =
+                Self::duration_seconds(&event_data.event_created_at, completed_at)
+            {
+                timing.push_str(&format!(" ({duration:.3}s)"));
+            }
+        }
+        timing.push(']');
+        lines.push(format!(
+            "{indent}{connector}{status_icon} {}#{} {timing}",
+            event_data.event_type,
+            Self::short_suffix(&event_data.event_id)
+        ));
+
+        if !visited.insert(event_data.event_id.clone()) {
+            return;
+        }
+
+        let extension = if is_last { "    " } else { "│   " };
+        let child_indent = format!("{indent}{extension}");
+        let mut result_items: Vec<EventResult> =
+            event_data.event_results.values().cloned().collect();
+        result_items.sort_by(|left, right| {
+            left.handler
+                .handler_registered_at
+                .cmp(&right.handler.handler_registered_at)
+                .then_with(|| left.handler.id.cmp(&right.handler.id))
+        });
+
+        let mut printed_child_ids = std::collections::HashSet::new();
+        let children = children_by_parent
+            .get(&event_data.event_id)
+            .cloned()
+            .unwrap_or_default();
+        let extra_children: Vec<Arc<BaseEvent>> = children
+            .iter()
+            .filter(|child| child.inner.lock().event_emitted_by_handler_id.is_none())
+            .cloned()
+            .collect();
+
+        let total = result_items.len() + extra_children.len();
+        let mut item_index = 0;
+        for result in result_items {
+            item_index += 1;
+            let is_last_item = item_index == total;
+            self.push_log_result_lines(
+                lines,
+                &result,
+                &child_indent,
+                is_last_item,
+                events,
+                visited,
+                &mut printed_child_ids,
+            );
+        }
+        for child in extra_children {
+            item_index += 1;
+            if !printed_child_ids.insert(child.inner.lock().event_id.clone()) {
+                continue;
+            }
+            self.push_log_event_lines(
+                lines,
+                child,
+                &child_indent,
+                item_index == total,
+                children_by_parent,
+                events,
+                visited,
+            );
+        }
+    }
+
+    fn push_log_result_lines(
+        &self,
+        lines: &mut Vec<String>,
+        result: &EventResult,
+        indent: &str,
+        is_last: bool,
+        events: &HashMap<String, Arc<BaseEvent>>,
+        visited: &mut std::collections::HashSet<String>,
+        printed_child_ids: &mut std::collections::HashSet<String>,
+    ) {
+        let connector = if is_last { "└── " } else { "├── " };
+        let status_icon = match result.status {
+            EventResultStatus::Completed => "✅",
+            EventResultStatus::Error
+                if result.error.as_deref().is_some_and(|error| {
+                    error.starts_with("EventHandlerCancelledError:")
+                        || error.starts_with("EventHandlerAbortedError:")
+                }) =>
+            {
+                "🚫"
+            }
+            EventResultStatus::Error => "❌",
+            EventResultStatus::Started => "🏃",
+            EventResultStatus::Pending => "⏳",
+        };
+        let handler_display = format!(
+            "{}#{}.{}#{}",
+            result.handler.eventbus_name,
+            Self::short_suffix(&result.handler.eventbus_id),
+            result.handler.handler_name,
+            Self::short_suffix(&result.handler.id)
+        );
+        let mut line = format!("{indent}{connector}{status_icon} {handler_display}");
+        if let Some(started_at) = &result.started_at {
+            line.push_str(&format!(" [{}", Self::format_log_timestamp(started_at)));
+            if let Some(completed_at) = &result.completed_at {
+                if let Some(duration) = Self::duration_seconds(started_at, completed_at) {
+                    line.push_str(&format!(" ({duration:.3}s)"));
+                }
+            }
+            line.push(']');
+        }
+        if result.status == EventResultStatus::Error {
+            if let Some(error) = &result.error {
+                if let Some(message) = error.strip_prefix("EventHandlerTimeoutError: ") {
+                    line.push_str(&format!(" ⏱️ Timeout: {message}"));
+                } else if let Some(message) = error.strip_prefix("EventHandlerCancelledError: ") {
+                    line.push_str(&format!(" Cancelled: {message}"));
+                } else if let Some(message) = error.strip_prefix("EventHandlerAbortedError: ") {
+                    line.push_str(&format!(" Aborted: {message}"));
+                } else {
+                    line.push_str(&format!(" ☠️ {}", Self::format_error_for_log(error)));
+                }
+            }
+        } else if result.status == EventResultStatus::Completed {
+            line.push_str(&format!(
+                " → {}",
+                Self::format_result_value(result.result.as_ref())
+            ));
+        }
+        lines.push(line);
+
+        let extension = if is_last { "    " } else { "│   " };
+        let child_indent = format!("{indent}{extension}");
+        let children: Vec<Arc<BaseEvent>> = result
+            .event_children
+            .iter()
+            .filter_map(|child_id| events.get(child_id).cloned())
+            .filter(|child| !visited.contains(&child.inner.lock().event_id))
+            .collect();
+        for (index, child) in children.iter().enumerate() {
+            printed_child_ids.insert(child.inner.lock().event_id.clone());
+            self.push_log_event_lines(
+                lines,
+                child.clone(),
+                &child_indent,
+                index == children.len() - 1,
+                &HashMap::new(),
+                events,
+                visited,
+            );
+        }
+    }
+
+    fn short_suffix(value: &str) -> String {
+        value[value.len().saturating_sub(4)..].to_string()
+    }
+
+    fn format_log_timestamp(value: &str) -> String {
+        chrono::DateTime::parse_from_rfc3339(value)
+            .map(|timestamp| {
+                timestamp
+                    .with_timezone(&chrono::Utc)
+                    .format("%H:%M:%S%.3f")
+                    .to_string()
+            })
+            .unwrap_or_else(|_| "N/A".to_string())
+    }
+
+    fn duration_seconds(started_at: &str, completed_at: &str) -> Option<f64> {
+        let started = chrono::DateTime::parse_from_rfc3339(started_at).ok()?;
+        let completed = chrono::DateTime::parse_from_rfc3339(completed_at).ok()?;
+        completed
+            .signed_duration_since(started)
+            .num_nanoseconds()
+            .map(|nanos| nanos as f64 / 1_000_000_000.0)
+    }
+
+    fn format_result_value(value: Option<&Value>) -> String {
+        match value {
+            None | Some(Value::Null) => "None".to_string(),
+            Some(Value::String(value)) => {
+                serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
+            }
+            Some(Value::Number(value)) => value.to_string(),
+            Some(Value::Bool(value)) => value.to_string(),
+            Some(Value::Array(value)) => format!("list({} items)", value.len()),
+            Some(Value::Object(value)) => format!("dict({} items)", value.len()),
+        }
+    }
+
+    fn format_error_for_log(error: &str) -> String {
+        if error.contains(": ") {
+            error.to_string()
+        } else {
+            format!("Error: {error}")
+        }
+    }
+
     pub fn from_json_value(value: Value) -> Arc<Self> {
         let Value::Object(payload) = value else {
             panic!("EventBus.from_json_value(data) requires an object");
