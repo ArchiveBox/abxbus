@@ -1,5 +1,5 @@
 use std::{
-    sync::{Arc, Mutex},
+    sync::{mpsc, Arc, Mutex},
     thread,
     time::Duration,
 };
@@ -558,7 +558,7 @@ fn test_multi_bus_queues_are_independent_when_awaiting_child() {
 }
 
 #[test]
-fn test_awaited_child_jumps_queue_no_overshoot() {
+fn test_awaited_child_jumps_queue_without_overshoot() {
     let bus = EventBus::new(Some("ComprehensiveNoOvershootBus".to_string()));
     let execution_order = Arc::new(Mutex::new(Vec::new()));
 
@@ -639,7 +639,191 @@ fn test_awaited_child_jumps_queue_no_overshoot() {
 }
 
 #[test]
-fn test_dispatch_multiple_await_one_skips_others() {
+fn test_done_on_non_proxied_event_keeps_bus_paused_during_queue_jump() {
+    let bus = EventBus::new(Some("RawDoneBus".to_string()));
+    let execution_order = Arc::new(Mutex::new(Vec::new()));
+
+    let bus_for_event1 = bus.clone();
+    let order_for_event1 = execution_order.clone();
+    bus.on("Event1", "event1_handler", move |_event| {
+        let bus = bus_for_event1.clone();
+        let order = order_for_event1.clone();
+        async move {
+            push(&order, "Event1_start");
+            let child = bus.emit::<ChildA>(TypedEvent::new(EmptyPayload {}));
+            child.wait_completed().await;
+            push(&order, "RawChild_await_returned");
+            assert!(
+                !order
+                    .lock()
+                    .expect("order lock")
+                    .contains(&"Event2_start".to_string()),
+                "queued sibling must not run while the parent handler is still active"
+            );
+            push(&order, "Event1_end");
+            Ok(json!("event1_done"))
+        }
+    });
+
+    let order_for_child = execution_order.clone();
+    bus.on("ChildA", "raw_child_handler", move |_event| {
+        let order = order_for_child.clone();
+        async move {
+            push(&order, "RawChild_start");
+            push(&order, "RawChild_end");
+            Ok(json!("raw_child_done"))
+        }
+    });
+
+    let order_for_event2 = execution_order.clone();
+    bus.on("Event2", "event2_handler", move |_event| {
+        let order = order_for_event2.clone();
+        async move {
+            push(&order, "Event2_start");
+            push(&order, "Event2_end");
+            Ok(json!("event2_done"))
+        }
+    });
+
+    let event1 = bus.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    bus.emit::<Event2>(TypedEvent::new(EmptyPayload {}));
+    block_on(event1.wait_completed());
+    block_on(bus.wait_until_idle(Some(2.0)));
+
+    let order = execution_order.lock().expect("order lock").clone();
+    assert!(index_of(&order, "RawChild_end") < index_of(&order, "Event1_end"));
+    assert!(index_of(&order, "Event2_start") > index_of(&order, "Event1_end"));
+    let child = bus
+        .runtime_payload_for_test()
+        .values()
+        .find(|event| event.inner.lock().event_type == "ChildA")
+        .cloned()
+        .expect("raw child");
+    assert_eq!(child.inner.lock().event_parent_id, None);
+    assert!(!child.inner.lock().event_blocks_parent_completion);
+    bus.stop();
+}
+
+#[test]
+fn test_bus_pause_state_clears_after_queue_jump_completes() {
+    let bus = EventBus::new(Some("DepthBalanceBus".to_string()));
+    let execution_order = Arc::new(Mutex::new(Vec::new()));
+
+    let bus_for_event1 = bus.clone();
+    let order_for_event1 = execution_order.clone();
+    bus.on("Event1", "event1_handler", move |_event| {
+        let bus = bus_for_event1.clone();
+        let order = order_for_event1.clone();
+        async move {
+            push(&order, "Event1_start");
+            let child_a = bus.emit_child::<ChildA>(TypedEvent::new(EmptyPayload {}));
+            child_a.wait_completed().await;
+            push(&order, "ChildA_await_returned");
+            assert!(!order
+                .lock()
+                .expect("order lock")
+                .contains(&"Event2_start".to_string()));
+
+            let child_b = bus.emit_child::<ChildB>(TypedEvent::new(EmptyPayload {}));
+            assert!(!order
+                .lock()
+                .expect("order lock")
+                .contains(&"Event2_start".to_string()));
+            child_b.wait_completed().await;
+            push(&order, "ChildB_await_returned");
+            assert!(!order
+                .lock()
+                .expect("order lock")
+                .contains(&"Event2_start".to_string()));
+            push(&order, "Event1_end");
+            Ok(json!("event1_done"))
+        }
+    });
+
+    for (pattern, start, end) in [
+        ("ChildA", "ChildA_start", "ChildA_end"),
+        ("ChildB", "ChildB_start", "ChildB_end"),
+        ("Event2", "Event2_start", "Event2_end"),
+    ] {
+        let order = execution_order.clone();
+        bus.on(pattern, &format!("{pattern}_handler"), move |_event| {
+            let order = order.clone();
+            async move {
+                push(&order, start);
+                push(&order, end);
+                Ok(json!(null))
+            }
+        });
+    }
+
+    let event1 = bus.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    bus.emit::<Event2>(TypedEvent::new(EmptyPayload {}));
+    block_on(event1.wait_completed());
+    block_on(bus.wait_until_idle(Some(2.0)));
+
+    let order = execution_order.lock().expect("order lock").clone();
+    assert!(index_of(&order, "ChildA_end") < index_of(&order, "ChildA_await_returned"));
+    assert!(index_of(&order, "ChildB_end") < index_of(&order, "ChildB_await_returned"));
+    assert!(index_of(&order, "Event2_start") > index_of(&order, "Event1_end"));
+    bus.stop();
+}
+
+#[test]
+fn test_isinsidehandler_is_per_bus_not_global() {
+    let bus_a = EventBus::new(Some("InsideHandlerA".to_string()));
+    let bus_b = EventBus::new(Some("InsideHandlerB".to_string()));
+    let execution_order = Arc::new(Mutex::new(Vec::new()));
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Arc::new(Mutex::new(release_rx));
+
+    let order_for_a = execution_order.clone();
+    let release_for_a = release_rx.clone();
+    bus_a.on("Event1", "bus_a_handler", move |_event| {
+        let order = order_for_a.clone();
+        let release = release_for_a.clone();
+        let started_tx = started_tx.clone();
+        async move {
+            push(&order, "bus_a_start");
+            let _ = started_tx.send(());
+            release
+                .lock()
+                .expect("release lock")
+                .recv_timeout(Duration::from_secs(2))
+                .expect("release bus_a handler");
+            push(&order, "bus_a_end");
+            Ok(json!(null))
+        }
+    });
+
+    let order_for_b = execution_order.clone();
+    bus_b.on("Event2", "bus_b_handler", move |_event| {
+        let order = order_for_b.clone();
+        async move {
+            push(&order, "bus_b_start");
+            push(&order, "bus_b_end");
+            Ok(json!(null))
+        }
+    });
+
+    let event_a = bus_a.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    started_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("bus_a handler started");
+    let event_b = bus_b.emit::<Event2>(TypedEvent::new(EmptyPayload {}));
+    block_on(event_b.wait_completed());
+    release_tx.send(()).expect("release bus_a handler");
+    block_on(event_a.wait_completed());
+
+    let order = execution_order.lock().expect("order lock").clone();
+    assert!(index_of(&order, "bus_b_start") < index_of(&order, "bus_a_end"));
+    assert!(index_of(&order, "bus_b_end") < index_of(&order, "bus_a_end"));
+    bus_a.stop();
+    bus_b.stop();
+}
+
+#[test]
+fn test_dispatch_multiple_await_one_skips_others_until_after_handler_completes() {
     let bus = EventBus::new(Some("ComprehensiveMultiDispatchBus".to_string()));
     let execution_order = Arc::new(Mutex::new(Vec::new()));
 
@@ -708,7 +892,51 @@ fn test_dispatch_multiple_await_one_skips_others() {
 }
 
 #[test]
-fn test_multiple_awaits_same_event() {
+fn test_awaiting_an_already_completed_event_is_a_no_op() {
+    let bus = EventBus::new(Some("AlreadyCompletedBus".to_string()));
+    let event1 = bus.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    block_on(event1.wait_completed());
+    assert_eq!(
+        event1.inner.inner.lock().event_status,
+        EventStatus::Completed
+    );
+
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Arc::new(Mutex::new(release_rx));
+    bus.on("SlowEvent", "blocker", move |_event| {
+        let release_rx = release_rx.clone();
+        let started_tx = started_tx.clone();
+        async move {
+            let _ = started_tx.send(());
+            release_rx
+                .lock()
+                .expect("release lock")
+                .recv_timeout(Duration::from_secs(2))
+                .expect("release blocker");
+            Ok(json!(null))
+        }
+    });
+    bus.on("Event2", "event2_handler", |_event| async move {
+        Ok(json!("event2_done"))
+    });
+
+    let blocker = bus.emit::<SlowEvent>(TypedEvent::new(EmptyPayload {}));
+    started_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("blocker started");
+    let event2 = bus.emit::<Event2>(TypedEvent::new(EmptyPayload {}));
+    block_on(event1.wait_completed());
+    assert_eq!(event2.inner.inner.lock().event_status, EventStatus::Pending);
+
+    release_tx.send(()).expect("release blocker");
+    block_on(blocker.wait_completed());
+    block_on(event2.wait_completed());
+    bus.stop();
+}
+
+#[test]
+fn test_multiple_awaits_on_same_event() {
     let bus = EventBus::new(Some("ComprehensiveMultiAwaitBus".to_string()));
     let execution_order = Arc::new(Mutex::new(Vec::new()));
     let await_results = Arc::new(Mutex::new(Vec::new()));
@@ -851,7 +1079,7 @@ fn test_deeply_nested_awaited_children() {
 }
 
 #[test]
-fn test_queue_jump_two_bus_serial_handlers_should_serialize_on_each_bus() {
+fn test_bug_queue_jump_two_bus_serial_handlers_should_serialize_on_each_bus() {
     let bus_a = new_bus_with_concurrency(
         "QJ2BS_A",
         EventConcurrencyMode::BusSerial,
@@ -918,7 +1146,7 @@ fn test_queue_jump_two_bus_serial_handlers_should_serialize_on_each_bus() {
 }
 
 #[test]
-fn test_queue_jump_two_bus_mixed_bus_a_serial_bus_b_parallel() {
+fn test_bug_queue_jump_two_bus_mixed_bus_a_serial_bus_b_parallel() {
     let bus_a = new_bus_with_concurrency(
         "QJ2Mix1_A",
         EventConcurrencyMode::BusSerial,
@@ -985,7 +1213,7 @@ fn test_queue_jump_two_bus_mixed_bus_a_serial_bus_b_parallel() {
 }
 
 #[test]
-fn test_queue_jump_two_bus_mixed_bus_a_parallel_bus_b_serial() {
+fn test_bug_queue_jump_two_bus_mixed_bus_a_parallel_bus_b_serial() {
     let bus_a = new_bus_with_concurrency(
         "QJ2Mix2_A",
         EventConcurrencyMode::BusSerial,
@@ -1200,7 +1428,7 @@ fn test_forwarded_first_mode_uses_processing_bus_handler_concurrency_defaults() 
 }
 
 #[test]
-fn test_queue_jump_respects_bus_serial_event_concurrency_on_forward_bus() {
+fn test_bug_queue_jump_should_respect_bus_serial_event_concurrency_on_forward_bus() {
     let bus_a = new_bus_with_concurrency(
         "QJEvt_A",
         EventConcurrencyMode::BusSerial,
@@ -1338,7 +1566,8 @@ fn test_queue_jump_with_fully_parallel_forward_bus_starts_immediately() {
 }
 
 #[test]
-fn test_queue_jump_with_parallel_events_and_serial_handlers_on_forward_bus_overlaps_events() {
+fn test_queue_jump_with_parallel_events_and_serial_handlers_on_forward_bus_still_overlaps_across_events(
+) {
     let bus_a = new_bus_with_concurrency(
         "QJEvtParHSer_A",
         EventConcurrencyMode::BusSerial,
