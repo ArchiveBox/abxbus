@@ -1,0 +1,23 @@
+abxbus-rust/tests/test_eventbus_debounce.rs
+  6a8c07f028b30c43 1-325
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "fac30abf1b8256c0e9ace1ada1a72e82ee199bde",
+  "prompts": {
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "messages": [],
+      "total_additions": 1711,
+      "total_deletions": 1386,
+      "accepted_lines": 20409,
+      "overriden_lines": 0
+    }
+  }
+}
