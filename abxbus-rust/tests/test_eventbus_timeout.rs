@@ -392,6 +392,47 @@ fn test_event_level_timeout_marks_started_parallel_handlers_as_aborted_or_timed_
 }
 
 #[test]
+fn test_event_level_concurrency_overrides_do_not_bypass_timeout_aborts() {
+    let _guard = timeout_test_guard();
+    let bus = EventBus::new_with_options(
+        Some("TimeoutEventOverrideBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::GlobalSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            ..EventBusOptions::default()
+        },
+    );
+
+    bus.on("timeout", "slow", |_event| async move {
+        thread::sleep(Duration::from_millis(50));
+        Ok(json!("slow"))
+    });
+
+    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    {
+        let mut inner = event.inner.inner.lock();
+        inner.event_timeout = Some(0.01);
+        inner.event_concurrency = Some(EventConcurrencyMode::Parallel);
+        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
+    }
+    let event = bus.emit(event);
+    block_on(event.wait_completed());
+
+    let result = event
+        .inner
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("result");
+    assert_eq!(result.status, EventResultStatus::Error);
+    assert_eq!(error_type(&result), "EventHandlerAbortedError");
+    bus.stop();
+}
+
+#[test]
 fn test_event_timeout_is_hard_cap_across_serial_handlers() {
     let _guard = timeout_test_guard();
     let bus = EventBus::new_with_options(
@@ -451,6 +492,108 @@ fn test_event_timeout_is_hard_cap_across_serial_handlers() {
 }
 
 #[test]
+fn test_forwarded_timeout_path_does_not_stall_followup_events() {
+    let _guard = timeout_test_guard();
+    let bus_a = EventBus::new(Some("TimeoutForwardRecoveryA".to_string()));
+    let bus_b = EventBus::new(Some("TimeoutForwardRecoveryB".to_string()));
+    let bus_a_tail_runs = Arc::new(Mutex::new(0usize));
+    let bus_b_tail_runs = Arc::new(Mutex::new(0usize));
+    let child_ref = Arc::new(Mutex::new(None));
+
+    let bus_a_for_parent = bus_a.clone();
+    let child_ref_for_parent = child_ref.clone();
+    bus_a.on("parent", "parent_handler", move |_event| {
+        let bus_a = bus_a_for_parent.clone();
+        let child_ref = child_ref_for_parent.clone();
+        async move {
+            let child = TypedEvent::<ChildEvent>::new(EmptyPayload {});
+            child.inner.inner.lock().event_timeout = Some(0.01);
+            let child = bus_a.emit_child(child);
+            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            child.wait_completed().await;
+            Ok(json!("parent_done"))
+        }
+    });
+
+    let bus_b_for_forward = bus_b.clone();
+    bus_a.on("*", "forward_to_b", move |event| {
+        let bus_b = bus_b_for_forward.clone();
+        async move {
+            bus_b.emit_base(event);
+            Ok(json!(null))
+        }
+    });
+    bus_b.on("child", "slow_child_handler", |_event| async move {
+        thread::sleep(Duration::from_millis(50));
+        Ok(json!("child_done"))
+    });
+
+    let bus_a_tail_runs_for_handler = bus_a_tail_runs.clone();
+    bus_a.on("tail", "tail_handler_a", move |_event| {
+        let runs = bus_a_tail_runs_for_handler.clone();
+        async move {
+            *runs.lock().expect("bus a tail runs lock") += 1;
+            Ok(json!("tail_a"))
+        }
+    });
+    let bus_b_tail_runs_for_handler = bus_b_tail_runs.clone();
+    bus_b.on("tail", "tail_handler_b", move |_event| {
+        let runs = bus_b_tail_runs_for_handler.clone();
+        async move {
+            *runs.lock().expect("bus b tail runs lock") += 1;
+            Ok(json!("tail_b"))
+        }
+    });
+
+    let parent = TypedEvent::<ParentEvent>::new(EmptyPayload {});
+    parent.inner.inner.lock().event_timeout = Some(1.0);
+    let parent = bus_a.emit(parent);
+    block_on(parent.wait_completed());
+    assert!(block_on(bus_a.wait_until_idle(Some(2.0))));
+    assert!(block_on(bus_b.wait_until_idle(Some(2.0))));
+
+    let parent_result = parent
+        .inner
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .find(|result| result.handler.handler_name == "parent_handler")
+        .cloned()
+        .expect("parent result");
+    assert_eq!(parent_result.status, EventResultStatus::Completed);
+
+    let child = child_ref
+        .lock()
+        .expect("child ref lock")
+        .clone()
+        .expect("child ref");
+    let child_results: Vec<_> = child.inner.lock().event_results.values().cloned().collect();
+    assert!(child_results.iter().any(|result| {
+        matches!(
+            error_type(result).as_str(),
+            "EventHandlerAbortedError" | "EventHandlerTimeoutError"
+        )
+    }));
+
+    let tail = TypedEvent::<TailEvent>::new(EmptyPayload {});
+    tail.inner.inner.lock().event_timeout = Some(0.2);
+    let tail = bus_a.emit(tail);
+    block_on(tail.wait_completed());
+    assert!(block_on(bus_a.wait_until_idle(Some(2.0))));
+    assert!(block_on(bus_b.wait_until_idle(Some(2.0))));
+
+    assert_eq!(
+        tail.inner.inner.lock().event_status,
+        abxbus_rust::types::EventStatus::Completed
+    );
+    assert_eq!(*bus_a_tail_runs.lock().expect("bus a tail runs lock"), 1);
+    assert_eq!(*bus_b_tail_runs.lock().expect("bus b tail runs lock"), 1);
+    bus_a.stop();
+    bus_b.stop();
+}
+
+#[test]
 fn test_handler_timeout_marks_error_and_other_handlers_still_complete() {
     let _guard = timeout_test_guard();
     let bus = EventBus::new_with_options(
@@ -496,6 +639,56 @@ fn test_handler_timeout_marks_error_and_other_handlers_still_complete() {
         .contains("EventHandlerTimeoutError"));
     assert_eq!(fast_result.status, EventResultStatus::Completed);
     assert_eq!(fast_result.result, Some(json!("fast")));
+    bus.stop();
+}
+
+#[test]
+fn test_processing_time_timeout_defaults_do_not_mutate_event_fields() {
+    let _guard = timeout_test_guard();
+    let bus = EventBus::new_with_options(
+        Some("TimeoutDefaultsCopyBus".to_string()),
+        EventBusOptions {
+            event_timeout: Some(12.0),
+            event_slow_timeout: Some(34.0),
+            event_handler_slow_timeout: Some(56.0),
+            ..EventBusOptions::default()
+        },
+    );
+
+    bus.on(
+        "timeout",
+        "handler",
+        |_event| async move { Ok(json!("ok")) },
+    );
+
+    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    {
+        let inner = event.inner.inner.lock();
+        assert_eq!(inner.event_timeout, None);
+        assert_eq!(inner.event_handler_timeout, None);
+        assert_eq!(inner.event_handler_slow_timeout, None);
+        assert_eq!(inner.event_slow_timeout, None);
+    }
+
+    let event = bus.emit(event);
+    {
+        let inner = event.inner.inner.lock();
+        assert_eq!(inner.event_timeout, None);
+        assert_eq!(inner.event_handler_timeout, None);
+        assert_eq!(inner.event_handler_slow_timeout, None);
+        assert_eq!(inner.event_slow_timeout, None);
+    }
+    block_on(event.wait_completed());
+    let result = event
+        .inner
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("handler result");
+    assert_eq!(result.timeout, Some(12.0));
     bus.stop();
 }
 
