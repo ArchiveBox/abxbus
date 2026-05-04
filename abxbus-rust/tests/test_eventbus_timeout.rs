@@ -5,7 +5,7 @@ use abxbus_rust::{
     event_handler::EventHandlerOptions,
     event_result::EventResultStatus,
     typed::{EventSpec, TypedEvent},
-    types::EventHandlerConcurrencyMode,
+    types::{EventConcurrencyMode, EventHandlerConcurrencyMode},
 };
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
@@ -91,6 +91,95 @@ fn test_event_timeout_aborts_in_flight_handler_result() {
         })
     );
     bus.stop();
+}
+
+#[test]
+fn test_handler_completes_within_timeout() {
+    let bus = EventBus::new(Some("TimeoutOkBus".to_string()));
+
+    bus.on("timeout", "fast", |_event| async move {
+        thread::sleep(Duration::from_millis(5));
+        Ok(json!("fast"))
+    });
+
+    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    event.inner.inner.lock().event_timeout = Some(0.5);
+
+    let event = bus.emit(event);
+    block_on(event.wait_completed());
+
+    let result = event
+        .inner
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("missing result");
+    assert_eq!(result.status, EventResultStatus::Completed);
+    assert_eq!(result.result, Some(json!("fast")));
+    bus.stop();
+}
+
+#[test]
+fn test_event_timeouts_abort_handlers_across_concurrency_modes() {
+    let event_modes = [
+        EventConcurrencyMode::GlobalSerial,
+        EventConcurrencyMode::BusSerial,
+        EventConcurrencyMode::Parallel,
+    ];
+    let handler_modes = [
+        EventHandlerConcurrencyMode::Serial,
+        EventHandlerConcurrencyMode::Parallel,
+    ];
+
+    for event_mode in event_modes {
+        for handler_mode in handler_modes {
+            let bus = EventBus::new_with_options(
+                Some(format!("TimeoutModeBus{event_mode:?}{handler_mode:?}")),
+                EventBusOptions {
+                    event_concurrency: event_mode,
+                    event_handler_concurrency: handler_mode,
+                    ..EventBusOptions::default()
+                },
+            );
+
+            bus.on("timeout", "slow", |_event| async move {
+                thread::sleep(Duration::from_millis(50));
+                Ok(json!("slow"))
+            });
+
+            let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+            event.inner.inner.lock().event_timeout = Some(0.01);
+            let event = bus.emit(event);
+            block_on(event.wait_completed());
+
+            let result = event
+                .inner
+                .inner
+                .lock()
+                .event_results
+                .values()
+                .next()
+                .cloned()
+                .expect("missing result");
+            assert_eq!(
+                result.status,
+                EventResultStatus::Error,
+                "expected timeout error for event={event_mode:?} handler={handler_mode:?}"
+            );
+            assert_eq!(
+                result.to_flat_json_value()["error"],
+                json!({
+                    "type": "EventHandlerAbortedError",
+                    "message": "timeout",
+                }),
+                "expected aborted error for event={event_mode:?} handler={handler_mode:?}"
+            );
+            bus.stop();
+        }
+    }
 }
 
 #[test]

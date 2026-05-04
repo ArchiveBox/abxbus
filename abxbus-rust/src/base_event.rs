@@ -281,11 +281,19 @@ impl BaseEvent {
     }
 
     pub fn mark_completed(&self) {
+        self.mark_completed_without_notify();
+        self.notify_completed();
+    }
+
+    pub(crate) fn mark_completed_without_notify(&self) {
         let mut event = self.inner.lock();
         event.event_status = EventStatus::Completed;
         if event.event_completed_at.is_none() {
             event.event_completed_at = Some(now_iso());
         }
+    }
+
+    pub(crate) fn notify_completed(&self) {
         self.completed.notify(usize::MAX);
     }
 

@@ -1180,7 +1180,7 @@ impl EventBus {
             done
         };
         if should_complete {
-            event.mark_completed();
+            event.mark_completed_without_notify();
         }
 
         if self.runtime.max_history_size == Some(0) {
@@ -1192,6 +1192,10 @@ impl EventBus {
                 .retain(|id| id != &event_id);
         } else if let Some(max_size) = self.runtime.max_history_size {
             self.trim_history_to_capacity(max_size, false);
+        }
+
+        if should_complete {
+            event.notify_completed();
         }
     }
 
