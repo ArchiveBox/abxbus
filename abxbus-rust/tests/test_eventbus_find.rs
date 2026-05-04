@@ -1743,3 +1743,251 @@ fn test_find_with_all_parameters_combined() {
     assert_eq!(found.inner.lock().event_id, expected_child_id);
     bus.stop();
 }
+
+#[test]
+fn test_max_history_zero_disables_past_but_future_still_works() {
+    let bus =
+        EventBus::new_with_history(Some("FindZeroHistoryAliasBus".to_string()), Some(0), true);
+    let bus_for_emit = bus.clone();
+    bus.on("parent", "complete_parent", |_event| async move {
+        Ok(json!("done"))
+    });
+
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(20));
+        bus_for_emit.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    });
+
+    let found_future = block_on(bus.find("parent", false, Some(0.5), None)).expect("future match");
+    block_on(found_future.event_completed());
+    assert_eq!(bus.event_history_size(), 0);
+
+    let found_past = block_on(bus.find("parent", true, None, None));
+    assert!(found_past.is_none());
+    bus.stop();
+}
+
+#[test]
+fn test_past_float_filters_by_time_window() {
+    let bus = EventBus::new(Some("FindPastFloatAliasBus".to_string()));
+    bus.on("work", "complete", |_event| async move { Ok(json!("ok")) });
+
+    let old_event = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(old_event.wait_completed());
+    old_event.inner.inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
+    let new_event = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(new_event.wait_completed());
+
+    let recent = block_on(bus.find_with_options(
+        "work",
+        FindOptions {
+            past: true,
+            past_window: Some(0.1),
+            ..FindOptions::default()
+        },
+    ))
+    .expect("recent event");
+    let recent_id = recent.inner.lock().event_id.clone();
+    let new_event_id = new_event.inner.inner.lock().event_id.clone();
+    assert_eq!(recent_id, new_event_id);
+
+    let newest_from_longer_window = block_on(bus.find_with_options(
+        "work",
+        FindOptions {
+            past: true,
+            past_window: Some(1.0),
+            ..FindOptions::default()
+        },
+    ))
+    .expect("newest event");
+    let newest_id = newest_from_longer_window.inner.lock().event_id.clone();
+    let new_event_id = new_event.inner.inner.lock().event_id.clone();
+    assert_eq!(newest_id, new_event_id);
+    assert_ne!(
+        newest_from_longer_window.inner.lock().event_id,
+        old_event.inner.inner.lock().event_id
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_respects_where_filter() {
+    let bus = EventBus::new(Some("FindWhereAliasBus".to_string()));
+    bus.on("filter_event", "complete_filter", |_event| async move {
+        Ok(json!("done"))
+    });
+
+    let first = bus.emit::<FilterEvent>(TypedEvent::new(FilterPayload {
+        value: "target-1".to_string(),
+        category: "screenshot".to_string(),
+    }));
+    block_on(first.wait_completed());
+    let second = bus.emit::<FilterEvent>(TypedEvent::new(FilterPayload {
+        value: "target-2".to_string(),
+        category: "screenshot".to_string(),
+    }));
+    block_on(second.wait_completed());
+
+    let found = block_on(bus.find_with_options(
+        "filter_event",
+        FindOptions {
+            past: true,
+            where_predicate: Some(Arc::new(|event| {
+                payload_string(event, "value").as_deref() == Some("target-2")
+            })),
+            ..FindOptions::default()
+        },
+    ))
+    .expect("where match");
+
+    let found_id = found.inner.lock().event_id.clone();
+    let second_id = second.inner.inner.lock().event_id.clone();
+    assert_eq!(found_id, second_id);
+    bus.stop();
+}
+
+#[test]
+fn test_past_includes_in_progress_events() {
+    let bus = EventBus::new(Some("FindPastInProgressAliasBus".to_string()));
+
+    bus.on("parent", "slow_parent", |_event| async move {
+        thread::sleep(Duration::from_millis(80));
+        Ok(json!("done"))
+    });
+
+    let in_flight = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    thread::sleep(Duration::from_millis(10));
+
+    let found = block_on(bus.find("parent", true, None, None)).expect("in-progress event");
+    let found_id = found.inner.lock().event_id.clone();
+    let in_flight_id = in_flight.inner.inner.lock().event_id.clone();
+    assert_eq!(found_id, in_flight_id);
+    assert!(matches!(
+        found.inner.lock().event_status,
+        abxbus_rust::types::EventStatus::Pending | abxbus_rust::types::EventStatus::Started
+    ));
+
+    block_on(in_flight.wait_completed());
+    let completed = block_on(bus.find("parent", true, None, None)).expect("completed event");
+    let completed_id = completed.inner.lock().event_id.clone();
+    let in_flight_id = in_flight.inner.inner.lock().event_id.clone();
+    assert_eq!(completed_id, in_flight_id);
+    bus.stop();
+}
+
+#[test]
+fn test_find_waits_for_future_event() {
+    let bus = EventBus::new(Some("FindFutureLegacyAliasBus".to_string()));
+    let bus_for_emit = bus.clone();
+    bus.on("parent", "complete_parent", |_event| async move {
+        Ok(json!("done"))
+    });
+
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(50));
+        bus_for_emit.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    });
+
+    let found = block_on(bus.find("parent", false, Some(1.0), None)).expect("future event");
+    assert_eq!(found.inner.lock().event_type, "parent");
+    block_on(found.event_completed());
+    bus.stop();
+}
+
+#[test]
+fn test_find_with_past_true_and_future_timeout() {
+    let bus = EventBus::new(Some("FindPastTrueFutureTimeoutAliasBus".to_string()));
+    bus.on("parent", "complete_parent", |_event| async move {
+        Ok(json!("done"))
+    });
+
+    let dispatched = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let dispatched_id = dispatched.inner.inner.lock().event_id.clone();
+
+    let start = Instant::now();
+    let found = block_on(bus.find("parent", true, Some(5.0), None)).expect("past event");
+    assert!(start.elapsed() < Duration::from_millis(100));
+    assert_eq!(found.inner.lock().event_id, dispatched_id);
+    bus.stop();
+}
+
+#[test]
+fn test_find_with_past_float_and_future_timeout() {
+    let bus = EventBus::new(Some("FindPastFloatFutureTimeoutAliasBus".to_string()));
+    bus.on("parent", "complete_parent", |_event| async move {
+        Ok(json!("done"))
+    });
+
+    let dispatched = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let dispatched_id = dispatched.inner.inner.lock().event_id.clone();
+
+    let found = block_on(bus.find_with_options(
+        "parent",
+        FindOptions {
+            past: true,
+            past_window: Some(5.0),
+            future: Some(1.0),
+            ..FindOptions::default()
+        },
+    ))
+    .expect("recent past event");
+    assert_eq!(found.inner.lock().event_id, dispatched_id);
+    bus.stop();
+}
+
+#[test]
+fn test_find_with_child_of_and_future_timeout() {
+    let bus = EventBus::new(Some("FindChildFutureTimeoutAliasBus".to_string()));
+    let bus_for_parent = bus.clone();
+    let child_id = Arc::new(Mutex::new(None::<String>));
+    let child_id_for_parent = child_id.clone();
+
+    bus.on("parent", "emit_child", move |_event| {
+        let bus = bus_for_parent.clone();
+        let child_id = child_id_for_parent.clone();
+        async move {
+            let child = bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            *child_id.lock().expect("child id lock") =
+                Some(child.inner.inner.lock().event_id.clone());
+            Ok(json!("parent"))
+        }
+    });
+    bus.on("child", "complete_child", |_event| async move {
+        Ok(json!("child"))
+    });
+
+    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let expected_child_id = wait_for_string(&child_id);
+
+    let found = block_on(bus.find("child", true, Some(5.0), Some(parent.inner.clone())))
+        .expect("child event");
+    assert_eq!(found.inner.lock().event_id, expected_child_id);
+    bus.stop();
+}
+
+#[test]
+fn test_past_true_future_true_searches_all_and_waits_forever() {
+    let bus = EventBus::new(Some("FindPastTrueFutureTrueAliasBus".to_string()));
+    bus.on("parent", "complete_parent", |_event| async move {
+        Ok(json!("done"))
+    });
+
+    let dispatched = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let dispatched_id = dispatched.inner.inner.lock().event_id.clone();
+    thread::sleep(Duration::from_millis(100));
+
+    let start = Instant::now();
+    let found = block_on(bus.find_with_options(
+        "parent",
+        FindOptions {
+            past: true,
+            future: Some(30.0),
+            ..FindOptions::default()
+        },
+    ))
+    .expect("past event");
+
+    assert!(start.elapsed() < Duration::from_millis(100));
+    assert_eq!(found.inner.lock().event_id, dispatched_id);
+    bus.stop();
+}
