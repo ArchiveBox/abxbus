@@ -532,6 +532,9 @@ impl EventBus {
             } else {
                 list.clear();
             }
+            if list.is_empty() {
+                handlers.remove(pattern);
+            }
         }
     }
 
