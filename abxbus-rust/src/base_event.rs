@@ -268,6 +268,154 @@ impl BaseEvent {
         })
     }
 
+    pub(crate) fn validate_result_value(&self, value: Value) -> Result<Value, String> {
+        let schema = self.inner.lock().event_result_type.clone();
+        let Some(schema) = schema else {
+            return Ok(value);
+        };
+        if value.is_null() || Self::is_base_event_json(&value) {
+            return Ok(value);
+        }
+        Self::validate_json_schema_value(&schema, &value, "$")
+            .map(|_| value.clone())
+            .map_err(|error| {
+                let preview = serde_json::to_string(&value)
+                    .unwrap_or_else(|_| value.to_string())
+                    .chars()
+                    .take(40)
+                    .collect::<String>();
+                format!(
+                    "EventHandlerResultSchemaError: Event handler return value {preview}... did not match event_result_type: {error}"
+                )
+            })
+    }
+
+    fn validate_json_schema_value(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
+        if let Some(any_of) = schema.get("anyOf").and_then(Value::as_array) {
+            if any_of
+                .iter()
+                .any(|branch| Self::validate_json_schema_value(branch, value, path).is_ok())
+            {
+                return Ok(());
+            }
+            return Err(format!("{path} did not match anyOf schema"));
+        }
+
+        let schema_type = schema.get("type");
+        if let Some(Value::Array(types)) = schema_type {
+            if types
+                .iter()
+                .any(|schema_type| Self::json_schema_type_matches(schema_type, value))
+            {
+                return Self::validate_json_schema_children(schema, value, path);
+            }
+            return Err(format!("{path} did not match any allowed type"));
+        }
+
+        if let Some(schema_type) = schema_type {
+            if !Self::json_schema_type_matches(schema_type, value) {
+                return Err(format!(
+                    "{path} expected {}",
+                    schema_type.as_str().unwrap_or("matching schema type")
+                ));
+            }
+        } else if schema.get("properties").is_some()
+            || schema.get("required").is_some()
+            || schema.get("additionalProperties").is_some()
+        {
+            if !value.is_object() {
+                return Err(format!("{path} expected object"));
+            }
+        }
+
+        Self::validate_json_schema_children(schema, value, path)
+    }
+
+    fn json_schema_type_matches(schema_type: &Value, value: &Value) -> bool {
+        match schema_type.as_str() {
+            Some("string") => value.is_string(),
+            Some("number") => value.is_number(),
+            Some("integer") => value
+                .as_f64()
+                .is_some_and(|number| number.is_finite() && number.fract() == 0.0),
+            Some("boolean") => value.is_boolean(),
+            Some("null") => value.is_null(),
+            Some("array") => value.is_array(),
+            Some("object") => value.is_object(),
+            _ => true,
+        }
+    }
+
+    fn validate_json_schema_children(
+        schema: &Value,
+        value: &Value,
+        path: &str,
+    ) -> Result<(), String> {
+        if let Some(items_schema) = schema.get("items") {
+            if let Some(items) = value.as_array() {
+                for (index, item) in items.iter().enumerate() {
+                    Self::validate_json_schema_value(
+                        items_schema,
+                        item,
+                        &format!("{path}[{index}]"),
+                    )?;
+                }
+            }
+        }
+
+        let Some(object) = value.as_object() else {
+            return Ok(());
+        };
+
+        if let Some(required) = schema.get("required").and_then(Value::as_array) {
+            for key in required.iter().filter_map(Value::as_str) {
+                if !object.contains_key(key) {
+                    return Err(format!("{path}.{key} is required"));
+                }
+            }
+        }
+
+        let properties = schema.get("properties").and_then(Value::as_object);
+        if let Some(properties) = properties {
+            for (key, property_schema) in properties {
+                if let Some(property_value) = object.get(key) {
+                    Self::validate_json_schema_value(
+                        property_schema,
+                        property_value,
+                        &format!("{path}.{key}"),
+                    )?;
+                }
+            }
+        }
+
+        match schema.get("additionalProperties") {
+            Some(Value::Bool(false)) => {
+                if let Some(properties) = properties {
+                    for key in object.keys() {
+                        if !properties.contains_key(key) {
+                            return Err(format!("{path}.{key} is not allowed"));
+                        }
+                    }
+                }
+            }
+            Some(additional_schema @ Value::Object(_)) => {
+                for (key, item) in object {
+                    if properties.is_some_and(|props| props.contains_key(key)) {
+                        continue;
+                    }
+                    Self::validate_json_schema_value(
+                        additional_schema,
+                        item,
+                        &format!("{path}.{key}"),
+                    )?;
+                }
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
     fn ordered_event_results(&self) -> Vec<EventResult> {
         let mut results: Vec<EventResult> =
             self.inner.lock().event_results.values().cloned().collect();

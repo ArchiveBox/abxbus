@@ -169,8 +169,9 @@ impl EventResult {
         };
 
         let (tx, rx) = std_mpsc::channel();
+        let event_for_handler = event.clone();
         thread::spawn(move || {
-            let _ = tx.send(block_on(callable(event)));
+            let _ = tx.send(block_on(callable(event_for_handler)));
         });
 
         let call_result = if let Some(timeout_secs) = timeout {
@@ -199,11 +200,19 @@ impl EventResult {
 
         self.completed_at = Some(now_iso());
         match call_result {
-            Ok(value) => {
-                self.status = EventResultStatus::Completed;
-                self.result = Some(value.clone());
-                Ok(value)
-            }
+            Ok(value) => match event.validate_result_value(value) {
+                Ok(value) => {
+                    self.status = EventResultStatus::Completed;
+                    self.result = Some(value.clone());
+                    Ok(value)
+                }
+                Err(error) => {
+                    self.status = EventResultStatus::Error;
+                    self.result = None;
+                    self.error = Some(error.clone());
+                    Err(error)
+                }
+            },
             Err(error) => {
                 self.status = EventResultStatus::Error;
                 self.error = Some(error.clone());

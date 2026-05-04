@@ -1856,10 +1856,17 @@ impl EventBus {
         }
 
         match call_result {
-            Ok(Ok(value)) => {
-                current.status = EventResultStatus::Completed;
-                current.result = Some(value);
-            }
+            Ok(Ok(value)) => match event.validate_result_value(value) {
+                Ok(value) => {
+                    current.status = EventResultStatus::Completed;
+                    current.result = Some(value);
+                }
+                Err(error) => {
+                    current.status = EventResultStatus::Error;
+                    current.result = None;
+                    current.error = Some(error);
+                }
+            },
             Ok(Err(error)) => {
                 current.status = EventResultStatus::Error;
                 current.error = Some(error);
