@@ -112,6 +112,24 @@ impl EventResult {
         }
     }
 
+    pub fn update(
+        &mut self,
+        status: Option<EventResultStatus>,
+        result: Option<Option<Value>>,
+        error: Option<Option<String>>,
+    ) -> &mut Self {
+        if let Some(result) = result {
+            self.result = result;
+        }
+        if let Some(error) = error {
+            self.error = error;
+        }
+        if let Some(status) = status {
+            self.status = status;
+        }
+        self
+    }
+
     pub fn to_flat_json_value(&self) -> Value {
         json!({
             "id": self.id,
@@ -150,6 +168,7 @@ impl EventResult {
             "EventHandlerCancelledError",
             "EventHandlerTimeoutError",
             "EventHandlerResultSchemaError",
+            "Exception",
         ] {
             let prefix = format!("{error_type}: ");
             if let Some(message) = raw_message.strip_prefix(&prefix) {
@@ -157,6 +176,27 @@ impl EventResult {
             }
         }
         ("Error", raw_message)
+    }
+
+    fn error_from_json_value(error: &Value) -> Option<String> {
+        match error {
+            Value::String(message) => Some(message.clone()),
+            Value::Object(object) => {
+                let message = object
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| error.to_string());
+                if let Some(error_type) = object.get("type").and_then(Value::as_str) {
+                    if !error_type.is_empty() {
+                        return Some(format!("{error_type}: {message}"));
+                    }
+                }
+                Some(message)
+            }
+            Value::Null => None,
+            other => Some(other.to_string()),
+        }
     }
 
     pub fn from_flat_json_value(
@@ -251,16 +291,7 @@ impl EventResult {
                 .and_then(Value::as_str)
                 .map(ToString::to_string),
             result: record.get("result").cloned(),
-            error: record.get("error").and_then(|error| match error {
-                Value::String(message) => Some(message.clone()),
-                Value::Object(object) => object
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string)
-                    .or_else(|| Some(error.to_string())),
-                Value::Null => None,
-                other => Some(other.to_string()),
-            }),
+            error: record.get("error").and_then(Self::error_from_json_value),
             completed_at: record
                 .get("completed_at")
                 .and_then(Value::as_str)

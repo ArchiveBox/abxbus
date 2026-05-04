@@ -116,6 +116,71 @@ fn test_event_result_serializes_handler_metadata_and_derived_fields() {
 }
 
 #[test]
+fn test_event_result_update_keeps_consistent_ordering_semantics_for_status_result_error() {
+    let handler = EventHandler {
+        id: "h1".into(),
+        event_pattern: "StandaloneEvent".into(),
+        handler_name: "handler".into(),
+        handler_file_path: None,
+        handler_timeout: None,
+        handler_slow_timeout: None,
+        handler_registered_at: "2026-01-01T00:00:00.000Z".into(),
+        eventbus_name: "StandaloneBus".into(),
+        eventbus_id: "018f8e40-1234-7000-8000-000000001234".into(),
+        callable: None,
+    };
+
+    let mut result = EventResult::new("event-id".into(), handler, None);
+    result.error = Some("RuntimeError: existing".to_string());
+
+    result.update(Some(EventResultStatus::Completed), None, None);
+    assert_eq!(result.status, EventResultStatus::Completed);
+    assert_eq!(result.error.as_deref(), Some("RuntimeError: existing"));
+
+    result.update(
+        Some(EventResultStatus::Error),
+        Some(Some(json!("seeded"))),
+        None,
+    );
+    assert_eq!(result.result, Some(json!("seeded")));
+    assert_eq!(result.status, EventResultStatus::Error);
+}
+
+#[test]
+fn test_event_result_error_json_roundtrip_preserves_error_type_and_message() {
+    let payload = json!({
+        "id": "018f8e40-1234-7000-8000-000000009999",
+        "status": "error",
+        "event_id": "018f8e40-1234-7000-8000-000000001111",
+        "handler_id": "h1",
+        "handler_name": "handler",
+        "handler_file_path": null,
+        "handler_timeout": null,
+        "handler_slow_timeout": null,
+        "handler_registered_at": "2026-01-01T00:00:00.000Z",
+        "handler_event_pattern": "StandaloneEvent",
+        "eventbus_name": "StandaloneBus",
+        "eventbus_id": "018f8e40-1234-7000-8000-000000001234",
+        "started_at": "2026-01-01T00:00:01.000Z",
+        "completed_at": "2026-01-01T00:00:02.000Z",
+        "result": null,
+        "error": {
+            "type": "EventHandlerTimeoutError",
+            "message": "handler exceeded 0.01s"
+        },
+        "event_children": []
+    });
+
+    let restored: EventResult =
+        serde_json::from_value(payload.clone()).expect("event result json should deserialize");
+    assert_eq!(
+        restored.error.as_deref(),
+        Some("EventHandlerTimeoutError: handler exceeded 0.01s")
+    );
+    assert_eq!(serde_json::to_value(&restored).expect("serialize"), payload);
+}
+
+#[test]
 fn test_eventresultslist_returns_filtered_values_by_default_and_can_return_raw_values_with_include()
 {
     let bus = EventBus::new(Some("EventResultsListBus".to_string()));
