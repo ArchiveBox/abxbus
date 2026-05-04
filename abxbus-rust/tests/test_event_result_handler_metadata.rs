@@ -244,6 +244,11 @@ fn test_construct_pending_handler_result_matches_constructor() {
 }
 
 #[test]
+fn test_construct_pending_handler_result_matches_pydantic_constructor() {
+    test_construct_pending_handler_result_matches_constructor();
+}
+
+#[test]
 fn test_event_result_serializes_handler_metadata_and_derived_fields() {
     let entry = handler_entry("handler", data_handler());
     let result = EventResult::new(

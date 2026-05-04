@@ -1711,6 +1711,36 @@ fn test_forwarded_first_mode_uses_processing_bus_handler_defaults() {
 }
 
 #[test]
+fn test_comprehensive_patterns() {
+    test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking();
+}
+
+#[test]
+fn test_multi_bus_forwarding_with_queued_events() {
+    test_multi_bus_queues_are_independent_when_awaiting_child();
+}
+
+#[test]
+fn test_awaited_child_jumps_queue_no_overshoot() {
+    test_awaited_child_jumps_queue_without_overshoot();
+}
+
+#[test]
+fn test_dispatch_multiple_await_one_skips_others() {
+    test_dispatch_multiple_await_one_skips_others_until_after_handler_completes();
+}
+
+#[test]
+fn test_await_already_completed_event() {
+    test_awaiting_an_already_completed_event_is_a_no_op();
+}
+
+#[test]
+fn test_multiple_awaits_same_event() {
+    test_multiple_awaits_on_same_event();
+}
+
+#[test]
 fn test_forwarded_event_uses_processing_bus_defaults_unless_overridden() {
     test_forwarded_event_uses_processing_bus_defaults_unless_explicit_overrides_are_set();
 }

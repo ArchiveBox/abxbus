@@ -640,3 +640,13 @@ fn test_history_backpressure_rejects_overflow_and_preserves_findable_history() {
     assert!(bus.is_idle_and_queue_empty());
     bus.stop();
 }
+
+#[test]
+fn test_concurrency_intersection_parallel_events_with_serial_handlers() {
+    test_concurrency_intersection_parallel_events_with_serial_handlers_stays_serial_per_event();
+}
+
+#[test]
+fn test_timeout_enforcement_does_not_break_followup_processing_or_queue_state() {
+    test_timeout_enforcement_preserves_follow_up_processing_and_queue_state();
+}

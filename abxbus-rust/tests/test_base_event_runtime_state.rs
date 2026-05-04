@@ -108,6 +108,11 @@ fn test_event_without_handlers_completes_and_serializes_runtime_state() {
 }
 
 #[test]
+fn test_event_without_handlers() {
+    test_event_without_handlers_completes_and_serializes_runtime_state();
+}
+
+#[test]
 fn test_event_with_manually_set_completed_at_reconciles_through_dispatch() {
     let event = sample_event("manual");
     let bus = EventBus::new(Some("RuntimeStateManualCompletedAtBus".to_string()));
@@ -172,12 +177,22 @@ fn test_event_with_manually_set_completed_at_reconciles_through_dispatch() {
 }
 
 #[test]
+fn test_event_with_manually_set_completed_at() {
+    test_event_with_manually_set_completed_at_reconciles_through_dispatch();
+}
+
+#[test]
 fn test_event_copy_preserves_runtime_attrs() {
     let event = sample_event("copy_test");
     let copied_event = BaseEvent::from_json_value(event.to_json_value());
 
     assert_eq!(copied_event.inner.lock().event_started_at, None);
     assert_eq!(copied_event.inner.lock().event_completed_at, None);
+}
+
+#[test]
+fn test_event_copy_preserves_private_attrs() {
+    test_event_copy_preserves_runtime_attrs();
 }
 
 #[test]

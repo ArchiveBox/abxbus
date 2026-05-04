@@ -7,7 +7,10 @@ use abxbus_rust::{
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{mpsc, Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 #[derive(Clone, Serialize, Deserialize)]
 struct EmptyPayload {}
@@ -41,6 +44,13 @@ impl EventSpec for ResetCoverageEvent {
     type Payload = ResetPayload;
     type Result = EmptyResult;
     const EVENT_TYPE: &'static str = "ResetCoverageEvent";
+}
+
+struct IdleTimeoutCoverageEvent;
+impl EventSpec for IdleTimeoutCoverageEvent {
+    type Payload = EmptyPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "IdleTimeoutCoverageEvent";
 }
 
 #[test]
@@ -123,6 +133,54 @@ fn test_event_reset_creates_fresh_pending_event_for_cross_bus_dispatch() {
         .any(|path| path.starts_with("ResetCoverageBusB#")));
     bus_a.stop();
     bus_b.stop();
+}
+
+#[test]
+fn test_wait_until_idle_timeout_path_recovers_after_inflight_handler_finishes() {
+    let bus = EventBus::new(Some("IdleTimeoutCoverageBus".to_string()));
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Arc::new(Mutex::new(release_rx));
+
+    bus.on("IdleTimeoutCoverageEvent", "slow_handler", move |_event| {
+        let started_tx = started_tx.clone();
+        let release_rx = release_rx.clone();
+        async move {
+            let _ = started_tx.send(());
+            release_rx
+                .lock()
+                .expect("release lock")
+                .recv_timeout(Duration::from_secs(2))
+                .expect("release handler");
+            Ok(json!(null))
+        }
+    });
+
+    let pending = bus.emit::<IdleTimeoutCoverageEvent>(
+        TypedEvent::<IdleTimeoutCoverageEvent>::new(EmptyPayload {}),
+    );
+    started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("handler should start");
+
+    let start = Instant::now();
+    let idle = block_on(bus.wait_until_idle(Some(0.01)));
+    let elapsed = start.elapsed();
+    assert!(!idle);
+    assert!(elapsed < Duration::from_millis(500));
+    assert_ne!(
+        pending.inner.inner.lock().event_status,
+        EventStatus::Completed
+    );
+
+    release_tx.send(()).expect("release handler");
+    block_on(pending.wait_completed());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+    assert_eq!(
+        pending.inner.inner.lock().event_status,
+        EventStatus::Completed
+    );
+    bus.stop();
 }
 
 #[test]

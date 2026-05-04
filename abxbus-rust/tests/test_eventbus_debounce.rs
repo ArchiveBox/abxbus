@@ -124,6 +124,11 @@ fn test_simple_debounce_with_child_of_reuses_recent_event() {
 }
 
 #[test]
+fn test_simple_debounce_uses_recent_history_or_dispatches_new() {
+    test_simple_debounce_with_child_of_reuses_recent_event();
+}
+
+#[test]
 fn test_debounce_uses_future_match_before_dispatch_fallback() {
     let bus = EventBus::new(Some("AdvancedDebounceBus".to_string()));
     let bus_for_find = bus.clone();
@@ -152,6 +157,16 @@ fn test_debounce_uses_future_match_before_dispatch_fallback() {
 
     assert_eq!(resolved.inner.lock().event_type, "SyncEvent");
     bus.stop();
+}
+
+#[test]
+fn test_advanced_debounce_prefers_history_then_waits_future_then_dispatches() {
+    test_debounce_uses_future_match_before_dispatch_fallback();
+}
+
+#[test]
+fn test_advanced_debounce_prefers_history_then_waits_for_future_then_dispatches() {
+    test_debounce_uses_future_match_before_dispatch_fallback();
 }
 
 #[test]
@@ -190,6 +205,16 @@ fn test_debounce_prefers_recent_history() {
 }
 
 #[test]
+fn test_returns_existing_fresh_event() {
+    test_debounce_prefers_recent_history();
+}
+
+#[test]
+fn test_debounce_returns_existing_fresh_event() {
+    test_debounce_prefers_recent_history();
+}
+
+#[test]
 fn test_debounce_dispatches_when_recent_missing() {
     let bus = EventBus::new(Some("DebounceNoMatchBus".to_string()));
     bus.on("ScreenshotEvent", "complete", |_event| async move {
@@ -218,6 +243,16 @@ fn test_debounce_dispatches_when_recent_missing() {
     );
     assert_eq!(result.inner.lock().event_status, EventStatus::Completed);
     bus.stop();
+}
+
+#[test]
+fn test_dispatches_new_when_no_match() {
+    test_debounce_dispatches_when_recent_missing();
+}
+
+#[test]
+fn test_debounce_dispatches_new_when_no_match() {
+    test_debounce_dispatches_when_recent_missing();
 }
 
 #[test]
@@ -258,6 +293,11 @@ fn test_dispatches_new_when_stale() {
 }
 
 #[test]
+fn test_debounce_dispatches_new_when_existing_is_stale() {
+    test_dispatches_new_when_stale();
+}
+
+#[test]
 fn test_find_past_only_returns_immediately_without_waiting() {
     let bus = EventBus::new(Some("DebouncePastOnlyBus".to_string()));
 
@@ -268,6 +308,12 @@ fn test_find_past_only_returns_immediately_without_waiting() {
     assert!(result.is_none());
     assert!(elapsed < Duration::from_millis(50));
     bus.stop();
+}
+
+#[test]
+fn test_debounce_past_only_and_past_window_lookups_return_immediately_when_empty() {
+    test_find_past_only_returns_immediately_without_waiting();
+    test_find_past_float_returns_immediately_without_waiting();
 }
 
 #[test]
@@ -429,4 +475,9 @@ fn test_or_chain_multiple_sequential_lookups() {
         Some(&json!(TARGET_ID_2))
     );
     bus.stop();
+}
+
+#[test]
+fn test_debounce_or_chain_handles_sequential_lookups_without_blocking() {
+    test_or_chain_multiple_sequential_lookups();
 }
