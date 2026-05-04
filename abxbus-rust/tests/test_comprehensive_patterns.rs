@@ -5,9 +5,11 @@ use std::{
 };
 
 use abxbus_rust::{
-    event_bus::EventBus,
+    event_bus::{EventBus, EventBusOptions},
     typed::{EventSpec, TypedEvent},
-    types::EventStatus,
+    types::{
+        EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventStatus,
+    },
 };
 use futures::{executor::block_on, join};
 use serde::{Deserialize, Serialize};
@@ -79,6 +81,67 @@ impl EventSpec for Child2 {
     const EVENT_TYPE: &'static str = "Child2";
 }
 
+struct ParentEvent;
+impl EventSpec for ParentEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "ParentEvent";
+}
+
+struct ImmediateChildEvent;
+impl EventSpec for ImmediateChildEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "ImmediateChildEvent";
+}
+
+struct QueuedChildEvent;
+impl EventSpec for QueuedChildEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "QueuedChildEvent";
+}
+
+struct RootEvent;
+impl EventSpec for RootEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "RootEvent";
+}
+
+struct Event4;
+impl EventSpec for Event4 {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "Event4";
+}
+
+struct SlowEvent;
+impl EventSpec for SlowEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "SlowEvent";
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct ModePayload {
+    mode: String,
+}
+
+struct DefaultsChildEvent;
+impl EventSpec for DefaultsChildEvent {
+    type Payload = ModePayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "DefaultsChildEvent";
+}
+
+struct ForwardedFirstEvent;
+impl EventSpec for ForwardedFirstEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "ForwardedFirstEvent";
+}
+
 fn push(order: &Arc<Mutex<Vec<String>>>, entry: &str) {
     order.lock().expect("order lock").push(entry.to_string());
 }
@@ -88,6 +151,410 @@ fn index_of(order: &[String], entry: &str) -> usize {
         .iter()
         .position(|value| value == entry)
         .unwrap_or_else(|| panic!("missing order entry: {entry}; got {order:?}"))
+}
+
+fn count_entries(order: &[String], entry: &str) -> usize {
+    order.iter().filter(|value| value.as_str() == entry).count()
+}
+
+fn wait_for_entry(order: &Arc<Mutex<Vec<String>>>, entry: &str) {
+    for _ in 0..200 {
+        if order
+            .lock()
+            .expect("order lock")
+            .iter()
+            .any(|value| value == entry)
+        {
+            return;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    panic!(
+        "timed out waiting for {entry}; got {:?}",
+        order.lock().expect("order lock").clone()
+    );
+}
+
+fn new_bus_with_concurrency(
+    name: &str,
+    event_concurrency: EventConcurrencyMode,
+    event_handler_concurrency: EventHandlerConcurrencyMode,
+    event_handler_completion: EventHandlerCompletionMode,
+) -> Arc<EventBus> {
+    EventBus::new_with_options(
+        Some(name.to_string()),
+        EventBusOptions {
+            event_concurrency,
+            event_handler_concurrency,
+            event_handler_completion,
+            ..EventBusOptions::default()
+        },
+    )
+}
+
+#[test]
+fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() {
+    let bus1 = EventBus::new(Some("bus1".to_string()));
+    let bus2 = EventBus::new(Some("bus2".to_string()));
+    let results = Arc::new(Mutex::new(Vec::<(usize, String)>::new()));
+    let execution_counter = Arc::new(Mutex::new(0usize));
+
+    let bus2_results = results.clone();
+    let bus2_counter = execution_counter.clone();
+    bus2.on("*", "child_bus2_event_handler", move |event| {
+        let results = bus2_results.clone();
+        let counter = bus2_counter.clone();
+        async move {
+            let seq = {
+                let mut count = counter.lock().expect("counter lock");
+                *count += 1;
+                *count
+            };
+            let event_type_short = event
+                .inner
+                .lock()
+                .event_type
+                .trim_end_matches("Event")
+                .to_string();
+            results
+                .lock()
+                .expect("results lock")
+                .push((seq, format!("bus2_handler_{event_type_short}")));
+            Ok(json!("forwarded bus result"))
+        }
+    });
+
+    let bus2_for_forward = bus2.clone();
+    bus1.on("*", "emit", move |event| {
+        let bus2 = bus2_for_forward.clone();
+        async move {
+            bus2.emit_base(event);
+            Ok(json!(null))
+        }
+    });
+
+    let bus1_for_parent = bus1.clone();
+    let bus2_label = bus2.label();
+    let parent_results = results.clone();
+    let parent_counter = execution_counter.clone();
+    bus1.on("ParentEvent", "parent_bus1_handler", move |event| {
+        let bus = bus1_for_parent.clone();
+        let bus2_label = bus2_label.clone();
+        let results = parent_results.clone();
+        let counter = parent_counter.clone();
+        async move {
+            let seq = {
+                let mut count = counter.lock().expect("counter lock");
+                *count += 1;
+                *count
+            };
+            results
+                .lock()
+                .expect("results lock")
+                .push((seq, "parent_start".to_string()));
+
+            let child_event_async =
+                bus.emit_child::<QueuedChildEvent>(TypedEvent::new(EmptyPayload {}));
+            assert_ne!(
+                child_event_async.inner.inner.lock().event_status,
+                EventStatus::Completed
+            );
+
+            let child_event_sync =
+                bus.emit_child::<ImmediateChildEvent>(TypedEvent::new(EmptyPayload {}));
+            child_event_sync.wait_completed().await;
+            assert_eq!(
+                child_event_sync.inner.inner.lock().event_status,
+                EventStatus::Completed
+            );
+            assert!(
+                child_event_sync
+                    .inner
+                    .inner
+                    .lock()
+                    .event_path
+                    .contains(&bus2_label),
+                "awaited child should be forwarded to bus2"
+            );
+
+            let sync_results = child_event_sync.inner.inner.lock().event_results.clone();
+            assert!(sync_results.values().any(|result| {
+                result.handler.eventbus_name == "bus1" && result.handler.handler_name == "emit"
+            }));
+            assert!(sync_results.values().any(|result| {
+                result.handler.eventbus_name == "bus2"
+                    && result.handler.handler_name == "child_bus2_event_handler"
+            }));
+
+            let parent_id = event.inner.lock().event_id.clone();
+            assert_eq!(
+                child_event_async
+                    .inner
+                    .inner
+                    .lock()
+                    .event_parent_id
+                    .as_deref(),
+                Some(parent_id.as_str())
+            );
+            assert_eq!(
+                child_event_sync
+                    .inner
+                    .inner
+                    .lock()
+                    .event_parent_id
+                    .as_deref(),
+                Some(parent_id.as_str())
+            );
+
+            let seq = {
+                let mut count = counter.lock().expect("counter lock");
+                *count += 1;
+                *count
+            };
+            results
+                .lock()
+                .expect("results lock")
+                .push((seq, "parent_end".to_string()));
+            Ok(json!("parent_done"))
+        }
+    });
+
+    let parent_event = bus1.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(parent_event.wait_completed());
+    block_on(bus1.wait_until_idle(Some(2.0)));
+    block_on(bus2.wait_until_idle(Some(2.0)));
+
+    let parent_id = parent_event.inner.inner.lock().event_id.clone();
+    let bus1_events = bus1.to_json_value();
+    let event_history = bus1_events
+        .get("event_history")
+        .and_then(serde_json::Value::as_object)
+        .expect("event history object");
+    let child_events: Vec<_> = event_history
+        .values()
+        .filter(|event| {
+            event
+                .get("event_type")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|event_type| {
+                    event_type == "ImmediateChildEvent" || event_type == "QueuedChildEvent"
+                })
+        })
+        .collect();
+    assert!(!child_events.is_empty());
+    assert!(child_events.iter().all(|event| {
+        event
+            .get("event_parent_id")
+            .and_then(serde_json::Value::as_str)
+            == Some(parent_id.as_str())
+    }));
+
+    let mut sorted_results = results.lock().expect("results lock").clone();
+    sorted_results.sort_by_key(|(seq, _)| *seq);
+    let execution_order: Vec<String> = sorted_results.into_iter().map(|(_, value)| value).collect();
+    assert_eq!(
+        execution_order.first().map(String::as_str),
+        Some("parent_start")
+    );
+    assert!(execution_order.contains(&"bus2_handler_ImmediateChild".to_string()));
+    assert_eq!(
+        count_entries(&execution_order, "bus2_handler_ImmediateChild"),
+        1
+    );
+    assert_eq!(
+        count_entries(&execution_order, "bus2_handler_QueuedChild"),
+        1
+    );
+    assert_eq!(count_entries(&execution_order, "bus2_handler_Parent"), 1);
+    if execution_order.contains(&"parent_end".to_string()) {
+        assert!(index_of(&execution_order, "parent_end") > 1);
+    }
+
+    bus1.stop();
+    bus2.stop();
+}
+
+#[test]
+fn test_race_condition_stress() {
+    let bus1 = EventBus::new(Some("RaceBus1".to_string()));
+    let bus2 = EventBus::new(Some("RaceBus2".to_string()));
+    let results = Arc::new(Mutex::new(Vec::<String>::new()));
+
+    let bus2_for_forward = bus2.clone();
+    bus1.on("*", "forward_to_bus2", move |event| {
+        let bus2 = bus2_for_forward.clone();
+        async move {
+            bus2.emit_base(event);
+            Ok(json!(null))
+        }
+    });
+
+    for bus in [&bus1, &bus2] {
+        for pattern in ["QueuedChildEvent", "ImmediateChildEvent"] {
+            let results = results.clone();
+            let label = bus.label();
+            bus.on(
+                pattern,
+                &format!("{pattern}_child_handler"),
+                move |_event| {
+                    let results = results.clone();
+                    let label = label.clone();
+                    async move {
+                        results
+                            .lock()
+                            .expect("results lock")
+                            .push(format!("child_{label}"));
+                        thread::sleep(Duration::from_millis(1));
+                        Ok(json!(format!("child_done_{label}")))
+                    }
+                },
+            );
+        }
+    }
+
+    let bus1_for_parent = bus1.clone();
+    bus1.on("RootEvent", "parent_handler", move |event| {
+        let bus = bus1_for_parent.clone();
+        async move {
+            let mut children = Vec::new();
+            for _ in 0..3 {
+                children.push(
+                    bus.emit_child::<QueuedChildEvent>(TypedEvent::new(EmptyPayload {}))
+                        .inner,
+                );
+            }
+            for _ in 0..3 {
+                let child = bus.emit_child::<ImmediateChildEvent>(TypedEvent::new(EmptyPayload {}));
+                child.wait_completed().await;
+                assert_eq!(
+                    child.inner.inner.lock().event_status,
+                    EventStatus::Completed
+                );
+                children.push(child.inner);
+            }
+            let parent_id = event.inner.lock().event_id.clone();
+            assert!(children.iter().all(|child| {
+                child.inner.lock().event_parent_id.as_deref() == Some(parent_id.as_str())
+            }));
+            Ok(json!("parent_done"))
+        }
+    });
+    bus1.on("RootEvent", "bad_handler", |_event| async move {
+        Ok(json!(null))
+    });
+
+    for run in 0..5 {
+        results.lock().expect("results lock").clear();
+        let event = bus1.emit::<RootEvent>(TypedEvent::new(EmptyPayload {}));
+        block_on(event.wait_completed());
+        block_on(bus1.wait_until_idle(Some(2.0)));
+        block_on(bus2.wait_until_idle(Some(2.0)));
+
+        let results = results.lock().expect("results lock").clone();
+        assert_eq!(
+            count_entries(&results, &format!("child_{}", bus1.label())),
+            6,
+            "run {run}: expected six child handlers on bus1, got {results:?}"
+        );
+        assert_eq!(
+            count_entries(&results, &format!("child_{}", bus2.label())),
+            6,
+            "run {run}: expected six child handlers on bus2, got {results:?}"
+        );
+    }
+
+    bus1.stop();
+    bus2.stop();
+}
+
+#[test]
+fn test_multi_bus_queues_are_independent_when_awaiting_child() {
+    let bus1 = EventBus::new(Some("Bus1".to_string()));
+    let bus2 = EventBus::new(Some("Bus2".to_string()));
+    let execution_order = Arc::new(Mutex::new(Vec::new()));
+
+    let bus1_for_event1 = bus1.clone();
+    let order_for_event1 = execution_order.clone();
+    bus1.on("Event1", "event1_handler", move |_event| {
+        let bus = bus1_for_event1.clone();
+        let order = order_for_event1.clone();
+        async move {
+            push(&order, "Bus1_Event1_start");
+            let child = bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            push(&order, "Child_dispatched_to_Bus1");
+            child.wait_completed().await;
+            push(&order, "Child_await_returned");
+            push(&order, "Bus1_Event1_end");
+            Ok(json!("event1_done"))
+        }
+    });
+
+    for (bus, pattern, start, end, result) in [
+        (
+            bus1.clone(),
+            "Event2",
+            "Bus1_Event2_start",
+            "Bus1_Event2_end",
+            "event2_done",
+        ),
+        (
+            bus2.clone(),
+            "Event3",
+            "Bus2_Event3_start",
+            "Bus2_Event3_end",
+            "event3_done",
+        ),
+        (
+            bus2.clone(),
+            "Event4",
+            "Bus2_Event4_start",
+            "Bus2_Event4_end",
+            "event4_done",
+        ),
+        (
+            bus1.clone(),
+            "ChildEvent",
+            "Child_start",
+            "Child_end",
+            "child_done",
+        ),
+    ] {
+        let order = execution_order.clone();
+        bus.on(pattern, &format!("{pattern}_handler"), move |_event| {
+            let order = order.clone();
+            async move {
+                push(&order, start);
+                push(&order, end);
+                Ok(json!(result))
+            }
+        });
+    }
+
+    let event1 = bus1.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    bus1.emit::<Event2>(TypedEvent::new(EmptyPayload {}));
+    bus2.emit::<Event3>(TypedEvent::new(EmptyPayload {}));
+    bus2.emit::<Event4>(TypedEvent::new(EmptyPayload {}));
+
+    wait_for_entry(&execution_order, "Bus2_Event3_start");
+    block_on(event1.wait_completed());
+
+    let order = execution_order.lock().expect("order lock").clone();
+    assert!(order.contains(&"Child_start".to_string()));
+    assert!(order.contains(&"Child_end".to_string()));
+    assert!(index_of(&order, "Child_end") < index_of(&order, "Bus1_Event1_end"));
+    if order.contains(&"Bus1_Event2_start".to_string()) {
+        assert!(index_of(&order, "Bus1_Event2_start") > index_of(&order, "Bus1_Event1_end"));
+    }
+    assert!(index_of(&order, "Bus2_Event3_start") < index_of(&order, "Bus1_Event1_end"));
+
+    block_on(bus1.wait_until_idle(Some(2.0)));
+    block_on(bus2.wait_until_idle(Some(2.0)));
+    let order = execution_order.lock().expect("order lock").clone();
+    assert!(order.contains(&"Bus1_Event2_start".to_string()));
+    assert!(order.contains(&"Bus2_Event3_start".to_string()));
+    assert!(order.contains(&"Bus2_Event4_start".to_string()));
+    bus1.stop();
+    bus2.stop();
 }
 
 #[test]
@@ -381,4 +848,554 @@ fn test_deeply_nested_awaited_children() {
     let order = execution_order.lock().expect("order lock").clone();
     assert!(index_of(&order, "Event2_start") > index_of(&order, "Event1_end"));
     bus.stop();
+}
+
+#[test]
+fn test_queue_jump_two_bus_serial_handlers_should_serialize_on_each_bus() {
+    let bus_a = new_bus_with_concurrency(
+        "QJ2BS_A",
+        EventConcurrencyMode::BusSerial,
+        EventHandlerConcurrencyMode::Serial,
+        EventHandlerCompletionMode::All,
+    );
+    let bus_b = new_bus_with_concurrency(
+        "QJ2BS_B",
+        EventConcurrencyMode::BusSerial,
+        EventHandlerConcurrencyMode::Serial,
+        EventHandlerCompletionMode::All,
+    );
+    let log = Arc::new(Mutex::new(Vec::new()));
+
+    let bus_a_for_trigger = bus_a.clone();
+    let bus_b_for_trigger = bus_b.clone();
+    bus_a.on("Event1", "trigger_handler", move |_event| {
+        let bus_a = bus_a_for_trigger.clone();
+        let bus_b = bus_b_for_trigger.clone();
+        async move {
+            let child = bus_a.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            bus_b.emit_base(child.inner.clone());
+            child.wait_completed().await;
+            Ok(json!(null))
+        }
+    });
+
+    for (bus, first_start, first_end, second_start, second_end) in [
+        (bus_a.clone(), "a1_start", "a1_end", "a2_start", "a2_end"),
+        (bus_b.clone(), "b1_start", "b1_end", "b2_start", "b2_end"),
+    ] {
+        let log_first = log.clone();
+        bus.on("ChildEvent", first_start, move |_event| {
+            let log = log_first.clone();
+            async move {
+                push(&log, first_start);
+                thread::sleep(Duration::from_millis(15));
+                push(&log, first_end);
+                Ok(json!(null))
+            }
+        });
+        let log_second = log.clone();
+        bus.on("ChildEvent", second_start, move |_event| {
+            let log = log_second.clone();
+            async move {
+                push(&log, second_start);
+                thread::sleep(Duration::from_millis(5));
+                push(&log, second_end);
+                Ok(json!(null))
+            }
+        });
+    }
+
+    let top = bus_a.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    block_on(top.wait_completed());
+    block_on(bus_a.wait_until_idle(Some(2.0)));
+    block_on(bus_b.wait_until_idle(Some(2.0)));
+
+    let log = log.lock().expect("log lock").clone();
+    assert!(index_of(&log, "a1_end") < index_of(&log, "a2_start"));
+    assert!(index_of(&log, "b1_end") < index_of(&log, "b2_start"));
+    bus_a.stop();
+    bus_b.stop();
+}
+
+#[test]
+fn test_queue_jump_two_bus_mixed_bus_a_serial_bus_b_parallel() {
+    let bus_a = new_bus_with_concurrency(
+        "QJ2Mix1_A",
+        EventConcurrencyMode::BusSerial,
+        EventHandlerConcurrencyMode::Serial,
+        EventHandlerCompletionMode::All,
+    );
+    let bus_b = new_bus_with_concurrency(
+        "QJ2Mix1_B",
+        EventConcurrencyMode::BusSerial,
+        EventHandlerConcurrencyMode::Parallel,
+        EventHandlerCompletionMode::All,
+    );
+    let log = Arc::new(Mutex::new(Vec::new()));
+
+    let bus_a_for_trigger = bus_a.clone();
+    let bus_b_for_trigger = bus_b.clone();
+    bus_a.on("Event1", "trigger_handler", move |_event| {
+        let bus_a = bus_a_for_trigger.clone();
+        let bus_b = bus_b_for_trigger.clone();
+        async move {
+            let child = bus_a.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            bus_b.emit_base(child.inner.clone());
+            child.wait_completed().await;
+            Ok(json!(null))
+        }
+    });
+
+    for (bus, first_start, first_end, second_start, second_end) in [
+        (bus_a.clone(), "a1_start", "a1_end", "a2_start", "a2_end"),
+        (bus_b.clone(), "b1_start", "b1_end", "b2_start", "b2_end"),
+    ] {
+        let log_first = log.clone();
+        bus.on("ChildEvent", first_start, move |_event| {
+            let log = log_first.clone();
+            async move {
+                push(&log, first_start);
+                thread::sleep(Duration::from_millis(15));
+                push(&log, first_end);
+                Ok(json!(null))
+            }
+        });
+        let log_second = log.clone();
+        bus.on("ChildEvent", second_start, move |_event| {
+            let log = log_second.clone();
+            async move {
+                push(&log, second_start);
+                thread::sleep(Duration::from_millis(5));
+                push(&log, second_end);
+                Ok(json!(null))
+            }
+        });
+    }
+
+    let top = bus_a.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    block_on(top.wait_completed());
+    block_on(bus_a.wait_until_idle(Some(2.0)));
+    block_on(bus_b.wait_until_idle(Some(2.0)));
+
+    let log = log.lock().expect("log lock").clone();
+    assert!(index_of(&log, "a1_end") < index_of(&log, "a2_start"));
+    assert!(index_of(&log, "b2_start") < index_of(&log, "b1_end"));
+    bus_a.stop();
+    bus_b.stop();
+}
+
+#[test]
+fn test_queue_jump_two_bus_mixed_bus_a_parallel_bus_b_serial() {
+    let bus_a = new_bus_with_concurrency(
+        "QJ2Mix2_A",
+        EventConcurrencyMode::BusSerial,
+        EventHandlerConcurrencyMode::Parallel,
+        EventHandlerCompletionMode::All,
+    );
+    let bus_b = new_bus_with_concurrency(
+        "QJ2Mix2_B",
+        EventConcurrencyMode::BusSerial,
+        EventHandlerConcurrencyMode::Serial,
+        EventHandlerCompletionMode::All,
+    );
+    let log = Arc::new(Mutex::new(Vec::new()));
+
+    let bus_a_for_trigger = bus_a.clone();
+    let bus_b_for_trigger = bus_b.clone();
+    bus_a.on("Event1", "trigger_handler", move |_event| {
+        let bus_a = bus_a_for_trigger.clone();
+        let bus_b = bus_b_for_trigger.clone();
+        async move {
+            let child = bus_a.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            bus_b.emit_base(child.inner.clone());
+            child.wait_completed().await;
+            Ok(json!(null))
+        }
+    });
+
+    for (bus, first_start, first_end, second_start, second_end) in [
+        (bus_a.clone(), "a1_start", "a1_end", "a2_start", "a2_end"),
+        (bus_b.clone(), "b1_start", "b1_end", "b2_start", "b2_end"),
+    ] {
+        let log_first = log.clone();
+        bus.on("ChildEvent", first_start, move |_event| {
+            let log = log_first.clone();
+            async move {
+                push(&log, first_start);
+                thread::sleep(Duration::from_millis(15));
+                push(&log, first_end);
+                Ok(json!(null))
+            }
+        });
+        let log_second = log.clone();
+        bus.on("ChildEvent", second_start, move |_event| {
+            let log = log_second.clone();
+            async move {
+                push(&log, second_start);
+                thread::sleep(Duration::from_millis(5));
+                push(&log, second_end);
+                Ok(json!(null))
+            }
+        });
+    }
+
+    let top = bus_a.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    block_on(top.wait_completed());
+    block_on(bus_a.wait_until_idle(Some(2.0)));
+    block_on(bus_b.wait_until_idle(Some(2.0)));
+
+    let log = log.lock().expect("log lock").clone();
+    assert!(index_of(&log, "a2_start") < index_of(&log, "a1_end"));
+    assert!(index_of(&log, "b1_end") < index_of(&log, "b2_start"));
+    bus_a.stop();
+    bus_b.stop();
+}
+
+#[test]
+fn test_forwarded_event_uses_processing_bus_defaults_unless_explicit_overrides_are_set() {
+    let bus_a = new_bus_with_concurrency(
+        "QJDefaults_A",
+        EventConcurrencyMode::BusSerial,
+        EventHandlerConcurrencyMode::Serial,
+        EventHandlerCompletionMode::All,
+    );
+    let bus_b = new_bus_with_concurrency(
+        "QJDefaults_B",
+        EventConcurrencyMode::BusSerial,
+        EventHandlerConcurrencyMode::Parallel,
+        EventHandlerCompletionMode::All,
+    );
+    let log = Arc::new(Mutex::new(Vec::new()));
+
+    let log_b1 = log.clone();
+    bus_b.on("DefaultsChildEvent", "b1", move |event| {
+        let log = log_b1.clone();
+        async move {
+            let mode = event
+                .inner
+                .lock()
+                .payload
+                .get("mode")
+                .and_then(serde_json::Value::as_str)
+                .expect("mode")
+                .to_string();
+            push(&log, &format!("{mode}:b1_start"));
+            thread::sleep(Duration::from_millis(15));
+            push(&log, &format!("{mode}:b1_end"));
+            Ok(json!(null))
+        }
+    });
+    let log_b2 = log.clone();
+    bus_b.on("DefaultsChildEvent", "b2", move |event| {
+        let log = log_b2.clone();
+        async move {
+            let mode = event
+                .inner
+                .lock()
+                .payload
+                .get("mode")
+                .and_then(serde_json::Value::as_str)
+                .expect("mode")
+                .to_string();
+            push(&log, &format!("{mode}:b2_start"));
+            thread::sleep(Duration::from_millis(5));
+            push(&log, &format!("{mode}:b2_end"));
+            Ok(json!(null))
+        }
+    });
+
+    let bus_a_for_trigger = bus_a.clone();
+    let bus_b_for_trigger = bus_b.clone();
+    bus_a.on("Event1", "trigger_handler", move |_event| {
+        let bus_a = bus_a_for_trigger.clone();
+        let bus_b = bus_b_for_trigger.clone();
+        async move {
+            let inherited = bus_a.emit_child::<DefaultsChildEvent>(TypedEvent::new(ModePayload {
+                mode: "inherited".to_string(),
+            }));
+            bus_b.emit_base(inherited.inner.clone());
+            inherited.wait_completed().await;
+
+            let override_event = TypedEvent::<DefaultsChildEvent>::new(ModePayload {
+                mode: "override".to_string(),
+            });
+            override_event.inner.inner.lock().event_handler_concurrency =
+                Some(EventHandlerConcurrencyMode::Serial);
+            let override_event = bus_a.emit_child(override_event);
+            bus_b.emit_base(override_event.inner.clone());
+            override_event.wait_completed().await;
+            Ok(json!(null))
+        }
+    });
+
+    let top = bus_a.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    block_on(top.wait_completed());
+    block_on(bus_a.wait_until_idle(Some(2.0)));
+    block_on(bus_b.wait_until_idle(Some(2.0)));
+
+    let log = log.lock().expect("log lock").clone();
+    assert!(index_of(&log, "inherited:b2_start") < index_of(&log, "inherited:b1_end"));
+    assert!(index_of(&log, "override:b1_end") < index_of(&log, "override:b2_start"));
+    bus_a.stop();
+    bus_b.stop();
+}
+
+#[test]
+fn test_forwarded_first_mode_uses_processing_bus_handler_concurrency_defaults() {
+    let bus_a = new_bus_with_concurrency(
+        "ForwardedFirstDefaults_A",
+        EventConcurrencyMode::BusSerial,
+        EventHandlerConcurrencyMode::Serial,
+        EventHandlerCompletionMode::All,
+    );
+    let bus_b = new_bus_with_concurrency(
+        "ForwardedFirstDefaults_B",
+        EventConcurrencyMode::BusSerial,
+        EventHandlerConcurrencyMode::Parallel,
+        EventHandlerCompletionMode::First,
+    );
+    let log = Arc::new(Mutex::new(Vec::new()));
+
+    let bus_b_for_forward = bus_b.clone();
+    bus_a.on("*", "forward_to_b", move |event| {
+        let bus_b = bus_b_for_forward.clone();
+        async move {
+            bus_b.emit_base(event);
+            Ok(json!(null))
+        }
+    });
+
+    let slow_log = log.clone();
+    bus_b.on("ForwardedFirstEvent", "slow", move |_event| {
+        let log = slow_log.clone();
+        async move {
+            push(&log, "slow_start");
+            thread::sleep(Duration::from_millis(20));
+            push(&log, "slow_end");
+            Ok(json!("slow"))
+        }
+    });
+    let fast_log = log.clone();
+    bus_b.on("ForwardedFirstEvent", "fast", move |_event| {
+        let log = fast_log.clone();
+        async move {
+            push(&log, "fast_start");
+            thread::sleep(Duration::from_millis(1));
+            push(&log, "fast_end");
+            Ok(json!("fast"))
+        }
+    });
+
+    let event = bus_a.emit::<ForwardedFirstEvent>(TypedEvent::new(EmptyPayload {}));
+    let result = block_on(event.first());
+    block_on(bus_a.wait_until_idle(Some(2.0)));
+    block_on(bus_b.wait_until_idle(Some(2.0)));
+
+    let log = log.lock().expect("log lock").clone();
+    assert_eq!(result.as_deref(), Some("fast"));
+    assert!(log.contains(&"slow_start".to_string()));
+    assert!(log.contains(&"fast_start".to_string()));
+    bus_a.stop();
+    bus_b.stop();
+}
+
+#[test]
+fn test_queue_jump_respects_bus_serial_event_concurrency_on_forward_bus() {
+    let bus_a = new_bus_with_concurrency(
+        "QJEvt_A",
+        EventConcurrencyMode::BusSerial,
+        EventHandlerConcurrencyMode::Serial,
+        EventHandlerCompletionMode::All,
+    );
+    let bus_b = new_bus_with_concurrency(
+        "QJEvt_B",
+        EventConcurrencyMode::BusSerial,
+        EventHandlerConcurrencyMode::Serial,
+        EventHandlerCompletionMode::All,
+    );
+    let log = Arc::new(Mutex::new(Vec::new()));
+
+    let slow_log = log.clone();
+    bus_b.on("SlowEvent", "slow", move |_event| {
+        let log = slow_log.clone();
+        async move {
+            push(&log, "slow_start");
+            thread::sleep(Duration::from_millis(40));
+            push(&log, "slow_end");
+            Ok(json!(null))
+        }
+    });
+    let child_b_log = log.clone();
+    bus_b.on("ChildEvent", "child_b", move |_event| {
+        let log = child_b_log.clone();
+        async move {
+            push(&log, "child_b_start");
+            thread::sleep(Duration::from_millis(5));
+            push(&log, "child_b_end");
+            Ok(json!(null))
+        }
+    });
+    let child_a_log = log.clone();
+    bus_a.on("ChildEvent", "child_a", move |_event| {
+        let log = child_a_log.clone();
+        async move {
+            push(&log, "child_a_start");
+            thread::sleep(Duration::from_millis(5));
+            push(&log, "child_a_end");
+            Ok(json!(null))
+        }
+    });
+
+    let bus_a_for_trigger = bus_a.clone();
+    let bus_b_for_trigger = bus_b.clone();
+    bus_a.on("Event1", "trigger_handler", move |_event| {
+        let bus_a = bus_a_for_trigger.clone();
+        let bus_b = bus_b_for_trigger.clone();
+        async move {
+            let child = bus_a.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            bus_b.emit_base(child.inner.clone());
+            child.wait_completed().await;
+            Ok(json!(null))
+        }
+    });
+
+    bus_b.emit::<SlowEvent>(TypedEvent::new(EmptyPayload {}));
+    wait_for_entry(&log, "slow_start");
+    let top = bus_a.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    block_on(top.wait_completed());
+    block_on(bus_a.wait_until_idle(Some(2.0)));
+    block_on(bus_b.wait_until_idle(Some(2.0)));
+
+    let log = log.lock().expect("log lock").clone();
+    assert!(index_of(&log, "slow_end") < index_of(&log, "child_b_start"));
+    assert!(log.contains(&"child_a_start".to_string()));
+    assert!(log.contains(&"child_a_end".to_string()));
+    bus_a.stop();
+    bus_b.stop();
+}
+
+#[test]
+fn test_queue_jump_with_fully_parallel_forward_bus_starts_immediately() {
+    let bus_a = new_bus_with_concurrency(
+        "QJFullPar_A",
+        EventConcurrencyMode::BusSerial,
+        EventHandlerConcurrencyMode::Serial,
+        EventHandlerCompletionMode::All,
+    );
+    let bus_b = new_bus_with_concurrency(
+        "QJFullPar_B",
+        EventConcurrencyMode::Parallel,
+        EventHandlerConcurrencyMode::Parallel,
+        EventHandlerCompletionMode::All,
+    );
+    let log = Arc::new(Mutex::new(Vec::new()));
+
+    let slow_log = log.clone();
+    bus_b.on("SlowEvent", "slow", move |_event| {
+        let log = slow_log.clone();
+        async move {
+            push(&log, "slow_start");
+            thread::sleep(Duration::from_millis(40));
+            push(&log, "slow_end");
+            Ok(json!(null))
+        }
+    });
+    let child_log = log.clone();
+    bus_b.on("ChildEvent", "child_b", move |_event| {
+        let log = child_log.clone();
+        async move {
+            push(&log, "child_b_start");
+            thread::sleep(Duration::from_millis(5));
+            push(&log, "child_b_end");
+            Ok(json!(null))
+        }
+    });
+
+    let bus_a_for_trigger = bus_a.clone();
+    let bus_b_for_trigger = bus_b.clone();
+    bus_a.on("Event1", "trigger_handler", move |_event| {
+        let bus_a = bus_a_for_trigger.clone();
+        let bus_b = bus_b_for_trigger.clone();
+        async move {
+            let child = bus_a.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            bus_b.emit_base(child.inner.clone());
+            child.wait_completed().await;
+            Ok(json!(null))
+        }
+    });
+
+    bus_b.emit::<SlowEvent>(TypedEvent::new(EmptyPayload {}));
+    wait_for_entry(&log, "slow_start");
+    let top = bus_a.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    block_on(top.wait_completed());
+    block_on(bus_a.wait_until_idle(Some(2.0)));
+    block_on(bus_b.wait_until_idle(Some(2.0)));
+
+    let log = log.lock().expect("log lock").clone();
+    assert!(index_of(&log, "child_b_start") < index_of(&log, "slow_end"));
+    bus_a.stop();
+    bus_b.stop();
+}
+
+#[test]
+fn test_queue_jump_with_parallel_events_and_serial_handlers_on_forward_bus_overlaps_events() {
+    let bus_a = new_bus_with_concurrency(
+        "QJEvtParHSer_A",
+        EventConcurrencyMode::BusSerial,
+        EventHandlerConcurrencyMode::Serial,
+        EventHandlerCompletionMode::All,
+    );
+    let bus_b = new_bus_with_concurrency(
+        "QJEvtParHSer_B",
+        EventConcurrencyMode::Parallel,
+        EventHandlerConcurrencyMode::Serial,
+        EventHandlerCompletionMode::All,
+    );
+    let log = Arc::new(Mutex::new(Vec::new()));
+
+    let slow_log = log.clone();
+    bus_b.on("SlowEvent", "slow", move |_event| {
+        let log = slow_log.clone();
+        async move {
+            push(&log, "slow_start");
+            thread::sleep(Duration::from_millis(40));
+            push(&log, "slow_end");
+            Ok(json!(null))
+        }
+    });
+    let child_log = log.clone();
+    bus_b.on("ChildEvent", "child_b", move |_event| {
+        let log = child_log.clone();
+        async move {
+            push(&log, "child_b_start");
+            thread::sleep(Duration::from_millis(5));
+            push(&log, "child_b_end");
+            Ok(json!(null))
+        }
+    });
+
+    let bus_a_for_trigger = bus_a.clone();
+    let bus_b_for_trigger = bus_b.clone();
+    bus_a.on("Event1", "trigger_handler", move |_event| {
+        let bus_a = bus_a_for_trigger.clone();
+        let bus_b = bus_b_for_trigger.clone();
+        async move {
+            let child = bus_a.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            bus_b.emit_base(child.inner.clone());
+            child.wait_completed().await;
+            Ok(json!(null))
+        }
+    });
+
+    bus_b.emit::<SlowEvent>(TypedEvent::new(EmptyPayload {}));
+    wait_for_entry(&log, "slow_start");
+    let top = bus_a.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    block_on(top.wait_completed());
+    block_on(bus_a.wait_until_idle(Some(2.0)));
+    block_on(bus_b.wait_until_idle(Some(2.0)));
+
+    let log = log.lock().expect("log lock").clone();
+    assert!(index_of(&log, "child_b_start") < index_of(&log, "slow_end"));
+    bus_a.stop();
+    bus_b.stop();
 }
