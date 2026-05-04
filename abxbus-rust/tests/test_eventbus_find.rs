@@ -241,6 +241,27 @@ fn test_find_past_float_filters_by_time_window() {
 }
 
 #[test]
+fn test_find_past_returns_null_when_all_events_are_too_old() {
+    let bus = EventBus::new(Some("FindTooOldBus".to_string()));
+    bus.on("work", "complete", |_event| async move { Ok(json!("ok")) });
+
+    let old_event = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(old_event.wait_completed());
+    old_event.inner.inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
+
+    let found = block_on(bus.find_with_options(
+        "work",
+        FindOptions {
+            past: true,
+            past_window: Some(0.05),
+            ..FindOptions::default()
+        },
+    ));
+    assert!(found.is_none());
+    bus.stop();
+}
+
+#[test]
 fn test_find_future_waits_for_new_event() {
     let bus = EventBus::new(Some("FindFutureBus".to_string()));
     let bus_for_emit = bus.clone();
@@ -252,6 +273,21 @@ fn test_find_future_waits_for_new_event() {
 
     let found = block_on(bus.find("future_event", false, Some(0.5), None));
     assert!(found.is_some());
+    bus.stop();
+}
+
+#[test]
+fn test_find_future_works_with_string_event_keys() {
+    let bus = EventBus::new(Some("FindFutureStringBus".to_string()));
+    let bus_for_emit = bus.clone();
+
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(30));
+        bus_for_emit.emit::<WorkEvent>(TypedEvent::<WorkEvent>::new(EmptyPayload {}));
+    });
+
+    let found = block_on(bus.find("work", false, Some(0.5), None)).expect("future event");
+    assert_eq!(found.inner.lock().event_type, "work");
     bus.stop();
 }
 
@@ -278,6 +314,23 @@ fn test_max_history_size_zero_disables_past_history_search_but_future_find_still
     block_on(dispatched.wait_completed());
     assert_eq!(bus.event_history_size(), 0);
     assert!(block_on(bus.find("work", true, None, None)).is_none());
+    bus.stop();
+}
+
+#[test]
+fn test_find_defaults_to_past_true_future_false_when_both_are_undefined() {
+    let bus = EventBus::new(Some("FindDefaultWindowBus".to_string()));
+
+    let start = Instant::now();
+    let missing = block_on(bus.find("work", true, None, None));
+    assert!(missing.is_none());
+    assert!(start.elapsed() < Duration::from_millis(100));
+
+    let dispatched = bus.emit::<WorkEvent>(TypedEvent::<WorkEvent>::new(EmptyPayload {}));
+    let found = block_on(bus.find("work", true, None, None)).expect("past event");
+    let found_id = found.inner.lock().event_id.clone();
+    let dispatched_id = dispatched.inner.inner.lock().event_id.clone();
+    assert_eq!(found_id, dispatched_id);
     bus.stop();
 }
 
@@ -374,6 +427,83 @@ fn test_find_past_future_waits_for_future_when_no_past_match() {
 }
 
 #[test]
+fn test_find_past_future_windows_are_independent() {
+    let bus = EventBus::new(Some("FindPastFutureWindowBus".to_string()));
+    bus.on("work", "complete", |_event| async move { Ok(json!("ok")) });
+    let bus_for_emit = bus.clone();
+
+    let old_event = bus.emit::<WorkEvent>(TypedEvent::<WorkEvent>::new(EmptyPayload {}));
+    block_on(old_event.wait_completed());
+    old_event.inner.inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
+
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(30));
+        bus_for_emit.emit::<WorkEvent>(TypedEvent::<WorkEvent>::new(EmptyPayload {}));
+    });
+
+    let found = block_on(bus.find_with_options(
+        "work",
+        FindOptions {
+            past: true,
+            past_window: Some(0.01),
+            future: Some(0.5),
+            ..FindOptions::default()
+        },
+    ))
+    .expect("future event should resolve when past window excludes old event");
+    let found_id = found.inner.lock().event_id.clone();
+    let old_id = old_event.inner.inner.lock().event_id.clone();
+    assert_ne!(found_id, old_id);
+    bus.stop();
+}
+
+#[test]
+fn test_find_past_true_future_float_returns_old_event_immediately() {
+    let bus = EventBus::new(Some("FindPastTrueFutureFloatBus".to_string()));
+    let dispatched = bus.emit::<WorkEvent>(TypedEvent::<WorkEvent>::new(EmptyPayload {}));
+    block_on(dispatched.wait_completed());
+
+    let start = Instant::now();
+    let found = block_on(bus.find("work", true, Some(0.5), None)).expect("past event");
+
+    let found_id = found.inner.lock().event_id.clone();
+    let dispatched_id = dispatched.inner.inner.lock().event_id.clone();
+    assert_eq!(found_id, dispatched_id);
+    assert!(start.elapsed() < Duration::from_millis(100));
+    bus.stop();
+}
+
+#[test]
+fn test_find_past_float_future_waits_for_new_event() {
+    let bus = EventBus::new(Some("FindPastFloatFutureBus".to_string()));
+    let bus_for_emit = bus.clone();
+
+    let old_event = bus.emit::<WorkEvent>(TypedEvent::<WorkEvent>::new(EmptyPayload {}));
+    block_on(old_event.wait_completed());
+    old_event.inner.inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
+
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(30));
+        bus_for_emit.emit::<WorkEvent>(TypedEvent::<WorkEvent>::new(EmptyPayload {}));
+    });
+
+    let found = block_on(bus.find_with_options(
+        "work",
+        FindOptions {
+            past: true,
+            past_window: Some(0.01),
+            future: Some(0.5),
+            ..FindOptions::default()
+        },
+    ))
+    .expect("future event");
+    let found_id = found.inner.lock().event_id.clone();
+    let old_id = old_event.inner.inner.lock().event_id.clone();
+    assert_ne!(found_id, old_id);
+    bus.stop();
+}
+
+#[test]
 fn test_find_supports_metadata_filters_like_event_status() {
     let bus = EventBus::new(Some("FindMetadataBus".to_string()));
     let event = bus.emit::<FilterEvent>(TypedEvent::new(FilterPayload {
@@ -440,6 +570,38 @@ fn test_find_supports_metadata_equality_filters_like_event_id_and_event_timeout(
         },
     ));
     assert!(mismatch.is_none());
+    bus.stop();
+}
+
+#[test]
+fn test_find_respects_where_filter() {
+    let bus = EventBus::new(Some("FindWhereBus".to_string()));
+    bus.emit::<FilterEvent>(TypedEvent::new(FilterPayload {
+        value: "wrong".to_string(),
+        category: "alpha".to_string(),
+    }));
+    let target = bus.emit::<FilterEvent>(TypedEvent::new(FilterPayload {
+        value: "right".to_string(),
+        category: "beta".to_string(),
+    }));
+    block_on(bus.wait_until_idle(None));
+
+    let found = block_on(bus.find_with_options(
+        "filter_event",
+        FindOptions {
+            past: true,
+            where_filter: Some(HashMap::from([
+                ("value".to_string(), json!("right")),
+                ("category".to_string(), json!("beta")),
+            ])),
+            ..FindOptions::default()
+        },
+    ))
+    .expect("where-filtered event");
+
+    let found_id = found.inner.lock().event_id.clone();
+    let target_id = target.inner.inner.lock().event_id.clone();
+    assert_eq!(found_id, target_id);
     bus.stop();
 }
 
@@ -514,6 +676,26 @@ fn test_find_where_filter_works_with_future_waiting() {
 }
 
 #[test]
+fn test_find_wildcard() {
+    let bus = EventBus::new(Some("FindWildcardBus".to_string()));
+    let first = bus.emit::<SystemEvent>(TypedEvent::new(EmptyPayload {}));
+    thread::sleep(Duration::from_millis(5));
+    let second = bus.emit::<UserActionEvent>(TypedEvent::new(FilterPayload {
+        value: "clicked".to_string(),
+        category: "user".to_string(),
+    }));
+    block_on(bus.wait_until_idle(None));
+
+    let found = block_on(bus.find("*", true, None, None)).expect("wildcard match");
+    let found_id = found.inner.lock().event_id.clone();
+    let second_id = second.inner.inner.lock().event_id.clone();
+    let first_id = first.inner.inner.lock().event_id.clone();
+    assert_eq!(found_id, second_id);
+    assert_ne!(found_id, first_id);
+    bus.stop();
+}
+
+#[test]
 fn test_find_wildcard_with_where_filter_matches_across_event_types_in_history() {
     let bus = EventBus::new(Some("FindWildcardWhereBus".to_string()));
     bus.emit::<FilterEvent>(TypedEvent::new(FilterPayload {
@@ -541,6 +723,37 @@ fn test_find_wildcard_with_where_filter_matches_across_event_types_in_history() 
     let found_id = found.inner.lock().event_id.clone();
     let target_id = target.inner.inner.lock().event_id.clone();
     assert_eq!(found_id, target_id);
+    bus.stop();
+}
+
+#[test]
+fn test_find_with_past_float_and_where_filter() {
+    let bus = EventBus::new(Some("FindPastFloatWhereBus".to_string()));
+    let old = bus.emit::<FilterEvent>(TypedEvent::new(FilterPayload {
+        value: "target".to_string(),
+        category: "old".to_string(),
+    }));
+    block_on(old.wait_completed());
+    old.inner.inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
+    let fresh = bus.emit::<FilterEvent>(TypedEvent::new(FilterPayload {
+        value: "target".to_string(),
+        category: "fresh".to_string(),
+    }));
+    block_on(fresh.wait_completed());
+
+    let found = block_on(bus.find_with_options(
+        "filter_event",
+        FindOptions {
+            past: true,
+            past_window: Some(1.0),
+            where_filter: Some(HashMap::from([("value".to_string(), json!("target"))])),
+            ..FindOptions::default()
+        },
+    ))
+    .expect("fresh filtered event");
+    let found_id = found.inner.lock().event_id.clone();
+    let fresh_id = fresh.inner.inner.lock().event_id.clone();
+    assert_eq!(found_id, fresh_id);
     bus.stop();
 }
 
