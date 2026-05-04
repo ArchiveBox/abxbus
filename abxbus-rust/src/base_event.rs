@@ -1,6 +1,10 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, thread, time::Duration};
 
 use event_listener::Event;
+use futures::{
+    channel::oneshot,
+    future::{select, Either, FutureExt},
+};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Map, Value};
@@ -55,6 +59,7 @@ pub struct BaseEvent {
 pub struct EventResultsOptions {
     pub raise_if_any: bool,
     pub raise_if_none: bool,
+    pub timeout: Option<f64>,
 }
 
 impl Default for EventResultsOptions {
@@ -62,6 +67,7 @@ impl Default for EventResultsOptions {
         Self {
             raise_if_any: true,
             raise_if_none: true,
+            timeout: None,
         }
     }
 }
@@ -191,6 +197,45 @@ impl BaseEvent {
         }
     }
 
+    async fn event_completed_with_timeout(self: &Arc<Self>, timeout: Option<f64>) -> bool {
+        let Some(timeout) = timeout else {
+            self.event_completed().await;
+            return true;
+        };
+
+        crate::event_bus::EventBus::mark_blocks_parent_completion_if_awaited(self.clone());
+        let deadline = std::time::Instant::now() + Duration::from_secs_f64(timeout.max(0.0));
+        loop {
+            let listener = self.completed.listen();
+            {
+                let event = self.inner.lock();
+                if event.event_status == EventStatus::Completed {
+                    return true;
+                }
+            }
+
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                return false;
+            }
+
+            let remaining = deadline.saturating_duration_since(now);
+            let (timeout_tx, timeout_rx) = oneshot::channel::<()>();
+            thread::spawn(move || {
+                thread::sleep(remaining);
+                let _ = timeout_tx.send(());
+            });
+
+            match select(listener.boxed(), timeout_rx.boxed()).await {
+                Either::Left((_listener_result, _timeout_future)) => continue,
+                Either::Right((_timeout_result, _listener_future)) => {
+                    let event = self.inner.lock();
+                    return event.event_status == EventStatus::Completed;
+                }
+            }
+        }
+    }
+
     pub async fn event_result(
         self: &Arc<Self>,
         options: EventResultsOptions,
@@ -229,7 +274,15 @@ impl BaseEvent {
     where
         F: Fn(&EventResult) -> bool,
     {
-        self.event_completed().await;
+        if !self.event_completed_with_timeout(options.timeout).await {
+            let event = self.inner.lock();
+            return Err(format!(
+                "Timed out waiting for event results after {:.3}s: {}#{}",
+                options.timeout.unwrap_or_default(),
+                event.event_type,
+                short_id(&event.event_id)
+            ));
+        }
         let all_results = self.ordered_event_results();
         let error_results: Vec<String> = all_results
             .iter()

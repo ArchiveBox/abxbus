@@ -1407,3 +1407,24 @@ fn test_awaited_event_emit_marks_child_as_parent_completion_blocking() {
 fn test_awaiting_bus_emitted_child_keeps_independent_parentage() {
     test_awaited_bus_emit_child_remains_independent_and_does_not_block_parent_completion();
 }
+
+#[test]
+fn test_parent_tracking_works_with_sync_handlers_and_handler_errors() {
+    test_sync_handler_parent_tracking();
+    test_erroring_parent_handlers_still_preserve_child_event_parent_id();
+}
+
+#[test]
+fn test_bus_emit_inside_a_handler_dispatches_a_root_event_by_default() {
+    test_bus_emit_inside_handler_dispatches_root_event_by_default();
+}
+
+#[test]
+fn test_outside_await_of_bus_emit_child_done_keeps_it_independent_of_the_active_handler() {
+    test_outside_wait_completed_of_bus_emit_child_keeps_it_independent_of_active_handler();
+}
+
+#[test]
+fn test_outside_eventcompleted_wait_of_bus_emit_child_keeps_it_independent_of_the_active_handler() {
+    test_outside_event_completed_wait_of_bus_emit_child_keeps_it_independent_of_active_handler();
+}

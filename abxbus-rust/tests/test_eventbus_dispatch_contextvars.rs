@@ -642,3 +642,28 @@ fn test_deeply_nested_context_and_parent_tracking() {
     bus.stop();
     EventBus::context_clear();
 }
+
+#[test]
+fn test_context_propagates_to_handler() {
+    test_contextvar_propagates_to_handler();
+}
+
+#[test]
+fn test_context_propagates_through_nested_handlers() {
+    test_contextvar_propagates_through_nested_handlers();
+}
+
+#[test]
+fn test_context_propagates_to_multiple_handlers() {
+    test_context_propagates_to_parallel_handler_concurrency();
+}
+
+#[test]
+fn test_event_parent_id_tracking_still_works_with_context_propagation() {
+    test_event_parent_id_tracking_still_works();
+}
+
+#[test]
+fn test_dispatch_context_and_parent_id_both_work_together() {
+    test_dispatch_context_and_parent_id_both_work();
+}

@@ -528,6 +528,50 @@ fn test_unlimited_history_max_history_size_null_keeps_all_events() {
 }
 
 #[test]
+fn test_max_history_drop_false_rejects_new_dispatch_when_history_is_full() {
+    let bus = EventBus::new_with_options(
+        Some("NoDropHistBus".to_string()),
+        EventBusOptions {
+            max_history_size: Some(2),
+            max_history_drop: false,
+            ..EventBusOptions::default()
+        },
+    );
+    bus.on(
+        "NoDropEvent",
+        "handler",
+        |_event| async move { Ok(json!("ok")) },
+    );
+
+    for seq in 1..=2 {
+        let event = bus.emit_base(base_event("NoDropEvent", json!({"seq": seq})));
+        block_on(event.event_completed());
+    }
+
+    assert_eq!(bus.event_history_size(), 2);
+    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        bus.emit_base(base_event("NoDropEvent", json!({"seq": 3})));
+    }))
+    .expect_err("full history should reject the third dispatch");
+    let panic_message = rejected
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| rejected.downcast_ref::<&str>().copied())
+        .unwrap_or("");
+    assert!(
+        panic_message.contains("history limit reached"),
+        "{panic_message}"
+    );
+    assert_eq!(bus.event_history_size(), 2);
+    assert_eq!(
+        bus.to_json_value()["pending_event_queue"],
+        json!([]),
+        "rejected dispatch must not enqueue a pending event"
+    );
+    bus.stop();
+}
+
+#[test]
 fn test_max_history_size_0_keeps_in_flight_events_and_drops_them_on_completion() {
     let bus = EventBus::new_with_options(
         Some("ZeroHistBus".to_string()),
@@ -577,6 +621,66 @@ fn test_max_history_size_0_keeps_in_flight_events_and_drops_them_on_completion()
 
     assert_eq!(bus.event_history_size(), 0);
     assert!(bus.runtime_payload_for_test().is_empty());
+    bus.stop();
+}
+
+#[test]
+fn test_max_history_size_0_with_max_history_drop_false_still_allows_unbounded_queueing_and_drops_completed_events(
+) {
+    let bus = EventBus::new_with_options(
+        Some("ZeroHistNoDropBus".to_string()),
+        EventBusOptions {
+            max_history_size: Some(0),
+            max_history_drop: false,
+            ..EventBusOptions::default()
+        },
+    );
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let release_rx = Arc::new(Mutex::new(release_rx));
+
+    bus.on("BurstEvent", "handler", move |_event| {
+        let started_tx = started_tx.clone();
+        let release_rx = release_rx.clone();
+        async move {
+            let _ = started_tx.send(());
+            release_rx
+                .lock()
+                .expect("release lock")
+                .recv_timeout(Duration::from_secs(2))
+                .expect("release signal");
+            Ok(json!("ok"))
+        }
+    });
+
+    let mut events = Vec::new();
+    events.push(bus.emit_base(base_event("BurstEvent", json!({"seq": 0}))));
+    started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("first handler should start");
+    for seq in 1..25 {
+        events.push(bus.emit_base(base_event("BurstEvent", json!({"seq": seq}))));
+    }
+
+    assert!(
+        bus.to_json_value()["pending_event_queue"]
+            .as_array()
+            .expect("pending_event_queue array")
+            .len()
+            > 1
+    );
+    assert!(bus.event_history_size() >= 1);
+
+    for _ in 0..25 {
+        release_tx.send(()).expect("release event");
+    }
+    for event in &events {
+        block_on(event.event_completed());
+    }
+    assert!(block_on(bus.wait_until_idle(None)));
+
+    assert_eq!(bus.event_history_size(), 0);
+    assert_eq!(bus.to_json_value()["pending_event_queue"], json!([]));
     bus.stop();
 }
 
@@ -1125,6 +1229,11 @@ fn test_event_version_defaults_and_overrides() {
 }
 
 #[test]
+fn test_event_version_supports_defaults_extend_time_defaults_runtime_override_and_json_roundtrip() {
+    test_event_version_defaults_and_overrides();
+}
+
+#[test]
 fn test_automatic_event_type_derivation() {
     let bus = EventBus::new(Some("AutomaticEventTypeBus".to_string()));
     let received = Arc::new(Mutex::new(Vec::new()));
@@ -1183,6 +1292,11 @@ fn test_automatic_event_type_derivation() {
 }
 
 #[test]
+fn test_event_type_is_derived_from_extend_name_argument() {
+    test_automatic_event_type_derivation();
+}
+
+#[test]
 fn test_explicit_event_type_override() {
     let bus = EventBus::new(Some("ExplicitEventTypeBus".to_string()));
     let received = Arc::new(Mutex::new(Vec::new()));
@@ -1222,6 +1336,11 @@ fn test_explicit_event_type_override() {
         &["CustomEventType".to_string()]
     );
     bus.stop();
+}
+
+#[test]
+fn test_event_type_can_be_overridden_at_instantiation() {
+    test_explicit_event_type_override();
 }
 
 #[test]
@@ -1716,6 +1835,7 @@ fn test_manual_dict_merge() {
         EventResultsOptions {
             raise_if_any: false,
             raise_if_none: true,
+            timeout: None,
         },
         |result| result.result.as_ref().is_some_and(Value::is_object),
     ))
@@ -1738,6 +1858,7 @@ fn test_manual_dict_merge() {
         EventResultsOptions {
             raise_if_any: false,
             raise_if_none: false,
+            timeout: None,
         },
         |result| result.result.as_ref().is_some_and(Value::is_object),
     ))
@@ -1763,6 +1884,7 @@ fn test_manual_dict_merge_conflicts_last_write_wins() {
         EventResultsOptions {
             raise_if_any: false,
             raise_if_none: true,
+            timeout: None,
         },
         |result| result.result.as_ref().is_some_and(Value::is_object),
     ))
@@ -1798,6 +1920,7 @@ fn test_manual_list_flatten() {
         EventResultsOptions {
             raise_if_any: false,
             raise_if_none: true,
+            timeout: None,
         },
         |result| result.result.as_ref().is_some_and(Value::is_array),
     ))
@@ -1826,6 +1949,7 @@ fn test_manual_list_flatten() {
         EventResultsOptions {
             raise_if_any: false,
             raise_if_none: false,
+            timeout: None,
         },
         |result| result.result.as_ref().is_some_and(Value::is_array),
     ))
@@ -2074,6 +2198,7 @@ fn test_complex_multi_bus_scenario() {
         EventResultsOptions {
             raise_if_any: false,
             raise_if_none: true,
+            timeout: None,
         },
         |result| result.result.as_ref().is_some_and(Value::is_object),
     ))
@@ -2090,6 +2215,7 @@ fn test_complex_multi_bus_scenario() {
         EventResultsOptions {
             raise_if_any: false,
             raise_if_none: true,
+            timeout: None,
         },
         |result| result.result.as_ref().is_some_and(Value::is_array),
     ))
@@ -2203,6 +2329,7 @@ fn test_event_result_type_enforcement_with_list() {
         EventResultsOptions {
             raise_if_any: false,
             raise_if_none: false,
+            timeout: None,
         },
         |result| result.result.as_ref().is_some_and(Value::is_array),
     ))
@@ -2394,6 +2521,62 @@ fn test_eventbus_all_instances_tracks_all_created_buses() {
     assert!(EventBus::all_instances_contains(&bus_b));
     bus_a.stop();
     bus_b.stop();
+}
+
+#[test]
+fn test_unreferenced_eventbus_can_be_garbage_collected_not_retained_by_all_instances() {
+    let baseline = EventBus::all_instances_len();
+    let weak_ref = {
+        let bus = EventBus::new(Some("GCTestBus".to_string()));
+        let weak_ref = Arc::downgrade(&bus);
+        assert!(EventBus::all_instances_contains(&bus));
+        assert_eq!(EventBus::all_instances_len(), baseline + 1);
+        weak_ref
+    };
+
+    assert!(
+        weak_ref.upgrade().is_none(),
+        "all_instances must not hold a strong reference to an unreferenced bus"
+    );
+    assert!(
+        EventBus::all_instances_len() <= baseline,
+        "dead EventBus weak refs should be purged from all_instances"
+    );
+}
+
+#[test]
+fn test_unreferenced_buses_with_event_history_are_garbage_collected_without_destroy() {
+    let baseline = EventBus::all_instances_len();
+    let mut refs = Vec::new();
+
+    for index in 0..5 {
+        let bus = EventBus::new_with_options(
+            Some(format!("GCNoDestroyBus{index}")),
+            EventBusOptions {
+                max_history_size: Some(20),
+                ..EventBusOptions::default()
+            },
+        );
+        bus.on("UserActionEvent", "history_handler", |_event| async move {
+            Ok(json!("ok"))
+        });
+        for _ in 0..10 {
+            let event = bus.emit::<UserActionEvent>(TypedEvent::new(EmptyPayload {}));
+            block_on(event.wait_completed());
+        }
+        block_on(bus.wait_until_idle(Some(2.0)));
+        assert_eq!(bus.event_history_size(), 10);
+        refs.push(Arc::downgrade(&bus));
+    }
+
+    assert!(
+        refs.iter().all(|weak_ref| weak_ref.upgrade().is_none()),
+        "all_instances must not retain buses after their last Arc handle is dropped"
+    );
+    assert!(
+        EventBus::all_instances_len() <= baseline,
+        "dead EventBus weak refs should be purged after history-bearing buses are dropped"
+    );
 }
 
 #[test]
@@ -2830,6 +3013,46 @@ fn test_event_bus_auto_generates_name_when_not_provided() {
 }
 
 #[test]
+fn test_eventbus_initializes_with_correct_defaults() {
+    test_event_bus_initializes_with_correct_defaults();
+}
+
+#[test]
+fn test_waituntilidle_timeout_returns_after_timeout_when_work_is_still_in_flight() {
+    test_wait_until_idle_timeout_returns_after_timeout_when_work_is_still_in_flight();
+}
+
+#[test]
+fn test_eventbus_applies_custom_options() {
+    test_event_bus_applies_custom_options();
+}
+
+#[test]
+fn test_eventbus_with_null_max_history_size_means_unlimited() {
+    test_event_bus_with_null_max_history_size_means_unlimited();
+}
+
+#[test]
+fn test_eventbus_with_null_event_timeout_disables_timeouts() {
+    test_event_bus_with_null_event_timeout_disables_timeouts();
+}
+
+#[test]
+fn test_eventbus_auto_generates_name_when_not_provided() {
+    test_event_bus_auto_generates_name_when_not_provided();
+}
+
+#[test]
+fn test_baseevent_lifecycle_methods_are_callable_and_preserve_lifecycle_behavior() {
+    test_base_event_lifecycle_methods_are_callable_and_preserve_lifecycle_behavior();
+}
+
+#[test]
+fn test_baseevent_tojson_fromjson_roundtrips_runtime_fields_and_event_results() {
+    test_base_event_to_json_from_json_roundtrips_runtime_fields_and_event_results();
+}
+
+#[test]
 fn test_eventbus_accepts_custom_id() {
     let custom_id = "018f8e40-1234-7000-8000-000000001234".to_string();
     let bus = EventBus::new_with_options(
@@ -2857,6 +3080,28 @@ fn test_eventbus_accepts_custom_handler_recursion_depth() {
 
     assert_eq!(bus.max_handler_recursion_depth, 5);
     bus.stop();
+}
+
+#[test]
+fn test_handler_registration_via_string_class_and_wildcard() {
+    test_handler_registration_by_string_matches_extend_name();
+    test_class_matcher_matches_generic_base_event_by_event_type();
+    test_wildcard_handler_receives_all_events();
+}
+
+#[test]
+fn test_handlers_can_be_sync_or_async() {
+    test_handler_can_be_sync_or_async();
+}
+
+#[test]
+fn test_class_matcher_falls_back_to_class_name_and_matches_generic_baseevent_event_type() {
+    test_class_matcher_matches_generic_base_event_by_event_type();
+}
+
+#[test]
+fn test_instance_class_and_static_method_handlers() {
+    test_class_and_instance_method_handlers();
 }
 
 #[test]

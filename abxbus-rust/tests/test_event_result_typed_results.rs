@@ -272,6 +272,26 @@ fn test_from_json_converts_event_result_type_into_schema() {
 }
 
 #[test]
+fn test_fromjson_deserializes_event_result_type_and_tojson_reserializes_schema() {
+    let schema = json!({"type": "integer"});
+    let event = BaseEvent::from_json_value(json!({
+        "event_id": "018f8e40-1234-7000-8000-000000001235",
+        "event_created_at": "2025-01-01T00:00:01.000Z",
+        "event_type": "RawSchemaEvent",
+        "event_timeout": null,
+        "event_result_type": schema,
+    }));
+
+    assert_eq!(event.inner.lock().event_result_type, Some(schema.clone()));
+    assert_eq!(event.to_json_value()["event_result_type"], schema);
+}
+
+#[test]
+fn test_fromjson_converts_event_result_type_into_zod_schema() {
+    test_from_json_converts_event_result_type_into_schema();
+}
+
+#[test]
 fn test_from_json_reconstructs_primitive_json_schema() {
     let bus = EventBus::new(Some("PrimitiveFromJsonBus".to_string()));
     let restored = BaseEvent::from_json_value(
@@ -294,6 +314,55 @@ fn test_from_json_reconstructs_primitive_json_schema() {
     );
     assert_eq!(result.result, Some(json!(true)));
     bus.stop();
+}
+
+#[test]
+fn test_fromjson_reconstructs_integer_and_null_schemas_for_runtime_validation() {
+    let bus = EventBus::new(Some("SchemaPrimitiveRuntimeBus".to_string()));
+
+    bus.on("RawIntegerEvent", "int_handler", |_event| async move {
+        Ok(json!(123))
+    });
+    let int_event = bus.emit_base(schema_event(
+        "RawIntegerEvent",
+        Some(json!({"type": "integer"})),
+    ));
+    wait(&int_event);
+    assert_eq!(
+        first_result(&int_event).status,
+        EventResultStatus::Completed
+    );
+
+    bus.on(
+        "RawIntegerEventBad",
+        "int_bad_handler",
+        |_event| async move { Ok(json!(1.5)) },
+    );
+    let int_bad_event = bus.emit_base(schema_event(
+        "RawIntegerEventBad",
+        Some(json!({"type": "integer"})),
+    ));
+    wait(&int_bad_event);
+    assert_eq!(
+        first_result(&int_bad_event).status,
+        EventResultStatus::Error
+    );
+
+    bus.on("RawNullEvent", "null_handler", |_event| async move {
+        Ok(Value::Null)
+    });
+    let null_event = bus.emit_base(schema_event("RawNullEvent", Some(json!({"type": "null"}))));
+    wait(&null_event);
+    assert_eq!(
+        first_result(&null_event).status,
+        EventResultStatus::Completed
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_fromjson_reconstructs_primitive_json_schema() {
+    test_from_json_reconstructs_primitive_json_schema();
 }
 
 #[test]
@@ -396,6 +465,11 @@ fn test_json_schema_nested_object_and_array_runtime_enforcement() {
         .unwrap_or_default()
         .contains("EventHandlerResultSchemaError"));
     bus.stop();
+}
+
+#[test]
+fn test_fromjson_reconstructs_nested_object_array_result_schemas() {
+    test_json_schema_nested_object_and_array_runtime_enforcement();
 }
 
 #[test]

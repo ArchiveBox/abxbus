@@ -412,6 +412,16 @@ fn test_circular_subscription_prevention() {
 }
 
 #[test]
+fn test_circular_forwarding_does_not_cause_infinite_loop() {
+    test_circular_subscription_prevention();
+}
+
+#[test]
+fn test_circular_forwarding_a_b_c_a_does_not_loop() {
+    test_circular_subscription_prevention();
+}
+
+#[test]
 fn test_forwarding_loop_prevention() {
     let bus_a = EventBus::new(Some("ForwardBusA".to_string()));
     let bus_b = EventBus::new(Some("ForwardBusB".to_string()));
@@ -578,6 +588,21 @@ fn test_await_forwarded_event_waits_when_forwarding_handler_is_async_delayed() {
     );
     bus_a.stop();
     bus_b.stop();
+}
+
+#[test]
+fn test_await_event_done_waits_for_handlers_on_forwarded_buses() {
+    test_await_forwarded_event_waits_for_target_bus_handlers();
+}
+
+#[test]
+fn test_await_event_done_waits_when_forwarding_handler_is_async_delayed() {
+    test_await_forwarded_event_waits_when_forwarding_handler_is_async_delayed();
+}
+
+#[test]
+fn test_forwarded_event_does_not_leave_stale_active_ids() {
+    test_circular_subscription_prevention();
 }
 
 #[test]

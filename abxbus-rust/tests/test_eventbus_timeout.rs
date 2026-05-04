@@ -1503,3 +1503,13 @@ fn __abxbus_slow_handler_and_event_warning_child() {
     }
     run_slow_warning_event(Some(0.01), Some(0.01));
 }
+
+#[test]
+fn test_slow_event_warning_fires_when_event_exceeds_event_slow_timeout() {
+    test_event_slow_warning_uses_event_slow_timeout();
+}
+
+#[test]
+fn test_slow_handler_warning_fires_when_handler_runs_long() {
+    test_handler_slow_warning_uses_event_handler_slow_timeout();
+}

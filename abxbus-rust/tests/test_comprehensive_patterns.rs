@@ -1628,3 +1628,13 @@ fn test_queue_jump_with_parallel_events_and_serial_handlers_on_forward_bus_still
     bus_a.stop();
     bus_b.stop();
 }
+
+#[test]
+fn test_forwarded_first_mode_uses_processing_bus_handler_defaults() {
+    test_forwarded_first_mode_uses_processing_bus_handler_concurrency_defaults();
+}
+
+#[test]
+fn test_forwarded_event_uses_processing_bus_defaults_unless_overridden() {
+    test_forwarded_event_uses_processing_bus_defaults_unless_explicit_overrides_are_set();
+}

@@ -228,3 +228,13 @@ fn test_typed_event_config_defaults_populate_base_event_fields() {
     assert_eq!(inner.event_handler_slow_timeout, Some(4.0));
     assert!(inner.event_blocks_parent_completion);
 }
+
+#[test]
+fn test_null_event_concurrency_null_resolves_to_bus_defaults() {
+    test_event_concurrency_remains_unset_on_dispatch_and_resolves_during_processing();
+}
+
+#[test]
+fn test_null_event_handler_concurrency_null_resolves_to_bus_defaults() {
+    test_handler_defaults_remain_unset_on_dispatch_and_resolve_during_processing();
+}

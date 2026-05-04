@@ -212,3 +212,18 @@ fn test_eventbus_model_dump_promotes_pending_events_into_event_history() {
 fn test_eventbus_to_json_promotes_pending_events_into_event_history_snapshot() {
     assert_eventbus_promotes_pending_events_into_event_history();
 }
+
+#[test]
+fn test_eventbus_tojson_fromjson_roundtrip_uses_id_keyed_structures() {
+    assert_eventbus_json_roundtrip_uses_id_keyed_structures();
+}
+
+#[test]
+fn test_eventbus_fromjson_recreates_missing_handler_entries_from_event_result_metadata() {
+    assert_eventbus_recreates_missing_handler_entries_from_event_result_metadata();
+}
+
+#[test]
+fn test_eventbus_tojson_promotes_pending_events_into_event_history_snapshot() {
+    assert_eventbus_promotes_pending_events_into_event_history();
+}

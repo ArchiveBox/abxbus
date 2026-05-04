@@ -374,3 +374,18 @@ fn test_on_uses_explicit_handler_name_in_json_and_log_tree() {
     assert!(output.contains(&format!("{handler_name}#")));
     bus.stop();
 }
+
+#[test]
+fn test_on_stores_eventhandler_entry_and_indexes_it_by_event_key() {
+    test_on_stores_eventhandler_entry_and_index();
+}
+
+#[test]
+fn test_off_removes_handlers_by_callable_handler_id_entry_object_or_all() {
+    test_off_removes_handler_id_or_all_and_prunes_empty_index();
+}
+
+#[test]
+fn test_on_accepts_sync_handlers_and_dispatch_captures_their_return_values() {
+    test_on_accepts_handlers_and_dispatch_captures_return_values();
+}

@@ -2068,3 +2068,274 @@ fn test_past_true_future_true_searches_all_and_waits_forever() {
     assert_eq!(found.inner.lock().event_id, dispatched_id);
     bus.stop();
 }
+
+#[test]
+fn test_find_past_window_filters_by_time() {
+    test_find_past_respects_time_window();
+}
+
+#[test]
+fn test_find_future_waits_for_event() {
+    test_find_future_basic();
+}
+
+#[test]
+fn test_max_history_size_0_disables_past_history_search_but_future_find_still_resolves() {
+    test_max_history_size_zero_disables_past_history_search_but_future_find_still_resolves();
+}
+
+#[test]
+fn test_find_class_pattern_matches_generic_baseevent_event_type_for_future_lookups() {
+    test_find_future_with_model_class();
+}
+
+#[test]
+fn test_find_future_times_out_when_no_event_arrives() {
+    test_find_future_timeout();
+}
+
+#[test]
+fn test_find_past_true_future_true_returns_past_event_immediately() {
+    test_past_true_future_true_searches_all_and_waits_forever();
+}
+
+#[test]
+fn test_find_with_multiple_concurrent_waiters_resolves_correct_events() {
+    test_multiple_concurrent_future_finds();
+}
+
+#[test]
+fn test_find_child_of_works_across_forwarded_buses() {
+    test_child_of_works_across_forwarded_buses();
+}
+
+#[test]
+fn test_find_past_includes_in_progress_dispatched_events() {
+    test_find_past_can_match_incomplete_events();
+}
+
+#[test]
+fn test_find_future_resolves_on_dispatch_before_completion() {
+    test_find_future_receives_dispatched_event_before_completion();
+}
+
+#[test]
+fn test_find_returns_promise_that_can_be_awaited_later() {
+    test_find_returns_coroutine_that_can_be_awaited_later();
+}
+
+#[test]
+fn test_find_past_returns_most_recent_completed_event_bus_scoped() {
+    test_find_past_returns_most_recent_dispatched_event();
+    test_find_past_history_lookup_is_bus_scoped();
+}
+
+#[test]
+fn test_find_past_returns_in_flight_dispatched_event_and_done_waits() {
+    test_find_past_can_match_incomplete_events();
+}
+
+#[test]
+fn test_find_future_waits_for_next_event_when_none_in_flight() {
+    test_find_future_basic();
+}
+
+#[test]
+fn test_find_most_recent_wins_across_completed_and_in_flight() {
+    test_most_recent_wins_across_completed_and_inflight();
+}
+
+#[test]
+fn test_returns_matching_event_from_history() {
+    test_find_past_match_returns_event();
+}
+
+#[test]
+fn test_history_lookup_is_bus_scoped() {
+    test_find_past_history_lookup_is_bus_scoped();
+}
+
+#[test]
+fn test_found_event_retains_origin_bus_label() {
+    test_find_past_result_retains_origin_bus_label_in_event_path();
+}
+
+#[test]
+fn test_past_float_returns_none_when_all_events_too_old() {
+    test_find_past_returns_null_when_all_events_are_too_old();
+}
+
+#[test]
+fn test_returns_none_when_no_match() {
+    test_find_past_returns_null_when_no_matching_event_exists();
+}
+
+#[test]
+fn test_returns_most_recent_match() {
+    test_find_past_returns_most_recent_dispatched_event();
+}
+
+#[test]
+fn test_find_past_returns_most_recent() {
+    test_find_past_returns_most_recent_dispatched_event();
+}
+
+#[test]
+fn test_find_default_is_past_only_no_future_wait() {
+    test_find_defaults_to_past_true_future_false_when_both_are_undefined();
+}
+
+#[test]
+fn test_find_supports_event_field_keyword_filters() {
+    test_find_supports_metadata_filters_like_event_status();
+}
+
+#[test]
+fn test_find_supports_event_id_and_event_timeout_filters() {
+    test_find_supports_metadata_equality_filters_like_event_id_and_event_timeout();
+}
+
+#[test]
+fn test_find_supports_non_event_data_field_filters() {
+    test_find_supports_non_event_data_field_equality_filters();
+}
+
+#[test]
+fn test_find_wildcard_with_where_filter_matches_history() {
+    test_find_wildcard_with_where_filter_matches_across_event_types_in_history();
+}
+
+#[test]
+fn test_waits_for_future_event() {
+    test_find_waits_for_future_event();
+}
+
+#[test]
+fn test_future_float_timeout() {
+    test_find_future_timeout();
+}
+
+#[test]
+fn test_ignores_past_events() {
+    test_find_future_ignores_past_events();
+}
+
+#[test]
+fn test_ignores_inflight_events_dispatched_before_find() {
+    test_find_future_ignores_already_dispatched_in_flight_events_when_past_false();
+}
+
+#[test]
+fn test_future_works_with_string_event_type() {
+    test_find_future_works_with_string_event_keys();
+}
+
+#[test]
+fn test_find_wildcard_with_where_filter_waits_for_future_match() {
+    test_find_wildcard_with_where_filter_works_for_future_waiting();
+}
+
+#[test]
+fn test_future_class_pattern_matches_generic_base_event_by_event_type() {
+    test_find_future_with_model_class();
+}
+
+#[test]
+fn test_multiple_concurrent_find_waiters_resolve_correct_events() {
+    test_multiple_concurrent_future_finds();
+}
+
+#[test]
+fn test_find_future_resolves_before_handlers_complete() {
+    test_find_future_receives_dispatched_event_before_completion();
+}
+
+#[test]
+fn test_returns_none_immediately() {
+    test_find_past_false_future_false_returns_null_immediately();
+}
+
+#[test]
+fn test_returns_past_event_immediately() {
+    test_find_past_future_returns_past_event_immediately();
+}
+
+#[test]
+fn test_waits_for_future_when_no_past_match() {
+    test_find_past_future_waits_for_future_when_no_past_match();
+}
+
+#[test]
+fn test_past_and_future_independent_control() {
+    test_find_past_future_windows_are_independent();
+}
+
+#[test]
+fn test_past_true_future_float() {
+    test_find_past_true_future_float_returns_old_event_immediately();
+}
+
+#[test]
+fn test_past_float_future_true_would_wait_forever() {
+    test_find_past_float_future_waits_for_new_event();
+}
+
+#[test]
+fn test_returns_child_of_specified_parent() {
+    test_find_child_of_returns_child_event();
+}
+
+#[test]
+fn test_returns_none_for_non_child() {
+    test_find_child_of_returns_null_for_non_child();
+}
+
+#[test]
+fn test_finds_grandchild() {
+    test_find_child_of_returns_grandchild_event();
+}
+
+#[test]
+fn test_future_wait_with_child_of() {
+    test_find_future_with_child_of_waits_for_matching_child();
+}
+
+#[test]
+fn test_find_with_include_style_filter() {
+    test_find_future_with_predicate();
+}
+
+#[test]
+fn test_find_catches_already_fired_event() {
+    test_find_catches_child_event_that_fired_during_parent_handler();
+}
+
+#[test]
+fn test_child_of_filters_to_correct_parent() {
+    test_find_child_of_filters_to_correct_parent_among_siblings();
+}
+
+#[test]
+fn test_past_true_future_false_searches_all_history() {
+    test_find_defaults_to_past_true_future_false_when_both_are_undefined();
+}
+
+#[test]
+fn test_past_float_future_false_filters_by_age() {
+    test_find_past_respects_time_window();
+}
+
+#[test]
+fn test_past_false_future_float_waits_for_timeout() {
+    test_find_future_timeout();
+}
+
+#[test]
+fn test_find_with_where_and_past_float() {
+    test_find_with_past_float_and_where_filter();
+}
+
+#[test]
+fn test_find_with_all_parameters() {
+    test_find_with_all_parameters_combined();
+}

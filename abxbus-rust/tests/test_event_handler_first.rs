@@ -658,3 +658,53 @@ fn test_event_first_skips_base_event_json_result_and_uses_next_winner() {
     }));
     bus.stop();
 }
+
+#[test]
+fn test_first_returns_the_first_non_undefined_result_from_parallel_handlers() {
+    test_event_handler_first_parallel_returns_earliest_completed_non_null_result();
+}
+
+#[test]
+fn test_first_cancels_remaining_parallel_handlers_after_first_result() {
+    test_event_first_parallel_returns_before_slow_loser_finishes();
+}
+
+#[test]
+fn test_first_returns_the_first_non_undefined_result_from_serial_handlers() {
+    test_event_handler_first_serial_stops_after_first_success();
+}
+
+#[test]
+fn test_first_serial_mode_skips_first_handler_returning_undefined_takes_second() {
+    test_event_first_skips_none_result_and_uses_next_winner();
+}
+
+#[test]
+fn test_first_returns_undefined_when_all_handlers_return_undefined() {
+    test_event_first_returns_none_when_all_handlers_return_null();
+}
+
+#[test]
+fn test_first_re_raises_the_first_processing_error_when_all_handlers_throw() {
+    test_first_re_raises_first_processing_error_when_all_handlers_throw();
+}
+
+#[test]
+fn test_first_works_with_a_single_handler() {
+    test_event_first_works_with_single_handler();
+}
+
+#[test]
+fn test_first_skips_null_result_and_uses_the_next_handler_winner() {
+    test_event_first_skips_none_result_and_uses_next_winner();
+}
+
+#[test]
+fn test_first_returns_0_as_a_valid_first_result() {
+    test_event_first_returns_zero_as_valid_first_result();
+}
+
+#[test]
+fn test_first_skips_baseevent_return_values_and_uses_the_next_scalar_winner() {
+    test_event_first_skips_base_event_json_result_and_uses_next_winner();
+}

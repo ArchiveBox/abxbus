@@ -414,3 +414,8 @@ fn test_lock_manager_same_key_waiters_serialize() {
 
     assert_eq!(order.lock().expect("order lock").as_slice(), &["waiter"]);
 }
+
+#[test]
+fn test_reentrant_lock_serializes_across_tasks() {
+    test_reentrant_lock_serializes_across_threads();
+}

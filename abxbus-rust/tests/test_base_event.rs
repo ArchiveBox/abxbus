@@ -750,3 +750,65 @@ fn test_event_emitted_by_handler_id_defaults_to_null_and_accepts_null_in_from_js
         Value::Null
     );
 }
+
+#[test]
+fn test_fromjson_accepts_event_parent_id_null_and_preserves_it_in_tojson_output() {
+    test_from_json_accepts_event_parent_id_null_and_preserves_it_in_to_json_output();
+}
+
+#[test]
+fn test_event_emitted_by_handler_id_defaults_to_null_and_accepts_null_in_fromjson() {
+    test_event_emitted_by_handler_id_defaults_to_null_and_accepts_null_in_from_json();
+}
+
+#[test]
+fn test_done_re_raises_the_first_processing_exception_after_completion() {
+    test_event_result_re_raises_first_processing_exception_after_completion();
+}
+
+#[test]
+fn test_baseevent_eventresultupdate_creates_and_updates_typed_handler_results() {
+    test_event_result_update_creates_and_updates_typed_handler_results();
+}
+
+#[test]
+fn test_baseevent_eventresultupdate_status_only_update_does_not_implicitly_pass_undefined_result_error_keys(
+) {
+    test_event_result_update_status_only_preserves_existing_error_and_result();
+}
+
+#[test]
+fn test_await_event_done_queue_jumps_child_processing_inside_handlers() {
+    test_await_event_queue_jumps_inside_handler();
+}
+
+#[test]
+fn test_await_event_eventcompleted_preserves_normal_queue_order_inside_handlers() {
+    test_event_completed_waits_in_queue_order_inside_handler();
+}
+
+#[test]
+fn test_baseevent_rejects_reserved_runtime_fields_in_payload_and_event_shape() {
+    test_reserved_runtime_fields_are_rejected();
+}
+
+#[test]
+fn test_baseevent_rejects_unknown_event_fields_while_allowing_known_event_overrides() {
+    test_unknown_event_prefixed_field_rejected_in_payload();
+    test_builtin_event_prefixed_override_is_allowed();
+}
+
+#[test]
+fn test_baseevent_rejects_model_fields_in_payload_and_event_shape() {
+    test_model_prefixed_field_rejected_in_payload();
+}
+
+#[test]
+fn test_baseevent_tojson_fromjson_roundtrips_runtime_fields_and_event_results() {
+    test_base_event_json_roundtrip();
+}
+
+#[test]
+fn test_baseevent_event_at_fields_are_recognized_and_normalized() {
+    test_event_at_fields_are_recognized();
+}

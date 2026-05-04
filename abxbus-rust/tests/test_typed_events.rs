@@ -80,6 +80,7 @@ fn test_typed_event_result_accessors_decode_handler_values() {
     let first = block_on(event.event_result(EventResultsOptions {
         raise_if_any: false,
         raise_if_none: true,
+        timeout: None,
     }))
     .expect("typed first result");
     assert_eq!(first, Some(AddResult { sum: 8 }));
@@ -87,6 +88,7 @@ fn test_typed_event_result_accessors_decode_handler_values() {
     let values = block_on(event.event_results_list(EventResultsOptions {
         raise_if_any: false,
         raise_if_none: true,
+        timeout: None,
     }))
     .expect("typed results list");
     assert_eq!(values, vec![AddResult { sum: 8 }, AddResult { sum: 15 }]);

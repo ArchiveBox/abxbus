@@ -682,3 +682,58 @@ fn test_event_is_child_of_returns_false_for_unrelated_events() {
     assert!(!bus.event_is_parent_of(&parent, &unrelated));
     bus.stop();
 }
+
+#[test]
+fn test_eventischildof_and_eventisparentof_work_for_direct_children() {
+    test_event_is_child_of_and_event_is_parent_of_work_for_direct_children();
+}
+
+#[test]
+fn test_eventischildof_works_for_grandchildren() {
+    test_event_is_child_of_works_for_grandchildren();
+}
+
+#[test]
+fn test_eventischildof_returns_false_for_unrelated_events() {
+    test_event_is_child_of_returns_false_for_unrelated_events();
+}
+
+#[test]
+fn test_event_bus_property_single_bus() {
+    test_event_event_bus_inside_handler_returns_the_dispatching_bus();
+}
+
+#[test]
+fn test_event_bus_property_multiple_buses() {
+    test_event_event_bus_returns_correct_bus_when_multiple_buses_exist();
+}
+
+#[test]
+fn test_event_bus_property_with_forwarding() {
+    test_event_event_bus_reflects_the_currently_processing_bus_when_forwarded();
+}
+
+#[test]
+fn test_event_bus_property_outside_handler() {
+    test_event_event_bus_is_available_outside_handler_context();
+}
+
+#[test]
+fn test_event_bus_property_nested_handlers() {
+    test_event_event_bus_in_nested_handlers_sees_the_same_bus();
+}
+
+#[test]
+fn test_event_bus_property_no_active_bus() {
+    test_event_event_bus_is_absent_on_detached_events();
+}
+
+#[test]
+fn test_event_bus_property_child_dispatch() {
+    test_event_event_bus_is_set_for_child_events_emitted_in_handler();
+}
+
+#[test]
+fn test_event_bus_property_multi_bus_child_dispatch() {
+    test_event_emit_with_forwarding_child_dispatch_goes_to_the_correct_bus();
+}
