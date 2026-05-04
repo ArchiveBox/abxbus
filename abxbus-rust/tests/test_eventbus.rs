@@ -9,7 +9,7 @@ use std::{
 };
 
 use abxbus_rust::{
-    base_event::BaseEvent,
+    base_event::{BaseEvent, EventResultsOptions},
     event_bus::{EventBus, EventBusOptions},
     event_result::EventResultStatus,
     typed::{EventSpec, TypedEvent},
@@ -433,6 +433,270 @@ fn test_wildcard_handler_receives_all_events() {
         types.lock().expect("types lock").as_slice(),
         &["EventA".to_string(), "EventB".to_string()]
     );
+    bus.stop();
+}
+
+#[test]
+fn test_wait_for_result() {
+    let bus = EventBus::new(Some("WaitForResultBus".to_string()));
+    let completion_order = Arc::new(Mutex::new(Vec::new()));
+
+    let order_for_handler = completion_order.clone();
+    bus.on("UserActionEvent", "slow_handler", move |_event| {
+        let completion_order = order_for_handler.clone();
+        async move {
+            thread::sleep(Duration::from_millis(50));
+            completion_order
+                .lock()
+                .expect("completion order lock")
+                .push("handler_done".to_string());
+            Ok(json!("done"))
+        }
+    });
+
+    let event = bus.emit::<UserActionEvent>(TypedEvent::new(EmptyPayload {}));
+    completion_order
+        .lock()
+        .expect("completion order lock")
+        .push("enqueue_done".to_string());
+
+    block_on(event.wait_completed());
+    completion_order
+        .lock()
+        .expect("completion order lock")
+        .push("wait_done".to_string());
+
+    assert_eq!(
+        completion_order
+            .lock()
+            .expect("completion order lock")
+            .as_slice(),
+        &[
+            "enqueue_done".to_string(),
+            "handler_done".to_string(),
+            "wait_done".to_string()
+        ]
+    );
+    assert!(event.inner.inner.lock().event_completed_at.is_some());
+    bus.stop();
+}
+
+#[test]
+fn test_error_handling() {
+    let bus = EventBus::new(Some("ErrorHandlingBus".to_string()));
+    let results = Arc::new(Mutex::new(Vec::new()));
+
+    bus.on("UserActionEvent", "failing_handler", |_event| async move {
+        Err("Expected to fail - testing error handling in event handlers".to_string())
+    });
+
+    let results_for_handler = results.clone();
+    bus.on("UserActionEvent", "working_handler", move |_event| {
+        let results = results_for_handler.clone();
+        async move {
+            results
+                .lock()
+                .expect("results lock")
+                .push("success".to_string());
+            Ok(json!("worked"))
+        }
+    });
+
+    let event = bus.emit::<UserActionEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(event.wait_completed());
+    let event_results = event.inner.inner.lock().event_results.clone();
+
+    let failing_result = event_results
+        .values()
+        .find(|result| result.handler.handler_name == "failing_handler")
+        .expect("failing handler result");
+    assert_eq!(failing_result.status, EventResultStatus::Error);
+    assert!(failing_result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("Expected to fail"));
+
+    let working_result = event_results
+        .values()
+        .find(|result| result.handler.handler_name == "working_handler")
+        .expect("working handler result");
+    assert_eq!(working_result.status, EventResultStatus::Completed);
+    assert_eq!(working_result.result, Some(json!("worked")));
+    assert_eq!(
+        results.lock().expect("results lock").as_slice(),
+        &["success".to_string()]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_event_result_raises_exception_group_when_multiple_handlers_fail() {
+    let bus = EventBus::new(Some("EventResultMultiErrorBus".to_string()));
+
+    bus.on(
+        "UserActionEvent",
+        "failing_handler_one",
+        |_event| async move { Err("ValueError: first failure".to_string()) },
+    );
+    bus.on(
+        "UserActionEvent",
+        "failing_handler_two",
+        |_event| async move { Err("RuntimeError: second failure".to_string()) },
+    );
+
+    let event = bus.emit::<UserActionEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(event.wait_completed());
+
+    let error = block_on(event.inner.event_result(EventResultsOptions::default()))
+        .expect_err("multiple handler errors should be raised");
+    assert!(error.contains("2 handler error(s)"), "{error}");
+    assert!(error.contains("ValueError: first failure"), "{error}");
+    assert!(error.contains("RuntimeError: second failure"), "{error}");
+    bus.stop();
+}
+
+#[test]
+fn test_event_result_single_handler_error_raises_original_exception() {
+    let bus = EventBus::new(Some("EventResultSingleErrorBus".to_string()));
+
+    bus.on("UserActionEvent", "failing_handler", |_event| async move {
+        Err("ValueError: single failure".to_string())
+    });
+
+    let event = bus.emit::<UserActionEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(event.wait_completed());
+
+    let error = block_on(event.inner.event_result(EventResultsOptions::default()))
+        .expect_err("single handler error should be raised");
+    assert_eq!(error, "ValueError: single failure");
+    bus.stop();
+}
+
+#[test]
+fn test_event_results_access() {
+    let bus = EventBus::new(Some("EventResultsAccessBus".to_string()));
+
+    bus.on("TestEvent", "early_handler", |_event| async move {
+        Ok(json!("early"))
+    });
+    bus.on("TestEvent", "late_handler", |_event| async move {
+        thread::sleep(Duration::from_millis(10));
+        Ok(json!("late"))
+    });
+
+    let event = bus.emit_base(base_event("TestEvent", json!({})));
+    block_on(event.event_completed());
+    let event_results = event.inner.lock().event_results.clone();
+    assert_eq!(event_results.len(), 2);
+    assert_eq!(
+        event_results
+            .values()
+            .find(|result| result.handler.handler_name == "early_handler")
+            .and_then(|result| result.result.clone()),
+        Some(json!("early"))
+    );
+    assert_eq!(
+        event_results
+            .values()
+            .find(|result| result.handler.handler_name == "late_handler")
+            .and_then(|result| result.result.clone()),
+        Some(json!("late"))
+    );
+
+    let empty_event = bus.emit_base(base_event("EmptyEvent", json!({})));
+    block_on(empty_event.event_completed());
+    assert_eq!(empty_event.inner.lock().event_results.len(), 0);
+    bus.stop();
+}
+
+#[test]
+fn test_by_handler_name() {
+    let bus = EventBus::new(Some("ByHandlerNameBus".to_string()));
+
+    bus.on("TestEvent", "process_data", |_event| async move {
+        Ok(json!("version1"))
+    });
+    bus.on("TestEvent", "process_data", |_event| async move {
+        Ok(json!("version2"))
+    });
+    bus.on("TestEvent", "unique_handler", |_event| async move {
+        Ok(json!("unique"))
+    });
+
+    let event = bus.emit_base(base_event("TestEvent", json!({})));
+    block_on(event.event_completed());
+    let event_results = event.inner.lock().event_results.clone();
+    let process_results: Vec<Value> = event_results
+        .values()
+        .filter(|result| result.handler.handler_name == "process_data")
+        .filter_map(|result| result.result.clone())
+        .collect();
+    assert_eq!(process_results.len(), 2);
+    assert!(process_results.contains(&json!("version1")));
+    assert!(process_results.contains(&json!("version2")));
+    assert_eq!(
+        event_results
+            .values()
+            .find(|result| result.handler.handler_name == "unique_handler")
+            .and_then(|result| result.result.clone()),
+        Some(json!("unique"))
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_by_handler_id() {
+    let bus = EventBus::new(Some("ByHandlerIdBus".to_string()));
+
+    bus.on(
+        "TestEvent",
+        "handler",
+        |_event| async move { Ok(json!("v1")) },
+    );
+    bus.on(
+        "TestEvent",
+        "handler",
+        |_event| async move { Ok(json!("v2")) },
+    );
+
+    let event = bus.emit_base(base_event("TestEvent", json!({})));
+    block_on(event.event_completed());
+    let event_results = event.inner.lock().event_results.clone();
+    let ids: BTreeSet<String> = event_results.keys().cloned().collect();
+    let values: Vec<Value> = event_results
+        .values()
+        .filter_map(|result| result.result.clone())
+        .collect();
+    assert_eq!(ids.len(), 2);
+    assert_eq!(event_results.len(), 2);
+    assert!(values.contains(&json!("v1")));
+    assert!(values.contains(&json!("v2")));
+    bus.stop();
+}
+
+#[test]
+fn test_string_indexing() {
+    let bus = EventBus::new(Some("StringIndexingBus".to_string()));
+
+    bus.on("TestEvent", "my_handler", |_event| async move {
+        Ok(json!("my_result"))
+    });
+
+    let event = bus.emit_base(base_event("TestEvent", json!({})));
+    block_on(event.event_completed());
+    let event_results = event.inner.lock().event_results.clone();
+    let my_handler_result = event_results
+        .values()
+        .find(|result| result.handler.handler_name == "my_handler");
+    assert_eq!(
+        my_handler_result.and_then(|result| result.result.clone()),
+        Some(json!("my_result"))
+    );
+    let missing_result = event_results
+        .values()
+        .find(|result| result.handler.handler_name == "missing");
+    assert!(missing_result.is_none());
     bus.stop();
 }
 
