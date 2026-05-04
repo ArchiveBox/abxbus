@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use abxbus_rust::{base_event::BaseEvent, event_bus::EventBus};
+use abxbus_rust::{
+    base_event::BaseEvent,
+    event_bus::EventBus,
+    event_result::{EventResult, EventResultStatus},
+};
 use futures::executor::block_on;
 use serde_json::{json, Map, Value};
 
@@ -10,7 +14,7 @@ fn schema_event(event_type: &str, schema: Option<Value>) -> Arc<BaseEvent> {
     event
 }
 
-fn first_result(event: &Arc<BaseEvent>) -> abxbus_rust::event_result::EventResult {
+fn first_result(event: &Arc<BaseEvent>) -> EventResult {
     event
         .inner
         .lock()
@@ -19,6 +23,12 @@ fn first_result(event: &Arc<BaseEvent>) -> abxbus_rust::event_result::EventResul
         .next()
         .cloned()
         .expect("expected one event result")
+}
+
+fn assert_schema_roundtrips(schema: Value) {
+    let original = schema_event("SchemaEvent", Some(schema.clone()));
+    let restored = BaseEvent::from_json_value(original.to_json_value());
+    assert_eq!(restored.inner.lock().event_result_type, Some(schema));
 }
 
 fn wait(event: &Arc<BaseEvent>) {
@@ -283,6 +293,160 @@ fn test_from_json_reconstructs_primitive_json_schema() {
         abxbus_rust::event_result::EventResultStatus::Completed
     );
     assert_eq!(result.result, Some(json!(true)));
+    bus.stop();
+}
+
+#[test]
+fn test_json_schema_primitive_deserialization() {
+    for schema in [
+        json!({"type": "string"}),
+        json!({"type": "number"}),
+        json!({"type": "integer"}),
+        json!({"type": "boolean"}),
+        json!({"type": "null"}),
+    ] {
+        assert_schema_roundtrips(schema);
+    }
+}
+
+#[test]
+fn test_json_schema_top_level_shape_deserialization_matrix() {
+    for schema in [
+        json!({"type": "array", "items": {"type": "string"}}),
+        json!({"type": "array", "items": {"type": "integer"}}),
+        json!({"type": "object", "additionalProperties": {"type": "integer"}}),
+        json!({
+            "type": "object",
+            "properties": {"scores": {"type": "array", "items": {"type": "integer"}}},
+            "required": ["scores"]
+        }),
+    ] {
+        assert_schema_roundtrips(schema);
+    }
+}
+
+#[test]
+fn test_json_schema_optional_typed_dict_is_lax_on_missing_fields() {
+    let bus = EventBus::new(Some("OptionalSchemaBus".to_string()));
+    let optional_schema = json!({
+        "type": "object",
+        "properties": {
+            "nickname": {"type": "string"},
+            "age": {"type": "integer"}
+        }
+    });
+
+    for (event_type, result) in [
+        ("OptionalSchemaEmptyEvent", json!({})),
+        ("OptionalSchemaPartialEvent", json!({"nickname": "squash"})),
+    ] {
+        bus.on(event_type, "handler", move |_event| {
+            let result = result.clone();
+            async move { Ok(result) }
+        });
+        let event = bus.emit_base(schema_event(event_type, Some(optional_schema.clone())));
+        wait(&event);
+        assert_eq!(first_result(&event).status, EventResultStatus::Completed);
+    }
+    bus.stop();
+}
+
+#[test]
+fn test_json_schema_nested_object_and_array_runtime_enforcement() {
+    let bus = EventBus::new(Some("NestedSchemaRuntimeBus".to_string()));
+    let nested_schema = json!({
+        "type": "object",
+        "properties": {
+            "items": {"type": "array", "items": {"type": "integer"}},
+            "meta": {"type": "object", "additionalProperties": {"type": "boolean"}}
+        },
+        "required": ["items", "meta"]
+    });
+
+    bus.on("NestedSchemaValidEvent", "valid_handler", |_event| async move {
+        Ok(json!({"items": [1, 2, 3], "meta": {"ok": true, "cached": false}}))
+    });
+    let valid_event = bus.emit_base(schema_event(
+        "NestedSchemaValidEvent",
+        Some(nested_schema.clone()),
+    ));
+    wait(&valid_event);
+    let valid_result = first_result(&valid_event);
+    assert_eq!(valid_result.status, EventResultStatus::Completed);
+    assert_eq!(
+        valid_result.result,
+        Some(json!({"items": [1, 2, 3], "meta": {"ok": true, "cached": false}}))
+    );
+
+    bus.on(
+        "NestedSchemaInvalidEvent",
+        "invalid_handler",
+        |_event| async move { Ok(json!({"items": ["not-an-int"], "meta": {"ok": "yes"}})) },
+    );
+    let invalid_event = bus.emit_base(schema_event(
+        "NestedSchemaInvalidEvent",
+        Some(nested_schema),
+    ));
+    wait(&invalid_event);
+    let invalid_result = first_result(&invalid_event);
+    assert_eq!(invalid_result.status, EventResultStatus::Error);
+    assert!(invalid_result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("EventHandlerResultSchemaError"));
+    bus.stop();
+}
+
+#[test]
+fn test_module_level_runtime_enforcement() {
+    let bus = EventBus::new(Some("ModuleLevelRuntimeBus".to_string()));
+    let module_schema = json!({
+        "type": "object",
+        "properties": {
+            "result_id": {"type": "string"},
+            "data": {"type": "object"},
+            "success": {"type": "boolean"}
+        },
+        "required": ["result_id", "data", "success"],
+        "additionalProperties": false
+    });
+
+    bus.on(
+        "RuntimeValidEvent",
+        "correct_handler",
+        |_event| async move {
+            Ok(json!({
+                "result_id": "e1bb315c-472f-7bd1-8e72-c8502e1a9a36",
+                "data": {"key": "value"},
+                "success": true
+            }))
+        },
+    );
+    let valid_event = bus.emit_base(schema_event(
+        "RuntimeValidEvent",
+        Some(module_schema.clone()),
+    ));
+    wait(&valid_event);
+    assert_eq!(
+        first_result(&valid_event).status,
+        EventResultStatus::Completed
+    );
+
+    bus.on(
+        "RuntimeInvalidEvent",
+        "incorrect_handler",
+        |_event| async move { Ok(json!({"wrong": "format"})) },
+    );
+    let invalid_event = bus.emit_base(schema_event("RuntimeInvalidEvent", Some(module_schema)));
+    wait(&invalid_event);
+    let invalid_result = first_result(&invalid_event);
+    assert_eq!(invalid_result.status, EventResultStatus::Error);
+    assert!(invalid_result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("required"));
     bus.stop();
 }
 
