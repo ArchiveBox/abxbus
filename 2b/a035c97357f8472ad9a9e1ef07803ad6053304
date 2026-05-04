@@ -1,0 +1,35 @@
+abxbus-rust/tests/test_eventbus_log_tree.rs
+  6a8c07f028b30c43 74-82,102-111,130-139,172-176,225-234,254-263,281-290,322-330
+abxbus-rust/tests/test_event_result_handler_metadata.rs
+  6a8c07f028b30c43 247-250
+abxbus-rust/tests/test_eventbus_edge_cases.rs
+  6a8c07f028b30c43 10-13,49-55,138-183
+abxbus-rust/tests/test_eventbus_cross_runtime_features.rs
+  6a8c07f028b30c43 643-652
+abxbus-rust/tests/test_comprehensive_patterns.rs
+  6a8c07f028b30c43 1714-1742
+abxbus-rust/tests/test_eventbus_debounce.rs
+  6a8c07f028b30c43 127-130,162-171,207-216,248-257,295-299,313-318,479-482
+abxbus-rust/tests/test_base_event_runtime_state.rs
+  6a8c07f028b30c43 111-114,179-183,193-195
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "2ba035c97357f8472ad9a9e1ef07803ad6053304",
+  "prompts": {
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "messages": [],
+      "total_additions": 1721,
+      "total_deletions": 1477,
+      "accepted_lines": 20246,
+      "overriden_lines": 0
+    }
+  }
+}
