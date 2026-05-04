@@ -576,6 +576,11 @@ fn test_eventhandler_fromcallable_supports_id_override_and_detect_handler_file_p
 }
 
 #[test]
+fn test_event_handler_from_callable_supports_id_override_and_detect_handler_file_path_toggle() {
+    test_eventhandler_fromcallable_supports_id_override_and_detect_handler_file_path_toggle();
+}
+
+#[test]
 fn test_event_result_update_keeps_consistent_ordering_semantics_for_status_result_error() {
     let handler = EventHandler {
         id: "h1".into(),

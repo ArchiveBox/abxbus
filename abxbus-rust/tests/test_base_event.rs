@@ -547,6 +547,11 @@ fn test_monotonicdatetime_emits_parseable_monotonic_iso_timestamps() {
 }
 
 #[test]
+fn test_monotonic_datetime_emits_parseable_monotonic_iso_timestamps() {
+    test_monotonicdatetime_emits_parseable_monotonic_iso_timestamps();
+}
+
+#[test]
 fn test_python_serialized_at_fields_are_strings() {
     let timestamp = now_iso();
     assert!(timestamp.contains('T'));
@@ -773,6 +778,12 @@ fn test_baseevent_eventresultupdate_creates_and_updates_typed_handler_results() 
 
 #[test]
 fn test_baseevent_eventresultupdate_status_only_update_does_not_implicitly_pass_undefined_result_error_keys(
+) {
+    test_event_result_update_status_only_preserves_existing_error_and_result();
+}
+
+#[test]
+fn test_base_event_event_result_update_status_only_update_does_not_implicitly_pass_undefined_result_error_keys(
 ) {
     test_event_result_update_status_only_preserves_existing_error_and_result();
 }

@@ -219,6 +219,11 @@ fn test_first_event_handler_completion_is_set_to_first_after_calling_first() {
 }
 
 #[test]
+fn test_first_event_handler_completion_is_set_to() {
+    test_first_event_handler_completion_is_set_to_first_after_calling_first();
+}
+
+#[test]
 fn test_first_event_handler_completion_appears_in_tojson_output() {
     let bus = EventBus::new(Some("FirstJsonBus".to_string()));
 

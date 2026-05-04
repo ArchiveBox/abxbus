@@ -144,6 +144,11 @@ fn test_runwithlock_null_executes_function_directly_and_preserves_errors() {
 }
 
 #[test]
+fn test_run_with_lock_null_executes_function_directly_and_preserves_errors() {
+    test_runwithlock_null_executes_function_directly_and_preserves_errors();
+}
+
+#[test]
 fn test_handlerlock_reclaimhandlerlockifrunning_releases_reclaimed_permit_if_handler_exits_while_waiting(
 ) {
     let lock = AsyncLock::new(1);
@@ -253,6 +258,11 @@ fn test_lockmanager_waitforidle_uses_two_check_stability_and_supports_timeout() 
     });
     assert!(became_idle);
     assert!(checks.load(Ordering::SeqCst) >= 2);
+}
+
+#[test]
+fn test_lock_manager_wait_for_idle_uses_two_check_stability_and_supports_timeout() {
+    test_lockmanager_waitforidle_uses_two_check_stability_and_supports_timeout();
 }
 
 #[test]

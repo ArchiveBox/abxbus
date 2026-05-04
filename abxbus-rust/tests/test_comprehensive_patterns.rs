@@ -823,6 +823,11 @@ fn test_isinsidehandler_is_per_bus_not_global() {
 }
 
 #[test]
+fn test_is_inside_handler_is_per_bus_not_global() {
+    test_isinsidehandler_is_per_bus_not_global();
+}
+
+#[test]
 fn test_dispatch_multiple_await_one_skips_others_until_after_handler_completes() {
     let bus = EventBus::new(Some("ComprehensiveMultiDispatchBus".to_string()));
     let execution_order = Arc::new(Mutex::new(Vec::new()));
