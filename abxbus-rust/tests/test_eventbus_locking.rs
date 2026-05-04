@@ -1132,6 +1132,97 @@ fn test_awaited_bus_emit_inside_handler_queue_jumps_but_stays_untracked_root_eve
 }
 
 #[test]
+fn test_awaited_bus_emit_inside_handler_preempts_queued_sibling_without_parentage() {
+    let bus = EventBus::new_with_options(
+        Some("AwaitedBusEmitQueueJumpBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_for_handler = bus.clone();
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let child_ref = Arc::new(Mutex::new(None::<Arc<abxbus_rust::base_event::BaseEvent>>));
+
+    let order_for_parent = order.clone();
+    let child_ref_for_parent = child_ref.clone();
+    bus.on("parent", "parent_handler", move |_event| {
+        let bus = bus_for_handler.clone();
+        let order = order_for_parent.clone();
+        let child_ref = child_ref_for_parent.clone();
+        async move {
+            order
+                .lock()
+                .expect("order lock")
+                .push("parent_start".to_string());
+            bus.emit::<SiblingEvent>(TypedEvent::new(EmptyPayload {}));
+            let child = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            child.wait_completed().await;
+            order
+                .lock()
+                .expect("order lock")
+                .push("parent_end".to_string());
+            Ok(json!(null))
+        }
+    });
+
+    let order_for_child = order.clone();
+    bus.on("work", "child_handler", move |_event| {
+        let order = order_for_child.clone();
+        async move {
+            order
+                .lock()
+                .expect("order lock")
+                .push("child_start".to_string());
+            Ok(json!("child"))
+        }
+    });
+
+    let order_for_sibling = order.clone();
+    bus.on("sibling", "sibling_handler", move |_event| {
+        let order = order_for_sibling.clone();
+        async move {
+            order
+                .lock()
+                .expect("order lock")
+                .push("sibling_start".to_string());
+            Ok(json!("sibling"))
+        }
+    });
+
+    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(parent.wait_completed());
+    block_on(bus.wait_until_idle(Some(2.0)));
+
+    let order = order.lock().expect("order lock").clone();
+    let child_start_idx = order
+        .iter()
+        .position(|entry| entry == "child_start")
+        .expect("child start");
+    let sibling_start_idx = order
+        .iter()
+        .position(|entry| entry == "sibling_start")
+        .expect("sibling start");
+    let parent_end_idx = order
+        .iter()
+        .position(|entry| entry == "parent_end")
+        .expect("parent end");
+    assert!(child_start_idx < sibling_start_idx);
+    assert!(parent_end_idx < sibling_start_idx);
+
+    let child = child_ref
+        .lock()
+        .expect("child ref lock")
+        .clone()
+        .expect("child ref");
+    assert_eq!(child.inner.lock().event_parent_id, None);
+    assert_eq!(child.inner.lock().event_emitted_by_handler_id, None);
+    assert!(!child.inner.lock().event_blocks_parent_completion);
+    bus.stop();
+}
+
+#[test]
 fn test_awaiting_in_flight_event_does_not_double_run_handlers() {
     let bus = EventBus::new_with_options(
         Some("InFlightBus".to_string()),
