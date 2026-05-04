@@ -255,6 +255,10 @@ impl EventResult {
         })
     }
 
+    pub fn result_type_json(&self, event: &BaseEvent) -> Option<Value> {
+        event.inner.lock().event_result_type.clone()
+    }
+
     fn error_json_value(&self) -> Option<Value> {
         self.error.as_ref().map(|raw_message| {
             let (error_type, message) = Self::error_type_and_message(raw_message);

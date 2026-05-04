@@ -6,6 +6,7 @@ use abxbus_rust::{
     event_result::{EventResult, EventResultStatus},
 };
 use futures::executor::block_on;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 fn schema_event(event_type: &str, schema: Option<Value>) -> Arc<BaseEvent> {
@@ -60,6 +61,80 @@ fn test_typed_result_schema_validates_and_parses_handler_result() {
         abxbus_rust::event_result::EventResultStatus::Completed
     );
     assert_eq!(result.result, Some(json!({"value": "hello", "count": 42})));
+    bus.stop();
+}
+
+#[test]
+fn test_result_type_stored_in_event_result() {
+    let bus = EventBus::new(Some("storage_test_bus".to_string()));
+    let schema = json!({"type": "string"});
+
+    bus.on("StringEvent", "handler", |_event| async move {
+        Ok(json!("123"))
+    });
+
+    let event = bus.emit_base(schema_event("StringEvent", Some(schema.clone())));
+    wait(&event);
+
+    let result = first_result(&event);
+    assert_eq!(result.status, EventResultStatus::Completed);
+    assert_eq!(result.result_type_json(&event), Some(schema));
+    assert!(
+        !result
+            .to_flat_json_value()
+            .as_object()
+            .expect("result json object")
+            .contains_key("result_type"),
+        "EventResult JSON must not duplicate the parent event result schema"
+    );
+    bus.stop();
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct SimpleResult {
+    value: String,
+    count: i64,
+}
+
+#[test]
+fn test_simple_typed_result_model_roundtrip_and_status() {
+    let bus = EventBus::new(Some("typed_result_simple_bus".to_string()));
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "value": {"type": "string"},
+            "count": {"type": "integer"},
+        },
+        "required": ["value", "count"],
+        "additionalProperties": false,
+    });
+
+    bus.on("SimpleTypedEvent", "handler", |_event| async move {
+        Ok(json!({"value": "hello", "count": 42}))
+    });
+
+    let event = bus.emit_base(schema_event("SimpleTypedEvent", Some(schema)));
+    wait(&event);
+
+    assert_eq!(
+        event.inner.lock().event_status,
+        abxbus_rust::types::EventStatus::Completed
+    );
+
+    let result = first_result(&event);
+    assert_eq!(result.status, EventResultStatus::Completed);
+    assert!(result.error.is_none());
+    assert_eq!(result.result, Some(json!({"value": "hello", "count": 42})));
+
+    let typed_result: SimpleResult =
+        serde_json::from_value(result.result.expect("handler result")).expect("typed result");
+    assert_eq!(
+        typed_result,
+        SimpleResult {
+            value: "hello".to_string(),
+            count: 42
+        }
+    );
     bus.stop();
 }
 

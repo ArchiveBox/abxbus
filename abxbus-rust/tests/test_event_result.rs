@@ -795,6 +795,16 @@ fn test_slow_handler_warning_is_based_on_handler_runtime_after_lock_wait() {
 }
 
 #[test]
+fn test_run_handler_marks_started_after_handler_lock_entry() {
+    test_handler_result_stays_pending_while_waiting_for_handler_lock_entry();
+}
+
+#[test]
+fn test_run_handler_starts_slow_monitor_after_lock_wait() {
+    test_slow_handler_warning_is_based_on_handler_runtime_after_lock_wait();
+}
+
+#[test]
 fn test_event_result_error_json_roundtrip_preserves_error_type_and_message() {
     let payload = json!({
         "id": "018f8e40-1234-7000-8000-000000009999",
