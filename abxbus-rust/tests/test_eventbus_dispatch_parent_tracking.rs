@@ -6,9 +6,9 @@ use std::{
 
 use abxbus_rust::{
     base_event::BaseEvent,
-    event_bus::EventBus,
+    event_bus::{EventBus, EventBusOptions},
     typed::{EventSpec, TypedEvent},
-    types::EventStatus,
+    types::{EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
@@ -131,6 +131,97 @@ fn test_multi_level_parent_tracking_preserves_lineage() {
 }
 
 #[test]
+fn test_multiple_children_from_same_parent_keep_same_event_parent_id() {
+    let bus = EventBus::new(Some("MultiChildBus".to_string()));
+    let bus_for_handler = bus.clone();
+
+    bus.on("ParentEvent", "parent_handler", move |_event| {
+        let bus = bus_for_handler.clone();
+        async move {
+            for _ in 0..3 {
+                bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            }
+            Ok(json!("spawned_children"))
+        }
+    });
+    bus.on("ChildEvent", "child_handler", |_event| async move {
+        Ok(json!("child"))
+    });
+
+    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(bus.wait_until_idle(None));
+
+    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let payload = bus.runtime_payload_for_test();
+    let children: Vec<_> = payload
+        .values()
+        .filter(|event| event.inner.lock().event_type == "ChildEvent")
+        .cloned()
+        .collect();
+    assert_eq!(children.len(), 3);
+    for child in children {
+        assert_eq!(
+            child.inner.lock().event_parent_id.as_deref(),
+            Some(parent_id.as_str())
+        );
+    }
+    bus.stop();
+}
+
+#[test]
+fn test_parallel_parent_handlers_preserve_parent_tracking() {
+    let bus = EventBus::new_with_options(
+        Some("ParallelParentTrackingBus".to_string()),
+        EventBusOptions {
+            event_handler_concurrency: EventHandlerConcurrencyMode::Parallel,
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_for_handler_1 = bus.clone();
+    let bus_for_handler_2 = bus.clone();
+
+    bus.on("ParentEvent", "handler_1", move |_event| {
+        let bus = bus_for_handler_1.clone();
+        async move {
+            thread::sleep(Duration::from_millis(10));
+            bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            Ok(json!("h1"))
+        }
+    });
+    bus.on("ParentEvent", "handler_2", move |_event| {
+        let bus = bus_for_handler_2.clone();
+        async move {
+            thread::sleep(Duration::from_millis(20));
+            bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            Ok(json!("h2"))
+        }
+    });
+    bus.on("ChildEvent", "child_handler", |_event| async move {
+        Ok(json!("child"))
+    });
+
+    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(bus.wait_until_idle(None));
+
+    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let payload = bus.runtime_payload_for_test();
+    let children: Vec<_> = payload
+        .values()
+        .filter(|event| event.inner.lock().event_type == "ChildEvent")
+        .cloned()
+        .collect();
+    assert_eq!(children.len(), 2);
+    for child in children {
+        assert_eq!(
+            child.inner.lock().event_parent_id.as_deref(),
+            Some(parent_id.as_str())
+        );
+        assert!(child.inner.lock().event_emitted_by_handler_id.is_some());
+    }
+    bus.stop();
+}
+
+#[test]
 fn test_event_children_tracks_multiple_children_from_a_single_handler() {
     let bus = EventBus::new(Some("EventChildrenBus".to_string()));
     let bus_for_handler = bus.clone();
@@ -184,6 +275,53 @@ fn test_event_children_tracks_multiple_children_from_a_single_handler() {
 }
 
 #[test]
+fn test_multiple_parent_handlers_contribute_to_one_event_children_list() {
+    let bus = EventBus::new(Some("EventChildrenMultiHandlerBus".to_string()));
+    let bus_for_handler_1 = bus.clone();
+    let bus_for_handler_2 = bus.clone();
+
+    let handler_1 = bus.on("ParentEvent", "handler_1", move |_event| {
+        let bus = bus_for_handler_1.clone();
+        async move {
+            bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            Ok(json!("h1"))
+        }
+    });
+    let handler_2 = bus.on("ParentEvent", "handler_2", move |_event| {
+        let bus = bus_for_handler_2.clone();
+        async move {
+            bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            Ok(json!("h2"))
+        }
+    });
+    bus.on("ChildEvent", "child_handler", |_event| async move {
+        Ok(json!("child"))
+    });
+
+    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(bus.wait_until_idle(None));
+
+    let parent_inner = parent.inner.inner.lock();
+    let handler_1_children = parent_inner
+        .event_results
+        .get(&handler_1.id)
+        .expect("handler 1 result")
+        .event_children
+        .clone();
+    let handler_2_children = parent_inner
+        .event_results
+        .get(&handler_2.id)
+        .expect("handler 2 result")
+        .event_children
+        .clone();
+    assert_eq!(handler_1_children.len(), 1);
+    assert_eq!(handler_2_children.len(), 2);
+    assert_eq!(handler_1_children.len() + handler_2_children.len(), 3);
+    bus.stop();
+}
+
+#[test]
 fn test_explicit_event_parent_id_is_not_overridden() {
     let bus = EventBus::new(Some("ExplicitParentBus".to_string()));
     let bus_for_handler = bus.clone();
@@ -214,6 +352,100 @@ fn test_explicit_event_parent_id_is_not_overridden() {
         child.inner.lock().event_parent_id.as_deref(),
         Some(explicit_parent_id.as_str())
     );
+    bus.stop();
+}
+
+#[test]
+fn test_cross_eventbus_dispatch_preserves_parent_tracking() {
+    let bus_1 = EventBus::new(Some("CrossParentBus1".to_string()));
+    let bus_2 = EventBus::new(Some("CrossParentBus2".to_string()));
+    let bus_1_for_handler = bus_1.clone();
+    let bus_2_for_handler = bus_2.clone();
+
+    bus_1.on("ParentEvent", "parent_handler", move |_event| {
+        let bus_1 = bus_1_for_handler.clone();
+        let bus_2 = bus_2_for_handler.clone();
+        async move {
+            let child = bus_1.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            bus_2.emit::<ChildEvent>(TypedEvent::from_base_event(child.inner.clone()));
+            Ok(json!("bus1"))
+        }
+    });
+    bus_2.on("ChildEvent", "bus2_child_handler", |_event| async move {
+        Ok(json!("bus2"))
+    });
+
+    let parent = bus_1.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(async {
+        bus_1.wait_until_idle(None).await;
+        bus_2.wait_until_idle(None).await;
+    });
+
+    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let received_child = bus_2
+        .runtime_payload_for_test()
+        .values()
+        .find(|event| event.inner.lock().event_type == "ChildEvent")
+        .cloned()
+        .expect("received child");
+    assert_eq!(
+        received_child.inner.lock().event_parent_id.as_deref(),
+        Some(parent_id.as_str())
+    );
+    bus_1.stop();
+    bus_2.stop();
+}
+
+#[test]
+fn test_erroring_parent_handlers_still_preserve_child_event_parent_id() {
+    let bus = EventBus::new(Some("ErrorOnlyParentTrackingBus".to_string()));
+    let bus_for_failing_handler = bus.clone();
+    let bus_for_success_handler = bus.clone();
+
+    bus.on("ParentEvent", "failing_handler", move |_event| {
+        let bus = bus_for_failing_handler.clone();
+        async move {
+            bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            Err("expected parent handler failure".to_string())
+        }
+    });
+    bus.on("ParentEvent", "success_handler", move |_event| {
+        let bus = bus_for_success_handler.clone();
+        async move {
+            bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            Ok(json!("recovered"))
+        }
+    });
+    bus.on("ChildEvent", "child_handler", |_event| async move {
+        Ok(json!("child"))
+    });
+
+    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(bus.wait_until_idle(None));
+
+    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let payload = bus.runtime_payload_for_test();
+    let children: Vec<_> = payload
+        .values()
+        .filter(|event| event.inner.lock().event_type == "ChildEvent")
+        .cloned()
+        .collect();
+    assert_eq!(children.len(), 2);
+    for child in children {
+        assert_eq!(
+            child.inner.lock().event_parent_id.as_deref(),
+            Some(parent_id.as_str())
+        );
+    }
+    let parent_errors = parent
+        .inner
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .filter(|result| result.error.is_some())
+        .count();
+    assert_eq!(parent_errors, 1);
     bus.stop();
 }
 
