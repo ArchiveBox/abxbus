@@ -11,7 +11,7 @@ use std::{
 use abxbus_rust::{
     base_event::{BaseEvent, EventResultsOptions},
     event_bus::{EventBus, EventBusOptions},
-    event_result::EventResultStatus,
+    event_result::{EventResult, EventResultStatus},
     typed::{EventSpec, TypedEvent},
     types::{
         EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventStatus,
@@ -46,6 +46,122 @@ impl EventSpec for UserActionEvent {
     type Payload = EmptyPayload;
     type Result = EmptyResult;
     const EVENT_TYPE: &'static str = "UserActionEvent";
+}
+
+#[test]
+fn test_eventbus_exposes_locks_api_surface() {
+    let bus = EventBus::new(Some("GateSurfaceBus".to_string()));
+
+    let mut pause = bus.locks.request_runloop_pause();
+    assert!(bus.locks.is_paused());
+    pause.release();
+    assert!(!bus.locks.is_paused());
+
+    assert!(bus
+        .locks
+        .wait_for_idle(Some(Duration::from_millis(20)), || true));
+
+    let event = BaseEvent::new("GateSurfaceEvent", serde_json::Map::new());
+    assert!(bus.locks.get_lock_for_event(&bus, &event).is_some());
+    bus.stop();
+}
+
+#[test]
+fn test_eventbus_locks_methods_are_callable_and_preserve_lock_resolution_behavior() {
+    let bus = EventBus::new_with_options(
+        Some("GateInvocationBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            ..EventBusOptions::default()
+        },
+    );
+
+    let mut release_pause = bus.locks.request_runloop_pause();
+    assert!(bus.locks.is_paused());
+    let resumed = Arc::new(AtomicBool::new(false));
+    let resumed_for_thread = resumed.clone();
+    let locks_for_waiter = bus.locks.clone();
+    let waiter = thread::spawn(move || {
+        locks_for_waiter.wait_until_runloop_resumed();
+        resumed_for_thread.store(true, Ordering::SeqCst);
+    });
+    thread::sleep(Duration::from_millis(20));
+    assert!(!resumed.load(Ordering::SeqCst));
+    release_pause.release();
+    waiter.join().expect("pause waiter joins");
+    assert!(resumed.load(Ordering::SeqCst));
+    assert!(!bus.locks.is_paused());
+
+    let event_with_global = BaseEvent::new("GateInvocationEvent", serde_json::Map::new());
+    {
+        let mut inner = event_with_global.inner.lock();
+        inner.event_concurrency = Some(EventConcurrencyMode::GlobalSerial);
+        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
+    }
+    let global_lock = bus
+        .locks
+        .get_lock_for_event(&bus, &event_with_global)
+        .expect("global lock");
+    assert!(Arc::ptr_eq(&global_lock, &EventBus::global_serial_lock()));
+    let handler = bus.on("GateInvocationEvent", "handler", |_event| async move {
+        Ok(json!("ok"))
+    });
+    let result = EventResult::new(
+        event_with_global.inner.lock().event_id.clone(),
+        handler.clone(),
+        None,
+    );
+    let handler_lock = bus
+        .locks
+        .get_lock_for_event_handler(&bus, &event_with_global, &result)
+        .expect("handler lock");
+    let same_event_handler_lock = bus
+        .locks
+        .get_lock_for_event_handler(&bus, &event_with_global, &result)
+        .expect("same handler lock");
+    assert!(Arc::ptr_eq(&handler_lock, &same_event_handler_lock));
+
+    let event_with_parallel = BaseEvent::new("GateInvocationEvent", serde_json::Map::new());
+    {
+        let mut inner = event_with_parallel.inner.lock();
+        inner.event_concurrency = Some(EventConcurrencyMode::Parallel);
+        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
+    }
+    let parallel_result = EventResult::new(
+        event_with_parallel.inner.lock().event_id.clone(),
+        handler.clone(),
+        None,
+    );
+    assert!(bus
+        .locks
+        .get_lock_for_event(&bus, &event_with_parallel)
+        .is_none());
+    assert!(bus
+        .locks
+        .get_lock_for_event_handler(&bus, &event_with_parallel, &parallel_result)
+        .is_none());
+
+    let another_serial_event = BaseEvent::new("GateInvocationEvent", serde_json::Map::new());
+    let another_result = EventResult::new(
+        another_serial_event.inner.lock().event_id.clone(),
+        handler,
+        None,
+    );
+    let another_handler_lock = bus
+        .locks
+        .get_lock_for_event_handler(&bus, &another_serial_event, &another_result)
+        .expect("another handler lock");
+    assert!(!Arc::ptr_eq(&handler_lock, &another_handler_lock));
+
+    let emitted = bus.emit_base(BaseEvent::new(
+        "GateInvocationEvent",
+        serde_json::Map::new(),
+    ));
+    block_on(emitted.wait_completed());
+    assert!(bus.locks.wait_for_idle(Some(Duration::from_secs(1)), || bus
+        .is_idle_and_queue_empty()));
+    bus.stop();
 }
 
 #[derive(Clone, Serialize, Deserialize)]

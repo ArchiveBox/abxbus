@@ -7,6 +7,13 @@ use std::{
 
 use parking_lot::{Mutex, ReentrantMutex, ReentrantMutexGuard};
 
+use crate::{
+    base_event::BaseEvent,
+    event_bus::EventBus,
+    event_result::EventResult,
+    types::{EventConcurrencyMode, EventHandlerConcurrencyMode},
+};
+
 #[derive(Clone)]
 pub struct AsyncLock {
     inner: Arc<AsyncLockInner>,
@@ -366,6 +373,43 @@ impl LockManager {
             .entry(key.to_string())
             .or_insert_with(|| Arc::new(ReentrantLock::default()))
             .clone()
+    }
+
+    pub fn get_lock_for_event(
+        &self,
+        bus: &EventBus,
+        event: &Arc<BaseEvent>,
+    ) -> Option<Arc<ReentrantLock>> {
+        let resolved = event
+            .inner
+            .lock()
+            .event_concurrency
+            .unwrap_or(bus.event_concurrency);
+        match resolved {
+            EventConcurrencyMode::Parallel => None,
+            EventConcurrencyMode::GlobalSerial => Some(EventBus::global_serial_lock()),
+            EventConcurrencyMode::BusSerial => Some(bus.event_bus_serial_lock()),
+        }
+    }
+
+    pub fn get_lock_for_event_handler(
+        &self,
+        bus: &EventBus,
+        event: &Arc<BaseEvent>,
+        _event_result: &EventResult,
+    ) -> Option<Arc<ReentrantLock>> {
+        let resolved = event
+            .inner
+            .lock()
+            .event_handler_concurrency
+            .unwrap_or(bus.event_handler_concurrency);
+        match resolved {
+            EventHandlerConcurrencyMode::Parallel => None,
+            EventHandlerConcurrencyMode::Serial => {
+                let event_id = event.inner.lock().event_id.clone();
+                Some(self.get_lock(&format!("handler:{event_id}")))
+            }
+        }
     }
 
     pub fn request_runloop_pause(&self) -> RunloopPauseGuard<'_> {

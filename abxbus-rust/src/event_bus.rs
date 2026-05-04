@@ -16,13 +16,13 @@ use crate::{
     event_handler::{EventHandler, EventHandlerCallable, EventHandlerOptions},
     event_result::{EventResult, EventResultStatus},
     id::uuid_v7_string,
-    lock_manager::ReentrantLock,
+    lock_manager::{LockManager, ReentrantLock},
     types::{
         EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventStatus,
     },
 };
 
-static GLOBAL_SERIAL_LOCK: OnceLock<Arc<ReentrantLock>> = OnceLock::new();
+pub(crate) static GLOBAL_SERIAL_LOCK: OnceLock<Arc<ReentrantLock>> = OnceLock::new();
 static ALL_INSTANCES: OnceLock<Mutex<Vec<Weak<EventBus>>>> = OnceLock::new();
 thread_local! {
     static CURRENT_BUS_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
@@ -66,6 +66,7 @@ pub struct EventBus {
     pub event_handler_slow_timeout: Option<f64>,
     pub event_handler_detect_file_paths: bool,
     pub max_handler_recursion_depth: usize,
+    pub locks: Arc<LockManager>,
     handlers: Arc<Mutex<HashMap<String, Vec<EventHandler>>>>,
     runtime: Arc<BusRuntime>,
     bus_serial_lock: Arc<ReentrantLock>,
@@ -138,6 +139,16 @@ impl Default for EventBusOptions {
 }
 
 impl EventBus {
+    pub fn global_serial_lock() -> Arc<ReentrantLock> {
+        GLOBAL_SERIAL_LOCK
+            .get_or_init(|| Arc::new(ReentrantLock::default()))
+            .clone()
+    }
+
+    pub fn event_bus_serial_lock(&self) -> Arc<ReentrantLock> {
+        self.bus_serial_lock.clone()
+    }
+
     fn live_instances() -> Vec<Arc<EventBus>> {
         let mut instances = ALL_INSTANCES.get_or_init(|| Mutex::new(Vec::new())).lock();
         instances.retain(|entry| entry.upgrade().is_some());
@@ -234,6 +245,7 @@ impl EventBus {
             event_handler_slow_timeout: options.event_handler_slow_timeout,
             event_handler_detect_file_paths: options.event_handler_detect_file_paths,
             max_handler_recursion_depth: options.max_handler_recursion_depth,
+            locks: Arc::new(LockManager::default()),
             handlers: Arc::new(Mutex::new(HashMap::new())),
             runtime: Arc::new(BusRuntime {
                 queue: Mutex::new(VecDeque::new()),
