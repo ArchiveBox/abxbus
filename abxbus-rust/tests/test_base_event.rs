@@ -21,6 +21,23 @@ fn unwrap_event_error(result: Result<Arc<BaseEvent>, String>) -> String {
 }
 
 #[test]
+fn test_baseevent_lifecycle_transitions_are_explicit_and_awaitable() {
+    let event = mk_event("BaseEventLifecycleTestEvent");
+    assert_eq!(event.inner.lock().event_status, EventStatus::Pending);
+    assert!(event.inner.lock().event_started_at.is_none());
+    assert!(event.inner.lock().event_completed_at.is_none());
+
+    event.mark_started();
+    assert_eq!(event.inner.lock().event_status, EventStatus::Started);
+    assert!(event.inner.lock().event_started_at.is_some());
+
+    event.mark_completed();
+    assert_eq!(event.inner.lock().event_status, EventStatus::Completed);
+    assert!(event.inner.lock().event_completed_at.is_some());
+    block_on(event.event_completed());
+}
+
+#[test]
 fn test_base_event_json_roundtrip() {
     let event = mk_event("test_event");
     let json_value = event.to_json_value();
@@ -40,6 +57,16 @@ fn test_base_event_runtime_state_transitions() {
 }
 
 #[test]
+fn test_monotonicdatetime_emits_parseable_monotonic_iso_timestamps() {
+    let first = now_iso();
+    let second = now_iso();
+
+    assert!(chrono::DateTime::parse_from_rfc3339(&first).is_ok());
+    assert!(chrono::DateTime::parse_from_rfc3339(&second).is_ok());
+    assert!(second > first || second == first);
+}
+
+#[test]
 fn test_python_serialized_at_fields_are_strings() {
     let timestamp = now_iso();
     assert!(timestamp.contains('T'));
@@ -54,6 +81,24 @@ fn test_python_serialized_at_fields_are_strings() {
         .as_str()
         .expect("created_at string")
         .contains('T'));
+}
+
+#[test]
+fn test_baseevent_reset_returns_a_fresh_pending_event_that_can_be_redispatched() {
+    let event = mk_event("BaseEventResetEvent");
+    event.mark_started();
+    event.mark_completed();
+
+    let reset = event.event_reset();
+
+    assert_ne!(reset.inner.lock().event_id, event.inner.lock().event_id);
+    assert_eq!(reset.inner.lock().event_status, EventStatus::Pending);
+    assert!(reset.inner.lock().event_started_at.is_none());
+    assert!(reset.inner.lock().event_completed_at.is_none());
+    assert_eq!(reset.inner.lock().event_pending_bus_count, 0);
+    assert!(reset.inner.lock().event_results.is_empty());
+    assert_eq!(reset.inner.lock().event_type, "BaseEventResetEvent");
+    assert_eq!(reset.inner.lock().payload.get("value"), Some(&json!(1)));
 }
 
 #[test]
@@ -89,6 +134,24 @@ fn test_event_at_fields_are_recognized() {
         "018f8e40-1234-7000-8000-000000000301"
     );
     assert_eq!(serialized["event_pending_bus_count"], 2);
+}
+
+#[test]
+fn test_baseevent_fromjson_preserves_nullable_parent_emitted_metadata() {
+    let event = BaseEvent::from_json_value(json!({
+        "event_id": "018f8e40-1234-7000-8000-000000001234",
+        "event_created_at": "2025-01-01T00:00:00.000Z",
+        "event_type": "NullableMetadataEvent",
+        "event_parent_id": null,
+        "event_emitted_by_handler_id": null,
+        "event_timeout": null
+    }));
+
+    assert_eq!(event.inner.lock().event_parent_id, None);
+    assert_eq!(event.inner.lock().event_emitted_by_handler_id, None);
+    let payload = event.to_json_value();
+    assert_eq!(payload["event_parent_id"], Value::Null);
+    assert_eq!(payload["event_emitted_by_handler_id"], Value::Null);
 }
 
 #[test]
