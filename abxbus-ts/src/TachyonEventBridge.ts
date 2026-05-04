@@ -247,10 +247,21 @@ export class TachyonEventBridge {
       // worker.terminate() cannot preempt a futex-blocked Tachyon recv() (see the
       // SHUTDOWN_TYPE_ID comment above), so a listener-only instance that never
       // received a sentinel would hang forever if we awaited it. Fire-and-forget the
-      // terminate and bound how long we'll wait for it to come back; either way the
-      // worker is daemon-mode and dies with the process.
+      // terminate and bound how long we'll wait for it to come back; if it doesn't,
+      // unref the worker so the parent Node process can still exit (the worker is
+      // daemon-mode and dies with the process either way).
       const terminate_promise = listener.terminate().catch(() => undefined)
-      await Promise.race([terminate_promise, new Promise((resolve) => setTimeout(resolve, 500))])
+      const terminate_settled = await Promise.race([
+        terminate_promise.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+      ])
+      if (!terminate_settled) {
+        try {
+          listener.unref()
+        } catch {
+          // ignore
+        }
+      }
     }
     for (const pending of this.pending_sends.values()) {
       pending.reject(new Error('TachyonEventBridge closed'))

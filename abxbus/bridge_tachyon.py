@@ -206,21 +206,10 @@ class TachyonEventBridge:
         thread = threading.Thread(target=_run, daemon=True, name='TachyonEventBridge-listener')
         thread.start()
         self._listener_thread = thread
-
-        deadline = time.monotonic() + _TACHYON_SOCKET_WAIT_TIMEOUT
-        while time.monotonic() < deadline:
-            if self._listener_init_error is not None:
-                raise RuntimeError(f'TachyonEventBridge failed to listen on {self.path}') from self._listener_init_error
-            # Path-existence is what peers need to know to call Bus.connect; the thread
-            # itself sets _acted_as_listener once Bus.listen has actually completed the
-            # bind+handshake, so a startup race where another process beats our thread to
-            # the path can't trick close() into unlinking a socket we never owned.
-            if os.path.exists(self.path):
-                return
-            time.sleep(0.005)
-        if self._listener_init_error is not None:
-            raise RuntimeError(f'TachyonEventBridge failed to listen on {self.path}') from self._listener_init_error
-        raise TimeoutError(f'TachyonEventBridge listener did not bind socket {self.path} within {_TACHYON_SOCKET_WAIT_TIMEOUT}s')
+        # on() returns immediately so the asyncio loop isn't pinned on startup; peers
+        # that try Bus.connect before this thread finishes binding are covered by the
+        # sender-side connect retry loop, and `await bridge.start()` is the explicit
+        # fail-fast readiness checkpoint (see the path-existence poll there).
 
     async def _ensure_sender_connected(self) -> None:
         if self._send_bus is not None:
