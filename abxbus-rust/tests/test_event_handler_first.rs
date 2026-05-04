@@ -388,6 +388,15 @@ fn test_first_returns_undefined_when_no_handlers_are_registered() {
 }
 
 #[test]
+fn test_first_rejects_when_event_has_no_bus_attached() {
+    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+
+    let error = block_on(event.first()).expect_err("unemitted event should reject");
+
+    assert_eq!(error, "event has no bus attached");
+}
+
+#[test]
 fn test_first_re_raises_first_processing_error_when_all_handlers_throw() {
     let bus = EventBus::new(Some("FirstErrorBus".to_string()));
 

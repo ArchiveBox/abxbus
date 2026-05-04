@@ -81,6 +81,16 @@ impl<E: EventSpec> TypedEvent<E> {
     }
 
     pub async fn first(&self) -> Result<Option<E::Result>, String> {
+        {
+            let event = self.inner.inner.lock();
+            if event.event_status == crate::types::EventStatus::Pending
+                && event.event_path.is_empty()
+                && event.event_pending_bus_count == 0
+                && event.event_results.is_empty()
+            {
+                return Err("event has no bus attached".to_string());
+            }
+        }
         self.inner.inner.lock().event_handler_completion = Some(EventHandlerCompletionMode::First);
         self.wait_completed().await;
         self.first_result_or_error()
