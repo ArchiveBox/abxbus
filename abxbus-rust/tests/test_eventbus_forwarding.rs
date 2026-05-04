@@ -18,6 +18,9 @@ struct PingPayload {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+struct EmptyPayload {}
+
+#[derive(Clone, Serialize, Deserialize)]
 struct EmptyResult {}
 
 struct PingEvent;
@@ -37,6 +40,20 @@ impl EventSpec for OrderEvent {
     type Payload = OrderPayload;
     type Result = EmptyResult;
     const EVENT_TYPE: &'static str = "OrderEvent";
+}
+
+struct ProxyDispatchRootEvent;
+impl EventSpec for ProxyDispatchRootEvent {
+    type Payload = EmptyPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "ProxyDispatchRootEvent";
+}
+
+struct ProxyDispatchChildEvent;
+impl EventSpec for ProxyDispatchChildEvent {
+    type Payload = EmptyPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "ProxyDispatchChildEvent";
 }
 
 #[test]
@@ -401,6 +418,77 @@ fn test_forwarding_same_event_does_not_set_self_parent_id() {
     );
     origin.stop();
     target.stop();
+}
+
+#[test]
+fn test_proxy_dispatch_auto_links_child_events_like_emit() {
+    let bus = EventBus::new(Some("ProxyDispatchAutoLinkBus".to_string()));
+    let bus_for_root = bus.clone();
+
+    bus.on("ProxyDispatchRootEvent", "root_handler", move |_event| {
+        let bus = bus_for_root.clone();
+        async move {
+            bus.emit_child::<ProxyDispatchChildEvent>(TypedEvent::new(EmptyPayload {}));
+            Ok(json!("root"))
+        }
+    });
+    bus.on(
+        "ProxyDispatchChildEvent",
+        "child_handler",
+        |_event| async move { Ok(json!("child")) },
+    );
+
+    let root = bus.emit::<ProxyDispatchRootEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(root.wait_completed());
+    block_on(bus.wait_until_idle(None));
+
+    let root_id = root.inner.inner.lock().event_id.clone();
+    let child_ids: Vec<String> = root
+        .inner
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .flat_map(|result| result.event_children.clone())
+        .collect();
+    assert_eq!(child_ids.len(), 1);
+    let payload = bus.runtime_payload_for_test();
+    let child = payload.get(&child_ids[0]).cloned().expect("child event");
+    assert_eq!(
+        child.inner.lock().event_parent_id.as_deref(),
+        Some(root_id.as_str())
+    );
+    assert_eq!(child.inner.lock().event_id, child_ids[0]);
+    bus.stop();
+}
+
+#[test]
+fn test_proxy_dispatch_of_same_event_does_not_self_parent_or_self_link_child() {
+    let bus = EventBus::new(Some("ProxyDispatchSameEventBus".to_string()));
+    let bus_for_root = bus.clone();
+
+    bus.on("ProxyDispatchRootEvent", "root_handler", move |event| {
+        let bus = bus_for_root.clone();
+        async move {
+            bus.emit_base(event);
+            Ok(json!("root"))
+        }
+    });
+
+    let root = bus.emit::<ProxyDispatchRootEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(root.wait_completed());
+    block_on(bus.wait_until_idle(None));
+
+    let inner = root.inner.inner.lock();
+    let child_ids: Vec<String> = inner
+        .event_results
+        .values()
+        .flat_map(|result| result.event_children.clone())
+        .collect();
+    assert_eq!(inner.event_parent_id, None);
+    assert!(child_ids.is_empty());
+    drop(inner);
+    bus.stop();
 }
 
 #[test]
