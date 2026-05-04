@@ -76,6 +76,10 @@ impl<E: EventSpec> TypedEvent<E> {
         self.inner.wait_completed().await;
     }
 
+    pub async fn event_completed(&self) {
+        self.inner.event_completed().await;
+    }
+
     pub fn first_result(&self) -> Option<E::Result> {
         let results: HashMap<String, crate::event_result::EventResult> =
             self.inner.inner.lock().event_results.clone();

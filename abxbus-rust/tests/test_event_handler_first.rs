@@ -49,11 +49,19 @@ fn test_event_handler_first_serial_stops_after_first_success() {
     block_on(emitted.wait_completed());
 
     let results = emitted.inner.inner.lock().event_results.clone();
-    assert_eq!(results.len(), 1);
-    assert_eq!(
-        results.values().next().and_then(|r| r.result.clone()),
-        Some(json!("winner"))
-    );
+    assert_eq!(results.len(), 2);
+    assert!(results.values().any(|result| {
+        result.status == abxbus_rust::event_result::EventResultStatus::Completed
+            && result.result == Some(json!("winner"))
+    }));
+    assert!(results.values().any(|result| {
+        result.status == abxbus_rust::event_result::EventResultStatus::Error
+            && result
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Cancelled: first() resolved")
+    }));
     bus.stop();
 }
 
@@ -79,7 +87,7 @@ fn test_event_first_skips_none_result_and_uses_next_winner() {
     block_on(emitted.wait_completed());
 
     let results = emitted.inner.inner.lock().event_results.clone();
-    assert_eq!(results.len(), 2);
+    assert_eq!(results.len(), 3);
     assert_eq!(emitted.first_result(), Some(json!("winner")));
     assert!(results
         .values()
@@ -87,6 +95,14 @@ fn test_event_first_skips_none_result_and_uses_next_winner() {
     assert!(results
         .values()
         .any(|result| result.result == Some(json!("winner"))));
+    assert!(results.values().any(|result| {
+        result.status == abxbus_rust::event_result::EventResultStatus::Error
+            && result
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Cancelled: first() resolved")
+    }));
     bus.stop();
 }
 
@@ -109,7 +125,7 @@ fn test_event_first_preserves_false_and_empty_string_results() {
     let false_event = false_bus.emit(false_event);
     block_on(false_event.wait_completed());
     assert_eq!(false_event.first_result(), Some(json!(false)));
-    assert_eq!(false_event.inner.inner.lock().event_results.len(), 1);
+    assert_eq!(false_event.inner.inner.lock().event_results.len(), 2);
     false_bus.stop();
 
     let empty_bus = EventBus::new(Some("BusFirstEmptyString".to_string()));
@@ -129,6 +145,6 @@ fn test_event_first_preserves_false_and_empty_string_results() {
     let empty_event = empty_bus.emit(empty_event);
     block_on(empty_event.wait_completed());
     assert_eq!(empty_event.first_result(), Some(json!("")));
-    assert_eq!(empty_event.inner.inner.lock().event_results.len(), 1);
+    assert_eq!(empty_event.inner.inner.lock().event_results.len(), 2);
     empty_bus.stop();
 }

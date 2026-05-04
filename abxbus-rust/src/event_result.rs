@@ -31,6 +31,7 @@ impl Serialize for EventResult {
     where
         S: Serializer,
     {
+        let error = self.error_json_value();
         let mut state = serializer.serialize_struct("EventResult", 17)?;
         state.serialize_field("id", &self.id)?;
         state.serialize_field("status", &self.status)?;
@@ -47,7 +48,7 @@ impl Serialize for EventResult {
         state.serialize_field("started_at", &self.started_at)?;
         state.serialize_field("completed_at", &self.completed_at)?;
         state.serialize_field("result", &self.result)?;
-        state.serialize_field("error", &self.error)?;
+        state.serialize_field("error", &error)?;
         state.serialize_field("event_children", &self.event_children)?;
         state.end()
     }
@@ -128,8 +129,17 @@ impl EventResult {
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "result": self.result,
-            "error": self.error,
+            "error": self.error_json_value(),
             "event_children": self.event_children,
+        })
+    }
+
+    fn error_json_value(&self) -> Option<Value> {
+        self.error.as_ref().map(|message| {
+            json!({
+                "type": "Error",
+                "message": message,
+            })
         })
     }
 

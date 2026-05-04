@@ -220,6 +220,9 @@ fn test_error_handler_result_fields_are_populated_correctly() {
         .as_deref()
         .unwrap_or_default()
         .contains("out of range"));
+    let payload = result.to_flat_json_value();
+    assert_eq!(payload["error"]["type"], "Error");
+    assert_eq!(payload["error"]["message"], "RangeError: out of range");
     assert!(result.started_at.is_some());
     assert!(result.completed_at.is_some());
     bus.stop();

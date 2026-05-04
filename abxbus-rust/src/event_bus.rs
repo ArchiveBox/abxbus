@@ -635,46 +635,11 @@ impl EventBus {
     }
 
     pub fn queue_jump_if_waited(event: Arc<BaseEvent>) {
-        let context = CURRENT_BUS_ID.with(|bus_id| {
-            CURRENT_EVENT_ID.with(|event_id| {
-                CURRENT_HANDLER_ID.with(|handler_id| {
-                    Some((
-                        bus_id.borrow().clone()?,
-                        event_id.borrow().clone()?,
-                        handler_id.borrow().clone()?,
-                    ))
-                })
-            })
-        });
-        let Some((current_bus_id, current_event_id, current_handler_id)) = context else {
+        let Some((current_bus_id, _, _)) =
+            Self::mark_blocks_parent_completion_if_awaited(event.clone())
+        else {
             return;
         };
-
-        {
-            let mut inner = event.inner.lock();
-            if inner.event_parent_id.as_deref() == Some(current_event_id.as_str())
-                && inner.event_emitted_by_handler_id.as_deref() == Some(current_handler_id.as_str())
-                && inner.event_id != current_event_id
-            {
-                let is_linked_child = ALL_INSTANCES
-                    .get_or_init(|| Mutex::new(Vec::new()))
-                    .lock()
-                    .iter()
-                    .filter_map(Weak::upgrade)
-                    .filter_map(|bus| bus.runtime.events.lock().get(&current_event_id).cloned())
-                    .any(|parent| {
-                        parent
-                            .inner
-                            .lock()
-                            .event_results
-                            .get(&current_handler_id)
-                            .is_some_and(|result| result.event_children.contains(&inner.event_id))
-                    });
-                if is_linked_child {
-                    inner.event_blocks_parent_completion = true;
-                }
-            }
-        }
 
         let event_path = event.inner.lock().event_path.clone();
         if event_path.is_empty() {
@@ -721,6 +686,53 @@ impl EventBus {
                     && bus_mode == EventConcurrencyMode::GlobalSerial);
             bus.process_event_immediately_if_queued(event.clone(), bypass_event_lock);
         }
+    }
+
+    pub fn mark_blocks_parent_completion_if_awaited(
+        event: Arc<BaseEvent>,
+    ) -> Option<(String, String, String)> {
+        let context = CURRENT_BUS_ID.with(|bus_id| {
+            CURRENT_EVENT_ID.with(|event_id| {
+                CURRENT_HANDLER_ID.with(|handler_id| {
+                    Some((
+                        bus_id.borrow().clone()?,
+                        event_id.borrow().clone()?,
+                        handler_id.borrow().clone()?,
+                    ))
+                })
+            })
+        });
+        let Some((current_bus_id, current_event_id, current_handler_id)) = context else {
+            return None;
+        };
+
+        {
+            let mut inner = event.inner.lock();
+            if inner.event_parent_id.as_deref() == Some(current_event_id.as_str())
+                && inner.event_emitted_by_handler_id.as_deref() == Some(current_handler_id.as_str())
+                && inner.event_id != current_event_id
+            {
+                let is_linked_child = ALL_INSTANCES
+                    .get_or_init(|| Mutex::new(Vec::new()))
+                    .lock()
+                    .iter()
+                    .filter_map(Weak::upgrade)
+                    .filter_map(|bus| bus.runtime.events.lock().get(&current_event_id).cloned())
+                    .any(|parent| {
+                        parent
+                            .inner
+                            .lock()
+                            .event_results
+                            .get(&current_handler_id)
+                            .is_some_and(|result| result.event_children.contains(&inner.event_id))
+                    });
+                if is_linked_child {
+                    inner.event_blocks_parent_completion = true;
+                }
+            }
+        }
+
+        Some((current_bus_id, current_event_id, current_handler_id))
     }
 
     fn process_event_immediately_if_queued(&self, event: Arc<BaseEvent>, bypass_event_lock: bool) {
@@ -1087,20 +1099,26 @@ impl EventBus {
             .unwrap_or(self.event_handler_completion);
 
         let event_timeout = event.inner.lock().event_timeout.or(self.event_timeout);
+        self.create_pending_handler_results(&event, &handlers, event_timeout);
 
         match handler_concurrency {
             EventHandlerConcurrencyMode::Serial => {
-                for handler in handlers {
+                for (index, handler) in handlers.iter().cloned().enumerate() {
                     let timed_out = self
                         .run_handler_with_context(event.clone(), handler, started_at, event_timeout)
                         .await;
                     if timed_out {
                         break;
                     }
-                    if handler_completion == EventHandlerCompletionMode::First
-                        && self.has_winner(&event)
-                    {
-                        break;
+                    if handler_completion == EventHandlerCompletionMode::First {
+                        let winner_id = self.winning_handler_id(&event);
+                        if winner_id.is_some() {
+                            self.cancel_remaining_first_mode_results(
+                                &event,
+                                &handlers[index + 1..],
+                            );
+                            break;
+                        }
                     }
                 }
             }
@@ -1120,6 +1138,11 @@ impl EventBus {
                 }
                 for handle in join_handles {
                     let _ = handle.join();
+                }
+                if handler_completion == EventHandlerCompletionMode::First {
+                    if let Some(winner_id) = self.winning_handler_id(&event) {
+                        self.cancel_parallel_first_mode_losers(&event, &winner_id);
+                    }
                 }
             }
         }
@@ -1190,12 +1213,112 @@ impl EventBus {
         }
     }
 
-    fn has_winner(&self, event: &Arc<BaseEvent>) -> bool {
-        event.inner.lock().event_results.values().any(|result| {
-            result.status == EventResultStatus::Completed
-                && result.error.is_none()
-                && !matches!(result.result, None | Some(Value::Null))
-        })
+    fn create_pending_handler_results(
+        &self,
+        event: &Arc<BaseEvent>,
+        handlers: &[EventHandler],
+        event_timeout: Option<f64>,
+    ) {
+        let event_id = event.inner.lock().event_id.clone();
+        let pending_results: Vec<(String, EventResult)> = handlers
+            .iter()
+            .map(|handler| {
+                (
+                    handler.id.clone(),
+                    EventResult::new(
+                        event_id.clone(),
+                        handler.clone(),
+                        self.result_timeout_for_handler(event, handler, event_timeout),
+                    ),
+                )
+            })
+            .collect();
+        let mut inner = event.inner.lock();
+        for (handler_id, result) in pending_results {
+            inner.event_results.entry(handler_id).or_insert(result);
+        }
+    }
+
+    fn result_timeout_for_handler(
+        &self,
+        event: &Arc<BaseEvent>,
+        handler: &EventHandler,
+        event_timeout: Option<f64>,
+    ) -> Option<f64> {
+        let resolved_handler_timeout = handler
+            .handler_timeout
+            .or(event.inner.lock().event_handler_timeout)
+            .or(self.event_timeout);
+
+        match (resolved_handler_timeout, event_timeout) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        }
+    }
+
+    fn winning_handler_id(&self, event: &Arc<BaseEvent>) -> Option<String> {
+        event
+            .inner
+            .lock()
+            .event_results
+            .iter()
+            .find_map(|(handler_id, result)| {
+                if result.status == EventResultStatus::Completed
+                    && result.error.is_none()
+                    && !matches!(result.result, None | Some(Value::Null))
+                {
+                    Some(handler_id.clone())
+                } else {
+                    None
+                }
+            })
+    }
+
+    fn cancel_remaining_first_mode_results(
+        &self,
+        event: &Arc<BaseEvent>,
+        remaining_handlers: &[EventHandler],
+    ) {
+        let mut inner = event.inner.lock();
+        for handler in remaining_handlers {
+            if let Some(result) = inner.event_results.get_mut(&handler.id) {
+                if result.status != EventResultStatus::Pending {
+                    continue;
+                }
+                result.status = EventResultStatus::Error;
+                result.error =
+                    Some("EventHandlerCancelledError: Cancelled: first() resolved".to_string());
+                if result.started_at.is_none() {
+                    result.started_at = Some(now_iso());
+                }
+                result.completed_at = Some(now_iso());
+            }
+        }
+    }
+
+    fn cancel_parallel_first_mode_losers(&self, event: &Arc<BaseEvent>, winner_id: &str) {
+        let mut inner = event.inner.lock();
+        for (handler_id, result) in inner.event_results.iter_mut() {
+            if handler_id == winner_id {
+                continue;
+            }
+            if result.status == EventResultStatus::Pending {
+                result.error =
+                    Some("EventHandlerCancelledError: Cancelled: first() resolved".to_string());
+            } else if result.status == EventResultStatus::Started {
+                result.error =
+                    Some("EventHandlerAbortedError: Aborted: first() resolved".to_string());
+            } else {
+                continue;
+            }
+            result.status = EventResultStatus::Error;
+            if result.started_at.is_none() {
+                result.started_at = Some(now_iso());
+            }
+            result.completed_at = Some(now_iso());
+        }
     }
 
     async fn run_handler_with_context(
@@ -1230,12 +1353,7 @@ impl EventBus {
             .or(event.inner.lock().event_handler_timeout)
             .or(self.event_timeout);
 
-        let result_timeout = match (resolved_handler_timeout, event_timeout) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (Some(a), None) => Some(a),
-            (None, Some(b)) => Some(b),
-            (None, None) => None,
-        };
+        let result_timeout = self.result_timeout_for_handler(&event, &handler, event_timeout);
 
         let remaining_event_timeout = event_timeout.map(|timeout| {
             let elapsed = event_started_at.elapsed().as_secs_f64();
@@ -1249,11 +1367,14 @@ impl EventBus {
             (None, None) => None,
         };
 
-        let mut result = EventResult::new(
-            event.inner.lock().event_id.clone(),
-            handler.clone(),
-            result_timeout,
-        );
+        let existing_result = { event.inner.lock().event_results.get(&handler.id).cloned() };
+        let mut result = existing_result.unwrap_or_else(|| {
+            EventResult::new(
+                event.inner.lock().event_id.clone(),
+                handler.clone(),
+                result_timeout,
+            )
+        });
         result.status = EventResultStatus::Started;
         result.started_at = Some(now_iso());
         event

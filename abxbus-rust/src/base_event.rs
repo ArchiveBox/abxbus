@@ -139,6 +139,11 @@ impl BaseEvent {
 
     pub async fn wait_completed(self: &Arc<Self>) {
         crate::event_bus::EventBus::queue_jump_if_waited(self.clone());
+        self.event_completed().await;
+    }
+
+    pub async fn event_completed(self: &Arc<Self>) {
+        crate::event_bus::EventBus::mark_blocks_parent_completion_if_awaited(self.clone());
         loop {
             let listener = self.completed.listen();
             {
