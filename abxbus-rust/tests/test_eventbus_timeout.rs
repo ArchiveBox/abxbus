@@ -83,6 +83,13 @@ fn test_event_timeout_aborts_in_flight_handler_result() {
         .as_deref()
         .unwrap_or_default()
         .contains("EventHandlerAbortedError"));
+    assert_eq!(
+        result.to_flat_json_value()["error"],
+        json!({
+            "type": "EventHandlerAbortedError",
+            "message": "timeout",
+        })
+    );
     bus.stop();
 }
 

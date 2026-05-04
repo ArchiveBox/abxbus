@@ -89,12 +89,22 @@ impl<E: EventSpec> TypedEvent<E> {
     pub fn first_result(&self) -> Option<E::Result> {
         let results: HashMap<String, crate::event_result::EventResult> =
             self.inner.inner.lock().event_results.clone();
-        let mut ordered_handler_ids: Vec<String> = results.keys().cloned().collect();
-        ordered_handler_ids.sort();
-        for handler_id in ordered_handler_ids {
-            let Some(result) = results.get(&handler_id) else {
-                continue;
-            };
+        let mut ordered_results: Vec<_> = results
+            .values()
+            .filter(|result| result.status == crate::event_result::EventResultStatus::Completed)
+            .collect();
+        ordered_results.sort_by(|left, right| {
+            left.completed_at
+                .cmp(&right.completed_at)
+                .then_with(|| left.started_at.cmp(&right.started_at))
+                .then_with(|| {
+                    left.handler
+                        .handler_registered_at
+                        .cmp(&right.handler.handler_registered_at)
+                })
+                .then_with(|| left.handler.id.cmp(&right.handler.id))
+        });
+        for result in ordered_results {
             if result.error.is_none() {
                 if let Some(value) = &result.result {
                     if value.is_null() {

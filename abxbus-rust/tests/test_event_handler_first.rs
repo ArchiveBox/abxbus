@@ -181,3 +181,78 @@ fn test_event_first_shortcut_sets_mode_and_returns_winner() {
         .is_some_and(|value| value == "first"));
     bus.stop();
 }
+
+#[test]
+fn test_event_handler_first_parallel_returns_earliest_completed_non_null_result() {
+    let bus = EventBus::new(Some("BusFirstParallelWinner".to_string()));
+
+    bus.on("value", "slow_loser", |_event| async move {
+        thread::sleep(Duration::from_millis(80));
+        Ok(json!("slow"))
+    });
+    bus.on("value", "fast_winner", |_event| async move {
+        thread::sleep(Duration::from_millis(10));
+        Ok(json!("fast"))
+    });
+
+    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    {
+        let mut inner = event.inner.inner.lock();
+        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
+        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
+    }
+    let event = bus.emit(event);
+    block_on(event.wait_completed());
+
+    assert_eq!(event.first_result(), Some(json!("fast")));
+    let results = event.inner.inner.lock().event_results.clone();
+    let fast_result = results
+        .values()
+        .find(|result| result.handler.handler_name == "fast_winner")
+        .expect("fast result");
+    assert_eq!(
+        fast_result.status,
+        abxbus_rust::event_result::EventResultStatus::Completed
+    );
+    let slow_result = results
+        .values()
+        .find(|result| result.handler.handler_name == "slow_loser")
+        .expect("slow result");
+    assert_eq!(
+        slow_result.status,
+        abxbus_rust::event_result::EventResultStatus::Error
+    );
+    assert!(slow_result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("Aborted: first() resolved"));
+    assert_eq!(
+        slow_result.to_flat_json_value()["error"],
+        json!({
+            "type": "EventHandlerAbortedError",
+            "message": "Aborted: first() resolved",
+        })
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_event_first_returns_zero_as_valid_first_result() {
+    let bus = EventBus::new(Some("BusFirstZero".to_string()));
+
+    bus.on("value", "zero_winner", |_event| async move { Ok(json!(0)) });
+    bus.on("value", "late", |_event| async move { Ok(json!("late")) });
+
+    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    {
+        let mut inner = event.inner.inner.lock();
+        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
+        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
+    }
+    let event = bus.emit(event);
+    block_on(event.wait_completed());
+
+    assert_eq!(event.first_result(), Some(json!(0)));
+    bus.stop();
+}

@@ -1259,21 +1259,39 @@ impl EventBus {
     }
 
     fn winning_handler_id(&self, event: &Arc<BaseEvent>) -> Option<String> {
-        event
+        let mut candidates: Vec<(String, EventResult)> = event
             .inner
             .lock()
             .event_results
             .iter()
-            .find_map(|(handler_id, result)| {
+            .filter_map(|(handler_id, result)| {
                 if result.status == EventResultStatus::Completed
                     && result.error.is_none()
                     && !matches!(result.result, None | Some(Value::Null))
                 {
-                    Some(handler_id.clone())
+                    Some((handler_id.clone(), result.clone()))
                 } else {
                     None
                 }
             })
+            .collect();
+        candidates.sort_by(|left, right| {
+            left.1
+                .completed_at
+                .cmp(&right.1.completed_at)
+                .then_with(|| left.1.started_at.cmp(&right.1.started_at))
+                .then_with(|| {
+                    left.1
+                        .handler
+                        .handler_registered_at
+                        .cmp(&right.1.handler.handler_registered_at)
+                })
+                .then_with(|| left.0.cmp(&right.0))
+        });
+        candidates
+            .into_iter()
+            .next()
+            .map(|(handler_id, _)| handler_id)
     }
 
     fn cancel_remaining_first_mode_results(
@@ -1288,6 +1306,7 @@ impl EventBus {
                     continue;
                 }
                 result.status = EventResultStatus::Error;
+                result.result = None;
                 result.error =
                     Some("EventHandlerCancelledError: Cancelled: first() resolved".to_string());
                 if result.started_at.is_none() {
@@ -1300,6 +1319,10 @@ impl EventBus {
 
     fn cancel_parallel_first_mode_losers(&self, event: &Arc<BaseEvent>, winner_id: &str) {
         let mut inner = event.inner.lock();
+        let winner_completed_at = inner
+            .event_results
+            .get(winner_id)
+            .and_then(|result| result.completed_at.clone());
         for (handler_id, result) in inner.event_results.iter_mut() {
             if handler_id == winner_id {
                 continue;
@@ -1310,10 +1333,19 @@ impl EventBus {
             } else if result.status == EventResultStatus::Started {
                 result.error =
                     Some("EventHandlerAbortedError: Aborted: first() resolved".to_string());
+            } else if result.status == EventResultStatus::Completed
+                && winner_completed_at
+                    .as_ref()
+                    .zip(result.completed_at.as_ref())
+                    .is_some_and(|(winner_at, result_at)| result_at >= winner_at)
+            {
+                result.error =
+                    Some("EventHandlerAbortedError: Aborted: first() resolved".to_string());
             } else {
                 continue;
             }
             result.status = EventResultStatus::Error;
+            result.result = None;
             if result.started_at.is_none() {
                 result.started_at = Some(now_iso());
             }

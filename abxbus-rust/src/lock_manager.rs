@@ -1,14 +1,14 @@
 use std::{collections::HashMap, sync::Arc};
 
-use parking_lot::Mutex;
+use parking_lot::{Mutex, ReentrantMutex, ReentrantMutexGuard};
 
 #[derive(Default, Clone)]
 pub struct ReentrantLock {
-    lock: Arc<Mutex<()>>,
+    lock: Arc<ReentrantMutex<()>>,
 }
 
 impl ReentrantLock {
-    pub fn lock(&self) -> parking_lot::MutexGuard<'_, ()> {
+    pub fn lock(&self) -> ReentrantMutexGuard<'_, ()> {
         self.lock.lock()
     }
 }

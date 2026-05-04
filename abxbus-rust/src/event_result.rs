@@ -135,12 +135,28 @@ impl EventResult {
     }
 
     fn error_json_value(&self) -> Option<Value> {
-        self.error.as_ref().map(|message| {
+        self.error.as_ref().map(|raw_message| {
+            let (error_type, message) = Self::error_type_and_message(raw_message);
             json!({
-                "type": "Error",
+                "type": error_type,
                 "message": message,
             })
         })
+    }
+
+    fn error_type_and_message(raw_message: &str) -> (&str, &str) {
+        for error_type in [
+            "EventHandlerAbortedError",
+            "EventHandlerCancelledError",
+            "EventHandlerTimeoutError",
+            "EventHandlerResultSchemaError",
+        ] {
+            let prefix = format!("{error_type}: ");
+            if let Some(message) = raw_message.strip_prefix(&prefix) {
+                return (error_type, message);
+            }
+        }
+        ("Error", raw_message)
     }
 
     pub fn from_flat_json_value(
