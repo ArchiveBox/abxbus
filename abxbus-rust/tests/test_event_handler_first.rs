@@ -1,7 +1,7 @@
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     thread,
     time::{Duration, Instant},
@@ -35,6 +35,13 @@ impl EventSpec for ValueEvent {
     type Payload = EmptyPayload;
     type Result = Value;
     const EVENT_TYPE: &'static str = "value";
+}
+
+struct ChildEvent;
+impl EventSpec for ChildEvent {
+    type Payload = EmptyPayload;
+    type Result = Value;
+    const EVENT_TYPE: &'static str = "child";
 }
 
 #[test]
@@ -175,7 +182,7 @@ fn test_event_first_shortcut_sets_mode_and_returns_winner() {
 
     let event = bus.emit::<ValueEvent>(TypedEvent::<ValueEvent>::new(EmptyPayload {}));
     assert_eq!(event.inner.inner.lock().event_handler_completion, None);
-    let result = block_on(event.first());
+    let result = block_on(event.first()).expect("first result");
 
     assert_eq!(result, Some(json!("winner")));
     assert_eq!(
@@ -201,7 +208,7 @@ fn test_first_event_handler_completion_is_set_to_first_after_calling_first() {
     let event = bus.emit::<ValueEvent>(TypedEvent::<ValueEvent>::new(EmptyPayload {}));
     assert_eq!(event.inner.inner.lock().event_handler_completion, None);
 
-    let result = block_on(event.first());
+    let result = block_on(event.first()).expect("first result");
 
     assert_eq!(result, Some(json!("result")));
     assert_eq!(
@@ -220,7 +227,7 @@ fn test_first_event_handler_completion_appears_in_tojson_output() {
     });
 
     let event = bus.emit::<ValueEvent>(TypedEvent::<ValueEvent>::new(EmptyPayload {}));
-    block_on(event.first());
+    block_on(event.first()).expect("first result");
 
     let payload = event.inner.to_json_value();
     assert_eq!(payload["event_handler_completion"], "first");
@@ -247,7 +254,7 @@ fn test_first_event_handler_completion_can_be_set_via_event_constructor() {
         inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
     }
     let event = bus.emit(event);
-    let result = block_on(event.first());
+    let result = block_on(event.first()).expect("first result");
 
     assert_eq!(result, Some(json!("fast handler")));
     assert_eq!(
@@ -341,7 +348,7 @@ fn test_event_first_parallel_returns_before_slow_loser_finishes() {
     let event = bus.emit(event);
 
     let started = Instant::now();
-    let result = block_on(event.first());
+    let result = block_on(event.first()).expect("first result");
 
     assert_eq!(result, Some(json!("fast")));
     assert!(
@@ -373,9 +380,127 @@ fn test_first_returns_undefined_when_no_handlers_are_registered() {
     let result = block_on(
         bus.emit::<ValueEvent>(TypedEvent::new(EmptyPayload {}))
             .first(),
-    );
+    )
+    .expect("first result");
 
     assert_eq!(result, None);
+    bus.stop();
+}
+
+#[test]
+fn test_first_re_raises_first_processing_error_when_all_handlers_throw() {
+    let bus = EventBus::new(Some("FirstErrorBus".to_string()));
+
+    bus.on("value", "handler_1", |_event| async move {
+        Err("handler 1 error".to_string())
+    });
+    bus.on("value", "handler_2", |_event| async move {
+        Err("handler 2 error".to_string())
+    });
+
+    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    {
+        let mut inner = event.inner.inner.lock();
+        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
+        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
+    }
+    let error = block_on(bus.emit(event).first()).expect_err("first should surface handler error");
+
+    assert!(
+        error.contains("handler 1 error") || error.contains("handler 2 error"),
+        "unexpected first error: {error}"
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_first_re_raises_processing_errors_even_when_another_handler_succeeds() {
+    let bus = EventBus::new(Some("FirstMixBus".to_string()));
+
+    bus.on("value", "fast_failure", |_event| async move {
+        Err("fast but fails".to_string())
+    });
+    bus.on("value", "slow_success", |_event| async move {
+        thread::sleep(Duration::from_millis(20));
+        Ok(json!("slow but succeeds"))
+    });
+
+    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    {
+        let mut inner = event.inner.inner.lock();
+        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
+        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
+    }
+    let event = bus.emit(event);
+    let error = block_on(event.first()).expect_err("first should surface fast handler error");
+
+    assert!(error.contains("fast but fails"));
+    let has_success = event
+        .inner
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .any(|result| result.result == Some(json!("slow but succeeds")));
+    assert!(has_success, "slow success should still be recorded");
+    bus.stop();
+}
+
+#[test]
+fn test_first_cancels_child_events_emitted_by_losing_handlers() {
+    let bus = EventBus::new(Some("FirstChildBus".to_string()));
+    let bus_for_slow_parent = bus.clone();
+    let child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
+    let child_ref_for_slow_parent = child_ref.clone();
+
+    bus.on("child", "slow_child", |_event| async move {
+        thread::sleep(Duration::from_millis(500));
+        Ok(json!("child result"))
+    });
+    bus.on("value", "fast_parent", |_event| async move {
+        thread::sleep(Duration::from_millis(30));
+        Ok(json!("fast parent"))
+    });
+    bus.on("value", "slow_parent_with_child", move |_event| {
+        let bus = bus_for_slow_parent.clone();
+        let child_ref = child_ref_for_slow_parent.clone();
+        async move {
+            let child = bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            child.wait_completed().await;
+            Ok(json!("slow parent with child"))
+        }
+    });
+
+    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    {
+        let mut inner = event.inner.inner.lock();
+        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
+        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
+    }
+    let result = block_on(bus.emit(event).first()).expect("first result");
+    assert_eq!(result, Some(json!("fast parent")));
+
+    let child = child_ref
+        .lock()
+        .expect("child ref lock")
+        .clone()
+        .expect("losing handler should have emitted child");
+    let child_inner = child.inner.lock();
+    assert!(child_inner.event_blocks_parent_completion);
+    assert_eq!(
+        child_inner.event_status,
+        abxbus_rust::types::EventStatus::Completed
+    );
+    assert!(child_inner.event_results.values().any(|result| {
+        result.status == abxbus_rust::event_result::EventResultStatus::Error
+            && result
+                .error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("first() resolved")
+    }));
+    drop(child_inner);
     bus.stop();
 }
 
@@ -412,7 +537,8 @@ fn test_first_returns_empty_string_as_a_valid_first_result() {
     let result = block_on(
         bus.emit::<ValueEvent>(TypedEvent::new(EmptyPayload {}))
             .first(),
-    );
+    )
+    .expect("first result");
 
     assert_eq!(result, Some(json!("")));
     bus.stop();
@@ -431,7 +557,8 @@ fn test_first_returns_false_as_a_valid_first_result() {
     let result = block_on(
         bus.emit::<ValueEvent>(TypedEvent::new(EmptyPayload {}))
             .first(),
-    );
+    )
+    .expect("first result");
 
     assert_eq!(result, Some(json!(false)));
     bus.stop();
@@ -447,7 +574,8 @@ fn test_event_first_returns_none_when_all_handlers_return_null() {
     let result = block_on(
         bus.emit::<ValueEvent>(TypedEvent::new(EmptyPayload {}))
             .first(),
-    );
+    )
+    .expect("first result");
 
     assert_eq!(result, None);
     bus.stop();
@@ -462,7 +590,8 @@ fn test_event_first_works_with_single_handler() {
     let result = block_on(
         bus.emit::<ValueEvent>(TypedEvent::new(EmptyPayload {}))
             .first(),
-    );
+    )
+    .expect("first result");
 
     assert_eq!(result, Some(json!(42)));
     bus.stop();

@@ -80,10 +80,10 @@ impl<E: EventSpec> TypedEvent<E> {
         self.inner.event_completed().await;
     }
 
-    pub async fn first(&self) -> Option<E::Result> {
+    pub async fn first(&self) -> Result<Option<E::Result>, String> {
         self.inner.inner.lock().event_handler_completion = Some(EventHandlerCompletionMode::First);
         self.wait_completed().await;
-        self.first_result()
+        self.first_result_or_error()
     }
 
     pub async fn event_result(
@@ -110,6 +110,45 @@ impl<E: EventSpec> TypedEvent<E> {
     }
 
     pub fn first_result(&self) -> Option<E::Result> {
+        self.first_result_from_completed().ok().flatten()
+    }
+
+    pub fn first_result_or_error(&self) -> Result<Option<E::Result>, String> {
+        let results: HashMap<String, crate::event_result::EventResult> =
+            self.inner.inner.lock().event_results.clone();
+        let mut error_results: Vec<_> = results
+            .values()
+            .filter(|result| {
+                result.status == crate::event_result::EventResultStatus::Error
+                    && !result
+                        .error
+                        .as_deref()
+                        .unwrap_or_default()
+                        .contains("first() resolved")
+            })
+            .collect();
+        error_results.sort_by(|left, right| {
+            left.completed_at
+                .cmp(&right.completed_at)
+                .then_with(|| left.started_at.cmp(&right.started_at))
+                .then_with(|| {
+                    left.handler
+                        .handler_registered_at
+                        .cmp(&right.handler.handler_registered_at)
+                })
+                .then_with(|| left.handler.id.cmp(&right.handler.id))
+        });
+        if let Some(error) = error_results
+            .into_iter()
+            .filter_map(|result| result.error.clone())
+            .next()
+        {
+            return Err(error);
+        }
+        self.first_result_from_completed()
+    }
+
+    fn first_result_from_completed(&self) -> Result<Option<E::Result>, String> {
         let results: HashMap<String, crate::event_result::EventResult> =
             self.inner.inner.lock().event_results.clone();
         let mut ordered_results: Vec<_> = results
@@ -134,12 +173,12 @@ impl<E: EventSpec> TypedEvent<E> {
                         continue;
                     }
                     let decoded: E::Result =
-                        serde_json::from_value(value.clone()).expect("typed result decode failed");
-                    return Some(decoded);
+                        serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
+                    return Ok(Some(decoded));
                 }
             }
         }
-        None
+        Ok(None)
     }
 
     fn decode_result_value(value: Value) -> Result<E::Result, String> {

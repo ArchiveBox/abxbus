@@ -129,7 +129,7 @@ fn test_log_tree_first_mode_control_cancellations_use_cancelled_icon() {
     let event = TypedEvent::<CancelledLogEvent>::new(RootPayload { data: None });
     event.inner.inner.lock().event_handler_completion = Some(EventHandlerCompletionMode::First);
     let event = bus.emit(event);
-    let first = block_on(event.first());
+    let first = block_on(event.first()).expect("first result");
     assert_eq!(first, Some("fast result".to_string()));
 
     let output = bus.log_tree();

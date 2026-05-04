@@ -1187,7 +1187,7 @@ fn test_forwarded_first_mode_uses_processing_bus_handler_concurrency_defaults() 
     });
 
     let event = bus_a.emit::<ForwardedFirstEvent>(TypedEvent::new(EmptyPayload {}));
-    let result = block_on(event.first());
+    let result = block_on(event.first()).expect("first result");
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));
 
