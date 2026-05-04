@@ -39,10 +39,34 @@ const { parentPort, workerData } = require('node:worker_threads')
 
 const SHUTDOWN_TYPE_ID = ${TACHYON_SHUTDOWN_TYPE_ID}
 
+const probeListenerAlive = (path) => new Promise((resolve) => {
+  const net = require('node:net')
+  const sock = net.createConnection(path)
+  const settle = (alive) => {
+    try { sock.destroy() } catch {}
+    resolve(alive)
+  }
+  sock.setTimeout(50, () => settle(false))
+  sock.once('connect', () => settle(true))
+  sock.once('error', () => settle(false))
+})
+
 const main = async () => {
   const { Bus } = await import('@tachyon-ipc/core')
+  const fs = require('node:fs')
   const { path, capacity } = workerData
-  const bus = Bus.listen(path, capacity)
+  let bus
+  try {
+    bus = Bus.listen(path, capacity)
+  } catch (firstErr) {
+    // The bind failed because the path is in use. If a live listener owns it, propagate
+    // the error so the user can resolve the conflict; if it's a stale socket from a
+    // previous crash, unlink it and retry exactly once.
+    const alive = await probeListenerAlive(path)
+    if (alive || !fs.existsSync(path)) throw firstErr
+    try { fs.unlinkSync(path) } catch {}
+    bus = Bus.listen(path, capacity)
+  }
   parentPort.postMessage({ type: 'ready' })
   while (true) {
     let msg
@@ -285,13 +309,9 @@ export class TachyonEventBridge {
     if (!isNodeRuntime()) {
       throw new Error('TachyonEventBridge is only supported in Node.js runtimes')
     }
-    if (existsSync(this.path)) {
-      try {
-        unlinkSync(this.path)
-      } catch {
-        // ignore
-      }
-    }
+    // The worker probes the path before unlinking — only stale sockets (no live
+    // listener) get cleared. This avoids clobbering a listener owned by another
+    // process when two bridges race on the same path.
     const worker = new Worker(TACHYON_LISTENER_WORKER_CODE, {
       eval: true,
       workerData: { path: this.path, capacity: this.capacity },

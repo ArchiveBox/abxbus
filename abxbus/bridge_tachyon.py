@@ -24,6 +24,7 @@ import asyncio
 import importlib
 import json
 import os
+import socket as _socket
 import threading
 import time
 from collections.abc import Callable
@@ -170,7 +171,9 @@ class TachyonEventBridge:
             self._listener_loop = None
 
         tachyon_module = self._load_tachyon()
-        if os.path.exists(self.path):
+        if os.path.exists(self.path) and not self._is_listener_alive(self.path):
+            # Only clear truly stale socket files; an `unlink` of a live listener's
+            # bound path would silently break that listener for any future producers.
             try:
                 os.unlink(self.path)
             except OSError:
@@ -240,6 +243,28 @@ class TachyonEventBridge:
         if loop is None or loop.is_closed():
             return
         loop.call_soon_threadsafe(self._inbound_bus.emit, event)
+
+    @staticmethod
+    def _is_listener_alive(path: str) -> bool:
+        """Brief unix-socket connect probe used to distinguish a live listener from a
+        stale socket file left behind by a crashed peer."""
+        try:
+            probe = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        except OSError:
+            return False
+        try:
+            probe.settimeout(0.05)
+            probe.connect(path)
+            return True
+        except (FileNotFoundError, ConnectionRefusedError):
+            return False
+        except OSError:
+            return False
+        finally:
+            try:
+                probe.close()
+            except OSError:
+                pass
 
     @staticmethod
     def _load_tachyon() -> Any:
