@@ -7,8 +7,9 @@ use std::{
 
 use abxbus_rust::{
     event_bus::{EventBus, EventBusOptions},
+    event_result::EventResultStatus,
     typed::{EventSpec, TypedEvent},
-    types::{EventConcurrencyMode, EventHandlerConcurrencyMode},
+    types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
@@ -217,6 +218,86 @@ fn test_bus_serial_processes_in_order() {
         .unwrap_or_default();
     assert!(event1_started <= event2_started);
     bus.stop();
+}
+
+#[test]
+fn test_bus_serial_fifo_order_preserved_per_bus_with_interleaving() {
+    let bus_a = EventBus::new_with_options(
+        Some("BusSerialOrderA".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_b = EventBus::new_with_options(
+        Some("BusSerialOrderB".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            ..EventBusOptions::default()
+        },
+    );
+    let starts_a = Arc::new(Mutex::new(Vec::new()));
+    let starts_b = Arc::new(Mutex::new(Vec::new()));
+
+    let starts_a_for_handler = starts_a.clone();
+    bus_a.on("serial", "record_a", move |event| {
+        let starts = starts_a_for_handler.clone();
+        async move {
+            let order = event
+                .inner
+                .lock()
+                .payload
+                .get("order")
+                .and_then(serde_json::Value::as_i64)
+                .expect("order payload");
+            starts.lock().expect("starts_a lock").push(order);
+            thread::sleep(Duration::from_millis(2));
+            Ok(json!(null))
+        }
+    });
+    let starts_b_for_handler = starts_b.clone();
+    bus_b.on("serial", "record_b", move |event| {
+        let starts = starts_b_for_handler.clone();
+        async move {
+            let order = event
+                .inner
+                .lock()
+                .payload
+                .get("order")
+                .and_then(serde_json::Value::as_i64)
+                .expect("order payload");
+            starts.lock().expect("starts_b lock").push(order);
+            thread::sleep(Duration::from_millis(2));
+            Ok(json!(null))
+        }
+    });
+
+    for order in 0..4 {
+        bus_a.emit::<SerialEvent>(TypedEvent::new(SerialPayload {
+            order,
+            source: "a".to_string(),
+        }));
+        bus_b.emit::<SerialEvent>(TypedEvent::new(SerialPayload {
+            order,
+            source: "b".to_string(),
+        }));
+    }
+
+    block_on(async {
+        assert!(bus_a.wait_until_idle(Some(2.0)).await);
+        assert!(bus_b.wait_until_idle(Some(2.0)).await);
+    });
+
+    assert_eq!(
+        starts_a.lock().expect("starts_a lock").as_slice(),
+        &[0, 1, 2, 3]
+    );
+    assert_eq!(
+        starts_b.lock().expect("starts_b lock").as_slice(),
+        &[0, 1, 2, 3]
+    );
+    bus_a.stop();
+    bus_b.stop();
 }
 
 #[test]
@@ -555,6 +636,102 @@ fn test_event_concurrency_bus_serial_serializes_per_bus_but_overlaps_across_buse
     });
 
     assert!(*max_in_flight_global.lock().expect("max lock") >= 2);
+    bus_a.stop();
+    bus_b.stop();
+}
+
+#[test]
+fn test_bus_serial_awaiting_child_on_one_bus_does_not_block_other_bus_queue() {
+    let bus_a = EventBus::new_with_options(
+        Some("BusSerialParentBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_b = EventBus::new_with_options(
+        Some("BusSerialOtherBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+
+    let order_for_child = order.clone();
+    bus_a.on("work", "child_handler", move |_event| {
+        let order = order_for_child.clone();
+        async move {
+            order
+                .lock()
+                .expect("order lock")
+                .push("child_start".to_string());
+            thread::sleep(Duration::from_millis(25));
+            order
+                .lock()
+                .expect("order lock")
+                .push("child_end".to_string());
+            Ok(json!(null))
+        }
+    });
+
+    let bus_a_for_parent = bus_a.clone();
+    let order_for_parent = order.clone();
+    bus_a.on("parent", "parent_handler", move |_event| {
+        let bus_a = bus_a_for_parent.clone();
+        let order = order_for_parent.clone();
+        async move {
+            order
+                .lock()
+                .expect("order lock")
+                .push("parent_start".to_string());
+            let child = bus_a.emit_child::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+            child.wait_completed().await;
+            order
+                .lock()
+                .expect("order lock")
+                .push("parent_end".to_string());
+            Ok(json!(null))
+        }
+    });
+
+    let order_for_other = order.clone();
+    bus_b.on("sibling", "other_handler", move |_event| {
+        let order = order_for_other.clone();
+        async move {
+            order
+                .lock()
+                .expect("order lock")
+                .push("other_start".to_string());
+            thread::sleep(Duration::from_millis(2));
+            order
+                .lock()
+                .expect("order lock")
+                .push("other_end".to_string());
+            Ok(json!(null))
+        }
+    });
+
+    let parent = bus_a.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    thread::sleep(Duration::from_millis(1));
+    bus_b.emit::<SiblingEvent>(TypedEvent::new(EmptyPayload {}));
+
+    block_on(async {
+        parent.wait_completed().await;
+        assert!(bus_a.wait_until_idle(Some(2.0)).await);
+        assert!(bus_b.wait_until_idle(Some(2.0)).await);
+    });
+
+    let order = order.lock().expect("order lock").clone();
+    let other_start_idx = order
+        .iter()
+        .position(|entry| entry == "other_start")
+        .expect("other_start");
+    let parent_end_idx = order
+        .iter()
+        .position(|entry| entry == "parent_end")
+        .expect("parent_end");
+    assert!(other_start_idx < parent_end_idx);
     bus_a.stop();
     bus_b.stop();
 }
@@ -1275,4 +1452,285 @@ fn test_awaiting_in_flight_event_does_not_double_run_handlers() {
     block_on(bus.wait_until_idle(Some(2.0)));
     assert_eq!(*handler_runs.lock().expect("runs lock"), 1);
     bus.stop();
+}
+
+#[test]
+fn test_edge_case_event_with_no_handlers_completes_immediately() {
+    let bus = EventBus::new(Some("NoHandlerBus".to_string()));
+
+    let event = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(async {
+        event.wait_completed().await;
+        assert!(bus.wait_until_idle(Some(2.0)).await);
+    });
+
+    let inner = event.inner.inner.lock();
+    assert_eq!(inner.event_status, EventStatus::Completed);
+    assert_eq!(inner.event_pending_bus_count, 0);
+    assert_eq!(inner.event_results.len(), 0);
+    bus.stop();
+}
+
+#[test]
+fn test_fifo_forwarded_events_preserve_order_on_target_bus_bus_serial() {
+    let bus_a = EventBus::new_with_options(
+        Some("ForwardOrderA".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_b = EventBus::new_with_options(
+        Some("ForwardOrderB".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            ..EventBusOptions::default()
+        },
+    );
+    let order_a = Arc::new(Mutex::new(Vec::new()));
+    let order_b = Arc::new(Mutex::new(Vec::new()));
+    let bus_b_id = bus_b.id.clone();
+
+    let order_a_for_handler = order_a.clone();
+    let bus_b_for_forward = bus_b.clone();
+    bus_a.on("serial", "forward_order_a", move |event| {
+        let order_a = order_a_for_handler.clone();
+        let bus_b = bus_b_for_forward.clone();
+        async move {
+            let order = event
+                .inner
+                .lock()
+                .payload
+                .get("order")
+                .and_then(serde_json::Value::as_i64)
+                .expect("order payload");
+            order_a.lock().expect("order_a lock").push(order);
+            bus_b.emit_base(event);
+            thread::sleep(Duration::from_millis(2));
+            Ok(json!(null))
+        }
+    });
+
+    let order_b_for_handler = order_b.clone();
+    let bus_b_id_for_handler = bus_b_id.clone();
+    bus_b.on("serial", "forward_order_b", move |event| {
+        let order_b = order_b_for_handler.clone();
+        let bus_b_id = bus_b_id_for_handler.clone();
+        async move {
+            let (order, in_flight_on_bus_b) = {
+                let inner = event.inner.lock();
+                let order = inner
+                    .payload
+                    .get("order")
+                    .and_then(serde_json::Value::as_i64)
+                    .expect("order payload");
+                let in_flight_on_bus_b = inner
+                    .event_results
+                    .values()
+                    .filter(|result| result.handler.eventbus_id == bus_b_id)
+                    .filter(|result| {
+                        result.status == EventResultStatus::Pending
+                            || result.status == EventResultStatus::Started
+                    })
+                    .count();
+                (order, in_flight_on_bus_b)
+            };
+            assert!(in_flight_on_bus_b <= 1);
+            order_b.lock().expect("order_b lock").push(order);
+            thread::sleep(Duration::from_millis(1));
+            Ok(json!(null))
+        }
+    });
+
+    for order in 0..5 {
+        bus_a.emit::<SerialEvent>(TypedEvent::new(SerialPayload {
+            order,
+            source: "a".to_string(),
+        }));
+    }
+
+    block_on(async {
+        assert!(bus_a.wait_until_idle(Some(2.0)).await);
+        assert!(bus_b.wait_until_idle(Some(2.0)).await);
+    });
+
+    let events_by_id = bus_b.runtime_payload_for_test();
+    let history_orders: Vec<i64> = bus_b
+        .event_history_ids()
+        .iter()
+        .map(|id| {
+            events_by_id
+                .get(id)
+                .expect("history event")
+                .inner
+                .lock()
+                .payload
+                .get("order")
+                .and_then(serde_json::Value::as_i64)
+                .expect("order payload")
+        })
+        .collect();
+    let results_sizes: Vec<usize> = bus_b
+        .event_history_ids()
+        .iter()
+        .map(|id| {
+            events_by_id
+                .get(id)
+                .expect("history event")
+                .inner
+                .lock()
+                .event_results
+                .len()
+        })
+        .collect();
+    let bus_b_result_counts: Vec<usize> = bus_b
+        .event_history_ids()
+        .iter()
+        .map(|id| {
+            events_by_id
+                .get(id)
+                .expect("history event")
+                .inner
+                .lock()
+                .event_results
+                .values()
+                .filter(|result| result.handler.eventbus_id == bus_b_id)
+                .count()
+        })
+        .collect();
+    let processed_flags: Vec<bool> = bus_b
+        .event_history_ids()
+        .iter()
+        .map(|id| {
+            events_by_id
+                .get(id)
+                .expect("history event")
+                .inner
+                .lock()
+                .event_results
+                .values()
+                .filter(|result| result.handler.eventbus_id == bus_b_id)
+                .all(|result| {
+                    result.status == EventResultStatus::Completed
+                        || result.status == EventResultStatus::Error
+                })
+        })
+        .collect();
+    let pending_counts: Vec<usize> = bus_b
+        .event_history_ids()
+        .iter()
+        .map(|id| {
+            events_by_id
+                .get(id)
+                .expect("history event")
+                .inner
+                .lock()
+                .event_results
+                .values()
+                .filter(|result| result.status == EventResultStatus::Pending)
+                .count()
+        })
+        .collect();
+
+    assert_eq!(
+        order_a.lock().expect("order_a lock").as_slice(),
+        &[0, 1, 2, 3, 4]
+    );
+    assert_eq!(
+        order_b.lock().expect("order_b lock").as_slice(),
+        &[0, 1, 2, 3, 4]
+    );
+    assert_eq!(history_orders, vec![0, 1, 2, 3, 4]);
+    assert_eq!(results_sizes, vec![2, 2, 2, 2, 2]);
+    assert_eq!(bus_b_result_counts, vec![1, 1, 1, 1, 1]);
+    assert_eq!(processed_flags, vec![true, true, true, true, true]);
+    assert_eq!(pending_counts, vec![0, 0, 0, 0, 0]);
+    bus_a.stop();
+    bus_b.stop();
+}
+
+#[test]
+fn test_fifo_forwarded_events_preserve_order_across_chained_buses_bus_serial() {
+    let bus_a = EventBus::new_with_options(
+        Some("ForwardChainA".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_b = EventBus::new_with_options(
+        Some("ForwardChainB".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_c = EventBus::new_with_options(
+        Some("ForwardChainC".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            ..EventBusOptions::default()
+        },
+    );
+    let order_c = Arc::new(Mutex::new(Vec::new()));
+
+    bus_b.on("serial", "forward_chain_b_handler", |_event| async move {
+        thread::sleep(Duration::from_millis(2));
+        Ok(json!(null))
+    });
+
+    let order_c_for_handler = order_c.clone();
+    bus_c.on("serial", "forward_chain_c_handler", move |event| {
+        let order_c = order_c_for_handler.clone();
+        async move {
+            let order = event
+                .inner
+                .lock()
+                .payload
+                .get("order")
+                .and_then(serde_json::Value::as_i64)
+                .expect("order payload");
+            order_c.lock().expect("order_c lock").push(order);
+            thread::sleep(Duration::from_millis(1));
+            Ok(json!(null))
+        }
+    });
+
+    let bus_b_for_forward = bus_b.clone();
+    bus_a.on("*", "forward_chain_a_to_b", move |event| {
+        let bus_b = bus_b_for_forward.clone();
+        async move {
+            bus_b.emit_base(event);
+            Ok(json!(null))
+        }
+    });
+    let bus_c_for_forward = bus_c.clone();
+    bus_b.on("*", "forward_chain_b_to_c", move |event| {
+        let bus_c = bus_c_for_forward.clone();
+        async move {
+            bus_c.emit_base(event);
+            Ok(json!(null))
+        }
+    });
+
+    for order in 0..6 {
+        bus_a.emit::<SerialEvent>(TypedEvent::new(SerialPayload {
+            order,
+            source: "a".to_string(),
+        }));
+    }
+
+    block_on(async {
+        assert!(bus_a.wait_until_idle(Some(2.0)).await);
+        assert!(bus_b.wait_until_idle(Some(2.0)).await);
+        assert!(bus_c.wait_until_idle(Some(2.0)).await);
+    });
+
+    assert_eq!(
+        order_c.lock().expect("order_c lock").as_slice(),
+        &[0, 1, 2, 3, 4, 5]
+    );
+    bus_a.stop();
+    bus_b.stop();
+    bus_c.stop();
 }

@@ -70,6 +70,14 @@ fn error_type(result: &abxbus_rust::event_result::EventResult) -> String {
         .to_string()
 }
 
+static GLOBAL_SERIAL_TIMEOUT_TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+fn global_serial_timeout_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    GLOBAL_SERIAL_TIMEOUT_TEST_MUTEX
+        .lock()
+        .expect("global serial timeout test lock")
+}
+
 #[test]
 fn test_event_timeout_aborts_in_flight_handler_result() {
     let bus = EventBus::new(Some("TimeoutBus".to_string()));
@@ -141,6 +149,7 @@ fn test_handler_completes_within_timeout() {
 
 #[test]
 fn test_event_timeouts_abort_handlers_across_concurrency_modes() {
+    let _global_serial_guard = global_serial_timeout_test_guard();
     let event_modes = [
         EventConcurrencyMode::GlobalSerial,
         EventConcurrencyMode::BusSerial,
@@ -748,6 +757,7 @@ fn test_forwarded_event_timeout_aborts_apply_across_buses() {
 
 #[test]
 fn test_queue_jump_awaited_child_timeout_aborts_still_fire_across_buses() {
+    let _global_serial_guard = global_serial_timeout_test_guard();
     let bus_a = EventBus::new_with_options(
         Some("TimeoutQueueJumpA".to_string()),
         EventBusOptions {
