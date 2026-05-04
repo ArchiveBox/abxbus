@@ -183,6 +183,112 @@ fn test_event_timeouts_abort_handlers_across_concurrency_modes() {
 }
 
 #[test]
+fn test_event_timeout_is_hard_cap_across_serial_handlers() {
+    let bus = EventBus::new_with_options(
+        Some("EventHardCapBus".to_string()),
+        EventBusOptions {
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            ..EventBusOptions::default()
+        },
+    );
+
+    bus.on("timeout", "first_handler", |_event| async move {
+        thread::sleep(Duration::from_millis(30));
+        Ok(json!("first"))
+    });
+    bus.on("timeout", "second_handler", |_event| async move {
+        thread::sleep(Duration::from_millis(30));
+        Ok(json!("second"))
+    });
+    bus.on("timeout", "pending_handler", |_event| async move {
+        Ok(json!("pending"))
+    });
+
+    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    event.inner.inner.lock().event_timeout = Some(0.05);
+    let event = bus.emit(event);
+    block_on(event.wait_completed());
+
+    let results = event.inner.inner.lock().event_results.clone();
+    let first_result = results
+        .values()
+        .find(|result| result.handler.handler_name == "first_handler")
+        .expect("first result");
+    let second_result = results
+        .values()
+        .find(|result| result.handler.handler_name == "second_handler")
+        .expect("second result");
+    let pending_result = results
+        .values()
+        .find(|result| result.handler.handler_name == "pending_handler")
+        .expect("pending result");
+
+    assert_eq!(first_result.status, EventResultStatus::Completed);
+    assert_eq!(first_result.result, Some(json!("first")));
+    assert_eq!(second_result.status, EventResultStatus::Error);
+    assert!(second_result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("EventHandlerAbortedError"));
+    assert_eq!(pending_result.status, EventResultStatus::Error);
+    assert!(pending_result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("EventHandlerCancelledError"));
+    bus.stop();
+}
+
+#[test]
+fn test_handler_timeout_marks_error_and_other_handlers_still_complete() {
+    let bus = EventBus::new_with_options(
+        Some("TimeoutFocusedBus".to_string()),
+        EventBusOptions {
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            ..EventBusOptions::default()
+        },
+    );
+
+    bus.on("timeout", "slow_handler", |_event| async move {
+        thread::sleep(Duration::from_millis(50));
+        Ok(json!("slow"))
+    });
+    bus.on("timeout", "fast_handler", |_event| async move {
+        Ok(json!("fast"))
+    });
+
+    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    {
+        let mut inner = event.inner.inner.lock();
+        inner.event_timeout = Some(0.2);
+        inner.event_handler_timeout = Some(0.01);
+    }
+    let event = bus.emit(event);
+    block_on(event.wait_completed());
+
+    let results = event.inner.inner.lock().event_results.clone();
+    let slow_result = results
+        .values()
+        .find(|result| result.handler.handler_name == "slow_handler")
+        .expect("slow result");
+    let fast_result = results
+        .values()
+        .find(|result| result.handler.handler_name == "fast_handler")
+        .expect("fast result");
+
+    assert_eq!(slow_result.status, EventResultStatus::Error);
+    assert!(slow_result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("EventHandlerTimeoutError"));
+    assert_eq!(fast_result.status, EventResultStatus::Completed);
+    assert_eq!(fast_result.result, Some(json!("fast")));
+    bus.stop();
+}
+
+#[test]
 fn test_parent_timeout_does_not_cancel_unawaited_child_with_own_timeout() {
     let bus = EventBus::new(Some("ParentTimeoutBus".to_string()));
     let bus_for_handler = bus.clone();

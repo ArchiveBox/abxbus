@@ -1457,6 +1457,7 @@ impl EventBus {
                         .run_handler_with_context(event.clone(), handler, started_at, event_timeout)
                         .await;
                     if timed_out {
+                        self.cancel_remaining_timeout_results(&event, &handlers[index + 1..]);
                         break;
                     }
                     if handler_completion == EventHandlerCompletionMode::First {
@@ -1709,6 +1710,31 @@ impl EventBus {
         }
     }
 
+    fn cancel_remaining_timeout_results(
+        &self,
+        event: &Arc<BaseEvent>,
+        remaining_handlers: &[EventHandler],
+    ) {
+        let mut inner = event.inner.lock();
+        for handler in remaining_handlers {
+            if let Some(result) = inner.event_results.get_mut(&handler.id) {
+                if result.status != EventResultStatus::Pending {
+                    continue;
+                }
+                result.status = EventResultStatus::Error;
+                result.result = None;
+                result.error = Some(
+                    "EventHandlerCancelledError: Cancelled pending handler due to event timeout"
+                        .to_string(),
+                );
+                if result.started_at.is_none() {
+                    result.started_at = Some(now_iso());
+                }
+                result.completed_at = Some(now_iso());
+            }
+        }
+    }
+
     fn cancel_parallel_first_mode_losers(&self, event: &Arc<BaseEvent>, winner_id: &str) {
         let mut inner = event.inner.lock();
         let winner_completed_at = inner
@@ -1893,7 +1919,7 @@ impl EventBus {
                     .lock()
                     .event_results
                     .insert(handler.id.clone(), current);
-                return true;
+                return error == "timeout" && !handler_timeout_won;
             }
         }
 
