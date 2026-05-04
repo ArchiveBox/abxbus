@@ -7,7 +7,11 @@ use abxbus_rust::{
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    thread,
+    time::Duration,
+};
 
 #[derive(Clone, Serialize, Deserialize)]
 struct EmptyPayload {}
@@ -41,6 +45,15 @@ impl EventSpec for OrphanEvent {
     type Payload = EmptyPayload;
     type Result = EmptyResult;
     const EVENT_TYPE: &'static str = "OrphanEvent";
+}
+
+struct TimeoutTaxonomyEvent;
+impl EventSpec for TimeoutTaxonomyEvent {
+    type Payload = EmptyPayload;
+    type Result = String;
+    const EVENT_TYPE: &'static str = "TimeoutTaxonomyEvent";
+    const EVENT_TIMEOUT: Option<f64> = Some(0.2);
+    const EVENT_HANDLER_TIMEOUT: Option<f64> = Some(0.01);
 }
 
 #[test]
@@ -225,5 +238,46 @@ fn test_error_handler_result_fields_are_populated_correctly() {
     assert_eq!(payload["error"]["message"], "RangeError: out of range");
     assert!(result.started_at.is_some());
     assert!(result.completed_at.is_some());
+    bus.stop();
+}
+
+#[test]
+fn test_handler_timeout_uses_event_handler_timeout_error() {
+    let bus = EventBus::new(Some("TaxonomyTimeoutBus".to_string()));
+
+    bus.on(
+        "TimeoutTaxonomyEvent",
+        "slow_handler",
+        |_event| async move {
+            thread::sleep(Duration::from_millis(50));
+            Ok(json!("slow"))
+        },
+    );
+
+    let event = bus.emit::<TimeoutTaxonomyEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(event.wait_completed());
+
+    let result = event
+        .inner
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("handler result");
+    assert_eq!(result.status, EventResultStatus::Error);
+    assert!(result
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("EventHandlerTimeoutError"));
+    assert_eq!(
+        result.to_flat_json_value()["error"],
+        json!({
+            "type": "EventHandlerTimeoutError",
+            "message": "timeout",
+        })
+    );
     bus.stop();
 }

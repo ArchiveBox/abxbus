@@ -1382,10 +1382,10 @@ impl EventBus {
         event_started_at: Instant,
         event_timeout: Option<f64>,
     ) -> bool {
-        let resolved_handler_timeout = handler
+        let explicit_handler_timeout = handler
             .handler_timeout
-            .or(event.inner.lock().event_handler_timeout)
-            .or(self.event_timeout);
+            .or(event.inner.lock().event_handler_timeout);
+        let resolved_handler_timeout = explicit_handler_timeout.or(self.event_timeout);
 
         let result_timeout = self.result_timeout_for_handler(&event, &handler, event_timeout);
 
@@ -1465,7 +1465,17 @@ impl EventBus {
             }
             Err(error) => {
                 current.status = EventResultStatus::Error;
-                current.error = Some(format!("EventHandlerAbortedError: {error}"));
+                let handler_timeout_won = explicit_handler_timeout.is_some_and(|handler_timeout| {
+                    remaining_event_timeout
+                        .map(|event_remaining| handler_timeout <= event_remaining)
+                        .unwrap_or(true)
+                });
+                let error_type = if error == "timeout" && handler_timeout_won {
+                    "EventHandlerTimeoutError"
+                } else {
+                    "EventHandlerAbortedError"
+                };
+                current.error = Some(format!("{error_type}: {error}"));
                 current.completed_at = Some(now_iso());
                 if let Some(latest) = event.inner.lock().event_results.get(&handler.id).cloned() {
                     current.event_children = latest.event_children;
