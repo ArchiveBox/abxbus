@@ -135,6 +135,37 @@ impl Default for EventBusOptions {
 }
 
 impl EventBus {
+    fn live_instances() -> Vec<Arc<EventBus>> {
+        let mut instances = ALL_INSTANCES.get_or_init(|| Mutex::new(Vec::new())).lock();
+        instances.retain(|entry| entry.upgrade().is_some());
+        instances.iter().filter_map(Weak::upgrade).collect()
+    }
+
+    pub fn live_instance_by_id(eventbus_id: &str) -> Option<Arc<EventBus>> {
+        Self::live_instances()
+            .into_iter()
+            .find(|bus| bus.id == eventbus_id)
+    }
+
+    pub fn event_bus_for_event(event: &Arc<BaseEvent>) -> Option<Arc<EventBus>> {
+        let event_id = event.inner.lock().event_id.clone();
+        if let Some(current_bus_id) = CURRENT_EVENT_ID.with(|current_event_id| {
+            CURRENT_BUS_ID.with(|current_bus_id| {
+                (current_event_id.borrow().as_deref() == Some(event_id.as_str()))
+                    .then(|| current_bus_id.borrow().clone())
+                    .flatten()
+            })
+        }) {
+            if let Some(bus) = Self::live_instance_by_id(&current_bus_id) {
+                return Some(bus);
+            }
+        }
+
+        event
+            .runtime_eventbus_id()
+            .and_then(|eventbus_id| Self::live_instance_by_id(&eventbus_id))
+    }
+
     pub fn new(name: Option<String>) -> Arc<Self> {
         Self::new_with_options(name, EventBusOptions::default())
     }
@@ -916,6 +947,10 @@ impl EventBus {
         self.enqueue_base(event)
     }
 
+    pub fn emit_child_base(&self, event: Arc<BaseEvent>) -> Arc<BaseEvent> {
+        self.enqueue_child_base(event)
+    }
+
     pub(crate) fn enqueue_base(&self, event: Arc<BaseEvent>) -> Arc<BaseEvent> {
         self.enqueue_base_with_options(event, false)
     }
@@ -950,6 +985,8 @@ impl EventBus {
         if event.inner.lock().event_path.contains(&bus_label) {
             return event;
         }
+
+        event.set_runtime_eventbus_id(Some(self.id.clone()));
 
         if !self.register_in_history(event.clone()) {
             panic!(

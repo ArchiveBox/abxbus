@@ -48,6 +48,7 @@ pub struct BaseEventData {
 pub struct BaseEvent {
     pub inner: Mutex<BaseEventData>,
     pub completed: Event,
+    runtime_eventbus_id: Mutex<Option<String>>,
 }
 
 #[derive(Clone, Debug)]
@@ -118,7 +119,20 @@ impl BaseEvent {
                 payload,
             }),
             completed: Event::new(),
+            runtime_eventbus_id: Mutex::new(None),
         }))
+    }
+
+    pub fn event_bus(self: &Arc<Self>) -> Option<Arc<crate::event_bus::EventBus>> {
+        crate::event_bus::EventBus::event_bus_for_event(self)
+    }
+
+    pub(crate) fn set_runtime_eventbus_id(&self, eventbus_id: Option<String>) {
+        *self.runtime_eventbus_id.lock() = eventbus_id;
+    }
+
+    pub(crate) fn runtime_eventbus_id(&self) -> Option<String> {
+        self.runtime_eventbus_id.lock().clone()
     }
 
     fn validate_event_type(event_type: &str) -> Result<(), String> {
@@ -466,6 +480,7 @@ impl BaseEvent {
         Arc::new(Self {
             inner: Mutex::new(data),
             completed: Event::new(),
+            runtime_eventbus_id: Mutex::new(None),
         })
     }
 
@@ -644,6 +659,7 @@ impl BaseEvent {
         Arc::new(Self {
             inner: Mutex::new(parsed),
             completed: Event::new(),
+            runtime_eventbus_id: Mutex::new(None),
         })
     }
 }
