@@ -894,6 +894,107 @@ fn test_event_concurrency_override_bus_serial_beats_bus_parallel_default() {
 }
 
 #[test]
+fn test_queue_jump_awaited_child_preempts_queued_sibling_on_same_bus() {
+    let bus = EventBus::new_with_options(
+        Some("QueueJumpBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let captured_child = Arc::new(Mutex::new(None::<Arc<abxbus_rust::base_event::BaseEvent>>));
+
+    let bus_for_parent = bus.clone();
+    let order_for_parent = order.clone();
+    let child_for_parent = captured_child.clone();
+    bus.on("parent", "parent_handler", move |_event| {
+        let bus = bus_for_parent.clone();
+        let order = order_for_parent.clone();
+        let captured_child = child_for_parent.clone();
+        async move {
+            order
+                .lock()
+                .expect("order lock")
+                .push("parent_start".to_string());
+            let child = bus.emit_child::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+            *captured_child.lock().expect("captured child lock") = Some(child.inner.clone());
+            child.wait_completed().await;
+            order
+                .lock()
+                .expect("order lock")
+                .push("parent_end".to_string());
+            Ok(json!(null))
+        }
+    });
+
+    let order_for_child = order.clone();
+    bus.on("work", "child_handler", move |_event| {
+        let order = order_for_child.clone();
+        async move {
+            order
+                .lock()
+                .expect("order lock")
+                .push("child_start".to_string());
+            thread::sleep(Duration::from_millis(5));
+            order
+                .lock()
+                .expect("order lock")
+                .push("child_end".to_string());
+            Ok(json!(null))
+        }
+    });
+
+    let order_for_sibling = order.clone();
+    bus.on("sibling", "sibling_handler", move |_event| {
+        let order = order_for_sibling.clone();
+        async move {
+            order
+                .lock()
+                .expect("order lock")
+                .push("sibling".to_string());
+            Ok(json!(null))
+        }
+    });
+
+    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let sibling = bus.emit::<SiblingEvent>(TypedEvent::new(EmptyPayload {}));
+
+    block_on(async {
+        parent.wait_completed().await;
+        sibling.wait_completed().await;
+        assert!(bus.wait_until_idle(Some(1.0)).await);
+    });
+
+    assert_eq!(
+        order.lock().expect("order lock").as_slice(),
+        &[
+            "parent_start".to_string(),
+            "child_start".to_string(),
+            "child_end".to_string(),
+            "parent_end".to_string(),
+            "sibling".to_string(),
+        ]
+    );
+
+    let child = captured_child
+        .lock()
+        .expect("captured child lock")
+        .clone()
+        .expect("captured child");
+    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let child_inner = child.inner.lock();
+    assert_eq!(
+        child_inner.event_parent_id.as_deref(),
+        Some(parent_id.as_str())
+    );
+    assert!(child_inner.event_blocks_parent_completion);
+    assert!(child_inner.event_emitted_by_handler_id.is_some());
+    bus.stop();
+}
+
+#[test]
 fn test_global_serial_with_handler_parallel_allows_handlers_but_not_events_to_overlap() {
     let bus_a = EventBus::new_with_options(
         Some("GlobalSerialParallelA".to_string()),

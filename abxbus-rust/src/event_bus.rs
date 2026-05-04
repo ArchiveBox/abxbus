@@ -28,6 +28,7 @@ thread_local! {
     static CURRENT_BUS_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     static CURRENT_EVENT_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     static CURRENT_HANDLER_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static DISPATCH_CONTEXT: std::cell::RefCell<HashMap<String, Value>> = std::cell::RefCell::new(HashMap::new());
 }
 
 struct FindWaiter {
@@ -45,6 +46,7 @@ struct BusRuntime {
     stop: Mutex<bool>,
     loop_started: Mutex<bool>,
     events: Mutex<HashMap<String, Arc<BaseEvent>>>,
+    event_contexts: Mutex<HashMap<String, HashMap<String, Value>>>,
     history_order: Mutex<VecDeque<String>>,
     max_history_size: Option<usize>,
     max_history_drop: bool,
@@ -102,6 +104,18 @@ pub struct FindOptions {
 }
 
 pub type FindPredicate = Arc<dyn Fn(&Arc<BaseEvent>) -> bool + Send + Sync>;
+
+pub struct DispatchContextGuard {
+    previous: Option<HashMap<String, Value>>,
+}
+
+impl Drop for DispatchContextGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            EventBus::replace_context(previous);
+        }
+    }
+}
 
 impl Default for EventBusOptions {
     fn default() -> Self {
@@ -192,6 +206,7 @@ impl EventBus {
                 stop: Mutex::new(false),
                 loop_started: Mutex::new(false),
                 events: Mutex::new(HashMap::new()),
+                event_contexts: Mutex::new(HashMap::new()),
                 history_order: Mutex::new(VecDeque::new()),
                 max_history_size: options.max_history_size,
                 max_history_drop: options.max_history_drop,
@@ -296,6 +311,41 @@ impl EventBus {
 
     pub fn max_history_drop(&self) -> bool {
         self.runtime.max_history_drop
+    }
+
+    pub fn context_get(key: &str) -> Option<Value> {
+        DISPATCH_CONTEXT.with(|context| context.borrow().get(key).cloned())
+    }
+
+    pub fn context_set(key: impl Into<String>, value: Value) -> Option<Value> {
+        DISPATCH_CONTEXT.with(|context| context.borrow_mut().insert(key.into(), value))
+    }
+
+    pub fn context_remove(key: &str) -> Option<Value> {
+        DISPATCH_CONTEXT.with(|context| context.borrow_mut().remove(key))
+    }
+
+    pub fn context_clear() {
+        DISPATCH_CONTEXT.with(|context| context.borrow_mut().clear());
+    }
+
+    pub fn context_snapshot() -> HashMap<String, Value> {
+        DISPATCH_CONTEXT.with(|context| context.borrow().clone())
+    }
+
+    pub fn enter_context(context: HashMap<String, Value>) -> DispatchContextGuard {
+        DispatchContextGuard {
+            previous: Some(Self::replace_context(context)),
+        }
+    }
+
+    pub fn with_context<R>(context: HashMap<String, Value>, run: impl FnOnce() -> R) -> R {
+        let _guard = Self::enter_context(context);
+        run()
+    }
+
+    fn replace_context(context: HashMap<String, Value>) -> HashMap<String, Value> {
+        DISPATCH_CONTEXT.with(|current| std::mem::replace(&mut *current.borrow_mut(), context))
     }
 
     pub fn event_history_size(&self) -> usize {
@@ -748,6 +798,7 @@ impl EventBus {
         }
 
         bus.runtime.events.lock().clear();
+        bus.runtime.event_contexts.lock().clear();
         bus.runtime.history_order.lock().clear();
         if let Some(Value::Object(raw_event_history)) = payload.get("event_history") {
             for (event_id_hint, event_value) in raw_event_history {
@@ -1131,6 +1182,10 @@ impl EventBus {
             }
         }
 
+        self.runtime
+            .event_contexts
+            .lock()
+            .insert(event_id.clone(), Self::context_snapshot());
         self.runtime.events.lock().insert(event_id.clone(), event);
         self.runtime.history_order.lock().push_back(event_id);
         true
@@ -1163,7 +1218,18 @@ impl EventBus {
             }
             self.runtime.history_order.lock().pop_front();
             self.runtime.events.lock().remove(&oldest);
+            self.runtime.event_contexts.lock().remove(&oldest);
         }
+    }
+
+    fn context_for_event(&self, event: &Arc<BaseEvent>) -> HashMap<String, Value> {
+        let event_id = event.inner.lock().event_id.clone();
+        self.runtime
+            .event_contexts
+            .lock()
+            .get(&event_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub async fn find(
@@ -1603,6 +1669,7 @@ impl EventBus {
         if self.runtime.max_history_size == Some(0) {
             let event_id = event.inner.lock().event_id.clone();
             self.runtime.events.lock().remove(&event_id);
+            self.runtime.event_contexts.lock().remove(&event_id);
             self.runtime
                 .history_order
                 .lock()
@@ -1825,6 +1892,7 @@ impl EventBus {
         event_timeout: Option<f64>,
     ) -> bool {
         let handler_id = handler.id.clone();
+        let previous_context = Self::replace_context(self.context_for_event(&event));
         CURRENT_BUS_ID.with(|id| *id.borrow_mut() = Some(self.id.clone()));
         CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = Some(event.inner.lock().event_id.clone()));
         CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = Some(handler_id.clone()));
@@ -1834,6 +1902,7 @@ impl EventBus {
         CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = None);
         CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = None);
         CURRENT_BUS_ID.with(|id| *id.borrow_mut() = None);
+        Self::replace_context(previous_context);
         timed_out
     }
 
@@ -1895,7 +1964,9 @@ impl EventBus {
         let context_bus_id = self.id.clone();
         let context_event_id = event.inner.lock().event_id.clone();
         let context_handler_id = handler.id.clone();
+        let dispatch_context = self.context_for_event(&event);
         thread::spawn(move || {
+            let previous_context = EventBus::replace_context(dispatch_context);
             CURRENT_BUS_ID.with(|id| *id.borrow_mut() = Some(context_bus_id));
             CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = Some(context_event_id));
             CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = Some(context_handler_id));
@@ -1903,6 +1974,7 @@ impl EventBus {
             CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = None);
             CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = None);
             CURRENT_BUS_ID.with(|id| *id.borrow_mut() = None);
+            EventBus::replace_context(previous_context);
             let _ = tx.send(response);
         });
 
