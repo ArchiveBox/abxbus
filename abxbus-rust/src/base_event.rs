@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Map, Value};
 
 use crate::{
-    event_result::EventResult,
+    event_result::{EventResult, EventResultStatus},
     id::uuid_v7_string,
     types::{
         EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventStatus,
@@ -47,6 +47,26 @@ pub struct BaseEventData {
 pub struct BaseEvent {
     pub inner: Mutex<BaseEventData>,
     pub completed: Event,
+}
+
+#[derive(Clone, Debug)]
+pub struct EventResultsOptions {
+    pub raise_if_any: bool,
+    pub raise_if_none: bool,
+}
+
+impl Default for EventResultsOptions {
+    fn default() -> Self {
+        Self {
+            raise_if_any: true,
+            raise_if_none: true,
+        }
+    }
+}
+
+fn short_id(id: &str) -> String {
+    let start = id.len().saturating_sub(4);
+    id[start..].to_string()
 }
 
 impl Serialize for BaseEvent {
@@ -154,6 +174,102 @@ impl BaseEvent {
             }
             listener.await;
         }
+    }
+
+    pub async fn event_result(
+        self: &Arc<Self>,
+        options: EventResultsOptions,
+    ) -> Result<Option<Value>, String> {
+        self.event_result_with_filter(options, Self::default_result_include)
+            .await
+    }
+
+    pub async fn event_result_with_filter<F>(
+        self: &Arc<Self>,
+        options: EventResultsOptions,
+        include: F,
+    ) -> Result<Option<Value>, String>
+    where
+        F: Fn(&EventResult) -> bool,
+    {
+        let results = self
+            .event_results_list_with_filter(options, include)
+            .await?;
+        Ok(results.into_iter().next())
+    }
+
+    pub async fn event_results_list(
+        self: &Arc<Self>,
+        options: EventResultsOptions,
+    ) -> Result<Vec<Value>, String> {
+        self.event_results_list_with_filter(options, Self::default_result_include)
+            .await
+    }
+
+    pub async fn event_results_list_with_filter<F>(
+        self: &Arc<Self>,
+        options: EventResultsOptions,
+        include: F,
+    ) -> Result<Vec<Value>, String>
+    where
+        F: Fn(&EventResult) -> bool,
+    {
+        self.event_completed().await;
+        let all_results = self.ordered_event_results();
+        let error_results: Vec<String> = all_results
+            .iter()
+            .filter_map(|event_result| event_result.error.clone())
+            .collect();
+
+        if options.raise_if_any && !error_results.is_empty() {
+            if error_results.len() == 1 {
+                return Err(error_results[0].clone());
+            }
+            let event = self.inner.lock();
+            return Err(format!(
+                "Event {}#{} had {} handler error(s): {}",
+                event.event_type,
+                short_id(&event.event_id),
+                error_results.len(),
+                error_results.join("; ")
+            ));
+        }
+
+        let values: Vec<Value> = all_results
+            .iter()
+            .filter(|result| include(result))
+            .filter_map(|result| result.result.clone())
+            .collect();
+
+        if options.raise_if_none && values.is_empty() {
+            let event = self.inner.lock();
+            return Err(format!(
+                "Expected at least one handler to return a non-null result, but none did: {}#{}",
+                event.event_type,
+                short_id(&event.event_id)
+            ));
+        }
+
+        Ok(values)
+    }
+
+    fn default_result_include(result: &EventResult) -> bool {
+        result.status == EventResultStatus::Completed
+            && result.error.is_none()
+            && result.result.as_ref().is_some_and(|value| !value.is_null())
+    }
+
+    fn ordered_event_results(&self) -> Vec<EventResult> {
+        let mut results: Vec<EventResult> =
+            self.inner.lock().event_results.values().cloned().collect();
+        results.sort_by(|left, right| {
+            left.handler
+                .handler_registered_at
+                .cmp(&right.handler.handler_registered_at)
+                .then_with(|| left.started_at.cmp(&right.started_at))
+                .then_with(|| left.handler.id.cmp(&right.handler.id))
+        });
+        results
     }
 
     pub fn mark_started(&self) {

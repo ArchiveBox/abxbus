@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 
 use crate::types::{EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode};
 use crate::{
-    base_event::BaseEvent,
+    base_event::{BaseEvent, EventResultsOptions},
     event_bus::EventBus,
     event_handler::{EventHandler, EventHandlerOptions},
 };
@@ -86,6 +86,29 @@ impl<E: EventSpec> TypedEvent<E> {
         self.first_result()
     }
 
+    pub async fn event_result(
+        &self,
+        options: EventResultsOptions,
+    ) -> Result<Option<E::Result>, String> {
+        self.inner
+            .event_result(options)
+            .await?
+            .map(Self::decode_result_value)
+            .transpose()
+    }
+
+    pub async fn event_results_list(
+        &self,
+        options: EventResultsOptions,
+    ) -> Result<Vec<E::Result>, String> {
+        self.inner
+            .event_results_list(options)
+            .await?
+            .into_iter()
+            .map(Self::decode_result_value)
+            .collect()
+    }
+
     pub fn first_result(&self) -> Option<E::Result> {
         let results: HashMap<String, crate::event_result::EventResult> =
             self.inner.inner.lock().event_results.clone();
@@ -117,6 +140,10 @@ impl<E: EventSpec> TypedEvent<E> {
             }
         }
         None
+    }
+
+    fn decode_result_value(value: Value) -> Result<E::Result, String> {
+        serde_json::from_value(value).map_err(|error| error.to_string())
     }
 }
 
