@@ -199,6 +199,68 @@ impl abxbus_rust::typed::EventSpec for RuntimeSchemaEvent {
     );
 }
 
+struct DictIntSchemaEvent;
+impl abxbus_rust::typed::EventSpec for DictIntSchemaEvent {
+    type Payload = Map<String, Value>;
+    type Result = Map<String, Value>;
+    const EVENT_TYPE: &'static str = "DictIntSchemaEvent";
+    const EVENT_RESULT_TYPE: Option<&'static str> =
+        Some(r#"{"type": "object", "additionalProperties": {"type": "integer"}}"#);
+}
+
+struct DictModuleSchemaEvent;
+impl abxbus_rust::typed::EventSpec for DictModuleSchemaEvent {
+    type Payload = Map<String, Value>;
+    type Result = Map<String, Value>;
+    const EVENT_TYPE: &'static str = "DictModuleSchemaEvent";
+    const EVENT_RESULT_TYPE: Option<&'static str> = Some(
+        r#"{
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "properties": {
+                    "subject": {"type": "string"},
+                    "body": {"type": "string"},
+                    "recipients": {"type": "array", "items": {"type": "string"}}
+                },
+                "required": ["subject", "body", "recipients"],
+                "additionalProperties": false
+            }
+        }"#,
+    );
+}
+
+struct DictLocalSchemaEvent;
+impl abxbus_rust::typed::EventSpec for DictLocalSchemaEvent {
+    type Payload = Map<String, Value>;
+    type Result = Map<String, Value>;
+    const EVENT_TYPE: &'static str = "DictLocalSchemaEvent";
+    const EVENT_RESULT_TYPE: Option<&'static str> = Some(
+        r#"{
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "properties": {
+                    "filename": {"type": "string"},
+                    "content": {"type": "string", "contentEncoding": "base64"},
+                    "mime_type": {"type": "string"}
+                },
+                "required": ["filename", "content", "mime_type"],
+                "additionalProperties": false
+            }
+        }"#,
+    );
+}
+
+struct SpecificUserEvent;
+impl abxbus_rust::typed::EventSpec for SpecificUserEvent {
+    type Payload = Map<String, Value>;
+    type Result = ModuleLevelResult;
+    const EVENT_TYPE: &'static str = "SpecificUserEvent";
+    const EVENT_RESULT_TYPE: Option<&'static str> =
+        <RuntimeSchemaEvent as abxbus_rust::typed::EventSpec>::EVENT_RESULT_TYPE;
+}
+
 #[test]
 fn test_builtin_types_auto_extraction() {
     let string_event = abxbus_rust::typed::TypedEvent::<BuiltinStringEvent>::new(Map::new());
@@ -283,6 +345,14 @@ fn test_eventspec_result_schema_runtime_enforcement() {
 }
 
 #[test]
+fn test_nested_inheritance() {
+    assert_eq!(
+        <SpecificUserEvent as abxbus_rust::typed::EventSpec>::event_result_type_json(),
+        <RuntimeSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json()
+    );
+}
+
+#[test]
 fn test_module_level_types_auto_extraction() {
     let schema = <RuntimeSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json()
         .expect("module-level schema");
@@ -321,6 +391,52 @@ fn test_complex_module_level_generics() {
     ] {
         assert_schema_roundtrips(schema);
     }
+}
+
+#[test]
+fn test_extract_basemodel_generic_arg_basic() {
+    assert_eq!(
+        <BuiltinIntEvent as abxbus_rust::typed::EventSpec>::event_result_type_json(),
+        Some(json!({"type": "integer"}))
+    );
+}
+
+#[test]
+fn test_extract_basemodel_generic_arg_dict() {
+    assert_eq!(
+        <DictIntSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json(),
+        Some(json!({"type": "object", "additionalProperties": {"type": "integer"}}))
+    );
+}
+
+#[test]
+fn test_extract_basemodel_generic_arg_dict_with_module_type() {
+    let schema = <DictModuleSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json()
+        .expect("module dict schema");
+    assert_eq!(schema["type"], "object");
+    assert_eq!(
+        schema["additionalProperties"]["properties"]["recipients"]["items"]["type"],
+        "string"
+    );
+}
+
+#[test]
+fn test_extract_basemodel_generic_arg_dict_with_local_type() {
+    let schema = <DictLocalSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json()
+        .expect("local dict schema");
+    assert_eq!(schema["type"], "object");
+    assert_eq!(
+        schema["additionalProperties"]["properties"]["mime_type"]["type"],
+        "string"
+    );
+}
+
+#[test]
+fn test_extract_basemodel_generic_arg_no_generic() {
+    assert_eq!(
+        <PlainSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json(),
+        None
+    );
 }
 
 #[test]
