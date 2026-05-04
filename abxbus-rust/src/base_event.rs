@@ -297,6 +297,20 @@ impl BaseEvent {
         self.completed.notify(usize::MAX);
     }
 
+    pub fn event_reset(&self) -> Arc<Self> {
+        let mut data = self.inner.lock().clone();
+        data.event_id = uuid_v7_string();
+        data.event_status = EventStatus::Pending;
+        data.event_started_at = None;
+        data.event_completed_at = None;
+        data.event_pending_bus_count = 0;
+        data.event_results.clear();
+        Arc::new(Self {
+            inner: Mutex::new(data),
+            completed: Event::new(),
+        })
+    }
+
     pub fn to_json_value(&self) -> Value {
         let event = self.inner.lock();
         let mut value = serde_json::to_value(&*event).unwrap_or(Value::Null);
