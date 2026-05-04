@@ -11,8 +11,9 @@ use std::{
 use abxbus_rust::{
     base_event::{BaseEvent, EventResultsOptions},
     event_bus::EventBus,
-    event_handler::{EventHandler, HandlerFuture},
+    event_handler::{EventHandler, EventHandlerOptions, HandlerFuture},
     event_result::{EventResult, EventResultStatus},
+    id::compute_handler_id,
     typed::{EventSpec, TypedEvent},
 };
 use futures::executor::block_on;
@@ -191,7 +192,7 @@ fn test_event_result_type_validates_handler_results() {
 }
 
 #[test]
-fn test_event_result_type_allows_null_handler_return_values() {
+fn test_event_result_type_allows_undefined_handler_return_values() {
     let bus = EventBus::new(Some("ResultSchemaUndefinedBus".to_string()));
     let schema = json!({
         "type": "object",
@@ -260,6 +261,131 @@ fn test_event_with_no_result_schema_stores_raw_values() {
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!({"raw": true})));
     bus.stop();
+}
+
+#[test]
+fn test_event_result_json_omits_result_type_and_derives_from_parent_event() {
+    let bus = EventBus::new(Some("ResultTypeDeriveBus".to_string()));
+    bus.on("StringResultEvent", "handler", |_event| async move {
+        Ok(json!("ok"))
+    });
+
+    let event = bus.emit::<StringResultEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(event.wait_completed());
+
+    let result = event
+        .inner
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("result");
+    let payload = serde_json::to_value(&result).expect("event result json");
+
+    assert!(!payload
+        .as_object()
+        .expect("object")
+        .contains_key("result_type"));
+    assert!(payload.get("handler").is_none());
+    assert!(payload["handler_id"].is_string());
+    assert!(payload["handler_name"].is_string());
+    assert!(payload["handler_event_pattern"].is_string());
+    assert!(payload["eventbus_name"].is_string());
+    assert!(payload["eventbus_id"].is_string());
+    assert!(payload["handler_registered_at"].is_string());
+    assert_eq!(event.inner.inner.lock().event_result_type, None);
+    bus.stop();
+}
+
+#[test]
+fn test_eventhandler_json_roundtrips_handler_metadata() {
+    let handler = EventHandler {
+        id: "h1".into(),
+        event_pattern: "StandaloneEvent".into(),
+        handler_name: "pkg.module.handler".into(),
+        handler_file_path: Some("~/project/app.rs:123".into()),
+        handler_timeout: None,
+        handler_slow_timeout: None,
+        handler_registered_at: "2025-01-02T03:04:05.678Z".into(),
+        eventbus_name: "StandaloneBus".into(),
+        eventbus_id: "018f8e40-1234-7000-8000-000000001234".into(),
+        callable: None,
+    };
+
+    let dumped = handler.to_json_value();
+    let loaded = EventHandler::from_json_value(dumped);
+
+    assert_eq!(loaded.id, handler.id);
+    assert_eq!(loaded.event_pattern, "StandaloneEvent");
+    assert_eq!(loaded.eventbus_name, "StandaloneBus");
+    assert_eq!(loaded.eventbus_id, "018f8e40-1234-7000-8000-000000001234");
+    assert_eq!(loaded.handler_name, "pkg.module.handler");
+    assert_eq!(
+        loaded.handler_file_path.as_deref(),
+        Some("~/project/app.rs:123")
+    );
+}
+
+#[test]
+fn test_eventhandler_computehandlerid_matches_uuidv5_seed_algorithm() {
+    let expected_seed =
+        "018f8e40-1234-7000-8000-000000001234|pkg.module.handler|~/project/app.py:123|2025-01-02T03:04:05.678901000Z|StandaloneEvent";
+    let expected_id = "19ea9fe8-cfbe-541e-8a35-2579e4e9efff";
+
+    let eventbus_id = "018f8e40-1234-7000-8000-000000001234";
+    let handler_name = "pkg.module.handler";
+    let handler_file_path = Some("~/project/app.py:123");
+    let handler_registered_at = "2025-01-02T03:04:05.678901000Z";
+    let event_pattern = "StandaloneEvent";
+    let actual_seed = format!(
+        "{eventbus_id}|{handler_name}|{}|{handler_registered_at}|{event_pattern}",
+        handler_file_path.expect("handler path")
+    );
+    let computed_id = compute_handler_id(
+        eventbus_id,
+        handler_name,
+        handler_file_path,
+        handler_registered_at,
+        event_pattern,
+    );
+
+    assert_eq!(actual_seed, expected_seed);
+    assert_eq!(computed_id, expected_id);
+}
+
+#[test]
+fn test_eventhandler_fromcallable_supports_id_override_and_detect_handler_file_path_toggle() {
+    let explicit_id = "018f8e40-1234-7000-8000-000000009999";
+    let callable = Arc::new(|_event| -> HandlerFuture { Box::pin(async { Ok(json!("ok")) }) });
+
+    let explicit = EventHandler::from_callable_with_options(
+        "StandaloneEvent".to_string(),
+        "handler".to_string(),
+        "StandaloneBus".to_string(),
+        "018f8e40-1234-7000-8000-000000001234".to_string(),
+        callable.clone(),
+        EventHandlerOptions {
+            id: Some(explicit_id.to_string()),
+            detect_handler_file_path: Some(false),
+            ..EventHandlerOptions::default()
+        },
+    );
+    assert_eq!(explicit.id, explicit_id);
+
+    let no_detect = EventHandler::from_callable_with_options(
+        "StandaloneEvent".to_string(),
+        "handler".to_string(),
+        "StandaloneBus".to_string(),
+        "018f8e40-1234-7000-8000-000000001234".to_string(),
+        callable,
+        EventHandlerOptions {
+            detect_handler_file_path: Some(false),
+            ..EventHandlerOptions::default()
+        },
+    );
+    assert_eq!(no_detect.handler_file_path, None);
 }
 
 #[test]
@@ -411,6 +537,80 @@ fn test_handler_result_stays_pending_while_waiting_for_handler_lock_entry() {
             .status,
         EventResultStatus::Completed
     );
+    bus.stop();
+}
+
+#[test]
+fn test_slow_handler_warning_is_based_on_handler_runtime_after_lock_wait() {
+    let bus = EventBus::new_with_options(
+        Some("RunHandlerSlowAfterLockWaitBus".to_string()),
+        abxbus_rust::event_bus::EventBusOptions {
+            event_handler_concurrency: abxbus_rust::types::EventHandlerConcurrencyMode::Serial,
+            event_handler_slow_timeout: Some(0.01),
+            ..abxbus_rust::event_bus::EventBusOptions::default()
+        },
+    );
+    let (first_started_tx, first_started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let release_rx = Arc::new(Mutex::new(release_rx));
+
+    let release_for_first = release_rx.clone();
+    bus.on(
+        "RunHandlerSlowAfterLockWaitEvent",
+        "first_handler",
+        move |_event| {
+            let first_started_tx = first_started_tx.clone();
+            let release_rx = release_for_first.clone();
+            async move {
+                let _ = first_started_tx.send(());
+                release_rx
+                    .lock()
+                    .expect("release lock")
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("release signal");
+                thread::sleep(Duration::from_millis(40));
+                Ok(json!("first"))
+            }
+        },
+    );
+    bus.on_with_options(
+        "RunHandlerSlowAfterLockWaitEvent",
+        "second_handler",
+        EventHandlerOptions {
+            handler_slow_timeout: Some(0.01),
+            ..EventHandlerOptions::default()
+        },
+        |_event| async move {
+            thread::sleep(Duration::from_millis(30));
+            Ok(json!("second"))
+        },
+    );
+
+    let event = bus.emit_base(schema_event("RunHandlerSlowAfterLockWaitEvent", None));
+    first_started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("first handler should start");
+
+    while event.inner.lock().event_results.len() < 2 {
+        thread::sleep(Duration::from_millis(1));
+    }
+    let second_status = || {
+        event
+            .inner
+            .lock()
+            .event_results
+            .values()
+            .find(|result| result.handler.handler_name == "second_handler")
+            .expect("second result")
+            .status
+    };
+    assert_eq!(second_status(), EventResultStatus::Pending);
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(second_status(), EventResultStatus::Pending);
+
+    release_tx.send(()).expect("release send");
+    block_on(event.event_completed());
+    assert_eq!(second_status(), EventResultStatus::Completed);
     bus.stop();
 }
 
