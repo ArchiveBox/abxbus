@@ -782,7 +782,16 @@ export class EventBus {
   ): Promise<T | null> {
     const where = typeof where_or_options === 'function' ? where_or_options : () => true
     const options = typeof where_or_options === 'function' ? maybe_options : where_or_options
-    const results = await this.filter(event_pattern as EventPattern<T> | '*', where, { ...options, limit: 1 })
+    // `limit` field-equality filter would collide with filter()'s cap arg; route it through `where`.
+    let effective_where = where
+    let effective_options: FindOptions<T> = options
+    if (Object.prototype.hasOwnProperty.call(options, 'limit')) {
+      const { limit: limit_field_value, ...rest } = options as FindOptions<T> & { limit: unknown }
+      const inner_where = where
+      effective_where = (event: T) => (event as unknown as Record<string, unknown>).limit === limit_field_value && inner_where(event)
+      effective_options = rest as unknown as FindOptions<T>
+    }
+    const results = await this.filter(event_pattern as EventPattern<T> | '*', effective_where, { ...effective_options, limit: 1 })
     return results.length > 0 ? results[0] : null
   }
 
@@ -791,11 +800,7 @@ export class EventBus {
   filter(event_pattern: '*', options?: FilterOptions<BaseEvent>): Promise<BaseEvent[]>
   filter(event_pattern: '*', where: (event: BaseEvent) => boolean, options?: FilterOptions<BaseEvent>): Promise<BaseEvent[]>
   filter<T extends BaseEvent>(event_pattern: EventPattern<T>, options?: FilterOptions<T>): Promise<T[]>
-  filter<T extends BaseEvent>(
-    event_pattern: EventPattern<T>,
-    where: (event: T) => boolean,
-    options?: FilterOptions<T>
-  ): Promise<T[]>
+  filter<T extends BaseEvent>(event_pattern: EventPattern<T>, where: (event: T) => boolean, options?: FilterOptions<T>): Promise<T[]>
   async filter<T extends BaseEvent>(
     event_pattern: EventPattern<T> | '*',
     where_or_options: ((event: T) => boolean) | FilterOptions<T> = {},

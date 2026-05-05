@@ -111,7 +111,19 @@ export class EventHistory<TEvent extends BaseEvent = BaseEvent> implements Itera
     where: (event: TEvent) => boolean = () => true,
     options: EventHistoryFindOptions = {}
   ): Promise<TEvent | null> {
-    const results = await this.filter(event_pattern as EventPattern<TEvent> | '*', where, { ...options, limit: 1 })
+    // `limit` field-equality filter would collide with filter()'s cap arg; route it through `where`.
+    let effective_where = where
+    let effective_options: EventHistoryFindOptions = options
+    if (Object.prototype.hasOwnProperty.call(options, 'limit')) {
+      const { limit: limit_field_value, ...rest } = options as EventHistoryFindOptions & { limit: unknown }
+      const inner_where = where
+      effective_where = (event: TEvent) => (event as unknown as Record<string, unknown>).limit === limit_field_value && inner_where(event)
+      effective_options = rest as EventHistoryFindOptions
+    }
+    const results = await this.filter(event_pattern as EventPattern<TEvent> | '*', effective_where, {
+      ...effective_options,
+      limit: 1,
+    })
     return results.length > 0 ? results[0] : null
   }
 
@@ -133,6 +145,10 @@ export class EventHistory<TEvent extends BaseEvent = BaseEvent> implements Itera
     const waitForFutureMatch = options.wait_for_future_match
     const limit = options.limit ?? null
     if (past === false && future === false) {
+      return []
+    }
+
+    if (limit !== null && limit <= 0) {
       return []
     }
 

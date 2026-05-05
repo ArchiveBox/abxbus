@@ -1496,6 +1496,36 @@ class TestFilterMethod:
         assert len(filter_matches) == 1
         assert find_match.event_id == filter_matches[0].event_id == latest.event_id
 
+    async def test_filter_zero_limit_returns_empty_without_future_wait(self, eventbus):
+        eventbus.emit(UserActionEvent(action='x', user_id='e692b6cb-ae63-773b-8557-3218f7ce5ced'))
+        await eventbus.wait_until_idle()
+
+        start = time.monotonic()
+        matches = await eventbus.filter('UserActionEvent', past=True, future=2.0, limit=0)
+        elapsed = time.monotonic() - start
+
+        assert matches == []
+        assert elapsed < 0.5
+
+    async def test_filter_negative_limit_returns_empty(self, eventbus):
+        eventbus.emit(UserActionEvent(action='x', user_id='e692b6cb-ae63-773b-8557-3218f7ce5ced'))
+        await eventbus.wait_until_idle()
+        matches = await eventbus.filter('UserActionEvent', past=True, future=False, limit=-1)
+        assert matches == []
+
+    async def test_find_treats_limit_kwarg_as_field_filter(self, eventbus):
+        class LimitFieldEvent(BaseEvent):
+            limit: int
+
+        no_match = eventbus.emit(LimitFieldEvent(limit=3))
+        target = eventbus.emit(LimitFieldEvent(limit=5))
+        await eventbus.wait_until_idle()
+
+        match = await eventbus.find(LimitFieldEvent, past=True, future=False, limit=5)
+        assert match is not None
+        assert match.event_id == target.event_id
+        assert match.event_id != no_match.event_id
+
 
 class TestDebouncePatterns:
     """End-to-end scenarios for debounce-style flows."""

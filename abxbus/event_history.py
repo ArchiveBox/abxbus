@@ -134,6 +134,16 @@ class EventHistory(dict[UUIDStr, BaseEventT], Generic[BaseEventT]):
         | None = None,
         **event_fields: Any,
     ) -> BaseEvent[Any] | None:
+        # `limit` field-equality filter would collide with filter()'s cap arg; route it through `where`.
+        if 'limit' in event_fields:
+            limit_field_value = event_fields.pop('limit')
+            sentinel = object()
+            prior_where = where
+
+            def where_with_limit_field(event: BaseEvent[Any]) -> bool:
+                return getattr(event, 'limit', sentinel) == limit_field_value and (prior_where is None or prior_where(event))
+
+            where = where_with_limit_field
         results = await self.filter(
             event_type,
             where=where,
@@ -201,7 +211,7 @@ class EventHistory(dict[UUIDStr, BaseEventT], Generic[BaseEventT]):
         **event_fields: Any,
     ) -> list[BaseEvent[Any]]: ...
 
-    async def filter(
+    async def filter(  # pyright: ignore[reportInconsistentOverload]
         self,
         event_type: EventPatternType,
         where: Callable[[Any], bool] | None = None,
@@ -232,6 +242,9 @@ class EventHistory(dict[UUIDStr, BaseEventT], Generic[BaseEventT]):
             resolved_future = max(0.0, float(resolved_future_input))
 
         if resolved_past is False and resolved_future is False:
+            return []
+
+        if limit is not None and limit <= 0:
             return []
 
         event_key = self.normalize_event_pattern(event_type)

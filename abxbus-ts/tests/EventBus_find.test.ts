@@ -938,3 +938,41 @@ test('find returns first filter result', async () => {
   assert.equal(found.event_id, filtered[0].event_id)
   assert.equal(found.event_id, second.event_id)
 })
+
+test('filter limit=0 returns empty array immediately without waiting for future', async () => {
+  const bus = new EventBus('FilterZeroLimitBus')
+
+  bus.emit(ParentEvent({}))
+  await bus.waitUntilIdle()
+
+  const start = Date.now()
+  const matches = await bus.filter(ParentEvent, { past: true, future: 2.0, limit: 0 })
+  const elapsed_ms = Date.now() - start
+
+  assert.deepEqual(matches, [])
+  assert.ok(elapsed_ms < 200)
+})
+
+test('filter limit=-1 returns empty array', async () => {
+  const bus = new EventBus('FilterNegativeLimitBus')
+
+  bus.emit(ParentEvent({}))
+  await bus.waitUntilIdle()
+
+  const matches = await bus.filter(ParentEvent, { past: true, future: false, limit: -1 })
+  assert.deepEqual(matches, [])
+})
+
+test('find treats limit option as a field-equality filter', async () => {
+  const LimitFieldEvent = BaseEvent.extend('LimitFieldEvent', { limit: z.number() })
+  const bus = new EventBus('FindLimitFieldBus')
+
+  const no_match = bus.emit(LimitFieldEvent({ limit: 3 }))
+  const target = bus.emit(LimitFieldEvent({ limit: 5 }))
+  await bus.waitUntilIdle()
+
+  const match = await bus.find(LimitFieldEvent, { past: true, future: false, limit: 5 })
+  assert.ok(match)
+  assert.equal(match.event_id, target.event_id)
+  assert.notEqual(match.event_id, no_match.event_id)
+})

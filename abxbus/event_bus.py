@@ -1294,6 +1294,16 @@ class EventBus:
         Returns:
             Matching event or None if not found/timeout
         """
+        # `limit` field-equality filter would collide with filter()'s cap arg; route it through `where`.
+        if 'limit' in event_fields:
+            limit_field_value = event_fields.pop('limit')
+            sentinel = object()
+            prior_where = where
+
+            def where_with_limit_field(event: BaseEvent[Any]) -> bool:
+                return getattr(event, 'limit', sentinel) == limit_field_value and (prior_where is None or prior_where(event))
+
+            where = where_with_limit_field
         results = await self.filter(
             event_type,
             where=where,
@@ -1341,7 +1351,7 @@ class EventBus:
         **event_fields: Any,
     ) -> list[BaseEvent[Any]]: ...
 
-    async def filter(
+    async def filter(  # pyright: ignore[reportInconsistentOverload]
         self,
         event_type: EventPatternType,
         where: Callable[[Any], bool] | None = None,
