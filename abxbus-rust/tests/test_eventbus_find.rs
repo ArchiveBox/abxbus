@@ -7,7 +7,7 @@ use std::{
 
 use abxbus_rust::{
     base_event::BaseEvent,
-    event_bus::{EventBus, FindOptions},
+    event_bus::{EventBus, FilterOptions, FindOptions},
     typed::{EventSpec, TypedEvent},
 };
 use futures::executor::block_on;
@@ -127,6 +127,13 @@ fn payload_string(event: &Arc<BaseEvent>, key: &str) -> Option<String> {
         .get(key)
         .and_then(|value| value.as_str())
         .map(str::to_string)
+}
+
+fn event_ids(events: &[Arc<BaseEvent>]) -> Vec<String> {
+    events
+        .iter()
+        .map(|event| event.inner.lock().event_id.clone())
+        .collect()
 }
 
 #[test]
@@ -2338,4 +2345,280 @@ fn test_find_with_where_and_past_float() {
 #[test]
 fn test_find_with_all_parameters() {
     test_find_with_all_parameters_combined();
+}
+
+#[test]
+fn test_filter_past_returns_all_matches_newest_first() {
+    let bus = EventBus::new(Some("FilterAllBus".to_string()));
+
+    let first = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    let second = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    let third = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+
+    let matches = block_on(bus.filter("work", true, None, None, None));
+    assert_eq!(
+        event_ids(&matches),
+        vec![
+            third.inner.inner.lock().event_id.clone(),
+            second.inner.inner.lock().event_id.clone(),
+            first.inner.inner.lock().event_id.clone(),
+        ]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_filter_returns_empty_list_when_no_matches() {
+    let bus = EventBus::new(Some("FilterEmptyBus".to_string()));
+    let matches = block_on(bus.filter("missing", true, None, None, None));
+    assert!(matches.is_empty());
+    bus.stop();
+}
+
+#[test]
+fn test_filter_respects_limit() {
+    let bus = EventBus::new(Some("FilterLimitBus".to_string()));
+
+    bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    let second = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    let third = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+
+    let matches = block_on(bus.filter("work", true, None, None, Some(2)));
+    assert_eq!(
+        event_ids(&matches),
+        vec![
+            third.inner.inner.lock().event_id.clone(),
+            second.inner.inner.lock().event_id.clone(),
+        ]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_filter_respects_where_predicate() {
+    let bus = EventBus::new(Some("FilterWhereBus".to_string()));
+
+    let first = bus.emit::<FilterEvent>(TypedEvent::new(FilterPayload {
+        value: "target".to_string(),
+        category: "alpha".to_string(),
+    }));
+    bus.emit::<FilterEvent>(TypedEvent::new(FilterPayload {
+        value: "ignored".to_string(),
+        category: "beta".to_string(),
+    }));
+    let second = bus.emit::<FilterEvent>(TypedEvent::new(FilterPayload {
+        value: "target".to_string(),
+        category: "gamma".to_string(),
+    }));
+
+    let matches = block_on(bus.filter_with_options(
+        "filter_event",
+        FilterOptions {
+            where_predicate: Some(Arc::new(|event| {
+                payload_string(event, "value").as_deref() == Some("target")
+            })),
+            ..FilterOptions::default()
+        },
+    ));
+    assert_eq!(
+        event_ids(&matches),
+        vec![
+            second.inner.inner.lock().event_id.clone(),
+            first.inner.inner.lock().event_id.clone(),
+        ]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_filter_supports_field_equality_filters() {
+    let bus = EventBus::new(Some("FilterFieldBus".to_string()));
+
+    bus.emit::<FilterEvent>(TypedEvent::new(FilterPayload {
+        value: "login".to_string(),
+        category: "user".to_string(),
+    }));
+    let target = bus.emit::<FilterEvent>(TypedEvent::new(FilterPayload {
+        value: "logout".to_string(),
+        category: "user".to_string(),
+    }));
+
+    let matches = block_on(bus.filter_with_options(
+        "filter_event",
+        FilterOptions {
+            where_filter: Some(HashMap::from([("value".to_string(), json!("logout"))])),
+            ..FilterOptions::default()
+        },
+    ));
+    assert_eq!(
+        event_ids(&matches),
+        vec![target.inner.inner.lock().event_id.clone()]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_filter_wildcard_matches_all_event_types_newest_first() {
+    let bus = EventBus::new(Some("FilterWildcardBus".to_string()));
+
+    let first = bus.emit::<SystemEvent>(TypedEvent::new(EmptyPayload {}));
+    let second = bus.emit::<UserActionEvent>(TypedEvent::new(FilterPayload {
+        value: "clicked".to_string(),
+        category: "user".to_string(),
+    }));
+
+    let matches = block_on(bus.filter("*", true, None, None, None));
+    assert_eq!(
+        event_ids(&matches),
+        vec![
+            second.inner.inner.lock().event_id.clone(),
+            first.inner.inner.lock().event_id.clone(),
+        ]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_filter_child_of_returns_matching_descendants() {
+    let bus = EventBus::new(Some("FilterChildOfBus".to_string()));
+
+    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let parent_id = parent.inner.inner.lock().event_id.clone();
+
+    let child = TypedEvent::<ChildEvent>::new(EmptyPayload {});
+    child.inner.inner.lock().event_parent_id = Some(parent_id);
+    let child = bus.emit::<ChildEvent>(child);
+
+    bus.emit::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+
+    let matches = block_on(bus.filter("child", true, None, Some(parent.inner.clone()), None));
+    assert_eq!(
+        event_ids(&matches),
+        vec![child.inner.inner.lock().event_id.clone()]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_filter_past_time_window_filters_by_age() {
+    let bus = EventBus::new(Some("FilterPastWindowBus".to_string()));
+
+    let old = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    old.inner.inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
+    let fresh = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+
+    let matches = block_on(bus.filter_with_options(
+        "work",
+        FilterOptions {
+            past_window: Some(1.0),
+            ..FilterOptions::default()
+        },
+    ));
+    assert_eq!(
+        event_ids(&matches),
+        vec![fresh.inner.inner.lock().event_id.clone()]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_filter_past_false_future_false_returns_empty_list() {
+    let bus = EventBus::new(Some("FilterNeitherBus".to_string()));
+    bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+
+    let matches = block_on(bus.filter("work", false, None, None, None));
+    assert!(matches.is_empty());
+    bus.stop();
+}
+
+#[test]
+fn test_filter_future_appends_match_after_past_results() {
+    let bus = EventBus::new(Some("FilterFutureAppendBus".to_string()));
+    let bus_for_emit = bus.clone();
+
+    let past = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(30));
+        bus_for_emit.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    });
+
+    let matches = block_on(bus.filter("work", true, Some(0.5), None, None));
+    assert_eq!(matches.len(), 2);
+    let past_id = past.inner.inner.lock().event_id.clone();
+    let matched_past_id = matches[0].inner.lock().event_id.clone();
+    let matched_future_id = matches[1].inner.lock().event_id.clone();
+    assert_eq!(matched_past_id, past_id);
+    assert_ne!(matched_future_id, matched_past_id);
+    bus.stop();
+}
+
+#[test]
+fn test_filter_limit_short_circuits_future_wait() {
+    let bus = EventBus::new(Some("FilterLimitShortCircuitBus".to_string()));
+
+    let past = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+
+    let start = Instant::now();
+    let matches = block_on(bus.filter("work", true, Some(2.0), None, Some(1)));
+    assert!(start.elapsed() < Duration::from_millis(200));
+    assert_eq!(
+        event_ids(&matches),
+        vec![past.inner.inner.lock().event_id.clone()]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_filter_future_only_returns_dispatched_event() {
+    let bus = EventBus::new(Some("FilterFutureOnlyBus".to_string()));
+    let bus_for_emit = bus.clone();
+
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(30));
+        bus_for_emit.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    });
+
+    let matches = block_on(bus.filter("work", false, Some(0.5), None, None));
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].inner.lock().event_type, "work");
+    bus.stop();
+}
+
+#[test]
+fn test_filter_future_only_times_out_to_empty_list() {
+    let bus = EventBus::new(Some("FilterFutureTimeoutBus".to_string()));
+    let matches = block_on(bus.filter("missing", false, Some(0.05), None, None));
+    assert!(matches.is_empty());
+    bus.stop();
+}
+
+#[test]
+fn test_find_returns_first_filter_result() {
+    let bus = EventBus::new(Some("FindEqualsFilterFirstBus".to_string()));
+
+    bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    let latest = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+
+    let found = block_on(bus.find("work", true, None, None)).expect("latest event");
+    let filtered = block_on(bus.filter("work", true, None, None, Some(1)));
+    assert_eq!(filtered.len(), 1);
+    let latest_id = latest.inner.inner.lock().event_id.clone();
+    let found_id = found.inner.lock().event_id.clone();
+    let filtered_id = filtered[0].inner.lock().event_id.clone();
+    assert_eq!(found_id, latest_id);
+    assert_eq!(found_id, filtered_id);
+    bus.stop();
+}
+
+#[test]
+fn test_filter_zero_limit_returns_empty_without_future_wait() {
+    let bus = EventBus::new(Some("FilterZeroLimitBus".to_string()));
+    bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+
+    let start = Instant::now();
+    let matches = block_on(bus.filter("work", true, Some(2.0), None, Some(0)));
+    assert!(matches.is_empty());
+    assert!(start.elapsed() < Duration::from_millis(200));
+    bus.stop();
 }

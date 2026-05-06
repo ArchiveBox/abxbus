@@ -106,6 +106,31 @@ pub struct FindOptions {
     pub where_predicate: Option<FindPredicate>,
 }
 
+#[derive(Clone)]
+pub struct FilterOptions {
+    pub past: bool,
+    pub past_window: Option<f64>,
+    pub future: Option<f64>,
+    pub child_of: Option<Arc<BaseEvent>>,
+    pub where_filter: Option<HashMap<String, Value>>,
+    pub where_predicate: Option<FindPredicate>,
+    pub limit: Option<usize>,
+}
+
+impl Default for FilterOptions {
+    fn default() -> Self {
+        Self {
+            past: true,
+            past_window: None,
+            future: None,
+            child_of: None,
+            where_filter: None,
+            where_predicate: None,
+            limit: None,
+        }
+    }
+}
+
 pub type FindPredicate = Arc<dyn Fn(&Arc<BaseEvent>) -> bool + Send + Sync>;
 
 pub struct DispatchContextGuard {
@@ -1496,6 +1521,107 @@ impl EventBus {
         result
     }
 
+    pub async fn filter(
+        &self,
+        pattern: &str,
+        past: bool,
+        future: Option<f64>,
+        child_of: Option<Arc<BaseEvent>>,
+        limit: Option<usize>,
+    ) -> Vec<Arc<BaseEvent>> {
+        self.filter_with_options(
+            pattern,
+            FilterOptions {
+                past,
+                future,
+                child_of,
+                limit,
+                ..FilterOptions::default()
+            },
+        )
+        .await
+    }
+
+    pub async fn filter_with_options(
+        &self,
+        pattern: &str,
+        options: FilterOptions,
+    ) -> Vec<Arc<BaseEvent>> {
+        if !options.past && options.future.is_none() {
+            return Vec::new();
+        }
+        if options.limit == Some(0) {
+            return Vec::new();
+        }
+
+        let child_of_event_id = options
+            .child_of
+            .as_ref()
+            .map(|event| event.inner.lock().event_id.clone());
+
+        let mut results = Vec::new();
+        let mut waiter_id: Option<u64> = None;
+        let mut waiter_rx: Option<std_mpsc::Receiver<Arc<BaseEvent>>> = None;
+
+        if options.future.is_some() {
+            let (tx, rx) = std_mpsc::channel();
+            let id = {
+                let mut next = self.runtime.next_waiter_id.lock();
+                *next += 1;
+                *next
+            };
+            self.runtime.find_waiters.lock().push(FindWaiter {
+                id,
+                pattern: pattern.to_string(),
+                child_of_event_id: child_of_event_id.clone(),
+                where_filter: options.where_filter.clone(),
+                where_predicate: options.where_predicate.clone(),
+                sender: tx,
+            });
+            waiter_id = Some(id);
+            waiter_rx = Some(rx);
+        }
+
+        if options.past {
+            results.extend(self.filter_in_history(
+                pattern,
+                child_of_event_id.as_deref(),
+                options.where_filter.as_ref(),
+                options.where_predicate.as_ref(),
+                options.past_window,
+                options.limit,
+            ));
+            if options.limit.is_some_and(|limit| results.len() >= limit) {
+                if let Some(id) = waiter_id {
+                    self.runtime
+                        .find_waiters
+                        .lock()
+                        .retain(|waiter| waiter.id != id);
+                }
+                return results;
+            }
+        }
+
+        let Some(timeout) = options.future else {
+            return results;
+        };
+
+        if let Some(future_match) =
+            waiter_rx.and_then(|rx| rx.recv_timeout(Duration::from_secs_f64(timeout)).ok())
+        {
+            results.push(future_match);
+        }
+
+        if let Some(id) = waiter_id {
+            self.runtime
+                .find_waiters
+                .lock()
+                .retain(|waiter| waiter.id != id);
+        }
+
+        results
+    }
+
     fn find_in_history(
         &self,
         pattern: &str,
@@ -1530,6 +1656,47 @@ impl EventBus {
             return Some(event);
         }
         None
+    }
+
+    fn filter_in_history(
+        &self,
+        pattern: &str,
+        child_of_event_id: Option<&str>,
+        where_filter: Option<&HashMap<String, Value>>,
+        where_predicate: Option<&FindPredicate>,
+        past_window: Option<f64>,
+        limit: Option<usize>,
+    ) -> Vec<Arc<BaseEvent>> {
+        let mut results = Vec::new();
+        let history = self.runtime.history_order.lock().clone();
+        for event_id in history.iter().rev() {
+            let Some(event) = self.runtime.events.lock().get(event_id).cloned() else {
+                continue;
+            };
+            if !Self::is_within_past_window(&event, past_window) {
+                continue;
+            }
+            if !self.matches_pattern(&event, pattern) {
+                continue;
+            }
+            if let Some(parent_id) = child_of_event_id {
+                let event_id = event.inner.lock().event_id.clone();
+                if !self.event_is_child_of_ids(&event_id, parent_id) {
+                    continue;
+                }
+            }
+            if !Self::matches_where_filter(&event, where_filter) {
+                continue;
+            }
+            if !Self::matches_where_predicate(&event, where_predicate) {
+                continue;
+            }
+            results.push(event);
+            if limit.is_some_and(|limit| results.len() >= limit) {
+                break;
+            }
+        }
+        results
     }
 
     fn is_within_past_window(event: &Arc<BaseEvent>, past_window: Option<f64>) -> bool {
