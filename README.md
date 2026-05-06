@@ -368,6 +368,15 @@ if new_tab:
 
 This solves race conditions where child events fire before you start waiting for them.
 
+#### Returning Multiple Matches with `filter()`
+
+`filter()` takes the same arguments as `find()` but returns the list of all matching events
+(newest to oldest), plus an optional `limit` argument to cap the result count.
+
+```python
+recent = await bus.filter(ResponseEvent, past=10, future=False, limit=5)
+```
+
 See the `EventBus.find(...)` API section below for full parameter details.
 
 > [!IMPORTANT]
@@ -839,6 +848,16 @@ completed = await bus.find(ResponseEvent, event_status='completed')
 
 # Wildcard match across all event types
 any_completed = await bus.find('*', event_status='completed', past=True, future=False)
+```
+
+##### `filter(event_type, *, limit: int | None=None, ...) -> list[BaseEvent]`
+
+Same as [`find()`](#find-event-type-str--literal--type-base-event--where-callable-base-event-bool-none-child-of-base-event--none-none-past-bool--float--timedelta-true-future-bool--float-false-event-fields---base-event--none)
+but returns the list of all matching events (newest to oldest) instead of just the first match.
+Accepts an additional `limit` argument to cap the result count.
+
+```python
+recent = await bus.filter(ResponseEvent, past=10, future=False, limit=5)
 ```
 
 ##### `event_is_child_of(event: BaseEvent, ancestor: BaseEvent) -> bool`

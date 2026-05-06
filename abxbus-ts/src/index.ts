@@ -1,6 +1,6 @@
 export { BaseEvent, BaseEventSchema } from './BaseEvent.js'
 export { EventHistory } from './EventHistory.js'
-export type { EventHistoryFindOptions, EventHistoryTrimOptions } from './EventHistory.js'
+export type { EventHistoryFilterOptions, EventHistoryFindOptions, EventHistoryTrimOptions } from './EventHistory.js'
 export { EventResult } from './EventResult.js'
 export { EventBus } from './EventBus.js'
 export type { EventBusJSON, EventBusOptions } from './EventBus.js'
@@ -24,7 +24,15 @@ export type {
   EventHandlerCompletionMode,
   EventBusInterfaceForLockManager,
 } from './LockManager.js'
-export type { EventClass, EventHandlerCallable as EventHandler, EventPattern, EventStatus, FindOptions, FindWindow } from './types.js'
+export type {
+  EventClass,
+  EventHandlerCallable as EventHandler,
+  EventPattern,
+  EventStatus,
+  FilterOptions,
+  FindOptions,
+  FindWindow,
+} from './types.js'
 export { retry, clearSemaphoreRegistry, RetryTimeoutError, SemaphoreTimeoutError } from './retry.js'
 export type { RetryOptions } from './retry.js'
 export { events_suck } from './events_suck.js'

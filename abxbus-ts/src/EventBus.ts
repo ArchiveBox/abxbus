@@ -24,7 +24,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { monotonicDatetime } from './helpers.js'
 
 import { normalizeEventPattern } from './types.js'
-import type { EventClass, EventHandlerCallable, EventPattern, FindOptions, UntypedEventHandlerFunction } from './types.js'
+import type { EventClass, EventHandlerCallable, EventPattern, FilterOptions, FindOptions, UntypedEventHandlerFunction } from './types.js'
 
 export type EventBusOptions = {
   id?: string
@@ -782,16 +782,39 @@ export class EventBus {
   ): Promise<T | null> {
     const where = typeof where_or_options === 'function' ? where_or_options : () => true
     const options = typeof where_or_options === 'function' ? maybe_options : where_or_options
-    const match = await this.event_history.find(event_pattern as EventPattern<T> | '*', where, {
+    // `limit` field-equality filter would collide with filter()'s cap arg; route it through `where`.
+    let effective_where = where
+    let effective_options: FindOptions<T> = options
+    if (Object.prototype.hasOwnProperty.call(options, 'limit')) {
+      const { limit: limit_field_value, ...rest } = options as FindOptions<T> & { limit: unknown }
+      const inner_where = where
+      effective_where = (event: T) => (event as unknown as Record<string, unknown>).limit === limit_field_value && inner_where(event)
+      effective_options = rest as unknown as FindOptions<T>
+    }
+    const results = await this.filter(event_pattern as EventPattern<T> | '*', effective_where, { ...effective_options, limit: 1 })
+    return results.length > 0 ? results[0] : null
+  }
+
+  // same as find() but returns the list of all matching events (newest to oldest)
+  // optional `limit` arg caps the number of results returned
+  filter(event_pattern: '*', options?: FilterOptions<BaseEvent>): Promise<BaseEvent[]>
+  filter(event_pattern: '*', where: (event: BaseEvent) => boolean, options?: FilterOptions<BaseEvent>): Promise<BaseEvent[]>
+  filter<T extends BaseEvent>(event_pattern: EventPattern<T>, options?: FilterOptions<T>): Promise<T[]>
+  filter<T extends BaseEvent>(event_pattern: EventPattern<T>, where: (event: T) => boolean, options?: FilterOptions<T>): Promise<T[]>
+  async filter<T extends BaseEvent>(
+    event_pattern: EventPattern<T> | '*',
+    where_or_options: ((event: T) => boolean) | FilterOptions<T> = {},
+    maybe_options: FilterOptions<T> = {}
+  ): Promise<T[]> {
+    const where = typeof where_or_options === 'function' ? where_or_options : () => true
+    const options = typeof where_or_options === 'function' ? maybe_options : where_or_options
+    const matches = await this.event_history.filter(event_pattern as EventPattern<T> | '*', where, {
       ...options,
       event_is_child_of: (event, ancestor) => this.eventIsChildOf(event, ancestor),
-      wait_for_future_match: (normalized_event_pattern, matches, future) =>
-        this._waitForFutureMatch(normalized_event_pattern, matches, future),
+      wait_for_future_match: (normalized_event_pattern, matches_fn, future) =>
+        this._waitForFutureMatch(normalized_event_pattern, matches_fn, future),
     })
-    if (!match) {
-      return null
-    }
-    return this._getEventProxyScopedToThisBus(match) as T
+    return matches.map((match) => this._getEventProxyScopedToThisBus(match) as T)
   }
 
   private async _waitForFutureMatch(

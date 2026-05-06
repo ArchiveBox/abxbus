@@ -15,6 +15,8 @@ export type EventHistoryFindOptions = {
   ) => Promise<BaseEvent | null>
 } & Record<string, unknown>
 
+export type EventHistoryFilterOptions = EventHistoryFindOptions & { limit?: number | null }
+
 export type EventHistoryTrimOptions<TEvent extends BaseEvent = BaseEvent> = {
   is_event_complete?: (event: TEvent) => boolean
   on_remove?: (event: TEvent) => void
@@ -109,13 +111,45 @@ export class EventHistory<TEvent extends BaseEvent = BaseEvent> implements Itera
     where: (event: TEvent) => boolean = () => true,
     options: EventHistoryFindOptions = {}
   ): Promise<TEvent | null> {
+    // `limit` field-equality filter would collide with filter()'s cap arg; route it through `where`.
+    let effective_where = where
+    let effective_options: EventHistoryFindOptions = options
+    if (Object.prototype.hasOwnProperty.call(options, 'limit')) {
+      const { limit: limit_field_value, ...rest } = options as EventHistoryFindOptions & { limit: unknown }
+      const inner_where = where
+      effective_where = (event: TEvent) => (event as unknown as Record<string, unknown>).limit === limit_field_value && inner_where(event)
+      effective_options = rest as EventHistoryFindOptions
+    }
+    const results = await this.filter(event_pattern as EventPattern<TEvent> | '*', effective_where, {
+      ...effective_options,
+      limit: 1,
+    })
+    return results.length > 0 ? results[0] : null
+  }
+
+  filter(event_pattern: '*', where?: (event: TEvent) => boolean, options?: EventHistoryFilterOptions): Promise<TEvent[]>
+  filter<TMatch extends TEvent>(
+    event_pattern: EventPattern<TMatch>,
+    where?: (event: TMatch) => boolean,
+    options?: EventHistoryFilterOptions
+  ): Promise<TMatch[]>
+  async filter(
+    event_pattern: EventPattern<TEvent> | '*',
+    where: (event: TEvent) => boolean = () => true,
+    options: EventHistoryFilterOptions = {}
+  ): Promise<TEvent[]> {
     const past = options.past ?? true
     const future = options.future ?? false
     const child_of = options.child_of ?? null
     const eventIsChildOf = options.event_is_child_of ?? ((event: BaseEvent, ancestor: BaseEvent) => this.eventIsChildOf(event, ancestor))
     const waitForFutureMatch = options.wait_for_future_match
+    const limit = options.limit ?? null
     if (past === false && future === false) {
-      return null
+      return []
+    }
+
+    if (limit !== null && limit <= 0) {
+      return []
     }
 
     const event_key = EventHistory.normalizeEventPattern(event_pattern)
@@ -128,6 +162,7 @@ export class EventHistory<TEvent extends BaseEvent = BaseEvent> implements Itera
         key !== 'child_of' &&
         key !== 'event_is_child_of' &&
         key !== 'wait_for_future_match' &&
+        key !== 'limit' &&
         value !== undefined
     )
 
@@ -137,6 +172,7 @@ export class EventHistory<TEvent extends BaseEvent = BaseEvent> implements Itera
       event_field_filters.every(([field_name, expected]) => (event as unknown as Record<string, unknown>)[field_name] === expected) &&
       where(event as TEvent)
 
+    const results: TEvent[] = []
     if (past !== false) {
       const history_values = Array.from(this._events.values())
       for (let i = history_values.length - 1; i >= 0; i -= 1) {
@@ -145,16 +181,23 @@ export class EventHistory<TEvent extends BaseEvent = BaseEvent> implements Itera
           continue
         }
         if (matches(event)) {
-          return event
+          results.push(event)
+          if (limit !== null && results.length >= limit) {
+            return results
+          }
         }
       }
     }
 
     if (future === false || !waitForFutureMatch) {
-      return null
+      return results
     }
 
-    return (await waitForFutureMatch(event_key, matches, future)) as TEvent | null
+    const future_match = (await waitForFutureMatch(event_key, matches, future)) as TEvent | null
+    if (future_match !== null) {
+      results.push(future_match)
+    }
+    return results
   }
 
   trimEventHistory(options: EventHistoryTrimOptions<TEvent> = {}): number {

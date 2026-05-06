@@ -175,6 +175,29 @@ const child = await bus.find(ChildEvent, { child_of: parentEvent, future: 5 })
 </Tab>
 </Tabs>
 
+## `filter(...)`
+
+`filter(...)` takes the same arguments as `find(...)` but returns the list of all matching
+events (newest to oldest) instead of just the first match. Accepts an additional `limit`
+argument to cap the result count.
+
+<Tabs>
+<Tab title="Python">
+
+```python
+recent = await bus.filter(ResponseEvent, past=10, future=False, limit=5)
+```
+
+</Tab>
+<Tab title="TypeScript">
+
+```ts
+const recent = await bus.filter(ResponseEvent, { past: 10, future: false, limit: 5 })
+```
+
+</Tab>
+</Tabs>
+
 ## Lifecycle helpers
 
 ### Wait for idle
