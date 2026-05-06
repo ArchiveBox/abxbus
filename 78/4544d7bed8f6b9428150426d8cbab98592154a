@@ -1,0 +1,22 @@
+abxbus-rust/tests/test_eventbus_error_handling.rs
+  6a8c07f028b30c43 1,4-5,7-9,19-53,76-208,293-336,340-341,344,382-521
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "784544d7bed8f6b9428150426d8cbab98592154a",
+  "prompts": {
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "total_additions": 1693,
+      "total_deletions": 1455,
+      "accepted_lines": 242,
+      "overriden_lines": 0
+    }
+  }
+}

@@ -1,0 +1,22 @@
+abxbus-rust/tests/test_base_event_eventbus_proxy.rs
+  6a8c07f028b30c43 1-13,22-74,130-151,214-258,457-537,540-684
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "6fda8a9ef0aca5e770d541dc2ad2850779cce9f2",
+  "prompts": {
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "total_additions": 1942,
+      "total_deletions": 1474,
+      "accepted_lines": 468,
+      "overriden_lines": 0
+    }
+  }
+}

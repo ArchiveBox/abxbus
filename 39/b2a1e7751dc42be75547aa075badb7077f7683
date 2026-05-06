@@ -1,0 +1,22 @@
+abxbus-rust/tests/test_eventbus_serialization.rs
+  6a8c07f028b30c43 1-10,12-32,34-93,126-158,169-202,204-213
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "39b2a1e7751dc42be75547aa075badb7077f7683",
+  "prompts": {
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "total_additions": 1505,
+      "total_deletions": 1455,
+      "accepted_lines": 54,
+      "overriden_lines": 0
+    }
+  }
+}

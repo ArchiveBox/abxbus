@@ -1,0 +1,22 @@
+abxbus-rust/tests/test_event_result_typed_results.rs
+  6a8c07f028b30c43 1-2,8-16,18-27,34-63,66-295,453-511
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "36bb9caa8e6cc7bf5903f7677e86fb6ce61d8045",
+  "prompts": {
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "total_additions": 1632,
+      "total_deletions": 1468,
+      "accepted_lines": 166,
+      "overriden_lines": 0
+    }
+  }
+}

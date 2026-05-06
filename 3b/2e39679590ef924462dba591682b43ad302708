@@ -1,0 +1,22 @@
+abxbus-rust/tests/test_eventbus_find.rs
+  6a8c07f028b30c43 7-15,30-45,70-87,120-135,264,268,273,276-278,506,513-514,519-520,522-525,530-532,620,624,626-627,629-630,633,637-640,643-645,656-657,670,674-677,698,710,722-723,726,728,882-976,1026-1145,1147-1168,1170-1186,1188-1248
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "3b2e39679590ef924462dba591682b43ad302708",
+  "prompts": {
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "total_additions": 453,
+      "total_deletions": 240,
+      "accepted_lines": 213,
+      "overriden_lines": 0
+    }
+  }
+}

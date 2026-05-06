@@ -1,0 +1,22 @@
+abxbus-rust/tests/test_eventbus_locking.rs
+  6a8c07f028b30c43 1-10,12-42,49-402,509-1122,1214-1277
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "52d8de00cb24367b64978051ae0b28e5fca173ae",
+  "prompts": {
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "total_additions": 1485,
+      "total_deletions": 1394,
+      "accepted_lines": 91,
+      "overriden_lines": 0
+    }
+  }
+}
