@@ -1,0 +1,21 @@
+docs/api/eventbus.mdx
+  s_6a8c07f028b30c::t_fb8796a208d26c 49-68,123-128,130,132-134,160-169,193-203,229-243,267-282,306-314,336-341
+  s_6a8c07f028b30c::t_2cf0d8516c5271 129,131
+  s_6a8c07f028b30c::t_5ae22ea2ba47cb 93,349
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "b3e2276f0746a102ea6555d48cafbad04f2716cf",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
