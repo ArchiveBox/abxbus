@@ -679,6 +679,22 @@ test('eventResultsList returns filtered values by default and can return raw val
   assert.deepEqual(raw_values, [{ one: 1 }, ['two'], undefined])
 })
 
+test('eventResultsList returns results in handler registration order', async () => {
+  const bus = new EventBus('EventResultsListOrderBus', { event_handler_concurrency: 'serial' })
+  const ResultOrderEvent = BaseEvent.extend('ResultOrderEvent', {})
+
+  bus.on(ResultOrderEvent, () => undefined)
+  bus.on(ResultOrderEvent, () => 'winner')
+  bus.on(ResultOrderEvent, () => 'late')
+
+  const event = bus.emit(ResultOrderEvent({}))
+  const values = await event.eventResultsList({ raise_if_any: false, raise_if_none: true })
+  assert.deepEqual(values, ['winner', 'late'])
+
+  const raw_values = await event.eventResultsList(() => true, { raise_if_any: false, raise_if_none: false })
+  assert.deepEqual(raw_values, [undefined, 'winner', 'late'])
+})
+
 test('eventResultsList supports timeout/include/raise_if_any/raise_if_none arguments', async () => {
   const bus = new EventBus('EventResultsListArgsBus', { event_handler_concurrency: 'serial' })
   const ArgsEvent = BaseEvent.extend('ArgsEvent', {})

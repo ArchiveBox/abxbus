@@ -179,6 +179,33 @@ async def test_typed_accessors_normalize_forwarded_event_results_to_none():
     await bus.stop(clear=True)
 
 
+async def test_event_result_returns_first_filtered_value_in_handler_registration_order():
+    """Result accessors should use handler registration order, not handler ids or completion timestamps."""
+    bus = EventBus(name='event_result_registration_order_bus', event_handler_concurrency='serial')
+
+    class AccessorEvent(BaseEvent[str]):
+        pass
+
+    def null_handler(event: AccessorEvent) -> None:
+        return None
+
+    def winner_handler(event: AccessorEvent) -> str:
+        return 'winner'
+
+    def late_handler(event: AccessorEvent) -> str:
+        return 'late'
+
+    bus.on(AccessorEvent, null_handler)
+    bus.on(AccessorEvent, winner_handler)
+    bus.on(AccessorEvent, late_handler)
+
+    event = bus.emit(AccessorEvent())
+    assert await event.event_result(raise_if_any=False, raise_if_none=True) == 'winner'
+    assert await event.event_results_list(raise_if_any=False, raise_if_none=True) == ['winner', 'late']
+
+    await bus.stop(clear=True)
+
+
 async def test_run_handler_marks_started_after_handler_lock_entry():
     """Result status should remain pending while waiting on the handler lock."""
     bus = EventBus(name='handler_start_order_bus', event_handler_concurrency='serial')

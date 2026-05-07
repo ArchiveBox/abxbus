@@ -42,11 +42,11 @@ fn json_object_keys(value: &Value, key: &str) -> Vec<String> {
     value[key].as_object().expect(key).keys().cloned().collect()
 }
 
-fn assert_eventbus_json_roundtrip_uses_id_keyed_structures() {
+fn assert_eventbus_json_roundtrip_uses_id_keyed_structures(bus_name: &str, bus_id: &str) {
     let bus = EventBus::new_with_options(
-        Some("SerializableBus".to_string()),
+        Some(bus_name.to_string()),
         EventBusOptions {
-            id: Some("018f8e40-1234-7000-8000-000000001234".to_string()),
+            id: Some(bus_id.to_string()),
             max_history_size: Some(500),
             max_history_drop: false,
             event_concurrency: EventConcurrencyMode::Parallel,
@@ -67,8 +67,8 @@ fn assert_eventbus_json_roundtrip_uses_id_keyed_structures() {
     block_on(event.wait_completed());
 
     let payload = bus.to_json_value();
-    assert_eq!(payload["id"], "018f8e40-1234-7000-8000-000000001234");
-    assert_eq!(payload["name"], "SerializableBus");
+    assert_eq!(payload["id"], bus_id);
+    assert_eq!(payload["name"], bus_name);
     assert_eq!(payload["max_history_size"], 500);
     assert_eq!(payload["max_history_drop"], false);
     assert_eq!(payload["event_concurrency"], "parallel");
@@ -96,8 +96,8 @@ fn assert_eventbus_json_roundtrip_uses_id_keyed_structures() {
     assert_eq!(payload["pending_event_queue"], json!([]));
 
     let restored = EventBus::from_json_value(payload.clone());
-    assert_eq!(restored.id, "018f8e40-1234-7000-8000-000000001234");
-    assert_eq!(restored.name, "SerializableBus");
+    assert_eq!(restored.id, bus_id);
+    assert_eq!(restored.name, bus_name);
     assert_eq!(restored.to_json_value(), payload);
     restored.stop();
     bus.stop();
@@ -105,12 +105,18 @@ fn assert_eventbus_json_roundtrip_uses_id_keyed_structures() {
 
 #[test]
 fn test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() {
-    assert_eventbus_json_roundtrip_uses_id_keyed_structures();
+    assert_eventbus_json_roundtrip_uses_id_keyed_structures(
+        "SerializableBusModelDump",
+        "018f8e40-1234-7000-8000-000000001234",
+    );
 }
 
 #[test]
 fn test_eventbus_to_json_from_json_roundtrip_uses_id_keyed_structures() {
-    assert_eventbus_json_roundtrip_uses_id_keyed_structures();
+    assert_eventbus_json_roundtrip_uses_id_keyed_structures(
+        "SerializableBusToJson",
+        "018f8e40-1234-7000-8000-000000001235",
+    );
 }
 
 #[test]
@@ -338,7 +344,10 @@ fn test_eventbus_to_json_promotes_pending_events_into_event_history_snapshot() {
 
 #[test]
 fn test_eventbus_tojson_fromjson_roundtrip_uses_id_keyed_structures() {
-    assert_eventbus_json_roundtrip_uses_id_keyed_structures();
+    assert_eventbus_json_roundtrip_uses_id_keyed_structures(
+        "SerializableBusToJSON",
+        "018f8e40-1234-7000-8000-000000001236",
+    );
 }
 
 #[test]

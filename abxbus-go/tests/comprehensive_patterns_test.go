@@ -364,6 +364,8 @@ func TestComprehensiveMultiBusQueuesIndependentWhenAwaitingChild(t *testing.T) {
 	bus2 := abxbus.NewEventBus("Bus2", nil)
 	var mu sync.Mutex
 	order := []string{}
+	bus2Started := make(chan struct{})
+	closeBus2Started := sync.Once{}
 
 	bus1.On("Event1", "event1_handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
 		appendLocked(&mu, &order, "Bus1_Event1_start")
@@ -383,6 +385,11 @@ func TestComprehensiveMultiBusQueuesIndependentWhenAwaitingChild(t *testing.T) {
 	}, nil)
 	bus1.On("ChildEvent", "child_handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
 		appendLocked(&mu, &order, "Child_start")
+		select {
+		case <-bus2Started:
+		case <-time.After(2 * time.Second):
+			return nil, fmt.Errorf("timed out waiting for Bus2 to process independently")
+		}
 		appendLocked(&mu, &order, "Child_end")
 		return "child_done", nil
 	}, nil)
@@ -390,6 +397,9 @@ func TestComprehensiveMultiBusQueuesIndependentWhenAwaitingChild(t *testing.T) {
 		eventType := eventType
 		bus2.On(eventType, eventType+"_handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
 			appendLocked(&mu, &order, "Bus2_"+eventType+"_start")
+			if eventType == "Event3" {
+				closeBus2Started.Do(func() { close(bus2Started) })
+			}
 			appendLocked(&mu, &order, "Bus2_"+eventType+"_end")
 			return strings.ToLower(eventType) + "_done", nil
 		}, nil)

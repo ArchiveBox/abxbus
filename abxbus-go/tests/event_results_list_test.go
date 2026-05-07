@@ -76,3 +76,45 @@ func TestEventResultsListOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestEventResultsListAndFirstUseHandlerRegistrationOrder(t *testing.T) {
+	bus := abxbus.NewEventBus("ResultsListOrderBus", &abxbus.EventBusOptions{
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+	})
+	bus.On("OrderResultEvent", "null", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		return nil, nil
+	}, &abxbus.EventHandler{ID: "m-null"})
+	bus.On("OrderResultEvent", "winner", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		return "winner", nil
+	}, &abxbus.EventHandler{ID: "z-winner"})
+	bus.On("OrderResultEvent", "late", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		return "late", nil
+	}, &abxbus.EventHandler{ID: "a-late"})
+
+	e := bus.Emit(abxbus.NewBaseEvent("OrderResultEvent", nil))
+	first, err := e.First(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != "winner" {
+		t.Fatalf("expected First to return first non-nil result in registration order, got %#v", first)
+	}
+
+	values, err := e.EventResultsList(context.Background(), nil, &abxbus.EventResultsListOptions{RaiseIfAny: false, RaiseIfNone: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 2 || values[0] != "winner" || values[1] != "late" {
+		t.Fatalf("expected filtered values in registration order, got %#v", values)
+	}
+
+	rawValues, err := e.EventResultsList(context.Background(), func(result any, eventResult *abxbus.EventResult) bool {
+		return true
+	}, &abxbus.EventResultsListOptions{RaiseIfAny: false, RaiseIfNone: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rawValues) != 3 || rawValues[0] != nil || rawValues[1] != "winner" || rawValues[2] != "late" {
+		t.Fatalf("expected raw values in registration order, got %#v", rawValues)
+	}
+}

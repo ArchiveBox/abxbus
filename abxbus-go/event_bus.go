@@ -353,6 +353,7 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 			result = NewEventResult(event, h)
 			event.EventResults[h.ID] = result
 		}
+		event.noteEventResultOrder(h.ID)
 		pending_entries = append(pending_entries, result)
 	}
 	resolved_event_timeout := event.EventTimeout

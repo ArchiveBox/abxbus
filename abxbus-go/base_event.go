@@ -31,13 +31,14 @@ type BaseEvent struct {
 	EventHandlerCompletion      EventHandlerCompletionMode  `json:"event_handler_completion,omitempty"`
 	EventBlocksParentCompletion bool                        `json:"event_blocks_parent_completion"`
 
-	Payload      map[string]any
-	Bus          *EventBus               `json:"-"`
-	EventResults map[string]*EventResult `json:"-"`
-	dispatchCtx  context.Context         `json:"-"`
-	mu           sync.Mutex
-	done_ch      chan struct{}
-	done_once    sync.Once
+	Payload          map[string]any
+	Bus              *EventBus               `json:"-"`
+	EventResults     map[string]*EventResult `json:"-"`
+	eventResultOrder []string
+	dispatchCtx      context.Context `json:"-"`
+	mu               sync.Mutex
+	done_ch          chan struct{}
+	done_once        sync.Once
 }
 
 type EventResultsListOptions struct {
@@ -53,7 +54,7 @@ func NewBaseEvent(event_type string, payload map[string]any) *BaseEvent {
 	}
 	return &BaseEvent{
 		EventID: id, EventCreatedAt: monotonicDatetime(), EventType: event_type, EventVersion: "0.0.1",
-		EventStatus: "pending", EventPath: []string{}, EventResults: map[string]*EventResult{}, EventPendingBusCount: 0,
+		EventStatus: "pending", EventPath: []string{}, EventResults: map[string]*EventResult{}, eventResultOrder: []string{}, EventPendingBusCount: 0,
 		Payload: payload, done_ch: make(chan struct{}),
 	}
 }
@@ -193,6 +194,7 @@ func (e *BaseEvent) UnmarshalJSON(data []byte) error {
 				}
 				e.EventResults[result.HandlerID] = result
 			}
+			e.rebuildEventResultOrderByMetadata()
 		} else {
 			var resultList []json.RawMessage
 			if err := json.Unmarshal(m.EventResults, &resultList); err != nil {
@@ -204,6 +206,7 @@ func (e *BaseEvent) UnmarshalJSON(data []byte) error {
 					return err
 				}
 				e.EventResults[result.HandlerID] = result
+				e.noteEventResultOrder(result.HandlerID)
 			}
 		}
 	}
@@ -390,18 +393,85 @@ func (e *BaseEvent) EventResultsList(ctx context.Context, include func(result an
 }
 
 func (e *BaseEvent) sortedEventResults() []*EventResult {
-	keys := make([]string, 0, len(e.EventResults))
-	for key := range e.EventResults {
-		keys = append(keys, key)
+	if len(e.EventResults) == 0 {
+		return nil
 	}
-	sort.Strings(keys)
-	results := make([]*EventResult, 0, len(keys))
-	for _, key := range keys {
-		if result := e.EventResults[key]; result != nil {
+
+	results := make([]*EventResult, 0, len(e.EventResults))
+	seen := map[string]bool{}
+	appendByID := func(handlerID string) {
+		if seen[handlerID] {
+			return
+		}
+		if result := e.EventResults[handlerID]; result != nil {
+			results = append(results, result)
+			seen[handlerID] = true
+		}
+	}
+
+	for _, handlerID := range e.eventResultOrderSnapshot() {
+		appendByID(handlerID)
+	}
+
+	remaining := make([]*EventResult, 0, len(e.EventResults)-len(results))
+	for handlerID, result := range e.EventResults {
+		if !seen[handlerID] && result != nil {
+			remaining = append(remaining, result)
+		}
+	}
+	sort.SliceStable(remaining, func(i, j int) bool {
+		return eventResultRegistrationLess(remaining[i], remaining[j])
+	})
+	results = append(results, remaining...)
+	return results
+}
+
+func (e *BaseEvent) noteEventResultOrder(handlerID string) {
+	if handlerID == "" {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, existing := range e.eventResultOrder {
+		if existing == handlerID {
+			return
+		}
+	}
+	e.eventResultOrder = append(e.eventResultOrder, handlerID)
+}
+
+func (e *BaseEvent) eventResultOrderSnapshot() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]string{}, e.eventResultOrder...)
+}
+
+func (e *BaseEvent) rebuildEventResultOrderByMetadata() {
+	results := make([]*EventResult, 0, len(e.EventResults))
+	for _, result := range e.EventResults {
+		if result != nil {
 			results = append(results, result)
 		}
 	}
-	return results
+	sort.SliceStable(results, func(i, j int) bool {
+		return eventResultRegistrationLess(results[i], results[j])
+	})
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.eventResultOrder = e.eventResultOrder[:0]
+	for _, result := range results {
+		e.eventResultOrder = append(e.eventResultOrder, result.HandlerID)
+	}
+}
+
+func eventResultRegistrationLess(a, b *EventResult) bool {
+	if a.HandlerRegisteredAt != b.HandlerRegisteredAt {
+		return a.HandlerRegisteredAt < b.HandlerRegisteredAt
+	}
+	if a.StartedAt != nil && b.StartedAt != nil && *a.StartedAt != *b.StartedAt {
+		return *a.StartedAt < *b.StartedAt
+	}
+	return a.HandlerID < b.HandlerID
 }
 
 func toErrorString(v any) string {
