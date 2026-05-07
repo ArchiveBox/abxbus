@@ -109,6 +109,77 @@ if (JSON.stringify(startsB) !== JSON.stringify([0, 1, 2, 3])) throw new Error('b
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+package main
+
+import (
+	"context"
+	"reflect"
+	"sync"
+	"time"
+
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+)
+
+func main() {
+	busA := abxbus.NewEventBus("BusSerialA", &abxbus.EventBusOptions{
+		EventConcurrency: abxbus.EventConcurrencyBusSerial,
+	})
+	busB := abxbus.NewEventBus("BusSerialB", &abxbus.EventBusOptions{
+		EventConcurrency: abxbus.EventConcurrencyBusSerial,
+	})
+
+	var mu sync.Mutex
+	startsA := []int{}
+	startsB := []int{}
+	inFlightGlobal := 0
+	maxInFlightGlobal := 0
+
+	handler := func(starts *[]int) func(context.Context, *abxbus.BaseEvent) (any, error) {
+		return func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+			mu.Lock()
+			inFlightGlobal++
+			if inFlightGlobal > maxInFlightGlobal {
+				maxInFlightGlobal = inFlightGlobal
+			}
+			*starts = append(*starts, event.Payload["order"].(int))
+			mu.Unlock()
+
+			time.Sleep(10 * time.Millisecond)
+
+			mu.Lock()
+			inFlightGlobal--
+			mu.Unlock()
+			return nil, nil
+		}
+	}
+
+	busA.On("WorkEvent", "handler_a", handler(&startsA), nil)
+	busB.On("WorkEvent", "handler_b", handler(&startsB), nil)
+
+	for i := 0; i < 4; i++ {
+		busA.Emit(abxbus.NewBaseEvent("WorkEvent", map[string]any{"order": i, "source": "a"}))
+		busB.Emit(abxbus.NewBaseEvent("WorkEvent", map[string]any{"order": i, "source": "b"}))
+	}
+
+	busA.WaitUntilIdle(nil)
+	busB.WaitUntilIdle(nil)
+
+	if !reflect.DeepEqual(startsA, []int{0, 1, 2, 3}) {
+		panic("bus A FIFO failed")
+	}
+	if !reflect.DeepEqual(startsB, []int{0, 1, 2, 3}) {
+		panic("bus B FIFO failed")
+	}
+	if maxInFlightGlobal < 2 {
+		panic("expected buses to overlap")
+	}
+}
+```
+
+</Tab>
 </Tabs>
 
 ## Notes

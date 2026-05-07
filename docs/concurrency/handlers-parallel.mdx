@@ -87,6 +87,64 @@ if (maxInFlight < 2) throw new Error('expected overlapping handlers')
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+package main
+
+import (
+	"context"
+	"sync"
+
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+)
+
+func main() {
+	bus := abxbus.NewEventBus("ParallelHandlerBus", &abxbus.EventBusOptions{
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
+	})
+
+	var mu sync.Mutex
+	inFlight := 0
+	maxInFlight := 0
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+
+	tracked := func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		mu.Lock()
+		inFlight++
+		if inFlight > maxInFlight {
+			maxInFlight = inFlight
+		}
+		mu.Unlock()
+
+		started <- struct{}{}
+		<-release
+
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+		return nil, nil
+	}
+
+	bus.On("HandlerEvent", "tracked_a", tracked, nil)
+	bus.On("HandlerEvent", "tracked_b", tracked, nil)
+
+	event := bus.Emit(abxbus.NewBaseEvent("HandlerEvent", nil))
+	<-started
+	<-started
+	close(release)
+	if _, err := event.Done(context.Background()); err != nil {
+		panic(err)
+	}
+
+	if maxInFlight < 2 {
+		panic("expected overlapping handlers")
+	}
+}
+```
+
+</Tab>
 </Tabs>
 
 ## Notes

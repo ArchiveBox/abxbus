@@ -6,7 +6,7 @@ description: How emit, queueing, and history limits interact under high event vo
 Backpressure in `abxbus` is history-policy based, not queue-capacity based.
 
 - `emit()` enqueues synchronously and returns immediately.
-- Pending queues are unbounded in both runtimes.
+- Pending queues are unbounded in each runtime.
 - Overload behavior is controlled by `max_history_size` + `max_history_drop`.
 
 ## 1) If I emit 1,000,000 events, will errors be raised?
@@ -18,11 +18,12 @@ Backpressure in `abxbus` is history-policy based, not queue-capacity based.
 | Python | `emit()` called with no running event loop | `RuntimeError` (`emit() called but no event loop is running`) |
 | Python | `max_history_size > 0`, `max_history_drop=False`, and history already at limit | `RuntimeError` (`history limit reached`) |
 | TypeScript | `emit()` with `max_history_size > 0`, `max_history_drop=false`, and history already at limit | `Error` (message contains `history limit reached`) |
-| Both | Process runs out of memory under extreme load | Runtime/VM OOM failure (not a bus-specific exception type) |
+| Go | `Emit()` with `MaxHistorySize > 0`, `MaxHistoryDrop=false`, and history already at limit | panic with `history limit reached` |
+| All | Process runs out of memory under extreme load | Runtime/VM OOM failure (not a bus-specific exception type) |
 
 In normal operation, queue-capacity errors are not the backpressure mechanism.
 
-`max_history_size=0` is a special case in both runtimes: it does not trigger history-limit rejection, and instead keeps only in-flight visibility.
+`max_history_size=0` / `MaxHistorySize=0` is a special case in all runtimes: it does not trigger history-limit rejection, and instead keeps only in-flight visibility.
 
 With `max_history_drop=true`, `emit()` does not reject on history size. Under sustained overload, old uncompleted entries can be dropped and a warning is logged.
 
@@ -49,6 +50,25 @@ import { EventBus } from 'abxbus'
 
 const rejectBus = new EventBus('RejectBus', { max_history_size: 10_000, max_history_drop: false })
 const dropBus = new EventBus('DropBus', { max_history_size: 10_000, max_history_drop: true })
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+maxHistory := 10_000
+
+// Reject new emits once history reaches N.
+rejectBus := abxbus.NewEventBus("RejectBus", &abxbus.EventBusOptions{
+	MaxHistorySize: &maxHistory,
+	MaxHistoryDrop: false,
+})
+
+// Never reject on history size; trim oldest history entries instead.
+dropBus := abxbus.NewEventBus("DropBus", &abxbus.EventBusOptions{
+	MaxHistorySize: &maxHistory,
+	MaxHistoryDrop: true,
+})
 ```
 
 </Tab>
@@ -115,6 +135,15 @@ Events do not "move from queue to history." They are added to history at `emit()
 5. Runloop shifts from queue and executes handlers.
 6. Event remains in `event_history` unless trimmed/removed by policy.
 
+### Go timeline (`Emit`)
+
+1. Validate pressure policy against `EventHistory`.
+2. Add event to `EventHistory`.
+3. Apply history trimming according to `MaxHistorySize` + `MaxHistoryDrop`.
+4. Push event into the pending queue.
+5. Runloop dequeues the event and executes handlers.
+6. Event remains in `EventHistory` unless trimmed/removed by policy.
+
 So yes:
 
 - an event can be in both `pending_event_queue` and `event_history` at the same time,
@@ -139,6 +168,31 @@ print('pending_event_queue=', pending_count, 'event_history=', history_count)
 ```ts
 const event = bus.emit(MyEvent({}))
 console.log('pending_event_queue=', bus.pending_event_queue.length, 'event_history=', bus.event_history.size)
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+event := bus.Emit(abxbus.NewBaseEvent("MyEvent", nil))
+
+var state struct {
+	PendingEventQueue []string       `json:"pending_event_queue"`
+	EventHistory      map[string]any `json:"event_history"`
+}
+snapshot, err := bus.ToJSON()
+if err != nil {
+	panic(err)
+}
+if err := json.Unmarshal(snapshot, &state); err != nil {
+	panic(err)
+}
+
+pendingCount := len(state.PendingEventQueue)
+historyCount := len(state.EventHistory)
+fmt.Println("pending_event_queue=", pendingCount, "event_history=", historyCount)
+// pending_event_queue= 1 event_history= 1
+_ = event
 ```
 
 </Tab>
