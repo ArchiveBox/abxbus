@@ -65,3 +65,44 @@ func TestEventCompletesWhenOneHandlerErrorsAndAnotherSucceeds(t *testing.T) {
 		t.Fatalf("expected both success and error results, got success=%v error=%v", seenSuccess, seenError)
 	}
 }
+
+func TestSerialHandlerErrorDoesNotPreventLaterHandlers(t *testing.T) {
+	bus := abxbus.NewEventBus("SerialErrorIsolationBus", &abxbus.EventBusOptions{
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
+	})
+	calls := []string{}
+	bus.On("MixedEvent", "failing", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		calls = append(calls, "failing")
+		return nil, errors.New("expected failure")
+	}, nil)
+	bus.On("MixedEvent", "working", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		calls = append(calls, "working")
+		return "worked", nil
+	}, nil)
+
+	event := bus.Emit(abxbus.NewBaseEvent("MixedEvent", nil))
+	if _, err := event.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if event.EventStatus != "completed" {
+		t.Fatalf("event should complete despite handler error, got %s", event.EventStatus)
+	}
+	if len(calls) != 2 || calls[0] != "failing" || calls[1] != "working" {
+		t.Fatalf("serial handlers should continue after an error, got calls=%v", calls)
+	}
+
+	seenError := false
+	seenSuccess := false
+	for _, result := range event.EventResults {
+		switch result.HandlerName {
+		case "failing":
+			seenError = result.Status == abxbus.EventResultError && result.Error == "expected failure"
+		case "working":
+			seenSuccess = result.Status == abxbus.EventResultCompleted && result.Result == "worked"
+		}
+	}
+	if !seenError || !seenSuccess {
+		t.Fatalf("expected one captured error and one successful result, got %#v", event.EventResults)
+	}
+}

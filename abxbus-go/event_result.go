@@ -38,9 +38,10 @@ type EventResult struct {
 	Event   *BaseEvent    `json:"-"`
 	Handler *EventHandler `json:"-"`
 
-	mu      sync.Mutex
-	done_ch chan struct{}
-	once    sync.Once
+	mu                     sync.Mutex
+	queueJumpPauseReleases map[*EventBus]func()
+	done_ch                chan struct{}
+	once                   sync.Once
 }
 
 type EventResultUpdateOptions struct {
@@ -163,6 +164,31 @@ func (r *EventResult) childEvents() []*BaseEvent {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]*BaseEvent{}, r.EventChildren...)
+}
+
+func (r *EventResult) ensureQueueJumpPause(bus *EventBus) {
+	if bus == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.queueJumpPauseReleases == nil {
+		r.queueJumpPauseReleases = map[*EventBus]func(){}
+	}
+	if _, ok := r.queueJumpPauseReleases[bus]; ok {
+		return
+	}
+	r.queueJumpPauseReleases[bus] = bus.locks.requestRunloopPause()
+}
+
+func (r *EventResult) releaseQueueJumpPauses() {
+	r.mu.Lock()
+	releases := r.queueJumpPauseReleases
+	r.queueJumpPauseReleases = nil
+	r.mu.Unlock()
+	for _, release := range releases {
+		release()
+	}
 }
 
 func (r *EventResult) MarshalJSON() ([]byte, error) {

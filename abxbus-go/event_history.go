@@ -1,7 +1,6 @@
 package abxbus
 
 import (
-	"reflect"
 	"sync"
 	"time"
 )
@@ -111,24 +110,8 @@ func (h *EventHistory) Filter(event_pattern string, where func(event *BaseEvent)
 		if options.ChildOf != nil && !EventIsChildOfStatic(h, event, options.ChildOf) {
 			return false
 		}
-		if len(options.Equals) > 0 {
-			for key, value := range options.Equals {
-				switch key {
-				case "event_status":
-					if !reflect.DeepEqual(event.EventStatus, value) {
-						return false
-					}
-				case "event_type":
-					if !reflect.DeepEqual(event.EventType, value) {
-						return false
-					}
-				default:
-					payload_v, ok := event.Payload[key]
-					if !ok || !reflect.DeepEqual(payload_v, value) {
-						return false
-					}
-				}
-			}
+		if !eventMatchesEquals(event, options.Equals) {
+			return false
 		}
 		if !where(event) {
 			return false

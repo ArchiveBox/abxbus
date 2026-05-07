@@ -466,6 +466,7 @@ func (e *BaseEvent) Emit(event *BaseEvent) *BaseEvent {
 			event.EventParentID = &parentID
 		}
 		if active := e.Bus.locks.getActiveHandlerResult(); active != nil && active.EventID == e.EventID {
+			active.ensureQueueJumpPause(e.Bus)
 			if event.EventEmittedByHandlerID == nil {
 				handlerID := active.HandlerID
 				event.EventEmittedByHandlerID = &handlerID

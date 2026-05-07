@@ -29,7 +29,7 @@ func TestTimeoutPrecedenceEventOverBus(t *testing.T) {
 	if elapsed > time.Second {
 		t.Fatalf("expected event timeout (~10ms) to win over bus timeout (5s), elapsed=%s", elapsed)
 	}
-	if !strings.Contains(err.Error(), "timed out") {
+	if !strings.Contains(err.Error(), "timed out") && !strings.Contains(err.Error(), "event timeout") {
 		t.Fatalf("expected timeout error message, got %v", err)
 	}
 }

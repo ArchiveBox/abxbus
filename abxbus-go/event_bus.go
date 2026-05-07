@@ -639,6 +639,7 @@ func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, hand
 		return nil
 	}
 	result.markStarted()
+	defer result.releaseQueueJumpPauses()
 	bus.notifyEventResultChange(event, result, "started")
 	if signalFirstHandlerStarted != nil {
 		signalFirstHandlerStarted()
@@ -703,14 +704,22 @@ func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, hand
 		handler_slow_timer.Stop()
 	}
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return ctx.Err()
+		}
+		if errors.Is(ctx.Err(), context.Canceled) && errors.Is(err, context.Canceled) {
+			result.markError(&EventHandlerAbortedError{Message: "Aborted running handler due to first-completion mode"})
+			bus.notifyEventResultChange(event, result, "completed")
+			return nil
+		}
 		result.markError(err)
 		bus.notifyEventResultChange(event, result, "completed")
-		return err
+		return nil
 	}
 	if err := event.validateResultValue(return_value); err != nil {
 		result.markError(err)
 		bus.notifyEventResultChange(event, result, "completed")
-		return err
+		return nil
 	}
 	result.markCompleted(return_value)
 	bus.notifyEventResultChange(event, result, "completed")
@@ -774,6 +783,11 @@ func (b *EventBus) runloop(ctx context.Context) {
 		}
 		next_event := b.pendingEventQueue[0]
 		b.pendingEventQueue = b.pendingEventQueue[1:]
+		if b.locks.isPaused() {
+			b.pendingEventQueue = append([]*BaseEvent{next_event}, b.pendingEventQueue...)
+			b.mu.Unlock()
+			continue
+		}
 		if b.inFlightEventIDs[next_event.EventID] {
 			b.mu.Unlock()
 			continue
@@ -1116,28 +1130,29 @@ func normalizeFuture(future any) (enabled bool, timeout *float64) {
 	}
 }
 
-func (b *EventBus) eventMatchesEquals(event *BaseEvent, equals map[string]any) bool {
+func eventMatchesEquals(event *BaseEvent, equals map[string]any) bool {
 	if len(equals) == 0 {
 		return true
 	}
+	data, err := event.ToJSON()
+	if err != nil {
+		return false
+	}
+	var record map[string]any
+	if err := json.Unmarshal(data, &record); err != nil {
+		return false
+	}
 	for key, value := range equals {
-		switch key {
-		case "event_status":
-			if !reflect.DeepEqual(event.EventStatus, value) {
-				return false
-			}
-		case "event_type":
-			if !reflect.DeepEqual(event.EventType, value) {
-				return false
-			}
-		default:
-			payload_v, ok := event.Payload[key]
-			if !ok || !reflect.DeepEqual(payload_v, value) {
-				return false
-			}
+		actual, ok := record[key]
+		if !ok || !reflect.DeepEqual(normalizeJSONValue(actual), normalizeJSONValue(value)) {
+			return false
 		}
 	}
 	return true
+}
+
+func (b *EventBus) eventMatchesEquals(event *BaseEvent, equals map[string]any) bool {
+	return eventMatchesEquals(event, equals)
 }
 
 func (b *EventBus) Find(event_pattern string, where func(event *BaseEvent) bool, options *FindOptions) (*BaseEvent, error) {

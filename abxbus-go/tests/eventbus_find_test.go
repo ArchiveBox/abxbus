@@ -95,6 +95,69 @@ func TestFindPastWindowAndEqualsFiltering(t *testing.T) {
 	}
 }
 
+func TestFindSupportsMetadataAndPayloadEqualityFilters(t *testing.T) {
+	bus := abxbus.NewEventBus("FindEventFieldFilterBus", nil)
+	eventA := abxbus.NewBaseEvent("FieldFilterEvent", map[string]any{"action": "logout", "user_id": "user-2"})
+	eventTimeoutA := 11.0
+	eventA.EventTimeout = &eventTimeoutA
+	eventB := abxbus.NewBaseEvent("FieldFilterEvent", map[string]any{"action": "login", "user_id": "user-1"})
+	eventTimeoutB := 22.0
+	eventB.EventTimeout = &eventTimeoutB
+	for _, event := range []*abxbus.BaseEvent{bus.Emit(eventA), bus.Emit(eventB)} {
+		if _, err := event.Done(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	foundA, err := bus.Find("FieldFilterEvent", nil, &abxbus.FindOptions{
+		Past:   true,
+		Future: false,
+		Equals: map[string]any{
+			"event_id":      eventA.EventID,
+			"event_timeout": 11,
+			"event_status":  "completed",
+			"action":        "logout",
+			"user_id":       "user-2",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if foundA == nil || foundA.EventID != eventA.EventID {
+		t.Fatalf("expected metadata and payload filters to match event A, got %#v", foundA)
+	}
+
+	mismatch, err := bus.Find("FieldFilterEvent", nil, &abxbus.FindOptions{
+		Past:   true,
+		Future: false,
+		Equals: map[string]any{
+			"event_id":      eventA.EventID,
+			"event_timeout": 22,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mismatch != nil {
+		t.Fatalf("expected mismatched metadata filters to return nil, got %#v", mismatch)
+	}
+
+	foundPayload, err := bus.Find("FieldFilterEvent", nil, &abxbus.FindOptions{
+		Past:   true,
+		Future: false,
+		Equals: map[string]any{
+			"action":  "login",
+			"user_id": "user-1",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if foundPayload == nil || foundPayload.EventID != eventB.EventID {
+		t.Fatalf("expected payload filters to match newest login event, got %#v", foundPayload)
+	}
+}
+
 func TestFindWherePredicateAndBusScopedHistory(t *testing.T) {
 	busA := abxbus.NewEventBus("FindBusA", nil)
 	busB := abxbus.NewEventBus("FindBusB", nil)
@@ -276,5 +339,48 @@ func TestFilterSupportsWhereEqualsWildcardChildAndFuture(t *testing.T) {
 	}
 	if len(none) != 0 {
 		t.Fatalf("expected no matches when past=false and future=false, got %#v", none)
+	}
+}
+
+func TestFilterSupportsMetadataEqualityAndFutureLimitShortCircuit(t *testing.T) {
+	bus := abxbus.NewEventBus("FilterEventFieldBus", nil)
+	eventA := abxbus.NewBaseEvent("NumberedEvent", map[string]any{"value": 1})
+	timeoutA := 11.0
+	eventA.EventTimeout = &timeoutA
+	eventB := abxbus.NewBaseEvent("NumberedEvent", map[string]any{"value": 2})
+	timeoutB := 22.0
+	eventB.EventTimeout = &timeoutB
+	for _, event := range []*abxbus.BaseEvent{bus.Emit(eventA), bus.Emit(eventB)} {
+		if _, err := event.Done(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	matches, err := bus.Filter("NumberedEvent", nil, &abxbus.FilterOptions{
+		Past:   true,
+		Future: false,
+		Equals: map[string]any{
+			"event_timeout": 22,
+			"value":         2,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].EventID != eventB.EventID {
+		t.Fatalf("expected metadata and payload filters to match event B, got %#v", matches)
+	}
+
+	limit := 1
+	start := time.Now()
+	limited, err := bus.Filter("NumberedEvent", nil, &abxbus.FilterOptions{Past: true, Future: 2.0, Limit: &limit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(limited) != 1 || limited[0].EventID != eventB.EventID {
+		t.Fatalf("expected newest event from limit short-circuit, got %#v", limited)
+	}
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+		t.Fatalf("filter should short-circuit future wait after hitting limit, elapsed=%s", elapsed)
 	}
 }

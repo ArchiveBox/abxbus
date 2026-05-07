@@ -2,6 +2,7 @@ package abxbus_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -244,4 +245,101 @@ func TestAwaitedBusEmitInsideHandlerQueueJumpsButStaysUntrackedRootEvent(t *test
 			t.Fatalf("awaited bus.Emit root event should not be listed in parent event_children")
 		}
 	}
+}
+
+func TestErroringParentHandlersStillTrackChildrenAndContinue(t *testing.T) {
+	bus := abxbus.NewEventBus("ErrorParentTrackingBus", &abxbus.EventBusOptions{
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
+	})
+	childEvents := []*abxbus.BaseEvent{}
+
+	bus.On("Parent", "failing", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		child := e.Emit(abxbus.NewBaseEvent("Child", map[string]any{"source": "failing"}))
+		childEvents = append(childEvents, child)
+		return nil, errors.New("expected parent handler failure")
+	}, nil)
+	bus.On("Parent", "success", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		child := e.Emit(abxbus.NewBaseEvent("Child", map[string]any{"source": "success"}))
+		childEvents = append(childEvents, child)
+		return "success", nil
+	}, nil)
+	bus.On("Child", "child", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		return "child", nil
+	}, nil)
+
+	parent := bus.Emit(abxbus.NewBaseEvent("Parent", nil))
+	if _, err := parent.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(childEvents) != 2 {
+		t.Fatalf("expected both parent handlers to run and emit children, got %d", len(childEvents))
+	}
+	for _, child := range childEvents {
+		if child.EventParentID == nil || *child.EventParentID != parent.EventID {
+			t.Fatalf("child should link to parent after handler error path, got %#v", child.EventParentID)
+		}
+		if child.EventEmittedByHandlerID == nil {
+			t.Fatalf("child should record emitting handler id")
+		}
+	}
+	if len(parentChildEvents(parent)) != 2 {
+		t.Fatalf("parent event results should track both children, got %#v", parentChildEvents(parent))
+	}
+}
+
+func TestEventChildrenTrackDirectAndNestedDescendants(t *testing.T) {
+	bus := abxbus.NewEventBus("NestedChildrenTrackingBus", nil)
+	var child *abxbus.BaseEvent
+	var grandchild *abxbus.BaseEvent
+
+	bus.On("Parent", "parent", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		child = e.Emit(abxbus.NewBaseEvent("Child", map[string]any{"level": 1}))
+		return "parent", nil
+	}, nil)
+	bus.On("Child", "child", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		grandchild = e.Emit(abxbus.NewBaseEvent("Grandchild", map[string]any{"level": 2}))
+		return "child", nil
+	}, nil)
+	bus.On("Grandchild", "grandchild", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		return "grandchild", nil
+	}, nil)
+
+	parent := bus.Emit(abxbus.NewBaseEvent("Parent", nil))
+	if _, err := parent.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	timeout := 2.0
+	if !bus.WaitUntilIdle(&timeout) {
+		t.Fatal("bus did not become idle")
+	}
+	if child == nil || grandchild == nil {
+		t.Fatalf("expected child and grandchild to be emitted, child=%#v grandchild=%#v", child, grandchild)
+	}
+	parentChildren := parentChildEvents(parent)
+	if len(parentChildren) != 1 || parentChildren[0].EventID != child.EventID {
+		t.Fatalf("parent should track direct child only, got %#v", parentChildren)
+	}
+	childChildren := parentChildEvents(child)
+	if len(childChildren) != 1 || childChildren[0].EventID != grandchild.EventID {
+		t.Fatalf("child should track direct grandchild only, got %#v", childChildren)
+	}
+	if !bus.EventIsChildOf(grandchild, parent) {
+		t.Fatalf("grandchild should be a descendant of parent")
+	}
+}
+
+func parentChildEvents(event *abxbus.BaseEvent) []*abxbus.BaseEvent {
+	children := []*abxbus.BaseEvent{}
+	seen := map[string]bool{}
+	for _, result := range event.EventResults {
+		for _, child := range result.EventChildren {
+			if seen[child.EventID] {
+				continue
+			}
+			seen[child.EventID] = true
+			children = append(children, child)
+		}
+	}
+	return children
 }
