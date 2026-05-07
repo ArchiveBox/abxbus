@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 	"go.opentelemetry.io/otel/attribute"
@@ -66,6 +67,31 @@ func TestOtelTracingMiddlewareCreatesEventAndHandlerSpans(t *testing.T) {
 	}
 }
 
+func TestOtelTracingMiddlewareNamesEventAndHandlerSpansForDisplay(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	defer func() { _ = provider.Shutdown(context.Background()) }()
+
+	middleware := abxbus.NewOtelTracingMiddleware(&abxbus.OtelTracingMiddlewareOptions{
+		Tracer: provider.Tracer("abxbus-test"),
+	})
+	bus := abxbus.NewEventBus("StagehandExtensionBackground", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
+	t.Cleanup(bus.Destroy)
+	bus.On("CDPConnect", "DebuggerClient.on_CDPConnect", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return "connected", nil
+	}, nil)
+
+	eventTimeout := 0.2
+	event := abxbus.NewBaseEvent("CDPConnect", nil)
+	event.EventTimeout = &eventTimeout
+	if _, err := bus.Emit(event).Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = findSpan(t, recorder.Ended(), "StagehandExtensionBackground.emit(CDPConnect)")
+	_ = findSpan(t, recorder.Ended(), "DebuggerClient.on_CDPConnect(CDPConnect)")
+}
+
 func TestOtelTracingMiddlewareParentsChildEventToEmittingHandlerSpan(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
@@ -112,6 +138,60 @@ func TestOtelTracingMiddlewareParentsChildEventToEmittingHandlerSpan(t *testing.
 	}
 	if _, ok := childAttrs["abxbus.event_emitted_by_handler_id"].(string); !ok {
 		t.Fatalf("child event span missing emitted-by handler attr: %#v", childAttrs)
+	}
+}
+
+func TestOtelTracingMiddlewareWaitsUntilTopLevelEventCompletionBeforeEndingSpans(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	defer func() { _ = provider.Shutdown(context.Background()) }()
+
+	middleware := abxbus.NewOtelTracingMiddleware(&abxbus.OtelTracingMiddlewareOptions{
+		Tracer: provider.Tracer("abxbus-test"),
+	})
+	bus := abxbus.NewEventBus("OtelRootStartBus", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
+	t.Cleanup(bus.Destroy)
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	bus.On("OtelRootStartEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		close(started)
+		select {
+		case <-release:
+			return "done", nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, nil)
+
+	eventTimeout := 0.5
+	event := abxbus.NewBaseEvent("OtelRootStartEvent", nil)
+	event.EventTimeout = &eventTimeout
+	emitted := bus.Emit(event)
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not start")
+	}
+	if ended := recorder.Ended(); len(ended) != 0 {
+		t.Fatalf("spans should not be ended/exportable before event completion, got %d", len(ended))
+	}
+
+	close(release)
+	if _, err := emitted.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	eventSpan := findSpan(t, recorder.Ended(), "OtelRootStartBus.emit(OtelRootStartEvent)")
+	handlerSpan := findSpan(t, recorder.Ended(), "handler(OtelRootStartEvent)")
+	if eventSpan.Parent().IsValid() {
+		t.Fatalf("top-level event span should be root, got parent=%s", eventSpan.Parent().SpanID())
+	}
+	if handlerSpan.Parent().SpanID() != eventSpan.SpanContext().SpanID() {
+		t.Fatalf("handler span should be child of event span")
+	}
+	if !eventSpan.EndTime().After(eventSpan.StartTime()) || !handlerSpan.EndTime().After(handlerSpan.StartTime()) {
+		t.Fatalf("ended spans should have non-zero duration")
 	}
 }
 
