@@ -29,5 +29,3 @@ func monotonicDatetime(isoString ...string) string {
 }
 
 func ptr[T any](v T) *T { return &v }
-
-func IntPtr(v int) *int { return &v }

@@ -80,6 +80,7 @@ const inFlightOnly = new EventBus('InFlightBus', { max_history_size: 0 })
 ```go
 maxHistory := 100
 zeroHistory := 0
+unlimitedHistorySize := abxbus.UnlimitedHistorySize
 
 boundedDrop := abxbus.NewEventBus("BoundedDropBus", &abxbus.EventBusOptions{
 	MaxHistorySize: &maxHistory,
@@ -90,7 +91,7 @@ boundedReject := abxbus.NewEventBus("BoundedRejectBus", &abxbus.EventBusOptions{
 	MaxHistoryDrop: false,
 })
 unbounded := abxbus.NewEventBus("UnboundedBus", &abxbus.EventBusOptions{
-	MaxHistorySize: abxbus.IntPtr(abxbus.UnlimitedHistorySize),
+	MaxHistorySize: &unlimitedHistorySize,
 })
 inFlightOnly := abxbus.NewEventBus("InFlightBus", &abxbus.EventBusOptions{
 	MaxHistorySize: &zeroHistory,

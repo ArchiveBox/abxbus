@@ -269,9 +269,13 @@ const recent = await bus.filter(ResponseEvent, { past: 10, future: false, limit:
 
 ```go
 limit := 5
-recent, err := bus.Filter("ResponseEvent", 10.0, false, nil, &limit)
+recent, err := bus.Filter("ResponseEvent", nil, &abxbus.FilterOptions{
+	Past:   10.0,
+	Future: false,
+	Limit:  &limit,
+})
 
-recentWithPredicate, err := bus.FilterWithOptions(
+recentWithPredicate, err := bus.Filter(
 	"ResponseEvent",
 	func(event *abxbus.BaseEvent) bool {
 		return event.Payload["ok"] == true

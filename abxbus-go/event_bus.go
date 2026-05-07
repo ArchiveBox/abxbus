@@ -1201,11 +1201,7 @@ func (b *EventBus) Find(event_pattern string, where func(event *BaseEvent) bool,
 	}
 }
 
-func (b *EventBus) Filter(event_pattern string, past any, future any, childOf *BaseEvent, limit *int) ([]*BaseEvent, error) {
-	return b.FilterWithOptions(event_pattern, nil, &FilterOptions{Past: past, Future: future, ChildOf: childOf, Limit: limit})
-}
-
-func (b *EventBus) FilterWithOptions(event_pattern string, where func(event *BaseEvent) bool, options *FilterOptions) ([]*BaseEvent, error) {
+func (b *EventBus) Filter(event_pattern string, where func(event *BaseEvent) bool, options *FilterOptions) ([]*BaseEvent, error) {
 	if options == nil {
 		options = &FilterOptions{}
 	}

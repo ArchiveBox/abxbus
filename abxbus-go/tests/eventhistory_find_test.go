@@ -8,7 +8,8 @@ import (
 )
 
 func TestEventHistoryFindCoversFiltersAndEdgeCases(t *testing.T) {
-	h := abxbus.NewEventHistory(abxbus.IntPtr(100), false)
+	maxHistorySize := 100
+	h := abxbus.NewEventHistory(&maxHistorySize, false)
 	parent := abxbus.NewBaseEvent("ParentEvent", map[string]any{"kind": "parent"})
 	parent.EventStatus = "completed"
 	child := abxbus.NewBaseEvent("ChildEvent", map[string]any{"kind": "child", "k": "v"})

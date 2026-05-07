@@ -72,6 +72,7 @@ func TestGoToOtherRuntimeToGoEventRoundtripsPreserveJSONShape(t *testing.T) {
 	for _, runtime := range []string{"python", "ts", "rust"} {
 		t.Run(runtime, func(t *testing.T) {
 			throughRuntime := runRuntimeRoundtrip(t, runtime, "events", events)
+			assertJSONEqual(t, events, throughRuntime)
 			backThroughGo := runRuntimeRoundtrip(t, "go", "events", throughRuntime)
 			assertJSONEqual(t, events, backThroughGo)
 		})
@@ -83,6 +84,7 @@ func TestGoToOtherRuntimeToGoBusRoundtripsPreserveJSONShape(t *testing.T) {
 	for _, runtime := range []string{"python", "ts", "rust"} {
 		t.Run(runtime, func(t *testing.T) {
 			throughRuntime := runRuntimeRoundtrip(t, runtime, "bus", bus)
+			assertJSONEqual(t, bus, throughRuntime)
 			backThroughGo := runRuntimeRoundtrip(t, "go", "bus", throughRuntime)
 			assertJSONEqual(t, bus, backThroughGo)
 		})

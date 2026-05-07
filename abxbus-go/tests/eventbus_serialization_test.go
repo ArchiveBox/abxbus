@@ -122,8 +122,9 @@ func TestEventBusSerializationRoundtripPreservesConfigHandlersHistory(t *testing
 }
 
 func TestEventBusSerializationPreservesUnboundedHistoryNull(t *testing.T) {
+	unlimitedHistorySize := abxbus.UnlimitedHistorySize
 	bus := abxbus.NewEventBus("UnlimitedSerBus", &abxbus.EventBusOptions{
-		MaxHistorySize: abxbus.IntPtr(abxbus.UnlimitedHistorySize),
+		MaxHistorySize: &unlimitedHistorySize,
 		MaxHistoryDrop: false,
 	})
 	data, err := bus.ToJSON()

@@ -220,7 +220,8 @@ func TestFilterReturnsPastMatchesNewestFirstAndRespectsLimit(t *testing.T) {
 		}
 	}
 
-	matches, err := bus.Filter("Work", true, false, nil, abxbus.IntPtr(2))
+	limit := 2
+	matches, err := bus.Filter("Work", nil, &abxbus.FilterOptions{Past: true, Future: false, Limit: &limit})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +244,7 @@ func TestFilterSupportsWhereEqualsWildcardChildAndFuture(t *testing.T) {
 	}
 	bus.Emit(abxbus.NewBaseEvent("Other", map[string]any{"kind": "target"}))
 
-	childMatches, err := bus.FilterWithOptions("*", func(event *abxbus.BaseEvent) bool {
+	childMatches, err := bus.Filter("*", func(event *abxbus.BaseEvent) bool {
 		return event.Payload["kind"] == "target"
 	}, &abxbus.FilterOptions{Past: true, Future: false, ChildOf: parent, Equals: map[string]any{"kind": "target"}})
 	if err != nil {
@@ -257,7 +258,7 @@ func TestFilterSupportsWhereEqualsWildcardChildAndFuture(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		bus.Emit(abxbus.NewBaseEvent("FutureWork", map[string]any{"kind": "future"}))
 	}()
-	futureMatches, err := bus.FilterWithOptions("FutureWork", nil, &abxbus.FilterOptions{
+	futureMatches, err := bus.Filter("FutureWork", nil, &abxbus.FilterOptions{
 		Past:   false,
 		Future: 1.0,
 		Equals: map[string]any{"kind": "future"},
@@ -269,7 +270,7 @@ func TestFilterSupportsWhereEqualsWildcardChildAndFuture(t *testing.T) {
 		t.Fatalf("expected one future match, got %#v", futureMatches)
 	}
 
-	none, err := bus.Filter("Missing", false, false, nil, nil)
+	none, err := bus.Filter("Missing", nil, &abxbus.FilterOptions{Past: false, Future: false})
 	if err != nil {
 		t.Fatal(err)
 	}

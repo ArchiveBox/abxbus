@@ -56,8 +56,9 @@ func TestEmitAndDispatchUseDefaultBehavior(t *testing.T) {
 }
 
 func TestUnboundedHistoryDisablesHistoryRejection(t *testing.T) {
+	unlimitedHistorySize := abxbus.UnlimitedHistorySize
 	bus := abxbus.NewEventBus("UnlimitedHistBus", &abxbus.EventBusOptions{
-		MaxHistorySize: abxbus.IntPtr(abxbus.UnlimitedHistorySize),
+		MaxHistorySize: &unlimitedHistorySize,
 		MaxHistoryDrop: false,
 	})
 	if bus.EventHistory.MaxHistorySize != nil {
