@@ -22,6 +22,37 @@ func firstEventResult(event *abxbus.BaseEvent) *abxbus.EventResult {
 	return nil
 }
 
+func assertSchemaResult(t *testing.T, name string, schema map[string]any, value any, wantError bool) {
+	t.Helper()
+	bus := abxbus.NewEventBus(name+"Bus", nil)
+	eventType := name + "Event"
+	bus.On(eventType, "handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		return value, nil
+	}, nil)
+	event := bus.Emit(schemaEvent(eventType, schema))
+	_, err := event.Done(context.Background())
+	if wantError {
+		if err != nil {
+			t.Fatalf("%s: event completion should collect handler schema errors, got %v", name, err)
+		}
+		if _, err := event.EventResult(context.Background()); err == nil || !strings.Contains(err.Error(), "EventHandlerResultSchemaError") {
+			t.Fatalf("%s: expected schema error from result accessor, got %v", name, err)
+		}
+		result := firstEventResult(event)
+		if result == nil || result.Status != abxbus.EventResultError {
+			t.Fatalf("%s: expected errored result, got %#v", name, result)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("%s: expected schema to accept result, got %v", name, err)
+	}
+	result := firstEventResult(event)
+	if result == nil || result.Status != abxbus.EventResultCompleted {
+		t.Fatalf("%s: expected completed result, got %#v", name, result)
+	}
+}
+
 func TestTypedResultSchemaValidatesHandlerResult(t *testing.T) {
 	bus := abxbus.NewEventBus("TypedResultBus", nil)
 	schema := map[string]any{
@@ -121,6 +152,98 @@ func TestComplexResultSchemaValidatesNestedData(t *testing.T) {
 	if _, err := event.Done(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestJSONSchemaCombinationKeywordsAreEnforced(t *testing.T) {
+	assertSchemaResult(t, "AllOfValid", map[string]any{
+		"allOf": []any{
+			map[string]any{"type": "object", "required": []any{"kind"}},
+			map[string]any{"type": "object", "properties": map[string]any{"kind": map[string]any{"const": "ok"}}},
+		},
+	}, map[string]any{"kind": "ok"}, false)
+	assertSchemaResult(t, "AllOfInvalid", map[string]any{
+		"allOf": []any{
+			map[string]any{"type": "object", "required": []any{"kind"}},
+			map[string]any{"type": "object", "properties": map[string]any{"kind": map[string]any{"const": "ok"}}},
+		},
+	}, map[string]any{"kind": "bad"}, true)
+	assertSchemaResult(t, "OneOfValid", map[string]any{
+		"oneOf": []any{
+			map[string]any{"type": "string"},
+			map[string]any{"type": "integer"},
+		},
+	}, "ok", false)
+	assertSchemaResult(t, "OneOfInvalidAmbiguous", map[string]any{
+		"oneOf": []any{
+			map[string]any{"type": "number"},
+			map[string]any{"type": "integer"},
+		},
+	}, 7, true)
+	assertSchemaResult(t, "NotInvalid", map[string]any{
+		"type": "string",
+		"not":  map[string]any{"const": "forbidden"},
+	}, "forbidden", true)
+}
+
+func TestJSONSchemaConstraintKeywordsAreEnforced(t *testing.T) {
+	assertSchemaResult(t, "EnumValid", map[string]any{
+		"enum": []any{"queued", "done"},
+	}, "queued", false)
+	assertSchemaResult(t, "EnumInvalid", map[string]any{
+		"enum": []any{"queued", "done"},
+	}, "other", true)
+	assertSchemaResult(t, "StringConstraintsValid", map[string]any{
+		"type":      "string",
+		"minLength": 3,
+		"maxLength": 5,
+		"pattern":   "^[a-z]+$",
+	}, "abcd", false)
+	assertSchemaResult(t, "StringConstraintsInvalid", map[string]any{
+		"type":      "string",
+		"minLength": 3,
+		"maxLength": 5,
+		"pattern":   "^[a-z]+$",
+	}, "AB", true)
+	assertSchemaResult(t, "UnionTypeStillAppliesSiblingConstraints", map[string]any{
+		"type":      []any{"string", "null"},
+		"minLength": 3,
+	}, "ok", true)
+	assertSchemaResult(t, "NumericConstraintsValid", map[string]any{
+		"type":             "number",
+		"minimum":          1,
+		"exclusiveMaximum": 10,
+		"multipleOf":       0.5,
+	}, 4.5, false)
+	assertSchemaResult(t, "NumericConstraintsInvalid", map[string]any{
+		"type":             "number",
+		"minimum":          1,
+		"exclusiveMaximum": 10,
+		"multipleOf":       0.5,
+	}, 10, true)
+	assertSchemaResult(t, "ArrayConstraintsValid", map[string]any{
+		"type":     "array",
+		"minItems": 2,
+		"maxItems": 3,
+		"items":    map[string]any{"type": "integer"},
+	}, []any{1, 2}, false)
+	assertSchemaResult(t, "ArrayConstraintsInvalid", map[string]any{
+		"type":     "array",
+		"minItems": 2,
+		"maxItems": 3,
+		"items":    map[string]any{"type": "integer"},
+	}, []any{1, "two"}, true)
+	assertSchemaResult(t, "ObjectConstraintsValid", map[string]any{
+		"type":          "object",
+		"minProperties": 1,
+		"maxProperties": 2,
+		"properties":    map[string]any{"id": map[string]any{"type": "integer"}},
+	}, map[string]any{"id": 1}, false)
+	assertSchemaResult(t, "ObjectConstraintsInvalid", map[string]any{
+		"type":          "object",
+		"minProperties": 1,
+		"maxProperties": 2,
+		"properties":    map[string]any{"id": map[string]any{"type": "integer"}},
+	}, map[string]any{"id": 1, "name": "a", "extra": true}, true)
 }
 
 func TestFromJSONNormalizesEventResultTypeSchemaDraft(t *testing.T) {
