@@ -314,3 +314,381 @@ func TestForwardedTimeoutPathDoesNotStallFollowupEvents(t *testing.T) {
 		t.Fatalf("follow-up tail did not run on both buses: status=%s busA=%d busB=%d", tail.EventStatus, busATailRuns, busBTailRuns)
 	}
 }
+
+func TestParentTimeoutDoesNotCancelUnawaitedChildHandlerResultsUnderSerialHandlerLock(t *testing.T) {
+	bus := abxbus.NewEventBus("TimeoutCancelBus", &abxbus.EventBusOptions{
+		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+	})
+	t.Cleanup(bus.Destroy)
+
+	childRuns := 0
+	bus.On("TimeoutCancelChildEvent", "child_first", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		childRuns++
+		time.Sleep(30 * time.Millisecond)
+		return "first", nil
+	}, nil)
+	bus.On("TimeoutCancelChildEvent", "child_second", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		childRuns++
+		time.Sleep(10 * time.Millisecond)
+		return "second", nil
+	}, nil)
+	bus.On("TimeoutCancelParentEvent", "parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		childTimeout := 0.2
+		child := abxbus.NewBaseEvent("TimeoutCancelChildEvent", nil)
+		child.EventTimeout = &childTimeout
+		event.Emit(child)
+		select {
+		case <-time.After(50 * time.Millisecond):
+			return "parent", nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, nil)
+
+	parentTimeout := 0.01
+	parent := abxbus.NewBaseEvent("TimeoutCancelParentEvent", nil)
+	parent.EventTimeout = &parentTimeout
+	parent = bus.Emit(parent)
+	if _, err := parent.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	idleTimeout := 2.0
+	if !bus.WaitUntilIdle(&idleTimeout) {
+		t.Fatal("bus did not become idle")
+	}
+
+	children := parentChildEvents(parent)
+	if len(children) != 1 {
+		t.Fatalf("expected one child event, got %#v", children)
+	}
+	child := children[0]
+	if child.EventParentID == nil || *child.EventParentID != parent.EventID {
+		t.Fatalf("child parent mismatch: got %#v want %s", child.EventParentID, parent.EventID)
+	}
+	if child.EventBlocksParentCompletion {
+		t.Fatal("unawaited child should not block parent completion")
+	}
+	if childRuns != 2 {
+		t.Fatalf("expected both child handlers to run, got %d", childRuns)
+	}
+	assertTimeoutTestAllResultsCompleted(t, child)
+}
+
+func TestMultiLevelTimeoutCascadeWithMixedCancellations(t *testing.T) {
+	bus := abxbus.NewEventBus("TimeoutCascadeBus", &abxbus.EventBusOptions{
+		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+	})
+	t.Cleanup(bus.Destroy)
+
+	var queuedChild *abxbus.BaseEvent
+	var awaitedChild *abxbus.BaseEvent
+	var immediateGrandchild *abxbus.BaseEvent
+	var queuedGrandchild *abxbus.BaseEvent
+	queuedChildRuns := 0
+	immediateGrandchildRuns := 0
+	queuedGrandchildRuns := 0
+
+	bus.On("TimeoutCascadeQueuedChild", "queued_child_fast", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		queuedChildRuns++
+		time.Sleep(5 * time.Millisecond)
+		return "queued_fast", nil
+	}, nil)
+	bus.On("TimeoutCascadeQueuedChild", "queued_child_slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		queuedChildRuns++
+		time.Sleep(50 * time.Millisecond)
+		return "queued_slow", nil
+	}, nil)
+	bus.On("TimeoutCascadeAwaitedChild", "awaited_child_fast", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		time.Sleep(5 * time.Millisecond)
+		return "awaited_fast", nil
+	}, nil)
+	bus.On("TimeoutCascadeAwaitedChild", "awaited_child_slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		queuedTimeout := 0.2
+		queuedGrandchild = abxbus.NewBaseEvent("TimeoutCascadeQueuedGrandchild", nil)
+		queuedGrandchild.EventTimeout = &queuedTimeout
+		queuedGrandchild = event.Emit(queuedGrandchild)
+
+		immediateTimeout := 0.2
+		immediateGrandchild = abxbus.NewBaseEvent("TimeoutCascadeImmediateGrandchild", nil)
+		immediateGrandchild.EventTimeout = &immediateTimeout
+		immediateGrandchild = event.Emit(immediateGrandchild)
+		if _, err := immediateGrandchild.Done(ctx); err != nil {
+			return nil, err
+		}
+		select {
+		case <-time.After(100 * time.Millisecond):
+			return "awaited_slow", nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, nil)
+	bus.On("TimeoutCascadeImmediateGrandchild", "immediate_grandchild_slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		immediateGrandchildRuns++
+		select {
+		case <-time.After(50 * time.Millisecond):
+			return "immediate_grandchild_slow", nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, nil)
+	bus.On("TimeoutCascadeImmediateGrandchild", "immediate_grandchild_fast", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		immediateGrandchildRuns++
+		time.Sleep(10 * time.Millisecond)
+		return "immediate_grandchild_fast", nil
+	}, nil)
+	bus.On("TimeoutCascadeQueuedGrandchild", "queued_grandchild_slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		queuedGrandchildRuns++
+		time.Sleep(50 * time.Millisecond)
+		return "queued_grandchild_slow", nil
+	}, nil)
+	bus.On("TimeoutCascadeQueuedGrandchild", "queued_grandchild_fast", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		queuedGrandchildRuns++
+		time.Sleep(10 * time.Millisecond)
+		return "queued_grandchild_fast", nil
+	}, nil)
+	bus.On("TimeoutCascadeTop", "top", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		queuedTimeout := 0.2
+		queuedChild = abxbus.NewBaseEvent("TimeoutCascadeQueuedChild", nil)
+		queuedChild.EventTimeout = &queuedTimeout
+		queuedChild = event.Emit(queuedChild)
+
+		awaitedTimeout := 0.03
+		awaitedChild = abxbus.NewBaseEvent("TimeoutCascadeAwaitedChild", nil)
+		awaitedChild.EventTimeout = &awaitedTimeout
+		awaitedChild = event.Emit(awaitedChild)
+		if _, err := awaitedChild.Done(ctx); err != nil {
+			return nil, err
+		}
+		select {
+		case <-time.After(80 * time.Millisecond):
+			return "top", nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, nil)
+
+	topTimeout := 0.04
+	top := abxbus.NewBaseEvent("TimeoutCascadeTop", nil)
+	top.EventTimeout = &topTimeout
+	top = bus.Emit(top)
+	if _, err := top.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	idleTimeout := 2.0
+	if !bus.WaitUntilIdle(&idleTimeout) {
+		t.Fatal("bus did not become idle")
+	}
+
+	topResult := firstEventResult(top)
+	if topResult == nil || topResult.Status != abxbus.EventResultError || !timeoutResultErrorContains(topResult, "Aborted running handler") {
+		t.Fatalf("top handler should be aborted by event timeout, got %#v", topResult)
+	}
+	if queuedChild == nil || queuedChild.EventBlocksParentCompletion {
+		t.Fatalf("queued child should be emitted and non-blocking, got %#v", queuedChild)
+	}
+	if queuedChildRuns != 2 {
+		t.Fatalf("queued child should run both handlers independently, got %d", queuedChildRuns)
+	}
+	assertTimeoutTestAllResultsCompleted(t, queuedChild)
+
+	if awaitedChild == nil {
+		t.Fatal("awaited child was not emitted")
+	}
+	awaitedCompleted, awaitedErrored := timeoutTestCountCompletedAndErrored(awaitedChild)
+	if awaitedCompleted != 1 || awaitedErrored != 1 {
+		t.Fatalf("awaited child should have one completed and one error result, completed=%d errored=%d results=%#v", awaitedCompleted, awaitedErrored, awaitedChild.EventResults)
+	}
+
+	if immediateGrandchild == nil {
+		t.Fatal("immediate grandchild was not emitted")
+	}
+	immediateCompleted, immediateErrored := timeoutTestCountCompletedAndErrored(immediateGrandchild)
+	if immediateGrandchildRuns < 1 || immediateCompleted+immediateErrored != 2 || immediateErrored == 0 {
+		t.Fatalf("immediate grandchild should have timeout/cancellation results, runs=%d completed=%d errored=%d results=%#v", immediateGrandchildRuns, immediateCompleted, immediateErrored, immediateGrandchild.EventResults)
+	}
+
+	if queuedGrandchild == nil || queuedGrandchild.EventBlocksParentCompletion {
+		t.Fatalf("queued grandchild should be emitted and non-blocking, got %#v", queuedGrandchild)
+	}
+	if queuedGrandchildRuns != 2 {
+		t.Fatalf("queued grandchild should run independently after parent timeout, got %d", queuedGrandchildRuns)
+	}
+	assertTimeoutTestAllResultsCompleted(t, queuedGrandchild)
+}
+
+func TestUnawaitedDescendantPreservesLineageAndIsNotCancelledByAncestorTimeout(t *testing.T) {
+	bus := abxbus.NewEventBus("ErrorChainBus", &abxbus.EventBusOptions{
+		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+	})
+	t.Cleanup(bus.Destroy)
+
+	var innerRef *abxbus.BaseEvent
+	var deepRef *abxbus.BaseEvent
+	bus.On("ErrorChainDeep", "deep", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		time.Sleep(200 * time.Millisecond)
+		return "deep_done", nil
+	}, nil)
+	bus.On("ErrorChainInner", "inner", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		deepTimeout := 0.5
+		deepRef = abxbus.NewBaseEvent("ErrorChainDeep", nil)
+		deepRef.EventTimeout = &deepTimeout
+		deepRef = event.Emit(deepRef)
+		select {
+		case <-time.After(200 * time.Millisecond):
+			return "inner_done", nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, nil)
+	bus.On("ErrorChainOuter", "outer", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		innerTimeout := 0.04
+		innerRef = abxbus.NewBaseEvent("ErrorChainInner", nil)
+		innerRef.EventTimeout = &innerTimeout
+		innerRef = event.Emit(innerRef)
+		if _, err := innerRef.Done(ctx); err != nil {
+			return nil, err
+		}
+		select {
+		case <-time.After(200 * time.Millisecond):
+			return "outer_done", nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, nil)
+
+	outerTimeout := 0.15
+	outer := abxbus.NewBaseEvent("ErrorChainOuter", nil)
+	outer.EventTimeout = &outerTimeout
+	outer = bus.Emit(outer)
+	if _, err := outer.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	idleTimeout := 2.0
+	if !bus.WaitUntilIdle(&idleTimeout) {
+		t.Fatal("bus did not become idle")
+	}
+
+	outerResult := firstEventResult(outer)
+	if outerResult == nil || outerResult.Status != abxbus.EventResultError || !timeoutResultErrorContains(outerResult, "Aborted running handler") {
+		t.Fatalf("outer handler should be aborted by event timeout, got %#v", outerResult)
+	}
+	if innerRef == nil {
+		t.Fatal("inner event was not emitted")
+	}
+	innerResult := firstEventResult(innerRef)
+	if innerResult == nil || innerResult.Status != abxbus.EventResultError || !timeoutResultErrorContains(innerResult, "Aborted running handler") {
+		t.Fatalf("inner handler should be aborted by its own event timeout, got %#v", innerResult)
+	}
+	if deepRef == nil {
+		t.Fatal("deep event was not emitted")
+	}
+	if deepRef.EventParentID == nil || *deepRef.EventParentID != innerRef.EventID {
+		t.Fatalf("deep parent mismatch: got %#v want %s", deepRef.EventParentID, innerRef.EventID)
+	}
+	if deepRef.EventBlocksParentCompletion {
+		t.Fatal("unawaited deep event should not block parent completion")
+	}
+	deepResult := firstEventResult(deepRef)
+	if deepResult == nil || deepResult.Status != abxbus.EventResultCompleted || deepResult.Result != "deep_done" {
+		t.Fatalf("deep event should complete independently, got %#v", deepResult)
+	}
+}
+
+func TestParentTimeoutDoesNotCancelUnawaitedChildrenThatHaveNoTimeoutOfTheirOwn(t *testing.T) {
+	bus := abxbus.NewEventBus("TimeoutBoundaryBus", &abxbus.EventBusOptions{
+		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+		EventTimeout:            nil,
+	})
+	bus.EventTimeout = nil
+	t.Cleanup(bus.Destroy)
+
+	var childRef *abxbus.BaseEvent
+	childHandlerRan := false
+	bus.On("TimeoutBoundaryChild", "child_slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		childHandlerRan = true
+		time.Sleep(80 * time.Millisecond)
+		return "child_done", nil
+	}, nil)
+	bus.On("TimeoutBoundaryParent", "parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		childRef = abxbus.NewBaseEvent("TimeoutBoundaryChild", nil)
+		childRef.EventTimeout = nil
+		childRef = event.Emit(childRef)
+		select {
+		case <-time.After(200 * time.Millisecond):
+			return "parent_done", nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, nil)
+
+	parentTimeout := 0.03
+	parent := abxbus.NewBaseEvent("TimeoutBoundaryParent", nil)
+	parent.EventTimeout = &parentTimeout
+	parent = bus.Emit(parent)
+	if _, err := parent.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	idleTimeout := 2.0
+	if !bus.WaitUntilIdle(&idleTimeout) {
+		t.Fatal("bus did not become idle")
+	}
+
+	parentResult := firstEventResult(parent)
+	if parentResult == nil || parentResult.Status != abxbus.EventResultError || !timeoutResultErrorContains(parentResult, "Aborted running handler") {
+		t.Fatalf("parent should time out, got %#v", parentResult)
+	}
+	if childRef == nil {
+		t.Fatal("child event was not emitted")
+	}
+	if childRef.EventStatus != "completed" {
+		t.Fatalf("child should complete independently, got %s", childRef.EventStatus)
+	}
+	if childRef.EventParentID == nil || *childRef.EventParentID != parent.EventID {
+		t.Fatalf("child parent mismatch: got %#v want %s", childRef.EventParentID, parent.EventID)
+	}
+	if childRef.EventBlocksParentCompletion {
+		t.Fatal("unawaited child should not block parent completion")
+	}
+	if !childHandlerRan {
+		t.Fatal("child handler should run independently")
+	}
+	childResult := firstEventResult(childRef)
+	if childResult == nil || childResult.Status != abxbus.EventResultCompleted || childResult.Result != "child_done" {
+		t.Fatalf("child should complete independently, got %#v", childResult)
+	}
+}
+
+func timeoutResultErrorContains(result *abxbus.EventResult, text string) bool {
+	errorText, _ := result.Error.(string)
+	return strings.Contains(errorText, text)
+}
+
+func timeoutTestCountCompletedAndErrored(event *abxbus.BaseEvent) (int, int) {
+	completed := 0
+	errored := 0
+	for _, result := range event.EventResults {
+		switch result.Status {
+		case abxbus.EventResultCompleted:
+			completed++
+		case abxbus.EventResultError:
+			errored++
+		}
+	}
+	return completed, errored
+}
+
+func assertTimeoutTestAllResultsCompleted(t *testing.T, event *abxbus.BaseEvent) {
+	t.Helper()
+	if len(event.EventResults) == 0 {
+		t.Fatalf("expected handler results for %s", event.EventType)
+	}
+	for _, result := range event.EventResults {
+		if result.Status != abxbus.EventResultCompleted {
+			t.Fatalf("%s handler %s should complete, got %s error=%#v", event.EventType, result.HandlerName, result.Status, result.Error)
+		}
+	}
+}
