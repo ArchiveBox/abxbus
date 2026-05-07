@@ -401,8 +401,10 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 	if event.EventPendingBusCount < 0 {
 		event.EventPendingBusCount = 0
 	}
-	event.markCompleted()
-	b.notifyEventChange(event, "completed")
+	if event.EventPendingBusCount == 0 {
+		event.markCompleted()
+		b.notifyEventChange(event, "completed")
+	}
 	return nil
 }
 
@@ -617,6 +619,11 @@ func (b *EventBus) processEventImmediately(ctx context.Context, event *BaseEvent
 	bypass_event_locks := b.locks.getActiveHandlerResult() != nil
 	if err := b.processEvent(ctx, original_event, bypass_event_locks, nil); err != nil {
 		return nil, err
+	}
+	if original_event.status() != "completed" {
+		if err := original_event.EventCompleted(ctx); err != nil {
+			return nil, err
+		}
 	}
 	return original_event, nil
 }
