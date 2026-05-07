@@ -53,6 +53,20 @@ const updated = await client.update({ id: id ?? 'fallback-id', age: 46 }, { sour
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+// events_suck is not implemented in abxbus-go yet.
+//
+// Use the core EventBus APIs directly:
+event := bus.Emit(abxbus.NewBaseEvent("CreateUserEvent", map[string]any{
+	"name": "bob",
+	"age": 45,
+}))
+userID, err := event.EventResult(ctx)
+```
+
+</Tab>
 </Tabs>
 
 ### Minimal end-to-end `wrap(...)` wiring
@@ -150,6 +164,14 @@ const client = new SDKClient(bus)
 
 const user_id = await client.create({ name: 'bob', age: 45 }, { nickname: 'bobby' })
 const updated = await client.update({ id: user_id ?? 'fallback-id', age: 46 }, { source: 'sync' })
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+// events_suck.wrap/make_events/make_handler are not implemented in Go yet.
+// For typed event APIs, use OnTyped[...] and NewTypedEventWithResult[...].
 ```
 
 </Tab>
