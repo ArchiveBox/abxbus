@@ -1,0 +1,125 @@
+abxbus-go/tests/eventbus_idle_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-64
+abxbus-go/tests/eventbus_concurrency_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-53
+abxbus-go/tests/eventbus_slow_warning_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-61
+abxbus-go/event_result.go
+  s_6a8c07f028b30c::t_206edc67a3dd99 19-36,47-63,68-82,151,163-168,170-186,189-220
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-18,37-46,64-67,83-150,152-162,169,187-188,221-233
+abxbus-go/cmd/abxbus-go-roundtrip/main.go
+  s_6a8c07f028b30c::t_b5546fc0c18cf5 1-68
+abxbus-go/otel_middleware.go
+  s_6a8c07f028b30c::t_96715a594b1fdb 1-177
+abxbus-go/tests/eventbus_queue_jump_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-68
+abxbus-go/event_bus.go
+  s_6a8c07f028b30c::t_98f048e1d20e81 41-48,1018-1101,1103
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-3,5-9,11-29,32-40,49-72,101-109,113-121,123-145,150-152,168-190,203-337,339-400,402-524,526-583,585-587,589-681,688,755,758,764,766-769,787-803,805-1017,1102,1104-1174
+  s_6a8c07f028b30c::t_ad8fdd19d2cf69 31,122,166,191-202,338,401,525,584,588
+  s_6a8c07f028b30c::t_0a30553bde8e1f 10
+  s_6a8c07f028b30c::t_72b79e043653d3 110-111,153-158,160-165,167
+  s_6a8c07f028b30c::t_66e8e320f8be9f 112
+  s_6a8c07f028b30c::t_ec6a7143ec3de2 714-752
+  s_6a8c07f028b30c::t_a2c6ea145abd9c 30,146-149,159,804
+  s_6a8c07f028b30c::t_6bfb7d846f2216 4,73-100,682-687,689-713,753-754,756-757,759-763,765,770-786
+abxbus-go/tests/event_result_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-58
+abxbus-go/tests/eventbus_locking_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-84
+abxbus-go/tests/eventbus_timeout_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-48
+abxbus-go/base_event.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-80,96,102-130,132-164,190-360
+  s_6a8c07f028b30c::t_aaa0226e05c00d 81-95
+  s_6a8c07f028b30c::t_dd3748f3267878 97-101,131,165-189
+tests/test_cross_runtime_roundtrip.py
+  s_6a8c07f028b30c::t_ebd4b201bf0bff 20,489-532,649-703,948-1010
+abxbus-go/tests/lock_manager_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-45
+abxbus-go/tests/eventbus_forwarding_parity_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-137
+abxbus-go/tests/eventbus_log_tree_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-64
+abxbus-go/tests/eventbus_error_handling_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-67
+abxbus-go/tests/jsonl_bridge_test.go
+  s_6a8c07f028b30c::t_b6c92527889db5 5,75-81
+  s_6a8c07f028b30c::t_992f68578289f3 1-4,6-74,82
+abxbus-go/middleware.go
+  s_6a8c07f028b30c::t_6366e7aa3fcea7 1-11
+  s_6a8c07f028b30c::t_762caaefe44d05 12-13
+abxbus-go/tests/eventbus_serialization_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-192
+abxbus-go/tests/eventbus_completion_modes_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-98
+abxbus-go/helpers.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-33
+abxbus-go/jsonl_bridge.go
+  s_6a8c07f028b30c::t_9fb76b6e8806cd 1-6,8-202,205-206,208-219
+  s_6a8c07f028b30c::t_54d432ab59e631 7,203-204,207
+abxbus-go/tests/eventhistory_find_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-30,33-56
+  s_6a8c07f028b30c::t_0489b270b97fd4 31-32
+abxbus-go/event_handler.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-16,20-82
+  s_6a8c07f028b30c::t_f56d2268ab0129 17-19
+abxbus-ts/tests/cross_runtime_roundtrip.test.ts
+  s_6a8c07f028b30c::t_f5bf0a3dff30cb 18,571-592,841-903,1035-1121
+  s_6a8c07f028b30c::t_a1323525190b89 557
+abxbus-go/uuid.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-11
+README.md
+  s_6a8c07f028b30c::t_64aa73fd305236 9,40,1220-1221
+abxbus-go/lock_manager.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-191
+abxbus-go/tests/event_results_list_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-78
+abxbus-go/README.md
+  s_6a8c07f028b30c::t_f2afc1bab70dbd 1,3,8,13-15,17-30,32-34,36
+  s_6a8c07f028b30c::t_446b2b152fe41e 2,4-7,9-12,16
+  s_6a8c07f028b30c::t_09af6074fb7893 31,35
+abxbus-go/tests/base_event_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-37
+abxbus-go/event_history.go
+  s_6a8c07f028b30c::t_61a1862fa79ea6 21,80-87,99-102,144-147,149-152,155
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-20,22-79,88-98,103-143,148,153-154,156-244
+abxbus-go/tests/event_bus_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-72
+abxbus-go/tests/eventbus_find_test.go
+  s_6a8c07f028b30c::t_adcc606d893ae0 211-279
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-210
+abxbus-go/tests/otel_middleware_test.go
+  s_6a8c07f028b30c::t_fc75b176bc59c3 1-45
+abxbus-go/tests/event_handler_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-47
+abxbus-go/tests/event_history_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-90
+abxbus-go/tests/eventbus_teardown_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-78
+abxbus-go/tests/eventbus_on_off_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-84
+abxbus-go/go.mod
+  s_6a8c07f028b30c::t_eb3760bf24f185 3,11-17,19
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-2,4
+  s_6a8c07f028b30c::t_4f5b38e1b5369e 18
+  s_6a8c07f028b30c::t_8d922ccf334142 5-10
+abxbus-go/tests/eventbus_timeout_reporting_test.go
+  s_6a8c07f028b30c::t_446b2b152fe41e 1-86
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "2f5796749aac602c5e12abf8cf5ef32df331c817",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
