@@ -1,0 +1,20 @@
+abxbus-go/tests/eventbus_cross_runtime_features_test.go
+  s_6a8c07f028b30c::t_bd6fc440b394dc 6,285,289,297-299,361,366
+  s_6a8c07f028b30c::t_a0423195bce55b 7,9,14-284,286-288,290-296,300-360,362-365,367-478
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "493acfd8901efd62f7f834a893104cc45a912bd6",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
