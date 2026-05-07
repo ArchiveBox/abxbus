@@ -1,0 +1,9 @@
+abxbus-go/go.sum
+  ai_agent 14-17,20-21,40-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "e5db91a55e71e496a24a7a8e112834de88dc84ca",
+  "prompts": {}
+}
