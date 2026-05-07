@@ -1,0 +1,25 @@
+docs/features/find-events.mdx
+  s_6a8c07f028b30c::t_ea95c9a62c9aad 280,322,327,334
+  s_6a8c07f028b30c::t_607a88724c7fc9 41-60,98-104,124-133,153-162,191-206,235-250,272-279,281-287,316-321,323-326,328-333,335
+docs/features/parent-child-tracking.mdx
+  s_6a8c07f028b30c::t_e874015674b744 37-43,203-289
+docs/features/return-value-handling.mdx
+  s_6a8c07f028b30c::t_2a021556e5601a 195
+  s_6a8c07f028b30c::t_45ec8e7a0775ea 58-107,175-194,196-212,255-283,309-316
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "04d9749ee4802c6cb0c96d86c992e2d8248dcca9",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
