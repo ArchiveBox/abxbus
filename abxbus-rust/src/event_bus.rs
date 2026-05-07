@@ -2049,6 +2049,7 @@ impl EventBus {
 
         if should_complete {
             event.mark_completed();
+            event.wait_for_completion_waiters();
         }
     }
 

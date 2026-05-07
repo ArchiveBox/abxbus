@@ -1,4 +1,12 @@
-use std::{collections::HashMap, sync::Arc, thread, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    thread,
+    time::Duration,
+};
 
 use event_listener::Event;
 use futures::{
@@ -54,7 +62,23 @@ pub struct BaseEventData {
 pub struct BaseEvent {
     pub inner: Mutex<BaseEventData>,
     pub completed: Event,
+    completion_waiters: AtomicUsize,
     runtime_eventbus_id: Mutex<Option<String>>,
+}
+
+struct CompletionWaiterGuard<'a>(&'a AtomicUsize);
+
+impl<'a> CompletionWaiterGuard<'a> {
+    fn new(waiters: &'a AtomicUsize) -> Self {
+        waiters.fetch_add(1, Ordering::SeqCst);
+        Self(waiters)
+    }
+}
+
+impl Drop for CompletionWaiterGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -128,6 +152,7 @@ impl BaseEvent {
                 payload,
             }),
             completed: Event::new(),
+            completion_waiters: AtomicUsize::new(0),
             runtime_eventbus_id: Mutex::new(None),
         }))
     }
@@ -193,14 +218,23 @@ impl BaseEvent {
     pub async fn event_completed(self: &Arc<Self>) {
         crate::event_bus::EventBus::mark_blocks_parent_completion_if_awaited(self.clone());
         loop {
-            let listener = self.completed.listen();
             {
                 let event = self.inner.lock();
                 if event.event_status == EventStatus::Completed {
                     return;
                 }
             }
+            let waiter = CompletionWaiterGuard::new(&self.completion_waiters);
+            let listener = self.completed.listen();
+            {
+                let event = self.inner.lock();
+                if event.event_status == EventStatus::Completed {
+                    drop(waiter);
+                    return;
+                }
+            }
             listener.await;
+            drop(waiter);
         }
     }
 
@@ -213,16 +247,25 @@ impl BaseEvent {
         crate::event_bus::EventBus::mark_blocks_parent_completion_if_awaited(self.clone());
         let deadline = std::time::Instant::now() + Duration::from_secs_f64(timeout.max(0.0));
         loop {
-            let listener = self.completed.listen();
             {
                 let event = self.inner.lock();
                 if event.event_status == EventStatus::Completed {
                     return true;
                 }
             }
+            let waiter = CompletionWaiterGuard::new(&self.completion_waiters);
+            let listener = self.completed.listen();
+            {
+                let event = self.inner.lock();
+                if event.event_status == EventStatus::Completed {
+                    drop(waiter);
+                    return true;
+                }
+            }
 
             let now = std::time::Instant::now();
             if now >= deadline {
+                drop(waiter);
                 return false;
             }
 
@@ -234,8 +277,12 @@ impl BaseEvent {
             });
 
             match select(listener.boxed(), timeout_rx.boxed()).await {
-                Either::Left((_listener_result, _timeout_future)) => continue,
+                Either::Left((_listener_result, _timeout_future)) => {
+                    drop(waiter);
+                    continue;
+                }
                 Either::Right((_timeout_result, _listener_future)) => {
+                    drop(waiter);
                     let event = self.inner.lock();
                     return event.event_status == EventStatus::Completed;
                 }
@@ -576,6 +623,12 @@ impl BaseEvent {
         self.completed.notify(usize::MAX);
     }
 
+    pub(crate) fn wait_for_completion_waiters(&self) {
+        while self.completion_waiters.load(Ordering::SeqCst) > 0 {
+            thread::yield_now();
+        }
+    }
+
     pub fn event_reset(&self) -> Arc<Self> {
         let mut data = self.inner.lock().clone();
         data.event_id = uuid_v7_string();
@@ -588,6 +641,7 @@ impl BaseEvent {
         Arc::new(Self {
             inner: Mutex::new(data),
             completed: Event::new(),
+            completion_waiters: AtomicUsize::new(0),
             runtime_eventbus_id: Mutex::new(None),
         })
     }
@@ -796,6 +850,7 @@ impl BaseEvent {
         Arc::new(Self {
             inner: Mutex::new(parsed),
             completed: Event::new(),
+            completion_waiters: AtomicUsize::new(0),
             runtime_eventbus_id: Mutex::new(None),
         })
     }

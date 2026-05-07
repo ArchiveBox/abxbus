@@ -316,6 +316,7 @@ func (b *EventBus) Off(event_pattern string, handler any) {
 
 func (b *EventBus) Emit(event *BaseEvent) *BaseEvent {
 	original_event := event
+	original_event.mu.Lock()
 	if event.Bus == nil {
 		original_event.Bus = b
 	}
@@ -327,17 +328,19 @@ func (b *EventBus) Emit(event *BaseEvent) *BaseEvent {
 	}
 	for _, label := range original_event.EventPath {
 		if label == b.Label() {
+			original_event.mu.Unlock()
 			return original_event
 		}
 	}
+	original_event.EventPath = append(original_event.EventPath, b.Label())
+	original_event.EventPendingBusCount++
+	original_event.mu.Unlock()
 	if b.EventHistory.MaxHistorySize != nil && *b.EventHistory.MaxHistorySize > 0 && !b.EventHistory.MaxHistoryDrop && b.EventHistory.Size() >= *b.EventHistory.MaxHistorySize {
 		panic(fmt.Sprintf("%s.emit(%s) rejected: history limit reached (%d/%d); set event_history.max_history_drop=true to drop old history instead.", b.Label(), original_event.EventType, b.EventHistory.Size(), *b.EventHistory.MaxHistorySize))
 	}
-	original_event.EventPath = append(original_event.EventPath, b.Label())
 	b.mu.Lock()
 	b.EventHistory.AddEvent(original_event)
 	b.resolveFindWaitersLocked(original_event)
-	original_event.EventPendingBusCount++
 	b.pendingEventQueue = append(b.pendingEventQueue, original_event)
 	b.mu.Unlock()
 	b.notifyEventChange(original_event, "pending")
@@ -401,7 +404,7 @@ func mergeHandlerContext(base context.Context, values context.Context) context.C
 }
 
 func (b *EventBus) eventHasLocalActiveResults(event *BaseEvent) bool {
-	for _, result := range event.EventResults {
+	for _, result := range event.eventResultsSnapshot() {
 		if result == nil || result.EventBusID != b.ID {
 			continue
 		}
@@ -422,13 +425,16 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 		}
 		defer signalFirstHandlerStarted()
 	}
+	event.mu.Lock()
 	if event.dispatchCtx == nil && ctx != nil {
 		event.dispatchCtx = ctx
 	}
 	previousBus := event.Bus
 	event.Bus = b
-	if previousBus != nil && previousBus != b {
-		defer func() { event.Bus = previousBus }()
+	shouldRestoreBus := previousBus != nil && previousBus != b
+	event.mu.Unlock()
+	if shouldRestoreBus {
+		defer func() { event.mu.Lock(); event.Bus = previousBus; event.mu.Unlock() }()
 	}
 	defer func() { b.mu.Lock(); delete(b.inFlightEventIDs, event.EventID); b.mu.Unlock() }()
 	if event.status() == "completed" {
@@ -460,11 +466,16 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 	}
 	pending_entries := make([]*EventResult, 0, len(handlers))
 	for _, h := range handlers {
+		event.mu.Lock()
+		if event.EventResults == nil {
+			event.EventResults = map[string]*EventResult{}
+		}
 		result := event.EventResults[h.ID]
 		if result == nil {
 			result = NewEventResult(event, h)
 			event.EventResults[h.ID] = result
 		}
+		event.mu.Unlock()
 		event.noteEventResultOrder(h.ID)
 		pending_entries = append(pending_entries, result)
 		if result.Status == EventResultPending {
@@ -520,11 +531,14 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 			b.notifyEventResultChange(event, r, "completed")
 		}
 	}
+	event.mu.Lock()
 	event.EventPendingBusCount--
 	if event.EventPendingBusCount < 0 {
 		event.EventPendingBusCount = 0
 	}
-	if event.EventPendingBusCount == 0 {
+	eventDone := event.EventPendingBusCount == 0
+	event.mu.Unlock()
+	if eventDone {
 		event.markCompleted()
 		b.notifyEventChange(event, "completed")
 		b.EventHistory.TrimEventHistory(nil)
@@ -790,7 +804,10 @@ func (b *EventBus) processEventImmediatelyAcrossBuses(ctx context.Context, event
 	instances := eventBusInstancesSnapshot()
 	ordered := []*EventBus{}
 	seen := map[*EventBus]bool{}
-	for _, label := range originalEvent.EventPath {
+	originalEvent.mu.Lock()
+	eventPath := append([]string{}, originalEvent.EventPath...)
+	originalEvent.mu.Unlock()
+	for _, label := range eventPath {
 		for _, bus := range instances {
 			if seen[bus] || bus.Label() != label || bus.EventHistory.GetEvent(originalEvent.EventID) != originalEvent || bus.eventHasLocalActiveResults(originalEvent) {
 				continue
@@ -914,7 +931,7 @@ func (b *EventBus) WaitUntilIdle(timeout *float64) bool { return b.locks.waitFor
 
 func (b *EventBus) IsIdle() bool {
 	for _, event := range b.EventHistory.Values() {
-		for _, result := range event.EventResults {
+		for _, result := range event.eventResultsSnapshot() {
 			if result.EventBusID != b.ID {
 				continue
 			}
@@ -1434,7 +1451,7 @@ func (b *EventBus) logEventTree(event *BaseEvent, prefix string, isLast bool) []
 	}
 	line := fmt.Sprintf("%s%s %s#%s%s", prefix, connector, event.EventType, suffix(event.EventID, 4), dur)
 	out := []string{line}
-	for _, r := range event.EventResults {
+	for _, r := range event.sortedEventResults() {
 		status, resultValue, errorValue, _ := r.snapshot()
 		sym := "✅"
 		if status == EventResultError {

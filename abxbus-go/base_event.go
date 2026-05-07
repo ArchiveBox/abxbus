@@ -289,6 +289,7 @@ func (e *BaseEvent) EventResultUpdate(handler *EventHandler, options *BaseEventR
 	if options == nil {
 		options = &BaseEventResultUpdateOptions{}
 	}
+	e.mu.Lock()
 	if e.EventResults == nil {
 		e.EventResults = map[string]*EventResult{}
 	}
@@ -305,23 +306,26 @@ func (e *BaseEvent) EventResultUpdate(handler *EventHandler, options *BaseEventR
 			result.HandlerTimeout = options.Timeout
 		}
 		e.EventResults[handler.ID] = result
-	} else {
-		result.Event = e
-		result.Handler = handler
-		result.HandlerID = handler.ID
-		result.HandlerName = handler.HandlerName
-		result.HandlerFilePath = handler.HandlerFilePath
-		result.HandlerSlowTimeout = handler.HandlerSlowTimeout
-		result.HandlerRegisteredAt = handler.HandlerRegisteredAt
-		result.HandlerEventPattern = handler.EventPattern
-		result.EventBusName = handler.EventBusName
-		result.EventBusID = handler.EventBusID
-		if options.Timeout != nil {
-			result.HandlerTimeout = options.Timeout
-		} else {
-			result.HandlerTimeout = handler.HandlerTimeout
-		}
 	}
+	e.mu.Unlock()
+
+	result.mu.Lock()
+	result.Event = e
+	result.Handler = handler
+	result.HandlerID = handler.ID
+	result.HandlerName = handler.HandlerName
+	result.HandlerFilePath = handler.HandlerFilePath
+	result.HandlerSlowTimeout = handler.HandlerSlowTimeout
+	result.HandlerRegisteredAt = handler.HandlerRegisteredAt
+	result.HandlerEventPattern = handler.EventPattern
+	result.EventBusName = handler.EventBusName
+	result.EventBusID = handler.EventBusID
+	if options.Timeout != nil {
+		result.HandlerTimeout = options.Timeout
+	} else {
+		result.HandlerTimeout = handler.HandlerTimeout
+	}
+	result.mu.Unlock()
 	e.noteEventResultOrder(handler.ID)
 
 	result.Update(&options.EventResultUpdateOptions)
@@ -427,8 +431,11 @@ func (e *BaseEvent) status() string {
 }
 
 func (e *BaseEvent) EventCompleted(ctx context.Context) error {
-	if e.Bus != nil {
-		e.Bus.startRunloop()
+	e.mu.Lock()
+	bus := e.Bus
+	e.mu.Unlock()
+	if bus != nil {
+		bus.startRunloop()
 	}
 	select {
 	case <-e.done_ch:
@@ -442,14 +449,17 @@ func (e *BaseEvent) Done(ctx context.Context) (*BaseEvent, error) {
 	if e.status() == "completed" {
 		return e, nil
 	}
-	if e.Bus == nil {
-		return nil, errors.New("event has no bus attached")
-	}
+	e.mu.Lock()
+	bus := e.Bus
 	if ctx != nil {
 		e.dispatchCtx = ctx
 	}
+	e.mu.Unlock()
+	if bus == nil {
+		return nil, errors.New("event has no bus attached")
+	}
 	e.markBlocksParentCompletionIfAwaitedFromEmittingHandler()
-	_, err := e.Bus.processEventImmediatelyAcrossBuses(ctx, e)
+	_, err := bus.processEventImmediatelyAcrossBuses(ctx, e)
 	if err != nil {
 		return nil, err
 	}
@@ -457,7 +467,10 @@ func (e *BaseEvent) Done(ctx context.Context) (*BaseEvent, error) {
 }
 
 func (e *BaseEvent) Emit(event *BaseEvent) *BaseEvent {
-	if e.Bus == nil {
+	e.mu.Lock()
+	bus := e.Bus
+	e.mu.Unlock()
+	if bus == nil {
 		return event
 	}
 	if event.EventID != e.EventID {
@@ -465,8 +478,8 @@ func (e *BaseEvent) Emit(event *BaseEvent) *BaseEvent {
 			parentID := e.EventID
 			event.EventParentID = &parentID
 		}
-		if active := e.Bus.locks.getActiveHandlerResult(); active != nil && active.EventID == e.EventID {
-			active.ensureQueueJumpPause(e.Bus)
+		if active := bus.locks.getActiveHandlerResult(); active != nil && active.EventID == e.EventID {
+			active.ensureQueueJumpPause(bus)
 			if event.EventEmittedByHandlerID == nil {
 				handlerID := active.HandlerID
 				event.EventEmittedByHandlerID = &handlerID
@@ -474,20 +487,28 @@ func (e *BaseEvent) Emit(event *BaseEvent) *BaseEvent {
 			active.addChild(event)
 		}
 	}
-	return e.Bus.Emit(event)
+	return bus.Emit(event)
 }
 
 func (e *BaseEvent) markBlocksParentCompletionIfAwaitedFromEmittingHandler() {
-	if e.EventBlocksParentCompletion || e.Bus == nil || e.EventParentID == nil || e.EventEmittedByHandlerID == nil {
+	e.mu.Lock()
+	bus := e.Bus
+	blocksParentCompletion := e.EventBlocksParentCompletion
+	parentID := e.EventParentID
+	emittedByHandlerID := e.EventEmittedByHandlerID
+	e.mu.Unlock()
+	if blocksParentCompletion || bus == nil || parentID == nil || emittedByHandlerID == nil {
 		return
 	}
-	active := e.Bus.locks.getActiveHandlerResult()
-	if active == nil || active.EventID != *e.EventParentID || active.HandlerID != *e.EventEmittedByHandlerID {
+	active := bus.locks.getActiveHandlerResult()
+	if active == nil || active.EventID != *parentID || active.HandlerID != *emittedByHandlerID {
 		return
 	}
 	for _, child := range active.EventChildren {
 		if child.EventID == e.EventID {
+			e.mu.Lock()
 			e.EventBlocksParentCompletion = true
+			e.mu.Unlock()
 			return
 		}
 	}
@@ -924,28 +945,36 @@ func schemaNumber(value any) (float64, bool) {
 }
 
 func (e *BaseEvent) sortedEventResults() []*EventResult {
+	e.mu.Lock()
 	if len(e.EventResults) == 0 {
+		e.mu.Unlock()
 		return nil
 	}
+	eventResults := make(map[string]*EventResult, len(e.EventResults))
+	for handlerID, result := range e.EventResults {
+		eventResults[handlerID] = result
+	}
+	eventResultOrder := append([]string{}, e.eventResultOrder...)
+	e.mu.Unlock()
 
-	results := make([]*EventResult, 0, len(e.EventResults))
+	results := make([]*EventResult, 0, len(eventResults))
 	seen := map[string]bool{}
 	appendByID := func(handlerID string) {
 		if seen[handlerID] {
 			return
 		}
-		if result := e.EventResults[handlerID]; result != nil {
+		if result := eventResults[handlerID]; result != nil {
 			results = append(results, result)
 			seen[handlerID] = true
 		}
 	}
 
-	for _, handlerID := range e.eventResultOrderSnapshot() {
+	for _, handlerID := range eventResultOrder {
 		appendByID(handlerID)
 	}
 
-	remaining := make([]*EventResult, 0, len(e.EventResults)-len(results))
-	for handlerID, result := range e.EventResults {
+	remaining := make([]*EventResult, 0, len(eventResults)-len(results))
+	for handlerID, result := range eventResults {
 		if !seen[handlerID] && result != nil {
 			remaining = append(remaining, result)
 		}
@@ -954,6 +983,18 @@ func (e *BaseEvent) sortedEventResults() []*EventResult {
 		return eventResultRegistrationLess(remaining[i], remaining[j])
 	})
 	results = append(results, remaining...)
+	return results
+}
+
+func (e *BaseEvent) eventResultsSnapshot() []*EventResult {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	results := make([]*EventResult, 0, len(e.EventResults))
+	for _, result := range e.EventResults {
+		if result != nil {
+			results = append(results, result)
+		}
+	}
 	return results
 }
 
@@ -978,12 +1019,7 @@ func (e *BaseEvent) eventResultOrderSnapshot() []string {
 }
 
 func (e *BaseEvent) rebuildEventResultOrderByMetadata() {
-	results := make([]*EventResult, 0, len(e.EventResults))
-	for _, result := range e.EventResults {
-		if result != nil {
-			results = append(results, result)
-		}
-	}
+	results := e.eventResultsSnapshot()
 	sort.SliceStable(results, func(i, j int) bool {
 		return eventResultRegistrationLess(results[i], results[j])
 	})

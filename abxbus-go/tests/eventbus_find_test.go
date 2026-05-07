@@ -272,6 +272,143 @@ func TestFindCanSeeInProgressEventInHistory(t *testing.T) {
 	}
 }
 
+func TestFindFutureIgnoresAlreadyDispatchedInFlightEventsWhenPastFalse(t *testing.T) {
+	bus := abxbus.NewEventBus("FindFutureIgnoresInflightBus", nil)
+	t.Cleanup(bus.Destroy)
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	bus.On("FutureInflightEvent", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		started <- struct{}{}
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return "ok", nil
+	}, nil)
+
+	event := bus.Emit(abxbus.NewBaseEvent("FutureInflightEvent", nil))
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("timed out waiting for in-flight event")
+	}
+
+	match, err := bus.Find("FutureInflightEvent", nil, &abxbus.FindOptions{Past: false, Future: 0.03})
+	close(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if match != nil {
+		t.Fatalf("future-only find should ignore already-dispatched in-flight events, got %#v", match)
+	}
+	if _, err := event.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFindFutureResolvesOnDispatchBeforeHandlersComplete(t *testing.T) {
+	bus := abxbus.NewEventBus("FindFutureDispatchVisibilityBus", nil)
+	t.Cleanup(bus.Destroy)
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	bus.On("DispatchVisibleEvent", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		started <- struct{}{}
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return "ok", nil
+	}, nil)
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		bus.Emit(abxbus.NewBaseEvent("DispatchVisibleEvent", nil))
+	}()
+	match, err := bus.Find("DispatchVisibleEvent", nil, &abxbus.FindOptions{Past: false, Future: 1.0})
+	if err != nil {
+		close(release)
+		t.Fatal(err)
+	}
+	if match == nil {
+		close(release)
+		t.Fatal("future find should resolve when event is dispatched")
+	}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("timed out waiting for matched event handler to start")
+	}
+	if match.EventStatus == "completed" {
+		close(release)
+		t.Fatalf("future find should resolve before handler completion, got status %s", match.EventStatus)
+	}
+	close(release)
+	if _, err := match.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMultipleConcurrentFutureFindWaitersResolveCorrectEvents(t *testing.T) {
+	bus := abxbus.NewEventBus("FindConcurrentWaitersBus", nil)
+	t.Cleanup(bus.Destroy)
+	resultA := make(chan *abxbus.BaseEvent, 1)
+	resultB := make(chan *abxbus.BaseEvent, 1)
+	errs := make(chan error, 2)
+
+	go func() {
+		event, err := bus.Find("ConcurrentFindA", nil, &abxbus.FindOptions{Past: false, Future: 1.0})
+		if err != nil {
+			errs <- err
+			return
+		}
+		resultA <- event
+	}()
+	go func() {
+		event, err := bus.Find("ConcurrentFindB", nil, &abxbus.FindOptions{Past: false, Future: 1.0})
+		if err != nil {
+			errs <- err
+			return
+		}
+		resultB <- event
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	eventB := bus.Emit(abxbus.NewBaseEvent("ConcurrentFindB", nil))
+	eventA := bus.Emit(abxbus.NewBaseEvent("ConcurrentFindA", nil))
+
+	select {
+	case err := <-errs:
+		t.Fatal(err)
+	default:
+	}
+	select {
+	case gotA := <-resultA:
+		if gotA == nil || gotA.EventID != eventA.EventID {
+			t.Fatalf("waiter A resolved wrong event: got %#v want %s", gotA, eventA.EventID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for waiter A")
+	}
+	select {
+	case gotB := <-resultB:
+		if gotB == nil || gotB.EventID != eventB.EventID {
+			t.Fatalf("waiter B resolved wrong event: got %#v want %s", gotB, eventB.EventID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for waiter B")
+	}
+	if _, err := eventA.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eventB.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMaxHistorySizeZeroDisablesPastSearchButFutureFindStillResolves(t *testing.T) {
 	zeroHistorySize := 0
 	bus := abxbus.NewEventBus("FindZeroHistoryBus", &abxbus.EventBusOptions{MaxHistorySize: &zeroHistorySize})
@@ -312,6 +449,41 @@ func TestMaxHistorySizeZeroDisablesPastSearchButFutureFindStillResolves(t *testi
 	}
 	if bus.EventHistory.Size() != 0 {
 		t.Fatalf("zero history should stay empty after future match completion, got size=%d", bus.EventHistory.Size())
+	}
+}
+
+func TestFilterLimitZeroAndNegativeReturnImmediatelyWithoutFutureWait(t *testing.T) {
+	bus := abxbus.NewEventBus("FilterLimitImmediateBus", nil)
+	t.Cleanup(bus.Destroy)
+	for _, limit := range []int{0, -1} {
+		start := time.Now()
+		matches, err := bus.Filter("NeverDispatched", nil, &abxbus.FilterOptions{Past: false, Future: 1.0, Limit: &limit})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(matches) != 0 {
+			t.Fatalf("limit=%d should return no matches, got %#v", limit, matches)
+		}
+		if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+			t.Fatalf("limit=%d should not wait for future events, elapsed=%s", limit, elapsed)
+		}
+	}
+}
+
+func TestFilterFutureOnlyTimesOutToEmptyList(t *testing.T) {
+	bus := abxbus.NewEventBus("FilterFutureTimeoutBus", nil)
+	t.Cleanup(bus.Destroy)
+	start := time.Now()
+	matches, err := bus.Filter("MissingFutureFilterEvent", nil, &abxbus.FilterOptions{Past: false, Future: 0.03})
+	if err != nil {
+		t.Fatal(err)
+	}
+	elapsed := time.Since(start)
+	if len(matches) != 0 {
+		t.Fatalf("future-only filter should time out to empty list, got %#v", matches)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("future-only filter timeout took too long: %s", elapsed)
 	}
 }
 
