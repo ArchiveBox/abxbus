@@ -1,0 +1,22 @@
+docs/features/typed-events.mdx
+  s_6a8c07f028b30c::t_e9f28ae611acd0 6
+  s_6a8c07f028b30c::t_bcdb03d33155ca 11,41-70,76
+docs/operations/performance.mdx
+  s_6a8c07f028b30c::t_52d8dc9031bb08 43-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "5e8a4436e553de19799852e9c34290baf9c370bc",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
