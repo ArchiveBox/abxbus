@@ -354,6 +354,19 @@ func mergeHandlerContext(base context.Context, values context.Context) context.C
 	return handlerContext{base: base, values: values}
 }
 
+func (b *EventBus) eventHasLocalActiveResults(event *BaseEvent) bool {
+	for _, result := range event.EventResults {
+		if result == nil || result.EventBusID != b.ID {
+			continue
+		}
+		status, _, _, _ := result.snapshot()
+		if status == EventResultStarted || status == EventResultCompleted || status == EventResultError {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_event_locks bool, pre_acquired_lock *AsyncLock, first_handler_started chan struct{}) error {
 	signalFirstHandlerStarted := func() {}
 	if first_handler_started != nil {
@@ -367,6 +380,14 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 		event.dispatchCtx = ctx
 	}
 	defer func() { b.mu.Lock(); delete(b.inFlightEventIDs, event.EventID); b.mu.Unlock() }()
+	if event.status() == "completed" {
+		signalFirstHandlerStarted()
+		return nil
+	}
+	if b.eventHasLocalActiveResults(event) {
+		signalFirstHandlerStarted()
+		return event.EventCompleted(ctx)
+	}
 	var event_lock *AsyncLock
 	if !bypass_event_locks {
 		event_lock = b.locks.getLockForEvent(event)
@@ -574,6 +595,13 @@ func (e *BaseEvent) runHandlers(ctx context.Context, bus *EventBus, handlers []*
 }
 
 func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, handler *EventHandler, result *EventResult, signalFirstHandlerStarted func()) error {
+	status, _, _, _ := result.snapshot()
+	if status != EventResultPending {
+		if signalFirstHandlerStarted != nil {
+			signalFirstHandlerStarted()
+		}
+		return nil
+	}
 	result.markStarted()
 	bus.notifyEventResultChange(event, result, "started")
 	if signalFirstHandlerStarted != nil {
