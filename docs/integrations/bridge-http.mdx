@@ -48,6 +48,14 @@ const bridge = new HTTPEventBridge({
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+// HTTPEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
+```
+
+</Tab>
 </Tabs>
 
 ## Setup with a bus
@@ -84,6 +92,14 @@ const bridge = new HTTPEventBridge({
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+// HTTPEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
 ```
 
 </Tab>

@@ -44,6 +44,14 @@ npm install abxbus ioredis
 This bridge is Node.js-only.
 
 </Tab>
+<Tab title="Go">
+
+```go
+// RedisEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for the currently supported Go bridge.
+```
+
+</Tab>
 </Tabs>
 
 ## Constructor params
@@ -78,6 +86,14 @@ const bridge = new RedisEventBridge(
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+// RedisEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
+```
+
+</Tab>
 </Tabs>
 
 ## Setup with a bus
@@ -108,6 +124,14 @@ const bridge = new RedisEventBridge('redis://localhost:6379/0/abxbus_events')
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+// RedisEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
 ```
 
 </Tab>

@@ -42,6 +42,14 @@ npm install @tachyon-ipc/core
 This bridge is Node.js-only. Blocking `listen`/`recv`/`connect` calls run inside `node:worker_threads` so the main event loop stays responsive.
 
 </Tab>
+<Tab title="Go">
+
+```go
+// TachyonEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for the currently supported Go bridge.
+```
+
+</Tab>
 </Tabs>
 
 ## Constructor params
@@ -66,6 +74,14 @@ bridge = TachyonEventBridge('/tmp/abxbus.sock', capacity=1 << 20, name='TachyonB
 import { TachyonEventBridge } from 'abxbus/bridges'
 
 const bridge = new TachyonEventBridge('/tmp/abxbus.sock', 1 << 20, 'TachyonBridge')
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+// TachyonEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
 ```
 
 </Tab>
@@ -109,6 +125,14 @@ inbound.on('*', bus.emit)
 // sender process (separate instance / process)
 const outbound = new TachyonEventBridge('/tmp/abxbus.sock')
 bus.on('*', outbound.emit)
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+// TachyonEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
 ```
 
 </Tab>

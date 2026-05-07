@@ -44,6 +44,14 @@ npm install abxbus pg
 This bridge is Node.js-only.
 
 </Tab>
+<Tab title="Go">
+
+```go
+// PostgresEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for the currently supported Go bridge.
+```
+
+</Tab>
 </Tabs>
 
 ## Constructor params
@@ -79,6 +87,14 @@ const bridge = new PostgresEventBridge(
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+// PostgresEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
+```
+
+</Tab>
 </Tabs>
 
 ## Setup with a bus
@@ -109,6 +125,14 @@ const bridge = new PostgresEventBridge('postgresql://user:pass@localhost:5432/my
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+// PostgresEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
 ```
 
 </Tab>

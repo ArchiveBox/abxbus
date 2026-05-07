@@ -240,6 +240,25 @@ bus.on(ChargeCardEvent, async (event) => `receipt-${event.order_id}`)
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+bus.On("CheckoutEvent", "on_checkout", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	orderID, _ := event.Payload["order_id"].(string)
+	child := event.Emit(abxbus.NewBaseEvent("ChargeCardEvent", map[string]any{"order_id": orderID}))
+	if _, err := child.Done(ctx); err != nil {
+		return nil, err
+	}
+	return child.EventResult(ctx)
+}, nil)
+
+bus.On("ChargeCardEvent", "on_charge", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	orderID, _ := event.Payload["order_id"].(string)
+	return "receipt-" + orderID, nil
+}, nil)
+```
+
+</Tab>
 </Tabs>
 
 Related docs:

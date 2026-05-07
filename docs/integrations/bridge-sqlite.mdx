@@ -46,6 +46,14 @@ const bridge = new SQLiteEventBridge('/tmp/abxbus_events.sqlite3', 'abxbus_event
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+// SQLiteEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
+```
+
+</Tab>
 </Tabs>
 
 ## Setup with a bus
@@ -76,6 +84,14 @@ const bridge = new SQLiteEventBridge('/tmp/abxbus_events.sqlite3')
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+// SQLiteEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
 ```
 
 </Tab>
