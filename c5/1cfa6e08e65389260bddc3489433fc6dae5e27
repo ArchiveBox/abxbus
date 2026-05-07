@@ -1,0 +1,50 @@
+abxbus-go/tests/ids_test.go
+  s_6a8c07f028b30c::t_c40d4510a39f55 11-12,14,16,18-27,29,31-32
+abxbus-go/tests/event_result_handler_metadata_test.go
+  s_6a8c07f028b30c::t_204e397d9ce0f7 1-46
+abxbus-go/README.md
+  s_6a8c07f028b30c::t_8aa04aab2a7767 7
+abxbus-go/tests/eventbus_dispatch_defaults_test.go
+  s_6a8c07f028b30c::t_42ee23af4aca0b 10-17,20-22,24,27-28,32-39,41-46,49-52
+abxbus-go/tests/base_event_eventbus_proxy_test.go
+  s_6a8c07f028b30c::t_9dd1f46ff043a4 1-26
+abxbus-go/base_event.go
+  s_6a8c07f028b30c::t_d22bdcb6c4a040 335-337,345,350,362-371
+abxbus-go/tests/event_results_list_test.go
+  s_6a8c07f028b30c::t_dfb341cdca4e6d 95,100
+abxbus-go/tests/eventbusmiddleware_test.go
+  s_6a8c07f028b30c::t_8a6094fcf2b7cb 1-39
+abxbus-go/tests/base_event_runtime_state_test.go
+  s_6a8c07f028b30c::t_6415ff94b2dbc9 4,19-29,31-33,35-36,38-39,41-42,44-45,48-50,52-53
+  s_6a8c07f028b30c::t_47d4b30cb2da45 10-14,16-17
+abxbus-go/tests/eventbus_cross_runtime_features_test.go
+  s_6a8c07f028b30c::t_6b72debb7de235 1-48
+abxbus-go/tests/typed_events_test.go
+  s_6a8c07f028b30c::t_470b2e9fcbef05 1-49
+abxbus-go/tests/eventbus_dispatch_contextvars_test.go
+  s_6a8c07f028b30c::t_38172189868bde 1-53
+abxbus-go/typed.go
+  s_6a8c07f028b30c::t_c3eec0510fe471 1-45
+abxbus-go/tests/event_handler_first_test.go
+  s_6a8c07f028b30c::t_ef515727a5562e 10-15,18-23,26-28,30-32,34-38,40-41
+abxbus-go/tests/eventbus_name_conflict_gc_test.go
+  s_6a8c07f028b30c::t_916feb5d0f6f85 1-38
+abxbus-go/tests/cross_runtime_roundtrip_test.go
+  s_6a8c07f028b30c::t_f1b13fe6a23747 1-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "c51cfa6e08e65389260bddc3489433fc6dae5e27",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
