@@ -17,6 +17,11 @@ var SlowWarningLogger = func(message string) {
 	fmt.Println(message)
 }
 
+var eventBusRegistry = struct {
+	sync.Mutex
+	instances map[*EventBus]struct{}
+}{instances: map[*EventBus]struct{}{}}
+
 type EventBusOptions struct {
 	ID                          string
 	MaxHistorySize              *int
@@ -178,6 +183,9 @@ func NewEventBus(name string, options *EventBusOptions) *EventBus {
 		bus.EventHandlerCompletion = EventHandlerCompletionAll
 	}
 	bus.locks = NewLockManager(bus)
+	eventBusRegistry.Lock()
+	eventBusRegistry.instances[bus] = struct{}{}
+	eventBusRegistry.Unlock()
 	return bus
 }
 
@@ -189,6 +197,16 @@ func suffix(value string, n int) string {
 }
 
 func (b *EventBus) Label() string { return fmt.Sprintf("%s#%s", b.Name, suffix(b.ID, 4)) }
+
+func eventBusInstancesSnapshot() []*EventBus {
+	eventBusRegistry.Lock()
+	defer eventBusRegistry.Unlock()
+	instances := make([]*EventBus, 0, len(eventBusRegistry.instances))
+	for bus := range eventBusRegistry.instances {
+		instances = append(instances, bus)
+	}
+	return instances
+}
 
 func (b *EventBus) notifyEventChange(event *BaseEvent, status string) {
 	for _, middleware := range append([]EventBusMiddleware{}, b.middlewares...) {
@@ -761,6 +779,77 @@ func (b *EventBus) processEventImmediately(ctx context.Context, event *BaseEvent
 		}
 	}
 	return original_event, nil
+}
+
+func (b *EventBus) processEventImmediatelyAcrossBuses(ctx context.Context, event *BaseEvent) (*BaseEvent, error) {
+	originalEvent := event
+	if originalEvent.status() == "completed" {
+		return originalEvent, nil
+	}
+
+	instances := eventBusInstancesSnapshot()
+	ordered := []*EventBus{}
+	seen := map[*EventBus]bool{}
+	for _, label := range originalEvent.EventPath {
+		for _, bus := range instances {
+			if seen[bus] || bus.Label() != label || bus.EventHistory.GetEvent(originalEvent.EventID) != originalEvent || bus.eventHasLocalActiveResults(originalEvent) {
+				continue
+			}
+			ordered = append(ordered, bus)
+			seen[bus] = true
+		}
+	}
+	if !seen[b] && b.EventHistory.GetEvent(originalEvent.EventID) == originalEvent && !b.eventHasLocalActiveResults(originalEvent) {
+		ordered = append(ordered, b)
+		seen[b] = true
+	}
+	if len(ordered) == 0 {
+		if err := originalEvent.EventCompleted(ctx); err != nil {
+			return nil, err
+		}
+		return originalEvent, nil
+	}
+
+	initiatingLock := b.locks.getLockForEvent(originalEvent)
+	activeHandlerResult := b.locks.getActiveHandlerResult()
+	releases := []func(){}
+	for _, bus := range ordered {
+		if bus != b {
+			releases = append(releases, bus.locks.requestRunloopPause())
+		}
+	}
+	defer func() {
+		for _, release := range releases {
+			release()
+		}
+	}()
+
+	for _, bus := range ordered {
+		bus.mu.Lock()
+		for i := len(bus.pendingEventQueue) - 1; i >= 0; i-- {
+			if bus.pendingEventQueue[i].EventID == originalEvent.EventID {
+				bus.pendingEventQueue = append(bus.pendingEventQueue[:i], bus.pendingEventQueue[i+1:]...)
+			}
+		}
+		if bus.inFlightEventIDs[originalEvent.EventID] {
+			bus.mu.Unlock()
+			continue
+		}
+		bus.inFlightEventIDs[originalEvent.EventID] = true
+		bus.mu.Unlock()
+
+		busEventLock := bus.locks.getLockForEvent(originalEvent)
+		bypassEventLocks := activeHandlerResult != nil && (bus == b || (initiatingLock != nil && busEventLock == initiatingLock))
+		if err := bus.processEvent(ctx, originalEvent, bypassEventLocks, nil, nil); err != nil {
+			return nil, err
+		}
+	}
+	if originalEvent.status() != "completed" {
+		if err := originalEvent.EventCompleted(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return originalEvent, nil
 }
 
 func (b *EventBus) startRunloop() {
@@ -1368,6 +1457,9 @@ func (b *EventBus) logEventTree(event *BaseEvent, prefix string, isLast bool) []
 }
 
 func (b *EventBus) Destroy() {
+	eventBusRegistry.Lock()
+	delete(eventBusRegistry.instances, b)
+	eventBusRegistry.Unlock()
 	b.mu.Lock()
 	waiters := append([]*findWaiter{}, b.findWaiters...)
 	b.findWaiters = []*findWaiter{}

@@ -83,6 +83,70 @@ func TestGlobalSerialAcrossBuses(t *testing.T) {
 	b2.Destroy()
 }
 
+func TestGlobalSerialAwaitedChildJumpsAheadOfQueuedEventsAcrossBuses(t *testing.T) {
+	busA := abxbus.NewEventBus("GlobalSerialParent", &abxbus.EventBusOptions{EventConcurrency: abxbus.EventConcurrencyGlobalSerial})
+	busB := abxbus.NewEventBus("GlobalSerialChild", &abxbus.EventBusOptions{EventConcurrency: abxbus.EventConcurrencyGlobalSerial})
+	defer busA.Destroy()
+	defer busB.Destroy()
+
+	var mu sync.Mutex
+	order := []string{}
+	record := func(value string) {
+		mu.Lock()
+		defer mu.Unlock()
+		order = append(order, value)
+	}
+
+	busB.On("ChildEvent", "child", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		record("child_start")
+		time.Sleep(5 * time.Millisecond)
+		record("child_end")
+		return "child", nil
+	}, nil)
+	busB.On("QueuedEvent", "queued", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		record("queued_start")
+		time.Sleep(time.Millisecond)
+		record("queued_end")
+		return "queued", nil
+	}, nil)
+	busA.On("ParentEvent", "parent", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		record("parent_start")
+		busB.Emit(abxbus.NewBaseEvent("QueuedEvent", nil))
+		child := e.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
+		busB.Emit(child)
+		record("child_dispatched")
+		if _, err := child.Done(ctx); err != nil {
+			return nil, err
+		}
+		record("child_awaited")
+		record("parent_end")
+		return "parent", nil
+	}, nil)
+
+	parent := busA.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := parent.Done(ctx); err != nil {
+		t.Fatal(err)
+	}
+	timeout := 2.0
+	if !busB.WaitUntilIdle(&timeout) {
+		t.Fatal("busB did not become idle")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	childStart := indexOfLockingOrder(order, "child_start")
+	childEnd := indexOfLockingOrder(order, "child_end")
+	queuedStart := indexOfLockingOrder(order, "queued_start")
+	if childStart == -1 || childEnd == -1 || queuedStart == -1 {
+		t.Fatalf("expected child and queued handlers to run, order=%v", order)
+	}
+	if !(childStart < queuedStart && childEnd < queuedStart) {
+		t.Fatalf("awaited child should queue-jump ahead of older queued event, order=%v", order)
+	}
+}
+
 func TestEventConcurrencyBusSerialSerializesPerBusButOverlapsAcrossBuses(t *testing.T) {
 	busA := abxbus.NewEventBus("BusSerialA", &abxbus.EventBusOptions{EventConcurrency: abxbus.EventConcurrencyBusSerial})
 	busB := abxbus.NewEventBus("BusSerialB", &abxbus.EventBusOptions{EventConcurrency: abxbus.EventConcurrencyBusSerial})
@@ -353,4 +417,13 @@ func TestPrecedenceEventEventConcurrencyOverridesBusDefaultsToParallel(t *testin
 
 func TestPrecedenceEventEventConcurrencyOverridesBusDefaultsToBusSerial(t *testing.T) {
 	TestEventConcurrencyOverrideBusSerialBeatsBusParallelDefault(t)
+}
+
+func indexOfLockingOrder(values []string, target string) int {
+	for i, value := range values {
+		if value == target {
+			return i
+		}
+	}
+	return -1
 }

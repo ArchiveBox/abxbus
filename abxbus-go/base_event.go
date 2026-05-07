@@ -449,7 +449,7 @@ func (e *BaseEvent) Done(ctx context.Context) (*BaseEvent, error) {
 		e.dispatchCtx = ctx
 	}
 	e.markBlocksParentCompletionIfAwaitedFromEmittingHandler()
-	_, err := e.Bus.processEventImmediately(ctx, e, nil)
+	_, err := e.Bus.processEventImmediatelyAcrossBuses(ctx, e)
 	if err != nil {
 		return nil, err
 	}
