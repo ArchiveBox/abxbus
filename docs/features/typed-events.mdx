@@ -3,11 +3,12 @@ title: Type-Safe Events
 description: Define validated event payloads and event result types.
 ---
 
-Events are strongly typed and validated in both runtimes.
+Events are strongly typed and validated across the supported runtimes.
 
 Repository example files:
 - [`examples/simple.py`](https://github.com/ArchiveBox/abxbus/blob/main/examples/simple.py)
 - [`abxbus-ts/examples/simple.ts`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-ts/examples/simple.ts)
+- [`abxbus-go/README.md`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-go/README.md)
 
 <Tabs>
 <Tab title="Python">
@@ -38,7 +39,38 @@ const OrderCreatedEvent = BaseEvent.extend('OrderCreatedEvent', {
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+type OrderCreatedPayload struct {
+	OrderID     string  `json:"order_id"`
+	CustomerID  string  `json:"customer_id"`
+	TotalAmount float64 `json:"total_amount"`
+}
+
+type OrderResult struct {
+	OK bool `json:"ok"`
+}
+
+event, err := abxbus.NewTypedEvent("OrderCreatedEvent", OrderCreatedPayload{
+	OrderID:     "order-123",
+	CustomerID:  "customer-456",
+	TotalAmount: 42.50,
+})
+if err != nil {
+	panic(err)
+}
+
+payload, err := abxbus.EventPayloadAs[OrderCreatedPayload](event)
+if err != nil {
+	panic(err)
+}
+_ = payload
+```
+
+</Tab>
 </Tabs>
 
 - Python payload validation is powered by Pydantic models.
 - TypeScript payload and result validation is powered by Zod schemas.
+- Go uses typed struct helpers for static shape at call sites and JSON Schema via `event_result_type` for runtime result validation.
