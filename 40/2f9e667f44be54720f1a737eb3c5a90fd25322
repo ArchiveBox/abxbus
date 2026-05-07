@@ -1,0 +1,19 @@
+abxbus-ts/tests/cross_runtime_roundtrip.test.ts
+  s_6a8c07f028b30c::t_08c4b76aeea33f 593-657,724,789,854-855
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "402f9e667f44be54720f1a737eb3c5a90fd25322",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
