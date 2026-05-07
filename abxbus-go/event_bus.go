@@ -651,9 +651,20 @@ func (b *EventBus) runloop(ctx context.Context) {
 		}
 		b.inFlightEventIDs[next_event.EventID] = true
 		b.mu.Unlock()
-		if err := b.processEvent(ctx, next_event, false, nil); err != nil && !errors.Is(err, context.Canceled) {
-			// no-op log hook
+		eventConcurrency := next_event.EventConcurrency
+		if eventConcurrency == "" {
+			eventConcurrency = b.EventConcurrency
 		}
+		process := func(event *BaseEvent) {
+			if err := b.processEvent(ctx, event, false, nil); err != nil && !errors.Is(err, context.Canceled) {
+				// no-op log hook
+			}
+		}
+		if eventConcurrency == EventConcurrencyParallel {
+			go process(next_event)
+			continue
+		}
+		process(next_event)
 	}
 }
 
