@@ -64,6 +64,58 @@ func TestFindDefaultPastOnlyNoFutureWait(t *testing.T) {
 	}
 }
 
+func TestFindFutureIgnoresPastEvents(t *testing.T) {
+	bus := abxbus.NewEventBus("FindFutureIgnoresPastBus", nil)
+	prior := bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
+	if _, err := prior.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	found, err := bus.Find("ParentEvent", nil, &abxbus.FindOptions{Past: false, Future: 0.03})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found != nil {
+		t.Fatalf("future-only find should ignore past events, got %#v", found)
+	}
+}
+
+func TestFindPastFalseFutureFalseReturnsNilImmediately(t *testing.T) {
+	bus := abxbus.NewEventBus("FindNeitherBus", nil)
+	start := time.Now()
+	found, err := bus.Find("ParentEvent", nil, &abxbus.FindOptions{Past: false, Future: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found != nil {
+		t.Fatalf("past=false future=false should return nil, got %#v", found)
+	}
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("past=false future=false should not wait, elapsed=%s", elapsed)
+	}
+}
+
+func TestFindPastAndFutureWindowsAreIndependent(t *testing.T) {
+	bus := abxbus.NewEventBus("FindWindowIndependentBus", nil)
+	oldEvent := bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
+	if _, err := oldEvent.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(120 * time.Millisecond)
+
+	start := time.Now()
+	found, err := bus.Find("ParentEvent", nil, &abxbus.FindOptions{Past: 0.03, Future: 0.03})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found != nil {
+		t.Fatalf("old event outside past window should not match, got %#v", found)
+	}
+	if elapsed := time.Since(start); elapsed < 20*time.Millisecond {
+		t.Fatalf("future window should be waited independently after past miss, elapsed=%s", elapsed)
+	}
+}
+
 func TestFindPastWindowAndEqualsFiltering(t *testing.T) {
 	bus := abxbus.NewEventBus("FindWindowBus", nil)
 
@@ -452,6 +504,61 @@ func TestMaxHistorySizeZeroDisablesPastSearchButFutureFindStillResolves(t *testi
 	}
 }
 
+func TestFindReturnsFirstFilterResult(t *testing.T) {
+	bus := abxbus.NewEventBus("FindFilterFirstBus", nil)
+	first := bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
+	second := bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
+	if _, err := first.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	found, err := bus.Find("ParentEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	limit := 1
+	filtered, err := bus.Filter("ParentEvent", nil, &abxbus.FilterOptions{Past: true, Future: false, Limit: &limit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found == nil || len(filtered) != 1 {
+		t.Fatalf("expected find and filter to return one newest match, found=%#v filtered=%#v", found, filtered)
+	}
+	if found.EventID != filtered[0].EventID || found.EventID != second.EventID {
+		t.Fatalf("find should return first filter result/newest event, found=%s filtered=%s newest=%s", found.EventID, filtered[0].EventID, second.EventID)
+	}
+}
+
+func TestFindSupportsPayloadFieldNamedLimitViaEquals(t *testing.T) {
+	bus := abxbus.NewEventBus("FindLimitFieldBus", nil)
+	noMatch := bus.Emit(abxbus.NewBaseEvent("LimitFieldEvent", map[string]any{"limit": 3}))
+	target := bus.Emit(abxbus.NewBaseEvent("LimitFieldEvent", map[string]any{"limit": 5}))
+	if _, err := noMatch.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := target.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	match, err := bus.Find("LimitFieldEvent", nil, &abxbus.FindOptions{
+		Past:   true,
+		Future: false,
+		Equals: map[string]any{"limit": 5},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if match == nil || match.EventID != target.EventID {
+		t.Fatalf("expected payload field named limit to match target event, got %#v", match)
+	}
+	if match.EventID == noMatch.EventID {
+		t.Fatal("find matched the wrong limit payload")
+	}
+}
+
 func TestFilterLimitZeroAndNegativeReturnImmediatelyWithoutFutureWait(t *testing.T) {
 	bus := abxbus.NewEventBus("FilterLimitImmediateBus", nil)
 	t.Cleanup(bus.Destroy)
@@ -487,6 +594,17 @@ func TestFilterFutureOnlyTimesOutToEmptyList(t *testing.T) {
 	}
 }
 
+func TestFilterReturnsEmptyArrayWhenNoMatches(t *testing.T) {
+	bus := abxbus.NewEventBus("FilterEmptyBus", nil)
+	matches, err := bus.Filter("ParentEvent", nil, &abxbus.FilterOptions{Past: true, Future: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("expected empty match list, got %#v", matches)
+	}
+}
+
 func TestFilterReturnsPastMatchesNewestFirstAndRespectsLimit(t *testing.T) {
 	bus := abxbus.NewEventBus("FilterPastBus", nil)
 	first := bus.Emit(abxbus.NewBaseEvent("Work", map[string]any{"n": 1}))
@@ -505,6 +623,92 @@ func TestFilterReturnsPastMatchesNewestFirstAndRespectsLimit(t *testing.T) {
 	}
 	if len(matches) != 2 || matches[0].EventID != third.EventID || matches[1].EventID != second.EventID {
 		t.Fatalf("expected two newest matches [third, second], got %#v", matches)
+	}
+}
+
+func TestFilterRespectsWherePredicateNewestFirst(t *testing.T) {
+	bus := abxbus.NewEventBus("FilterWhereBus", nil)
+	first := bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"target_id": "same"}))
+	other := bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"target_id": "other"}))
+	second := bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"target_id": "same"}))
+	for _, event := range []*abxbus.BaseEvent{first, other, second} {
+		if _, err := event.Done(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	matches, err := bus.Filter("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
+		return event.Payload["target_id"] == "same"
+	}, &abxbus.FilterOptions{Past: true, Future: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 2 || matches[0].EventID != second.EventID || matches[1].EventID != first.EventID {
+		t.Fatalf("expected where-filtered newest-first matches [second, first], got %#v", matches)
+	}
+}
+
+func TestFilterWildcardMatchesAllEventTypesNewestFirst(t *testing.T) {
+	bus := abxbus.NewEventBus("FilterWildcardBus", nil)
+	userEvent := bus.Emit(abxbus.NewBaseEvent("UserActionEvent", map[string]any{"action": "login"}))
+	systemEvent := bus.Emit(abxbus.NewBaseEvent("SystemEvent", nil))
+	if _, err := userEvent.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := systemEvent.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	matches, err := bus.Filter("*", nil, &abxbus.FilterOptions{Past: true, Future: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) < 2 || matches[0].EventID != systemEvent.EventID || matches[1].EventID != userEvent.EventID {
+		t.Fatalf("expected wildcard newest-first matches [system, user], got %#v", matches)
+	}
+}
+
+func TestFilterPastWindowFiltersByAge(t *testing.T) {
+	bus := abxbus.NewEventBus("FilterPastWindowBus", nil)
+	oldEvent := bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
+	if _, err := oldEvent.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(120 * time.Millisecond)
+	newEvent := bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
+	if _, err := newEvent.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	matches, err := bus.Filter("ParentEvent", nil, &abxbus.FilterOptions{Past: 0.1, Future: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].EventID != newEvent.EventID {
+		t.Fatalf("expected only recent event inside past window, got %#v", matches)
+	}
+}
+
+func TestFilterFutureAppendsMatchAfterPastResults(t *testing.T) {
+	bus := abxbus.NewEventBus("FilterFutureAppendBus", nil)
+	pastEvent := bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
+	if _, err := pastEvent.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
+	}()
+	matches, err := bus.Filter("ParentEvent", nil, &abxbus.FilterOptions{Past: true, Future: 0.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("expected past match plus future match, got %#v", matches)
+	}
+	if matches[0].EventID != pastEvent.EventID {
+		t.Fatalf("future match should be appended after past results, got %#v", matches)
 	}
 }
 
