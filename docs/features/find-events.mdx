@@ -38,6 +38,27 @@ await bus.find(event_pattern, where, options?)
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+bus.Find(
+	"ResponseEvent",                         // event type string or "*"
+	func(event *abxbus.BaseEvent) bool {      // optional predicate
+		return true
+	},
+	&abxbus.FindOptions{
+		Past: true,                           // bool or seconds as float64/int
+		Future: false,                        // bool or seconds as float64/int
+		ChildOf: parentEvent,                 // optional lineage filter
+		Equals: map[string]any{               // event metadata or payload equality filters
+			"event_status": "completed",
+			"request_id": "abc",
+		},
+	},
+)
+```
+
+</Tab>
 </Tabs>
 
 ## Option semantics
@@ -75,6 +96,13 @@ const existing = await bus.find(ResponseEvent)
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+existing, err := bus.Find("ResponseEvent", nil, nil)
+```
+
+</Tab>
 </Tabs>
 
 ### 2) Wait only for future events
@@ -94,6 +122,16 @@ const future = await bus.find(ResponseEvent, { past: false, future: 5 })
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+future, err := bus.Find("ResponseEvent", nil, &abxbus.FindOptions{
+	Past: false,
+	Future: 5.0,
+})
+```
+
+</Tab>
 </Tabs>
 
 ### 3) Check recent history, then keep waiting briefly
@@ -110,6 +148,16 @@ match = await bus.find(ResponseEvent, past=5, future=5)
 
 ```ts
 const match = await bus.find(ResponseEvent, { past: 5, future: 5 })
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+match, err := bus.Find("ResponseEvent", nil, &abxbus.FindOptions{
+	Past: 5.0,
+	Future: 5.0,
+})
 ```
 
 </Tab>
@@ -137,6 +185,22 @@ const match = await bus.find(
   ResponseEvent,
   (event) => event.request_id === myId,
   { event_status: 'completed', future: 5 }
+)
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+match, err := bus.Find(
+	"ResponseEvent",
+	func(event *abxbus.BaseEvent) bool {
+		return event.Payload["request_id"] == myID
+	},
+	&abxbus.FindOptions{
+		Future: 5.0,
+		Equals: map[string]any{"event_status": "completed"},
+	},
 )
 ```
 
@@ -169,6 +233,22 @@ const anyCompleted = await bus.find(
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+anyCompleted, err := bus.Find(
+	"*",
+	func(event *abxbus.BaseEvent) bool {
+		return strings.HasSuffix(event.EventType, "ResultEvent")
+	},
+	&abxbus.FindOptions{
+		Future: 5.0,
+		Equals: map[string]any{"event_status": "completed"},
+	},
+)
+```
+
+</Tab>
 </Tabs>
 
 ### 6) Find descendants of a specific parent event
@@ -187,6 +267,22 @@ child = await bus.find(TabCreatedEvent, child_of=parent_event, past=5)
 ```ts
 const parentEvent = await bus.emit(NavigateToUrlEvent({ url: 'https://example.com' })).done()
 const child = await bus.find(TabCreatedEvent, { child_of: parentEvent, past: 5 })
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+parentEvent := bus.Emit(abxbus.NewBaseEvent("NavigateToUrlEvent", map[string]any{
+	"url": "https://example.com",
+}))
+if _, err := parentEvent.Done(ctx); err != nil {
+	panic(err)
+}
+child, err := bus.Find("TabCreatedEvent", nil, &abxbus.FindOptions{
+	ChildOf: parentEvent,
+	Past: 5.0,
+})
 ```
 
 </Tab>
@@ -215,6 +311,28 @@ const event =
   (await bus.find(ScreenshotEvent, { past: false, future: 5 })) ??
   bus.emit(ScreenshotEvent({}))
 await event.done()
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+event, err := bus.Find("ScreenshotEvent", nil, &abxbus.FindOptions{Past: 10.0, Future: false})
+if err != nil {
+	panic(err)
+}
+if event == nil {
+	event, err = bus.Find("ScreenshotEvent", nil, &abxbus.FindOptions{Past: false, Future: 5.0})
+	if err != nil {
+		panic(err)
+	}
+}
+if event == nil {
+	event = bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", nil))
+}
+if _, err := event.Done(ctx); err != nil {
+	panic(err)
+}
 ```
 
 </Tab>

@@ -55,6 +55,57 @@ const result = event.event_result
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+package main
+
+import (
+	"context"
+
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+)
+
+type DoMathPayload struct {
+	A int `json:"a"`
+	B int `json:"b"`
+}
+
+func main() {
+	bus := abxbus.NewEventBus("AppBus", nil)
+
+	abxbus.OnTyped[DoMathPayload, int](
+		bus,
+		"DoMathEvent",
+		"add",
+		func(ctx context.Context, payload DoMathPayload) (int, error) {
+			return payload.A + payload.B, nil
+		},
+		nil,
+	)
+
+	event, err := abxbus.NewTypedEventWithResult[DoMathPayload, int](
+		"DoMathEvent",
+		DoMathPayload{A: 2, B: 3},
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	event = bus.Emit(event)
+	result, err := event.EventResult(context.Background())
+	if err != nil {
+		panic(err)
+	}
+	typedResult, err := abxbus.EventResultAs[int](result)
+	if err != nil {
+		panic(err)
+	}
+	_ = typedResult
+}
+```
+
+</Tab>
 </Tabs>
 
 ## Aggregating multiple handler results
@@ -122,6 +173,44 @@ const merged_config = values.reduce((acc, value) => {
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+bus := abxbus.NewEventBus("AppBus", nil)
+
+bus.On("GetConfigEvent", "user_config", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	return map[string]any{"debug": true, "port": 8080}, nil
+}, nil)
+bus.On("GetConfigEvent", "system_config", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	return map[string]any{"debug": false, "timeout": 30}, nil
+}, nil)
+
+event := bus.Emit(abxbus.NewBaseEvent("GetConfigEvent", nil))
+values, err := event.EventResultsList(
+	context.Background(),
+	nil,
+	&abxbus.EventResultsListOptions{RaiseIfAny: false, RaiseIfNone: false},
+)
+if err != nil {
+	panic(err)
+}
+// []any{
+//   map[string]any{"debug": true, "port": 8080},
+//   map[string]any{"debug": false, "timeout": 30},
+// }
+
+mergedConfig := map[string]any{}
+for _, value := range values {
+	if config, ok := value.(map[string]any); ok {
+		for key, val := range config {
+			mergedConfig[key] = val
+		}
+	}
+}
+// map[string]any{"debug": false, "port": 8080, "timeout": 30}
+```
+
+</Tab>
 </Tabs>
 
 ## `event_results_list` / `eventResultsList` options
@@ -164,6 +253,35 @@ await event.eventResultsList({ timeout: 0.25 })
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+EventResultsList(
+	ctx context.Context,
+	include func(result any, eventResult *EventResult) bool,
+	options *EventResultsListOptions,
+) ([]any, error)
+
+type EventResultsListOptions struct {
+	Timeout     *float64
+	RaiseIfAny  bool
+	RaiseIfNone bool
+}
+
+// examples
+event.EventResultsList(ctx, nil, &abxbus.EventResultsListOptions{
+	RaiseIfAny: false,
+	RaiseIfNone: false,
+})
+event.EventResultsList(ctx, func(result any, eventResult *abxbus.EventResult) bool {
+	_, ok := result.(map[string]any)
+	return ok
+}, &abxbus.EventResultsListOptions{RaiseIfAny: false})
+timeout := 0.25
+event.EventResultsList(ctx, nil, &abxbus.EventResultsListOptions{Timeout: &timeout})
+```
+
+</Tab>
 </Tabs>
 
 - `raise_if_any`: raise if any handler ended with an error.
@@ -186,6 +304,16 @@ by_name = {result.handler_name: result.result for result in event.event_results.
 
 ```ts
 const byHandler = event.event_results
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+byName := map[string]any{}
+for _, result := range event.EventResults {
+	byName[result.HandlerName] = result.Result
+}
 ```
 
 </Tab>
