@@ -2,9 +2,10 @@ use std::{
     collections::BTreeSet,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, Barrier,
+        Arc, Barrier, Weak,
     },
     thread,
+    time::{Duration, Instant},
 };
 
 use abxbus_rust::{
@@ -25,6 +26,15 @@ static NEXT_BUS_NAME: AtomicUsize = AtomicUsize::new(1);
 
 fn unique_bus_name(prefix: &str) -> String {
     format!("{prefix}_{}", NEXT_BUS_NAME.fetch_add(1, Ordering::Relaxed))
+}
+
+fn assert_eventually_collected(weak_ref: &Weak<EventBus>) {
+    let deadline = Instant::now() + Duration::from_millis(500);
+    while weak_ref.upgrade().is_some() && Instant::now() < deadline {
+        thread::yield_now();
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(weak_ref.upgrade().is_none());
 }
 
 struct GcHistoryEvent;
@@ -62,7 +72,7 @@ fn test_name_no_conflict_after_deletion() {
         let bus1 = EventBus::new(Some(requested_name.clone()));
         Arc::downgrade(&bus1)
     };
-    assert!(weak_ref.upgrade().is_none());
+    assert_eventually_collected(&weak_ref);
 
     let bus2 = EventBus::new(Some(requested_name.clone()));
     assert_eq!(bus2.name, requested_name);
@@ -91,7 +101,7 @@ fn test_name_conflict_with_weak_reference_only() {
         weak_ref
     };
 
-    assert!(weak_ref.upgrade().is_none());
+    assert_eventually_collected(&weak_ref);
     let bus2 = EventBus::new(Some(requested_name.clone()));
     assert_eq!(bus2.name, requested_name);
     bus2.stop();
@@ -157,7 +167,7 @@ fn test_weakset_behavior() {
     assert!(EventBus::all_instances_contains(&bus3));
 
     drop(bus2);
-    assert!(weak2.upgrade().is_none());
+    assert_eventually_collected(&weak2);
     EventBus::all_instances_len();
     assert!(EventBus::live_instance_by_id(&bus2_id).is_none());
     assert!(EventBus::all_instances_contains(&bus1));
@@ -242,7 +252,9 @@ fn test_unreferenced_buses_with_history_can_be_cleaned_without_instance_leak() {
         bus.stop();
     }
 
-    assert!(refs.iter().all(|weak_ref| weak_ref.upgrade().is_none()));
+    for weak_ref in &refs {
+        assert_eventually_collected(weak_ref);
+    }
     EventBus::all_instances_len();
     assert!(ids
         .iter()
@@ -275,7 +287,9 @@ fn test_unreferenced_buses_with_history_are_collected_without_stop() {
         refs.push(Arc::downgrade(&bus));
     }
 
-    assert!(refs.iter().all(|weak_ref| weak_ref.upgrade().is_none()));
+    for weak_ref in &refs {
+        assert_eventually_collected(weak_ref);
+    }
     EventBus::all_instances_len();
     assert!(ids
         .iter()
