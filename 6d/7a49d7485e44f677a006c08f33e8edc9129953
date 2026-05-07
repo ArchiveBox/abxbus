@@ -1,0 +1,23 @@
+abxbus-rust/Cargo.toml
+  s_6a8c07f028b30c::t_8ae5b79d38f4b3 7-13
+abxbus-rust/tests/test_eventbus_name_conflict_gc.rs
+  s_6a8c07f028b30c::t_1ed42e49214896 5,8,31-39,75,104,170,255-257,290-292
+abxbus-rust/Cargo.lock
+  ai_agent 1-812
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "6d7a49d7485e44f677a006c08f33e8edc9129953",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
