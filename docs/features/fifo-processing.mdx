@@ -114,6 +114,58 @@ console.log(
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+	"time"
+
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+)
+
+func main() {
+	bus := abxbus.NewEventBus("FifoBus", nil)
+	startedOrder := []int{}
+	completedOrder := []int{}
+
+	bus.On("JobEvent", "on_job", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		order := event.Payload["order"].(int)
+		delayMS := event.Payload["delay_ms"].(int)
+		startedOrder = append(startedOrder, order)
+		time.Sleep(time.Duration(delayMS) * time.Millisecond)
+		completedOrder = append(completedOrder, order)
+		return nil, nil
+	}, nil)
+
+	emitted := []*abxbus.BaseEvent{
+		bus.Emit(abxbus.NewBaseEvent("JobEvent", map[string]any{"order": 0, "delay_ms": 30})),
+		bus.Emit(abxbus.NewBaseEvent("JobEvent", map[string]any{"order": 1, "delay_ms": 1})),
+		bus.Emit(abxbus.NewBaseEvent("JobEvent", map[string]any{"order": 2, "delay_ms": 20})),
+	}
+
+	bus.WaitUntilIdle(nil)
+
+	fmt.Println(startedOrder)
+	// [0 1 2]
+	fmt.Println(completedOrder)
+	// [0 1 2]
+	if !reflect.DeepEqual(startedOrder, []int{0, 1, 2}) {
+		panic("started order is not FIFO")
+	}
+	if !reflect.DeepEqual(completedOrder, []int{0, 1, 2}) {
+		panic("completed order is not FIFO")
+	}
+	fmt.Println(emitted[0].EventStartedAt != nil, emitted[1].EventStartedAt != nil, emitted[2].EventStartedAt != nil)
+	// true true true
+}
+```
+
+</Tab>
 </Tabs>
 
 ## Ambiguous case: slow then fast still runs serially
@@ -209,6 +261,38 @@ const treeLines = bus
   .filter((line) => line.includes('SlowEvent#') || line.includes('FastEvent#'))
 console.log(treeLines)
 // ['├── ✅ SlowEvent#6aa1 [14:09:10.120 (0.040s)]', '└── ✅ FastEvent#6aa2 [14:09:10.161 (0.001s)]']
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+bus := abxbus.NewEventBus("FifoBus", nil)
+trace := []string{}
+
+bus.On("SlowEvent", "on_slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	trace = append(trace, fmt.Sprintf("start:%s:%s", event.EventType, event.Payload["name"]))
+	time.Sleep(40 * time.Millisecond)
+	trace = append(trace, fmt.Sprintf("end:%s:%s", event.EventType, event.Payload["name"]))
+	return nil, nil
+}, nil)
+
+bus.On("FastEvent", "on_fast", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	trace = append(trace, fmt.Sprintf("start:%s:%s", event.EventType, event.Payload["name"]))
+	time.Sleep(1 * time.Millisecond)
+	trace = append(trace, fmt.Sprintf("end:%s:%s", event.EventType, event.Payload["name"]))
+	return nil, nil
+}, nil)
+
+slow := bus.Emit(abxbus.NewBaseEvent("SlowEvent", map[string]any{"name": "slow-a"}))
+fast := bus.Emit(abxbus.NewBaseEvent("FastEvent", map[string]any{"name": "fast-b"}))
+bus.WaitUntilIdle(nil)
+
+fmt.Println(trace)
+// [start:SlowEvent:slow-a end:SlowEvent:slow-a start:FastEvent:fast-b end:FastEvent:fast-b]
+fmt.Println(*slow.EventCompletedAt <= *fast.EventStartedAt)
+// true
+fmt.Println(bus.LogTree())
 ```
 
 </Tab>

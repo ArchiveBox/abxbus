@@ -3,7 +3,7 @@ title: Event History Store
 description: Understand queue vs history behavior and how retention settings trim old events.
 ---
 
-Both runtimes expose two related (but different) runtime stores:
+Each runtime exposes two related (but different) runtime stores:
 
 - `pending_event_queue`: events accepted by the bus but not yet started by the runloop
 - `event_history`: events the bus knows about (pending, started, and completed until trimmed)
@@ -46,7 +46,7 @@ The key difference: queue is "what still needs to start", history is "what this 
 - `max_history_size > 0` and `max_history_drop = false`: bus rejects new emits once history reaches the limit.
 - `max_history_size > 0` and `max_history_drop = true`: bus trims oldest history entries (prefers completed first; can drop uncompleted entries under extreme pressure).
 
-Both runtimes follow this policy. Internally, trim timing is implementation-specific (eager vs amortized cleanup), but externally the semantics above are the contract to rely on.
+All runtimes follow this policy. Internally, trim timing is implementation-specific (eager vs amortized cleanup), but externally the semantics above are the contract to rely on.
 
 ## Common configurations
 
@@ -72,6 +72,30 @@ const boundedDrop = new EventBus('BoundedDropBus', { max_history_size: 100, max_
 const boundedReject = new EventBus('BoundedRejectBus', { max_history_size: 100, max_history_drop: false })
 const unbounded = new EventBus('UnboundedBus', { max_history_size: null })
 const inFlightOnly = new EventBus('InFlightBus', { max_history_size: 0 })
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+maxHistory := 100
+zeroHistory := 0
+
+boundedDrop := abxbus.NewEventBus("BoundedDropBus", &abxbus.EventBusOptions{
+	MaxHistorySize: &maxHistory,
+	MaxHistoryDrop: true,
+})
+boundedReject := abxbus.NewEventBus("BoundedRejectBus", &abxbus.EventBusOptions{
+	MaxHistorySize: &maxHistory,
+	MaxHistoryDrop: false,
+})
+unbounded := abxbus.NewEventBus("UnboundedBus", &abxbus.EventBusOptions{
+	MaxHistorySize: nil, // nil in options uses the default; set the store to nil for unbounded history.
+})
+unbounded.EventHistory.MaxHistorySize = nil
+inFlightOnly := abxbus.NewEventBus("InFlightBus", &abxbus.EventBusOptions{
+	MaxHistorySize: &zeroHistory,
+})
 ```
 
 </Tab>
@@ -105,6 +129,45 @@ console.log('pending_event_queue=', bus.pending_event_queue.length, 'event_histo
 
 await event.done()
 console.log('after completion -> pending_event_queue=', bus.pending_event_queue.length, 'event_history=', bus.event_history.size)
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+event := bus.Emit(abxbus.NewBaseEvent("MyEvent", nil))
+
+var before struct {
+	PendingEventQueue []string       `json:"pending_event_queue"`
+	EventHistory      map[string]any `json:"event_history"`
+}
+snapshot, err := bus.ToJSON()
+if err != nil {
+	panic(err)
+}
+if err := json.Unmarshal(snapshot, &before); err != nil {
+	panic(err)
+}
+fmt.Println("pending_event_queue=", len(before.PendingEventQueue), "event_history=", len(before.EventHistory))
+// pending_event_queue= 1 event_history= 1
+
+if _, err := event.Done(ctx); err != nil {
+	panic(err)
+}
+
+var after struct {
+	PendingEventQueue []string       `json:"pending_event_queue"`
+	EventHistory      map[string]any `json:"event_history"`
+}
+snapshot, err = bus.ToJSON()
+if err != nil {
+	panic(err)
+}
+if err := json.Unmarshal(snapshot, &after); err != nil {
+	panic(err)
+}
+fmt.Println("after completion -> pending_event_queue=", len(after.PendingEventQueue), "event_history=", len(after.EventHistory))
+// after completion -> pending_event_queue= 0 event_history= 1
 ```
 
 </Tab>

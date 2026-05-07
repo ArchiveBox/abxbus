@@ -3,7 +3,7 @@ title: Async and Sync Handlers
 description: Mix sync and async handlers across functions and method styles.
 ---
 
-Both runtimes support registering sync and async handlers together.
+Python and TypeScript support registering sync and async handlers together. Go handlers use one context-aware function shape; handlers can return immediately, block, or coordinate goroutines, while AbxBus controls event/handler concurrency with bus options.
 
 Supported handler shapes:
 
@@ -120,6 +120,47 @@ bus.on(WorkEvent, HandlerSet.staticSync)
 bus.on(WorkEvent, HandlerSet.staticAsync)
 bus.on(WorkEvent, handlers.instanceSync.bind(handlers))
 bus.on(WorkEvent, handlers.instanceAsync.bind(handlers))
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+)
+
+func bareHandler(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	return fmt.Sprintf("bare:%s", event.Payload["task_id"]), nil
+}
+
+type HandlerSet struct {
+	Prefix string
+}
+
+func StaticStyleHandler(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	time.Sleep(10 * time.Millisecond)
+	return fmt.Sprintf("static:%s", event.Payload["task_id"]), nil
+}
+
+func (h *HandlerSet) InstanceHandler(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	return fmt.Sprintf("%s-instance:%s", h.Prefix, event.Payload["task_id"]), nil
+}
+
+func main() {
+	bus := abxbus.NewEventBus("AppBus", nil)
+	handlers := &HandlerSet{Prefix: "svc"}
+
+	bus.On("WorkEvent", "bare_handler", bareHandler, nil)
+	bus.On("WorkEvent", "static_style_handler", StaticStyleHandler, nil)
+	bus.On("WorkEvent", "instance_handler", handlers.InstanceHandler, nil)
+}
 ```
 
 </Tab>

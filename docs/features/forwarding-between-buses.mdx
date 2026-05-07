@@ -150,6 +150,76 @@ console.log(event.event_path)
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+)
+
+type AuthService struct {
+	bus *abxbus.EventBus
+}
+
+type RelayService struct {
+	bus *abxbus.EventBus
+}
+
+type BillingService struct {
+	bus *abxbus.EventBus
+}
+
+func main() {
+	maxHistory := 100
+	zeroHistory := 0
+
+	auth := &AuthService{bus: abxbus.NewEventBus("AuthBus", &abxbus.EventBusOptions{
+		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+		MaxHistorySize:          &maxHistory,
+	})}
+	relay := &RelayService{bus: abxbus.NewEventBus("RelayBus", &abxbus.EventBusOptions{
+		EventConcurrency: abxbus.EventConcurrencyParallel,
+		MaxHistorySize:   &zeroHistory,
+	})}
+	billing := &BillingService{bus: abxbus.NewEventBus("BillingBus", &abxbus.EventBusOptions{
+		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+		MaxHistorySize:          &maxHistory,
+	})}
+
+	auth.bus.On("UserCreatedEvent", "on_user_created", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return fmt.Sprintf("auth-ok:%s", event.Payload["user_id"]), nil
+	}, nil)
+	billing.bus.On("UserCreatedEvent", "on_user_created", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return fmt.Sprintf("billing-ok:%s", event.Payload["user_id"]), nil
+	}, nil)
+
+	auth.bus.On("*", "forward_to_relay", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return relay.bus.Emit(event), nil
+	}, nil)
+	relay.bus.On("*", "forward_to_billing", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return billing.bus.Emit(event), nil
+	}, nil)
+
+	event := auth.bus.Emit(abxbus.NewBaseEvent("UserCreatedEvent", map[string]any{"user_id": "u-a8d1"}))
+	result, err := event.EventResult(context.Background())
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(result)
+	// auth-ok:u-a8d1
+	fmt.Println(event.EventPath)
+	// [AuthBus#a8d1 RelayBus#3f2c BillingBus#b91e]
+}
+```
+
+</Tab>
 </Tabs>
 
 ## Uni-directional and bi-directional forwarding
@@ -185,6 +255,24 @@ left.on('*', right.emit)
 
 // bi-directional (add reverse path)
 right.on('*', left.emit)
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+left := abxbus.NewEventBus("LeftBus", nil)
+right := abxbus.NewEventBus("RightBus", nil)
+
+// uni-directional
+left.On("*", "forward_to_right", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	return right.Emit(event), nil
+}, nil)
+
+// bi-directional (add reverse path)
+right.On("*", "forward_to_left", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	return left.Emit(event), nil
+}, nil)
 ```
 
 </Tab>
@@ -252,6 +340,34 @@ await event.done()
 
 console.log(event.event_path)
 // ['BusA#a8d1', 'BusB#3f2c', 'BusC#b91e']
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+busA := abxbus.NewEventBus("BusA", nil)
+busB := abxbus.NewEventBus("BusB", nil)
+busC := abxbus.NewEventBus("BusC", nil)
+
+// cycle: A -> B -> C -> A
+busA.On("*", "forward_to_b", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	return busB.Emit(event), nil
+}, nil)
+busB.On("*", "forward_to_c", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	return busC.Emit(event), nil
+}, nil)
+busC.On("*", "forward_to_a", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	return busA.Emit(event), nil
+}, nil)
+
+event := busA.Emit(abxbus.NewBaseEvent("PingEvent", map[string]any{"message": "hello"}))
+if _, err := event.Done(context.Background()); err != nil {
+	panic(err)
+}
+
+fmt.Println(event.EventPath)
+// [BusA#a8d1 BusB#3f2c BusC#b91e]
 ```
 
 </Tab>
