@@ -52,7 +52,18 @@ type OrderResult struct {
 	OK bool `json:"ok"`
 }
 
-event, err := abxbus.NewTypedEvent("OrderCreatedEvent", OrderCreatedPayload{
+bus := abxbus.NewEventBus("OrdersBus", nil)
+abxbus.OnTyped[OrderCreatedPayload, OrderResult](
+	bus,
+	"OrderCreatedEvent",
+	"handle_order",
+	func(ctx context.Context, payload OrderCreatedPayload) (OrderResult, error) {
+		return OrderResult{OK: payload.TotalAmount > 0}, nil
+	},
+	nil,
+)
+
+event, err := abxbus.NewTypedEventWithResult[OrderCreatedPayload, OrderResult]("OrderCreatedEvent", OrderCreatedPayload{
 	OrderID:     "order-123",
 	CustomerID:  "customer-456",
 	TotalAmount: 42.50,
@@ -61,11 +72,15 @@ if err != nil {
 	panic(err)
 }
 
-payload, err := abxbus.EventPayloadAs[OrderCreatedPayload](event)
+result, err := bus.Emit(event).EventResult(context.Background())
 if err != nil {
 	panic(err)
 }
-_ = payload
+typedResult, err := abxbus.EventResultAs[OrderResult](result)
+if err != nil {
+	panic(err)
+}
+_ = typedResult
 ```
 
 </Tab>
@@ -73,4 +88,4 @@ _ = payload
 
 - Python payload validation is powered by Pydantic models.
 - TypeScript payload and result validation is powered by Zod schemas.
-- Go uses typed struct helpers for static shape at call sites and JSON Schema via `event_result_type` for runtime result validation.
+- Go uses typed struct helpers for static shape at call sites and derives JSON Schema from the declared result type for runtime result validation.
