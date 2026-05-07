@@ -90,6 +90,29 @@ func TestGoToOtherRuntimeToGoEventRoundtripsPreserveJSONShape(t *testing.T) {
 	}
 }
 
+func TestOtherRuntimeToGoToSameRuntimeEventRoundtripsPreserveJSONShape(t *testing.T) {
+	cases := roundtripEventCases()
+	events := make([]any, 0, len(cases))
+	for _, tc := range cases {
+		events = append(events, tc.event)
+	}
+	for _, runtime := range []string{"python", "ts", "rust"} {
+		t.Run(runtime, func(t *testing.T) {
+			originRuntime := runRuntimeRoundtrip(t, runtime, "events", events)
+			assertEventRoundtripEqualAllowingSchemaNormalization(t, events, originRuntime)
+			assertGoResultSchemaSemantics(t, originRuntime, cases)
+
+			throughGo := runRuntimeRoundtrip(t, "go", "events", originRuntime)
+			assertJSONEqual(t, originRuntime, throughGo)
+			assertGoResultSchemaSemantics(t, throughGo, cases)
+
+			backThroughOrigin := runRuntimeRoundtrip(t, runtime, "events", throughGo)
+			assertJSONEqual(t, originRuntime, backThroughOrigin)
+			assertGoResultSchemaSemantics(t, backThroughOrigin, cases)
+		})
+	}
+}
+
 func TestGoToOtherRuntimeToGoBusRoundtripsPreserveJSONShape(t *testing.T) {
 	bus := roundtripBusFixture()
 	for _, runtime := range []string{"python", "ts", "rust"} {
@@ -98,6 +121,22 @@ func TestGoToOtherRuntimeToGoBusRoundtripsPreserveJSONShape(t *testing.T) {
 			assertJSONEqual(t, bus, throughRuntime)
 			backThroughGo := runRuntimeRoundtrip(t, "go", "bus", throughRuntime)
 			assertJSONEqual(t, bus, backThroughGo)
+		})
+	}
+}
+
+func TestOtherRuntimeToGoToSameRuntimeBusRoundtripsPreserveJSONShape(t *testing.T) {
+	bus := roundtripBusFixture()
+	for _, runtime := range []string{"python", "ts", "rust"} {
+		t.Run(runtime, func(t *testing.T) {
+			originRuntime := runRuntimeRoundtrip(t, runtime, "bus", bus)
+			assertJSONEqual(t, bus, originRuntime)
+
+			throughGo := runRuntimeRoundtrip(t, "go", "bus", originRuntime)
+			assertJSONEqual(t, originRuntime, throughGo)
+
+			backThroughOrigin := runRuntimeRoundtrip(t, runtime, "bus", throughGo)
+			assertJSONEqual(t, originRuntime, backThroughOrigin)
 		})
 	}
 }
@@ -132,9 +171,6 @@ func runRuntimeRoundtrip(t *testing.T, runtime string, mode string, payload any)
 		cmd.Dir = repoRoot
 	case "rust":
 		rustRoot := filepath.Join(repoRoot, "abxbus-rust")
-		t.Cleanup(func() {
-			_ = os.Remove(filepath.Join(rustRoot, "Cargo.lock"))
-		})
 		cmd = exec.Command("cargo", "run", "--quiet", "--manifest-path", filepath.Join(rustRoot, "Cargo.toml"), "--target-dir", filepath.Join(tempDir, "rust-target"), "--bin", "abxbus-rust-roundtrip", "--", mode, inputPath, outputPath)
 		cmd.Dir = repoRoot
 	default:
