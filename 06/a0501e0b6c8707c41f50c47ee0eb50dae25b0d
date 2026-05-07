@@ -1,0 +1,42 @@
+abxbus-go/middleware.go
+  s_6a8c07f028b30c::t_48d26e48d17faa 6,15-16
+docs/api/eventhandler.mdx
+  s_6a8c07f028b30c::t_d1a73269580b43 40-46,88-103
+docs/api/eventhistory.mdx
+  s_6a8c07f028b30c::t_5a824ad3b7d834 8,18,77
+  s_6a8c07f028b30c::t_9e1aec1af49c45 56-71,101-111,155-160
+abxbus-go/otel_middleware.go
+  s_6a8c07f028b30c::t_5a5cc9bf3c524f 74-76
+abxbus-go/tests/eventbusmiddleware_test.go
+  s_6a8c07f028b30c::t_e4cd49513b059e 13,24-31,35,38-44,49-56
+docs/api/eventbusmiddleware.mdx
+  s_6a8c07f028b30c::t_78c338897b5faa 53-66,97-109,183-215,237-242
+abxbus-go/event_bus.go
+  s_6a8c07f028b30c::t_7792e7443e310c 203-208,238,243-244,251,254-256,260-263,278-280,291-293
+abxbus-go/tests/eventbus_edge_cases_test.go
+  s_6a8c07f028b30c::t_2a3702f16f6851 32-97
+docs/api/eventresult.mdx
+  s_6a8c07f028b30c::t_d6ae9845a2dcfe 42-54,83-91,136-153
+  s_6a8c07f028b30c::t_320a319b665958 22-23
+docs/api/baseevent.mdx
+  s_6a8c07f028b30c::t_3d91be421de359 60,370
+  s_6a8c07f028b30c::t_e2fd781cb80240 40-56,64-65,116-130,153-159,186-200,245-251,295-312,366-369,371-377
+abxbus-go/base_event.go
+  s_6a8c07f028b30c::t_ef997bca7839dd 264-277
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "06a0501e0b6c8707c41f50c47ee0eb50dae25b0d",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
