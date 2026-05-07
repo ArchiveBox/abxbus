@@ -1,0 +1,37 @@
+tests/test_event_result.py
+  s_6a8c07f028b30c::t_c7ebe2725a58be 183-184,189-193,196-198,201-202,205-211,217
+  s_6a8c07f028b30c::t_c032708af711f3 216
+abxbus-rust/src/event_bus.rs
+  s_6a8c07f028b30c::t_af629775185f45 2108-2110
+abxbus-rust/src/base_event.rs
+  s_6a8c07f028b30c::t_84dc87bb3cad92 587,602,604
+  s_6a8c07f028b30c::t_3634052ed54039 48-49,127
+  s_6a8c07f028b30c::t_d8014a83196558 634-636
+  s_6a8c07f028b30c::t_e57b6d5a0813f9 678,749,761-765,770,780-795
+  s_6a8c07f028b30c::t_9441b8ccbac936 759-760,771-774
+  s_6a8c07f028b30c::t_07fe0454099b8f 766-769
+  s_6a8c07f028b30c::t_98c9ffdff5f34b 520,528-545,549-551
+abxbus-rust/tests/test_event_result.rs
+  s_6a8c07f028b30c::t_d36f5a3544eff7 907-909,911-915,917-960,971-980,985,987
+  s_6a8c07f028b30c::t_a15de4bc1a73f9 910,981-984,986,1059-1062
+  s_6a8c07f028b30c::t_82881904f6ee38 992-1024,1039-1045,1049-1058,1063-1088
+  s_6a8c07f028b30c::t_34ba89c4d4be03 1025-1038,1046-1048
+abxbus-ts/tests/EventBus.test.ts
+  s_6a8c07f028b30c::t_9b9ad4b347f73e 683,685-713,721
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "b5d676169059fbf0527efe167a1a789b0cd53175",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
