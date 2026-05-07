@@ -866,6 +866,7 @@ test('ts_to_go_roundtrip preserves event fields and result type semantics', asyn
       assert.ok(key in go_event, `missing key after go roundtrip: ${key}`)
       if (key === 'event_result_type') {
         assert.equal(typeof go_event[key], 'object')
+        assert.deepEqual(go_event[key], value, `event_result_type schema changed after go roundtrip: ${event_type}`)
         assertSchemaSemanticsEqual(
           value,
           go_event[key],

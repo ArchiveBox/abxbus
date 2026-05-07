@@ -59,9 +59,8 @@ func TestGoRoundtripCLIPreservesEventJSONShape(t *testing.T) {
 		t.Fatalf("roundtrip event payload mismatch: %#v", events)
 	}
 	expectedSchema := map[string]any{
-		"$schema": "https://json-schema.org/draft/2020-12/schema",
-		"type":    "array",
-		"items":   map[string]any{"type": "string"},
+		"type":  "array",
+		"items": map[string]any{"type": "string"},
 	}
 	if !reflect.DeepEqual(events[0]["event_result_type"], expectedSchema) {
 		t.Fatalf("event_result_type schema did not roundtrip: %#v", events[0]["event_result_type"])

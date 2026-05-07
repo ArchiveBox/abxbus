@@ -562,6 +562,7 @@ def _assert_events_roundtrip_matches_original(
             assert key in runtime_event, f'missing key after {context}: {key}'
             if key == 'event_result_type':
                 assert isinstance(runtime_event[key], dict), 'event_result_type should serialize as JSON schema dict'
+                assert runtime_event[key] == value, f'event_result_type schema changed after {context}'
                 _assert_result_type_semantics_equal(
                     semantics_case.event.event_result_type,
                     runtime_event[key],
@@ -579,6 +580,7 @@ def _assert_events_roundtrip_matches_original(
             assert key in restored_dump, f'missing key after python reload from {context}: {key}'
             if key == 'event_result_type':
                 assert isinstance(restored_dump[key], dict), 'event_result_type should remain JSON schema after reload'
+                assert restored_dump[key] == value, f'event_result_type schema changed after python reload from {context}'
                 _assert_result_type_semantics_equal(
                     semantics_case.event.event_result_type,
                     restored_dump[key],
@@ -733,6 +735,7 @@ def test_python_to_go_roundtrip_preserves_event_fields_and_result_type_semantics
             assert key in go_event, f'missing key after go roundtrip: {key}'
             if key == 'event_result_type':
                 assert isinstance(go_event[key], dict), 'event_result_type should serialize as JSON schema dict'
+                assert go_event[key] == value, f'event_result_type schema changed after go roundtrip: {event_type}'
                 _assert_result_type_semantics_equal(
                     semantics_case.event.event_result_type,
                     go_event[key],
@@ -750,6 +753,7 @@ def test_python_to_go_roundtrip_preserves_event_fields_and_result_type_semantics
             assert key in restored_dump, f'missing key after python reload: {key}'
             if key == 'event_result_type':
                 assert isinstance(restored_dump[key], dict), 'event_result_type should remain JSON schema after reload'
+                assert restored_dump[key] == value, f'event_result_type schema changed after python reload from go: {event_type}'
                 _assert_result_type_semantics_equal(
                     semantics_case.event.event_result_type,
                     restored_dump[key],

@@ -176,7 +176,7 @@ func (e *BaseEvent) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		e.EventResultType = normalizeEventResultTypeSchema(resultType)
-		if rawEventResultTypeHasDraftSchema(m.EventResultType) {
+		if rawEventResultTypeIsObject(m.EventResultType) {
 			e.eventResultTypeRaw = append(json.RawMessage(nil), m.EventResultType...)
 		} else {
 			e.eventResultTypeRaw = nil
@@ -279,27 +279,45 @@ func (e *BaseEvent) eventResultTypeJSONValue() any {
 	if e.EventResultType == nil {
 		return nil
 	}
-	if len(e.eventResultTypeRaw) > 0 && rawMessageMatchesValue(e.eventResultTypeRaw, e.EventResultType) {
+	if len(e.eventResultTypeRaw) > 0 && rawEventResultTypeMatchesValue(e.eventResultTypeRaw, e.EventResultType) {
 		return json.RawMessage(e.eventResultTypeRaw)
 	}
 	return normalizeEventResultTypeSchema(e.EventResultType)
 }
 
-func rawEventResultTypeHasDraftSchema(raw json.RawMessage) bool {
+func rawEventResultTypeIsObject(raw json.RawMessage) bool {
 	var schema map[string]any
 	if err := json.Unmarshal(raw, &schema); err != nil {
 		return false
 	}
-	_, ok := schema["$schema"].(string)
-	return ok
+	return true
 }
 
-func rawMessageMatchesValue(raw json.RawMessage, value any) bool {
+func rawEventResultTypeMatchesValue(raw json.RawMessage, value any) bool {
 	var rawValue any
 	if err := json.Unmarshal(raw, &rawValue); err != nil {
 		return false
 	}
-	return reflect.DeepEqual(normalizeJSONValue(rawValue), normalizeJSONValue(value))
+	normalizedRaw := normalizeJSONValue(rawValue)
+	normalizedValue := normalizeJSONValue(value)
+	if reflect.DeepEqual(normalizedRaw, normalizedValue) {
+		return true
+	}
+	rawSchema, rawOK := normalizedRaw.(map[string]any)
+	valueSchema, valueOK := normalizedValue.(map[string]any)
+	if !rawOK || !valueOK {
+		return false
+	}
+	if _, rawHasDraftSchema := rawSchema["$schema"]; rawHasDraftSchema {
+		return false
+	}
+	valueSchemaWithoutDraft := make(map[string]any, len(valueSchema))
+	for key, entry := range valueSchema {
+		if key != "$schema" {
+			valueSchemaWithoutDraft[key] = entry
+		}
+	}
+	return reflect.DeepEqual(rawSchema, valueSchemaWithoutDraft)
 }
 
 func normalizeEventResultTypeSchema(value any) any {
