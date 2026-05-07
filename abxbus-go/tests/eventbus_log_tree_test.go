@@ -12,7 +12,7 @@ import (
 func TestLogTreeShowsParentChildAndHandlerResults(t *testing.T) {
 	bus := abxbus.NewEventBus("TreeBus", nil)
 	bus.On("RootEvent", "root", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
-		child := bus.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
+		child := e.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
 		if _, err := child.Done(context.Background()); err != nil {
 			return nil, err
 		}

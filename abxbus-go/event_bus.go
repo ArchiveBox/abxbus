@@ -284,17 +284,6 @@ func (b *EventBus) Emit(event *BaseEvent) *BaseEvent {
 		}
 	}
 	original_event.EventPath = append(original_event.EventPath, b.Label())
-	if original_event.EventParentID == nil && original_event.EventEmittedByHandlerID == nil {
-		if active := b.locks.getActiveHandlerResult(); active != nil {
-			if active.EventID != original_event.EventID {
-				parent_id := active.EventID
-				handler_id := active.HandlerID
-				original_event.EventParentID = &parent_id
-				original_event.EventEmittedByHandlerID = &handler_id
-				active.addChild(original_event)
-			}
-		}
-	}
 	b.mu.Lock()
 	b.EventHistory.AddEvent(original_event)
 	b.resolveFindWaitersLocked(original_event)

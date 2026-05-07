@@ -60,6 +60,16 @@ class RoundtripCase:
     invalid_results: list[Any]
 
 
+@dataclass(slots=True)
+class BusResumeRoundtripCase:
+    source_bus: EventBus
+    source_dump: dict[str, Any]
+    handler_one_id: str
+    handler_two_id: str
+    event_one_id: str
+    event_two_id: str
+
+
 class PyTsIntResultEvent(BaseEvent[int]):
     value: int
     label: str
@@ -530,6 +540,56 @@ def _go_roundtrip_bus(payload: dict[str, Any], tmp_path: Path) -> dict[str, Any]
     return cast(dict[str, Any], result)
 
 
+def _assert_events_roundtrip_matches_original(
+    original_dumped: list[dict[str, Any]],
+    roundtripped: list[dict[str, Any]],
+    cases_by_type: dict[str, RoundtripCase],
+    context: str,
+) -> None:
+    assert len(roundtripped) == len(original_dumped)
+
+    for i, original in enumerate(original_dumped):
+        runtime_event = roundtripped[i]
+        assert isinstance(runtime_event, dict)
+
+        event_type = str(original.get('event_type'))
+        semantics_case = cases_by_type.get(event_type)
+        assert semantics_case is not None, f'missing semantics case for event_type={event_type}'
+
+        _assert_json_shape_equal(runtime_event, original, f'{context} {event_type}')
+
+        for key, value in original.items():
+            assert key in runtime_event, f'missing key after {context}: {key}'
+            if key == 'event_result_type':
+                assert isinstance(runtime_event[key], dict), 'event_result_type should serialize as JSON schema dict'
+                _assert_result_type_semantics_equal(
+                    semantics_case.event.event_result_type,
+                    runtime_event[key],
+                    semantics_case.valid_results,
+                    semantics_case.invalid_results,
+                    f'{context} {event_type}',
+                )
+            else:
+                assert runtime_event[key] == value, f'field changed after {context}: {key}'
+
+        restored = BaseEvent[Any].model_validate(runtime_event)
+        restored_dump = restored.model_dump(mode='json')
+        _assert_json_shape_equal(restored_dump, original, f'python reload after {context} {event_type}')
+        for key, value in original.items():
+            assert key in restored_dump, f'missing key after python reload from {context}: {key}'
+            if key == 'event_result_type':
+                assert isinstance(restored_dump[key], dict), 'event_result_type should remain JSON schema after reload'
+                _assert_result_type_semantics_equal(
+                    semantics_case.event.event_result_type,
+                    restored_dump[key],
+                    semantics_case.valid_results,
+                    semantics_case.invalid_results,
+                    f'python reload after {context} {event_type}',
+                )
+            else:
+                assert restored_dump[key] == value, f'field changed after python reload from {context}: {key}'
+
+
 def test_python_to_ts_roundtrip_preserves_event_fields_and_result_type_semantics(tmp_path: Path) -> None:
     cases = _build_python_roundtrip_cases()
     events = [entry.event for entry in cases]
@@ -701,6 +761,42 @@ def test_python_to_go_roundtrip_preserves_event_fields_and_result_type_semantics
                 assert restored_dump[key] == value, f'field changed after python reload: {key}'
 
 
+def test_python_to_rust_to_go_to_python_roundtrip_preserves_event_fields_and_result_type_semantics(
+    tmp_path: Path,
+) -> None:
+    cases = _build_python_roundtrip_cases()
+    events = [entry.event for entry in cases]
+    cases_by_type = {entry.event.event_type: entry for entry in cases}
+    python_dumped = [event.model_dump(mode='json') for event in events]
+
+    rust_roundtripped = _rust_roundtrip_events(python_dumped, tmp_path)
+    go_roundtripped = _go_roundtrip_events(rust_roundtripped, tmp_path)
+    _assert_events_roundtrip_matches_original(
+        python_dumped,
+        go_roundtripped,
+        cases_by_type,
+        'python -> rust -> go roundtrip',
+    )
+
+
+def test_python_to_go_to_rust_to_python_roundtrip_preserves_event_fields_and_result_type_semantics(
+    tmp_path: Path,
+) -> None:
+    cases = _build_python_roundtrip_cases()
+    events = [entry.event for entry in cases]
+    cases_by_type = {entry.event.event_type: entry for entry in cases}
+    python_dumped = [event.model_dump(mode='json') for event in events]
+
+    go_roundtripped = _go_roundtrip_events(python_dumped, tmp_path)
+    rust_roundtripped = _rust_roundtrip_events(go_roundtripped, tmp_path)
+    _assert_events_roundtrip_matches_original(
+        python_dumped,
+        rust_roundtripped,
+        cases_by_type,
+        'python -> go -> rust roundtrip',
+    )
+
+
 async def test_python_to_ts_roundtrip_schema_enforcement_after_reload(tmp_path: Path) -> None:
     events = [entry.event for entry in _build_python_roundtrip_cases()]
     python_dumped = [event.model_dump(mode='json') for event in events]
@@ -825,6 +921,86 @@ class PyTsBusResumeEvent(BaseEvent[str]):
     label: str
 
 
+def _build_bus_resume_roundtrip_case(name: str, bus_id: str) -> BusResumeRoundtripCase:
+    source_bus = EventBus(
+        name=name,
+        id=bus_id,
+        event_handler_detect_file_paths=False,
+        event_handler_concurrency='serial',
+        event_handler_completion='all',
+    )
+
+    async def handler_one(event: PyTsBusResumeEvent) -> str:
+        return f'h1:{event.label}'
+
+    async def handler_two(event: PyTsBusResumeEvent) -> str:
+        return f'h2:{event.label}'
+
+    handler_one_entry = source_bus.on(PyTsBusResumeEvent, handler_one)
+    handler_two_entry = source_bus.on(PyTsBusResumeEvent, handler_two)
+    assert handler_one_entry.id is not None
+    assert handler_two_entry.id is not None
+
+    event_one = PyTsBusResumeEvent(label='e1')
+    event_two = PyTsBusResumeEvent(label='e2')
+    seeded = event_one.event_result_update(handler=handler_one_entry, eventbus=source_bus, status='pending')
+    event_one.event_result_update(handler=handler_two_entry, eventbus=source_bus, status='pending')
+    seeded.update(status='completed', result='seeded')
+
+    source_bus.event_history[event_one.event_id] = event_one
+    source_bus.event_history[event_two.event_id] = event_two
+    source_bus.pending_event_queue = CleanShutdownQueue[BaseEvent[Any]](maxsize=0)
+    source_bus.pending_event_queue.put_nowait(event_one)
+    source_bus.pending_event_queue.put_nowait(event_two)
+
+    return BusResumeRoundtripCase(
+        source_bus=source_bus,
+        source_dump=source_bus.model_dump(),
+        handler_one_id=handler_one_entry.id,
+        handler_two_id=handler_two_entry.id,
+        event_one_id=event_one.event_id,
+        event_two_id=event_two.event_id,
+    )
+
+
+async def _assert_bus_roundtrip_rehydrates_and_resumes(
+    case: BusResumeRoundtripCase,
+    roundtripped: dict[str, Any],
+    context: str,
+) -> None:
+    _assert_json_shape_equal(roundtripped, case.source_dump, context)
+    restored = EventBus.validate(roundtripped)
+    restored_dump = restored.model_dump()
+    _assert_json_shape_equal(restored_dump, case.source_dump, f'{context} python reload')
+
+    assert restored_dump['handlers'] == case.source_dump['handlers']
+    assert restored_dump['handlers_by_key'] == case.source_dump['handlers_by_key']
+    assert restored_dump['pending_event_queue'] == case.source_dump['pending_event_queue']
+    assert set(restored_dump['event_history']) == set(case.source_dump['event_history'])
+
+    restored_event_one = restored.event_history[case.event_one_id]
+    preseeded = restored_event_one.event_results[case.handler_one_id]
+    assert preseeded.status == 'completed'
+    assert preseeded.result == 'seeded'
+    assert preseeded.handler is restored.handlers[case.handler_one_id]
+
+    trigger = restored.emit(PyTsBusResumeEvent(label='e3'))
+    await asyncio.wait_for(trigger, timeout=EVENT_WAIT_TIMEOUT_SECONDS)
+
+    done_one = restored.event_history[case.event_one_id]
+    done_two = restored.event_history[case.event_two_id]
+    done_three = restored.event_history[trigger.event_id]
+    assert done_three.event_status == 'completed'
+    if restored.pending_event_queue is not None:
+        assert restored.pending_event_queue.qsize() == 0
+    assert all(result.status == 'completed' for result in done_one.event_results.values())
+    assert all(result.status == 'completed' for result in done_two.event_results.values())
+    assert done_one.event_results[case.handler_one_id].result == 'seeded'
+    assert done_one.event_results[case.handler_two_id].result is None
+
+    await restored.stop(clear=True)
+
+
 @pytest.mark.asyncio
 async def test_python_to_ts_to_python_bus_roundtrip_rehydrates_and_resumes(tmp_path: Path) -> None:
     source_bus = EventBus(
@@ -894,6 +1070,38 @@ async def test_python_to_ts_to_python_bus_roundtrip_rehydrates_and_resumes(tmp_p
 
     await source_bus.stop(clear=True)
     await restored.stop(clear=True)
+
+
+@pytest.mark.asyncio
+async def test_python_to_rust_to_go_to_python_bus_roundtrip_rehydrates_and_resumes(tmp_path: Path) -> None:
+    case = _build_bus_resume_roundtrip_case(
+        name='PyRustGoBusSource',
+        bus_id='018f8e40-1234-7000-8000-00000000bb25',
+    )
+    rust_roundtripped = _rust_roundtrip_bus(case.source_dump, tmp_path)
+    go_roundtripped = _go_roundtrip_bus(rust_roundtripped, tmp_path)
+    await _assert_bus_roundtrip_rehydrates_and_resumes(
+        case,
+        go_roundtripped,
+        'python -> rust -> go bus roundtrip',
+    )
+    await case.source_bus.stop(clear=True)
+
+
+@pytest.mark.asyncio
+async def test_python_to_go_to_rust_to_python_bus_roundtrip_rehydrates_and_resumes(tmp_path: Path) -> None:
+    case = _build_bus_resume_roundtrip_case(
+        name='PyGoRustBusSource',
+        bus_id='018f8e40-1234-7000-8000-00000000bb26',
+    )
+    go_roundtripped = _go_roundtrip_bus(case.source_dump, tmp_path)
+    rust_roundtripped = _rust_roundtrip_bus(go_roundtripped, tmp_path)
+    await _assert_bus_roundtrip_rehydrates_and_resumes(
+        case,
+        rust_roundtripped,
+        'python -> go -> rust bus roundtrip',
+    )
+    await case.source_bus.stop(clear=True)
 
 
 @pytest.mark.asyncio

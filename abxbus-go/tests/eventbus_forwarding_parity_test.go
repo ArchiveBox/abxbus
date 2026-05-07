@@ -40,6 +40,7 @@ func TestForwardedEventUsesProcessingBusDefaults(t *testing.T) {
 
 	h1StartedInherited := make(chan struct{}, 1)
 	h1StartedOverride := make(chan struct{}, 1)
+	h2StartedInherited := make(chan struct{}, 1)
 	releaseInherited := make(chan struct{})
 	releaseOverride := make(chan struct{})
 
@@ -60,6 +61,9 @@ func TestForwardedEventUsesProcessingBusDefaults(t *testing.T) {
 	h2 := func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
 		mode := e.Payload["mode"].(string)
 		appendEntry(mode + ":b2_start")
+		if mode == "inherited" {
+			h2StartedInherited <- struct{}{}
+		}
 		appendEntry(mode + ":b2_end")
 		return "b2", nil
 	}
@@ -87,6 +91,11 @@ func TestForwardedEventUsesProcessingBusDefaults(t *testing.T) {
 	case <-h1StartedInherited:
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for inherited h1 start")
+	}
+	select {
+	case <-h2StartedInherited:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for inherited h2 start before h1 release")
 	}
 	close(releaseInherited)
 
