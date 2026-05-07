@@ -1,0 +1,22 @@
+abxbus-go/otel_middleware.go
+  s_6a8c07f028b30c::t_aeeb9142f3b27d 7
+  s_6a8c07f028b30c::t_3e11b394137d67 17-18,28,45,49-55,81-85,90,114,129,160-168,170-180,183-189,195-200,202-206,208-210
+abxbus-go/tests/otel_middleware_test.go
+  s_6a8c07f028b30c::t_b36c6e9c85c798 5,9-10,22-24,31,45,48,51-163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "6936b8af08880abec5f9c1db43c4c22fd2aad124",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
