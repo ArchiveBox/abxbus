@@ -1,0 +1,37 @@
+abxbus-go/tests/eventbus_find_test.go
+  s_6a8c07f028b30c::t_4b591e8655a312 98-160,344-384
+abxbus-go/tests/eventbus_timeout_test.go
+  s_6a8c07f028b30c::t_ec473d2d50c81b 32
+abxbus-go/tests/eventbus_error_handling_test.go
+  s_6a8c07f028b30c::t_51d7f66649192e 68-108
+abxbus-go/event_bus.go
+  s_6a8c07f028b30c::t_69cc3f0785c49e 707-714,717,722
+  s_6a8c07f028b30c::t_aa730a018c80e6 786-790
+  s_6a8c07f028b30c::t_3bd37303de3a12 1133,1137-1144,1146-1148,1154-1155
+  s_6a8c07f028b30c::t_066d3bde3b3cc5 642
+abxbus-go/event_history.go
+  s_6a8c07f028b30c::t_595909aed4c66a 113-114
+abxbus-go/tests/eventbus_dispatch_parent_tracking_test.go
+  s_6a8c07f028b30c::t_ebbc7ce4366c83 5,249-344
+abxbus-go/base_event.go
+  s_6a8c07f028b30c::t_967d7460eedf91 469
+abxbus-go/event_result.go
+  s_6a8c07f028b30c::t_4da80a0fb35780 169-191
+  s_6a8c07f028b30c::t_de50822a0bdd0e 41-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "8073303e54b61a6c4391b457ef1b95748ce2b491",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
