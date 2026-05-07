@@ -1,0 +1,20 @@
+abxbus-go/tests/eventbus_debounce_test.go
+  s_6a8c07f028b30c::t_ed3bb2bff5b94a 95-100
+  s_6a8c07f028b30c::t_bec47d8db72c57 1-94,101-386
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "902831dff1dba5f49a5c220c2ca6c0cd3bc5c7c0",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
