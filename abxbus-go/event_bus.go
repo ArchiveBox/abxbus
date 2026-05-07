@@ -404,6 +404,11 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 	if event.dispatchCtx == nil && ctx != nil {
 		event.dispatchCtx = ctx
 	}
+	previousBus := event.Bus
+	event.Bus = b
+	if previousBus != nil && previousBus != b {
+		defer func() { event.Bus = previousBus }()
+	}
 	defer func() { b.mu.Lock(); delete(b.inFlightEventIDs, event.EventID); b.mu.Unlock() }()
 	if event.status() == "completed" {
 		signalFirstHandlerStarted()
