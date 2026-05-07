@@ -1,0 +1,21 @@
+abxbus-go/event_bus.go
+  s_6a8c07f028b30c::t_d9b68ba99254dd 404-407,623-626
+abxbus-go/tests/comprehensive_patterns_test.go
+  s_6a8c07f028b30c::t_3df2d06a4dce6d 1-423
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "8f27e1d0045a9ded12ef34972eeb934430c204fa",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
