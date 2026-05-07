@@ -206,6 +206,15 @@ func (b *EventBus) On(event_pattern string, handler_name string, handler EventHa
 	}
 	h := NewEventHandler(b.Name, b.ID, event_pattern, handler_name, handler)
 	if options != nil {
+		if options.ID != "" {
+			h.ID = options.ID
+		}
+		if options.HandlerName != "" {
+			h.HandlerName = options.HandlerName
+		}
+		if options.HandlerRegisteredAt != "" {
+			h.HandlerRegisteredAt = options.HandlerRegisteredAt
+		}
 		h.HandlerTimeout = options.HandlerTimeout
 		h.HandlerSlowTimeout = options.HandlerSlowTimeout
 		h.HandlerFilePath = options.HandlerFilePath
@@ -213,7 +222,13 @@ func (b *EventBus) On(event_pattern string, handler_name string, handler EventHa
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.handlers[h.ID] = h
-	b.handlersByKey[event_pattern] = append(b.handlersByKey[event_pattern], h.ID)
+	ids := b.handlersByKey[event_pattern]
+	for _, id := range ids {
+		if id == h.ID {
+			return h
+		}
+	}
+	b.handlersByKey[event_pattern] = append(ids, h.ID)
 	return h
 }
 

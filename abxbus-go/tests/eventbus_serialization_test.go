@@ -1,6 +1,7 @@
 package abxbus_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
@@ -8,6 +9,20 @@ import (
 
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 )
+
+func assertJSONKeyBefore(t *testing.T, data []byte, firstKey string, secondKey string) {
+	t.Helper()
+	firstNeedle := append(append([]byte{'"'}, []byte(firstKey)...), []byte{'"', ':'}...)
+	secondNeedle := append(append([]byte{'"'}, []byte(secondKey)...), []byte{'"', ':'}...)
+	firstIndex := bytes.Index(data, firstNeedle)
+	secondIndex := bytes.Index(data, secondNeedle)
+	if firstIndex < 0 || secondIndex < 0 {
+		t.Fatalf("expected JSON keys %q and %q in payload: %s", firstKey, secondKey, string(data))
+	}
+	if firstIndex > secondIndex {
+		t.Fatalf("expected JSON key %q before %q in payload: %s", firstKey, secondKey, string(data))
+	}
+}
 
 func TestEventBusSerializationRoundtripPreservesConfigHandlersHistory(t *testing.T) {
 	maxHistory := 5
@@ -103,6 +118,96 @@ func TestEventBusSerializationRoundtripPreservesConfigHandlersHistory(t *testing
 	v, err := restored.Emit(abxbus.NewBaseEvent("Evt2", nil)).EventResult(context.Background())
 	if err != nil || v != "ok2" {
 		t.Fatalf("restored bus should remain functional, result=%#v err=%v", v, err)
+	}
+}
+
+func TestEventBusSerializationPreservesHandlerRegistrationOrderThroughJSONAndRestore(t *testing.T) {
+	detectPaths := false
+	bus := abxbus.NewEventBus("HandlerOrderSourceBus", &abxbus.EventBusOptions{
+		EventHandlerConcurrency:     abxbus.EventHandlerConcurrencySerial,
+		EventHandlerCompletion:      abxbus.EventHandlerCompletionAll,
+		EventHandlerDetectFilePaths: &detectPaths,
+	})
+	originalOrder := []string{}
+
+	first := bus.On("HandlerOrderEvent", "first", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		originalOrder = append(originalOrder, "first")
+		return "first", nil
+	}, nil)
+	second := bus.On("HandlerOrderEvent", "second", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		originalOrder = append(originalOrder, "second")
+		return "second", nil
+	}, nil)
+	expectedIDs := []string{first.ID, second.ID}
+
+	data, err := bus.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONKeyBefore(t, data, first.ID, second.ID)
+	var payload abxbus.EventBusJSON
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if got := payload.HandlersByKey["HandlerOrderEvent"]; len(got) != 2 || got[0] != expectedIDs[0] || got[1] != expectedIDs[1] {
+		t.Fatalf("handlers_by_key order mismatch: got %v want %v", got, expectedIDs)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := bus.Emit(abxbus.NewBaseEvent("HandlerOrderEvent", nil)).Done(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(originalOrder) != 2 || originalOrder[0] != "first" || originalOrder[1] != "second" {
+		t.Fatalf("handler execution order mismatch before restore: got %v", originalOrder)
+	}
+
+	restored, err := abxbus.EventBusFromJSON(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredData, err := restored.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONKeyBefore(t, restoredData, first.ID, second.ID)
+	var restoredPayload abxbus.EventBusJSON
+	if err := json.Unmarshal(restoredData, &restoredPayload); err != nil {
+		t.Fatal(err)
+	}
+	if got := restoredPayload.HandlersByKey["HandlerOrderEvent"]; len(got) != 2 || got[0] != expectedIDs[0] || got[1] != expectedIDs[1] {
+		t.Fatalf("restored handlers_by_key order mismatch: got %v want %v", got, expectedIDs)
+	}
+
+	restoredOrder := []string{}
+	restored.On("HandlerOrderEvent", "first", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		restoredOrder = append(restoredOrder, "first")
+		return "first", nil
+	}, payload.Handlers[first.ID])
+	restored.On("HandlerOrderEvent", "second", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		restoredOrder = append(restoredOrder, "second")
+		return "second", nil
+	}, payload.Handlers[second.ID])
+
+	restoredData, err = restored.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONKeyBefore(t, restoredData, first.ID, second.ID)
+	if err := json.Unmarshal(restoredData, &restoredPayload); err != nil {
+		t.Fatal(err)
+	}
+	if got := restoredPayload.HandlersByKey["HandlerOrderEvent"]; len(got) != 2 || got[0] != expectedIDs[0] || got[1] != expectedIDs[1] {
+		t.Fatalf("reattached handlers_by_key order mismatch: got %v want %v", got, expectedIDs)
+	}
+
+	restoredCtx, restoredCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer restoredCancel()
+	if _, err := restored.Emit(abxbus.NewBaseEvent("HandlerOrderEvent", nil)).Done(restoredCtx); err != nil {
+		t.Fatal(err)
+	}
+	if len(restoredOrder) != 2 || restoredOrder[0] != "first" || restoredOrder[1] != "second" {
+		t.Fatalf("handler execution order mismatch after restore: got %v", restoredOrder)
 	}
 }
 
