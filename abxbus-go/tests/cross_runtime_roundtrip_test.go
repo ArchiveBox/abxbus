@@ -1,12 +1,17 @@
 package abxbus_test
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 )
 
 func TestGoRoundtripCLIPreservesEventJSONShape(t *testing.T) {
@@ -68,13 +73,19 @@ func TestGoRoundtripCLIPreservesEventJSONShape(t *testing.T) {
 }
 
 func TestGoToOtherRuntimeToGoEventRoundtripsPreserveJSONShape(t *testing.T) {
-	events := []any{roundtripEventFixture("GoPythonTsRustEvent", "go-events")}
+	cases := roundtripEventCases()
+	events := make([]any, 0, len(cases))
+	for _, tc := range cases {
+		events = append(events, tc.event)
+	}
 	for _, runtime := range []string{"python", "ts", "rust"} {
 		t.Run(runtime, func(t *testing.T) {
 			throughRuntime := runRuntimeRoundtrip(t, runtime, "events", events)
-			assertJSONEqual(t, events, throughRuntime)
+			assertEventRoundtripEqualAllowingSchemaNormalization(t, events, throughRuntime)
+			assertGoResultSchemaSemantics(t, throughRuntime, cases)
 			backThroughGo := runRuntimeRoundtrip(t, "go", "events", throughRuntime)
-			assertJSONEqual(t, events, backThroughGo)
+			assertJSONEqual(t, throughRuntime, backThroughGo)
+			assertGoResultSchemaSemantics(t, backThroughGo, cases)
 		})
 	}
 }
@@ -161,7 +172,187 @@ func assertJSONEqual(t *testing.T, expected any, actual any) {
 	}
 }
 
-func roundtripEventFixture(eventType string, label string) map[string]any {
+func assertEventRoundtripEqualAllowingSchemaNormalization(t *testing.T, expected any, actual any) {
+	t.Helper()
+	expectedEvents := normalizeEventList(t, expected)
+	actualEvents := normalizeEventList(t, actual)
+	if len(expectedEvents) != len(actualEvents) {
+		t.Fatalf("event count changed: got %d want %d", len(actualEvents), len(expectedEvents))
+	}
+	for idx := range expectedEvents {
+		expectedEvent := copyWithoutKey(expectedEvents[idx], "event_result_type")
+		actualEvent := copyWithoutKey(actualEvents[idx], "event_result_type")
+		if !reflect.DeepEqual(expectedEvent, actualEvent) {
+			expectedPretty, _ := json.MarshalIndent(expectedEvent, "", "  ")
+			actualPretty, _ := json.MarshalIndent(actualEvent, "", "  ")
+			t.Fatalf("event fields changed at index %d\nexpected:\n%s\nactual:\n%s", idx, expectedPretty, actualPretty)
+		}
+		if _, ok := actualEvents[idx]["event_result_type"]; !ok {
+			t.Fatalf("event_result_type missing after roundtrip at index %d", idx)
+		}
+	}
+}
+
+func normalizeEventList(t *testing.T, payload any) []map[string]any {
+	t.Helper()
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []map[string]any
+	if err := json.Unmarshal(data, &events); err != nil {
+		t.Fatal(err)
+	}
+	return events
+}
+
+func copyWithoutKey(in map[string]any, omittedKey string) map[string]any {
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		if key != omittedKey {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+type roundtripEventCase struct {
+	event   map[string]any
+	valid   []any
+	invalid []any
+}
+
+func roundtripEventCases() []roundtripEventCase {
+	return []roundtripEventCase{
+		{
+			event:   roundtripEventFixture("GoStringResultEvent", "go-string", map[string]any{"type": "string"}, 1),
+			valid:   []any{"ok"},
+			invalid: []any{123},
+		},
+		{
+			event:   roundtripEventFixture("GoIntegerResultEvent", "go-integer", map[string]any{"type": "integer"}, 2),
+			valid:   []any{42},
+			invalid: []any{3.5, "42"},
+		},
+		{
+			event:   roundtripEventFixture("GoBooleanResultEvent", "go-boolean", map[string]any{"type": "boolean"}, 3),
+			valid:   []any{true},
+			invalid: []any{"true"},
+		},
+		{
+			event:   roundtripEventFixture("GoNullResultEvent", "go-null", map[string]any{"type": "null"}, 4),
+			valid:   []any{nil},
+			invalid: []any{false},
+		},
+		{
+			event: roundtripEventFixture("GoArrayResultEvent", "go-array", map[string]any{
+				"type":  "array",
+				"items": map[string]any{"type": "string"},
+			}, 5),
+			valid:   []any{[]any{"a", "b"}},
+			invalid: []any{[]any{"a", 2}},
+		},
+		{
+			event: roundtripEventFixture("GoObjectResultEvent", "go-object", map[string]any{
+				"type":                 "object",
+				"required":             []any{"id", "count"},
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"id":    map[string]any{"type": "string"},
+					"count": map[string]any{"type": "integer"},
+				},
+			}, 6),
+			valid:   []any{map[string]any{"id": "item-1", "count": 2}},
+			invalid: []any{map[string]any{"id": "item-1"}, map[string]any{"id": "item-1", "count": "2"}},
+		},
+		{
+			event: roundtripEventFixture("GoAnyOfResultEvent", "go-anyof", map[string]any{
+				"anyOf": []any{
+					map[string]any{"type": "string"},
+					map[string]any{"type": "integer"},
+				},
+			}, 7),
+			valid:   []any{"ok", 7},
+			invalid: []any{false},
+		},
+	}
+}
+
+func assertGoResultSchemaSemantics(t *testing.T, payload any, cases []roundtripEventCase) {
+	t.Helper()
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var eventPayloads []map[string]any
+	if err := json.Unmarshal(payloadJSON, &eventPayloads); err != nil {
+		t.Fatal(err)
+	}
+	if len(eventPayloads) != len(cases) {
+		t.Fatalf("schema semantics fixture count mismatch: got %d want %d", len(eventPayloads), len(cases))
+	}
+
+	casesByType := map[string]roundtripEventCase{}
+	for _, tc := range cases {
+		casesByType[fmt.Sprint(tc.event["event_type"])] = tc
+	}
+	for _, eventPayload := range eventPayloads {
+		eventType := fmt.Sprint(eventPayload["event_type"])
+		tc, ok := casesByType[eventType]
+		if !ok {
+			t.Fatalf("unexpected roundtrip event type %q", eventType)
+		}
+		for idx, valid := range tc.valid {
+			assertGoHandlerResultAccepted(t, eventPayload, valid, fmt.Sprintf("%s valid[%d]", eventType, idx))
+		}
+		for idx, invalid := range tc.invalid {
+			assertGoHandlerResultRejected(t, eventPayload, invalid, fmt.Sprintf("%s invalid[%d]", eventType, idx))
+		}
+	}
+}
+
+func assertGoHandlerResultAccepted(t *testing.T, eventPayload map[string]any, result any, contextLabel string) {
+	t.Helper()
+	event := hydrateEventPayload(t, eventPayload)
+	bus := abxbus.NewEventBus("GoRoundtripSchemaAccepted", nil)
+	bus.On(event.EventType, "valid", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return result, nil
+	}, nil)
+	if _, err := bus.Emit(event).EventResult(context.Background()); err != nil {
+		t.Fatalf("%s should accept handler result %#v: %v", contextLabel, result, err)
+	}
+}
+
+func assertGoHandlerResultRejected(t *testing.T, eventPayload map[string]any, result any, contextLabel string) {
+	t.Helper()
+	event := hydrateEventPayload(t, eventPayload)
+	bus := abxbus.NewEventBus("GoRoundtripSchemaRejected", nil)
+	bus.On(event.EventType, "invalid", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return result, nil
+	}, nil)
+	if _, err := bus.Emit(event).EventResult(context.Background()); err == nil || !strings.Contains(err.Error(), "EventHandlerResultSchemaError") {
+		t.Fatalf("%s should reject handler result %#v with schema error, got %v", contextLabel, result, err)
+	}
+}
+
+func hydrateEventPayload(t *testing.T, eventPayload map[string]any) *abxbus.BaseEvent {
+	t.Helper()
+	data, err := json.Marshal(eventPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := abxbus.BaseEventFromJSON(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return event
+}
+
+func roundtripEventFixture(eventType string, label string, resultSchema map[string]any, idSuffix int) map[string]any {
+	schema := map[string]any{"$schema": "https://json-schema.org/draft/2020-12/schema"}
+	for key, value := range resultSchema {
+		schema[key] = value
+	}
 	return map[string]any{
 		"event_type":                     eventType,
 		"event_version":                  "0.0.1",
@@ -173,21 +364,17 @@ func roundtripEventFixture(eventType string, label string) map[string]any {
 		"event_handler_concurrency":      nil,
 		"event_handler_completion":       nil,
 		"event_blocks_parent_completion": false,
-		"event_result_type": map[string]any{
-			"$schema": "https://json-schema.org/draft/2020-12/schema",
-			"type":    "array",
-			"items":   map[string]any{"type": "string"},
-		},
-		"event_id":                    "018f8e40-1234-7000-8000-00000000abcd",
-		"event_path":                  []any{},
-		"event_parent_id":             nil,
-		"event_emitted_by_handler_id": nil,
-		"event_pending_bus_count":     0,
-		"event_created_at":            "2026-01-01T00:00:00.000000000Z",
-		"event_status":                "pending",
-		"event_started_at":            nil,
-		"event_completed_at":          nil,
-		"label":                       label,
+		"event_result_type":              schema,
+		"event_id":                       fmt.Sprintf("018f8e40-1234-7000-8000-%012d", idSuffix),
+		"event_path":                     []any{},
+		"event_parent_id":                nil,
+		"event_emitted_by_handler_id":    nil,
+		"event_pending_bus_count":        0,
+		"event_created_at":               "2026-01-01T00:00:00.000000000Z",
+		"event_status":                   "pending",
+		"event_started_at":               nil,
+		"event_completed_at":             nil,
+		"label":                          label,
 	}
 }
 
@@ -195,7 +382,10 @@ func roundtripBusFixture() map[string]any {
 	handlerID := "handler-one"
 	eventID := "018f8e40-1234-7000-8000-00000000e001"
 	busID := "018f8e40-1234-7000-8000-00000000cc33"
-	event := roundtripEventFixture("GoCrossRuntimeResumeEvent", "go-bus")
+	event := roundtripEventFixture("GoCrossRuntimeResumeEvent", "go-bus", map[string]any{
+		"type":  "array",
+		"items": map[string]any{"type": "string"},
+	}, 999)
 	event["event_id"] = eventID
 	event["event_results"] = map[string]any{
 		handlerID: map[string]any{
