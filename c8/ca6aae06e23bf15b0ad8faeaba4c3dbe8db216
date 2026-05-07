@@ -1,0 +1,29 @@
+tests/test_eventbus_serialization.py
+  s_6a8c07f028b30c::t_f5ffdc90a489ce 1,5-6,16-19,108-163
+abxbus-rust/tests/test_eventbus_serialization.rs
+  s_6a8c07f028b30c::t_76b03a6d83dc8d 4,13,19,34-41,43-44,116-174,179-224
+  s_6a8c07f028b30c::t_67dee9e1578f94 42,175-178
+abxbus-ts/tests/EventBus_serialization.test.ts
+  s_6a8c07f028b30c::t_4fefd83d583a40 69-118
+abxbus-rust/Cargo.toml
+  s_6a8c07f028b30c::t_18461f3c582f45 8
+abxbus-rust/src/event_bus.rs
+  s_6a8c07f028b30c::t_20c0b26e21b5d1 523-532
+  s_6a8c07f028b30c::t_412e22a815dd71 507-522,533-541
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "c8ca6aae06e23bf15b0ad8faeaba4c3dbe8db216",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
