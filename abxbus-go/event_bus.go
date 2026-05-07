@@ -205,9 +205,11 @@ func (b *EventBus) On(event_pattern string, handler_name string, handler EventHa
 		event_pattern = "*"
 	}
 	h := NewEventHandler(b.Name, b.ID, event_pattern, handler_name, handler)
+	explicitID := false
 	if options != nil {
 		if options.ID != "" {
 			h.ID = options.ID
+			explicitID = true
 		}
 		if options.HandlerName != "" {
 			h.HandlerName = options.HandlerName
@@ -218,6 +220,9 @@ func (b *EventBus) On(event_pattern string, handler_name string, handler EventHa
 		h.HandlerTimeout = options.HandlerTimeout
 		h.HandlerSlowTimeout = options.HandlerSlowTimeout
 		h.HandlerFilePath = options.HandlerFilePath
+	}
+	if !explicitID {
+		h.ID = ComputeHandlerID(b.ID, h.HandlerName, h.HandlerFilePath, h.HandlerRegisteredAt, event_pattern)
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()

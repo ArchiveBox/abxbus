@@ -3,7 +3,6 @@ package abxbus
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 )
 
 type EventHandlerCallable func(ctx context.Context, event *BaseEvent) (any, error)
@@ -50,8 +49,7 @@ func (e *EventHandlerAbortedError) Error() string { return e.Message }
 
 func NewEventHandler(eventbus_name, eventbus_id, event_pattern, handler_name string, handler EventHandlerCallable) *EventHandler {
 	registered := monotonicDatetime()
-	seed := fmt.Sprintf("%s|%s|%s|%s|%s", eventbus_id, handler_name, "unknown", registered, event_pattern)
-	id := deterministicUUID(seed)
+	id := ComputeHandlerID(eventbus_id, handler_name, nil, registered, event_pattern)
 	return &EventHandler{
 		ID:                  id,
 		EventBusName:        eventbus_name,
