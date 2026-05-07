@@ -805,70 +805,44 @@ async def test_python_to_ts_roundtrip_schema_enforcement_after_reload(tmp_path: 
     events = [entry.event for entry in _build_python_roundtrip_cases()]
     python_dumped = [event.model_dump(mode='json') for event in events]
     ts_roundtripped = _ts_roundtrip_events(python_dumped, tmp_path)
-
-    screenshot_payload = next(event for event in ts_roundtripped if event.get('event_type') == 'PyTsScreenshotEvent')
-
-    wrong_bus = EventBus(name='py_ts_py_wrong_shape')
-
-    async def wrong_shape_handler(event: BaseEvent[Any]) -> dict[str, Any]:
-        return {
-            'image_url': 123,  # wrong: should be string
-            'width': '1920',  # wrong: should be int
-            'height': 1080,
-            'tags': ['a', 'b'],
-            'is_animated': 'false',  # wrong: should be bool
-            'confidence_scores': [0.9, 0.8],
-            'metadata': {'score': 0.99},
-            'regions': [{'id': '98f51f1d-b10a-7cd9-8ee6-cb706153f717', 'label': 'face', 'score': 0.9, 'visible': True}],
-        }
-
-    wrong_bus.on('PyTsScreenshotEvent', wrong_shape_handler)
-    wrong_event = BaseEvent[Any].model_validate(screenshot_payload)
-    assert isinstance(wrong_event.event_result_type, type)
-    assert issubclass(wrong_event.event_result_type, BaseModel)
-    await asyncio.wait_for(wrong_bus.emit(wrong_event), timeout=EVENT_WAIT_TIMEOUT_SECONDS)
-    wrong_result = next(iter(wrong_event.event_results.values()))
-    assert wrong_result.status == 'error'
-    assert wrong_result.error is not None
-    await wrong_bus.stop()
-
-    right_bus = EventBus(name='py_ts_py_right_shape')
-
-    async def right_shape_handler(event: BaseEvent[Any]) -> dict[str, Any]:
-        return {
-            'image_url': 'https://img.local/1.png',
-            'width': 1920,
-            'height': 1080,
-            'tags': ['hero', 'dashboard'],
-            'is_animated': False,
-            'confidence_scores': [0.95, 0.89],
-            'metadata': {'score': 0.99, 'variance': 0.01},
-            'regions': [
-                {'id': '98f51f1d-b10a-7cd9-8ee6-cb706153f717', 'label': 'face', 'score': 0.9, 'visible': True},
-                {'id': '5f234e9d-29e9-7921-8cf2-2a65f6ba3bdd', 'label': 'button', 'score': 0.7, 'visible': False},
-            ],
-        }
-
-    right_bus.on('PyTsScreenshotEvent', right_shape_handler)
-    right_event = BaseEvent[Any].model_validate(screenshot_payload)
-    assert isinstance(right_event.event_result_type, type)
-    assert issubclass(right_event.event_result_type, BaseModel)
-    await asyncio.wait_for(right_bus.emit(right_event), timeout=EVENT_WAIT_TIMEOUT_SECONDS)
-    right_result = next(iter(right_event.event_results.values()))
-    assert right_result.status == 'completed'
-    assert right_result.error is None
-    assert right_result.result is not None
-    await right_bus.stop()
+    await _assert_python_schema_enforcement_after_runtime_reload(
+        ts_roundtripped,
+        wrong_bus_name='py_ts_py_wrong_shape',
+        right_bus_name='py_ts_py_right_shape',
+    )
 
 
 async def test_python_to_rust_roundtrip_schema_enforcement_after_reload(tmp_path: Path) -> None:
     events = [entry.event for entry in _build_python_roundtrip_cases()]
     python_dumped = [event.model_dump(mode='json') for event in events]
     rust_roundtripped = _rust_roundtrip_events(python_dumped, tmp_path)
+    await _assert_python_schema_enforcement_after_runtime_reload(
+        rust_roundtripped,
+        wrong_bus_name='py_rust_py_wrong_shape',
+        right_bus_name='py_rust_py_right_shape',
+    )
 
-    screenshot_payload = next(event for event in rust_roundtripped if event.get('event_type') == 'PyTsScreenshotEvent')
 
-    wrong_bus = EventBus(name='py_rust_py_wrong_shape')
+async def test_python_to_go_roundtrip_schema_enforcement_after_reload(tmp_path: Path) -> None:
+    events = [entry.event for entry in _build_python_roundtrip_cases()]
+    python_dumped = [event.model_dump(mode='json') for event in events]
+    go_roundtripped = _go_roundtrip_events(python_dumped, tmp_path)
+    await _assert_python_schema_enforcement_after_runtime_reload(
+        go_roundtripped,
+        wrong_bus_name='py_go_py_wrong_shape',
+        right_bus_name='py_go_py_right_shape',
+    )
+
+
+async def _assert_python_schema_enforcement_after_runtime_reload(
+    runtime_roundtripped: list[dict[str, Any]],
+    *,
+    wrong_bus_name: str,
+    right_bus_name: str,
+) -> None:
+    screenshot_payload = next(event for event in runtime_roundtripped if event.get('event_type') == 'PyTsScreenshotEvent')
+
+    wrong_bus = EventBus(name=wrong_bus_name)
 
     async def wrong_shape_handler(event: BaseEvent[Any]) -> dict[str, Any]:
         return {
@@ -892,7 +866,7 @@ async def test_python_to_rust_roundtrip_schema_enforcement_after_reload(tmp_path
     assert wrong_result.error is not None
     await wrong_bus.stop()
 
-    right_bus = EventBus(name='py_rust_py_right_shape')
+    right_bus = EventBus(name=right_bus_name)
 
     async def right_shape_handler(event: BaseEvent[Any]) -> dict[str, Any]:
         return {
