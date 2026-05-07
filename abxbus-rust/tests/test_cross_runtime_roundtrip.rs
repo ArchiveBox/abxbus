@@ -1,6 +1,10 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    env, fs,
+    path::PathBuf,
+    process::Command,
     sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use abxbus_rust::{
@@ -37,6 +41,47 @@ fn assert_original_fields_survive(original: &Value, roundtripped: &Value) {
     }
 }
 
+fn run_go_roundtrip(mode: &str, payload: &Value) -> Value {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir.parent().expect("repo root");
+    let go_root = repo_root.join("abxbus-go");
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_nanos();
+    let temp_dir = env::temp_dir().join(format!("abxbus-rust-go-roundtrip-{mode}-{unique}"));
+    fs::create_dir_all(&temp_dir).expect("create temp roundtrip dir");
+    let input_path = temp_dir.join("input.json");
+    let output_path = temp_dir.join("output.json");
+    fs::write(
+        &input_path,
+        serde_json::to_vec_pretty(payload).expect("encode input payload"),
+    )
+    .expect("write input payload");
+
+    let output = Command::new("go")
+        .args([
+            "run",
+            "./cmd/abxbus-go-roundtrip",
+            mode,
+            input_path.to_str().expect("input path utf8"),
+            output_path.to_str().expect("output path utf8"),
+        ])
+        .current_dir(&go_root)
+        .output()
+        .expect("run Go roundtrip helper");
+    if !output.status.success() {
+        panic!(
+            "go {mode} roundtrip failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let output_payload = fs::read(&output_path).expect("read output payload");
+    let _ = fs::remove_dir_all(&temp_dir);
+    serde_json::from_slice(&output_payload).expect("decode output payload")
+}
+
 fn event_result_fixture(
     id: &str,
     event_id: &str,
@@ -71,7 +116,7 @@ fn event_result_fixture(
 }
 
 fn event_fixture(event_id: &str, label: &str, event_results: BTreeMap<String, Value>) -> Value {
-    json!({
+    let mut event = json!({
         "event_type": "CrossRuntimeResumeEvent",
         "event_version": "0.0.1",
         "event_timeout": null,
@@ -92,9 +137,12 @@ fn event_fixture(event_id: &str, label: &str, event_results: BTreeMap<String, Va
         "event_status": "pending",
         "event_started_at": null,
         "event_completed_at": null,
-        "event_results": event_results,
         "label": label
-    })
+    });
+    if !event_results.is_empty() {
+        event["event_results"] = json!(event_results);
+    }
+    event
 }
 
 fn cross_runtime_bus_fixture() -> Value {
@@ -177,6 +225,45 @@ fn cross_runtime_bus_fixture() -> Value {
             "018f8e40-1234-7000-8000-00000000e001",
             "018f8e40-1234-7000-8000-00000000e002"
         ]
+    })
+}
+
+fn go_rust_event_fixture() -> Value {
+    json!({
+        "event_type": "GoRustRoundtripEvent",
+        "event_version": "0.0.1",
+        "event_timeout": null,
+        "event_slow_timeout": null,
+        "event_concurrency": null,
+        "event_handler_timeout": null,
+        "event_handler_slow_timeout": null,
+        "event_handler_concurrency": null,
+        "event_handler_completion": null,
+        "event_blocks_parent_completion": false,
+        "event_result_type": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+                "kind": {"const": "ok"},
+                "scores": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "number", "minimum": 0}
+                }
+            },
+            "required": ["kind", "scores"],
+            "additionalProperties": false
+        },
+        "event_id": "018f8e40-1234-7000-8000-00000000d001",
+        "event_path": ["RustBus#aaaa", "GoBridge#bbbb"],
+        "event_parent_id": "018f8e40-1234-7000-8000-00000000d000",
+        "event_emitted_by_handler_id": "handler-parent",
+        "event_pending_bus_count": 0,
+        "event_created_at": "2025-01-02T03:04:07.678901000Z",
+        "event_status": "pending",
+        "event_started_at": null,
+        "event_completed_at": null,
+        "label": "rust-go"
     })
 }
 
@@ -266,8 +353,47 @@ fn test_ts_to_rust_roundtrip_preserves_event_fields_and_result_type_schema() {
 }
 
 #[test]
+fn test_go_to_rust_roundtrip_preserves_event_fields_and_result_type_schema() {
+    let original = go_rust_event_fixture();
+    let go_roundtripped = run_go_roundtrip("events", &json!([original.clone()]));
+    let go_event = go_roundtripped
+        .as_array()
+        .and_then(|events| events.first())
+        .expect("go roundtripped event");
+    assert_original_fields_survive(&original, go_event);
+
+    let restored = BaseEvent::from_json_value(go_event.clone());
+    let rust_roundtripped = restored.to_json_value();
+    assert_original_fields_survive(&original, &rust_roundtripped);
+}
+
+#[test]
+fn test_rust_to_go_roundtrip_preserves_event_fields_and_result_type_schema() {
+    let original = go_rust_event_fixture();
+    let rust_serialized = BaseEvent::from_json_value(original).to_json_value();
+    let go_roundtripped = run_go_roundtrip("events", &json!([rust_serialized.clone()]));
+    let go_event = go_roundtripped
+        .as_array()
+        .and_then(|events| events.first())
+        .expect("go roundtripped event");
+    assert_original_fields_survive(&rust_serialized, go_event);
+}
+
+#[test]
 fn test_cross_runtime_bus_roundtrip_rehydrates_and_resumes_pending_queue() {
-    let bus = EventBus::from_json_value(cross_runtime_bus_fixture());
+    assert_bus_roundtrip_rehydrates_and_resumes_pending_queue(cross_runtime_bus_fixture());
+}
+
+#[test]
+fn test_go_to_rust_bus_roundtrip_rehydrates_and_resumes_pending_queue() {
+    let fixture = cross_runtime_bus_fixture();
+    let go_roundtripped = run_go_roundtrip("bus", &fixture);
+    assert_original_fields_survive(&fixture, &go_roundtripped);
+    assert_bus_roundtrip_rehydrates_and_resumes_pending_queue(go_roundtripped);
+}
+
+fn assert_bus_roundtrip_rehydrates_and_resumes_pending_queue(payload: Value) {
+    let bus = EventBus::from_json_value(payload);
     let run_order = Arc::new(Mutex::new(Vec::<String>::new()));
 
     let run_order_for_h1 = run_order.clone();

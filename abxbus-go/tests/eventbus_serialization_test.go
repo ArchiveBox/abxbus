@@ -151,6 +151,24 @@ func TestEventBusSerializationPreservesUnboundedHistoryNull(t *testing.T) {
 	}
 }
 
+func TestEventBusFromJSONPreservesNullEventTimeout(t *testing.T) {
+	data := []byte(`{"id":"timeout-null-bus","name":"TimeoutNullBus","max_history_size":100,"max_history_drop":false,"event_concurrency":"bus-serial","event_timeout":null,"event_slow_timeout":null,"event_handler_concurrency":"serial","event_handler_completion":"all","event_handler_slow_timeout":null,"event_handler_detect_file_paths":false,"handlers":{},"handlers_by_key":{},"event_history":{},"pending_event_queue":[]}`)
+	restored, err := abxbus.EventBusFromJSON(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.EventTimeout != nil {
+		t.Fatalf("JSON event_timeout:null should disable the bus timeout, got %#v", restored.EventTimeout)
+	}
+	roundtripped, err := restored.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(roundtripped, []byte(`"event_timeout":null`)) {
+		t.Fatalf("expected event_timeout null to survive roundtrip: %s", string(roundtripped))
+	}
+}
+
 func TestEventBusSerializationPreservesHandlerRegistrationOrderThroughJSONAndRestore(t *testing.T) {
 	detectPaths := false
 	bus := abxbus.NewEventBus("HandlerOrderSourceBus", &abxbus.EventBusOptions{

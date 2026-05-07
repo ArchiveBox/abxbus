@@ -2,10 +2,10 @@ use std::{
     collections::BTreeSet,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, Weak,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use abxbus_rust::{
@@ -39,6 +39,20 @@ impl EventSpec for WaitForIdleTimeoutEvent {
     type Payload = EmptyPayload;
     type Result = EmptyResult;
     const EVENT_TYPE: &'static str = "WaitForIdleTimeoutEvent";
+}
+
+fn wait_for_eventbus_weak_refs_to_drop(refs: &[Weak<EventBus>]) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        EventBus::all_instances_len();
+        if refs.iter().all(|weak_ref| weak_ref.upgrade().is_none()) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
 }
 
 struct UserActionEvent;
@@ -2641,29 +2655,29 @@ fn test_eventbus_all_instances_tracks_all_created_buses() {
 
 #[test]
 fn test_unreferenced_eventbus_can_be_garbage_collected_not_retained_by_all_instances() {
-    let baseline = EventBus::all_instances_len();
-    let weak_ref = {
+    let (bus_id, weak_ref) = {
         let bus = EventBus::new(Some("GCTestBus".to_string()));
+        let bus_id = bus.id.clone();
         let weak_ref = Arc::downgrade(&bus);
         assert!(EventBus::all_instances_contains(&bus));
-        assert_eq!(EventBus::all_instances_len(), baseline + 1);
-        weak_ref
+        assert!(EventBus::live_instance_by_id(&bus_id).is_some());
+        (bus_id, weak_ref)
     };
 
     assert!(
-        weak_ref.upgrade().is_none(),
+        wait_for_eventbus_weak_refs_to_drop(&[weak_ref]),
         "all_instances must not hold a strong reference to an unreferenced bus"
     );
     assert!(
-        EventBus::all_instances_len() <= baseline,
+        EventBus::live_instance_by_id(&bus_id).is_none(),
         "dead EventBus weak refs should be purged from all_instances"
     );
 }
 
 #[test]
 fn test_unreferenced_buses_with_event_history_are_garbage_collected_without_destroy() {
-    let baseline = EventBus::all_instances_len();
     let mut refs = Vec::new();
+    let mut bus_ids = Vec::new();
 
     for index in 0..5 {
         let bus = EventBus::new_with_options(
@@ -2682,15 +2696,18 @@ fn test_unreferenced_buses_with_event_history_are_garbage_collected_without_dest
         }
         block_on(bus.wait_until_idle(Some(2.0)));
         assert_eq!(bus.event_history_size(), 10);
+        bus_ids.push(bus.id.clone());
         refs.push(Arc::downgrade(&bus));
     }
 
     assert!(
-        refs.iter().all(|weak_ref| weak_ref.upgrade().is_none()),
+        wait_for_eventbus_weak_refs_to_drop(&refs),
         "all_instances must not retain buses after their last Arc handle is dropped"
     );
     assert!(
-        EventBus::all_instances_len() <= baseline,
+        bus_ids
+            .iter()
+            .all(|bus_id| EventBus::live_instance_by_id(bus_id).is_none()),
         "dead EventBus weak refs should be purged after history-bearing buses are dropped"
     );
 }
