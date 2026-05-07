@@ -590,6 +590,71 @@ const runGoRoundtrip = <T extends Array<Record<string, unknown>> | Record<string
   }
 }
 
+const assertTsSchemaEnforcementAfterRuntimeReload = async (
+  runtime_roundtripped: Array<Record<string, unknown>>,
+  wrong_bus_name: string,
+  right_bus_name: string
+): Promise<void> => {
+  const screenshot_payload = runtime_roundtripped.find((event) => event.event_type === 'TsPy_ScreenshotResultEvent')
+  assert.ok(screenshot_payload, 'missing TsPy_ScreenshotResultEvent in roundtrip payload')
+  assert.equal(typeof screenshot_payload.event_result_type, 'object')
+
+  const wrong_bus = new EventBus(wrong_bus_name)
+  wrong_bus.on('TsPy_ScreenshotResultEvent', () => ({
+    image_url: 123,
+    width: '1920',
+    height: 1080,
+    tags: ['hero', 'dashboard'],
+    is_animated: 'false',
+    confidence_scores: [0.95, 0.89],
+    metadata: { score: 0.99 },
+    regions: [{ id: '98f51f1d-b10a-7cd9-8ee6-cb706153f717', label: 'face', score: 0.9, visible: true }],
+  }))
+  const wrong_event = BaseEvent.fromJSON(screenshot_payload)
+  assert.equal(typeof (wrong_event.event_result_type as { safeParse?: unknown } | undefined)?.safeParse, 'function')
+  const wrong_dispatched = wrong_bus.emit(wrong_event)
+  await runWithTimeout(wrong_dispatched.done({ raise_if_any: false }), EVENT_WAIT_TIMEOUT_MS, 'wrong-shape event completion')
+  const wrong_result = Array.from(wrong_dispatched.event_results.values())[0]
+  assert.equal(wrong_result.status, 'error')
+  assert.equal((wrong_result.error as { name?: string } | undefined)?.name, 'EventHandlerResultSchemaError')
+  wrong_bus.destroy()
+
+  const right_bus = new EventBus(right_bus_name)
+  right_bus.on('TsPy_ScreenshotResultEvent', () => ({
+    image_url: 'https://img.local/1.png',
+    width: 1920,
+    height: 1080,
+    tags: ['hero', 'dashboard'],
+    is_animated: false,
+    confidence_scores: [0.95, 0.89],
+    metadata: { score: 0.99, variance: 0.01 },
+    regions: [
+      { id: '98f51f1d-b10a-7cd9-8ee6-cb706153f717', label: 'face', score: 0.9, visible: true },
+      { id: '5f234e9d-29e9-7921-8cf2-2a65f6ba3bdd', label: 'button', score: 0.7, visible: false },
+    ],
+  }))
+  const right_event = BaseEvent.fromJSON(screenshot_payload)
+  assert.equal(typeof (right_event.event_result_type as { safeParse?: unknown } | undefined)?.safeParse, 'function')
+  const right_dispatched = right_bus.emit(right_event)
+  await runWithTimeout(right_dispatched.done(), EVENT_WAIT_TIMEOUT_MS, 'right-shape event completion')
+  const right_result = Array.from(right_dispatched.event_results.values())[0]
+  assert.equal(right_result.status, 'completed')
+  assert.deepEqual(right_result.result, {
+    image_url: 'https://img.local/1.png',
+    width: 1920,
+    height: 1080,
+    tags: ['hero', 'dashboard'],
+    is_animated: false,
+    confidence_scores: [0.95, 0.89],
+    metadata: { score: 0.99, variance: 0.01 },
+    regions: [
+      { id: '98f51f1d-b10a-7cd9-8ee6-cb706153f717', label: 'face', score: 0.9, visible: true },
+      { id: '5f234e9d-29e9-7921-8cf2-2a65f6ba3bdd', label: 'button', score: 0.7, visible: false },
+    ],
+  })
+  right_bus.destroy()
+}
+
 test('ts_to_python_roundtrip preserves event fields and result type semantics', async () => {
   const python_runner = resolvePython()
   assert.ok(python_runner, 'python is required for ts<->python roundtrip tests')
@@ -656,64 +721,7 @@ test('ts_to_python_roundtrip preserves event fields and result type semantics', 
     }
   }
 
-  const screenshot_payload = python_roundtripped.find((event) => event.event_type === 'TsPy_ScreenshotResultEvent')
-  assert.ok(screenshot_payload, 'missing TsPy_ScreenshotResultEvent in roundtrip payload')
-  assert.equal(typeof screenshot_payload.event_result_type, 'object')
-
-  const wrong_bus = new EventBus('TsPyTsWrongShape')
-  wrong_bus.on('TsPy_ScreenshotResultEvent', () => ({
-    image_url: 123,
-    width: '1920',
-    height: 1080,
-    tags: ['hero', 'dashboard'],
-    is_animated: 'false',
-    confidence_scores: [0.95, 0.89],
-    metadata: { score: 0.99 },
-    regions: [{ id: '98f51f1d-b10a-7cd9-8ee6-cb706153f717', label: 'face', score: 0.9, visible: true }],
-  }))
-  const wrong_event = BaseEvent.fromJSON(screenshot_payload)
-  assert.equal(typeof (wrong_event.event_result_type as { safeParse?: unknown } | undefined)?.safeParse, 'function')
-  const wrong_dispatched = wrong_bus.emit(wrong_event)
-  await runWithTimeout(wrong_dispatched.done({ raise_if_any: false }), EVENT_WAIT_TIMEOUT_MS, 'wrong-shape event completion')
-  const wrong_result = Array.from(wrong_dispatched.event_results.values())[0]
-  assert.equal(wrong_result.status, 'error')
-  assert.equal((wrong_result.error as { name?: string } | undefined)?.name, 'EventHandlerResultSchemaError')
-  wrong_bus.destroy()
-
-  const right_bus = new EventBus('TsPyTsRightShape')
-  right_bus.on('TsPy_ScreenshotResultEvent', () => ({
-    image_url: 'https://img.local/1.png',
-    width: 1920,
-    height: 1080,
-    tags: ['hero', 'dashboard'],
-    is_animated: false,
-    confidence_scores: [0.95, 0.89],
-    metadata: { score: 0.99, variance: 0.01 },
-    regions: [
-      { id: '98f51f1d-b10a-7cd9-8ee6-cb706153f717', label: 'face', score: 0.9, visible: true },
-      { id: '5f234e9d-29e9-7921-8cf2-2a65f6ba3bdd', label: 'button', score: 0.7, visible: false },
-    ],
-  }))
-  const right_event = BaseEvent.fromJSON(screenshot_payload)
-  assert.equal(typeof (right_event.event_result_type as { safeParse?: unknown } | undefined)?.safeParse, 'function')
-  const right_dispatched = right_bus.emit(right_event)
-  await runWithTimeout(right_dispatched.done(), EVENT_WAIT_TIMEOUT_MS, 'right-shape event completion')
-  const right_result = Array.from(right_dispatched.event_results.values())[0]
-  assert.equal(right_result.status, 'completed')
-  assert.deepEqual(right_result.result, {
-    image_url: 'https://img.local/1.png',
-    width: 1920,
-    height: 1080,
-    tags: ['hero', 'dashboard'],
-    is_animated: false,
-    confidence_scores: [0.95, 0.89],
-    metadata: { score: 0.99, variance: 0.01 },
-    regions: [
-      { id: '98f51f1d-b10a-7cd9-8ee6-cb706153f717', label: 'face', score: 0.9, visible: true },
-      { id: '5f234e9d-29e9-7921-8cf2-2a65f6ba3bdd', label: 'button', score: 0.7, visible: false },
-    ],
-  })
-  right_bus.destroy()
+  await assertTsSchemaEnforcementAfterRuntimeReload(python_roundtripped, 'TsPyTsWrongShape', 'TsPyTsRightShape')
 })
 
 test('ts_to_rust_roundtrip preserves event fields and result type semantics', async () => {
@@ -778,64 +786,7 @@ test('ts_to_rust_roundtrip preserves event fields and result type semantics', as
     }
   }
 
-  const screenshot_payload = rust_roundtripped.find((event) => event.event_type === 'TsPy_ScreenshotResultEvent')
-  assert.ok(screenshot_payload, 'missing TsPy_ScreenshotResultEvent in roundtrip payload')
-  assert.equal(typeof screenshot_payload.event_result_type, 'object')
-
-  const wrong_bus = new EventBus('TsRustTsWrongShape')
-  wrong_bus.on('TsPy_ScreenshotResultEvent', () => ({
-    image_url: 123,
-    width: '1920',
-    height: 1080,
-    tags: ['hero', 'dashboard'],
-    is_animated: 'false',
-    confidence_scores: [0.95, 0.89],
-    metadata: { score: 0.99 },
-    regions: [{ id: '98f51f1d-b10a-7cd9-8ee6-cb706153f717', label: 'face', score: 0.9, visible: true }],
-  }))
-  const wrong_event = BaseEvent.fromJSON(screenshot_payload)
-  assert.equal(typeof (wrong_event.event_result_type as { safeParse?: unknown } | undefined)?.safeParse, 'function')
-  const wrong_dispatched = wrong_bus.emit(wrong_event)
-  await runWithTimeout(wrong_dispatched.done({ raise_if_any: false }), EVENT_WAIT_TIMEOUT_MS, 'wrong-shape event completion')
-  const wrong_result = Array.from(wrong_dispatched.event_results.values())[0]
-  assert.equal(wrong_result.status, 'error')
-  assert.equal((wrong_result.error as { name?: string } | undefined)?.name, 'EventHandlerResultSchemaError')
-  wrong_bus.destroy()
-
-  const right_bus = new EventBus('TsRustTsRightShape')
-  right_bus.on('TsPy_ScreenshotResultEvent', () => ({
-    image_url: 'https://img.local/1.png',
-    width: 1920,
-    height: 1080,
-    tags: ['hero', 'dashboard'],
-    is_animated: false,
-    confidence_scores: [0.95, 0.89],
-    metadata: { score: 0.99, variance: 0.01 },
-    regions: [
-      { id: '98f51f1d-b10a-7cd9-8ee6-cb706153f717', label: 'face', score: 0.9, visible: true },
-      { id: '5f234e9d-29e9-7921-8cf2-2a65f6ba3bdd', label: 'button', score: 0.7, visible: false },
-    ],
-  }))
-  const right_event = BaseEvent.fromJSON(screenshot_payload)
-  assert.equal(typeof (right_event.event_result_type as { safeParse?: unknown } | undefined)?.safeParse, 'function')
-  const right_dispatched = right_bus.emit(right_event)
-  await runWithTimeout(right_dispatched.done(), EVENT_WAIT_TIMEOUT_MS, 'right-shape event completion')
-  const right_result = Array.from(right_dispatched.event_results.values())[0]
-  assert.equal(right_result.status, 'completed')
-  assert.deepEqual(right_result.result, {
-    image_url: 'https://img.local/1.png',
-    width: 1920,
-    height: 1080,
-    tags: ['hero', 'dashboard'],
-    is_animated: false,
-    confidence_scores: [0.95, 0.89],
-    metadata: { score: 0.99, variance: 0.01 },
-    regions: [
-      { id: '98f51f1d-b10a-7cd9-8ee6-cb706153f717', label: 'face', score: 0.9, visible: true },
-      { id: '5f234e9d-29e9-7921-8cf2-2a65f6ba3bdd', label: 'button', score: 0.7, visible: false },
-    ],
-  })
-  right_bus.destroy()
+  await assertTsSchemaEnforcementAfterRuntimeReload(rust_roundtripped, 'TsRustTsWrongShape', 'TsRustTsRightShape')
 })
 
 test('ts_to_go_roundtrip preserves event fields and result type semantics', async () => {
@@ -900,6 +851,8 @@ test('ts_to_go_roundtrip preserves event fields and result type semantics', asyn
       assertFieldEqual(key, restored_dump[key], value, 'field changed after ts reload')
     }
   }
+
+  await assertTsSchemaEnforcementAfterRuntimeReload(go_roundtripped, 'TsGoTsWrongShape', 'TsGoTsRightShape')
 })
 
 test('ts -> python -> ts bus roundtrip rehydrates and resumes pending queue', async () => {
