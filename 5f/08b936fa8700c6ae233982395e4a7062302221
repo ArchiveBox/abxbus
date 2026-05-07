@@ -1,0 +1,43 @@
+docs/integrations/bridge-socket.mdx
+  s_6a8c07f028b30c::t_f2d31e9047701a 41-46
+  s_6a8c07f028b30c::t_713732ddc10ae8 83-89
+docs/integrations/bridge-nats.mdx
+  s_6a8c07f028b30c::t_f2afd81edf339e 46-53,89-94
+  s_6a8c07f028b30c::t_067620479554cd 131-137
+docs/further-reading/events-suck.mdx
+  s_6a8c07f028b30c::t_94596db2ea8318 243-260
+docs/integrations/bridge-http.mdx
+  s_6a8c07f028b30c::t_384ecb01852ebe 50-55
+  s_6a8c07f028b30c::t_bb3fc16fcf6bf7 98-104
+docs/api/retry.mdx
+  s_6a8c07f028b30c::t_b8bcf6fc58fc8d 162-170
+  s_6a8c07f028b30c::t_68e30fd7c5b1b4 120-127
+docs/integrations/bridge-redis.mdx
+  s_6a8c07f028b30c::t_dd4c5c59804bbd 130-136
+  s_6a8c07f028b30c::t_d49159e9e98a8a 46-53,88-93
+docs/integrations/bridge-postgres.mdx
+  s_6a8c07f028b30c::t_a3dc69032a05cd 46-53,89-94
+  s_6a8c07f028b30c::t_fb01316533416f 131-137
+docs/integrations/bridge-sqlite.mdx
+  s_6a8c07f028b30c::t_66ec235f5df35a 48-53
+  s_6a8c07f028b30c::t_433e481671ca5f 90-96
+docs/integrations/bridge-tachyon.mdx
+  s_6a8c07f028b30c::t_fc2c519dd48956 44-51,79-84
+  s_6a8c07f028b30c::t_7c7c741c53df32 131-137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "5f08b936fa8700c6ae233982395e4a7062302221",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
