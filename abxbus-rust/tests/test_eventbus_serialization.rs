@@ -1,7 +1,7 @@
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     thread,
     time::Duration,
@@ -10,12 +10,13 @@ use std::{
 use abxbus_rust::{
     base_event::BaseEvent,
     event_bus::{EventBus, EventBusOptions},
+    event_handler::EventHandlerOptions,
     typed::{EventSpec, TypedEvent},
     types::{EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode},
 };
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 
 #[derive(Clone, Serialize, Deserialize)]
 struct EmptyPayload {}
@@ -28,6 +29,17 @@ impl EventSpec for SerializableEvent {
     type Payload = EmptyPayload;
     type Result = EmptyResult;
     const EVENT_TYPE: &'static str = "SerializableEvent";
+}
+
+struct HandlerOrderEvent;
+impl EventSpec for HandlerOrderEvent {
+    type Payload = EmptyPayload;
+    type Result = EmptyResult;
+    const EVENT_TYPE: &'static str = "HandlerOrderEvent";
+}
+
+fn json_object_keys(value: &Value, key: &str) -> Vec<String> {
+    value[key].as_object().expect(key).keys().cloned().collect()
 }
 
 fn assert_eventbus_json_roundtrip_uses_id_keyed_structures() {
@@ -99,6 +111,117 @@ fn test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() {
 #[test]
 fn test_eventbus_to_json_from_json_roundtrip_uses_id_keyed_structures() {
     assert_eventbus_json_roundtrip_uses_id_keyed_structures();
+}
+
+#[test]
+fn test_eventbus_preserves_handler_registration_order_through_json_and_restore() {
+    let bus = EventBus::new_with_options(
+        Some("HandlerOrderSourceBus".to_string()),
+        EventBusOptions {
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            event_handler_completion: EventHandlerCompletionMode::All,
+            event_handler_detect_file_paths: false,
+            ..EventBusOptions::default()
+        },
+    );
+    let original_order = Arc::new(Mutex::new(Vec::<String>::new()));
+
+    let order = original_order.clone();
+    let first = bus.on_sync_with_options(
+        "HandlerOrderEvent",
+        "first",
+        EventHandlerOptions {
+            handler_registered_at: Some("2025-01-02T03:04:05.000000000Z".to_string()),
+            detect_handler_file_path: Some(false),
+            ..EventHandlerOptions::default()
+        },
+        move |_event| {
+            order.lock().expect("order").push("first".to_string());
+            Ok(json!("first"))
+        },
+    );
+    let order = original_order.clone();
+    let second = bus.on_sync_with_options(
+        "HandlerOrderEvent",
+        "second",
+        EventHandlerOptions {
+            handler_registered_at: Some("2025-01-02T03:04:06.000000000Z".to_string()),
+            detect_handler_file_path: Some(false),
+            ..EventHandlerOptions::default()
+        },
+        move |_event| {
+            order.lock().expect("order").push("second".to_string());
+            Ok(json!("second"))
+        },
+    );
+    let expected_ids = vec![first.id.clone(), second.id.clone()];
+
+    let payload = bus.to_json_value();
+    assert_eq!(json_object_keys(&payload, "handlers"), expected_ids);
+    assert_eq!(
+        payload["handlers_by_key"]["HandlerOrderEvent"],
+        json!(expected_ids.clone())
+    );
+
+    let event = bus.emit::<HandlerOrderEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(event.wait_completed());
+    assert_eq!(
+        original_order.lock().expect("order").clone(),
+        vec!["first".to_string(), "second".to_string()]
+    );
+
+    let restored = EventBus::from_json_value(payload);
+    let restored_payload = restored.to_json_value();
+    assert_eq!(
+        json_object_keys(&restored_payload, "handlers"),
+        expected_ids
+    );
+    assert_eq!(
+        restored_payload["handlers_by_key"]["HandlerOrderEvent"],
+        json!(expected_ids.clone())
+    );
+
+    let restored_order = Arc::new(Mutex::new(Vec::<String>::new()));
+    let order = restored_order.clone();
+    restored.on_sync_with_options(
+        "HandlerOrderEvent",
+        "first",
+        EventHandlerOptions {
+            id: Some(first.id.clone()),
+            handler_registered_at: Some(first.handler_registered_at.clone()),
+            detect_handler_file_path: Some(false),
+            ..EventHandlerOptions::default()
+        },
+        move |_event| {
+            order.lock().expect("order").push("first".to_string());
+            Ok(json!("first"))
+        },
+    );
+    let order = restored_order.clone();
+    restored.on_sync_with_options(
+        "HandlerOrderEvent",
+        "second",
+        EventHandlerOptions {
+            id: Some(second.id.clone()),
+            handler_registered_at: Some(second.handler_registered_at.clone()),
+            detect_handler_file_path: Some(false),
+            ..EventHandlerOptions::default()
+        },
+        move |_event| {
+            order.lock().expect("order").push("second".to_string());
+            Ok(json!("second"))
+        },
+    );
+
+    let restored_event = restored.emit::<HandlerOrderEvent>(TypedEvent::new(EmptyPayload {}));
+    block_on(restored_event.wait_completed());
+    assert_eq!(
+        restored_order.lock().expect("order").clone(),
+        vec!["first".to_string(), "second".to_string()]
+    );
+
+    restored.stop();
+    bus.stop();
 }
 
 #[test]

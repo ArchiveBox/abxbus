@@ -66,6 +66,56 @@ test('EventBus toJSON/fromJSON roundtrip uses id-keyed structures', async () => 
   await pending_event.done()
 })
 
+test('EventBus preserves handler registration order through JSON and restore', async () => {
+  const HandlerOrderEvent = BaseEvent.extend('HandlerOrderEvent', {})
+  const bus = new EventBus('HandlerOrderSourceBus', {
+    event_handler_concurrency: 'serial',
+    event_handler_completion: 'all',
+    event_handler_detect_file_paths: false,
+  })
+  const original_order: string[] = []
+
+  const first = bus.on(HandlerOrderEvent, () => {
+    original_order.push('first')
+    return 'first'
+  })
+  const second = bus.on(HandlerOrderEvent, () => {
+    original_order.push('second')
+    return 'second'
+  })
+  const expected_ids = [first.id, second.id]
+
+  const json = bus.toJSON()
+  assert.deepEqual(Object.keys(json.handlers), expected_ids)
+  assert.deepEqual(json.handlers_by_key.HandlerOrderEvent, expected_ids)
+
+  await bus.emit(HandlerOrderEvent({})).done()
+  assert.deepEqual(original_order, ['first', 'second'])
+
+  const restored = EventBus.fromJSON(json)
+  const restored_json = restored.toJSON()
+  assert.deepEqual(Array.from(restored.handlers.keys()), expected_ids)
+  assert.deepEqual(restored.handlers_by_key.get('HandlerOrderEvent'), expected_ids)
+  assert.deepEqual(Object.keys(restored_json.handlers), expected_ids)
+  assert.deepEqual(restored_json.handlers_by_key.HandlerOrderEvent, expected_ids)
+
+  const restored_order: string[] = []
+  restored.handlers.get(first.id)!.handler = () => {
+    restored_order.push('first')
+    return 'first'
+  }
+  restored.handlers.get(second.id)!.handler = () => {
+    restored_order.push('second')
+    return 'second'
+  }
+
+  await restored.emit(HandlerOrderEvent({})).done()
+  assert.deepEqual(restored_order, ['first', 'second'])
+
+  bus.destroy()
+  restored.destroy()
+})
+
 test('EventBus.fromJSON recreates missing handler entries from event_result metadata', async () => {
   const bus = new EventBus('MissingHandlerHydrationBus', {
     event_handler_detect_file_paths: false,

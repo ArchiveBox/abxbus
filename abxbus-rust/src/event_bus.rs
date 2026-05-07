@@ -504,12 +504,41 @@ impl EventBus {
         let handlers_by_pattern = self.handlers.lock().clone();
         let mut handlers = Map::new();
         let mut handlers_by_key = Map::new();
-        for (pattern, entries) in handlers_by_pattern {
-            let mut ids = Vec::new();
-            for handler in entries {
-                ids.push(Value::String(handler.id.clone()));
-                handlers.insert(handler.id.clone(), handler.to_json_value());
-            }
+
+        let mut handler_entries: Vec<_> = handlers_by_pattern
+            .values()
+            .flat_map(|entries| entries.iter().cloned())
+            .collect();
+        handler_entries.sort_by(|left, right| {
+            left.handler_registered_at
+                .cmp(&right.handler_registered_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        for handler in handler_entries {
+            handlers.insert(handler.id.clone(), handler.to_json_value());
+        }
+
+        let mut pattern_entries: Vec<_> = handlers_by_pattern.into_iter().collect();
+        pattern_entries.sort_by(|left, right| {
+            let left_registered_at = left
+                .1
+                .iter()
+                .map(|handler| &handler.handler_registered_at)
+                .min();
+            let right_registered_at = right
+                .1
+                .iter()
+                .map(|handler| &handler.handler_registered_at)
+                .min();
+            left_registered_at
+                .cmp(&right_registered_at)
+                .then_with(|| left.0.cmp(&right.0))
+        });
+        for (pattern, entries) in pattern_entries {
+            let ids = entries
+                .into_iter()
+                .map(|handler| Value::String(handler.id))
+                .collect();
             handlers_by_key.insert(pattern, Value::Array(ids));
         }
 
