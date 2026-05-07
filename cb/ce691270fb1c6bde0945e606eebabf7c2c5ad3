@@ -1,0 +1,40 @@
+abxbus-go/tests/cross_runtime_roundtrip_test.go
+  s_6a8c07f028b30c::t_f81eb2619a6643 50,164
+docs/index.mdx
+  s_6a8c07f028b30c::t_f81eb2619a6643 154
+abxbus-ts/src/TachyonEventBridge.ts
+  s_6a8c07f028b30c::t_eba776e73b6bff 19-21,38-69,73,133,209
+abxbus-go/README.md
+  s_6a8c07f028b30c::t_f81eb2619a6643 15,29-30
+abxbus-ts/tests/cross_runtime_roundtrip.test.ts
+  s_6a8c07f028b30c::t_f81eb2619a6643 582
+docs/operations/development.mdx
+  s_6a8c07f028b30c::t_f81eb2619a6643 89-90
+abxbus-ts/package.json
+  s_6a8c07f028b30c::t_b08e9be39ae5d2 152
+docs/operations/supported-runtimes.mdx
+  s_6a8c07f028b30c::t_f81eb2619a6643 45
+abxbus-ts/pnpm-lock.yaml
+  ai_agent 35,1454
+tests/test_cross_runtime_roundtrip.py
+  s_6a8c07f028b30c::t_f81eb2619a6643 514
+abxbus-go/tests/eventbusmiddleware_test.go
+  s_6a8c07f028b30c::t_861e6ce51ca6d7 233-275
+  s_6a8c07f028b30c::t_3ef184059c4925 395-503
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "cbce691270fb1c6bde0945e606eebabf7c2c5ad3",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
