@@ -1,0 +1,34 @@
+docs/quickstart.mdx
+  s_6a8c07f028b30c::t_cb41d97ea8c83d 3,11-12,30-44,99-148
+docs/integrations/bridge-jsonl.mdx
+  s_6a8c07f028b30c::t_cb41d97ea8c83d 37-39,41-42,76-80,82-90,100
+  s_6a8c07f028b30c::t_330ca71c0a35f2 40,81
+docs/docs.json
+  s_6a8c07f028b30c::t_cb41d97ea8c83d 115
+docs/index.mdx
+  s_6a8c07f028b30c::t_cb41d97ea8c83d 3,17,66-121,129,149-154
+docs/integrations/middleware-otel-tracing.mdx
+  s_6a8c07f028b30c::t_cb41d97ea8c83d 41-50
+docs/operations/development.mdx
+  s_6a8c07f028b30c::t_cb41d97ea8c83d 3,70-97
+README.md
+  s_6a8c07f028b30c::t_cb41d97ea8c83d 13,29
+docs/operations/supported-runtimes.mdx
+  s_6a8c07f028b30c::t_cb41d97ea8c83d 3,29-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "30afb6c6f0aa55a0ba245c4022370c675a317ae6",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
