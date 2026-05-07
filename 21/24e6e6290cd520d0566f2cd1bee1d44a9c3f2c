@@ -1,0 +1,23 @@
+docs/features/typed-events.mdx
+  s_6a8c07f028b30c::t_546467d676d4da 55-66,75-79,83,91
+abxbus-go/typed.go
+  s_6a8c07f028b30c::t_2f7ea992c74463 3-8,24-32,41-65,85-191
+abxbus-go/tests/typed_events_test.go
+  s_6a8c07f028b30c::t_4067216786a825 5-6,23,27,48-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "2124e6e6290cd520d0566f2cd1bee1d44a9c3f2c",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
