@@ -180,28 +180,41 @@ async def test_typed_accessors_normalize_forwarded_event_results_to_none():
 
 
 async def test_event_result_returns_first_filtered_value_in_handler_registration_order():
-    """Result accessors should use handler registration order, not handler ids or completion timestamps."""
-    bus = EventBus(name='event_result_registration_order_bus', event_handler_concurrency='serial')
+    """Result accessors should use handler registration order, not completion timestamps."""
+    bus = EventBus(name='event_result_registration_order_bus', event_handler_concurrency='parallel')
 
     class AccessorEvent(BaseEvent[str]):
         pass
 
-    def null_handler(event: AccessorEvent) -> None:
+    completed_order: list[str] = []
+
+    async def null_handler(event: AccessorEvent) -> None:
+        await asyncio.sleep(0.03)
+        completed_order.append('null')
         return None
 
-    def winner_handler(event: AccessorEvent) -> str:
+    async def winner_handler(event: AccessorEvent) -> str:
+        await asyncio.sleep(0.02)
+        completed_order.append('winner')
         return 'winner'
 
-    def late_handler(event: AccessorEvent) -> str:
+    async def late_handler(event: AccessorEvent) -> str:
+        completed_order.append('late')
         return 'late'
 
-    bus.on(AccessorEvent, null_handler)
-    bus.on(AccessorEvent, winner_handler)
-    bus.on(AccessorEvent, late_handler)
+    handlers = [
+        bus.on(AccessorEvent, null_handler),
+        bus.on(AccessorEvent, winner_handler),
+        bus.on(AccessorEvent, late_handler),
+    ]
+    for handler in handlers:
+        handler.handler_registered_at = '2026-01-01T00:00:00.000000Z'
 
     event = bus.emit(AccessorEvent())
     assert await event.event_result(raise_if_any=False, raise_if_none=True) == 'winner'
     assert await event.event_results_list(raise_if_any=False, raise_if_none=True) == ['winner', 'late']
+    assert list(event.event_results) == [handler.id for handler in handlers]
+    assert completed_order == ['late', 'winner', 'null']
 
     await bus.stop(clear=True)
 

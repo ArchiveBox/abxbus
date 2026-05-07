@@ -45,6 +45,8 @@ pub struct BaseEventData {
     pub event_started_at: Option<String>,
     pub event_completed_at: Option<String>,
     pub event_results: HashMap<String, EventResult>,
+    #[serde(skip)]
+    pub event_result_order: Vec<String>,
     #[serde(flatten)]
     pub payload: Map<String, Value>,
 }
@@ -122,6 +124,7 @@ impl BaseEvent {
                 event_started_at: None,
                 event_completed_at: None,
                 event_results: HashMap::new(),
+                event_result_order: Vec::new(),
                 payload,
             }),
             completed: Event::new(),
@@ -514,9 +517,7 @@ impl BaseEvent {
         Ok(())
     }
 
-    fn ordered_event_results(&self) -> Vec<EventResult> {
-        let mut results: Vec<EventResult> =
-            self.inner.lock().event_results.values().cloned().collect();
+    fn sort_fallback_event_results(results: &mut [EventResult]) {
         results.sort_by(|left, right| {
             left.handler
                 .handler_registered_at
@@ -524,7 +525,30 @@ impl BaseEvent {
                 .then_with(|| left.started_at.cmp(&right.started_at))
                 .then_with(|| left.handler.id.cmp(&right.handler.id))
         });
+    }
+
+    fn ordered_event_results_from_data(event: &BaseEventData) -> Vec<EventResult> {
+        let mut results = Vec::new();
+        for handler_id in &event.event_result_order {
+            if let Some(result) = event.event_results.get(handler_id) {
+                results.push(result.clone());
+            }
+        }
+
+        let mut remaining: Vec<EventResult> = event
+            .event_results
+            .iter()
+            .filter(|(handler_id, _)| !event.event_result_order.contains(handler_id))
+            .map(|(_, result)| result.clone())
+            .collect();
+        Self::sort_fallback_event_results(&mut remaining);
+        results.extend(remaining);
         results
+    }
+
+    fn ordered_event_results(&self) -> Vec<EventResult> {
+        let event = self.inner.lock();
+        Self::ordered_event_results_from_data(&event)
     }
 
     pub fn mark_started(&self) {
@@ -560,6 +584,7 @@ impl BaseEvent {
         data.event_completed_at = None;
         data.event_pending_bus_count = 0;
         data.event_results.clear();
+        data.event_result_order.clear();
         Arc::new(Self {
             inner: Mutex::new(data),
             completed: Event::new(),
@@ -574,16 +599,9 @@ impl BaseEvent {
             if event.event_results.is_empty() {
                 object.remove("event_results");
             } else {
-                let mut results: Vec<_> = event.event_results.iter().collect();
-                results.sort_by(|left, right| {
-                    left.1
-                        .started_at
-                        .cmp(&right.1.started_at)
-                        .then_with(|| left.1.handler.id.cmp(&right.1.handler.id))
-                });
-                let results = results
+                let results = Self::ordered_event_results_from_data(&event)
                     .into_iter()
-                    .map(|(handler_id, result)| (handler_id.clone(), result.to_flat_json_value()))
+                    .map(|result| (result.handler.id.clone(), result.to_flat_json_value()))
                     .collect();
                 object.insert("event_results".to_string(), Value::Object(results));
             }
@@ -613,6 +631,9 @@ impl BaseEvent {
         let event_id = event.event_id.clone();
         let initial_status = status.unwrap_or(EventResultStatus::Pending);
         let initial_timeout = timeout.unwrap_or(event.event_timeout);
+        if !event.event_result_order.contains(&handler_id) {
+            event.event_result_order.push(handler_id.clone());
+        }
 
         let (updated, updated_status, updated_started_at) = {
             let event_result = event.event_results.entry(handler_id).or_insert_with(|| {
@@ -654,6 +675,7 @@ impl BaseEvent {
     }
 
     pub fn from_json_value(mut value: Value) -> Arc<Self> {
+        let mut event_result_order = Vec::new();
         if let Value::Object(ref mut object) = value {
             if !object.contains_key("event_version") {
                 object.insert(
@@ -724,10 +746,27 @@ impl BaseEvent {
                     ) else {
                         continue;
                     };
+                    event_result_order.push(result.handler.id.clone());
                     normalized_results.insert(
                         result.handler.id.clone(),
                         serde_json::to_value(result).expect("event result serialization failed"),
                     );
+                }
+                object.insert(
+                    "event_results".to_string(),
+                    Value::Object(normalized_results),
+                );
+            } else if let Some(Value::Object(raw_results)) = object.get("event_results").cloned() {
+                let mut normalized_results = Map::new();
+                for (handler_id, raw_result) in raw_results {
+                    let resolved_handler_id = raw_result
+                        .as_object()
+                        .and_then(|result| result.get("handler_id"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .unwrap_or(handler_id);
+                    event_result_order.push(resolved_handler_id.clone());
+                    normalized_results.insert(resolved_handler_id, raw_result);
                 }
                 object.insert(
                     "event_results".to_string(),
@@ -738,7 +777,22 @@ impl BaseEvent {
             }
         }
 
-        let parsed: BaseEventData = serde_json::from_value(value).expect("invalid base_event json");
+        let mut parsed: BaseEventData =
+            serde_json::from_value(value).expect("invalid base_event json");
+        parsed.event_result_order = event_result_order
+            .into_iter()
+            .filter(|handler_id| parsed.event_results.contains_key(handler_id))
+            .collect();
+        let mut missing_results: Vec<EventResult> = parsed
+            .event_results
+            .iter()
+            .filter(|(handler_id, _)| !parsed.event_result_order.contains(handler_id))
+            .map(|(_, result)| result.clone())
+            .collect();
+        Self::sort_fallback_event_results(&mut missing_results);
+        for result in missing_results {
+            parsed.event_result_order.push(result.handler.id);
+        }
         Arc::new(Self {
             inner: Mutex::new(parsed),
             completed: Event::new(),

@@ -904,17 +904,60 @@ fn test_runhandler_is_a_no_op_for_already_settled_results() {
 
 #[test]
 fn test_event_result_returns_first_filtered_value_in_handler_registration_order() {
-    let bus = EventBus::new(Some("EventResultFirstValueBus".to_string()));
+    let bus = EventBus::new_with_options(
+        Some("EventResultFirstValueBus".to_string()),
+        abxbus_rust::event_bus::EventBusOptions {
+            event_handler_concurrency: abxbus_rust::types::EventHandlerConcurrencyMode::Parallel,
+            ..abxbus_rust::event_bus::EventBusOptions::default()
+        },
+    );
+    let completed_order = Arc::new(Mutex::new(Vec::<String>::new()));
+    let registered_at = "2026-01-01T00:00:00.000Z".to_string();
 
-    bus.on("AccessorEvent", "null_handler", |_event| async move {
-        Ok(Value::Null)
-    });
-    bus.on("AccessorEvent", "winner_handler", |_event| async move {
-        Ok(json!("winner"))
-    });
-    bus.on("AccessorEvent", "late_handler", |_event| async move {
-        Ok(json!("late"))
-    });
+    let null_order = completed_order.clone();
+    bus.on_sync_with_options(
+        "AccessorEvent",
+        "null_handler",
+        EventHandlerOptions {
+            id: Some("00000000-0000-5000-8000-00000000000b".to_string()),
+            handler_registered_at: Some(registered_at.clone()),
+            ..EventHandlerOptions::default()
+        },
+        move |_event| {
+            thread::sleep(Duration::from_millis(30));
+            null_order.lock().unwrap().push("null".to_string());
+            Ok(Value::Null)
+        },
+    );
+    let winner_order = completed_order.clone();
+    bus.on_sync_with_options(
+        "AccessorEvent",
+        "winner_handler",
+        EventHandlerOptions {
+            id: Some("00000000-0000-5000-8000-00000000000c".to_string()),
+            handler_registered_at: Some(registered_at.clone()),
+            ..EventHandlerOptions::default()
+        },
+        move |_event| {
+            thread::sleep(Duration::from_millis(20));
+            winner_order.lock().unwrap().push("winner".to_string());
+            Ok(json!("winner"))
+        },
+    );
+    let late_order = completed_order.clone();
+    bus.on_sync_with_options(
+        "AccessorEvent",
+        "late_handler",
+        EventHandlerOptions {
+            id: Some("00000000-0000-5000-8000-00000000000a".to_string()),
+            handler_registered_at: Some(registered_at),
+            ..EventHandlerOptions::default()
+        },
+        move |_event| {
+            late_order.lock().unwrap().push("late".to_string());
+            Ok(json!("late"))
+        },
+    );
 
     let event = bus.emit::<AccessorEvent>(TypedEvent::new(EmptyPayload {}));
     let first_value = block_on(event.inner.event_result(EventResultsOptions {
@@ -925,7 +968,122 @@ fn test_event_result_returns_first_filtered_value_in_handler_registration_order(
     .expect("first result");
 
     assert_eq!(first_value, Some(json!("winner")));
+    let raw_values = block_on(event.inner.event_results_list_with_filter(
+        EventResultsOptions {
+            raise_if_any: false,
+            raise_if_none: false,
+            timeout: None,
+        },
+        |_| true,
+    ))
+    .expect("raw values");
+    assert_eq!(
+        raw_values,
+        vec![Value::Null, json!("winner"), json!("late")]
+    );
+    assert_eq!(
+        completed_order.lock().unwrap().clone(),
+        vec!["late".to_string(), "winner".to_string(), "null".to_string()]
+    );
     bus.stop();
+}
+
+#[test]
+fn test_base_event_from_json_preserves_event_results_object_registration_order() {
+    let event_id = "018f8e40-1234-7000-8000-000000001260";
+    let bus_id = "018f8e40-1234-7000-8000-000000001261";
+    let registered_at = "2026-01-01T00:00:00.000Z";
+    let started_at = "2026-01-01T00:00:01.000Z";
+    let completed_at = "2026-01-01T00:00:02.000Z";
+
+    let result_payload = |handler_id: &str, handler_name: &str, result: Value| {
+        json!({
+            "id": format!("018f8e40-1234-7000-8000-{}", &handler_id[handler_id.len() - 12..]),
+            "status": "completed",
+            "event_id": event_id,
+            "handler_id": handler_id,
+            "handler_name": handler_name,
+            "handler_file_path": null,
+            "handler_timeout": null,
+            "handler_slow_timeout": null,
+            "handler_registered_at": registered_at,
+            "handler_event_pattern": "AccessorEvent",
+            "eventbus_name": "RestoredOrderBus",
+            "eventbus_id": bus_id,
+            "timeout": null,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "result": result,
+            "error": null,
+            "event_children": [],
+        })
+    };
+
+    let null_id = "00000000-0000-5000-8000-00000000000b";
+    let winner_id = "00000000-0000-5000-8000-00000000000c";
+    let late_id = "00000000-0000-5000-8000-00000000000a";
+    let mut event_results = serde_json::Map::new();
+    event_results.insert(
+        null_id.to_string(),
+        result_payload(null_id, "null_handler", Value::Null),
+    );
+    event_results.insert(
+        winner_id.to_string(),
+        result_payload(winner_id, "winner_handler", json!("winner")),
+    );
+    event_results.insert(
+        late_id.to_string(),
+        result_payload(late_id, "late_handler", json!("late")),
+    );
+    let mut event_payload = json!({
+        "event_type": "AccessorEvent",
+        "event_version": "0.0.1",
+        "event_id": event_id,
+        "event_created_at": "2026-01-01T00:00:00.000Z",
+        "event_status": "completed",
+        "event_started_at": started_at,
+        "event_completed_at": completed_at,
+    });
+    event_payload["event_results"] = Value::Object(event_results);
+    let event = BaseEvent::from_json_value(event_payload);
+
+    let raw_values = block_on(event.event_results_list_with_filter(
+        EventResultsOptions {
+            raise_if_any: false,
+            raise_if_none: false,
+            timeout: None,
+        },
+        |_| true,
+    ))
+    .expect("raw values");
+    assert_eq!(
+        raw_values,
+        vec![Value::Null, json!("winner"), json!("late")]
+    );
+
+    let filtered_values = block_on(event.event_results_list(EventResultsOptions {
+        raise_if_any: false,
+        raise_if_none: true,
+        timeout: None,
+    }))
+    .expect("filtered values");
+    assert_eq!(filtered_values, vec![json!("winner"), json!("late")]);
+
+    let serialized = event.to_json_value();
+    let serialized_order: Vec<String> = serialized["event_results"]
+        .as_object()
+        .expect("event_results object")
+        .keys()
+        .cloned()
+        .collect();
+    assert_eq!(
+        serialized_order,
+        vec![
+            null_id.to_string(),
+            winner_id.to_string(),
+            late_id.to_string()
+        ]
+    );
 }
 
 #[test]

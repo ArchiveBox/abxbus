@@ -2105,6 +2105,9 @@ impl EventBus {
             .collect();
         let mut inner = event.inner.lock();
         for (handler_id, result) in pending_results {
+            if !inner.event_result_order.contains(&handler_id) {
+                inner.event_result_order.push(handler_id.clone());
+            }
             inner.event_results.entry(handler_id).or_insert(result);
         }
     }
