@@ -1,0 +1,31 @@
+abxbus-rust/tests/test_eventbus_serialization.rs
+  s_6a8c07f028b30c::t_033c4b785f9c15 45,47,49,70-71,99-100,108-111,116-119,347-350
+abxbus-go/event_bus.go
+  s_6a8c07f028b30c::t_d147975c68a991 356
+abxbus-go/tests/comprehensive_patterns_test.go
+  s_6a8c07f028b30c::t_6fa5c8e039dcb3 367-368,388-392,400-402
+tests/test_event_result.py
+  s_6a8c07f028b30c::t_299b2858a77150 182-208
+abxbus-ts/tests/EventBus.test.ts
+  s_6a8c07f028b30c::t_8bfa590d3f8351 682-697
+abxbus-go/base_event.go
+  s_6a8c07f028b30c::t_1d70539a814de8 37-41,57,197,209,396-406,408-419,422-425,429-474
+abxbus-go/tests/event_results_list_test.go
+  s_6a8c07f028b30c::t_f99a2d60f706a1 79-120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "931e4b031a2a3527782fc2847e17fbb433c58e49",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
