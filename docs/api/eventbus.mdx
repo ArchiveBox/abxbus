@@ -46,6 +46,27 @@ new EventBus(name?: string, options?: {
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+abxbus.NewEventBus(name string, options *abxbus.EventBusOptions)
+
+type EventBusOptions struct {
+	ID                          string
+	MaxHistorySize              *int
+	MaxHistoryDrop              bool
+	EventConcurrency            abxbus.EventConcurrencyMode
+	EventTimeout                *float64
+	EventSlowTimeout            *float64
+	EventHandlerConcurrency     abxbus.EventHandlerConcurrencyMode
+	EventHandlerCompletion      abxbus.EventHandlerCompletionMode
+	EventHandlerSlowTimeout     *float64
+	EventHandlerDetectFilePaths *bool
+	Middlewares                 []abxbus.EventBusMiddleware
+}
+```
+
+</Tab>
 </Tabs>
 
 ### Shared configuration semantics
@@ -69,7 +90,7 @@ When event fields are unset (`None`/`null`), the current processing bus applies 
 
 ## Runtime state
 
-Both implementations expose equivalent runtime state:
+All implementations expose equivalent runtime state:
 
 - Bus identity: `id`, `name`, `label`
 - Registered handlers and indexes
@@ -100,6 +121,18 @@ bus.on('*', wildcardHandler)
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+bus.On("UserEvent", "handler", handler, nil)
+bus.On("*", "wildcard_handler", wildcardHandler, nil)
+timeout := 5.0
+bus.On("UserEvent", "custom", handler, &abxbus.EventHandler{
+	HandlerTimeout: &timeout,
+})
+```
+
+</Tab>
 </Tabs>
 
 ## `off(...)`
@@ -125,6 +158,16 @@ bus.off('*')
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+handler := bus.On("UserEvent", "handler", onUserEvent, nil)
+bus.Off("UserEvent", handler)
+bus.Off("UserEvent", handler.ID)
+bus.Off("*", nil)
+```
+
+</Tab>
 </Tabs>
 
 ## `emit(...)`
@@ -145,6 +188,17 @@ result = await event.event_result()
 ```ts
 const event = bus.emit(MyEvent({ data: 'x' }))
 const result = await event.first()
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+event := bus.Emit(abxbus.NewBaseEvent("MyEvent", map[string]any{"data": "x"}))
+result, err := event.EventResult(context.Background())
+if err != nil {
+	return err
+}
 ```
 
 </Tab>
@@ -173,6 +227,21 @@ const child = await bus.find(ChildEvent, { child_of: parentEvent, future: 5 })
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+event, err := bus.Find("ResponseEvent", nil, nil)
+future, err := bus.Find("ResponseEvent", nil, &abxbus.FindOptions{
+	Past: false,
+	Future: 5.0,
+})
+child, err := bus.Find("ChildEvent", nil, &abxbus.FindOptions{
+	ChildOf: parentEvent,
+	Future: 5.0,
+})
+```
+
+</Tab>
 </Tabs>
 
 ## `filter(...)`
@@ -193,6 +262,22 @@ recent = await bus.filter(ResponseEvent, past=10, future=False, limit=5)
 
 ```ts
 const recent = await bus.filter(ResponseEvent, { past: 10, future: false, limit: 5 })
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+limit := 5
+recent, err := bus.Filter("ResponseEvent", 10.0, false, nil, &limit)
+
+recentWithPredicate, err := bus.FilterWithOptions(
+	"ResponseEvent",
+	func(event *abxbus.BaseEvent) bool {
+		return event.Payload["ok"] == true
+	},
+	&abxbus.FilterOptions{Past: 10.0, Future: false, Limit: &limit},
+)
 ```
 
 </Tab>
@@ -219,6 +304,15 @@ await bus.waitUntilIdle(5)
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+bus.WaitUntilIdle(nil)
+timeout := 5.0
+bus.WaitUntilIdle(&timeout)
+```
+
+</Tab>
 </Tabs>
 
 ### Parent/child relationship checks
@@ -240,11 +334,19 @@ bus.eventIsParentOf(parentEvent, childEvent)
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+bus.EventIsChildOf(childEvent, parentEvent)
+bus.EventIsParentOf(parentEvent, childEvent)
+```
+
+</Tab>
 </Tabs>
 
 ### Execution pipeline
 
-Both runtimes use the same layered model, expressed with runtime-native wrappers.
+All runtimes use the same layered model, expressed with runtime-native wrappers.
 
 - Event scope lock
 - Event-level timeout and slow monitor
