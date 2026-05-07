@@ -1,0 +1,38 @@
+docs/concurrency/events-bus-serial.mdx
+  s_6a8c07f028b30c::t_32949961e185cd 112-181
+docs/concurrency/handlers-parallel.mdx
+  s_6a8c07f028b30c::t_6c18e9ac27597f 110,121,134-135
+  s_6a8c07f028b30c::t_84038742b7828c 90-109,111-120,122-133,136-146
+docs/concurrency/handler-completion-first.mdx
+  s_6a8c07f028b30c::t_5da5f6d102d48e 98-151
+docs/concurrency/events-global-serial.mdx
+  s_6a8c07f028b30c::t_88be0fb003b1e0 105-165
+docs/concurrency/handlers-serial.mdx
+  s_6a8c07f028b30c::t_c5ba0c82250a8e 82-126
+docs/concurrency/events-parallel.mdx
+  s_6a8c07f028b30c::t_5484ef3b962b5f 97-150
+docs/concurrency/backpressure.mdx
+  s_6a8c07f028b30c::t_da38d5fbb11c3c 9,21-22,26,55-73,138-146,173-177,193-195
+  s_6a8c07f028b30c::t_0ead01323b042c 178-192
+docs/concurrency/timeouts.mdx
+  s_6a8c07f028b30c::t_3e3b94de8bef2c 77-90,135-152,179-189,280-306,317-318
+docs/concurrency/handler-completion-all.mdx
+  s_6a8c07f028b30c::t_02b7ddefef73a8 95-101,103-112,114-117,119,121-125,127,129-144,149-156
+  s_6a8c07f028b30c::t_de39b7c305c6ac 102,113,118,120,126,128,145-148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "399b16f0a6a27945cb487dde5a604141e172578d",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
