@@ -1,0 +1,19 @@
+abxbus-go/tests/cross_runtime_roundtrip_test.go
+  s_6a8c07f028b30c::t_23525ab2476fc9 93-115,128-143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "9b8245f6f99bda9fc9e744e588033deb6922823b",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
