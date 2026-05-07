@@ -2,7 +2,9 @@ package abxbus_test
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 )
@@ -72,6 +74,113 @@ func TestUnboundedHistoryDisablesHistoryRejection(t *testing.T) {
 	}
 	if bus.EventHistory.Size() != abxbus.DefaultMaxHistorySize+10 {
 		t.Fatalf("unbounded history should keep all events, got %d", bus.EventHistory.Size())
+	}
+}
+
+func TestMaxHistoryDropFalseRejectsNewDispatchWhenHistoryIsFull(t *testing.T) {
+	maxHistorySize := 2
+	bus := abxbus.NewEventBus("NoDropHistBus", &abxbus.EventBusOptions{MaxHistorySize: &maxHistorySize})
+	bus.On("NoDropEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return "ok", nil
+	}, nil)
+
+	for i := 1; i <= 2; i++ {
+		event := bus.Emit(abxbus.NewBaseEvent("NoDropEvent", map[string]any{"seq": i}))
+		if _, err := event.Done(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if bus.EventHistory.Size() != 2 {
+		t.Fatalf("expected history size 2, got %d", bus.EventHistory.Size())
+	}
+
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			t.Fatal("expected history limit panic")
+		}
+		if !strings.Contains(recovered.(string), "history limit reached (2/2)") {
+			t.Fatalf("unexpected panic: %v", recovered)
+		}
+		if bus.EventHistory.Size() != 2 {
+			t.Fatalf("history should remain capped after rejected emit, got %d", bus.EventHistory.Size())
+		}
+	}()
+	bus.Emit(abxbus.NewBaseEvent("NoDropEvent", map[string]any{"seq": 3}))
+}
+
+func TestZeroHistorySizeKeepsInflightAndDropsOnCompletion(t *testing.T) {
+	zeroHistorySize := 0
+	bus := abxbus.NewEventBus("ZeroHistoryBus", &abxbus.EventBusOptions{MaxHistorySize: &zeroHistorySize})
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	bus.On("SlowEvent", "slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+		return "ok", nil
+	}, nil)
+
+	first := bus.Emit(abxbus.NewBaseEvent("SlowEvent", nil))
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("timed out waiting for first handler to start")
+	}
+	second := bus.Emit(abxbus.NewBaseEvent("SlowEvent", nil))
+	if !bus.EventHistory.Has(first.EventID) || !bus.EventHistory.Has(second.EventID) {
+		close(release)
+		t.Fatalf("zero history should keep in-flight events, size=%d", bus.EventHistory.Size())
+	}
+
+	close(release)
+	for _, event := range []*abxbus.BaseEvent{first, second} {
+		if _, err := event.Done(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	timeout := 2.0
+	if !bus.WaitUntilIdle(&timeout) {
+		t.Fatal("bus did not become idle")
+	}
+	if bus.EventHistory.Size() != 0 {
+		t.Fatalf("zero history should drop completed events, got size=%d", bus.EventHistory.Size())
+	}
+}
+
+func TestZeroHistoryNoDropAllowsBurstQueueingAndDropsCompletedEvents(t *testing.T) {
+	zeroHistorySize := 0
+	bus := abxbus.NewEventBus("ZeroHistNoDropBus", &abxbus.EventBusOptions{MaxHistorySize: &zeroHistorySize, MaxHistoryDrop: false})
+	release := make(chan struct{})
+	bus.On("BurstEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		<-release
+		return "ok", nil
+	}, nil)
+
+	events := make([]*abxbus.BaseEvent, 0, 25)
+	for i := 0; i < 25; i++ {
+		events = append(events, bus.Emit(abxbus.NewBaseEvent("BurstEvent", map[string]any{"seq": i})))
+	}
+	if bus.EventHistory.Size() == 0 {
+		close(release)
+		t.Fatal("zero history should retain pending/in-flight events before completion")
+	}
+
+	close(release)
+	for _, event := range events {
+		if _, err := event.Done(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	timeout := 2.0
+	if !bus.WaitUntilIdle(&timeout) {
+		t.Fatal("bus did not become idle")
+	}
+	if bus.EventHistory.Size() != 0 {
+		t.Fatalf("zero history should drop all completed burst events, got size=%d", bus.EventHistory.Size())
 	}
 }
 

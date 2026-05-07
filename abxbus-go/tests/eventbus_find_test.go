@@ -272,6 +272,49 @@ func TestFindCanSeeInProgressEventInHistory(t *testing.T) {
 	}
 }
 
+func TestMaxHistorySizeZeroDisablesPastSearchButFutureFindStillResolves(t *testing.T) {
+	zeroHistorySize := 0
+	bus := abxbus.NewEventBus("FindZeroHistoryBus", &abxbus.EventBusOptions{MaxHistorySize: &zeroHistorySize})
+	bus.On("ZeroHistoryEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return "ok:" + event.Payload["value"].(string), nil
+	}, nil)
+
+	first := bus.Emit(abxbus.NewBaseEvent("ZeroHistoryEvent", map[string]any{"value": "first"}))
+	if _, err := first.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if bus.EventHistory.Size() != 0 {
+		t.Fatalf("zero history should drop completed event, got size=%d", bus.EventHistory.Size())
+	}
+	past, err := bus.Find("ZeroHistoryEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if past != nil {
+		t.Fatalf("past find should not see completed event in zero history, got %#v", past)
+	}
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		bus.Emit(abxbus.NewBaseEvent("ZeroHistoryEvent", map[string]any{"value": "future"}))
+	}()
+	future, err := bus.Find("ZeroHistoryEvent", func(event *abxbus.BaseEvent) bool {
+		return event.Payload["value"] == "future"
+	}, &abxbus.FindOptions{Past: false, Future: 1.0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if future == nil || future.Payload["value"] != "future" {
+		t.Fatalf("future find should resolve before zero history pruning, got %#v", future)
+	}
+	if _, err := future.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if bus.EventHistory.Size() != 0 {
+		t.Fatalf("zero history should stay empty after future match completion, got size=%d", bus.EventHistory.Size())
+	}
+}
+
 func TestFilterReturnsPastMatchesNewestFirstAndRespectsLimit(t *testing.T) {
 	bus := abxbus.NewEventBus("FilterPastBus", nil)
 	first := bus.Emit(abxbus.NewBaseEvent("Work", map[string]any{"n": 1}))

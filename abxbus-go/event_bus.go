@@ -312,6 +312,9 @@ func (b *EventBus) Emit(event *BaseEvent) *BaseEvent {
 			return original_event
 		}
 	}
+	if b.EventHistory.MaxHistorySize != nil && *b.EventHistory.MaxHistorySize > 0 && !b.EventHistory.MaxHistoryDrop && b.EventHistory.Size() >= *b.EventHistory.MaxHistorySize {
+		panic(fmt.Sprintf("%s.emit(%s) rejected: history limit reached (%d/%d); set event_history.max_history_drop=true to drop old history instead.", b.Label(), original_event.EventType, b.EventHistory.Size(), *b.EventHistory.MaxHistorySize))
+	}
 	original_event.EventPath = append(original_event.EventPath, b.Label())
 	b.mu.Lock()
 	b.EventHistory.AddEvent(original_event)
@@ -506,6 +509,7 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 	if event.EventPendingBusCount == 0 {
 		event.markCompleted()
 		b.notifyEventChange(event, "completed")
+		b.EventHistory.TrimEventHistory(nil)
 	}
 	b.startRunloop()
 	return nil
