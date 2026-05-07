@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -390,6 +393,199 @@ func (e *BaseEvent) EventResultsList(ctx context.Context, include func(result an
 		return nil, errors.New("no valid handler results")
 	}
 	return out, nil
+}
+
+func (e *BaseEvent) validateResultValue(value any) error {
+	if e.EventResultType == nil || value == nil {
+		return nil
+	}
+	if _, isEvent := value.(*BaseEvent); isEvent {
+		return nil
+	}
+	schema, ok := normalizeJSONValue(e.EventResultType).(map[string]any)
+	if !ok {
+		return nil
+	}
+	normalized := normalizeJSONValue(value)
+	if err := validateJSONSchemaValue(schema, schema, normalized, "$"); err != nil {
+		previewBytes, _ := json.Marshal(normalized)
+		preview := string(previewBytes)
+		if len(preview) > 40 {
+			preview = preview[:40]
+		}
+		return fmt.Errorf("EventHandlerResultSchemaError: Event handler return value %s... did not match event_result_type: %s", preview, err)
+	}
+	return nil
+}
+
+func normalizeJSONValue(value any) any {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	var normalized any
+	if err := json.Unmarshal(data, &normalized); err != nil {
+		return value
+	}
+	return normalized
+}
+
+func validateJSONSchemaValue(root map[string]any, schema any, value any, path string) error {
+	schemaMap, ok := schema.(map[string]any)
+	if !ok {
+		return nil
+	}
+	if ref, ok := schemaMap["$ref"].(string); ok {
+		resolved, ok := resolveJSONSchemaRef(root, ref)
+		if !ok {
+			return fmt.Errorf("%s unresolved schema reference %s", path, ref)
+		}
+		if err := validateJSONSchemaValue(root, resolved, value, path); err != nil {
+			return err
+		}
+		if len(schemaMap) == 1 {
+			return nil
+		}
+	}
+	if anyOf, ok := schemaMap["anyOf"].([]any); ok {
+		for _, branch := range anyOf {
+			if validateJSONSchemaValue(root, branch, value, path) == nil {
+				return nil
+			}
+		}
+		return fmt.Errorf("%s did not match anyOf schema", path)
+	}
+	if schemaType, ok := schemaMap["type"]; ok {
+		if types, ok := schemaType.([]any); ok {
+			for _, allowed := range types {
+				if jsonSchemaTypeMatches(allowed, value) {
+					return validateJSONSchemaChildren(root, schemaMap, value, path)
+				}
+			}
+			return fmt.Errorf("%s did not match any allowed type", path)
+		}
+		if !jsonSchemaTypeMatches(schemaType, value) {
+			if label, ok := schemaType.(string); ok {
+				return fmt.Errorf("%s expected %s", path, label)
+			}
+			return fmt.Errorf("%s expected matching schema type", path)
+		}
+	} else if schemaMap["properties"] != nil || schemaMap["required"] != nil || schemaMap["additionalProperties"] != nil {
+		if _, ok := value.(map[string]any); !ok {
+			return fmt.Errorf("%s expected object", path)
+		}
+	}
+	return validateJSONSchemaChildren(root, schemaMap, value, path)
+}
+
+func resolveJSONSchemaRef(root map[string]any, ref string) (any, bool) {
+	if ref == "#" {
+		return root, true
+	}
+	if !strings.HasPrefix(ref, "#/") {
+		return nil, false
+	}
+	var current any = root
+	for _, part := range strings.Split(strings.TrimPrefix(ref, "#/"), "/") {
+		part = strings.ReplaceAll(strings.ReplaceAll(part, "~1", "/"), "~0", "~")
+		object, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		current, ok = object[part]
+		if !ok {
+			return nil, false
+		}
+	}
+	return current, true
+}
+
+func jsonSchemaTypeMatches(schemaType any, value any) bool {
+	label, ok := schemaType.(string)
+	if !ok {
+		return true
+	}
+	switch label {
+	case "string":
+		_, ok := value.(string)
+		return ok
+	case "number":
+		number, ok := value.(float64)
+		return ok && !math.IsNaN(number) && !math.IsInf(number, 0)
+	case "integer":
+		number, ok := value.(float64)
+		return ok && !math.IsNaN(number) && !math.IsInf(number, 0) && math.Trunc(number) == number
+	case "boolean":
+		_, ok := value.(bool)
+		return ok
+	case "null":
+		return value == nil
+	case "array":
+		_, ok := value.([]any)
+		return ok
+	case "object":
+		_, ok := value.(map[string]any)
+		return ok
+	default:
+		return true
+	}
+}
+
+func validateJSONSchemaChildren(root map[string]any, schema map[string]any, value any, path string) error {
+	if itemsSchema, ok := schema["items"]; ok {
+		if items, ok := value.([]any); ok {
+			for idx, item := range items {
+				if err := validateJSONSchemaValue(root, itemsSchema, item, fmt.Sprintf("%s[%d]", path, idx)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	if required, ok := schema["required"].([]any); ok {
+		for _, keyValue := range required {
+			key, ok := keyValue.(string)
+			if !ok {
+				continue
+			}
+			if _, exists := object[key]; !exists {
+				return fmt.Errorf("%s.%s is required", path, key)
+			}
+		}
+	}
+	properties, _ := schema["properties"].(map[string]any)
+	for key, propertySchema := range properties {
+		if propertyValue, exists := object[key]; exists {
+			if err := validateJSONSchemaValue(root, propertySchema, propertyValue, path+"."+key); err != nil {
+				return err
+			}
+		}
+	}
+	switch additional := schema["additionalProperties"].(type) {
+	case bool:
+		if !additional && properties != nil {
+			for key := range object {
+				if _, known := properties[key]; !known {
+					return fmt.Errorf("%s.%s is not allowed", path, key)
+				}
+			}
+		}
+	case map[string]any:
+		for key, item := range object {
+			if properties != nil {
+				if _, known := properties[key]; known {
+					continue
+				}
+			}
+			if err := validateJSONSchemaValue(root, additional, item, path+"."+key); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (e *BaseEvent) sortedEventResults() []*EventResult {

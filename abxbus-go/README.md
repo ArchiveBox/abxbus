@@ -8,6 +8,7 @@ Implemented core features:
 - `find()` / `filter()` history and future lookup helpers
 - queue-jump via `event.Done(ctx)`
 - timeout handling with context propagation
+- `event_result_type` JSON Schema enforcement for handler return values
 - JSON-compatible snake_case wire format
 - `ToJSON` / `FromJSON` roundtrips for EventBus, BaseEvent, EventHandler, EventResult
 - Python/TS/Rust-compatible cross-runtime roundtrip helper: `cmd/abxbus-go-roundtrip`

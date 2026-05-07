@@ -596,6 +596,11 @@ func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, hand
 		bus.notifyEventResultChange(event, result, "completed")
 		return err
 	}
+	if err := event.validateResultValue(return_value); err != nil {
+		result.markError(err)
+		bus.notifyEventResultChange(event, result, "completed")
+		return err
+	}
 	result.markCompleted(return_value)
 	bus.notifyEventResultChange(event, result, "completed")
 	return nil
