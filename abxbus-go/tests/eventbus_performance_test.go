@@ -256,6 +256,53 @@ func TestPerformanceWorstCaseForwardingQueueJumpTimeouts(t *testing.T) {
 	assertPerformanceBudget(t, "worst-case forwarding + timeouts", totalEvents, elapsed, "event")
 }
 
+func TestPerformanceCleanupDestroyKeepsStateBounded(t *testing.T) {
+	busesPerBurst := 80
+	eventsPerBus := 64
+	historySize := 128
+	trimTarget := 1
+	totalEvents := busesPerBurst * eventsPerBus
+
+	started := time.Now()
+	for busIndex := 0; busIndex < busesPerBurst; busIndex++ {
+		bus := abxbus.NewEventBus(fmt.Sprintf("CleanupEqDestroy-%d", busIndex), &abxbus.EventBusOptions{
+			MaxHistorySize: &historySize,
+			MaxHistoryDrop: true,
+		})
+		bus.On("CleanupEqEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+			return nil, nil
+		}, nil)
+
+		pending := make([]*abxbus.BaseEvent, 0, eventsPerBus)
+		for eventIndex := 0; eventIndex < eventsPerBus; eventIndex++ {
+			pending = append(pending, bus.Emit(abxbus.NewBaseEvent("CleanupEqEvent", nil)))
+		}
+		waitForPerformanceBatch(t, pending)
+
+		bus.EventHistory.MaxHistorySize = &trimTarget
+		bus.EventHistory.MaxHistoryDrop = true
+		trimEvent := bus.Emit(abxbus.NewBaseEvent("CleanupEqTrimEvent", nil))
+		waitForPerformanceBatch(t, []*abxbus.BaseEvent{trimEvent})
+		timeout := 2.0
+		if !bus.WaitUntilIdle(&timeout) {
+			t.Fatal("timed out waiting for cleanup bus")
+		}
+		if bus.EventHistory.Size() > trimTarget {
+			t.Fatalf("trim-to-one failed: history=%d target=%d", bus.EventHistory.Size(), trimTarget)
+		}
+
+		bus.Destroy()
+		if bus.EventHistory.Size() != 0 {
+			t.Fatalf("destroy should clear history, got %d", bus.EventHistory.Size())
+		}
+		if !bus.IsIdleAndQueueEmpty() {
+			t.Fatal("destroyed bus should be idle with an empty queue")
+		}
+	}
+	elapsed := time.Since(started)
+	assertPerformanceBudget(t, "cleanup destroy bounded state", totalEvents, elapsed, "event")
+}
+
 func waitForPerformanceBatchAllowErrors(t *testing.T, events []*abxbus.BaseEvent) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
