@@ -1,0 +1,23 @@
+abxbus-go/tests/eventbus_concurrency_test.go
+  s_6a8c07f028b30c::t_ade136c9d17d6f 54-138
+abxbus-go/tests/eventbus_timeout_test.go
+  s_6a8c07f028b30c::t_18a243f63d03f2 62-65,67,74-77,79,114
+  s_6a8c07f028b30c::t_bddb6e1a8b21a2 49-53,55-58,60-61,66,68-73,78,80-113,115-135
+  s_6a8c07f028b30c::t_b384ed1dffda2f 54,59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "8fec63e60f95df6f4a60f219005a7e12c6392622",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
