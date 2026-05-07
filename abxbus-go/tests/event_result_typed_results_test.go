@@ -123,8 +123,8 @@ func TestComplexResultSchemaValidatesNestedData(t *testing.T) {
 	}
 }
 
-func TestFromJSONPreservesEventResultTypeSchema(t *testing.T) {
-	schema := map[string]any{"type": "integer"}
+func TestFromJSONNormalizesEventResultTypeSchemaDraft(t *testing.T) {
+	schema := map[string]any{"type": "string"}
 	event := schemaEvent("SchemaRoundtripEvent", schema)
 	data, err := event.ToJSON()
 	if err != nil {
@@ -138,8 +138,23 @@ func TestFromJSONPreservesEventResultTypeSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(encodedSchema) != `{"type":"integer"}` {
+	if string(encodedSchema) != `{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"string"}` {
 		t.Fatalf("unexpected restored schema: %s", string(encodedSchema))
+	}
+}
+
+func TestFromJSONPreservesCanonicalEventResultTypeSchemaJSON(t *testing.T) {
+	data := []byte(`{"event_type":"SchemaRawRoundtripEvent","event_version":"0.0.1","event_timeout":null,"event_slow_timeout":null,"event_concurrency":null,"event_handler_timeout":null,"event_handler_slow_timeout":null,"event_handler_concurrency":null,"event_handler_completion":null,"event_blocks_parent_completion":false,"event_result_type":{"type":"string","$schema":"https://json-schema.org/draft/2020-12/schema"},"event_id":"018f8e40-1234-7000-8000-00000000abcd","event_path":[],"event_parent_id":null,"event_emitted_by_handler_id":null,"event_pending_bus_count":0,"event_created_at":"2026-01-01T00:00:00.000000000Z","event_status":"pending","event_started_at":null,"event_completed_at":null}`)
+	event, err := abxbus.BaseEventFromJSON(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundtripped, err := event.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(roundtripped), `"event_result_type":{"type":"string","$schema":"https://json-schema.org/draft/2020-12/schema"}`) {
+		t.Fatalf("canonical event_result_type JSON order changed: %s", string(roundtripped))
 	}
 }
 

@@ -25,7 +25,7 @@ func TestGoRoundtripCLIPreservesEventJSONShape(t *testing.T) {
     "event_handler_concurrency": null,
     "event_handler_completion": null,
     "event_blocks_parent_completion": false,
-    "event_result_type": {"type": "object", "properties": {"ok": {"type": "boolean"}}},
+    "event_result_type": {"type": "array", "items": {"type": "string"}},
     "event_id": "018f8e40-1234-7000-8000-00000000abcd",
     "event_path": [],
     "event_parent_id": null,
@@ -58,7 +58,12 @@ func TestGoRoundtripCLIPreservesEventJSONShape(t *testing.T) {
 	if len(events) != 1 || events[0]["event_type"] != "RoundtripEvent" || events[0]["label"] != "go" {
 		t.Fatalf("roundtrip event payload mismatch: %#v", events)
 	}
-	if schema, ok := events[0]["event_result_type"].(map[string]any); !ok || schema["type"] != "object" {
+	expectedSchema := map[string]any{
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type":    "array",
+		"items":   map[string]any{"type": "string"},
+	}
+	if !reflect.DeepEqual(events[0]["event_result_type"], expectedSchema) {
 		t.Fatalf("event_result_type schema did not roundtrip: %#v", events[0]["event_result_type"])
 	}
 }
@@ -167,17 +172,21 @@ func roundtripEventFixture(eventType string, label string) map[string]any {
 		"event_handler_concurrency":      nil,
 		"event_handler_completion":       nil,
 		"event_blocks_parent_completion": false,
-		"event_result_type":              nil,
-		"event_id":                       "018f8e40-1234-7000-8000-00000000abcd",
-		"event_path":                     []any{},
-		"event_parent_id":                nil,
-		"event_emitted_by_handler_id":    nil,
-		"event_pending_bus_count":        0,
-		"event_created_at":               "2026-01-01T00:00:00.000000000Z",
-		"event_status":                   "pending",
-		"event_started_at":               nil,
-		"event_completed_at":             nil,
-		"label":                          label,
+		"event_result_type": map[string]any{
+			"$schema": "https://json-schema.org/draft/2020-12/schema",
+			"type":    "array",
+			"items":   map[string]any{"type": "string"},
+		},
+		"event_id":                    "018f8e40-1234-7000-8000-00000000abcd",
+		"event_path":                  []any{},
+		"event_parent_id":             nil,
+		"event_emitted_by_handler_id": nil,
+		"event_pending_bus_count":     0,
+		"event_created_at":            "2026-01-01T00:00:00.000000000Z",
+		"event_status":                "pending",
+		"event_started_at":            nil,
+		"event_completed_at":          nil,
+		"label":                       label,
 	}
 }
 
