@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"go.opentelemetry.io/otel"
@@ -13,7 +14,8 @@ import (
 )
 
 type OtelTracingMiddlewareOptions struct {
-	Tracer trace.Tracer
+	Tracer             trace.Tracer
+	RootSpanAttributes []attribute.KeyValue
 }
 
 type OtelTracingMiddleware struct {
@@ -23,6 +25,7 @@ type OtelTracingMiddleware struct {
 	eventSpans     map[string]trace.Span
 	handlerSpans   map[string]trace.Span
 	handlerContext map[string]context.Context
+	rootAttributes []attribute.KeyValue
 }
 
 func NewOtelTracingMiddleware(options *OtelTracingMiddlewareOptions) *OtelTracingMiddleware {
@@ -39,7 +42,15 @@ func NewOtelTracingMiddleware(options *OtelTracingMiddlewareOptions) *OtelTracin
 		eventSpans:     map[string]trace.Span{},
 		handlerSpans:   map[string]trace.Span{},
 		handlerContext: map[string]context.Context{},
+		rootAttributes: append([]attribute.KeyValue{}, optionsRootAttributes(options)...),
 	}
+}
+
+func optionsRootAttributes(options *OtelTracingMiddlewareOptions) []attribute.KeyValue {
+	if options == nil {
+		return nil
+	}
+	return options.RootSpanAttributes
 }
 
 func (m *OtelTracingMiddleware) OnEventChange(eventbus *EventBus, event *BaseEvent, status string) {
@@ -67,12 +78,16 @@ func (m *OtelTracingMiddleware) startEventSpan(eventbus *EventBus, event *BaseEv
 		return span
 	}
 	parent := context.Background()
-	if event.EventParentID != nil {
+	if event.EventParentID != nil && event.EventEmittedByHandlerID != nil {
+		if parentCtx := m.handlerContext[handlerSpanKey(*event.EventParentID, *event.EventEmittedByHandlerID)]; parentCtx != nil {
+			parent = parentCtx
+		}
+	} else if event.EventParentID != nil {
 		if parentCtx := m.eventContexts[*event.EventParentID]; parentCtx != nil {
 			parent = parentCtx
 		}
 	}
-	ctx, span := m.tracer.Start(parent, fmt.Sprintf("%s.%s", eventbus.Name, event.EventType), trace.WithAttributes(eventAttributes(eventbus, event)...))
+	ctx, span := m.tracer.Start(parent, eventSpanName(eventbus, event), trace.WithAttributes(m.eventAttributes(eventbus, event)...))
 	m.eventContexts[event.EventID] = ctx
 	m.eventSpans[event.EventID] = span
 	return span
@@ -96,7 +111,7 @@ func (m *OtelTracingMiddleware) completeEventSpan(eventbus *EventBus, event *Bas
 	} else {
 		span.SetStatus(codes.Ok, "")
 	}
-	span.SetAttributes(eventAttributes(eventbus, event)...)
+	span.SetAttributes(m.eventAttributes(eventbus, event)...)
 	span.End()
 }
 
@@ -111,7 +126,7 @@ func (m *OtelTracingMiddleware) startHandlerSpan(eventbus *EventBus, event *Base
 	if parent == nil {
 		parent = context.Background()
 	}
-	ctx, span := m.tracer.Start(parent, fmt.Sprintf("%s.%s.%s", eventbus.Name, event.EventType, result.HandlerName), trace.WithAttributes(handlerAttributes(eventbus, event, result)...))
+	ctx, span := m.tracer.Start(parent, handlerSpanName(event, result), trace.WithAttributes(handlerAttributes(eventbus, event, result)...))
 	m.handlerContext[key] = ctx
 	m.handlerSpans[key] = span
 	return span
@@ -142,28 +157,57 @@ func handlerSpanKey(eventID string, handlerID string) string {
 	return eventID + ":" + handlerID
 }
 
-func eventAttributes(eventbus *EventBus, event *BaseEvent) []attribute.KeyValue {
+func eventSpanName(eventbus *EventBus, event *BaseEvent) string {
+	return fmt.Sprintf("%s.emit(%s)", eventbus.Name, event.EventType)
+}
+
+func handlerSpanName(event *BaseEvent, result *EventResult) string {
+	return fmt.Sprintf("%s(%s)", result.HandlerName, event.EventType)
+}
+
+func (m *OtelTracingMiddleware) eventAttributes(eventbus *EventBus, event *BaseEvent) []attribute.KeyValue {
 	attrs := []attribute.KeyValue{
-		attribute.String("abxbus.eventbus.name", eventbus.Name),
-		attribute.String("abxbus.eventbus.id", eventbus.ID),
-		attribute.String("abxbus.event.id", event.EventID),
-		attribute.String("abxbus.event.type", event.EventType),
-		attribute.String("abxbus.event.status", event.EventStatus),
+		attribute.String("abxbus.event_bus.id", eventbus.ID),
+		attribute.String("abxbus.event_bus.name", eventbus.Name),
+		attribute.String("abxbus.event_id", event.EventID),
+		attribute.String("abxbus.event_type", event.EventType),
+		attribute.String("abxbus.event_version", event.EventVersion),
+		attribute.String("abxbus.event_path", strings.Join(event.EventPath, " ")),
+		attribute.String("abxbus.event_status", event.EventStatus),
+	}
+	if event.EventParentID == nil {
+		attrs = append(attrs, m.rootAttributes...)
+		attrs = append(attrs, attribute.Bool("abxbus.trace.root", true))
 	}
 	if event.EventParentID != nil {
-		attrs = append(attrs, attribute.String("abxbus.event.parent_id", *event.EventParentID))
+		attrs = append(attrs, attribute.String("abxbus.event_parent_id", *event.EventParentID))
+	}
+	if event.EventEmittedByHandlerID != nil {
+		attrs = append(attrs, attribute.String("abxbus.event_emitted_by_handler_id", *event.EventEmittedByHandlerID))
+	}
+	if sessionID, ok := event.Payload["session_id"].(string); ok {
+		attrs = append(attrs, attribute.String("abxbus.session_id", sessionID))
 	}
 	return attrs
 }
 
 func handlerAttributes(eventbus *EventBus, event *BaseEvent, result *EventResult) []attribute.KeyValue {
-	attrs := eventAttributes(eventbus, event)
+	attrs := []attribute.KeyValue{
+		attribute.String("abxbus.event_bus.id", eventbus.ID),
+		attribute.String("abxbus.event_bus.name", eventbus.Name),
+		attribute.String("abxbus.event_id", event.EventID),
+		attribute.String("abxbus.event_type", event.EventType),
+	}
 	attrs = append(attrs,
-		attribute.String("abxbus.handler.id", result.HandlerID),
-		attribute.String("abxbus.handler.name", result.HandlerName),
-		attribute.String("abxbus.result.id", result.ID),
-		attribute.String("abxbus.result.status", string(result.Status)),
+		attribute.String("abxbus.handler_id", result.HandlerID),
+		attribute.String("abxbus.handler_name", result.HandlerName),
+		attribute.String("abxbus.handler_event_pattern", result.HandlerEventPattern),
+		attribute.String("abxbus.event_result_id", result.ID),
+		attribute.String("abxbus.event_result_status", string(result.Status)),
 	)
+	if result.HandlerFilePath != nil {
+		attrs = append(attrs, attribute.String("abxbus.handler_file_path", *result.HandlerFilePath))
+	}
 	return attrs
 }
 
