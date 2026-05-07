@@ -1,0 +1,31 @@
+abxbus-go/event_bus.go
+  s_6a8c07f028b30c::t_27420df6d77aef 141-143
+  s_6a8c07f028b30c::t_d8d26d2b131c55 934
+  s_6a8c07f028b30c::t_716994a5ccc6f8 933,939-942,945,957
+abxbus-go/tests/eventbus_serialization_test.go
+  s_6a8c07f028b30c::t_f5493f834e9e5e 124-153
+abxbus-go/tests/event_history_store_test.go
+  s_6a8c07f028b30c::t_7daf20a8c01112 63-78
+docs/features/event-history-store.mdx
+  s_6a8c07f028b30c::t_dc28af3d211acc 93
+abxbus-go/event_history.go
+  s_6a8c07f028b30c::t_0cfd35615e732d 9-11,28-29
+abxbus-go/tests/eventbus_test.go
+  s_6a8c07f028b30c::t_97f2456c2a2c6d 12-14,58-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "7f1d129b45abccf454756125462e5a8671bb6d9d",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
