@@ -4,6 +4,7 @@ Go implementation of the core AbxBus event bus behavior.
 
 Implemented core features:
 - EventBus / BaseEvent / EventHandler / EventResult
+- typed payload/result helpers for Go structs
 - event_concurrency, event_handler_concurrency, event_handler_completion
 - `find()` / `filter()` history and future lookup helpers
 - queue-jump via `event.Done(ctx)`

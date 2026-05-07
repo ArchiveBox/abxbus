@@ -92,12 +92,12 @@ func TestEventResultsListAndFirstUseHandlerRegistrationOrder(t *testing.T) {
 	}, &abxbus.EventHandler{ID: "a-late"})
 
 	e := bus.Emit(abxbus.NewBaseEvent("OrderResultEvent", nil))
-	first, err := e.First(context.Background())
+	first, err := e.EventResult(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first != "winner" {
-		t.Fatalf("expected First to return first non-nil result in registration order, got %#v", first)
+		t.Fatalf("expected EventResult to return first non-nil result in registration order, got %#v", first)
 	}
 
 	values, err := e.EventResultsList(context.Background(), nil, &abxbus.EventResultsListOptions{RaiseIfAny: false, RaiseIfNone: true})

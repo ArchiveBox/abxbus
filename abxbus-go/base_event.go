@@ -332,7 +332,9 @@ func (e *BaseEvent) EventResult(ctx context.Context) (any, error) {
 		if result.Status == EventResultError {
 			return nil, errors.New(toErrorString(result.Error))
 		}
-		if result.Status == EventResultCompleted {
+	}
+	for _, result := range e.sortedEventResults() {
+		if result.Status == EventResultCompleted && result.Result != nil && !isBaseEventResult(result.Result) {
 			return result.Result, nil
 		}
 	}
@@ -340,11 +342,12 @@ func (e *BaseEvent) EventResult(ctx context.Context) (any, error) {
 }
 
 func (e *BaseEvent) First(ctx context.Context) (any, error) {
+	e.EventHandlerCompletion = EventHandlerCompletionFirst
 	if _, err := e.Done(ctx); err != nil {
 		return nil, err
 	}
 	for _, result := range e.sortedEventResults() {
-		if result.Status == EventResultCompleted && result.Result != nil {
+		if result.Status == EventResultCompleted && result.Result != nil && !isBaseEventResult(result.Result) {
 			return result.Result, nil
 		}
 	}
@@ -354,6 +357,18 @@ func (e *BaseEvent) First(ctx context.Context) (any, error) {
 		}
 	}
 	return nil, nil
+}
+
+func isBaseEventResult(result any) bool {
+	if _, ok := result.(*BaseEvent); ok {
+		return true
+	}
+	if object, ok := normalizeJSONValue(result).(map[string]any); ok {
+		_, hasEventType := object["event_type"]
+		_, hasEventID := object["event_id"]
+		return hasEventType && hasEventID
+	}
+	return false
 }
 
 func (e *BaseEvent) EventResultsList(ctx context.Context, include func(result any, event_result *EventResult) bool, options *EventResultsListOptions) ([]any, error) {
