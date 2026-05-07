@@ -319,6 +319,7 @@ func (b *EventBus) Emit(event *BaseEvent) *BaseEvent {
 	original_event.EventPendingBusCount++
 	b.pendingEventQueue = append(b.pendingEventQueue, original_event)
 	b.mu.Unlock()
+	b.notifyEventChange(original_event, "pending")
 	if b.locks.getActiveHandlerResult() == nil {
 		b.startRunloop()
 	}
@@ -440,6 +441,9 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 		}
 		event.noteEventResultOrder(h.ID)
 		pending_entries = append(pending_entries, result)
+		if result.Status == EventResultPending {
+			b.notifyEventResultChange(event, result, "pending")
+		}
 	}
 	resolved_event_timeout := event.EventTimeout
 	if resolved_event_timeout == nil {
@@ -480,12 +484,14 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 				} else {
 					r.replaceError((&EventHandlerCancelledError{Message: "Cancelled pending handler due to event timeout"}).Error())
 				}
+				b.notifyEventResultChange(event, r, "completed")
 				continue
 			}
 			if status == EventResultCompleted || status == EventResultError {
 				continue
 			}
 			r.markError(err)
+			b.notifyEventResultChange(event, r, "completed")
 		}
 	}
 	event.EventPendingBusCount--
@@ -523,6 +529,7 @@ func (e *BaseEvent) runHandlers(ctx context.Context, bus *EventBus, handlers []*
 					nextStatus, _, _, _ := results[j].snapshot()
 					if nextStatus == EventResultPending {
 						results[j].replaceError((&EventHandlerCancelledError{Message: "Cancelled pending handler due to first-completion mode"}).Error())
+						bus.notifyEventResultChange(e, results[j], "completed")
 					}
 				}
 				return nil
