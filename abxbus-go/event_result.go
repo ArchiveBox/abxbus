@@ -43,6 +43,14 @@ type EventResult struct {
 	once    sync.Once
 }
 
+type EventResultUpdateOptions struct {
+	Status    EventResultStatus
+	Result    any
+	Error     any
+	ResultSet bool
+	ErrorSet  bool
+}
+
 type eventResultJSON struct {
 	ID                  string            `json:"id"`
 	Status              EventResultStatus `json:"status"`
@@ -221,6 +229,58 @@ func (r *EventResult) UnmarshalJSON(data []byte) error {
 }
 
 func (r *EventResult) ToJSON() ([]byte, error) { return json.Marshal(r) }
+
+func (r *EventResult) Update(options *EventResultUpdateOptions) *EventResult {
+	if options == nil {
+		return r
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.done_ch == nil {
+		r.done_ch = make(chan struct{})
+	}
+
+	hasResult := options.ResultSet || options.Result != nil
+	if hasResult {
+		if errValue, ok := options.Result.(error); ok {
+			r.Result = nil
+			r.Error = errValue.Error()
+			r.Status = EventResultError
+		} else if r.Event != nil {
+			if err := r.Event.validateResultValue(options.Result); err != nil {
+				r.Result = nil
+				r.Error = err.Error()
+				r.Status = EventResultError
+			} else {
+				r.Result = options.Result
+				r.Status = EventResultCompleted
+			}
+		} else {
+			r.Result = options.Result
+			r.Status = EventResultCompleted
+		}
+	}
+
+	hasError := options.ErrorSet || options.Error != nil
+	if hasError {
+		r.Error = toErrorString(options.Error)
+		r.Status = EventResultError
+	}
+
+	if options.Status != "" {
+		r.Status = options.Status
+	}
+	if r.Status != EventResultPending && r.StartedAt == nil {
+		now := monotonicDatetime()
+		r.StartedAt = &now
+	}
+	if (r.Status == EventResultCompleted || r.Status == EventResultError) && r.CompletedAt == nil {
+		now := monotonicDatetime()
+		r.CompletedAt = &now
+		r.once.Do(func() { close(r.done_ch) })
+	}
+	return r
+}
 
 func (r *EventResult) replaceError(message string) {
 	r.mu.Lock()

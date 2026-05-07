@@ -3,6 +3,8 @@ package abxbus_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,6 +70,105 @@ func TestBaseEventJSONFlattenedPayload(t *testing.T) {
 	}
 	if _, ok := obj["event_id"]; !ok {
 		t.Fatal("missing event_id")
+	}
+}
+
+func TestBaseEventEventResultUpdateCreatesAndUpdatesTypedHandlerResults(t *testing.T) {
+	bus := abxbus.NewEventBus("BaseEventEventResultUpdateBus", nil)
+	event := abxbus.NewBaseEvent("BaseEventEventResultUpdateEvent", nil)
+	event.EventResultType = map[string]any{"type": "string"}
+	handlerEntry := bus.On("BaseEventEventResultUpdateEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return "ok", nil
+	}, nil)
+
+	pending := event.EventResultUpdate(handlerEntry, &abxbus.BaseEventResultUpdateOptions{
+		EventBus: bus,
+		EventResultUpdateOptions: abxbus.EventResultUpdateOptions{
+			Status: abxbus.EventResultPending,
+		},
+	})
+	if event.EventResults[handlerEntry.ID] != pending {
+		t.Fatal("event_result_update should store the pending result by handler id")
+	}
+	if pending.Status != abxbus.EventResultPending {
+		t.Fatalf("expected pending result, got %s", pending.Status)
+	}
+
+	completed := event.EventResultUpdate(handlerEntry, &abxbus.BaseEventResultUpdateOptions{
+		EventBus: bus,
+		EventResultUpdateOptions: abxbus.EventResultUpdateOptions{
+			Status: abxbus.EventResultCompleted,
+			Result: "seeded",
+		},
+	})
+	if completed != pending {
+		t.Fatal("event_result_update should update the existing handler result")
+	}
+	if completed.Status != abxbus.EventResultCompleted || completed.Result != "seeded" {
+		t.Fatalf("expected completed seeded result, got status=%s result=%#v", completed.Status, completed.Result)
+	}
+	if completed.StartedAt == nil || completed.CompletedAt == nil {
+		t.Fatalf("completed update should set started_at and completed_at: %#v", completed)
+	}
+}
+
+func TestBaseEventEventResultUpdateStatusOnlyPreservesExistingErrorAndResult(t *testing.T) {
+	bus := abxbus.NewEventBus("BaseEventEventResultUpdateStatusOnlyBus", nil)
+	event := abxbus.NewBaseEvent("BaseEventEventResultUpdateStatusOnlyEvent", nil)
+	event.EventResultType = map[string]any{"type": "string"}
+	handlerEntry := bus.On("BaseEventEventResultUpdateStatusOnlyEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return "ok", nil
+	}, nil)
+
+	errored := event.EventResultUpdate(handlerEntry, &abxbus.BaseEventResultUpdateOptions{
+		EventBus: bus,
+		EventResultUpdateOptions: abxbus.EventResultUpdateOptions{
+			Error: errors.New("seeded error"),
+		},
+	})
+	if errored.Status != abxbus.EventResultError || errored.Error != "seeded error" {
+		t.Fatalf("expected seeded error result, got status=%s error=%#v", errored.Status, errored.Error)
+	}
+
+	statusOnly := event.EventResultUpdate(handlerEntry, &abxbus.BaseEventResultUpdateOptions{
+		EventBus: bus,
+		EventResultUpdateOptions: abxbus.EventResultUpdateOptions{
+			Status: abxbus.EventResultPending,
+		},
+	})
+	if statusOnly.Status != abxbus.EventResultPending {
+		t.Fatalf("expected status-only update to set pending, got %s", statusOnly.Status)
+	}
+	if statusOnly.Error != "seeded error" {
+		t.Fatalf("status-only update should preserve existing error, got %#v", statusOnly.Error)
+	}
+	if statusOnly.Result != nil {
+		t.Fatalf("status-only update should not synthesize a result, got %#v", statusOnly.Result)
+	}
+}
+
+func TestBaseEventEventResultUpdateValidatesDeclaredResultSchema(t *testing.T) {
+	bus := abxbus.NewEventBus("BaseEventEventResultUpdateSchemaBus", nil)
+	event := abxbus.NewBaseEvent("BaseEventEventResultUpdateSchemaEvent", nil)
+	event.EventResultType = map[string]any{"type": "string"}
+	handlerEntry := bus.On("BaseEventEventResultUpdateSchemaEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return "ok", nil
+	}, nil)
+
+	result := event.EventResultUpdate(handlerEntry, &abxbus.BaseEventResultUpdateOptions{
+		EventBus: bus,
+		EventResultUpdateOptions: abxbus.EventResultUpdateOptions{
+			Result: 123,
+		},
+	})
+	if result.Status != abxbus.EventResultError {
+		t.Fatalf("invalid seeded result should mark handler error, got %s", result.Status)
+	}
+	if !strings.Contains(result.Error.(string), "EventHandlerResultSchemaError") {
+		t.Fatalf("expected schema error, got %#v", result.Error)
+	}
+	if result.Result != nil {
+		t.Fatalf("invalid seeded result should not be stored, got %#v", result.Result)
 	}
 }
 

@@ -65,7 +65,7 @@ In Go the same split is exposed as `event.Done(ctx)` for immediate queue-jump ex
 
 ## Core metadata fields
 
-Common event metadata fields available in both runtimes:
+Common event metadata fields available in all runtimes:
 
 - `event_id`: unique UUIDv7
 - `event_type`: event name/type key
@@ -222,6 +222,22 @@ pending.update({ status: 'completed', result: 'seeded' })
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+pending := event.EventResultUpdate(handlerEntry, &abxbus.BaseEventResultUpdateOptions{
+	EventBus: bus,
+	EventResultUpdateOptions: abxbus.EventResultUpdateOptions{
+		Status: abxbus.EventResultPending,
+	},
+})
+pending.Update(&abxbus.EventResultUpdateOptions{
+	Status: abxbus.EventResultCompleted,
+	Result: "seeded",
+})
+```
+
+</Tab>
 </Tabs>
 
 ## Resetting an event
@@ -254,7 +270,7 @@ fresh, err := event.EventReset()
 
 ## Serialization
 
-Events are JSON-serializable in both implementations for bridge and cross-runtime workflows.
+Events are JSON-serializable in all runtimes for bridge and cross-runtime workflows.
 
 <Tabs>
 <Tab title="Python">
@@ -315,14 +331,14 @@ restored, err := abxbus.BaseEventFromJSON(payload)
 
 ## Notes
 
-- Reserved names are validated in both runtimes:
+- Reserved names are validated in all runtimes:
   - `bus` and `first` are reserved runtime APIs and cannot be provided as payload fields.
   - Unknown `event_*` fields are rejected.
   - Known built-in `event_*` fields (for example `event_timeout`) can still be intentionally overridden in event definitions.
 - `model_*` is also reserved:
   - Python: unknown `model_*` fields are rejected, but valid Pydantic namespace overrides (for example `model_config`) are allowed.
   - TypeScript: any `model_*` field is rejected.
-- `event_result_type` drives handler return validation in both runtimes.
+- `event_result_type` drives handler return validation in all runtimes.
 - Parent-child tracking is automatic for `event.emit(...)` inside handlers. `bus.emit(...)` creates a top-level event with no parent link.
 
 ## Reserved Fields

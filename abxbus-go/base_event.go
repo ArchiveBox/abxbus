@@ -56,6 +56,12 @@ type EventResultsListOptions struct {
 	RaiseIfNone bool
 }
 
+type BaseEventResultUpdateOptions struct {
+	EventBus *EventBus
+	Timeout  *float64
+	EventResultUpdateOptions
+}
+
 func NewBaseEvent(event_type string, payload map[string]any) *BaseEvent {
 	id := newUUIDv7String()
 	if payload == nil {
@@ -274,6 +280,64 @@ func (e *BaseEvent) EventReset() (*BaseEvent, error) {
 	fresh.EventID = newUUIDv7String()
 	resetInboundEvent(fresh)
 	return fresh, nil
+}
+
+func (e *BaseEvent) EventResultUpdate(handler *EventHandler, options *BaseEventResultUpdateOptions) *EventResult {
+	if handler == nil {
+		return nil
+	}
+	if options == nil {
+		options = &BaseEventResultUpdateOptions{}
+	}
+	if e.EventResults == nil {
+		e.EventResults = map[string]*EventResult{}
+	}
+
+	result := e.EventResults[handler.ID]
+	if result == nil {
+		status := options.Status
+		if status == "" {
+			status = EventResultPending
+		}
+		result = NewEventResult(e, handler)
+		result.Status = status
+		if options.Timeout != nil {
+			result.HandlerTimeout = options.Timeout
+		}
+		e.EventResults[handler.ID] = result
+	} else {
+		result.Event = e
+		result.Handler = handler
+		result.HandlerID = handler.ID
+		result.HandlerName = handler.HandlerName
+		result.HandlerFilePath = handler.HandlerFilePath
+		result.HandlerSlowTimeout = handler.HandlerSlowTimeout
+		result.HandlerRegisteredAt = handler.HandlerRegisteredAt
+		result.HandlerEventPattern = handler.EventPattern
+		result.EventBusName = handler.EventBusName
+		result.EventBusID = handler.EventBusID
+		if options.Timeout != nil {
+			result.HandlerTimeout = options.Timeout
+		} else {
+			result.HandlerTimeout = handler.HandlerTimeout
+		}
+	}
+	e.noteEventResultOrder(handler.ID)
+
+	result.Update(&options.EventResultUpdateOptions)
+	if result.Status == EventResultStarted && result.StartedAt != nil {
+		e.EventStatus = "started"
+		if e.EventStartedAt == nil {
+			e.EventStartedAt = result.StartedAt
+		}
+	}
+	if result.Status == EventResultPending || result.Status == EventResultStarted {
+		e.EventCompletedAt = nil
+	}
+	if options.EventBus != nil {
+		e.Bus = options.EventBus
+	}
+	return result
 }
 
 func (e *BaseEvent) eventResultTypeJSONValue() any {
@@ -988,6 +1052,9 @@ func toErrorString(v any) string {
 	}
 	if s, ok := v.(string); ok {
 		return s
+	}
+	if err, ok := v.(error); ok {
+		return err.Error()
 	}
 	b, _ := json.Marshal(v)
 	return string(b)

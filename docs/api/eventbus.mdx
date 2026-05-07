@@ -420,11 +420,37 @@ await this.event_bus.locks._runWithHandlerDispatchContext(this, async () => {
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+// EventBus.processEvent(...)
+err := runWithTimeout(ctx, resolvedEventTimeout, timeoutError, func(ctx context.Context) error {
+	return event.runHandlers(ctx, bus, handlers, pendingEntries, signalFirstHandlerStarted)
+})
+
+// BaseEvent.runHandlers(...)
+for i, handler := range handlers {
+	if err := runSingleHandler(ctx, bus, event, handler, results[i], signalFirstHandlerStarted); err != nil {
+		return err
+	}
+}
+
+// runSingleHandler(...)
+result.markStarted()
+err := runWithTimeout(ctx, resolvedHandlerTimeout, handlerTimeoutError, func(ctx context.Context) error {
+	return bus.locks.runWithHandlerDispatchContext(result, func() error {
+		returnValue, err = handler.Handle(ctx, event)
+		return err
+	})
+})
+```
+
+</Tab>
 </Tabs>
 
 ### Serialization and teardown
 
-Both runtimes can serialize the entire bus state (config, handlers metadata, event history, pending queue), restore it, re-attach handler callables, and continue processing.
+All runtimes can serialize the entire bus state (config, handlers metadata, event history, pending queue), restore it, re-attach handler callables, and continue processing.
 
 <Tabs>
 <Tab title="Python">
@@ -502,6 +528,44 @@ await bus.waitUntilIdle()
 
 // 5) Teardown when done
 bus.destroy()
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+resumeTick := abxbus.NewBaseEvent("ResumeTickEvent", nil)
+
+// 1) Serialize full bus state
+payload, err := bus.ToJSON()
+fmt.Println(string(payload))
+// {
+//   "id": "018f...",
+//   "name": "SerializableBus",
+//   "handlers": {
+//     "018f...": {"id": "018f...", "handler_name": "onUserCreated", "event_pattern": "UserCreatedEvent"}
+//   },
+//   "event_history": {
+//     "0190...": {"event_id": "0190...", "event_type": "UserCreatedEvent", "...": "..."}
+//   },
+//   "pending_event_queue": ["0190..."]
+// }
+
+// 2) Rehydrate state
+bus, err = abxbus.EventBusFromJSON(payload)
+
+// 3) Re-link runtime callables by handler id
+bus.On("UserCreatedEvent", "onUserCreated", onUserCreated, bus.Handlers["018f..."])
+bus.On("UserDeletedEvent", "onUserDeleted", onUserDeleted, bus.Handlers["018g..."])
+bus.On("UserUpdatedEvent", "onUserUpdated", onUserUpdated, bus.Handlers["018h..."])
+
+// 4) Resume processing
+bus.Emit(resumeTick)
+timeout := 1.0
+bus.WaitUntilIdle(&timeout)
+
+// 5) Teardown when done
+bus.Stop()
 ```
 
 </Tab>

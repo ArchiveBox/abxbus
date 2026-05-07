@@ -366,4 +366,16 @@ const recent = await bus.filter(ResponseEvent, { past: 10, future: false, limit:
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+limit := 5
+recent, err := bus.Filter("ResponseEvent", nil, &abxbus.FilterOptions{
+	Past:   10.0,
+	Future: false,
+	Limit:  &limit,
+})
+```
+
+</Tab>
 </Tabs>

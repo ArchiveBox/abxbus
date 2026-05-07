@@ -56,3 +56,30 @@ func TestEventResultWaitTimeout(t *testing.T) {
 		t.Fatal("expected timeout")
 	}
 }
+
+func TestEventResultUpdateKeepsConsistentOrderingSemanticsForStatusResultError(t *testing.T) {
+	bus := abxbus.NewEventBus("StandaloneResultUpdateBus", nil)
+	handler := abxbus.NewEventHandler(bus.Name, bus.ID, "StandaloneEvent", "handler", nil)
+	event := abxbus.NewBaseEvent("StandaloneEvent", nil)
+	result := abxbus.NewEventResult(event, handler)
+	result.Error = "RuntimeError: existing"
+
+	result.Update(&abxbus.EventResultUpdateOptions{Status: abxbus.EventResultCompleted})
+	if result.Status != abxbus.EventResultCompleted {
+		t.Fatalf("expected completed status, got %s", result.Status)
+	}
+	if result.Error != "RuntimeError: existing" {
+		t.Fatalf("status-only update should preserve existing error, got %#v", result.Error)
+	}
+
+	result.Update(&abxbus.EventResultUpdateOptions{
+		Status: abxbus.EventResultError,
+		Result: "seeded",
+	})
+	if result.Result != "seeded" {
+		t.Fatalf("result update should preserve seeded result, got %#v", result.Result)
+	}
+	if result.Status != abxbus.EventResultError {
+		t.Fatalf("explicit status should apply after result, got %s", result.Status)
+	}
+}
