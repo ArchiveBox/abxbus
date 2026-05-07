@@ -1,0 +1,35 @@
+abxbus-rust/tests/test_eventbus_timeout.rs
+  6a8c07f028b30c43 6-7,11,13-39,54-65,73-102,110-112,497,508-509,512,520,941-943,945,947,950-953,963,965-966,987,999-1001,396-452,454-473,44-45,66-72,202,204-367,669-686,688-737,739-792,794-940
+  60f9f93049b86d73 8-9,46-53,503-507,949,957,960,962,968-969,972,976,983,991-994,997,395,453,42-43,687,738
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "03cd70b2b3b4e74863e31978a3b2a4b6de9702b0",
+  "prompts": {
+    "60f9f93049b86d73": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1c3-a846-79e3-90aa-0bd6ba4adc72",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "total_additions": 491,
+      "total_deletions": 50,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    },
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "total_additions": 1912,
+      "total_deletions": 1457,
+      "accepted_lines": 444,
+      "overriden_lines": 0
+    }
+  }
+}

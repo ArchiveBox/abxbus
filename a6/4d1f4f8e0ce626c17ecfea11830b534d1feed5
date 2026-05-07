@@ -1,0 +1,35 @@
+abxbus-rust/tests/test_eventbus_dispatch_parent_tracking.rs
+  60f9f93049b86d73 1-6,8,52,88,95,232,403,818-889,152,154-155,159,204,206-207,211,369,450,454-455,459,614,616-617,621,293,304,306-307,309-310,315,707-708
+  6a8c07f028b30c43 7,10,12-51,53-87,89-94,96-132,224-231,234-239,245-257,259-260,270,272-276,390-402,404-423,642,647-648,651,659-660,740,744-745,749,752-753,756-759,772-773,780,784-787,795,802-804,817,890-903,153,156-158,160-203,205,208-210,212-223,343-368,370-389,424-449,451-453,456-458,460-464,589-613,615,618-620,622-641,904,974-1199,294-303,305,308,311-314,316-338,340-342,465-588,661-706,709-739,905-973
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "a64d1f4f8e0ce626c17ecfea11830b534d1feed5",
+  "prompts": {
+    "60f9f93049b86d73": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1c3-a846-79e3-90aa-0bd6ba4adc72",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "total_additions": 491,
+      "total_deletions": 50,
+      "accepted_lines": 9,
+      "overriden_lines": 0
+    },
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "total_additions": 1788,
+      "total_deletions": 1450,
+      "accepted_lines": 325,
+      "overriden_lines": 0
+    }
+  }
+}

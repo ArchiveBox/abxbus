@@ -1,0 +1,25 @@
+abxbus-rust/tests/test_eventbus_timeout.rs
+  6a8c07f028b30c43 6-7,11,13-39,54-65,81-110,118-120,506,517-518,521,529,951-953,955,957,960-963,973,975-976,997,1009-1011,405-461,463-482,44-45,66-72,211,213-376,678-695,697-746,748-759,761-802,804-950
+  60f9f93049b86d73 8-9,46-53,512-516,959,967,970,972,978-979,982,986,993,1001-1004,1007,404,462,42-43,696,747
+abxbus-rust/tests/test_eventbus_locking.rs
+  6a8c07f028b30c43 1-9,11,13-43,50-220,303-483,590-638,739-892,896-1293,1391-1736
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "c605702edd414d1f26beb379a3721a8754572437",
+  "prompts": {
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "total_additions": 1909,
+      "total_deletions": 1,
+      "accepted_lines": 422,
+      "overriden_lines": 0
+    }
+  }
+}

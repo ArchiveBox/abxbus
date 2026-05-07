@@ -1,0 +1,22 @@
+abxbus-rust/tests/test_eventbus_forwarding.rs
+  6a8c07f028b30c43 1-19,24-42,59-143,146-207,209-279,281-283,286-385,388-420,494-530
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "a9a69d5de58707bacc0a55e25a5b8d568fc6ee9a",
+  "prompts": {
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "total_additions": 1538,
+      "total_deletions": 1450,
+      "accepted_lines": 33,
+      "overriden_lines": 0
+    }
+  }
+}

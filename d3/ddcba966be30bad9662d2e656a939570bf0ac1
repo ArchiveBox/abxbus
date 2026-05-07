@@ -1,0 +1,26 @@
+abxbus-rust/src/bin/abxbus-rust-roundtrip.rs
+  6a8c07f028b30c43 1-56
+abxbus-ts/tests/cross_runtime_roundtrip.test.ts
+  6a8c07f028b30c43 17,344,349,543-580,707-828,868-954
+tests/test_cross_runtime_roundtrip.py
+  6a8c07f028b30c43 19,439-487,546-603,664-723,777-839
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "d3ddcba966be30bad9662d2e656a939570bf0ac1",
+  "prompts": {
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "total_additions": 1777,
+      "total_deletions": 2,
+      "accepted_lines": 537,
+      "overriden_lines": 0
+    }
+  }
+}
