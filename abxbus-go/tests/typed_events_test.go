@@ -58,6 +58,46 @@ func TestTypedEventWithResultSchemaValidatesHandlerReturnAtRuntime(t *testing.T)
 	}
 }
 
+func TestOnTypedValidatesPayloadBeforeCallingHandler(t *testing.T) {
+	bus := abxbus.NewEventBus("TypedPayloadSchemaBus", nil)
+	called := false
+	abxbus.OnTyped[addPayload, addResult](bus, "TypedPayloadSchemaEvent", "typed", func(ctx context.Context, payload addPayload) (addResult, error) {
+		called = true
+		return addResult{Sum: payload.A + payload.B}, nil
+	}, nil)
+
+	event := bus.Emit(abxbus.NewBaseEvent("TypedPayloadSchemaEvent", map[string]any{"a": 1}))
+	if _, err := event.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("typed handler should not be called when a required payload field is missing")
+	}
+	if _, err := event.EventResult(context.Background()); err == nil || !strings.Contains(err.Error(), "EventHandlerPayloadSchemaError") {
+		t.Fatalf("expected typed payload schema error, got %v", err)
+	}
+}
+
+func TestOnTypedRejectsWrongPayloadFieldType(t *testing.T) {
+	bus := abxbus.NewEventBus("TypedPayloadTypeBus", nil)
+	called := false
+	abxbus.OnTyped[addPayload, addResult](bus, "TypedPayloadTypeEvent", "typed", func(ctx context.Context, payload addPayload) (addResult, error) {
+		called = true
+		return addResult{Sum: payload.A + payload.B}, nil
+	}, nil)
+
+	event := bus.Emit(abxbus.NewBaseEvent("TypedPayloadTypeEvent", map[string]any{"a": "one", "b": 2}))
+	if _, err := event.Done(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("typed handler should not be called when a payload field has the wrong type")
+	}
+	if _, err := event.EventResult(context.Background()); err == nil || !strings.Contains(err.Error(), "EventHandlerPayloadSchemaError") {
+		t.Fatalf("expected typed payload schema error, got %v", err)
+	}
+}
+
 func TestJSONSchemaForGoStructUsesJSONTagsAndRequiredFields(t *testing.T) {
 	type nestedResult struct {
 		Tags []string `json:"tags"`

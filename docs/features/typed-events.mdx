@@ -88,4 +88,4 @@ _ = typedResult
 
 - Python payload validation is powered by Pydantic models.
 - TypeScript payload and result validation is powered by Zod schemas.
-- Go uses typed struct helpers for static shape at call sites and derives JSON Schema from the declared result type for runtime result validation.
+- Go uses typed struct helpers for static shape at call sites, validates typed handler payloads against the declared payload struct, and derives JSON Schema from the declared result type for runtime result validation.

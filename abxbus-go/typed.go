@@ -3,6 +3,7 @@ package abxbus
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 )
@@ -53,7 +54,12 @@ func OnTyped[TPayload any, TResult any](
 	handler func(context.Context, TPayload) (TResult, error),
 	options *EventHandler,
 ) *EventHandler {
+	payloadSchema := JSONSchemaFor[TPayload]()
 	return bus.On(eventPattern, handlerName, func(ctx context.Context, event *BaseEvent) (any, error) {
+		if err := validateJSONSchemaValue(payloadSchema, payloadSchema, normalizeJSONValue(event.Payload), "$"); err != nil {
+			var zero TResult
+			return zero, fmt.Errorf("EventHandlerPayloadSchemaError: Event payload did not match declared handler payload type: %w", err)
+		}
 		payload, err := EventPayloadAs[TPayload](event)
 		if err != nil {
 			var zero TResult
