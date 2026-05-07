@@ -1,0 +1,25 @@
+abxbus-go/tests/event_result_typed_results_test.go
+  s_6a8c07f028b30c::t_b9e221477406f0 207-210
+  s_6a8c07f028b30c::t_3d73c50cefd5e4 25-34,40-55,157-206,211-246
+  s_6a8c07f028b30c::t_70cd36c9a88ac9 35-39
+abxbus-go/base_event.go
+  s_6a8c07f028b30c::t_452776fc150164 622,625-626,629-632
+  s_6a8c07f028b30c::t_0e55e3221538a9 790,823-827
+  s_6a8c07f028b30c::t_f3f019f2be2035 11,557-577,591,594-616,643-645,712-723,771-789,791-820,828-858
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "6c69257487d2871d836ca9ac71f3ae794024b9e5",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
