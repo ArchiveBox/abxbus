@@ -1,5 +1,8 @@
 use std::{
-    sync::{mpsc, Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc, Arc, Mutex,
+    },
     thread,
     time::Duration,
 };
@@ -14,6 +17,14 @@ use abxbus_rust::{
 use futures::{executor::block_on, join};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+
+fn unique_bus_name(prefix: &str) -> String {
+    static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+    format!(
+        "Comprehensive{prefix}{}",
+        NEXT_ID.fetch_add(1, Ordering::Relaxed)
+    )
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 struct EmptyPayload {}
@@ -194,8 +205,10 @@ fn new_bus_with_concurrency(
 
 #[test]
 fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() {
-    let bus1 = EventBus::new(Some("bus1".to_string()));
-    let bus2 = EventBus::new(Some("bus2".to_string()));
+    let bus1_name = unique_bus_name("bus1");
+    let bus2_name = unique_bus_name("bus2");
+    let bus1 = EventBus::new(Some(bus1_name.clone()));
+    let bus2 = EventBus::new(Some(bus2_name.clone()));
     let results = Arc::new(Mutex::new(Vec::<(usize, String)>::new()));
     let execution_counter = Arc::new(Mutex::new(0usize));
 
@@ -242,6 +255,8 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
         let bus2_label = bus2_label.clone();
         let results = parent_results.clone();
         let counter = parent_counter.clone();
+        let bus1_name = bus1_name.clone();
+        let bus2_name = bus2_name.clone();
         async move {
             let seq = {
                 let mut count = counter.lock().expect("counter lock");
@@ -279,10 +294,10 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
 
             let sync_results = child_event_sync.inner.inner.lock().event_results.clone();
             assert!(sync_results.values().any(|result| {
-                result.handler.eventbus_name == "bus1" && result.handler.handler_name == "emit"
+                result.handler.eventbus_name == bus1_name && result.handler.handler_name == "emit"
             }));
             assert!(sync_results.values().any(|result| {
-                result.handler.eventbus_name == "bus2"
+                result.handler.eventbus_name == bus2_name
                     && result.handler.handler_name == "child_bus2_event_handler"
             }));
 
@@ -469,8 +484,8 @@ fn test_race_condition_stress() {
 
 #[test]
 fn test_multi_bus_queues_are_independent_when_awaiting_child() {
-    let bus1 = EventBus::new(Some("Bus1".to_string()));
-    let bus2 = EventBus::new(Some("Bus2".to_string()));
+    let bus1 = EventBus::new(Some(unique_bus_name("Bus1")));
+    let bus2 = EventBus::new(Some(unique_bus_name("Bus2")));
     let execution_order = Arc::new(Mutex::new(Vec::new()));
 
     let bus1_for_event1 = bus1.clone();
@@ -1218,10 +1233,22 @@ fn test_bug_queue_jump_two_bus_global_handler_lock_should_serialize_across_both_
         index_of(&log, "b1_end") < index_of(&log, "b2_start"),
         "global lock: b1 should finish before b2 starts. Got: {log:?}"
     );
-    assert!(
-        index_of(&log, "a2_end") < index_of(&log, "b1_start"),
-        "global lock: bus_a should finish before bus_b starts. Got: {log:?}"
-    );
+    for entry_pair in log.chunks(2) {
+        assert_eq!(
+            entry_pair.len(),
+            2,
+            "global lock: every handler start must be followed by its end. Got: {log:?}"
+        );
+        assert!(
+            entry_pair[0].ends_with("_start") && entry_pair[1].ends_with("_end"),
+            "global lock: handlers must not overlap across buses. Got: {log:?}"
+        );
+        assert_eq!(
+            entry_pair[0].replace("_start", ""),
+            entry_pair[1].replace("_end", ""),
+            "global lock: handler start/end pair mismatch. Got: {log:?}"
+        );
+    }
     bus_a.stop();
     bus_b.stop();
 }

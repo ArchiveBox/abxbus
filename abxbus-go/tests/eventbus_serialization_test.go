@@ -295,3 +295,27 @@ func TestEventBusSerializationPreservesPendingQueueIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestEventBusFromJSONPreservesEventHistoryObjectOrder(t *testing.T) {
+	bus := abxbus.NewEventBus("HistoryOrderBus", nil)
+	first := abxbus.NewBaseEvent("HistoryOrderEvent", map[string]any{"label": "first"})
+	second := abxbus.NewBaseEvent("HistoryOrderEvent", map[string]any{"label": "second"})
+	bus.EventHistory.AddEvent(first)
+	bus.EventHistory.AddEvent(second)
+
+	data, err := bus.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONKeyBefore(t, data, first.EventID, second.EventID)
+
+	restored, err := abxbus.EventBusFromJSON(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredData, err := restored.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSONKeyBefore(t, restoredData, first.EventID, second.EventID)
+}

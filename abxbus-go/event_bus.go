@@ -927,6 +927,12 @@ func EventBusFromJSON(data []byte) (*EventBus, error) {
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		return nil, err
 	}
+	var rawPayload struct {
+		EventHistory json.RawMessage `json:"event_history"`
+	}
+	if err := json.Unmarshal(data, &rawPayload); err != nil {
+		return nil, err
+	}
 	bus := NewEventBus(parsed.Name, &EventBusOptions{
 		ID:                          parsed.ID,
 		MaxHistorySize:              parsed.MaxHistorySize,
@@ -942,7 +948,11 @@ func EventBusFromJSON(data []byte) (*EventBus, error) {
 	bus.handlers = parsed.Handlers
 	bus.handlersByKey = parsed.HandlersByKey
 	bus.EventHistory = NewEventHistory(parsed.MaxHistorySize, parsed.MaxHistoryDrop)
-	for _, event := range parsed.EventHistory {
+
+	addHistoryEvent := func(eventID string, event *BaseEvent) {
+		if event.EventID == "" {
+			event.EventID = eventID
+		}
 		event.Bus = bus
 		for _, result := range event.EventResults {
 			result.Event = event
@@ -952,6 +962,30 @@ func EventBusFromJSON(data []byte) (*EventBus, error) {
 		}
 		bus.EventHistory.AddEvent(event)
 	}
+
+	if orderedHistory, ok, err := orderedJSONRawObjectEntries(rawPayload.EventHistory); err != nil {
+		return nil, err
+	} else if ok {
+		for _, entry := range orderedHistory {
+			var event BaseEvent
+			if err := json.Unmarshal(entry.raw, &event); err != nil {
+				return nil, err
+			}
+			addHistoryEvent(entry.key, &event)
+		}
+	} else {
+		historyIDs := make([]string, 0, len(parsed.EventHistory))
+		for eventID := range parsed.EventHistory {
+			historyIDs = append(historyIDs, eventID)
+		}
+		sort.Strings(historyIDs)
+		for _, eventID := range historyIDs {
+			if event := parsed.EventHistory[eventID]; event != nil {
+				addHistoryEvent(eventID, event)
+			}
+		}
+	}
+
 	bus.pendingEventQueue = []*BaseEvent{}
 	for _, event_id := range parsed.PendingEventQueue {
 		if event := bus.EventHistory.GetEvent(event_id); event != nil {

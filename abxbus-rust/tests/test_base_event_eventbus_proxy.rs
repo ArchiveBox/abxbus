@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
 
 use abxbus_rust::{base_event::BaseEvent, event_bus::EventBus, types::EventStatus};
 use futures::executor::block_on;
@@ -11,6 +14,11 @@ fn base_event(event_type: &str, payload: Value) -> Arc<BaseEvent> {
     BaseEvent::new(event_type, payload)
 }
 
+fn unique_bus_name(prefix: &str) -> String {
+    static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+    format!("Proxy{prefix}{}", NEXT_ID.fetch_add(1, Ordering::Relaxed))
+}
+
 fn history_event(bus: &Arc<EventBus>, event_type: &str) -> Arc<BaseEvent> {
     bus.runtime_payload_for_test()
         .values()
@@ -21,7 +29,8 @@ fn history_event(bus: &Arc<EventBus>, event_type: &str) -> Arc<BaseEvent> {
 
 #[test]
 fn test_event_event_bus_inside_handler_returns_the_dispatching_bus() {
-    let bus = EventBus::new(Some("TestBus".to_string()));
+    let bus_name = unique_bus_name("TestBus");
+    let bus = EventBus::new(Some(bus_name.clone()));
     let handler_called = Arc::new(Mutex::new(false));
     let handler_bus_name = Arc::new(Mutex::new(None::<String>));
     let child_event = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
@@ -57,7 +66,7 @@ fn test_event_event_bus_inside_handler_returns_the_dispatching_bus() {
             .lock()
             .expect("handler_bus_name lock")
             .as_deref(),
-        Some("TestBus")
+        Some(bus_name.as_str())
     );
     let child = child_event
         .lock()
@@ -67,7 +76,7 @@ fn test_event_event_bus_inside_handler_returns_the_dispatching_bus() {
     assert_eq!(child.inner.lock().event_type, "ChildEvent");
     assert_eq!(
         child.event_bus().map(|bus| bus.name.clone()).as_deref(),
-        Some("TestBus")
+        Some(bus_name.as_str())
     );
     bus.stop();
 }
@@ -140,7 +149,8 @@ fn test_event_bus_aliases_bus_property() {
 
 #[test]
 fn test_event_event_bus_is_set_for_child_events_emitted_in_handler() {
-    let bus = EventBus::new(Some("EventBusPropertyFallbackBus".to_string()));
+    let bus_name = unique_bus_name("EventBusPropertyFallbackBus");
+    let bus = EventBus::new(Some(bus_name.clone()));
     let child_bus_name = Arc::new(Mutex::new(None::<String>));
 
     let child_bus_name_for_handler = child_bus_name.clone();
@@ -163,14 +173,15 @@ fn test_event_event_bus_is_set_for_child_events_emitted_in_handler() {
     assert!(block_on(bus.wait_until_idle(None)));
     assert_eq!(
         child_bus_name.lock().expect("child bus lock").as_deref(),
-        Some("EventBusPropertyFallbackBus")
+        Some(bus_name.as_str())
     );
     bus.stop();
 }
 
 #[test]
 fn test_event_event_bus_is_absent_on_detached_events() {
-    let bus = EventBus::new(Some("EventBusPropertyDetachedBus".to_string()));
+    let bus_name = unique_bus_name("EventBusPropertyDetachedBus");
+    let bus = EventBus::new(Some(bus_name.clone()));
     bus.on(
         "MainEvent",
         "handler",
@@ -182,7 +193,7 @@ fn test_event_event_bus_is_absent_on_detached_events() {
 
     assert_eq!(
         original.event_bus().map(|bus| bus.name.clone()).as_deref(),
-        Some("EventBusPropertyDetachedBus")
+        Some(bus_name.as_str())
     );
     let detached = BaseEvent::from_json_value(original.to_json_value());
     assert!(detached.event_bus().is_none());
@@ -192,21 +203,24 @@ fn test_event_event_bus_is_absent_on_detached_events() {
 
 #[test]
 fn test_event_event_bus_is_available_outside_handler_context() {
-    let bus = EventBus::new(Some("EventBusPropertyOutsideHandlerBus".to_string()));
+    let bus_name = unique_bus_name("EventBusPropertyOutsideHandlerBus");
+    let bus = EventBus::new(Some(bus_name.clone()));
     let event = bus.emit_base(base_event("MainEvent", json!({})));
     block_on(event.event_completed());
 
     assert_eq!(
         event.event_bus().map(|bus| bus.name.clone()).as_deref(),
-        Some("EventBusPropertyOutsideHandlerBus")
+        Some(bus_name.as_str())
     );
     bus.stop();
 }
 
 #[test]
 fn test_event_event_bus_returns_correct_bus_when_multiple_buses_exist() {
-    let bus1 = EventBus::new(Some("Bus1".to_string()));
-    let bus2 = EventBus::new(Some("Bus2".to_string()));
+    let bus1_name = unique_bus_name("Bus1");
+    let bus2_name = unique_bus_name("Bus2");
+    let bus1 = EventBus::new(Some(bus1_name.clone()));
+    let bus2 = EventBus::new(Some(bus2_name.clone()));
     let handler1_bus_name = Arc::new(Mutex::new(None::<String>));
     let handler2_bus_name = Arc::new(Mutex::new(None::<String>));
 
@@ -239,14 +253,14 @@ fn test_event_event_bus_returns_correct_bus_when_multiple_buses_exist() {
             .lock()
             .expect("handler1 bus lock")
             .as_deref(),
-        Some("Bus1")
+        Some(bus1_name.as_str())
     );
     assert_eq!(
         handler2_bus_name
             .lock()
             .expect("handler2 bus lock")
             .as_deref(),
-        Some("Bus2")
+        Some(bus2_name.as_str())
     );
     bus1.stop();
     bus2.stop();
@@ -254,8 +268,10 @@ fn test_event_event_bus_returns_correct_bus_when_multiple_buses_exist() {
 
 #[test]
 fn test_event_event_bus_reflects_the_currently_processing_bus_when_forwarded() {
-    let bus1 = EventBus::new(Some("Bus1".to_string()));
-    let bus2 = EventBus::new(Some("Bus2".to_string()));
+    let bus1_name = unique_bus_name("Bus1");
+    let bus2_name = unique_bus_name("Bus2");
+    let bus1 = EventBus::new(Some(bus1_name));
+    let bus2 = EventBus::new(Some(bus2_name.clone()));
     let bus2_handler_bus_name = Arc::new(Mutex::new(None::<String>));
 
     let bus2_for_forward = bus2.clone();
@@ -287,7 +303,7 @@ fn test_event_event_bus_reflects_the_currently_processing_bus_when_forwarded() {
             .lock()
             .expect("handler_bus_name lock")
             .as_deref(),
-        Some("Bus2")
+        Some(bus2_name.as_str())
     );
     assert_eq!(
         event.inner.lock().event_path,
@@ -299,7 +315,8 @@ fn test_event_event_bus_reflects_the_currently_processing_bus_when_forwarded() {
 
 #[test]
 fn test_event_event_bus_in_nested_handlers_sees_the_same_bus() {
-    let bus = EventBus::new(Some("MainBus".to_string()));
+    let bus_name = unique_bus_name("MainBus");
+    let bus = EventBus::new(Some(bus_name.clone()));
     let outer_bus_name = Arc::new(Mutex::new(None::<String>));
     let inner_bus_name = Arc::new(Mutex::new(None::<String>));
 
@@ -330,11 +347,11 @@ fn test_event_event_bus_in_nested_handlers_sees_the_same_bus() {
 
     assert_eq!(
         outer_bus_name.lock().expect("outer bus lock").as_deref(),
-        Some("MainBus")
+        Some(bus_name.as_str())
     );
     assert_eq!(
         inner_bus_name.lock().expect("inner bus lock").as_deref(),
-        Some("MainBus")
+        Some(bus_name.as_str())
     );
     bus.stop();
 }
@@ -386,7 +403,8 @@ fn test_event_emit_awaited_children_pass_explicit_handler_context_to_immediate_p
 
 #[test]
 fn test_event_emit_sets_parent_child_relationships_through_3_levels() {
-    let bus = EventBus::new(Some("MainBus".to_string()));
+    let bus_name = unique_bus_name("MainBus");
+    let bus = EventBus::new(Some(bus_name.clone()));
     let execution_order = Arc::new(Mutex::new(Vec::<String>::new()));
     let child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
     let grandchild_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
@@ -438,10 +456,11 @@ fn test_event_emit_sets_parent_child_relationships_through_3_levels() {
     let order_for_grandchild = execution_order.clone();
     bus.on("GrandchildEvent", "grandchild_handler", move |event| {
         let order = order_for_grandchild.clone();
+        let bus_name = bus_name.clone();
         async move {
             assert_eq!(
                 event.event_bus().map(|bus| bus.name.clone()).as_deref(),
-                Some("MainBus")
+                Some(bus_name.as_str())
             );
             order
                 .lock()
@@ -497,8 +516,10 @@ fn test_event_emit_sets_parent_child_relationships_through_3_levels() {
 
 #[test]
 fn test_event_emit_with_forwarding_child_dispatch_goes_to_the_correct_bus() {
-    let bus1 = EventBus::new(Some("Bus1".to_string()));
-    let bus2 = EventBus::new(Some("Bus2".to_string()));
+    let bus1_name = unique_bus_name("Bus1");
+    let bus2_name = unique_bus_name("Bus2");
+    let bus1 = EventBus::new(Some(bus1_name));
+    let bus2 = EventBus::new(Some(bus2_name.clone()));
     let child_handler_bus_name = Arc::new(Mutex::new(None::<String>));
     let child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
 
@@ -514,9 +535,10 @@ fn test_event_emit_with_forwarding_child_dispatch_goes_to_the_correct_bus() {
     let child_ref_for_handler = child_ref.clone();
     bus2.on("MainEvent", "bus2_main_handler", move |event| {
         let child_ref = child_ref_for_handler.clone();
+        let bus2_name = bus2_name.clone();
         async move {
             let current_bus = event.event_bus().expect("forwarded handler bus");
-            assert_eq!(current_bus.name, "Bus2");
+            assert_eq!(current_bus.name, bus2_name);
             let child = current_bus.emit_child_base(base_event("ChildEvent", json!({})));
             child.wait_completed().await;
             *child_ref.lock().expect("child_ref lock") = Some(child);
@@ -549,7 +571,7 @@ fn test_event_emit_with_forwarding_child_dispatch_goes_to_the_correct_bus() {
             .lock()
             .expect("child_bus_name lock")
             .as_deref(),
-        Some("Bus2")
+        Some(bus2.name.as_str())
     );
     assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
     assert_eq!(
@@ -563,7 +585,8 @@ fn test_event_emit_with_forwarding_child_dispatch_goes_to_the_correct_bus() {
 
 #[test]
 fn test_event_event_bus_is_set_on_the_event_after_dispatch_outside_handler() {
-    let bus = EventBus::new(Some("TestBus".to_string()));
+    let bus_name = unique_bus_name("TestBus");
+    let bus = EventBus::new(Some(bus_name.clone()));
     let raw_event = BaseEvent::new("MainEvent", Map::new());
     assert!(raw_event.event_bus().is_none());
 
@@ -573,7 +596,7 @@ fn test_event_event_bus_is_set_on_the_event_after_dispatch_outside_handler() {
             .event_bus()
             .map(|bus| bus.name.clone())
             .as_deref(),
-        Some("TestBus")
+        Some(bus_name.as_str())
     );
     block_on(dispatched.event_completed());
     bus.stop();
@@ -581,7 +604,7 @@ fn test_event_event_bus_is_set_on_the_event_after_dispatch_outside_handler() {
 
 #[test]
 fn test_event_emit_from_handler_correctly_attributes_event_emitted_by_handler_id() {
-    let bus = EventBus::new(Some("TestBus".to_string()));
+    let bus = EventBus::new(Some(unique_bus_name("TestBus")));
 
     bus.on("MainEvent", "main_handler", move |event| async move {
         let current_bus = event.event_bus().expect("handler bus");

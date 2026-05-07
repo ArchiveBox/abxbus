@@ -11,10 +11,10 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "aiofiles>=24.1.0",
-    "anyio>=4.9.0",
-    "pydantic>=2.11.5",
-    "typing-extensions>=4.12.2",
+    "aiofiles>=25.1.0",
+    "anyio>=4.13.0",
+    "pydantic>=2.13.4",
+    "typing-extensions>=4.15.0",
     "uuid7>=0.1.0",
 ]
 [project.optional-dependencies]
@@ -22,21 +22,21 @@ postgres = [
     "asyncpg>=0.31.0",
 ]
 nats = [
-    "nats-py>=2.13.1",
+    "nats-py>=2.14.0",
 ]
 redis = [
-    "redis>=7.1.1",
+    "redis>=7.4.0",
 ]
 # Tachyon's native core requires GCC 14+ / Clang 17+ to compile, so it's exposed
 # as its own extra and intentionally excluded from `bridges` to keep that
 # aggregate installable on stock CI/runtimes. Install with `abxbus[tachyon]`.
 tachyon = [
-    "tachyon-ipc>=0.4.2",
+    "tachyon-ipc>=0.5.0",
 ]
 bridges = [
     "asyncpg>=0.31.0",
-    "nats-py>=2.13.1",
-    "redis>=7.1.1",
+    "nats-py>=2.14.0",
+    "redis>=7.4.0",
 ]
 
 [project.urls]
@@ -50,30 +50,30 @@ NPM = "https://www.npmjs.com/package/abxbus"
 
 [dependency-groups]
 dev = [
-    "ruff>=0.15.1",
-    "build>=1.2.2",
-    "pytest>=8.3.5",
-    "pytest-asyncio>=1.1.0",
-    "pytest-httpserver>=1.0.8",
-    "fastapi>=0.118.0",
+    "ruff>=0.15.12",
+    "build>=1.5.0",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "pytest-httpserver>=1.1.5",
+    "fastapi>=0.136.1",
     "ipdb>=0.13.13",
-    "codespell>=2.4.1",
-    "pyright>=1.1.404",
-    "ty>=0.0.1a19",
-    "pytest-xdist>=3.7.0",
-    "psutil>=7.0.0",
-    "pytest-cov>=6.2.1",
+    "codespell>=2.4.2",
+    "pyright>=1.1.409",
+    "ty>=0.0.34",
+    "pytest-xdist>=3.8.0",
+    "psutil>=7.2.2",
+    "pytest-cov>=7.1.0",
     "pytest-timeout>=2.4.0",
-    "prek>=0.3.3",
+    "prek>=0.3.13",
 ]
 
 [build-system]
-requires = ["uv_build>=0.10.2,<0.11.0"]
+requires = ["uv_build>=0.10.12,<0.11.0"]
 build-backend = "uv_build"
 
 [tool.uv]
 exclude-newer = "14 days"
-# tachyon-ipc 0.4.2 was published within the 14-day exclusion window above
+# tachyon-ipc 0.5.0 was published within the 14-day exclusion window above
 # but is the lowest version with the API this bridge targets, so override
 # the cutoff for that package only.
 exclude-newer-package = { "tachyon-ipc" = "2026-04-26" }

@@ -9,6 +9,7 @@ import { retry } from '../src/index.js'
 
 const tests_dir = dirname(fileURLToPath(import.meta.url))
 const worker_path = resolve(tests_dir, 'subtests', 'retry_multiprocess_worker.ts')
+const repo_root = resolve(tests_dir, '..', '..')
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -96,28 +97,33 @@ test('retry: semaphore_scope=multiprocess serializes across JS processes', async
 
 test('retry: semaphore_scope=multiprocess contends with Python retry() using the same semaphore name', async (t) => {
   const local_venv_python = resolve(
-    tests_dir,
-    '..',
-    '..',
+    repo_root,
     '.venv',
     process.platform === 'win32' ? 'Scripts' : 'bin',
     process.platform === 'win32' ? 'python.exe' : 'python'
   )
-  const python = existsSync(local_venv_python)
-    ? local_venv_python
-    : spawnSync('python3', ['-c', 'print("ok")'], { stdio: 'ignore' }).status === 0
-      ? 'python3'
-      : 'python'
-  const probe = spawnSync(python, ['-c', 'import abxbus.retry'], { cwd: resolve(tests_dir, '..', '..'), stdio: 'ignore' })
-  if (probe.status !== 0) {
+  const candidates = [
+    ...(existsSync(local_venv_python) ? [{ executable: local_venv_python, args: [] as string[] }] : []),
+    ...(spawnSync('uv', ['--version'], { stdio: 'ignore' }).status === 0 ? [{ executable: 'uv', args: ['run', 'python'] }] : []),
+    ...(spawnSync('python3', ['-c', 'print("ok")'], { stdio: 'ignore' }).status === 0
+      ? [{ executable: 'python3', args: [] as string[] }]
+      : []),
+    { executable: 'python', args: [] as string[] },
+  ]
+  const python = candidates.find((candidate) => {
+    const probe = spawnSync(candidate.executable, [...candidate.args, '-c', 'import abxbus.retry'], { cwd: repo_root, stdio: 'ignore' })
+    return probe.status === 0
+  })
+  if (!python) {
     t.skip('python abxbus runtime is unavailable for cross-language multiprocess test')
     return
   }
 
   const semaphore_name = `retry-crosslang-${Date.now()}-${Math.random().toString(16).slice(2)}`
   const python_lock = spawn(
-    python,
+    python.executable,
     [
+      ...python.args,
       '-u',
       '-c',
       `
@@ -136,13 +142,24 @@ asyncio.run(hold_lock())
       '0.7',
     ],
     {
-      cwd: resolve(tests_dir, '..', '..'),
+      cwd: repo_root,
       stdio: ['ignore', 'pipe', 'pipe'],
     }
   )
 
+  let stdout = ''
+  let stderr = ''
+  const python_lock_exit = new Promise<number | null>((resolvePromise, reject) => {
+    python_lock.once('error', reject)
+    python_lock.stderr?.on('data', (chunk: Buffer | string) => {
+      stderr += String(chunk)
+    })
+    python_lock.once('close', (code) => {
+      resolvePromise(code)
+    })
+  })
+
   await new Promise<void>((resolvePromise, reject) => {
-    let stdout = ''
     python_lock.stdout?.on('data', (chunk: Buffer | string) => {
       stdout += String(chunk)
       if (stdout.includes('LOCKED')) {
@@ -150,12 +167,10 @@ asyncio.run(hold_lock())
       }
     })
     python_lock.once('error', reject)
-    python_lock.stderr?.on('data', (chunk: Buffer | string) => {
-      const stderr = String(chunk)
-      if (stderr.trim()) reject(new Error(stderr))
-    })
     python_lock.once('close', (code) => {
-      if (!stdout.includes('LOCKED')) reject(new Error(`python locker exited before acquiring (code=${code ?? 'null'})`))
+      if (!stdout.includes('LOCKED')) {
+        reject(new Error(`python locker exited before acquiring (code=${code ?? 'null'}): ${stderr.trim()}`))
+      }
     })
   })
 
@@ -173,9 +188,8 @@ asyncio.run(hold_lock())
   await guarded()
   const elapsed_ms = Date.now() - started
 
-  await new Promise<void>((resolvePromise) => {
-    python_lock.once('close', () => resolvePromise())
-  })
+  const python_lock_code = await python_lock_exit
+  assert.equal(python_lock_code, 0, stderr.trim())
 
   assert.ok(elapsed_ms >= 500, `expected JS acquisition to wait behind Python lock, got ${elapsed_ms}ms`)
 })
