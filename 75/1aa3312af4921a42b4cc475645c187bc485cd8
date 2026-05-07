@@ -1,0 +1,19 @@
+abxbus-go/tests/eventbus_forwarding_test.go
+  s_6a8c07f028b30c::t_b290bae43ee7ee 5,13-214,350-371
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "751aa3312af4921a42b4cc475645c187bc485cd8",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
