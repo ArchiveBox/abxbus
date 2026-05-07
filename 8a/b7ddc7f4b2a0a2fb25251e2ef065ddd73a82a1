@@ -1,0 +1,33 @@
+docs/features/context-propagation.mdx
+  s_6a8c07f028b30c::t_aeffff506750e1 20
+  s_6a8c07f028b30c::t_57c6ad6cb9bc91 18,71-101,130-141,156-157
+docs/features/fifo-processing.mdx
+  s_6a8c07f028b30c::t_19924d4cd47307 117-167,266-295
+docs/features/event-pattern-matching.mdx
+  s_6a8c07f028b30c::t_1405608b06b860 17-18,24,109-174,190
+docs/features/event-history-store.mdx
+  s_6a8c07f028b30c::t_4d96ccc8014ce8 93,95
+  s_6a8c07f028b30c::t_d58690421e3c06 6,49,77-92,94,96-100,134-170
+docs/features/forwarding-between-buses.mdx
+  s_6a8c07f028b30c::t_5f7f46dfad93ef 153-221,260-277,345-370
+docs/features/async-sync-handlers.mdx
+  s_6a8c07f028b30c::t_798ab057adf908 6,125-163
+docs/features/event-debouncing.mdx
+  s_6a8c07f028b30c::t_cfe05459d2e4ca 65-87,128-151,190-217,254-283,293
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "8ab7ddc7f4b2a0a2fb25251e2ef065ddd73a82a1",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
