@@ -295,7 +295,9 @@ func (b *EventBus) Emit(event *BaseEvent) *BaseEvent {
 	original_event.EventPendingBusCount++
 	b.pendingEventQueue = append(b.pendingEventQueue, original_event)
 	b.mu.Unlock()
-	b.startRunloop()
+	if b.locks.getActiveHandlerResult() == nil {
+		b.startRunloop()
+	}
 	return original_event
 }
 
@@ -328,7 +330,42 @@ func runWithTimeout(ctx context.Context, timeout_seconds *float64, on_timeout fu
 	return err
 }
 
-func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_event_locks bool, pre_acquired_lock *AsyncLock) error {
+type handlerContext struct {
+	base   context.Context
+	values context.Context
+}
+
+func (c handlerContext) Deadline() (time.Time, bool) { return c.base.Deadline() }
+func (c handlerContext) Done() <-chan struct{}       { return c.base.Done() }
+func (c handlerContext) Err() error                  { return c.base.Err() }
+func (c handlerContext) Value(key any) any {
+	if c.values != nil {
+		if value := c.values.Value(key); value != nil {
+			return value
+		}
+	}
+	return c.base.Value(key)
+}
+
+func mergeHandlerContext(base context.Context, values context.Context) context.Context {
+	if values == nil || values == base {
+		return base
+	}
+	return handlerContext{base: base, values: values}
+}
+
+func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_event_locks bool, pre_acquired_lock *AsyncLock, first_handler_started chan struct{}) error {
+	signalFirstHandlerStarted := func() {}
+	if first_handler_started != nil {
+		var signal_once sync.Once
+		signalFirstHandlerStarted = func() {
+			signal_once.Do(func() { close(first_handler_started) })
+		}
+		defer signalFirstHandlerStarted()
+	}
+	if event.dispatchCtx == nil && ctx != nil {
+		event.dispatchCtx = ctx
+	}
 	defer func() { b.mu.Lock(); delete(b.inFlightEventIDs, event.EventID); b.mu.Unlock() }()
 	var event_lock *AsyncLock
 	if !bypass_event_locks {
@@ -346,6 +383,9 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 	event.markStarted()
 	b.notifyEventChange(event, "started")
 	handlers := b.getHandlersForEvent(event)
+	if len(handlers) == 0 {
+		signalFirstHandlerStarted()
+	}
 	pending_entries := make([]*EventResult, 0, len(handlers))
 	for _, h := range handlers {
 		result := event.EventResults[h.ID]
@@ -378,7 +418,7 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 		}
 		return &EventTimeoutError{Message: fmt.Sprintf("%s.on(%s) timed out after %.3fs", b.Name, event.EventType, *resolved_event_timeout), TimeoutSeconds: *resolved_event_timeout}
 	}, func(ctx2 context.Context) error {
-		return event.runHandlers(ctx2, b, handlers, pending_entries)
+		return event.runHandlers(ctx2, b, handlers, pending_entries, signalFirstHandlerStarted)
 	})
 	if slow_timer != nil {
 		slow_timer.Stop()
@@ -411,10 +451,11 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 		event.markCompleted()
 		b.notifyEventChange(event, "completed")
 	}
+	b.startRunloop()
 	return nil
 }
 
-func (e *BaseEvent) runHandlers(ctx context.Context, bus *EventBus, handlers []*EventHandler, results []*EventResult) error {
+func (e *BaseEvent) runHandlers(ctx context.Context, bus *EventBus, handlers []*EventHandler, results []*EventResult, signalFirstHandlerStarted func()) error {
 	if len(handlers) == 0 {
 		return nil
 	}
@@ -428,7 +469,7 @@ func (e *BaseEvent) runHandlers(ctx context.Context, bus *EventBus, handlers []*
 	}
 	if completion == EventHandlerCompletionFirst && concurrency == EventHandlerConcurrencySerial {
 		for i, h := range handlers {
-			if err := runSingleHandler(ctx, bus, e, h, results[i]); err != nil {
+			if err := runSingleHandler(ctx, bus, e, h, results[i], signalFirstHandlerStarted); err != nil {
 				return err
 			}
 			status, result, _, _ := results[i].snapshot()
@@ -446,7 +487,7 @@ func (e *BaseEvent) runHandlers(ctx context.Context, bus *EventBus, handlers []*
 	}
 	if concurrency == EventHandlerConcurrencySerial {
 		for i, h := range handlers {
-			if err := runSingleHandler(ctx, bus, e, h, results[i]); err != nil {
+			if err := runSingleHandler(ctx, bus, e, h, results[i], signalFirstHandlerStarted); err != nil {
 				return err
 			}
 		}
@@ -464,7 +505,7 @@ func (e *BaseEvent) runHandlers(ctx context.Context, bus *EventBus, handlers []*
 		wg.Add(1)
 		go func(h *EventHandler, r *EventResult) {
 			defer wg.Done()
-			if err := runSingleHandler(run_ctx, bus, e, h, r); err != nil {
+			if err := runSingleHandler(run_ctx, bus, e, h, r, signalFirstHandlerStarted); err != nil {
 				err_ch <- err
 			}
 		}(h, results[i])
@@ -532,10 +573,16 @@ func (e *BaseEvent) runHandlers(ctx context.Context, bus *EventBus, handlers []*
 	return nil
 }
 
-func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, handler *EventHandler, result *EventResult) error {
+func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, handler *EventHandler, result *EventResult, signalFirstHandlerStarted func()) error {
 	result.markStarted()
 	bus.notifyEventResultChange(event, result, "started")
+	if signalFirstHandlerStarted != nil {
+		signalFirstHandlerStarted()
+	}
 	ctx2 := ctx
+	if event.dispatchCtx != nil {
+		ctx2 = mergeHandlerContext(ctx, event.dispatchCtx)
+	}
 	resolved_event_timeout := event.EventTimeout
 	if resolved_event_timeout == nil {
 		resolved_event_timeout = bus.EventTimeout
@@ -628,7 +675,7 @@ func (b *EventBus) processEventImmediately(ctx context.Context, event *BaseEvent
 	b.inFlightEventIDs[original_event.EventID] = true
 	b.mu.Unlock()
 	bypass_event_locks := b.locks.getActiveHandlerResult() != nil
-	if err := b.processEvent(ctx, original_event, bypass_event_locks, nil); err != nil {
+	if err := b.processEvent(ctx, original_event, bypass_event_locks, nil, nil); err != nil {
 		return nil, err
 	}
 	if original_event.status() != "completed" {
@@ -673,16 +720,22 @@ func (b *EventBus) runloop(ctx context.Context) {
 		if eventConcurrency == "" {
 			eventConcurrency = b.EventConcurrency
 		}
-		process := func(event *BaseEvent) {
-			if err := b.processEvent(ctx, event, false, nil); err != nil && !errors.Is(err, context.Canceled) {
+		process := func(event *BaseEvent, first_handler_started chan struct{}) {
+			if err := b.processEvent(ctx, event, false, nil, first_handler_started); err != nil && !errors.Is(err, context.Canceled) {
 				// no-op log hook
 			}
 		}
 		if eventConcurrency == EventConcurrencyParallel {
-			go process(next_event)
+			first_handler_started := make(chan struct{})
+			go process(next_event, first_handler_started)
+			select {
+			case <-first_handler_started:
+			case <-ctx.Done():
+				return
+			}
 			continue
 		}
-		process(next_event)
+		process(next_event, nil)
 	}
 }
 

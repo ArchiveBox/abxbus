@@ -3,6 +3,8 @@ package abxbus_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,4 +119,96 @@ func TestEventResultsListAndFirstUseHandlerRegistrationOrder(t *testing.T) {
 	if len(rawValues) != 3 || rawValues[0] != nil || rawValues[1] != "winner" || rawValues[2] != "late" {
 		t.Fatalf("expected raw values in registration order, got %#v", rawValues)
 	}
+}
+
+func TestEventResultsListPreservesJSONEventResultsObjectOrder(t *testing.T) {
+	nullID := "00000000-0000-5000-8000-00000000000b"
+	winnerID := "00000000-0000-5000-8000-00000000000c"
+	lateID := "00000000-0000-5000-8000-00000000000a"
+	raw := []byte(fmt.Sprintf(`{
+		"event_type": "RestoredResultOrderEvent",
+		"event_version": "0.0.1",
+		"event_timeout": null,
+		"event_slow_timeout": null,
+		"event_concurrency": null,
+		"event_handler_timeout": null,
+		"event_handler_slow_timeout": null,
+		"event_handler_concurrency": null,
+		"event_handler_completion": null,
+		"event_blocks_parent_completion": false,
+		"event_result_type": null,
+		"event_id": "00000000-0000-5000-8000-000000000201",
+		"event_path": [],
+		"event_parent_id": null,
+		"event_emitted_by_handler_id": null,
+		"event_pending_bus_count": 0,
+		"event_created_at": "2026-01-01T00:00:00.000Z",
+		"event_status": "completed",
+		"event_started_at": "2026-01-01T00:00:00.001Z",
+		"event_completed_at": "2026-01-01T00:00:00.002Z",
+		"event_results": {
+			%q: %s,
+			%q: %s,
+			%q: %s
+		}
+	}`, nullID, restoredEventResultJSON(nullID, "null", "null"), winnerID, restoredEventResultJSON(winnerID, "winner", `"winner"`), lateID, restoredEventResultJSON(lateID, "late", `"late"`)))
+
+	event, err := abxbus.BaseEventFromJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := event.EventResult(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != "winner" {
+		t.Fatalf("expected first non-nil result to follow JSON object/registration order, got %#v", first)
+	}
+
+	values, err := event.EventResultsList(context.Background(), func(result any, eventResult *abxbus.EventResult) bool {
+		return true
+	}, &abxbus.EventResultsListOptions{RaiseIfAny: false, RaiseIfNone: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 3 || values[0] != nil || values[1] != "winner" || values[2] != "late" {
+		t.Fatalf("expected restored raw values in JSON object order, got %#v", values)
+	}
+
+	serialized, err := event.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	serializedText := string(serialized)
+	nullIndex := strings.Index(serializedText, `"`+nullID+`"`)
+	winnerIndex := strings.Index(serializedText, `"`+winnerID+`"`)
+	lateIndex := strings.Index(serializedText, `"`+lateID+`"`)
+	if nullIndex < 0 || winnerIndex < 0 || lateIndex < 0 {
+		t.Fatalf("serialized event missing result IDs: %s", serializedText)
+	}
+	if !(nullIndex < winnerIndex && winnerIndex < lateIndex) {
+		t.Fatalf("serialized event_results should preserve restored order: %s", serializedText)
+	}
+}
+
+func restoredEventResultJSON(handlerID string, name string, resultJSON string) string {
+	return fmt.Sprintf(`{
+		"id": "result-%s",
+		"status": "completed",
+		"event_id": "00000000-0000-5000-8000-000000000201",
+		"handler_id": %q,
+		"handler_name": %q,
+		"handler_file_path": null,
+		"handler_timeout": null,
+		"handler_slow_timeout": null,
+		"handler_registered_at": "2026-01-01T00:00:00.000Z",
+		"handler_event_pattern": "RestoredResultOrderEvent",
+		"eventbus_name": "RestoredResultOrderBus",
+		"eventbus_id": "00000000-0000-5000-8000-000000000202",
+		"started_at": "2026-01-01T00:00:00.001Z",
+		"completed_at": "2026-01-01T00:00:00.002Z",
+		"result": %s,
+		"error": null,
+		"event_children": []
+	}`, handlerID, handlerID, name, resultJSON)
 }

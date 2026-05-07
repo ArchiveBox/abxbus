@@ -1,6 +1,7 @@
 package abxbus
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -152,8 +153,7 @@ func (e *BaseEvent) UnmarshalJSON(data []byte) error {
 		EventResults                json.RawMessage             `json:"event_results,omitempty"`
 	}
 	var m meta
-	raw, _ := json.Marshal(record)
-	if err := json.Unmarshal(raw, &m); err != nil {
+	if err := json.Unmarshal(data, &m); err != nil {
 		return err
 	}
 	e.EventID = m.EventID
@@ -184,20 +184,22 @@ func (e *BaseEvent) UnmarshalJSON(data []byte) error {
 		}
 	}
 	e.EventResults = map[string]*EventResult{}
+	e.eventResultOrder = []string{}
 	if len(m.EventResults) > 0 && string(m.EventResults) != "null" {
-		var keyedResults map[string]json.RawMessage
-		if err := json.Unmarshal(m.EventResults, &keyedResults); err == nil {
-			for handlerID, raw_result := range keyedResults {
-				result, err := EventResultFromJSON(raw_result)
+		if keyedResults, ok, err := orderedJSONRawObjectEntries(m.EventResults); err != nil {
+			return err
+		} else if ok {
+			for _, entry := range keyedResults {
+				result, err := EventResultFromJSON(entry.raw)
 				if err != nil {
 					return err
 				}
 				if result.HandlerID == "" {
-					result.HandlerID = handlerID
+					result.HandlerID = entry.key
 				}
 				e.EventResults[result.HandlerID] = result
+				e.noteEventResultOrder(result.HandlerID)
 			}
-			e.rebuildEventResultOrderByMetadata()
 		} else {
 			var resultList []json.RawMessage
 			if err := json.Unmarshal(m.EventResults, &resultList); err != nil {
@@ -267,7 +269,9 @@ func (e *BaseEvent) status() string {
 }
 
 func (e *BaseEvent) EventCompleted(ctx context.Context) error {
-	e.markBlocksParentCompletionIfAwaitedFromEmittingHandler()
+	if e.Bus != nil {
+		e.Bus.startRunloop()
+	}
 	select {
 	case <-e.done_ch:
 		return nil
@@ -277,8 +281,14 @@ func (e *BaseEvent) EventCompleted(ctx context.Context) error {
 }
 
 func (e *BaseEvent) Done(ctx context.Context) (*BaseEvent, error) {
+	if e.status() == "completed" {
+		return e, nil
+	}
 	if e.Bus == nil {
 		return nil, errors.New("event has no bus attached")
+	}
+	if ctx != nil {
+		e.dispatchCtx = ctx
 	}
 	e.markBlocksParentCompletionIfAwaitedFromEmittingHandler()
 	_, err := e.Bus.processEventImmediately(ctx, e, nil)
@@ -683,6 +693,48 @@ func eventResultRegistrationLess(a, b *EventResult) bool {
 		return *a.StartedAt < *b.StartedAt
 	}
 	return a.HandlerID < b.HandlerID
+}
+
+type orderedJSONRawObjectEntry struct {
+	key string
+	raw json.RawMessage
+}
+
+func orderedJSONRawObjectEntries(data []byte) ([]orderedJSONRawObjectEntry, bool, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, false, err
+	}
+	delim, ok := token.(json.Delim)
+	if !ok || delim != '{' {
+		return nil, false, nil
+	}
+	entries := []orderedJSONRawObjectEntry{}
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return nil, true, err
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return nil, true, fmt.Errorf("expected JSON object key while decoding event_results")
+		}
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			return nil, true, err
+		}
+		entries = append(entries, orderedJSONRawObjectEntry{key: key, raw: raw})
+	}
+	endToken, err := decoder.Token()
+	if err != nil {
+		return nil, true, err
+	}
+	endDelim, ok := endToken.(json.Delim)
+	if !ok || endDelim != '}' {
+		return nil, true, fmt.Errorf("unterminated JSON object while decoding event_results")
+	}
+	return entries, true, nil
 }
 
 func toErrorString(v any) string {
