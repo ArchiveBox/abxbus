@@ -1,7 +1,7 @@
 use std::{sync::mpsc as std_mpsc, sync::Arc, thread, time::Duration};
 
 use futures::executor::block_on;
-use serde::{ser::SerializeStruct, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Value};
 
 use crate::{
@@ -38,26 +38,48 @@ impl Serialize for EventResult {
     where
         S: Serializer,
     {
+        #[derive(Serialize)]
+        struct EventResultSnapshot<'a> {
+            id: &'a str,
+            status: EventResultStatus,
+            event_id: &'a str,
+            handler_id: &'a str,
+            handler_name: &'a str,
+            handler_file_path: &'a Option<String>,
+            handler_timeout: &'a Option<f64>,
+            handler_slow_timeout: &'a Option<f64>,
+            handler_registered_at: &'a str,
+            handler_event_pattern: &'a str,
+            eventbus_name: &'a str,
+            eventbus_id: &'a str,
+            started_at: &'a Option<String>,
+            completed_at: &'a Option<String>,
+            result: &'a Option<Value>,
+            error: Option<Value>,
+            event_children: &'a Vec<String>,
+        }
+
         let error = self.error_json_value();
-        let mut state = serializer.serialize_struct("EventResult", 17)?;
-        state.serialize_field("id", &self.id)?;
-        state.serialize_field("status", &self.status)?;
-        state.serialize_field("event_id", &self.event_id)?;
-        state.serialize_field("handler_id", &self.handler.id)?;
-        state.serialize_field("handler_name", &self.handler.handler_name)?;
-        state.serialize_field("handler_file_path", &self.handler.handler_file_path)?;
-        state.serialize_field("handler_timeout", &self.handler.handler_timeout)?;
-        state.serialize_field("handler_slow_timeout", &self.handler.handler_slow_timeout)?;
-        state.serialize_field("handler_registered_at", &self.handler.handler_registered_at)?;
-        state.serialize_field("handler_event_pattern", &self.handler.event_pattern)?;
-        state.serialize_field("eventbus_name", &self.handler.eventbus_name)?;
-        state.serialize_field("eventbus_id", &self.handler.eventbus_id)?;
-        state.serialize_field("started_at", &self.started_at)?;
-        state.serialize_field("completed_at", &self.completed_at)?;
-        state.serialize_field("result", &self.result)?;
-        state.serialize_field("error", &error)?;
-        state.serialize_field("event_children", &self.event_children)?;
-        state.end()
+        EventResultSnapshot {
+            id: &self.id,
+            status: self.status,
+            event_id: &self.event_id,
+            handler_id: &self.handler.id,
+            handler_name: &self.handler.handler_name,
+            handler_file_path: &self.handler.handler_file_path,
+            handler_timeout: &self.handler.handler_timeout,
+            handler_slow_timeout: &self.handler.handler_slow_timeout,
+            handler_registered_at: &self.handler.handler_registered_at,
+            handler_event_pattern: &self.handler.event_pattern,
+            eventbus_name: &self.handler.eventbus_name,
+            eventbus_id: &self.handler.eventbus_id,
+            started_at: &self.started_at,
+            completed_at: &self.completed_at,
+            result: &self.result,
+            error,
+            event_children: &self.event_children,
+        }
+        .serialize(serializer)
     }
 }
 

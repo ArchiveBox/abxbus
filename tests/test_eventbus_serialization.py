@@ -145,13 +145,13 @@ async def test_eventbus_preserves_handler_registration_order_through_json_and_re
 
     restored_order: list[str] = []
 
-    async def restored_first(event: HandlerOrderEvent) -> str:
+    async def restored_first(event: BaseEvent[Any]) -> str:
         restored_order.append('first')
-        return event.value
+        return cast(HandlerOrderEvent, event).value
 
-    async def restored_second(event: HandlerOrderEvent) -> str:
+    async def restored_second(event: BaseEvent[Any]) -> str:
         restored_order.append('second')
-        return event.value
+        return cast(HandlerOrderEvent, event).value
 
     restored.handlers[first_entry.id].handler = restored_first
     restored.handlers[second_entry.id].handler = restored_second
