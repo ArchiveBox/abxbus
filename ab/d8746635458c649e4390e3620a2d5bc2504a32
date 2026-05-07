@@ -1,0 +1,34 @@
+abxbus-go/event_bus.go
+  s_6a8c07f028b30c::t_dbe4bdd7bc0d7a 1204
+abxbus-go/tests/cross_runtime_roundtrip_test.go
+  s_6a8c07f028b30c::t_331f53b454565a 75,87
+abxbus-go/tests/eventbus_serialization_test.go
+  s_6a8c07f028b30c::t_9548c790fce6a5 125,127
+abxbus-go/tests/eventbus_find_test.go
+  s_6a8c07f028b30c::t_54bfcd0692fdde 223-224,247,261,273
+docs/features/event-history-store.mdx
+  s_6a8c07f028b30c::t_f9b83d60983040 83
+  s_6a8c07f028b30c::t_ffc2623b56f568 94
+docs/api/eventbus.mdx
+  s_6a8c07f028b30c::t_7f2a666b576c56 272-276,278
+abxbus-go/tests/eventhistory_find_test.go
+  s_6a8c07f028b30c::t_19b0616313ad76 11-12
+abxbus-go/tests/eventbus_test.go
+  s_6a8c07f028b30c::t_da1d4602970369 59,61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "abd8746635458c649e4390e3620a2d5bc2504a32",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
