@@ -10,7 +10,7 @@ AbxBus is an in-memory event bus library for async Python, TypeScript (node/brow
 
 It's designed for quickly building resilient, predictable, complex event-driven apps.
 
-It "just works" with an intuitive, but powerful event JSON format + emit API that's consistent across both languages and scales consistently from one event up to millions (~0.2ms/event):
+It "just works" with an intuitive, but powerful event JSON format + emit API that's consistent across runtimes and scales consistently from one event up to millions (~0.2ms/event):
 
 ```python
 class SomeEvent(BaseEvent):
@@ -26,7 +26,7 @@ await bus.emit(SomeEvent({some_data: 132}))
 
 It's async native, has proper automatic nested event tracking, and powerful concurrency control options. The API is inspired by `EventEmitter` or [`emittery`](https://github.com/sindresorhus/emittery) in JS, but it takes it a step further:
 
-- nice Pydantic / Zod schemas for events that can be exchanged between both languages
+- nice Pydantic / Zod schemas for events that can be exchanged between runtimes
 - automatic UUIDv7s and monotonic nanosecond timestamps for ordering events globally
 - built in locking options to force strict global FIFO processing or fully parallel processing
 

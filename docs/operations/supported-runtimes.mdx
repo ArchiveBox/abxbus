@@ -1,6 +1,6 @@
 ---
 title: Supported Runtimes
-description: Runtime support details for Python and TypeScript.
+description: Runtime support details for Python, TypeScript, Rust, and Go.
 ---
 
 <Tabs>
@@ -25,6 +25,24 @@ description: Runtime support details for Python and TypeScript.
 
 - The package output is ESM (`./dist/esm`) which is supported by all browsers [released after 2018](https://caniuse.com/?search=ESM)
 - `AsyncLocalStorage` is preserved at emit time and used during handling when available (Node/Bun), otel/tracing context will work normally in those environments
+
+</Tab>
+<Tab title="Rust">
+
+`abxbus-rust` is a native Rust crate in this repository.
+
+- Tested with Cargo using the crate manifest at `abxbus-rust/Cargo.toml`
+- Uses `serde`/`serde_json` for the shared event wire format
+- Cross-runtime JSON roundtrips are covered by `abxbus-rust/tests/test_cross_runtime_roundtrip.rs`
+
+</Tab>
+<Tab title="Go">
+
+`abxbus-go` is a native Go module in this repository.
+
+- Module path: `github.com/ArchiveBox/abxbus/abxbus-go`
+- Tested with `go test ./...`
+- Cross-runtime JSON roundtrips use `abxbus-go/cmd/abxbus-go-roundtrip`
 
 </Tab>
 </Tabs>

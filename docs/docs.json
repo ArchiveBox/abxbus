@@ -112,7 +112,7 @@
       }
     ]
   },
-  "description": "Fast strongly-typed Python + Typescript event bus library.",
+  "description": "Fast strongly-typed multi-language event bus library.",
   "background": {
     "decoration": "grid"
   },

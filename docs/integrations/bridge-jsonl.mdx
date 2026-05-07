@@ -34,6 +34,13 @@ const bridge = new JSONLEventBridge('/tmp/abxbus_events.jsonl', 0.25, 'JsonlBrid
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+bridge := abxbus.NewJSONLEventBridge("/tmp/abxbus_events.jsonl", 0.25, "JsonlBridge")
+```
+
+</Tab>
 </Tabs>
 
 ## Setup with a bus
@@ -67,6 +74,21 @@ bridge.on('*', bus.emit)
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+bus := abxbus.NewEventBus("AppBus", nil)
+bridge := abxbus.NewJSONLEventBridge("/tmp/abxbus_events.jsonl", 0.25, "JsonlBridge")
+
+bus.On("*", "jsonl_emit", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	return bridge.Emit(event), nil
+}, nil)
+bridge.On("*", "bus_emit", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	return bus.Emit(event), nil
+}, nil)
+```
+
+</Tab>
 </Tabs>
 
 ## Behavior
@@ -75,4 +97,4 @@ bridge.on('*', bus.emit)
 - `on(...)` auto-starts a tail loop and registers inbound handlers.
 - Start cursor is initialized at current EOF, so only newly appended lines are processed.
 - Malformed lines are ignored; valid lines are parsed into events, reset, and emitted on the internal bus.
-- Runtime note: TypeScript JSONL bridge is Node.js-only.
+- Runtime note: TypeScript JSONL bridge is Node.js-only. Go's JSONL bridge uses local filesystem polling.

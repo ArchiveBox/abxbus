@@ -38,6 +38,17 @@ const bus = new EventBus('AppBus', {
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+bus := abxbus.NewEventBus("AppBus", &abxbus.EventBusOptions{
+	Middlewares: []abxbus.EventBusMiddleware{
+		abxbus.NewOtelTracingMiddleware(nil),
+	},
+})
+```
+
+</Tab>
 </Tabs>
 
 ## Setup with Sentry
