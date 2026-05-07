@@ -1,0 +1,28 @@
+abxbus-rust/tests/test_cross_runtime_roundtrip.rs
+  s_6a8c07f028b30c::t_77e6e909defd86 3-5,7,44-84,231-269,355-381,384-396
+  s_6a8c07f028b30c::t_530d1a2066cdb5 119,141-145
+abxbus-go/tests/eventbus_serialization_test.go
+  s_6a8c07f028b30c::t_c90c16bca2a6f0 154-171
+abxbus-go/event_bus.go
+  s_6a8c07f028b30c::t_8aa4ddf0d6ca09 934,944-945,951,958-960
+abxbus-rust/tests/test_eventbus.rs
+  s_6a8c07f028b30c::t_f3b4e347f6cd63 5,8,44-55
+  s_6a8c07f028b30c::t_e8a0aa28881ca9 2668,2704
+  s_6a8c07f028b30c::t_c4edc3183cd765 2658,2660,2663-2664,2672,2680,2699,2708-2710
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "d1e05e04bbdc3440f33d5bfee9dbbc5be30cb527",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
