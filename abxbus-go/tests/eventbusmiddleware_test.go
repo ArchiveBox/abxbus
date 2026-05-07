@@ -10,6 +10,7 @@ import (
 type recordingMiddleware struct {
 	eventStatuses  []string
 	resultStatuses []string
+	handlerChanges []string
 }
 
 func (m *recordingMiddleware) OnEventChange(bus *abxbus.EventBus, event *abxbus.BaseEvent, status string) {
@@ -20,15 +21,39 @@ func (m *recordingMiddleware) OnEventResultChange(bus *abxbus.EventBus, event *a
 	m.resultStatuses = append(m.resultStatuses, status)
 }
 
+func (m *recordingMiddleware) OnBusHandlersChange(bus *abxbus.EventBus, handler *abxbus.EventHandler, registered bool) {
+	if registered {
+		m.handlerChanges = append(m.handlerChanges, handler.HandlerName+":registered")
+	} else {
+		m.handlerChanges = append(m.handlerChanges, handler.HandlerName+":unregistered")
+	}
+}
+
 func TestEventBusMiddlewareReceivesEventAndResultLifecycleHooks(t *testing.T) {
 	middleware := &recordingMiddleware{}
 	bus := abxbus.NewEventBus("MiddlewareBus", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
-	bus.On("MiddlewareEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	handler := bus.On("MiddlewareEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		return "ok", nil
 	}, nil)
+	bus.Off("MiddlewareEvent", handler)
+	bus.On("MiddlewareEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return "ok", nil
+	}, &abxbus.EventHandler{
+		ID:                  handler.ID,
+		HandlerRegisteredAt: handler.HandlerRegisteredAt,
+	})
 
 	if _, err := bus.Emit(abxbus.NewBaseEvent("MiddlewareEvent", nil)).Done(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	expectedHandlerChanges := []string{"handler:registered", "handler:unregistered", "handler:registered"}
+	if len(middleware.handlerChanges) != len(expectedHandlerChanges) {
+		t.Fatalf("unexpected handler middleware changes: %#v", middleware.handlerChanges)
+	}
+	for i, expected := range expectedHandlerChanges {
+		if middleware.handlerChanges[i] != expected {
+			t.Fatalf("unexpected handler middleware changes: %#v", middleware.handlerChanges)
+		}
 	}
 	if len(middleware.eventStatuses) != 2 || middleware.eventStatuses[0] != "started" || middleware.eventStatuses[1] != "completed" {
 		t.Fatalf("unexpected event middleware statuses: %#v", middleware.eventStatuses)

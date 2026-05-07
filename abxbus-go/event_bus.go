@@ -200,6 +200,12 @@ func (b *EventBus) notifyEventResultChange(event *BaseEvent, result *EventResult
 	}
 }
 
+func (b *EventBus) notifyBusHandlersChange(handler *EventHandler, registered bool) {
+	for _, middleware := range append([]EventBusMiddleware{}, b.middlewares...) {
+		middleware.OnBusHandlersChange(b, handler, registered)
+	}
+}
+
 func (b *EventBus) On(event_pattern string, handler_name string, handler EventHandlerCallable, options *EventHandler) *EventHandler {
 	if event_pattern == "" {
 		event_pattern = "*"
@@ -225,27 +231,36 @@ func (b *EventBus) On(event_pattern string, handler_name string, handler EventHa
 		h.ID = ComputeHandlerID(b.ID, h.HandlerName, h.HandlerFilePath, h.HandlerRegisteredAt, event_pattern)
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	b.handlers[h.ID] = h
 	ids := b.handlersByKey[event_pattern]
 	for _, id := range ids {
 		if id == h.ID {
+			b.mu.Unlock()
 			return h
 		}
 	}
 	b.handlersByKey[event_pattern] = append(ids, h.ID)
+	b.mu.Unlock()
+	b.notifyBusHandlersChange(h, true)
 	return h
 }
 
 func (b *EventBus) Off(event_pattern string, handler any) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	ids := b.handlersByKey[event_pattern]
+	removed := []*EventHandler{}
 	if handler == nil {
 		for _, id := range ids {
+			if h := b.handlers[id]; h != nil {
+				removed = append(removed, h)
+			}
 			delete(b.handlers, id)
 		}
 		delete(b.handlersByKey, event_pattern)
+		b.mu.Unlock()
+		for _, h := range removed {
+			b.notifyBusHandlersChange(h, false)
+		}
 		return
 	}
 	for i := len(ids) - 1; i >= 0; i-- {
@@ -260,6 +275,9 @@ func (b *EventBus) Off(event_pattern string, handler any) {
 		}
 		if match {
 			ids = append(ids[:i], ids[i+1:]...)
+			if h != nil {
+				removed = append(removed, h)
+			}
 			delete(b.handlers, id)
 		} else if h == nil {
 			ids = append(ids[:i], ids[i+1:]...)
@@ -269,6 +287,10 @@ func (b *EventBus) Off(event_pattern string, handler any) {
 		delete(b.handlersByKey, event_pattern)
 	} else {
 		b.handlersByKey[event_pattern] = ids
+	}
+	b.mu.Unlock()
+	for _, h := range removed {
+		b.notifyBusHandlersChange(h, false)
 	}
 }
 

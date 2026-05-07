@@ -261,6 +261,20 @@ func BaseEventFromJSON(data []byte) (*BaseEvent, error) {
 	return &event, nil
 }
 
+func (e *BaseEvent) EventReset() (*BaseEvent, error) {
+	data, err := e.ToJSON()
+	if err != nil {
+		return nil, err
+	}
+	fresh, err := BaseEventFromJSON(data)
+	if err != nil {
+		return nil, err
+	}
+	fresh.EventID = newUUIDv7String()
+	resetInboundEvent(fresh)
+	return fresh, nil
+}
+
 func (e *BaseEvent) eventResultTypeJSONValue() any {
 	if e.EventResultType == nil {
 		return nil

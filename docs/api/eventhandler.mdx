@@ -37,6 +37,14 @@ bus.off(MyEvent, entry)
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+entry := bus.On("MyEvent", "handler", handler, nil)
+bus.Off("MyEvent", entry)
+```
+
+</Tab>
 </Tabs>
 
 ## Serialization
@@ -75,6 +83,24 @@ console.log(payload)
 // }
 
 const restored = EventHandler.fromJSON(payload, realHandler)
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+payload, err := entry.ToJSON()
+fmt.Println(string(payload))
+// {
+//   "id": "018f...",
+//   "handler_name": "on_user_created",
+//   "event_pattern": "UserCreatedEvent",
+//   "eventbus_name": "AuthBus",
+//   "eventbus_id": "018f...",
+//   ...
+// }
+
+restored, err := abxbus.EventHandlerFromJSON(payload, realHandler)
 ```
 
 </Tab>

@@ -71,6 +71,9 @@ func (m *OtelTracingMiddleware) OnEventResultChange(eventbus *EventBus, event *B
 	}
 }
 
+func (m *OtelTracingMiddleware) OnBusHandlersChange(eventbus *EventBus, handler *EventHandler, registered bool) {
+}
+
 func (m *OtelTracingMiddleware) startEventSpan(eventbus *EventBus, event *BaseEvent) trace.Span {
 	m.mu.Lock()
 	defer m.mu.Unlock()

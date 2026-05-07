@@ -37,11 +37,31 @@ const FooCreateEvent = BaseEvent.extend('FooCreateEvent', {
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+type FooPayload struct {
+	ID   *string `json:"id,omitempty"`
+	Name string  `json:"name"`
+	Age  int     `json:"age"`
+}
+
+type FooResult string
+
+event, err := abxbus.NewTypedEventWithResult[FooPayload, FooResult]("FooCreateEvent", FooPayload{
+	Name: "Ada",
+	Age:  37,
+})
+```
+
+</Tab>
 </Tabs>
 
-Queue semantics are split in both runtimes:
+Queue semantics are split in each runtime:
 - Immediate path: `await event` (Python) / `await event.done()` (TypeScript)
 - Queue-order path: `await event.event_completed()` (Python) / `await event.eventCompleted()` (TypeScript)
+
+In Go the same split is exposed as `event.Done(ctx)` for immediate queue-jump execution and `event.EventCompleted(ctx)` for normal queue-order waiting.
 
 ## Core metadata fields
 
@@ -94,6 +114,21 @@ const value = completed.event_result
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+pending := bus.Emit(abxbus.NewBaseEvent("MyEvent", nil))
+completed, err := pending.Done(context.Background())
+if err != nil {
+	return err
+}
+if err := pending.EventCompleted(context.Background()); err != nil {
+	return err
+}
+value, err := completed.EventResult(context.Background())
+```
+
+</Tab>
 </Tabs>
 
 ## Result access helpers
@@ -113,6 +148,13 @@ value = await event.first()
 
 ```ts
 const value = await event.first()
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+value, err := event.First(context.Background())
 ```
 
 </Tab>
@@ -139,6 +181,21 @@ const filtered = await event.eventResultsList((result) => typeof result === 'str
 })
 const first = event.event_result
 const errors = event.event_errors
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+items, err := event.EventResultsList(context.Background(), nil, nil)
+filtered, err := event.EventResultsList(
+	context.Background(),
+	func(result any, eventResult *abxbus.EventResult) bool {
+		_, ok := result.(string)
+		return ok
+	},
+	&abxbus.EventResultsListOptions{RaiseIfAny: false, RaiseIfNone: true},
+)
 ```
 
 </Tab>
@@ -186,6 +243,13 @@ const fresh = event.eventReset()
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+fresh, err := event.EventReset()
+```
+
+</Tab>
 </Tabs>
 
 ## Serialization
@@ -226,6 +290,24 @@ console.log(payload)
 // }
 
 const restored = BaseEvent.fromJSON(payload)
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+payload, err := event.ToJSON()
+fmt.Println(string(payload))
+// {
+//   "event_id": "0190...",
+//   "event_type": "CreateUserEvent",
+//   "event_status": "pending",
+//   "event_result_type": {"type": "object", "...": "..."},
+//   "email": "someuser@example.com",
+//   "...": "..."
+// }
+
+restored, err := abxbus.BaseEventFromJSON(payload)
 ```
 
 </Tab>
@@ -279,6 +361,20 @@ BaseEvent.extend('InvalidEvent', {
   event_some_field_we_dont_recognize: 1, // throws
   model_something_random: 2, // throws
 })
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+timeout := 30.0
+event := abxbus.NewBaseEvent("AllowedEvent", map[string]any{
+	"payload": "ok",
+})
+event.EventTimeout = &timeout // allowed built-in event_* override
+
+// Go payloads are passed as maps or typed structs, so unknown event_* / model_* keys
+// should not be placed in the flattened payload. Use explicit BaseEvent fields instead.
 ```
 
 </Tab>
