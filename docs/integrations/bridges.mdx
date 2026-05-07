@@ -49,7 +49,7 @@ bus := abxbus.NewEventBus("AppBus", nil)
 bridge := abxbus.NewJSONLEventBridge("/tmp/abxbus_events.jsonl", 0.25, "JsonlBridge")
 
 bus.On("*", "jsonl_emit", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
-	return bridge.Emit(event), nil
+	return bridge.Emit(event)
 }, nil)
 bridge.On("*", "bus_emit", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 	return bus.Emit(event), nil
