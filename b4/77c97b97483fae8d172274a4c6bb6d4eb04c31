@@ -1,0 +1,49 @@
+abxbus-ts/patches/@tachyon-ipc__core@0.5.0.patch
+  s_6a8c07f028b30c::t_3aa735bb29dd24 16-30
+  s_6a8c07f028b30c::t_2af9c9337debc9 1-15
+abxbus-ts/package.json
+  s_6a8c07f028b30c::t_cb2e7dc0449364 100
+  s_6a8c07f028b30c::t_849290660379e9 84
+  s_6a8c07f028b30c::t_da5f90bd9e20c5 97-99,101,103
+  s_6a8c07f028b30c::t_f23d4b77ca555b 73,77-79,81-83,85-87,89-90,93
+  s_6a8c07f028b30c::t_adb81fe6d2fbd7 80
+  s_6a8c07f028b30c::t_40a9c1cd31dae0 149-150
+  s_6a8c07f028b30c::t_2af9c9337debc9 152-155
+abxbus-rust/tests/test_comprehensive_patterns.rs
+  s_6a8c07f028b30c::t_0fd5101e6ec7ad 2-5,21-28,208-211,297,300,487-488,1236-1251
+  s_6a8c07f028b30c::t_31c0a5554f8d8e 258-259
+abxbus-rust/tests/test_eventbus_name_conflict_gc.rs
+  s_6a8c07f028b30c::t_42908ca382a764 3-6,24-29,46-53,60,62,67-68,74,76,79-80,86,88,95-96,102-106,108,110,112,115-118,120-121,124-125,138-139,142-143,149-152,161-162,171,173,176-177,185,190,193,206,208-210,220,222,226,232,246-249,254,256,260,266,279-282
+abxbus-rust/tests/test_base_event_eventbus_proxy.rs
+  s_6a8c07f028b30c::t_e543531481e537 459,538,607
+  s_6a8c07f028b30c::t_0a3c475406b921 19
+  s_6a8c07f028b30c::t_b194a3d2cdf4a4 1-4,17-18,20-21,32-33,69,79,152-153,176,183-184,196,206-207,213,220-223,256,263,271-274,306,318-319,350,354,406-407,463,519-522,541,574,588-589,599
+abxbus-go/event_bus.go
+  s_6a8c07f028b30c::t_261a7e8699f84c 930-935,951-955,965-988
+pyproject.toml
+  s_6a8c07f028b30c::t_2c142b3be29c60 14-17,25,28,34,38-39,53-58,60-65,67,71,76
+abxbus-go/tests/eventbus_serialization_test.go
+  s_6a8c07f028b30c::t_02d1c9f36bb212 298-321
+abxbus-ts/tests/retry_multiprocess.test.ts
+  s_6a8c07f028b30c::t_8f3df0b0433fca 108-110
+  s_6a8c07f028b30c::t_df3e4360280ec7 150-161,171-173,191-192
+  s_6a8c07f028b30c::t_ab09cb9dae134e 12,100,105-107,111-117,124,126,145
+abxbus-go/go.mod
+  s_6a8c07f028b30c::t_d24fb942f86192 18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "b477c97b97483fae8d172274a4c6bb6d4eb04c31",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
