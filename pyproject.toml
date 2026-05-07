@@ -71,13 +71,6 @@ dev = [
 requires = ["uv_build>=0.10.12,<0.11.0"]
 build-backend = "uv_build"
 
-[tool.uv]
-exclude-newer = "14 days"
-# tachyon-ipc 0.5.0 was published within the 14-day exclusion window above
-# but is the lowest version with the API this bridge targets, so override
-# the cutoff for that package only.
-exclude-newer-package = { "tachyon-ipc" = "2026-04-26" }
-
 [tool.uv.build-backend]
 module-name = "abxbus"
 module-root = "."
