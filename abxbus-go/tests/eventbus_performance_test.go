@@ -193,7 +193,6 @@ func TestPerformanceWorstCaseForwardingQueueJumpTimeouts(t *testing.T) {
 	parentBus := abxbus.NewEventBus("PerfWorstParentBus", &abxbus.EventBusOptions{
 		MaxHistorySize: &historySize,
 		MaxHistoryDrop: true,
-		EventTimeout:   &eventTimeout,
 	})
 	childBus := abxbus.NewEventBus("PerfWorstChildBus", &abxbus.EventBusOptions{
 		MaxHistorySize: &historySize,
