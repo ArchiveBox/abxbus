@@ -1,0 +1,19 @@
+abxbus-go/tests/optional_dependencies_test.go
+  s_6a8c07f028b30c::t_bee6ea6394f444 1-98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "d999801fe90e625bc8003564c391bcbf17c52b35",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
