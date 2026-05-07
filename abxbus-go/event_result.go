@@ -116,19 +116,26 @@ func (r *EventResult) markStarted() {
 	}
 }
 
-func (r *EventResult) markCompleted(result any) {
+func (r *EventResult) markCompleted(result any) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.Status == EventResultCompleted || r.Status == EventResultError {
+		return false
+	}
 	r.Status = EventResultCompleted
 	r.Result = result
 	now := monotonicDatetime()
 	r.CompletedAt = &now
 	r.once.Do(func() { close(r.done_ch) })
+	return true
 }
 
-func (r *EventResult) markError(err error) {
+func (r *EventResult) markError(err error) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.Status == EventResultCompleted || r.Status == EventResultError {
+		return false
+	}
 	r.Status = EventResultError
 	if err != nil {
 		r.Error = err.Error()
@@ -136,6 +143,7 @@ func (r *EventResult) markError(err error) {
 	now := monotonicDatetime()
 	r.CompletedAt = &now
 	r.once.Do(func() { close(r.done_ch) })
+	return true
 }
 
 func (r *EventResult) Wait(ctx context.Context) error {
@@ -308,12 +316,16 @@ func (r *EventResult) Update(options *EventResultUpdateOptions) *EventResult {
 	return r
 }
 
-func (r *EventResult) replaceError(message string) {
+func (r *EventResult) replaceError(message string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.Status == EventResultCompleted || r.Status == EventResultError {
+		return false
+	}
 	r.Status = EventResultError
 	r.Error = message
 	now := monotonicDatetime()
 	r.CompletedAt = &now
 	r.once.Do(func() { close(r.done_ch) })
+	return true
 }

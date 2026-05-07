@@ -370,19 +370,37 @@ func runWithTimeout(ctx context.Context, timeout_seconds *float64, on_timeout fu
 	if timeout_seconds == nil {
 		return fn(ctx)
 	}
-	ctx2, cancel := context.WithTimeout(ctx, time.Duration(*timeout_seconds*float64(time.Second)))
+	ctx2, cancel := context.WithCancel(ctx)
 	defer cancel()
-	err := fn(ctx2)
-	if err != nil && errors.Is(err, context.DeadlineExceeded) && on_timeout != nil {
-		return on_timeout()
+	timer := time.NewTimer(time.Duration(*timeout_seconds * float64(time.Second)))
+	defer timer.Stop()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- fn(ctx2)
+	}()
+	select {
+	case err := <-errCh:
+		if err != nil && errors.Is(err, context.DeadlineExceeded) && on_timeout != nil {
+			return on_timeout()
+		}
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		cancel()
+		if on_timeout != nil {
+			return on_timeout()
+		}
+		return context.DeadlineExceeded
 	}
-	return err
 }
 
 type handlerContext struct {
 	base   context.Context
 	values context.Context
 }
+
+type handlerCancelReasonContextKey struct{}
 
 func (c handlerContext) Deadline() (time.Time, bool) { return c.base.Deadline() }
 func (c handlerContext) Done() <-chan struct{}       { return c.base.Done() }
@@ -525,9 +543,13 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 					continue
 				}
 				if startedAt != nil {
-					r.replaceError((&EventHandlerAbortedError{Message: "Aborted running handler due to event timeout"}).Error())
+					if !r.replaceError((&EventHandlerAbortedError{Message: "Aborted running handler due to event timeout"}).Error()) {
+						continue
+					}
 				} else {
-					r.replaceError((&EventHandlerCancelledError{Message: "Cancelled pending handler due to event timeout"}).Error())
+					if !r.replaceError((&EventHandlerCancelledError{Message: "Cancelled pending handler due to event timeout"}).Error()) {
+						continue
+					}
 				}
 				b.notifyEventResultChange(event, r, "completed")
 				continue
@@ -535,8 +557,9 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 			if status == EventResultCompleted || status == EventResultError {
 				continue
 			}
-			r.markError(err)
-			b.notifyEventResultChange(event, r, "completed")
+			if r.markError(err) {
+				b.notifyEventResultChange(event, r, "completed")
+			}
 		}
 	}
 	event.mu.Lock()
@@ -577,8 +600,9 @@ func (e *BaseEvent) runHandlers(ctx context.Context, bus *EventBus, handlers []*
 				for j := i + 1; j < len(results); j++ {
 					nextStatus, _, _, _ := results[j].snapshot()
 					if nextStatus == EventResultPending {
-						results[j].replaceError((&EventHandlerCancelledError{Message: "Cancelled pending handler due to first-completion mode"}).Error())
-						bus.notifyEventResultChange(e, results[j], "completed")
+						if results[j].replaceError((&EventHandlerCancelledError{Message: "Cancelled pending handler due to first-completion mode"}).Error()) {
+							bus.notifyEventResultChange(e, results[j], "completed")
+						}
 					}
 				}
 				return nil
@@ -598,6 +622,7 @@ func (e *BaseEvent) runHandlers(ctx context.Context, bus *EventBus, handlers []*
 	var cancel context.CancelFunc
 	if completion == EventHandlerCompletionFirst {
 		run_ctx, cancel = context.WithCancel(ctx)
+		run_ctx = context.WithValue(run_ctx, handlerCancelReasonContextKey{}, "first-completion")
 		defer cancel()
 	}
 	err_ch := make(chan error, len(handlers))
@@ -696,16 +721,11 @@ func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, hand
 	if resolved_event_timeout == nil {
 		resolved_event_timeout = bus.EventTimeout
 	}
-	resolved_handler_timeout := handler.HandlerTimeout
-	if resolved_handler_timeout == nil {
-		resolved_handler_timeout = event.EventHandlerTimeout
+	explicit_handler_timeout := handler.HandlerTimeout
+	if explicit_handler_timeout == nil {
+		explicit_handler_timeout = event.EventHandlerTimeout
 	}
-	if resolved_handler_timeout == nil {
-		resolved_handler_timeout = bus.EventTimeout
-	}
-	if resolved_handler_timeout != nil && resolved_event_timeout != nil && *resolved_handler_timeout > *resolved_event_timeout {
-		resolved_handler_timeout = resolved_event_timeout
-	}
+	resolved_handler_timeout := explicit_handler_timeout
 	resolved_handler_slow_timeout := handler.HandlerSlowTimeout
 	if resolved_handler_slow_timeout == nil {
 		resolved_handler_slow_timeout = event.EventHandlerSlowTimeout
@@ -752,21 +772,31 @@ func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, hand
 			return ctx.Err()
 		}
 		if errors.Is(ctx.Err(), context.Canceled) && errors.Is(err, context.Canceled) {
-			result.markError(&EventHandlerAbortedError{Message: "Aborted running handler due to first-completion mode"})
-			bus.notifyEventResultChange(event, result, "completed")
-			return nil
+			if ctx.Value(handlerCancelReasonContextKey{}) == "first-completion" {
+				if result.markError(&EventHandlerAbortedError{Message: "Aborted running handler due to first-completion mode"}) {
+					bus.notifyEventResultChange(event, result, "completed")
+				}
+				return nil
+			}
+			return ctx.Err()
 		}
-		result.markError(err)
-		bus.notifyEventResultChange(event, result, "completed")
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return ctx.Err()
+		}
+		if result.markError(err) {
+			bus.notifyEventResultChange(event, result, "completed")
+		}
 		return nil
 	}
 	if err := event.validateResultValue(return_value); err != nil {
-		result.markError(err)
-		bus.notifyEventResultChange(event, result, "completed")
+		if result.markError(err) {
+			bus.notifyEventResultChange(event, result, "completed")
+		}
 		return nil
 	}
-	result.markCompleted(return_value)
-	bus.notifyEventResultChange(event, result, "completed")
+	if result.markCompleted(return_value) {
+		bus.notifyEventResultChange(event, result, "completed")
+	}
 	return nil
 }
 

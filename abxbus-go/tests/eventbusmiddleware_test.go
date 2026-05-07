@@ -295,6 +295,60 @@ func TestEventBusMiddlewareHooksRemainMonotonicOnEventTimeout(t *testing.T) {
 	}
 }
 
+func TestEventBusMiddlewareHardEventTimeoutFinalizesImmediatelyWithoutWaitingForInFlightHandlers(t *testing.T) {
+	bus := abxbus.NewEventBus("MiddlewareHardTimeoutBus", &abxbus.EventBusOptions{
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
+	})
+	started := make(chan struct{}, 2)
+	for _, handlerName := range []string{"slow_1", "slow_2"} {
+		handlerName := handlerName
+		bus.On("MiddlewareHardTimeoutEvent", handlerName, func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+			started <- struct{}{}
+			time.Sleep(200 * time.Millisecond)
+			return "late:" + handlerName, nil
+		}, nil)
+	}
+
+	timeout := 0.01
+	event := abxbus.NewBaseEvent("MiddlewareHardTimeoutEvent", nil)
+	event.EventTimeout = &timeout
+	startedAt := time.Now()
+	dispatched := bus.Emit(event)
+	if err := dispatched.EventCompleted(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	elapsed := time.Since(startedAt)
+	if elapsed > 100*time.Millisecond {
+		t.Fatalf("event timeout should finalize without waiting for slow handlers, elapsed=%s", elapsed)
+	}
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		default:
+			t.Fatalf("expected both parallel handlers to start before hard timeout, got %d", i)
+		}
+	}
+
+	initialSnapshot := map[string]abxbus.EventResultStatus{}
+	for id, result := range dispatched.EventResults {
+		initialSnapshot[id] = result.Status
+		if result.Status != abxbus.EventResultError {
+			t.Fatalf("hard timeout should finalize handler result as error, got %#v", result)
+		}
+	}
+	time.Sleep(250 * time.Millisecond)
+	for id, status := range initialSnapshot {
+		result := dispatched.EventResults[id]
+		if result.Status != status {
+			t.Fatalf("late handler completion reversed result status for %s: got %s want %s", id, result.Status, status)
+		}
+		if result.Result != nil {
+			t.Fatalf("late handler result should not overwrite timeout error for %s: %#v", id, result)
+		}
+	}
+}
+
 func TestEventBusMiddlewareHooksArePerBusOnForwardedEvents(t *testing.T) {
 	middlewareA := newRecordingMiddleware("a", nil)
 	middlewareB := newRecordingMiddleware("b", nil)
