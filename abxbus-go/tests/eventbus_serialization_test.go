@@ -121,6 +121,36 @@ func TestEventBusSerializationRoundtripPreservesConfigHandlersHistory(t *testing
 	}
 }
 
+func TestEventBusSerializationPreservesUnboundedHistoryNull(t *testing.T) {
+	bus := abxbus.NewEventBus("UnlimitedSerBus", &abxbus.EventBusOptions{
+		MaxHistorySize: abxbus.IntPtr(abxbus.UnlimitedHistorySize),
+		MaxHistoryDrop: false,
+	})
+	data, err := bus.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(`"max_history_size":null`)) {
+		t.Fatalf("expected max_history_size to serialize as null: %s", string(data))
+	}
+
+	var payload abxbus.EventBusJSON
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.MaxHistorySize != nil {
+		t.Fatalf("expected unmarshaled max_history_size null, got %#v", payload.MaxHistorySize)
+	}
+
+	restored, err := abxbus.EventBusFromJSON(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.EventHistory.MaxHistorySize != nil {
+		t.Fatalf("expected restored history to remain unbounded, got %#v", restored.EventHistory.MaxHistorySize)
+	}
+}
+
 func TestEventBusSerializationPreservesHandlerRegistrationOrderThroughJSONAndRestore(t *testing.T) {
 	detectPaths := false
 	bus := abxbus.NewEventBus("HandlerOrderSourceBus", &abxbus.EventBusOptions{

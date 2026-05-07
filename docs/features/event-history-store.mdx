@@ -90,9 +90,8 @@ boundedReject := abxbus.NewEventBus("BoundedRejectBus", &abxbus.EventBusOptions{
 	MaxHistoryDrop: false,
 })
 unbounded := abxbus.NewEventBus("UnboundedBus", &abxbus.EventBusOptions{
-	MaxHistorySize: nil, // nil in options uses the default; set the store to nil for unbounded history.
+	MaxHistorySize: abxbus.IntPtr(abxbus.UnlimitedHistorySize),
 })
-unbounded.EventHistory.MaxHistorySize = nil
 inFlightOnly := abxbus.NewEventBus("InFlightBus", &abxbus.EventBusOptions{
 	MaxHistorySize: &zeroHistory,
 })

@@ -138,7 +138,9 @@ func NewEventBus(name string, options *EventBusOptions) *EventBus {
 	}
 	max_history_size := options.MaxHistorySize
 	if max_history_size == nil {
-		max_history_size = ptr(100)
+		max_history_size = ptr(DefaultMaxHistorySize)
+	} else if *max_history_size < 0 {
+		max_history_size = nil
 	}
 	event_timeout := options.EventTimeout
 	if event_timeout == nil {
@@ -928,14 +930,19 @@ func EventBusFromJSON(data []byte) (*EventBus, error) {
 		return nil, err
 	}
 	var rawPayload struct {
-		EventHistory json.RawMessage `json:"event_history"`
+		MaxHistorySize json.RawMessage `json:"max_history_size"`
+		EventHistory   json.RawMessage `json:"event_history"`
 	}
 	if err := json.Unmarshal(data, &rawPayload); err != nil {
 		return nil, err
 	}
+	maxHistorySize := parsed.MaxHistorySize
+	if rawPayload.MaxHistorySize == nil {
+		maxHistorySize = ptr(DefaultMaxHistorySize)
+	}
 	bus := NewEventBus(parsed.Name, &EventBusOptions{
 		ID:                          parsed.ID,
-		MaxHistorySize:              parsed.MaxHistorySize,
+		MaxHistorySize:              maxHistorySize,
 		MaxHistoryDrop:              parsed.MaxHistoryDrop,
 		EventConcurrency:            parsed.EventConcurrency,
 		EventTimeout:                parsed.EventTimeout,
@@ -947,7 +954,7 @@ func EventBusFromJSON(data []byte) (*EventBus, error) {
 	})
 	bus.handlers = parsed.Handlers
 	bus.handlersByKey = parsed.HandlersByKey
-	bus.EventHistory = NewEventHistory(parsed.MaxHistorySize, parsed.MaxHistoryDrop)
+	bus.EventHistory = NewEventHistory(maxHistorySize, parsed.MaxHistoryDrop)
 
 	addHistoryEvent := func(eventID string, event *BaseEvent) {
 		if event.EventID == "" {

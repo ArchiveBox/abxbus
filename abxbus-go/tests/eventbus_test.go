@@ -9,6 +9,9 @@ import (
 
 func TestEmitAndDispatchUseDefaultBehavior(t *testing.T) {
 	bus := abxbus.NewEventBus("DefaultsBus", nil)
+	if bus.EventHistory.MaxHistorySize == nil || *bus.EventHistory.MaxHistorySize != abxbus.DefaultMaxHistorySize {
+		t.Fatalf("unexpected default max history size: %#v", bus.EventHistory.MaxHistorySize)
+	}
 	if bus.EventConcurrency != abxbus.EventConcurrencyBusSerial {
 		t.Fatalf("unexpected default event concurrency: %s", bus.EventConcurrency)
 	}
@@ -49,6 +52,25 @@ func TestEmitAndDispatchUseDefaultBehavior(t *testing.T) {
 	}
 	if len(values) != 2 {
 		t.Fatalf("expected two non-nil result values, got %#v", values)
+	}
+}
+
+func TestUnboundedHistoryDisablesHistoryRejection(t *testing.T) {
+	bus := abxbus.NewEventBus("UnlimitedHistBus", &abxbus.EventBusOptions{
+		MaxHistorySize: abxbus.IntPtr(abxbus.UnlimitedHistorySize),
+		MaxHistoryDrop: false,
+	})
+	if bus.EventHistory.MaxHistorySize != nil {
+		t.Fatalf("unbounded history should store nil max size, got %#v", bus.EventHistory.MaxHistorySize)
+	}
+
+	for i := 0; i < abxbus.DefaultMaxHistorySize+10; i++ {
+		event := abxbus.NewBaseEvent("HistoryEvent", map[string]any{"index": i})
+		event.EventStatus = "completed"
+		bus.EventHistory.AddEvent(event)
+	}
+	if bus.EventHistory.Size() != abxbus.DefaultMaxHistorySize+10 {
+		t.Fatalf("unbounded history should keep all events, got %d", bus.EventHistory.Size())
 	}
 }
 

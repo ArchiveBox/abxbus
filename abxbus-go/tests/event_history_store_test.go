@@ -60,6 +60,22 @@ func TestEventHistory(t *testing.T) {
 		t.Fatalf("trim under max should remove 0 events, removed=%d", removed)
 	}
 
+	unbounded := abxbus.NewEventHistory(nil, false)
+	for i := 0; i < 3; i++ {
+		event := abxbus.NewBaseEvent("Unlimited", map[string]any{"index": i})
+		event.EventStatus = "completed"
+		unbounded.AddEvent(event)
+	}
+	if unbounded.MaxHistorySize != nil {
+		t.Fatalf("nil max_history_size should mean unbounded history")
+	}
+	if unbounded.Size() != 3 {
+		t.Fatalf("unbounded history should keep every event, got %d", unbounded.Size())
+	}
+	if removed := unbounded.TrimEventHistory(nil); removed != 0 {
+		t.Fatalf("unbounded history should not trim events, removed=%d", removed)
+	}
+
 	maxOne := 1
 	noDrop := abxbus.NewEventHistory(&maxOne, false)
 	p1 := abxbus.NewBaseEvent("P1", nil)

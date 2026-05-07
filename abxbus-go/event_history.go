@@ -6,6 +6,9 @@ import (
 	"time"
 )
 
+const DefaultMaxHistorySize = 100
+const UnlimitedHistorySize = -1
+
 type EventHistory struct {
 	MaxHistorySize *int
 	MaxHistoryDrop bool
@@ -22,8 +25,8 @@ type EventHistoryFindOptions struct {
 }
 
 func NewEventHistory(max_history_size *int, max_history_drop bool) *EventHistory {
-	if max_history_size == nil {
-		max_history_size = ptr(100)
+	if max_history_size != nil && *max_history_size < 0 {
+		max_history_size = nil
 	}
 	return &EventHistory{MaxHistorySize: max_history_size, MaxHistoryDrop: max_history_drop, events: map[string]*BaseEvent{}, order: []string{}}
 }
