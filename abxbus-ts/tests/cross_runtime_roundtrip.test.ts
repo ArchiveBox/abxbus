@@ -579,7 +579,7 @@ const runGoRoundtrip = <T extends Array<Record<string, unknown>> | Record<string
 
   try {
     writeFileSync(input_path, JSON.stringify(payload, null, 2), 'utf8')
-    const proc = runCommand('go', ['run', './cmd/abxbus-go-roundtrip', mode, input_path, output_path], go_root, GO_PROCESS_TIMEOUT_MS)
+    const proc = runCommand('go', ['run', './tests/roundtrip_cli', mode, input_path, output_path], go_root, GO_PROCESS_TIMEOUT_MS)
 
     assertProcessSucceeded(proc, `go ${mode} roundtrip`)
     assert.ok(existsSync(output_path), `go ${mode} roundtrip did not produce output payload`)

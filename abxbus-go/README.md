@@ -12,7 +12,7 @@ Implemented core features:
 - `event_result_type` JSON Schema enforcement for handler return values
 - JSON-compatible snake_case wire format
 - `ToJSON` / `FromJSON` roundtrips for EventBus, BaseEvent, EventHandler, EventResult
-- Python/TS/Rust-compatible cross-runtime roundtrip helper: `cmd/abxbus-go-roundtrip`
+- Python/TS/Rust-compatible cross-runtime roundtrip helper: `tests/roundtrip_cli`
 - `JSONLEventBridge`
 - `OtelTracingMiddleware`
 
@@ -26,8 +26,8 @@ Intentionally not implemented yet:
 
 ```bash
 go test ./...
-go run ./cmd/abxbus-go-roundtrip events input.json output.json
-go run ./cmd/abxbus-go-roundtrip bus input.json output.json
+go run ./tests/roundtrip_cli events input.json output.json
+go run ./tests/roundtrip_cli bus input.json output.json
 ```
 
 Cross-runtime parity tests live in the Python and TypeScript test suites. From the repo root:

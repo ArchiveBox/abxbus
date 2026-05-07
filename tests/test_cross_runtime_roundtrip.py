@@ -511,7 +511,7 @@ def _go_roundtrip(mode: str, payload: list[dict[str, Any]] | dict[str, Any], tmp
             [
                 go_bin,
                 'run',
-                './cmd/abxbus-go-roundtrip',
+                './tests/roundtrip_cli',
                 mode,
                 str(input_path),
                 str(output_path),

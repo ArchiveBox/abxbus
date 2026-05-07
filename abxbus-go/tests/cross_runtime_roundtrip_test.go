@@ -47,7 +47,7 @@ func TestGoRoundtripCLIPreservesEventJSONShape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command("go", "run", "../cmd/abxbus-go-roundtrip", "events", inputPath, outputPath)
+	cmd := exec.Command("go", "run", "./roundtrip_cli", "events", inputPath, outputPath)
 	cmd.Dir = "."
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go roundtrip CLI failed: %v\n%s", err, string(output))
@@ -161,7 +161,7 @@ func runRuntimeRoundtrip(t *testing.T, runtime string, mode string, payload any)
 	var cmd *exec.Cmd
 	switch runtime {
 	case "go":
-		cmd = exec.Command("go", "run", "./cmd/abxbus-go-roundtrip", mode, inputPath, outputPath)
+		cmd = exec.Command("go", "run", "./tests/roundtrip_cli", mode, inputPath, outputPath)
 		cmd.Dir = filepath.Join(repoRoot, "abxbus-go")
 	case "python":
 		cmd = exec.Command("uv", "run", "python", "-c", pythonRoundtripScript, mode, inputPath, outputPath)

@@ -7,11 +7,6 @@ settings:
 overrides:
   flatted: 3.4.2
 
-patchedDependencies:
-  '@tachyon-ipc/core@0.5.0':
-    hash: 36f209a2b516af270dc2d1d5208a6603eda17a57ce23c1a0968a03e883198d34
-    path: patches/@tachyon-ipc__core@0.5.0.patch
-
 importers:
 
   .:
@@ -37,7 +32,7 @@ importers:
         version: 2.7.1(@opentelemetry/api@1.9.1)
       '@tachyon-ipc/core':
         specifier: ^0.5.0
-        version: 0.5.0(patch_hash=36f209a2b516af270dc2d1d5208a6603eda17a57ce23c1a0968a03e883198d34)
+        version: 0.5.0
       '@types/node':
         specifier: ^25.6.1
         version: 25.6.1
@@ -1456,7 +1451,7 @@ snapshots:
 
   '@protobufjs/utf8@1.1.1': {}
 
-  '@tachyon-ipc/core@0.5.0(patch_hash=36f209a2b516af270dc2d1d5208a6603eda17a57ce23c1a0968a03e883198d34)':
+  '@tachyon-ipc/core@0.5.0':
     dependencies:
       node-addon-api: 8.7.0
 

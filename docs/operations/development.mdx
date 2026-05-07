@@ -86,8 +86,8 @@ The Rust roundtrip CLI used by cross-runtime tests lives at `abxbus-rust/src/bin
 git clone https://github.com/ArchiveBox/abxbus abxbus && cd abxbus/abxbus-go
 
 go test ./...
-go run ./cmd/abxbus-go-roundtrip events input.json output.json
-go run ./cmd/abxbus-go-roundtrip bus input.json output.json
+go run ./tests/roundtrip_cli events input.json output.json
+go run ./tests/roundtrip_cli bus input.json output.json
 ```
 
 Cross-runtime Go parity is exercised from the repo root by:

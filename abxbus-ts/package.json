@@ -149,9 +149,6 @@
       "@tachyon-ipc/core",
       "protobufjs",
       "esbuild"
-    ],
-    "patchedDependencies": {
-      "@tachyon-ipc/core@0.5.0": "patches/@tachyon-ipc__core@0.5.0.patch"
-    }
+    ]
   }
 }

@@ -230,6 +230,49 @@ func TestEventBusMiddlewareNoHandlerEventLifecycle(t *testing.T) {
 	}
 }
 
+func TestEventBusMiddlewareEventLifecycleOrderingIsDeterministicPerEvent(t *testing.T) {
+	middleware := newRecordingMiddleware("deterministic", nil)
+	historySize := 0
+	bus := abxbus.NewEventBus("MiddlewareDeterministicBus", &abxbus.EventBusOptions{
+		Middlewares:    []abxbus.EventBusMiddleware{middleware},
+		MaxHistorySize: &historySize,
+	})
+	bus.On("MiddlewareDeterministicEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		time.Sleep(time.Millisecond)
+		return "ok", nil
+	}, nil)
+
+	batchCount := 5
+	eventsPerBatch := 50
+	seenEvents := map[string]bool{}
+	for batchIndex := 0; batchIndex < batchCount; batchIndex++ {
+		events := make([]*abxbus.BaseEvent, 0, eventsPerBatch)
+		for eventIndex := 0; eventIndex < eventsPerBatch; eventIndex++ {
+			eventTimeout := 0.2
+			event := abxbus.NewBaseEvent("MiddlewareDeterministicEvent", nil)
+			event.EventTimeout = &eventTimeout
+			events = append(events, bus.Emit(event))
+		}
+		for _, event := range events {
+			if _, err := event.Done(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			seenEvents[event.EventID] = true
+		}
+
+		recordsByEventID := map[string][]middlewareRecord{}
+		for _, record := range recordsByHook(middleware.snapshot(), "event") {
+			recordsByEventID[record.EventID] = append(recordsByEventID[record.EventID], record)
+		}
+		for _, event := range events {
+			assertRecordStatuses(t, recordsByEventID[event.EventID], []string{"pending", "started", "completed"})
+		}
+	}
+	if len(seenEvents) != batchCount*eventsPerBatch {
+		t.Fatalf("unexpected deterministic event count: got %d want %d", len(seenEvents), batchCount*eventsPerBatch)
+	}
+}
+
 func TestEventBusMiddlewareHooksObserveHandlerErrorsWithoutErrorHookStatus(t *testing.T) {
 	middleware := newRecordingMiddleware("errors", nil)
 	bus := abxbus.NewEventBus("MiddlewareErrorBus", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
@@ -347,6 +390,115 @@ func TestEventBusMiddlewareHardEventTimeoutFinalizesImmediatelyWithoutWaitingFor
 			t.Fatalf("late handler result should not overwrite timeout error for %s: %#v", id, result)
 		}
 	}
+}
+
+func TestEventBusMiddlewareTimeoutCancelAbortAndResultSchemaTaxonomyRemainsExplicit(t *testing.T) {
+	serialBus := abxbus.NewEventBus("MiddlewareTaxonomySerialBus", &abxbus.EventBusOptions{
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+	})
+	parallelBus := abxbus.NewEventBus("MiddlewareTaxonomyParallelBus", &abxbus.EventBusOptions{
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
+	})
+
+	serialBus.On("MiddlewareSchemaEvent", "bad_schema", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return "not-a-number", nil
+	}, nil)
+	schemaEvent := abxbus.NewBaseEvent("MiddlewareSchemaEvent", nil)
+	schemaEvent.EventResultType = map[string]any{"type": "number"}
+	schemaEvent = serialBus.Emit(schemaEvent)
+	if err := schemaEvent.EventCompleted(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	schemaResults := schemaEvent.EventResults
+	if len(schemaResults) != 1 {
+		t.Fatalf("schema event should have one handler result, got %#v", schemaResults)
+	}
+	for _, result := range schemaResults {
+		if result.Status != abxbus.EventResultError || !strings.Contains(fmt.Sprint(result.Error), "EventHandlerResultSchemaError") {
+			t.Fatalf("schema mismatch should remain an explicit result-schema error, got %#v", result)
+		}
+	}
+
+	serialBus.On("MiddlewareSerialTimeoutEvent", "slow_1", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		select {
+		case <-time.After(100 * time.Millisecond):
+			return "slow", nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, nil)
+	serialBus.On("MiddlewareSerialTimeoutEvent", "slow_2", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		select {
+		case <-time.After(100 * time.Millisecond):
+			return "slow-2", nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, nil)
+	serialTimeout := 0.01
+	serialEvent := abxbus.NewBaseEvent("MiddlewareSerialTimeoutEvent", nil)
+	serialEvent.EventTimeout = &serialTimeout
+	serialEvent = serialBus.Emit(serialEvent)
+	if err := serialEvent.EventCompleted(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	serialErrors := eventResultErrorStrings(serialEvent)
+	if !containsErrorText(serialErrors, "Cancelled pending handler") {
+		t.Fatalf("serial event timeout should cancel pending handlers explicitly, got %#v", serialErrors)
+	}
+	if !containsErrorText(serialErrors, "Aborted running handler") && !containsErrorText(serialErrors, "timed out") {
+		t.Fatalf("serial event timeout should abort or time out a running handler explicitly, got %#v", serialErrors)
+	}
+
+	parallelBus.On("MiddlewareParallelTimeoutEvent", "slow_1", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		select {
+		case <-time.After(100 * time.Millisecond):
+			return "slow", nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, nil)
+	parallelBus.On("MiddlewareParallelTimeoutEvent", "slow_2", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		select {
+		case <-time.After(100 * time.Millisecond):
+			return "slow-2", nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, nil)
+	parallelTimeout := 0.01
+	parallelEvent := abxbus.NewBaseEvent("MiddlewareParallelTimeoutEvent", nil)
+	parallelEvent.EventTimeout = &parallelTimeout
+	parallelEvent = parallelBus.Emit(parallelEvent)
+	if err := parallelEvent.EventCompleted(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	parallelErrors := eventResultErrorStrings(parallelEvent)
+	if !containsErrorText(parallelErrors, "Aborted running handler") && !containsErrorText(parallelErrors, "timed out") {
+		t.Fatalf("parallel event timeout should abort or time out running handlers explicitly, got %#v", parallelErrors)
+	}
+	if containsErrorText(parallelErrors, "Cancelled pending handler") {
+		t.Fatalf("parallel event timeout should not cancel pending handlers when all handlers have started, got %#v", parallelErrors)
+	}
+}
+
+func eventResultErrorStrings(event *abxbus.BaseEvent) []string {
+	errors := []string{}
+	for _, result := range event.EventResults {
+		if result.Error != nil {
+			errors = append(errors, fmt.Sprint(result.Error))
+		}
+	}
+	return errors
+}
+
+func containsErrorText(errors []string, text string) bool {
+	for _, err := range errors {
+		if strings.Contains(err, text) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestEventBusMiddlewareHooksArePerBusOnForwardedEvents(t *testing.T) {
