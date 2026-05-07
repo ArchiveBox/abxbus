@@ -457,6 +457,14 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 			return err
 		}
 		defer event_lock.Release()
+		if event.status() == "completed" {
+			signalFirstHandlerStarted()
+			return nil
+		}
+		if b.eventHasLocalActiveResults(event) {
+			signalFirstHandlerStarted()
+			return event.EventCompleted(ctx)
+		}
 	}
 	event.markStarted()
 	b.notifyEventChange(event, "started")
@@ -842,21 +850,23 @@ func (b *EventBus) processEventImmediatelyAcrossBuses(ctx context.Context, event
 	}()
 
 	for _, bus := range ordered {
+		busEventLock := bus.locks.getLockForEvent(originalEvent)
+		bypassEventLocks := activeHandlerResult != nil && (bus == b || (initiatingLock != nil && busEventLock == initiatingLock))
 		bus.mu.Lock()
 		for i := len(bus.pendingEventQueue) - 1; i >= 0; i-- {
 			if bus.pendingEventQueue[i].EventID == originalEvent.EventID {
 				bus.pendingEventQueue = append(bus.pendingEventQueue[:i], bus.pendingEventQueue[i+1:]...)
 			}
 		}
-		if bus.inFlightEventIDs[originalEvent.EventID] {
-			bus.mu.Unlock()
+		alreadyInFlight := bus.inFlightEventIDs[originalEvent.EventID]
+		if !alreadyInFlight {
+			bus.inFlightEventIDs[originalEvent.EventID] = true
+		}
+		bus.mu.Unlock()
+		if alreadyInFlight && (!bypassEventLocks || bus.eventHasLocalActiveResults(originalEvent)) {
 			continue
 		}
-		bus.inFlightEventIDs[originalEvent.EventID] = true
-		bus.mu.Unlock()
 
-		busEventLock := bus.locks.getLockForEvent(originalEvent)
-		bypassEventLocks := activeHandlerResult != nil && (bus == b || (initiatingLock != nil && busEventLock == initiatingLock))
 		if err := bus.processEvent(ctx, originalEvent, bypassEventLocks, nil, nil); err != nil {
 			return nil, err
 		}
