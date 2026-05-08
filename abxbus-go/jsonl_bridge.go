@@ -33,10 +33,14 @@ func NewJSONLEventBridge(path string, pollIntervalSeconds float64, name string) 
 	if name == "" {
 		name = "JSONLEventBridge_" + suffix(newUUIDv7String(), 8)
 	}
+	pollInterval := time.Duration(pollIntervalSeconds * float64(time.Second))
+	if pollInterval < time.Millisecond {
+		pollInterval = time.Millisecond
+	}
 	zeroHistory := 0
 	return &JSONLEventBridge{
 		Path:         path,
-		PollInterval: time.Duration(pollIntervalSeconds * float64(time.Second)),
+		PollInterval: pollInterval,
 		Name:         name,
 		inboundBus:   NewEventBus(name, &EventBusOptions{MaxHistorySize: &zeroHistory}),
 	}

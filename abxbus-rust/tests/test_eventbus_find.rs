@@ -235,6 +235,23 @@ fn test_same_event_returns_false() {
 }
 
 #[test]
+fn test_event_is_child_of_returns_false_when_parent_chain_cycles() {
+    let bus = EventBus::new(Some("EventIsChildCycleBus".to_string()));
+    let first = bus.emit_base(BaseEvent::new("CycleFirst", Default::default()));
+    let second = bus.emit_base(BaseEvent::new("CycleSecond", Default::default()));
+    let unrelated = bus.emit_base(BaseEvent::new("CycleUnrelated", Default::default()));
+    assert!(block_on(bus.wait_until_idle(None)));
+
+    let first_id = first.inner.lock().event_id.clone();
+    let second_id = second.inner.lock().event_id.clone();
+    first.inner.lock().event_parent_id = Some(second_id);
+    second.inner.lock().event_parent_id = Some(first_id);
+
+    assert!(!bus.event_is_child_of(&first, &unrelated));
+    bus.stop();
+}
+
+#[test]
 fn test_reversed_relationship_returns_false() {
     let bus = EventBus::new(Some("EventIsChildReversedBus".to_string()));
     let bus_for_parent = bus.clone();

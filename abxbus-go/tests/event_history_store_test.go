@@ -95,8 +95,8 @@ func TestEventHistory(t *testing.T) {
 	d2.EventStatus = "pending"
 	drop.AddEvent(d1)
 	drop.AddEvent(d2)
-	if drop.Size() != 1 || !drop.Has(d2.EventID) {
-		t.Fatalf("max_history_drop=true should force-drop oldest when over max")
+	if drop.Size() != 2 || !drop.Has(d1.EventID) || !drop.Has(d2.EventID) {
+		t.Fatalf("max_history_drop=true should not force-drop in-progress events")
 	}
 
 	drop.Clear()

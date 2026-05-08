@@ -199,6 +199,25 @@ func (r *EventResult) releaseQueueJumpPauses() {
 	}
 }
 
+func (r *EventResult) releaseQueueJumpPauseFor(bus *EventBus) {
+	if bus == nil {
+		return
+	}
+	r.mu.Lock()
+	var release func()
+	if r.queueJumpPauseReleases != nil {
+		release = r.queueJumpPauseReleases[bus]
+		delete(r.queueJumpPauseReleases, bus)
+		if len(r.queueJumpPauseReleases) == 0 {
+			r.queueJumpPauseReleases = nil
+		}
+	}
+	r.mu.Unlock()
+	if release != nil {
+		release()
+	}
+}
+
 func (r *EventResult) MarshalJSON() ([]byte, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -253,9 +272,8 @@ func (r *EventResult) UnmarshalJSON(data []byte) error {
 	r.Error = parsed.Error
 	r.EventChildIDs = append([]string{}, parsed.EventChildren...)
 	r.EventChildren = nil
-	if r.done_ch == nil {
-		r.done_ch = make(chan struct{})
-	}
+	r.done_ch = make(chan struct{})
+	r.once = sync.Once{}
 	if r.Status == EventResultCompleted || r.Status == EventResultError {
 		r.once.Do(func() { close(r.done_ch) })
 	}

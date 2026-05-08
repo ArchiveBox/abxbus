@@ -43,6 +43,9 @@ func TestEventResultJSONRoundtrip(t *testing.T) {
 	if round.Result != "ok" || round.Error != "boom" {
 		t.Fatalf("result/error mismatch after roundtrip: %#v %#v", round.Result, round.Error)
 	}
+	if round.StartedAt == nil || *round.StartedAt != now || round.CompletedAt == nil || *round.CompletedAt != now {
+		t.Fatalf("timestamp mismatch after roundtrip: started=%#v completed=%#v", round.StartedAt, round.CompletedAt)
+	}
 }
 
 func TestEventResultWaitTimeout(t *testing.T) {
@@ -54,6 +57,63 @@ func TestEventResultWaitTimeout(t *testing.T) {
 	defer cancel()
 	if err := r.Wait(ctx); err == nil {
 		t.Fatal("expected timeout")
+	}
+}
+
+func TestEventResultUnmarshalResetsWaitStateForPendingResults(t *testing.T) {
+	completed := []byte(`{
+		"id":"result-1",
+		"status":"completed",
+		"event_id":"event-1",
+		"handler_id":"handler-1",
+		"handler_name":"handler",
+		"handler_file_path":null,
+		"handler_timeout":null,
+		"handler_slow_timeout":null,
+		"handler_registered_at":"2026-02-21T00:00:00.000000000Z",
+		"handler_event_pattern":"Evt",
+		"eventbus_name":"Bus",
+		"eventbus_id":"bus-1",
+		"started_at":null,
+		"completed_at":"2026-02-21T00:00:00.000000000Z",
+		"result":"ok",
+		"error":null,
+		"event_children":[]
+	}`)
+	pending := []byte(`{
+		"id":"result-2",
+		"status":"pending",
+		"event_id":"event-2",
+		"handler_id":"handler-2",
+		"handler_name":"handler",
+		"handler_file_path":null,
+		"handler_timeout":null,
+		"handler_slow_timeout":null,
+		"handler_registered_at":"2026-02-21T00:00:00.000000000Z",
+		"handler_event_pattern":"Evt",
+		"eventbus_name":"Bus",
+		"eventbus_id":"bus-1",
+		"started_at":null,
+		"completed_at":null,
+		"result":null,
+		"error":null,
+		"event_children":[]
+	}`)
+
+	var result abxbus.EventResult
+	if err := result.UnmarshalJSON(completed); err != nil {
+		t.Fatal(err)
+	}
+	if err := result.Wait(context.Background()); err != nil {
+		t.Fatalf("completed result should wait immediately: %v", err)
+	}
+	if err := result.UnmarshalJSON(pending); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := result.Wait(ctx); err == nil {
+		t.Fatal("pending result should not inherit the closed wait channel from a previous unmarshal")
 	}
 }
 

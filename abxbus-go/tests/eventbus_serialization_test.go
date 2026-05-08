@@ -170,6 +170,24 @@ func TestEventBusFromJSONPreservesNullEventTimeout(t *testing.T) {
 	}
 }
 
+func TestEventBusFromJSONDefaultsMissingHandlerMaps(t *testing.T) {
+	data := []byte(`{"id":"missing-handler-maps","name":"MissingHandlerMaps","max_history_size":100,"max_history_drop":false,"event_concurrency":"bus-serial","event_timeout":null,"event_slow_timeout":null,"event_handler_concurrency":"serial","event_handler_completion":"all","event_handler_slow_timeout":null,"event_handler_detect_file_paths":false,"event_history":{},"pending_event_queue":[]}`)
+	restored, err := abxbus.EventBusFromJSON(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored.On("Evt", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return "ok", nil
+	}, nil)
+	result, err := restored.Emit(abxbus.NewBaseEvent("Evt", nil)).EventResult(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "ok" {
+		t.Fatalf("restored bus handler did not run after missing maps were defaulted: %#v", result)
+	}
+}
+
 func TestEventBusSerializationPreservesHandlerRegistrationOrderThroughJSONAndRestore(t *testing.T) {
 	detectPaths := false
 	bus := abxbus.NewEventBus("HandlerOrderSourceBus", &abxbus.EventBusOptions{

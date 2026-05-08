@@ -1,6 +1,7 @@
-use std::{sync::mpsc as std_mpsc, sync::Arc, thread, time::Duration};
+use std::{sync::Arc, time::Duration};
 
-use futures::executor::block_on;
+use futures::future::{select, Either, FutureExt};
+use futures_timer::Delay;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Value};
 
@@ -188,6 +189,11 @@ impl EventResult {
         timeout: Option<f64>,
     ) -> Result<Value, String> {
         if self.status != EventResultStatus::Pending {
+            if self.status == EventResultStatus::Error {
+                return Err(self.error.clone().unwrap_or_else(|| {
+                    "EventHandlerError: handler result already errored".to_string()
+                }));
+            }
             return Ok(self.result.clone().unwrap_or(Value::Null));
         }
 
@@ -202,16 +208,13 @@ impl EventResult {
             return Err(error);
         };
 
-        let (tx, rx) = std_mpsc::channel();
-        let event_for_handler = event.clone();
-        thread::spawn(move || {
-            let _ = tx.send(block_on(callable(event_for_handler)));
-        });
-
         let call_result = if let Some(timeout_secs) = timeout {
-            match rx.recv_timeout(Duration::from_secs_f64(timeout_secs)) {
-                Ok(result) => result,
-                Err(_) => {
+            let timeout_duration = Duration::from_secs_f64(timeout_secs.max(0.0));
+            let timeout_future = Delay::new(timeout_duration)
+                .map(|_| Err::<Value, String>("EventHandlerTimeoutError: timeout".to_string()));
+            match select(callable(event.clone()), timeout_future.boxed()).await {
+                Either::Left((result, _timeout_future)) => result,
+                Either::Right((_timeout_result, _handler_future)) => {
                     let error = "EventHandlerTimeoutError: timeout".to_string();
                     self.status = EventResultStatus::Error;
                     self.error = Some(error.clone());
@@ -220,16 +223,7 @@ impl EventResult {
                 }
             }
         } else {
-            match rx.recv() {
-                Ok(result) => result,
-                Err(_) => {
-                    let error = "EventHandlerAbortedError: handler channel closed".to_string();
-                    self.status = EventResultStatus::Error;
-                    self.error = Some(error.clone());
-                    self.completed_at = Some(now_iso());
-                    return Err(error);
-                }
-            }
+            callable(event.clone()).await
         };
 
         self.completed_at = Some(now_iso());

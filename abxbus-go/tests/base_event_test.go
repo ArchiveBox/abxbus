@@ -13,8 +13,11 @@ import (
 
 func TestBaseEventDoneWithoutBus(t *testing.T) {
 	e := abxbus.NewBaseEvent("NoBus", nil)
-	if _, err := e.Done(context.Background()); err == nil {
-		t.Fatal("expected error")
+	if _, err := e.Done(context.Background()); err == nil || !strings.Contains(err.Error(), "no bus attached") {
+		t.Fatalf("expected missing bus error, got %v", err)
+	}
+	if e.EventStatus != "pending" {
+		t.Fatalf("Done without a bus should not mutate event status, got %s", e.EventStatus)
 	}
 }
 

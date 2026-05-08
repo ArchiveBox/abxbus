@@ -9,10 +9,8 @@ use std::{
 };
 
 use event_listener::Event;
-use futures::{
-    channel::oneshot,
-    future::{select, Either, FutureExt},
-};
+use futures::future::{select, Either, FutureExt};
+use futures_timer::Delay;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Map, Value};
@@ -270,13 +268,7 @@ impl BaseEvent {
             }
 
             let remaining = deadline.saturating_duration_since(now);
-            let (timeout_tx, timeout_rx) = oneshot::channel::<()>();
-            thread::spawn(move || {
-                thread::sleep(remaining);
-                let _ = timeout_tx.send(());
-            });
-
-            match select(listener.boxed(), timeout_rx.boxed()).await {
+            match select(listener.boxed(), Delay::new(remaining).boxed()).await {
                 Either::Left((_listener_result, _timeout_future)) => {
                     drop(waiter);
                     continue;

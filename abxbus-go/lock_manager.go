@@ -65,6 +65,9 @@ type LockManager struct {
 	active_mu               sync.Mutex
 	active_handler_result   []*EventResult
 	active_dispatch_context []context.Context
+
+	idle_mu      sync.Mutex
+	idle_waiters []chan struct{}
 }
 
 func NewLockManager(bus *EventBus) *LockManager {
@@ -174,10 +177,61 @@ func (l *LockManager) waitForIdle(timeout *float64) bool {
 		if l.bus.IsIdleAndQueueEmpty() {
 			return true
 		}
+		waiter := make(chan struct{})
+		l.idle_mu.Lock()
+		if l.bus.IsIdleAndQueueEmpty() {
+			l.idle_mu.Unlock()
+			return true
+		}
+		l.idle_waiters = append(l.idle_waiters, waiter)
+		l.idle_mu.Unlock()
 		if !deadline.IsZero() && time.Now().After(deadline) {
+			l.removeIdleWaiter(waiter)
 			return false
 		}
-		time.Sleep(time.Millisecond)
+		if deadline.IsZero() {
+			<-waiter
+			continue
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			l.removeIdleWaiter(waiter)
+			return false
+		}
+		timer := time.NewTimer(remaining)
+		select {
+		case <-waiter:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		case <-timer.C:
+			l.removeIdleWaiter(waiter)
+			return l.bus.IsIdleAndQueueEmpty()
+		}
+	}
+}
+
+func (l *LockManager) notifyIdleListeners() {
+	l.idle_mu.Lock()
+	waiters := l.idle_waiters
+	l.idle_waiters = nil
+	l.idle_mu.Unlock()
+	for _, waiter := range waiters {
+		close(waiter)
+	}
+}
+
+func (l *LockManager) removeIdleWaiter(waiter chan struct{}) {
+	l.idle_mu.Lock()
+	defer l.idle_mu.Unlock()
+	for i, candidate := range l.idle_waiters {
+		if candidate == waiter {
+			l.idle_waiters = append(l.idle_waiters[:i], l.idle_waiters[i+1:]...)
+			return
+		}
 	}
 }
 

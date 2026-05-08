@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/ArchiveBox/abxbus/abxbus-go/jsonschema"
 )
 
 func NewTypedEvent[T any](eventType string, payload T) (*BaseEvent, error) {
@@ -56,7 +58,7 @@ func OnTyped[TPayload any, TResult any](
 ) *EventHandler {
 	payloadSchema := JSONSchemaFor[TPayload]()
 	return bus.On(eventPattern, handlerName, func(ctx context.Context, event *BaseEvent) (any, error) {
-		if err := validateJSONSchemaValue(payloadSchema, payloadSchema, normalizeJSONValue(event.Payload), "$"); err != nil {
+		if err := jsonschema.Validate(payloadSchema, event.Payload); err != nil {
 			var zero TResult
 			return zero, fmt.Errorf("EventHandlerPayloadSchemaError: Event payload did not match declared handler payload type: %w", err)
 		}
@@ -71,6 +73,9 @@ func OnTyped[TPayload any, TResult any](
 
 func EventPayloadAs[T any](event *BaseEvent) (T, error) {
 	var payload T
+	if event == nil {
+		return payload, fmt.Errorf("event is nil")
+	}
 	data, err := json.Marshal(event.Payload)
 	if err != nil {
 		return payload, err
@@ -127,9 +132,7 @@ func jsonSchemaForNonPointerType(t reflect.Type) map[string]any {
 		return map[string]any{"type": "array", "items": jsonSchemaWithoutDraft(jsonSchemaForType(t.Elem()))}
 	case reflect.Map:
 		schema := map[string]any{"type": "object"}
-		if t.Key().Kind() == reflect.String {
-			schema["additionalProperties"] = jsonSchemaWithoutDraft(jsonSchemaForType(t.Elem()))
-		}
+		schema["additionalProperties"] = jsonSchemaWithoutDraft(jsonSchemaForType(t.Elem()))
 		return schema
 	case reflect.Struct:
 		return jsonSchemaForStruct(t)
@@ -145,11 +148,29 @@ func jsonSchemaForStruct(t reflect.Type) map[string]any {
 	required := []any{}
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		if field.PkgPath != "" {
+		name, omitempty, skip, explicitName := jsonFieldName(field)
+		if skip {
 			continue
 		}
-		name, omitempty, skip := jsonFieldName(field)
-		if skip {
+		fieldType := field.Type
+		for fieldType.Kind() == reflect.Pointer {
+			fieldType = fieldType.Elem()
+		}
+		if field.Anonymous && !explicitName && fieldType.Kind() == reflect.Struct {
+			embedded := jsonSchemaForStruct(fieldType)
+			if embeddedProperties, ok := embedded["properties"].(map[string]any); ok {
+				for embeddedName, embeddedSchema := range embeddedProperties {
+					properties[embeddedName] = embeddedSchema
+				}
+			}
+			if !omitempty && field.Type.Kind() != reflect.Pointer {
+				if embeddedRequired, ok := embedded["required"].([]any); ok {
+					required = append(required, embeddedRequired...)
+				}
+			}
+			continue
+		}
+		if field.PkgPath != "" {
 			continue
 		}
 		properties[name] = jsonSchemaWithoutDraft(jsonSchemaForType(field.Type))
@@ -164,18 +185,19 @@ func jsonSchemaForStruct(t reflect.Type) map[string]any {
 	return schema
 }
 
-func jsonFieldName(field reflect.StructField) (name string, omitempty bool, skip bool) {
+func jsonFieldName(field reflect.StructField) (name string, omitempty bool, skip bool, explicitName bool) {
 	name = field.Name
 	tag := field.Tag.Get("json")
 	if tag == "-" {
-		return "", false, true
+		return "", false, true, false
 	}
 	if tag == "" {
-		return name, false, false
+		return name, false, false, false
 	}
 	parts := strings.Split(tag, ",")
 	if parts[0] != "" {
 		name = parts[0]
+		explicitName = true
 	}
 	for _, part := range parts[1:] {
 		if part == "omitempty" || part == "omitzero" {
@@ -183,7 +205,7 @@ func jsonFieldName(field reflect.StructField) (name string, omitempty bool, skip
 			break
 		}
 	}
-	return name, omitempty, false
+	return name, omitempty, false, explicitName
 }
 
 func jsonSchemaWithoutDraft(schema map[string]any) map[string]any {

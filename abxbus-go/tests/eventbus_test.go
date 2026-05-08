@@ -2,6 +2,7 @@ package abxbus_test
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -54,6 +55,9 @@ func TestEmitAndDispatchUseDefaultBehavior(t *testing.T) {
 	}
 	if len(values) != 2 {
 		t.Fatalf("expected two non-nil result values, got %#v", values)
+	}
+	if values[0] != "first" || !reflect.DeepEqual(values[1], map[string]any{"user_id": "abc"}) {
+		t.Fatalf("unexpected result values/order: %#v", values)
 	}
 }
 

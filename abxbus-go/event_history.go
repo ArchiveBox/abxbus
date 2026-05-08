@@ -217,14 +217,7 @@ func (h *EventHistory) trimLocked(is_event_complete func(event *BaseEvent) bool)
 		if removed_any {
 			continue
 		}
-		if !h.MaxHistoryDrop || len(h.order) == 0 {
-			break
-		}
-		eid := h.order[0]
-		delete(h.events, eid)
-		h.order = h.order[1:]
-		overage--
-		removed++
+		break
 	}
 	return removed
 }

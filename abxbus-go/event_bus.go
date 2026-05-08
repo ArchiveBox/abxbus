@@ -209,12 +209,14 @@ func eventBusInstancesSnapshot() []*EventBus {
 }
 
 func (b *EventBus) notifyEventChange(event *BaseEvent, status string) {
+	b.locks.notifyIdleListeners()
 	for _, middleware := range append([]EventBusMiddleware{}, b.middlewares...) {
 		middleware.OnEventChange(b, event, status)
 	}
 }
 
 func (b *EventBus) notifyEventResultChange(event *BaseEvent, result *EventResult, status string) {
+	b.locks.notifyIdleListeners()
 	for _, middleware := range append([]EventBusMiddleware{}, b.middlewares...) {
 		middleware.OnEventResultChange(b, event, result, status)
 	}
@@ -454,7 +456,12 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 	if shouldRestoreBus {
 		defer func() { event.mu.Lock(); event.Bus = previousBus; event.mu.Unlock() }()
 	}
-	defer func() { b.mu.Lock(); delete(b.inFlightEventIDs, event.EventID); b.mu.Unlock() }()
+	defer func() {
+		b.mu.Lock()
+		delete(b.inFlightEventIDs, event.EventID)
+		b.mu.Unlock()
+		b.locks.notifyIdleListeners()
+	}()
 	if event.status() == "completed" {
 		signalFirstHandlerStarted()
 		return nil
@@ -929,6 +936,7 @@ func (b *EventBus) runloop(ctx context.Context) {
 		if len(b.pendingEventQueue) == 0 {
 			b.runloopRunning = false
 			b.mu.Unlock()
+			b.locks.notifyIdleListeners()
 			return
 		}
 		next_event := b.pendingEventQueue[0]
@@ -1134,8 +1142,12 @@ func EventBusFromJSON(data []byte) (*EventBus, error) {
 	if eventTimeoutWasExplicitNull {
 		bus.EventTimeout = nil
 	}
-	bus.handlers = parsed.Handlers
-	bus.handlersByKey = parsed.HandlersByKey
+	if parsed.Handlers != nil {
+		bus.handlers = parsed.Handlers
+	}
+	if parsed.HandlersByKey != nil {
+		bus.handlersByKey = parsed.HandlersByKey
+	}
 	bus.EventHistory = NewEventHistory(maxHistorySize, parsed.MaxHistoryDrop)
 
 	addHistoryEvent := func(eventID string, event *BaseEvent) {

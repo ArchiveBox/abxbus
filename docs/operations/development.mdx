@@ -93,6 +93,7 @@ go run ./tests/roundtrip_cli bus input.json output.json
 Cross-runtime Go parity is exercised from the repo root by:
 
 ```bash
+cd ..
 uv run pytest tests/test_cross_runtime_roundtrip.py -q
 pnpm --dir abxbus-ts exec node --expose-gc --test --import tsx tests/cross_runtime_roundtrip.test.ts
 ```

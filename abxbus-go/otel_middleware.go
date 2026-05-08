@@ -84,6 +84,8 @@ func (m *OtelTracingMiddleware) startEventSpan(eventbus *EventBus, event *BaseEv
 	if event.EventParentID != nil && event.EventEmittedByHandlerID != nil {
 		if parentCtx := m.handlerContext[handlerSpanKey(*event.EventParentID, *event.EventEmittedByHandlerID)]; parentCtx != nil {
 			parent = parentCtx
+		} else if parentCtx := m.eventContexts[*event.EventParentID]; parentCtx != nil {
+			parent = parentCtx
 		}
 	} else if event.EventParentID != nil {
 		if parentCtx := m.eventContexts[*event.EventParentID]; parentCtx != nil {

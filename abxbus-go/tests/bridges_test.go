@@ -48,6 +48,13 @@ func TestJSONLEventBridgeForwardsEventsThroughFile(t *testing.T) {
 	}
 }
 
+func TestJSONLEventBridgeClampsTinyPollInterval(t *testing.T) {
+	bridge := abxbus.NewJSONLEventBridge(filepath.Join(t.TempDir(), "events.jsonl"), 0.0000000001, "JSONLClamp")
+	if bridge.PollInterval < time.Millisecond {
+		t.Fatalf("poll interval should be clamped to a positive ticker-safe duration, got %s", bridge.PollInterval)
+	}
+}
+
 func TestJSONLEventBridgeIgnoresMalformedLinesAndKeepsPolling(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.jsonl")
 	reader := abxbus.NewJSONLEventBridge(path, 0.01, "JSONLReaderMalformed")

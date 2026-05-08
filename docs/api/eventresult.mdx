@@ -83,7 +83,7 @@ These are flow references for execution order, not public API method documentati
 </Tab>
 <Tab title="Go">
 
-- `LockManager.runWithHandlerLock(...)`
+- event-lock acquisition in `EventBus.processEvent(...)` via `LockManager.getLockForEvent(...)` and `AsyncLock.Acquire(...)`
 - `mergeHandlerContext(...)` for dispatch context values
 - `runWithTimeout(...)`
 - slow-handler timer setup in `EventBus.processEvent(...)`

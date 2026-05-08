@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{mpsc as std_mpsc, Arc, OnceLock, Weak},
     thread,
     time::{Duration, Instant},
@@ -1838,8 +1838,12 @@ impl EventBus {
             return false;
         }
 
+        let mut visited = HashSet::new();
         let mut current_id = child_event_id.to_string();
         loop {
+            if !visited.insert(current_id.clone()) {
+                return false;
+            }
             let Some(current_event) = self.runtime.events.lock().get(&current_id).cloned() else {
                 return false;
             };

@@ -46,6 +46,12 @@ func TestTypedEventPayloadAndResultHelpers(t *testing.T) {
 	}
 }
 
+func TestEventPayloadAsRejectsNilEvent(t *testing.T) {
+	if _, err := abxbus.EventPayloadAs[addPayload](nil); err == nil || !strings.Contains(err.Error(), "event is nil") {
+		t.Fatalf("expected nil event error, got %v", err)
+	}
+}
+
 func TestTypedEventWithResultSchemaValidatesHandlerReturnAtRuntime(t *testing.T) {
 	bus := abxbus.NewEventBus("TypedSchemaBus", nil)
 	bus.On("TypedSchemaEvent", "bad", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
@@ -132,5 +138,63 @@ func TestJSONSchemaForGoStructUsesJSONTagsAndRequiredFields(t *testing.T) {
 	nestedAnyOf := properties["nested"].(map[string]any)["anyOf"].([]any)
 	if nestedAnyOf[0].(map[string]any)["type"] != "object" || nestedAnyOf[1].(map[string]any)["type"] != "null" {
 		t.Fatalf("pointer property schema did not match: %#v", properties["nested"])
+	}
+}
+
+func TestJSONSchemaForMapIncludesAdditionalPropertiesForNonStringKeys(t *testing.T) {
+	schema := abxbus.JSONSchemaFor[map[int][]string]()
+	if schema["type"] != "object" {
+		t.Fatalf("unexpected map schema type: %#v", schema)
+	}
+	additionalProperties := schema["additionalProperties"].(map[string]any)
+	if additionalProperties["type"] != "array" {
+		t.Fatalf("map value schema should be array, got %#v", additionalProperties)
+	}
+	items := additionalProperties["items"].(map[string]any)
+	if items["type"] != "string" {
+		t.Fatalf("map value item schema should be string, got %#v", items)
+	}
+}
+
+func TestJSONSchemaForEmbeddedStructFieldsMatchesJSONFlattening(t *testing.T) {
+	type embeddedProfile struct {
+		Email string `json:"email"`
+		Age   int    `json:"age,omitempty"`
+	}
+	type schemaResult struct {
+		embeddedProfile
+		Name string `json:"name"`
+	}
+
+	schema := abxbus.JSONSchemaFor[schemaResult]()
+	properties := schema["properties"].(map[string]any)
+	if _, ok := properties["embeddedProfile"]; ok {
+		t.Fatalf("anonymous embedded struct should be flattened, got %#v", properties)
+	}
+	if properties["email"].(map[string]any)["type"] != "string" || properties["age"].(map[string]any)["type"] != "integer" || properties["name"].(map[string]any)["type"] != "string" {
+		t.Fatalf("flattened embedded property schemas did not match: %#v", properties)
+	}
+	expectedRequired := []any{"email", "name"}
+	if !reflect.DeepEqual(schema["required"], expectedRequired) {
+		t.Fatalf("unexpected required fields for flattened embedded struct: %#v", schema["required"])
+	}
+}
+
+func TestJSONSchemaForTaggedAnonymousStructFieldStaysNested(t *testing.T) {
+	type EmbeddedProfile struct {
+		Email string `json:"email"`
+	}
+	type schemaResult struct {
+		EmbeddedProfile `json:"profile"`
+	}
+
+	schema := abxbus.JSONSchemaFor[schemaResult]()
+	properties := schema["properties"].(map[string]any)
+	if _, ok := properties["email"]; ok {
+		t.Fatalf("tagged anonymous struct should not be flattened: %#v", properties)
+	}
+	profile := properties["profile"].(map[string]any)
+	if profile["type"] != "object" {
+		t.Fatalf("tagged anonymous struct should be nested object, got %#v", profile)
 	}
 }
