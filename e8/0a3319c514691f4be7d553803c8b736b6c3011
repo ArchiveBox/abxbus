@@ -1,0 +1,22 @@
+abxbus-go/typed.go
+  s_6a8c07f028b30c::t_aa8a0b3324351d 26
+  s_6a8c07f028b30c::t_ba46032634cc05 25,27-29
+abxbus-rust/README.md
+  s_6a8c07f028b30c::t_ba46032634cc05 22,34-35,38,40-41,44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "e80a3319c514691f4be7d553803c8b736b6c3011",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
