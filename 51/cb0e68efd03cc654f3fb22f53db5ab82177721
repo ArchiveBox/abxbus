@@ -1,0 +1,19 @@
+TODO_rust_core_ffi.md
+  s_60f9f93049b86d::t_2fac51f5449e5c 1-971
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "51cb0e68efd03cc654f3fb22f53db5ab82177721",
+  "prompts": {},
+  "sessions": {
+    "s_60f9f93049b86d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1c3-a846-79e3-90aa-0bd6ba4adc72",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
