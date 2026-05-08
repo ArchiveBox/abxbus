@@ -979,7 +979,7 @@ func (b *EventBus) processEventImmediatelyAcrossBuses(ctx context.Context, event
 				bus.inFlightEventIDs[originalEvent.EventID] = true
 			}
 			bus.mu.Unlock()
-			if alreadyInFlight && (!bypassEventLocks || bus.eventHasLocalActiveResults(originalEvent)) {
+			if alreadyInFlight && bus.eventHasLocalActiveResults(originalEvent) {
 				continue
 			}
 
