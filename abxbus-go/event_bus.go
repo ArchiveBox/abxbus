@@ -436,6 +436,75 @@ func (b *EventBus) eventHasLocalActiveResults(event *BaseEvent) bool {
 	return false
 }
 
+func eventHasRunningResults(event *BaseEvent) bool {
+	for _, result := range event.eventResultsSnapshot() {
+		if result == nil {
+			continue
+		}
+		status, _, _, _ := result.snapshot()
+		if status == EventResultPending || status == EventResultStarted {
+			return true
+		}
+	}
+	return false
+}
+
+func completeEventAcrossBuses(event *BaseEvent) {
+	if event.status() == "completed" {
+		return
+	}
+	event.mu.Lock()
+	if event.EventPendingBusCount < 0 {
+		event.EventPendingBusCount = 0
+	}
+	event.mu.Unlock()
+	event.markCompleted()
+	for _, bus := range eventBusInstancesSnapshot() {
+		if bus.EventHistory.GetEvent(event.EventID) != event {
+			continue
+		}
+		bus.notifyEventChange(event, "completed")
+		bus.EventHistory.TrimEventHistory(nil)
+	}
+}
+
+func eventQueuedOrInFlightAcrossBuses(event *BaseEvent) bool {
+	for _, bus := range eventBusInstancesSnapshot() {
+		if bus.EventHistory.GetEvent(event.EventID) != event {
+			continue
+		}
+		bus.mu.Lock()
+		if bus.inFlightEventIDs[event.EventID] {
+			bus.mu.Unlock()
+			return true
+		}
+		for _, queued := range bus.pendingEventQueue {
+			if queued.EventID == event.EventID {
+				bus.mu.Unlock()
+				return true
+			}
+		}
+		bus.mu.Unlock()
+	}
+	return false
+}
+
+func settleSkippedActiveBuses(event *BaseEvent, skipped int) {
+	if skipped <= 0 || eventHasRunningResults(event) || eventQueuedOrInFlightAcrossBuses(event) {
+		return
+	}
+	event.mu.Lock()
+	event.EventPendingBusCount -= skipped
+	if event.EventPendingBusCount < 0 {
+		event.EventPendingBusCount = 0
+	}
+	eventDone := event.EventPendingBusCount == 0
+	event.mu.Unlock()
+	if eventDone {
+		completeEventAcrossBuses(event)
+	}
+}
+
 func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_event_locks bool, pre_acquired_lock *AsyncLock, first_handler_started chan struct{}) error {
 	signalFirstHandlerStarted := func() {}
 	if first_handler_started != nil {
@@ -849,12 +918,18 @@ func (b *EventBus) processEventImmediatelyAcrossBuses(ctx context.Context, event
 	instances := eventBusInstancesSnapshot()
 	ordered := []*EventBus{}
 	seen := map[*EventBus]bool{}
+	skippedActiveBuses := 0
 	originalEvent.mu.Lock()
 	eventPath := append([]string{}, originalEvent.EventPath...)
 	originalEvent.mu.Unlock()
 	for _, label := range eventPath {
 		for _, bus := range instances {
-			if seen[bus] || bus.Label() != label || bus.EventHistory.GetEvent(originalEvent.EventID) != originalEvent || bus.eventHasLocalActiveResults(originalEvent) {
+			if seen[bus] || bus.Label() != label || bus.EventHistory.GetEvent(originalEvent.EventID) != originalEvent {
+				continue
+			}
+			if bus.eventHasLocalActiveResults(originalEvent) {
+				skippedActiveBuses++
+				seen[bus] = true
 				continue
 			}
 			ordered = append(ordered, bus)
@@ -866,6 +941,7 @@ func (b *EventBus) processEventImmediatelyAcrossBuses(ctx context.Context, event
 		seen[b] = true
 	}
 	if len(ordered) == 0 {
+		settleSkippedActiveBuses(originalEvent, skippedActiveBuses)
 		if err := originalEvent.EventCompleted(ctx); err != nil {
 			return nil, err
 		}
@@ -909,6 +985,7 @@ func (b *EventBus) processEventImmediatelyAcrossBuses(ctx context.Context, event
 		}
 	}
 	if originalEvent.status() != "completed" {
+		settleSkippedActiveBuses(originalEvent, skippedActiveBuses)
 		if err := originalEvent.EventCompleted(ctx); err != nil {
 			return nil, err
 		}
