@@ -1,0 +1,21 @@
+abxbus-ts/package.json
+  s_da40c27be267ee::t_a06d7bdb603a0b 3
+abxbus-ts/src/BaseEvent.ts
+  s_da40c27be267ee::t_fe9a3e4174298b 85,107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "56d5ef1abd4628bd2f1351319c242f83ffa44e91",
+  "prompts": {},
+  "sessions": {
+    "s_da40c27be267ee": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e0672-e176-70b2-b59b-7d59c3a22768",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
