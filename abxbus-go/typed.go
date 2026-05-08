@@ -5,10 +5,163 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"github.com/ArchiveBox/abxbus/abxbus-go/jsonschema"
 )
+
+func Event[T any](payload T) (*BaseEvent, error) {
+	return baseEventFromAny(payload)
+}
+
+func baseEventFromAny(value any) (*BaseEvent, error) {
+	if event, ok := value.(*BaseEvent); ok {
+		if event == nil {
+			return nil, fmt.Errorf("event is nil")
+		}
+		return event, nil
+	}
+	if event, ok := value.(BaseEvent); ok {
+		return &event, nil
+	}
+
+	raw := reflect.ValueOf(value)
+	if !raw.IsValid() {
+		return nil, fmt.Errorf("event is nil")
+	}
+	for raw.Kind() == reflect.Pointer {
+		if raw.IsNil() {
+			return nil, fmt.Errorf("event is nil")
+		}
+		raw = raw.Elem()
+	}
+	if raw.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("event must be *BaseEvent or struct, got %T", value)
+	}
+
+	eventType := raw.Type().Name()
+	if eventType == "" {
+		return nil, fmt.Errorf("event struct type must be named")
+	}
+	payload := map[string]any{}
+	event := NewBaseEvent(eventType, payload)
+
+	for i := 0; i < raw.NumField(); i++ {
+		field := raw.Type().Field(i)
+		if field.PkgPath != "" {
+			continue
+		}
+		if field.Anonymous {
+			continue
+		}
+		name, _, skip, _ := jsonFieldName(field)
+		if skip {
+			continue
+		}
+		fieldValue := raw.Field(i)
+		if applyEventConfigField(event, field.Name, fieldValue) {
+			continue
+		}
+		payload[name] = normalizeReflectValue(fieldValue)
+	}
+	return event, nil
+}
+
+func applyEventConfigField(event *BaseEvent, name string, value reflect.Value) bool {
+	switch name {
+	case "EventType":
+		if value.Kind() == reflect.String && value.String() != "" {
+			event.EventType = value.String()
+		}
+	case "EventVersion":
+		if value.Kind() == reflect.String && value.String() != "" {
+			event.EventVersion = value.String()
+		}
+	case "EventTimeout":
+		event.EventTimeout = reflectOptionalFloat(value)
+	case "EventSlowTimeout":
+		event.EventSlowTimeout = reflectOptionalFloat(value)
+	case "EventHandlerTimeout":
+		event.EventHandlerTimeout = reflectOptionalFloat(value)
+	case "EventHandlerSlowTimeout":
+		event.EventHandlerSlowTimeout = reflectOptionalFloat(value)
+	case "EventConcurrency":
+		if str := reflectString(value); str != "" {
+			event.EventConcurrency = EventConcurrencyMode(str)
+		}
+	case "EventHandlerConcurrency":
+		if str := reflectString(value); str != "" {
+			event.EventHandlerConcurrency = EventHandlerConcurrencyMode(str)
+		}
+	case "EventHandlerCompletion":
+		if str := reflectString(value); str != "" {
+			event.EventHandlerCompletion = EventHandlerCompletionMode(str)
+		}
+	case "EventBlocksParentCompletion":
+		if value.Kind() == reflect.Bool {
+			event.EventBlocksParentCompletion = value.Bool()
+		}
+	case "EventResultType":
+		if !value.IsZero() {
+			event.EventResultType = normalizeReflectValue(value)
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+func reflectOptionalFloat(value reflect.Value) *float64 {
+	for value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return nil
+		}
+		value = value.Elem()
+	}
+	switch value.Kind() {
+	case reflect.Float32, reflect.Float64:
+		if value.Float() == 0 {
+			return nil
+		}
+		f := value.Convert(reflect.TypeOf(float64(0))).Float()
+		return &f
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if value.Int() == 0 {
+			return nil
+		}
+		f := float64(value.Int())
+		return &f
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		if value.Uint() == 0 {
+			return nil
+		}
+		f := float64(value.Uint())
+		return &f
+	default:
+		return nil
+	}
+}
+
+func reflectString(value reflect.Value) string {
+	for value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return ""
+		}
+		value = value.Elem()
+	}
+	if value.Kind() == reflect.String {
+		return value.String()
+	}
+	return ""
+}
+
+func normalizeReflectValue(value reflect.Value) any {
+	if !value.IsValid() {
+		return nil
+	}
+	return value.Interface()
+}
 
 func NewTypedEvent[T any](eventType string, payload T) (*BaseEvent, error) {
 	normalized := map[string]any{}
@@ -186,7 +339,7 @@ func jsonSchemaForStruct(t reflect.Type) map[string]any {
 }
 
 func jsonFieldName(field reflect.StructField) (name string, omitempty bool, skip bool, explicitName bool) {
-	name = field.Name
+	name = lowerSnakeCase(field.Name)
 	tag := field.Tag.Get("json")
 	if tag == "-" {
 		return "", false, true, false
@@ -206,6 +359,20 @@ func jsonFieldName(field reflect.StructField) (name string, omitempty bool, skip
 		}
 	}
 	return name, omitempty, false, explicitName
+}
+
+var initialismPattern = regexp.MustCompile(`([A-Z]+)([A-Z][a-z])`)
+var wordBoundaryPattern = regexp.MustCompile(`([a-z0-9])([A-Z])`)
+
+func lowerSnakeCase(name string) string {
+	if name == "" {
+		return name
+	}
+	name = initialismPattern.ReplaceAllString(name, `${1}_${2}`)
+	name = wordBoundaryPattern.ReplaceAllString(name, `${1}_${2}`)
+	name = strings.ReplaceAll(name, "-", "_")
+	name = strings.ReplaceAll(name, " ", "_")
+	return strings.ToLower(name)
 }
 
 func jsonSchemaWithoutDraft(schema map[string]any) map[string]any {

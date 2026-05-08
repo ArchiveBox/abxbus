@@ -18,6 +18,58 @@ type addResult struct {
 	Sum int `json:"sum"`
 }
 
+type getConfigEvent struct {
+	Url              string
+	UserID           string
+	EventType        string
+	EventTimeout     float64
+	EventResultType  map[string]any
+	EventConcurrency abxbus.EventConcurrencyMode
+}
+
+type DerivedNameEvent struct {
+	Url string
+}
+
+func TestEmitAcceptsTypedStructAndDerivesPayloadAndConfig(t *testing.T) {
+	bus := abxbus.NewEventBus("StructEmitBus", nil)
+	event := bus.Emit(getConfigEvent{
+		Url:              "https://example.com",
+		UserID:           "user-1",
+		EventType:        "GetConfigEvent",
+		EventTimeout:     30,
+		EventResultType:  map[string]any{"type": "object"},
+		EventConcurrency: abxbus.EventConcurrencyParallel,
+	})
+
+	if event.EventType != "GetConfigEvent" {
+		t.Fatalf("event type mismatch: %s", event.EventType)
+	}
+	if event.EventTimeout == nil || *event.EventTimeout != 30 {
+		t.Fatalf("event timeout mismatch: %#v", event.EventTimeout)
+	}
+	if event.EventConcurrency != abxbus.EventConcurrencyParallel {
+		t.Fatalf("event concurrency mismatch: %s", event.EventConcurrency)
+	}
+	if !reflect.DeepEqual(event.EventResultType, map[string]any{"type": "object"}) {
+		t.Fatalf("event result type mismatch: %#v", event.EventResultType)
+	}
+	if event.Payload["url"] != "https://example.com" || event.Payload["user_id"] != "user-1" {
+		t.Fatalf("payload casing mismatch: %#v", event.Payload)
+	}
+	if _, ok := event.Payload["event_timeout"]; ok {
+		t.Fatalf("event config leaked into payload: %#v", event.Payload)
+	}
+
+	derived := bus.Emit(DerivedNameEvent{Url: "https://example.org"})
+	if derived.EventType != "DerivedNameEvent" {
+		t.Fatalf("derived event type mismatch: %s", derived.EventType)
+	}
+	if derived.Payload["url"] != "https://example.org" {
+		t.Fatalf("derived payload mismatch: %#v", derived.Payload)
+	}
+}
+
 func TestTypedEventPayloadAndResultHelpers(t *testing.T) {
 	bus := abxbus.NewEventBus("TypedBus", nil)
 	abxbus.OnTyped[addPayload, addResult](bus, "AddEvent", "add", func(ctx context.Context, payload addPayload) (addResult, error) {

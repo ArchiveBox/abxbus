@@ -316,7 +316,11 @@ func (b *EventBus) Off(event_pattern string, handler any) {
 	}
 }
 
-func (b *EventBus) Emit(event *BaseEvent) *BaseEvent {
+func (b *EventBus) Emit(input any) *BaseEvent {
+	event, err := baseEventFromAny(input)
+	if err != nil {
+		panic(err)
+	}
 	original_event := event
 	original_event.mu.Lock()
 	if event.Bus == nil {

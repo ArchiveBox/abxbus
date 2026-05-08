@@ -468,7 +468,11 @@ func (e *BaseEvent) Done(ctx context.Context) (*BaseEvent, error) {
 	return e, nil
 }
 
-func (e *BaseEvent) Emit(event *BaseEvent) *BaseEvent {
+func (e *BaseEvent) Emit(input any) *BaseEvent {
+	event, err := baseEventFromAny(input)
+	if err != nil {
+		panic(err)
+	}
 	e.mu.Lock()
 	bus := e.Bus
 	e.mu.Unlock()
