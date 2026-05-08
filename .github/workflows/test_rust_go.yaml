@@ -27,7 +27,7 @@ jobs:
             test-command: cargo test --locked --all-targets --all-features
           - runtime: go
             working-directory: abxbus-go
-            test-command: go test ./... -count=1 -timeout=600s
+            test-command: go test ./... -p 1 -count=1 -timeout=600s
 
     steps:
       - uses: actions/checkout@v4
