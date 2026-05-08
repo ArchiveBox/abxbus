@@ -44,6 +44,17 @@ retry({
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+// Not implemented in abxbus-rust yet.
+//
+// Use bus/event/handler timeout fields for outer execution budgets today.
+// Per-attempt retry/backoff/semaphore behavior should be wrapped inside
+// your Rust handler until retry parity is implemented.
+```
+
+</Tab>
 <Tab title="Go">
 
 ```go
@@ -118,6 +129,16 @@ bus.on(
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+// retry decorators/method wrappers are not implemented in abxbus-rust yet.
+//
+// Put retry/backoff code in a helper function or inside the handler body,
+// then register that function as a normal EventBus handler.
+```
+
+</Tab>
 <Tab title="Go">
 
 ```go
@@ -159,6 +180,16 @@ class ApiService {
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+// retry decorators/method wrappers are not implemented in abxbus-rust yet.
+//
+// Put retry/backoff code in a helper function or inside the method body,
+// then register that method/function as a normal EventBus handler.
+```
+
+</Tab>
 <Tab title="Go">
 
 ```go
@@ -181,7 +212,7 @@ class ApiService {
 ## Runtime differences
 
 - Python and TypeScript both support `multiprocess`, `global`, `class`, and `instance`.
-- Go does not include `retry` yet.
+- Rust and Go do not include `retry` yet.
 - TypeScript uses async-context re-entrancy tracking in Node/Bun to avoid same-semaphore nested deadlocks.
 - `retry_on_errors` matching differs slightly:
   - Python: exception classes or compiled regex patterns (matched against `"ErrorClass: message"`).

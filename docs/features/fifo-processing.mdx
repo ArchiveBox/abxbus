@@ -166,6 +166,39 @@ func main() {
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::{base_event::BaseEvent, event_bus::EventBus};
+use futures::executor::block_on;
+use serde_json::{json, Map};
+use std::sync::{Arc, Mutex};
+
+let bus = EventBus::new(Some("FifoBus".to_string()));
+let started_order = Arc::new(Mutex::new(Vec::new()));
+let completed_order = Arc::new(Mutex::new(Vec::new()));
+
+let started = started_order.clone();
+let completed = completed_order.clone();
+bus.on_sync("JobEvent", "on_job", move |event| {
+    let order = event.inner.lock().payload["order"].as_i64().unwrap();
+    started.lock().unwrap().push(order);
+    completed.lock().unwrap().push(order);
+    Ok(serde_json::Value::Null)
+});
+
+for order in 0..3 {
+    let mut payload = Map::new();
+    payload.insert("order".to_string(), json!(order));
+    bus.emit_base(BaseEvent::new("JobEvent", payload));
+}
+block_on(bus.wait_until_idle(None));
+
+assert_eq!(*started_order.lock().unwrap(), vec![0, 1, 2]);
+assert_eq!(*completed_order.lock().unwrap(), vec![0, 1, 2]);
+```
+
+</Tab>
 </Tabs>
 
 ## Ambiguous case: slow then fast still runs serially
@@ -293,6 +326,35 @@ fmt.Println(trace)
 fmt.Println(*slow.EventCompletedAt <= *fast.EventStartedAt)
 // true
 fmt.Println(bus.LogTree())
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+let bus = EventBus::new(Some("FifoBus".to_string()));
+let trace = Arc::new(Mutex::new(Vec::new()));
+
+let trace_for_slow = trace.clone();
+bus.on_sync("SlowEvent", "on_slow", move |_event| {
+    trace_for_slow.lock().unwrap().push("start:SlowEvent".to_string());
+    trace_for_slow.lock().unwrap().push("end:SlowEvent".to_string());
+    Ok(serde_json::Value::Null)
+});
+
+let trace_for_fast = trace.clone();
+bus.on_sync("FastEvent", "on_fast", move |_event| {
+    trace_for_fast.lock().unwrap().push("start:FastEvent".to_string());
+    trace_for_fast.lock().unwrap().push("end:FastEvent".to_string());
+    Ok(serde_json::Value::Null)
+});
+
+let slow = bus.emit_base(BaseEvent::new("SlowEvent", Default::default()));
+let fast = bus.emit_base(BaseEvent::new("FastEvent", Default::default()));
+block_on(bus.wait_until_idle(None));
+
+assert!(slow.inner.lock().event_completed_at <= fast.inner.lock().event_started_at);
+println!("{}", bus.log_tree());
 ```
 
 </Tab>

@@ -45,6 +45,14 @@ bus.Off("MyEvent", entry)
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+let entry = bus.on_sync("MyEvent", "handler", |_event| Ok(serde_json::Value::Null));
+bus.off("MyEvent", Some(&entry.id));
+```
+
+</Tab>
 </Tabs>
 
 ## Serialization
@@ -101,6 +109,24 @@ fmt.Println(string(payload))
 // }
 
 restored, err := abxbus.EventHandlerFromJSON(payload, realHandler)
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+let payload = entry.to_json_value();
+println!("{}", serde_json::to_string_pretty(&payload)?);
+// {
+//   "id": "018f...",
+//   "handler_name": "on_user_created",
+//   "event_pattern": "UserCreatedEvent",
+//   "eventbus_name": "AuthBus",
+//   "eventbus_id": "018f...",
+//   ...
+// }
+
+let restored = abxbus_rust::event_handler::EventHandler::from_json_value(payload);
 ```
 
 </Tab>

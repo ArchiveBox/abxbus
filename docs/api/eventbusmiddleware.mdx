@@ -5,6 +5,8 @@ description: Base middleware interface for EventBus lifecycle hooks.
 
 `EventBusMiddleware` defines the middleware hook contract used by `EventBus` in both runtimes.
 
+Rust core event dispatch does not expose a public middleware trait yet. Use handler wrappers or inspect `EventBus::to_json_value()` / event result state directly until Rust middleware parity lands.
+
 ## Interface
 
 <Tabs>
@@ -65,6 +67,16 @@ type AnalyticsMiddleware struct {
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+// Not implemented in abxbus-rust yet.
+//
+// Use explicit handler wrappers, EventBus::context_set(...), and
+// EventBus::to_json_value() for current Rust observability/custom hooks.
+```
+
+</Tab>
 </Tabs>
 
 ## Setup with EventBus
@@ -105,6 +117,13 @@ type AnalyticsMiddleware struct {
 bus := abxbus.NewEventBus("AppBus", &abxbus.EventBusOptions{
 	Middlewares: []abxbus.EventBusMiddleware{&AnalyticsMiddleware{}},
 })
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+// Not implemented in abxbus-rust yet.
 ```
 
 </Tab>
@@ -214,6 +233,13 @@ bus := abxbus.NewEventBus("AppBus", &abxbus.EventBusOptions{
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+// Not implemented in abxbus-rust yet.
+```
+
+</Tab>
 </Tabs>
 
 ## Built-in implementations
@@ -240,6 +266,11 @@ bus := abxbus.NewEventBus("AppBus", &abxbus.EventBusOptions{
 - `OtelTracingMiddleware` via `abxbus.NewOtelTracingMiddleware(...)`
 
 Go intentionally only ships Otel middleware for now; retry/events_suck and the other middleware implementations are deferred.
+
+</Tab>
+<Tab title="Rust">
+
+- Rust middleware implementations are not exposed yet.
 
 </Tab>
 </Tabs>

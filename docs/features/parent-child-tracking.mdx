@@ -8,6 +8,7 @@ When a handler emits another event, AbxBus automatically records lineage so you 
 Repository example files:
 - [`examples/parent_child_tracking.py`](https://github.com/ArchiveBox/abxbus/blob/main/examples/parent_child_tracking.py)
 - [`abxbus-ts/examples/parent_child_tracking.ts`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-ts/examples/parent_child_tracking.ts)
+- [`abxbus-rust/tests/test_eventbus_dispatch_parent_tracking.rs`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-rust/tests/test_eventbus_dispatch_parent_tracking.rs)
 - [`examples/log_tree_demo.py`](https://github.com/ArchiveBox/abxbus/blob/main/examples/log_tree_demo.py)
 - [`abxbus-ts/examples/log_tree_demo.ts`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-ts/examples/log_tree_demo.ts)
 
@@ -33,6 +34,13 @@ Use the other styles only when you explicitly want linked background work or a f
 | `bus.emit(TopLevelEvent(...))` without awaiting | `None` / `null` | `False` / `false` | No | True background event. It is queued for later processing and has no retained relationship to the event that emitted it. |
 
 In short: use `event.emit(...)` when you want parent-child lineage, and add `await` when that child work is part of the parent's completion. Use `bus.emit(...)` when the event should be treated as a separate top-level event.
+
+In Rust, the same split is explicit:
+
+- `current_bus.emit_child_base(BaseEvent::new(...))` creates linked child work while inside a handler.
+- `child.wait_completed().await` queue-jumps and waits for that linked child.
+- `bus.emit_base(BaseEvent::new(...))` creates detached top-level work.
+- calling `wait_completed().await` on a bus-emitted event waits for it without adding parent-child lineage.
 
 In Go, the same split is explicit:
 
@@ -198,6 +206,58 @@ await bus.waitUntilIdle()
 
 console.log(root.event_result)
 console.log(bus.logTree())
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::{base_event::BaseEvent, event_bus::EventBus};
+use futures::executor::block_on;
+use serde_json::{json, Map};
+
+let bus = EventBus::new(Some("TreeBus".to_string()));
+
+bus.on("CheckoutEvent", "on_checkout", |event| async move {
+    let current_bus = event.event_bus().expect("handler bus");
+    let order_id = event
+        .inner
+        .lock()
+        .payload
+        .get("order_id")
+        .cloned()
+        .unwrap_or_else(|| json!("ord-123"));
+
+    let mut reserve_payload = Map::new();
+    reserve_payload.insert("order_id".to_string(), order_id.clone());
+    let reserve = current_bus.emit_child_base(BaseEvent::new("ReserveInventoryEvent", reserve_payload));
+    reserve.wait_completed().await;
+    let reserve_id = reserve.event_result(Default::default()).await?;
+
+    let mut receipt_payload = Map::new();
+    receipt_payload.insert("order_id".to_string(), order_id);
+    let receipt = current_bus.emit_child_base(BaseEvent::new("SendReceiptEvent", receipt_payload));
+    receipt.wait_completed().await;
+    let receipt_id = receipt.event_result(Default::default()).await?;
+
+    Ok(json!(format!("{reserve_id}|{receipt_id}")))
+});
+
+bus.on_sync("ReserveInventoryEvent", "on_reserve", |event| {
+    Ok(json!(format!("reserve:{}", event.inner.lock().payload["order_id"])))
+});
+bus.on_sync("SendReceiptEvent", "on_receipt", |event| {
+    Ok(json!(format!("receipt:{}", event.inner.lock().payload["order_id"])))
+});
+
+let mut payload = Map::new();
+payload.insert("order_id".to_string(), json!("ord-123"));
+let root = bus.emit_base(BaseEvent::new("CheckoutEvent", payload));
+let result = block_on(root.event_result(Default::default()))?;
+block_on(bus.wait_until_idle(None));
+
+println!("{result}");
+println!("{}", bus.log_tree());
 ```
 
 </Tab>

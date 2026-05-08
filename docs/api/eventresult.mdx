@@ -53,6 +53,21 @@ for _, entry := range event.EventResults {
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+let entry = event
+    .inner
+    .lock()
+    .event_results
+    .values()
+    .next()
+    .cloned()
+    .expect("handler result");
+let value = entry.result.clone();
+```
+
+</Tab>
 </Tabs>
 
 ## Scope stack ordering
@@ -88,6 +103,15 @@ These are flow references for execution order, not public API method documentati
 - `runWithTimeout(...)`
 - slow-handler timer setup in `EventBus.processEvent(...)`
 - `EventHandler.Handle(...)`
+
+</Tab>
+<Tab title="Rust">
+
+- event-lock acquisition in `EventBus::process_event(...)` via the global or bus serial lock
+- `run_handler_with_context(...)` for dispatch context values
+- `run_handler(...)`
+- handler timeout resolution with event timeout capping
+- slow-handler checks after callable completion
 
 </Tab>
 </Tabs>
@@ -151,6 +175,26 @@ fmt.Println(string(payload))
 // }
 
 restored, err := abxbus.EventResultFromJSON(payload)
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+let payload = serde_json::to_value(&entry)?;
+println!("{}", serde_json::to_string_pretty(&payload)?);
+// {
+//   "id": "0190...",
+//   "status": "completed",
+//   "event_id": "018f...",
+//   "handler_id": "018g...",
+//   "handler_name": "on_user_created",
+//   "result": {"user_id": "u_123"},
+//   "error": null,
+//   ...
+// }
+
+let restored: abxbus_rust::event_result::EventResult = serde_json::from_value(payload)?;
 ```
 
 </Tab>

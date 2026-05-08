@@ -3,7 +3,7 @@ title: Async and Sync Handlers
 description: Mix sync and async handlers across functions and method styles.
 ---
 
-Python and TypeScript support registering sync and async handlers together. Go handlers use one context-aware function shape; handlers can return immediately, block, or coordinate goroutines, while AbxBus controls event/handler concurrency with bus options.
+Python, TypeScript, and Rust support registering sync and async handlers together. Go handlers use one context-aware function shape; handlers can return immediately, block, or coordinate goroutines, while AbxBus controls event/handler concurrency with bus options.
 
 Supported handler shapes:
 
@@ -120,6 +120,54 @@ bus.on(WorkEvent, HandlerSet.staticSync)
 bus.on(WorkEvent, HandlerSet.staticAsync)
 bus.on(WorkEvent, handlers.instanceSync.bind(handlers))
 bus.on(WorkEvent, handlers.instanceAsync.bind(handlers))
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::{
+    event_bus::EventBus,
+    typed::{EventSpec, TypedEvent},
+};
+use futures_timer::Delay;
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
+#[derive(Clone, Serialize, Deserialize)]
+struct WorkPayload {
+    task_id: String,
+}
+
+struct WorkEvent;
+impl EventSpec for WorkEvent {
+    type Payload = WorkPayload;
+    type Result = String;
+
+    const EVENT_TYPE: &'static str = "WorkEvent";
+}
+
+let bus = EventBus::new(Some("AppBus".to_string()));
+
+bus.on_typed_sync::<WorkEvent, _>("bare_sync", |event| {
+    Ok(format!("bare-sync:{}", event.payload().task_id))
+});
+
+bus.on_typed::<WorkEvent, _, _>("bare_async", |event| async move {
+    Delay::new(Duration::from_millis(10)).await;
+    Ok(format!("bare-async:{}", event.payload().task_id))
+});
+
+struct HandlerSet {
+    prefix: String,
+}
+
+let handlers = HandlerSet {
+    prefix: "svc".to_string(),
+};
+bus.on_typed_sync::<WorkEvent, _>("instance_sync", move |event| {
+    Ok(format!("{}-instance:{}", handlers.prefix, event.payload().task_id))
+});
 ```
 
 </Tab>

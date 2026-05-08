@@ -67,6 +67,36 @@ type EventBusOptions struct {
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::{
+    event_bus::{EventBus, EventBusOptions},
+    types::{
+        EventConcurrencyMode,
+        EventHandlerCompletionMode,
+        EventHandlerConcurrencyMode,
+    },
+};
+
+let bus = EventBus::new_with_options(
+    Some("MyBus".to_string()),
+    EventBusOptions {
+        max_history_size: Some(100),
+        max_history_drop: false,
+        event_concurrency: EventConcurrencyMode::BusSerial,
+        event_timeout: Some(60.0),
+        event_slow_timeout: Some(300.0),
+        event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+        event_handler_completion: EventHandlerCompletionMode::All,
+        event_handler_slow_timeout: Some(30.0),
+        event_handler_detect_file_paths: true,
+        ..EventBusOptions::default()
+    },
+);
+```
+
+</Tab>
 </Tabs>
 
 ### Shared configuration semantics
@@ -133,6 +163,28 @@ bus.On("UserEvent", "custom", handler, &abxbus.EventHandler{
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::event_handler::EventHandlerOptions;
+use serde_json::{json, Value};
+
+let entry = bus.on("UserEvent", "handler", |event| async move {
+    Ok(json!(event.inner.lock().payload.get("user_id").cloned()))
+});
+bus.on_sync("*", "wildcard_handler", |_event| Ok(Value::Null));
+bus.on_with_options(
+    "UserEvent",
+    "custom",
+    EventHandlerOptions {
+        handler_timeout: Some(5.0),
+        ..EventHandlerOptions::default()
+    },
+    |_event| async move { Ok(Value::Null) },
+);
+```
+
+</Tab>
 </Tabs>
 
 ## `off(...)`
@@ -168,6 +220,15 @@ bus.Off("*", nil)
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+let handler = bus.on_sync("UserEvent", "handler", |_event| Ok(serde_json::Value::Null));
+bus.off("UserEvent", Some(&handler.id));
+bus.off("*", None);
+```
+
+</Tab>
 </Tabs>
 
 ## `emit(...)`
@@ -199,6 +260,23 @@ result, err := event.EventResult(context.Background())
 if err != nil {
 	return err
 }
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::base_event::{BaseEvent, EventResultsOptions};
+use futures::executor::block_on;
+use serde_json::{json, Map};
+
+let mut payload = Map::new();
+payload.insert("data".to_string(), json!("x"));
+let event = bus.emit_base(BaseEvent::new(
+    "MyEvent",
+    payload,
+));
+let result = block_on(event.event_result(EventResultsOptions::default()))?;
 ```
 
 </Tab>
@@ -239,6 +317,25 @@ child, err := bus.Find("ChildEvent", nil, &abxbus.FindOptions{
 	ChildOf: parentEvent,
 	Future: 5.0,
 })
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::event_bus::FindOptions;
+use futures::executor::block_on;
+
+let event = block_on(bus.find("ResponseEvent", true, None, None));
+let future = block_on(bus.find("ResponseEvent", false, Some(5.0), None));
+let child = block_on(bus.find_with_options(
+    "ChildEvent",
+    FindOptions {
+        child_of: Some(parent_event.clone()),
+        future: Some(5.0),
+        ..FindOptions::default()
+    },
+));
 ```
 
 </Tab>
@@ -285,6 +382,28 @@ recentWithPredicate, err := bus.Filter(
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::event_bus::FilterOptions;
+use futures::executor::block_on;
+use serde_json::json;
+use std::collections::HashMap;
+
+let recent = block_on(bus.filter("ResponseEvent", true, None, None, Some(5)));
+
+let filtered = block_on(bus.filter_with_options(
+    "ResponseEvent",
+    FilterOptions {
+        past_window: Some(10.0),
+        where_filter: Some(HashMap::from([("ok".to_string(), json!(true))])),
+        limit: Some(5),
+        ..FilterOptions::default()
+    },
+));
+```
+
+</Tab>
 </Tabs>
 
 ## Lifecycle helpers
@@ -317,6 +436,16 @@ bus.WaitUntilIdle(&timeout)
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use futures::executor::block_on;
+
+block_on(bus.wait_until_idle(None));
+block_on(bus.wait_until_idle(Some(5.0)));
+```
+
+</Tab>
 </Tabs>
 
 ### Parent/child relationship checks
@@ -343,6 +472,14 @@ bus.eventIsParentOf(parentEvent, childEvent)
 ```go
 bus.EventIsChildOf(childEvent, parentEvent)
 bus.EventIsParentOf(parentEvent, childEvent)
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+bus.event_is_child_of(&child_event, &parent_event);
+bus.event_is_parent_of(&parent_event, &child_event);
 ```
 
 </Tab>

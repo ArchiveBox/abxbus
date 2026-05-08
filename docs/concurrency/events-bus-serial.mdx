@@ -180,6 +180,44 @@ func main() {
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::{
+    base_event::BaseEvent,
+    event_bus::{EventBus, EventBusOptions},
+    types::EventConcurrencyMode,
+};
+use futures::executor::block_on;
+
+let bus_a = EventBus::new_with_options(
+    Some("BusSerialA".to_string()),
+    EventBusOptions {
+        event_concurrency: EventConcurrencyMode::BusSerial,
+        ..EventBusOptions::default()
+    },
+);
+let bus_b = EventBus::new_with_options(
+    Some("BusSerialB".to_string()),
+    EventBusOptions {
+        event_concurrency: EventConcurrencyMode::BusSerial,
+        ..EventBusOptions::default()
+    },
+);
+
+bus_a.on_sync("WorkEvent", "handler_a", |_event| Ok(serde_json::Value::Null));
+bus_b.on_sync("WorkEvent", "handler_b", |_event| Ok(serde_json::Value::Null));
+
+for _ in 0..4 {
+    bus_a.emit_base(BaseEvent::new("WorkEvent", Default::default()));
+    bus_b.emit_base(BaseEvent::new("WorkEvent", Default::default()));
+}
+
+block_on(bus_a.wait_until_idle(None));
+block_on(bus_b.wait_until_idle(None));
+```
+
+</Tab>
 </Tabs>
 
 ## Notes

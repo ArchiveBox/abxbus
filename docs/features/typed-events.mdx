@@ -8,6 +8,7 @@ Events are strongly typed and validated across the supported runtimes.
 Repository example files:
 - [`examples/simple.py`](https://github.com/ArchiveBox/abxbus/blob/main/examples/simple.py)
 - [`abxbus-ts/examples/simple.ts`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-ts/examples/simple.ts)
+- [`abxbus-rust/tests/test_typed_events.rs`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-rust/tests/test_typed_events.rs)
 - [`abxbus-go/README.md`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-go/README.md)
 
 <Tabs>
@@ -36,6 +37,60 @@ const OrderCreatedEvent = BaseEvent.extend('OrderCreatedEvent', {
   total_amount: z.number(),
   event_result_type: z.object({ ok: z.boolean() }),
 })
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::{
+    event_bus::EventBus,
+    typed::{EventSpec, TypedEvent},
+};
+use futures::executor::block_on;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Serialize, Deserialize)]
+struct OrderCreatedPayload {
+    order_id: String,
+    customer_id: String,
+    total_amount: f64,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+struct OrderResult {
+    ok: bool,
+}
+
+struct OrderCreatedEvent;
+impl EventSpec for OrderCreatedEvent {
+    type Payload = OrderCreatedPayload;
+    type Result = OrderResult;
+
+    const EVENT_TYPE: &'static str = "OrderCreatedEvent";
+    const EVENT_RESULT_TYPE: Option<&'static str> = Some(r#"{
+        "type": "object",
+        "properties": {"ok": {"type": "boolean"}},
+        "required": ["ok"]
+    }"#);
+}
+
+let bus = EventBus::new(Some("OrdersBus".to_string()));
+bus.on_typed::<OrderCreatedEvent, _, _>("handle_order", |event| async move {
+    let payload = event.payload();
+    Ok(OrderResult {
+        ok: payload.total_amount > 0.0,
+    })
+});
+
+let event = bus.emit::<OrderCreatedEvent>(TypedEvent::new(OrderCreatedPayload {
+    order_id: "order-123".to_string(),
+    customer_id: "customer-456".to_string(),
+    total_amount: 42.50,
+}));
+
+let typed_result = block_on(event.event_result(Default::default()))?
+    .expect("handler result");
 ```
 
 </Tab>
@@ -88,4 +143,5 @@ _ = typedResult
 
 - Python payload validation is powered by Pydantic models.
 - TypeScript payload and result validation is powered by Zod schemas.
+- Rust uses `EventSpec` plus `serde` payload/result types. Primitive result schemas are derived automatically; structured result schemas are supplied as JSON Schema through `EVENT_RESULT_TYPE`.
 - Go uses typed struct helpers for static shape at call sites, validates typed handler payloads against the declared payload struct, and derives JSON Schema from the declared result type for runtime result validation.

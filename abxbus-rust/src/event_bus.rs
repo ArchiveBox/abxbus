@@ -23,6 +23,8 @@ use crate::{
 };
 
 pub(crate) static GLOBAL_SERIAL_LOCK: OnceLock<Arc<ReentrantLock>> = OnceLock::new();
+static HANDLER_EXECUTOR: OnceLock<HandlerExecutor> = OnceLock::new();
+static HANDLER_CALL_EXECUTOR: OnceLock<HandlerExecutor> = OnceLock::new();
 static ALL_INSTANCES: OnceLock<Mutex<Vec<Weak<EventBus>>>> = OnceLock::new();
 thread_local! {
     static CURRENT_BUS_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
@@ -52,6 +54,40 @@ struct BusRuntime {
     max_history_drop: bool,
     find_waiters: Mutex<Vec<FindWaiter>>,
     next_waiter_id: Mutex<u64>,
+}
+
+type HandlerJob = Box<dyn FnOnce() + Send + 'static>;
+
+struct HandlerExecutor {
+    sender: std_mpsc::Sender<HandlerJob>,
+}
+
+impl HandlerExecutor {
+    fn new() -> Self {
+        let parallelism = thread::available_parallelism()
+            .map(|value| value.get())
+            .unwrap_or(4);
+        let worker_count = (parallelism * 4).max(32);
+        let (sender, receiver) = std_mpsc::channel::<HandlerJob>();
+        let receiver = Arc::new(Mutex::new(receiver));
+
+        for _ in 0..worker_count {
+            let receiver = receiver.clone();
+            thread::spawn(move || loop {
+                let job = receiver.lock().recv();
+                match job {
+                    Ok(job) => job(),
+                    Err(_) => break,
+                }
+            });
+        }
+
+        Self { sender }
+    }
+
+    fn spawn(&self, job: impl FnOnce() + Send + 'static) {
+        let _ = self.sender.send(Box::new(job));
+    }
 }
 
 #[derive(Clone)]
@@ -164,6 +200,14 @@ impl Default for EventBusOptions {
 }
 
 impl EventBus {
+    fn handler_executor() -> &'static HandlerExecutor {
+        HANDLER_EXECUTOR.get_or_init(HandlerExecutor::new)
+    }
+
+    fn handler_call_executor() -> &'static HandlerExecutor {
+        HANDLER_CALL_EXECUTOR.get_or_init(HandlerExecutor::new)
+    }
+
     pub fn global_serial_lock() -> Arc<ReentrantLock> {
         GLOBAL_SERIAL_LOCK
             .get_or_init(|| Arc::new(ReentrantLock::default()))
@@ -1933,7 +1977,13 @@ impl EventBus {
             EventHandlerConcurrencyMode::Serial => {
                 for (index, handler) in handlers.iter().cloned().enumerate() {
                     let timed_out = self
-                        .run_handler_with_context(event.clone(), handler, started_at, event_timeout)
+                        .run_handler_with_context(
+                            event.clone(),
+                            handler,
+                            started_at,
+                            event_timeout,
+                            false,
+                        )
                         .await;
                     if timed_out {
                         self.cancel_remaining_timeout_results(&event, &handlers[index + 1..]);
@@ -1954,7 +2004,6 @@ impl EventBus {
                 }
             }
             EventHandlerConcurrencyMode::Parallel => {
-                let mut join_handles = Vec::new();
                 if handler_completion == EventHandlerCompletionMode::First {
                     let (tx, rx) = std_mpsc::channel();
                     let handler_count = handlers.len();
@@ -1963,12 +2012,13 @@ impl EventBus {
                         let event_clone = event.clone();
                         let handler_id = handler.id.clone();
                         let tx = tx.clone();
-                        thread::spawn(move || {
+                        Self::handler_executor().spawn(move || {
                             let timed_out = block_on(bus.run_handler_with_context(
                                 event_clone,
                                 handler,
                                 started_at,
                                 event_timeout,
+                                true,
                             ));
                             let _ = tx.send((handler_id, timed_out));
                         });
@@ -1988,20 +2038,26 @@ impl EventBus {
                         }
                     }
                 } else {
+                    let (tx, rx) = std_mpsc::channel();
+                    let handler_count = handlers.len();
                     for handler in handlers {
                         let bus = self.clone();
                         let event_clone = event.clone();
-                        join_handles.push(thread::spawn(move || {
-                            block_on(bus.run_handler_with_context(
+                        let tx = tx.clone();
+                        Self::handler_executor().spawn(move || {
+                            let timed_out = block_on(bus.run_handler_with_context(
                                 event_clone,
                                 handler,
                                 started_at,
                                 event_timeout,
-                            ))
-                        }));
+                                true,
+                            ));
+                            let _ = tx.send(timed_out);
+                        });
                     }
-                    for handle in join_handles {
-                        let _ = handle.join();
+                    drop(tx);
+                    for _ in 0..handler_count {
+                        let _ = rx.recv();
                     }
                 }
             }
@@ -2331,6 +2387,7 @@ impl EventBus {
         handler: EventHandler,
         event_started_at: Instant,
         event_timeout: Option<f64>,
+        inline_call: bool,
     ) -> bool {
         let handler_id = handler.id.clone();
         let previous_context = Self::replace_context(self.context_for_event(&event));
@@ -2338,7 +2395,7 @@ impl EventBus {
         CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = Some(event.inner.lock().event_id.clone()));
         CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = Some(handler_id.clone()));
         let timed_out = self
-            .run_handler(event, handler, event_started_at, event_timeout)
+            .run_handler(event, handler, event_started_at, event_timeout, inline_call)
             .await;
         CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = None);
         CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = None);
@@ -2353,6 +2410,7 @@ impl EventBus {
         handler: EventHandler,
         event_started_at: Instant,
         event_timeout: Option<f64>,
+        inline_call: bool,
     ) -> bool {
         let explicit_handler_timeout = handler
             .handler_timeout
@@ -2432,31 +2490,35 @@ impl EventBus {
             .as_ref()
             .expect("handler callable missing")
             .clone();
-        let (tx, rx) = std_mpsc::channel();
         let event_clone = event.clone();
-        let context_bus_id = self.id.clone();
-        let context_event_id = event.inner.lock().event_id.clone();
-        let context_handler_id = handler.id.clone();
-        let dispatch_context = self.context_for_event(&event);
-        thread::spawn(move || {
-            let previous_context = EventBus::replace_context(dispatch_context);
-            CURRENT_BUS_ID.with(|id| *id.borrow_mut() = Some(context_bus_id));
-            CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = Some(context_event_id));
-            CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = Some(context_handler_id));
-            let response = block_on(call(event_clone));
-            CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = None);
-            CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = None);
-            CURRENT_BUS_ID.with(|id| *id.borrow_mut() = None);
-            EventBus::replace_context(previous_context);
-            let _ = tx.send(response);
-        });
-
         let call_started = Instant::now();
-        let call_result = if let Some(timeout_secs) = call_timeout {
-            rx.recv_timeout(Duration::from_secs_f64(timeout_secs))
-                .map_err(|_| "timeout".to_string())
+        let call_result = if inline_call && call_timeout.is_none() {
+            Ok(call(event_clone).await)
         } else {
-            rx.recv().map_err(|_| "handler channel closed".to_string())
+            let (tx, rx) = std_mpsc::channel();
+            let context_bus_id = self.id.clone();
+            let context_event_id = event.inner.lock().event_id.clone();
+            let context_handler_id = handler.id.clone();
+            let dispatch_context = self.context_for_event(&event);
+            Self::handler_call_executor().spawn(move || {
+                let previous_context = EventBus::replace_context(dispatch_context);
+                CURRENT_BUS_ID.with(|id| *id.borrow_mut() = Some(context_bus_id));
+                CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = Some(context_event_id));
+                CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = Some(context_handler_id));
+                let response = block_on(call(event_clone));
+                CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = None);
+                CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = None);
+                CURRENT_BUS_ID.with(|id| *id.borrow_mut() = None);
+                EventBus::replace_context(previous_context);
+                let _ = tx.send(response);
+            });
+
+            if let Some(timeout_secs) = call_timeout {
+                rx.recv_timeout(Duration::from_secs_f64(timeout_secs))
+                    .map_err(|_| "timeout".to_string())
+            } else {
+                rx.recv().map_err(|_| "handler channel closed".to_string())
+            }
         };
         Self::notify_all_queues();
 

@@ -57,6 +57,14 @@ bus := abxbus.NewEventBus("MyBus", &abxbus.EventBusOptions{
 Go currently ships the middleware interface plus `OtelTracingMiddleware`. The logger/WAL/auto-event/SQLite-history mirror middlewares are Python-only for now.
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+// Not implemented in abxbus-rust yet.
+// Use the core EventBus/BaseEvent JSON APIs and external transport/wrappers for now.
+```
+
+</Tab>
 </Tabs>
 
 ## Middleware interface

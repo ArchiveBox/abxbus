@@ -15,9 +15,10 @@ This is commonly used in:
 
 - Python uses `ContextVars` (`contextvars.ContextVar`).
 - TypeScript (Node/Bun) uses `AsyncLocalStorage`.
+- Rust uses `EventBus::context_set(...)` / `context_snapshot()` thread-local dispatch context captured at emit time and restored for handlers.
 - Go uses `context.Context` values passed through `Done(ctx)`, `EventCompleted(ctx)`, `EventResult(ctx)`, and handler execution.
 
-Python/TypeScript AbxBus captures ambient context at `emit(...)` time and restores it when handlers execute. Go propagates the explicit `context.Context` passed to the event wait call. In both cases, handler code sees the same request-local values.
+Python/TypeScript/Rust AbxBus captures ambient context at `emit(...)` time and restores it when handlers execute. Go propagates the explicit `context.Context` passed to the event wait call. In both cases, handler code sees the same request-local values.
 
 ## Why this matters
 
@@ -65,6 +66,27 @@ bus.on(RequestEvent, () => {
 await requestContext.run({ requestId: 'req-123' }, async () => {
   await bus.emit(RequestEvent({})).done()
 })
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::{base_event::BaseEvent, event_bus::EventBus};
+use futures::executor::block_on;
+use serde_json::json;
+
+let bus = EventBus::new(Some("AppBus".to_string()));
+
+bus.on_sync("RequestEvent", "handler", |_event| {
+    println!("{}", EventBus::context_get("request_id").unwrap());
+    // "req-123"
+    Ok(serde_json::Value::Null)
+});
+
+EventBus::context_set("request_id", json!("req-123"));
+let event = bus.emit_base(BaseEvent::new("RequestEvent", Default::default()));
+block_on(event.wait_completed());
 ```
 
 </Tab>
@@ -125,6 +147,16 @@ await requestContext.run({ requestId: req.id }, async () => {
   await bus.emit(RequestEvent({})).done()
 })
 // handlers can still read requestContext.getStore()
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+EventBus::context_set("request_id", json!(incoming_request_id));
+let event = bus.emit_base(BaseEvent::new("RequestEvent", Default::default()));
+block_on(event.wait_completed());
+// handlers can still read EventBus::context_get("request_id")
 ```
 
 </Tab>

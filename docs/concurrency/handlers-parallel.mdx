@@ -145,6 +145,32 @@ func main() {
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::{
+    base_event::BaseEvent,
+    event_bus::{EventBus, EventBusOptions},
+    types::EventHandlerConcurrencyMode,
+};
+use futures::executor::block_on;
+
+let bus = EventBus::new_with_options(
+    Some("ParallelHandlerBus".to_string()),
+    EventBusOptions {
+        event_handler_concurrency: EventHandlerConcurrencyMode::Parallel,
+        ..EventBusOptions::default()
+    },
+);
+
+bus.on_sync("HandlerEvent", "tracked_a", |_event| Ok(serde_json::Value::Null));
+bus.on_sync("HandlerEvent", "tracked_b", |_event| Ok(serde_json::Value::Null));
+
+let event = bus.emit_base(BaseEvent::new("HandlerEvent", Default::default()));
+block_on(event.wait_completed());
+```
+
+</Tab>
 </Tabs>
 
 ## Notes

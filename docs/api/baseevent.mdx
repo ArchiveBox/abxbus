@@ -55,6 +55,35 @@ event, err := abxbus.NewTypedEventWithResult[FooPayload, FooResult]("FooCreateEv
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::typed::{EventSpec, TypedEvent};
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Serialize, Deserialize)]
+struct FooPayload {
+    id: Option<String>,
+    name: String,
+    age: i64,
+}
+
+struct FooCreateEvent;
+impl EventSpec for FooCreateEvent {
+    type Payload = FooPayload;
+    type Result = String;
+
+    const EVENT_TYPE: &'static str = "FooCreateEvent";
+}
+
+let event = TypedEvent::<FooCreateEvent>::new(FooPayload {
+    id: None,
+    name: "Ada".to_string(),
+    age: 37,
+});
+```
+
+</Tab>
 </Tabs>
 
 Queue semantics are split in each runtime:
@@ -62,6 +91,7 @@ Queue semantics are split in each runtime:
 - Queue-order path: `await event.event_completed()` (Python) / `await event.eventCompleted()` (TypeScript)
 
 In Go the same split is exposed as `event.Done(ctx)` for immediate queue-jump execution and `event.EventCompleted(ctx)` for normal queue-order waiting.
+In Rust the same split is exposed as `event.wait_completed().await` for immediate queue-jump execution and `event.event_completed().await` for normal queue-order waiting.
 
 ## Core metadata fields
 
@@ -129,6 +159,19 @@ value, err := completed.EventResult(context.Background())
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::base_event::{BaseEvent, EventResultsOptions};
+use futures::executor::block_on;
+
+let pending = bus.emit_base(BaseEvent::new("MyEvent", Default::default()));
+block_on(pending.wait_completed());
+block_on(pending.event_completed());
+let value = block_on(pending.event_result(EventResultsOptions::default()))?;
+```
+
+</Tab>
 </Tabs>
 
 ## Result access helpers
@@ -155,6 +198,13 @@ const value = await event.first()
 
 ```go
 value, err := event.First(context.Background())
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+let value = block_on(event.event_result(EventResultsOptions::default()))?;
 ```
 
 </Tab>
@@ -199,6 +249,18 @@ filtered, err := event.EventResultsList(
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+let items = block_on(event.event_results_list(EventResultsOptions {
+    raise_if_any: false,
+    raise_if_none: false,
+    timeout: None,
+}))?;
+let by_handler = event.inner.lock().event_results.clone();
+```
+
+</Tab>
 </Tabs>
 
 ### Per-handler result entries
@@ -238,6 +300,29 @@ pending.Update(&abxbus.EventResultUpdateOptions{
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::event_result::EventResultStatus;
+use serde_json::json;
+
+let pending = event.event_result_update(
+    &handler_entry,
+    Some(EventResultStatus::Pending),
+    None,
+    None,
+    None,
+);
+event.event_result_update(
+    &handler_entry,
+    Some(EventResultStatus::Completed),
+    Some(Some(json!("seeded"))),
+    None,
+    None,
+);
+```
+
+</Tab>
 </Tabs>
 
 ## Resetting an event
@@ -263,6 +348,13 @@ const fresh = event.eventReset()
 
 ```go
 fresh, err := event.EventReset()
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+let fresh = event.event_reset();
 ```
 
 </Tab>
@@ -324,6 +416,24 @@ fmt.Println(string(payload))
 // }
 
 restored, err := abxbus.BaseEventFromJSON(payload)
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+let payload = event.to_json_value();
+println!("{}", serde_json::to_string_pretty(&payload)?);
+// {
+//   "event_id": "0190...",
+//   "event_type": "CreateUserEvent",
+//   "event_status": "pending",
+//   "event_result_type": {"type": "object", "...": "..."},
+//   "email": "someuser@example.com",
+//   "...": "..."
+// }
+
+let restored = BaseEvent::from_json_value(payload);
 ```
 
 </Tab>
@@ -391,6 +501,22 @@ event.EventTimeout = &timeout // allowed built-in event_* override
 
 // Go payloads are passed as maps or typed structs, so unknown event_* / model_* keys
 // should not be placed in the flattened payload. Use explicit BaseEvent fields instead.
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::base_event::BaseEvent;
+use serde_json::{json, Map};
+
+let mut payload = Map::new();
+payload.insert("payload".to_string(), json!("ok"));
+let event = BaseEvent::new("AllowedEvent", payload);
+event.inner.lock().event_timeout = Some(30.0);
+
+// Rust validates unknown event_* / model_* keys in BaseEvent::new(...)
+// and uses explicit BaseEventData fields for built-in runtime overrides.
 ```
 
 </Tab>

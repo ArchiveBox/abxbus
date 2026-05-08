@@ -10,6 +10,7 @@ When this happens inside a handler, the child event is processed immediately (qu
 Repository example files:
 - [`examples/immediate_event_processing.py`](https://github.com/ArchiveBox/abxbus/blob/main/examples/immediate_event_processing.py)
 - [`abxbus-ts/examples/immediate_event_processing.ts`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-ts/examples/immediate_event_processing.ts)
+- [`abxbus-rust/tests/test_eventbus_timeout.rs`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-rust/tests/test_eventbus_timeout.rs)
 - [`abxbus-go/tests/eventbus_dispatch_parent_tracking_test.go`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-go/tests/eventbus_dispatch_parent_tracking_test.go)
 
 ## Core pattern
@@ -60,6 +61,28 @@ bus.on(ParentEvent, async (event) => {
 })
 
 bus.on(ChildEvent, async () => 'child response')
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::{base_event::BaseEvent, event_bus::EventBus};
+use serde_json::{json, Map};
+
+let bus = EventBus::new(Some("RpcBus".to_string()));
+
+bus.on("ParentEvent", "on_parent", |event| async move {
+    let current_bus = event.event_bus().expect("handler bus");
+    let child = current_bus.emit_child_base(BaseEvent::new("ChildEvent", Map::new()));
+    child.wait_completed().await; // queue-jump while still inside this handler
+    let value = child.event_result(Default::default()).await?;
+    Ok(json!(format!("parent got: {value}")))
+});
+
+bus.on_sync("ChildEvent", "on_child", |_event| {
+    Ok(json!("child response"))
+});
 ```
 
 </Tab>
@@ -189,7 +212,7 @@ bus.On("ParentEvent", "on_parent", func(ctx context.Context, event *abxbus.BaseE
 </Tab>
 </Tabs>
 
-Python note: `asyncio.gather(..., return_exceptions=True)` is the closest `Promise.allSettled(...)` equivalent here. In Go, call `Done(ctx)` on each emitted child to take the same immediate queue-jump path.
+Python note: `asyncio.gather(..., return_exceptions=True)` is the closest `Promise.allSettled(...)` equivalent here. In Rust, call `wait_completed().await` on each emitted child to take the same immediate queue-jump path. In Go, call `Done(ctx)` on each emitted child.
 
 ## Execution order example
 

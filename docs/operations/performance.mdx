@@ -3,58 +3,27 @@ title: Performance
 description: Performance notes and benchmark snapshots.
 ---
 
-<Tabs>
-<Tab title="Python">
+The parity performance suites use the same scenario layout across Python, TypeScript, Rust, and Go:
 
 ```bash
-uv run pytest tests/test_eventbus_performance.py -vxs   # run the performance test suite in Python
+uv run tests/performance_runtime.py --no-json
+pnpm --dir abxbus-ts run perf:node
+cargo test --manifest-path abxbus-rust/Cargo.toml --release --test test_eventbus_performance -- --nocapture
+(cd abxbus-go && go test ./tests -run TestPerformance -count=1 -timeout=180s -v)
 ```
 
+Measured locally on the same development machine used for the parity runs:
+
 | Runtime | 1 bus x 50k events x 1 handler | 500 buses x 100 events x 1 handler | 1 bus x 1 event x 50k parallel handlers | 1 bus x 50k events x 50k one-off handlers | Worst case (N buses x N events x N handlers) |
-| ------------------ | ------------------ | ------------------ | ------------------ | ------------------ | ------------------ |
-| Python | `0.179ms/event`, `0.235kb/event` | `0.191ms/event`, `0.191kb/event` | `0.035ms/handler`, `8.164kb/handler` | `0.255ms/event`, `0.185kb/event` | `0.351ms/event`, `5.867kb/event` |
-
-</Tab>
-<Tab title="TypeScript">
-
-### Performance comparison (local run, per-event)
-
-Measured locally on an `Apple M4 Pro` with:
-
-- `pnpm run perf:node` (`node v22.21.1`)
-- `pnpm run perf:bun` (`bun v1.3.9`)
-- `pnpm run perf:deno` (`deno v2.6.8`)
-- `pnpm run perf:browser` (`chrome v145.0.7632.6`)
-
-| Runtime            | 1 bus x 50k events x 1 handler | 500 buses x 100 events x 1 handler | 1 bus x 1 event x 50k parallel handlers | 1 bus x 50k events x 50k one-off handlers | Worst case (N buses x N events x N handlers) |
-| ------------------ | ------------------------------ | ----------------------------------- | --------------------------------------- | ----------------------------------------- | --------------------------------------------- |
-| Node               | `0.015ms/event`, `0.6kb/event` | `0.058ms/event`, `0.1kb/event`      | `0.021ms/handler`, `3.8kb/handler`      | `0.028ms/event`, `0.6kb/event`            | `0.442ms/event`, `0.9kb/event`                |
-| Bun                | `0.011ms/event`, `2.5kb/event` | `0.054ms/event`, `1.0kb/event`      | `0.006ms/handler`, `4.5kb/handler`      | `0.019ms/event`, `2.8kb/event`            | `0.441ms/event`, `3.1kb/event`                |
-| Deno               | `0.018ms/event`, `1.2kb/event` | `0.063ms/event`, `0.4kb/event`      | `0.024ms/handler`, `3.1kb/handler`      | `0.064ms/event`, `2.6kb/event`            | `0.461ms/event`, `7.9kb/event`                |
-| Browser (Chromium) | `0.030ms/event`                | `0.197ms/event`                     | `0.022ms/handler`                       | `0.022ms/event`                           | `1.566ms/event`                               |
+| --- | --- | --- | --- | --- | --- |
+| Python | `0.366ms/event`, `0.188kb/event` | `0.408ms/event`, `0.153kb/event` | `0.093ms/handler`, `10.197kb/handler` | `0.633ms/event`, `0.145kb/event` | `0.504ms/event`, `4.171kb/event` |
+| Rust | `0.067ms/event` | `0.070ms/event` | `0.062ms/handler` | `0.077ms/event` | `0.227ms/event` |
+| Go | `0.016ms/event` | `0.011ms/event` | `0.085ms/handler` | `0.011ms/event` | `0.041ms/event` |
+| TypeScript (Node) | `0.065ms/event`, `4.145kb/event` | `0.078ms/event`, `1.562kb/event` | `0.065ms/handler`, `11.631kb/handler` | `0.123ms/event`, `2.182kb/event` | `0.344ms/event`, `12.619kb/event` |
 
 Notes:
 
-- `kb/event` is peak RSS delta per event during active processing (most representative of OS-visible RAM in Activity Monitor / Task Manager, with `EventBus.max_history_size=1`)
-- In `1 bus x 1 event x 50k parallel handlers` stats are shown per-handler for clarity, `0.02ms/handler * 50k handlers ~= 1000ms` for the entire event
-- Browser runtime does not expose memory usage directly, in practice memory performance in-browser is comparable to Node (they both use V8)
-
-</Tab>
-<Tab title="Go">
-
-```bash
-cd abxbus-go
-go test ./tests -run TestPerformance -count=1 -timeout=120s -v
-```
-
-Measured locally on an Apple Silicon development machine with Go's `testing` runner:
-
-| Runtime | 1 bus x 50k events x 1 handler | 500 buses x 100 events x 1 handler | 1 bus x 1 event x 50k parallel handlers | 1 bus x 50k events x 50k one-off handlers | Worst case (forwarding + queue-jump + timeouts) | Cleanup destroy + bounded history |
-| --- | --- | --- | --- | --- | --- | --- |
-| Go | `0.007ms/event` | `0.006ms/event` | `0.083ms/handler` | `0.009ms/event` | `0.028ms/event` | `0.023ms/event` |
-
-The Go performance tests assert a hard `0.300ms` per event/handler budget for the measured scenarios.
-Go cleanup tests use explicit `Destroy()` because Go does not have a Python/TypeScript-style weak instance set for automatic out-of-scope registry cleanup.
-
-</Tab>
-</Tabs>
+- Python and TypeScript memory numbers are peak RSS deltas from their runtime harnesses.
+- Rust and Go performance tests currently assert the `0.300ms` per event/handler budget for the measured scenarios but do not report per-event memory in the README matrix.
+- Rust's 50k parallel handler budget is measured with `cargo test --release`; the debug build still runs the other Rust performance scenarios and ignores only that release-sensitive stress case.
+- The current local Python row and TypeScript worst-case row are above the target budget in some scenarios and should be treated as performance follow-up items rather than baseline targets.

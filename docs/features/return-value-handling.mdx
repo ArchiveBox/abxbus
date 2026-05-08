@@ -8,6 +8,7 @@ Handler return values are captured in `EventResult` records and can be consumed 
 Repository example files:
 - [`examples/simple.py`](https://github.com/ArchiveBox/abxbus/blob/main/examples/simple.py)
 - [`abxbus-ts/examples/simple.ts`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-ts/examples/simple.ts)
+- [`abxbus-rust/tests/test_typed_events.rs`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-rust/tests/test_typed_events.rs)
 
 ## Typed return values
 
@@ -55,54 +56,68 @@ const result = event.event_result
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::{
+    event_bus::EventBus,
+    typed::{EventSpec, TypedEvent},
+};
+use futures::executor::block_on;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Serialize, Deserialize)]
+struct DoMathPayload {
+    a: i64,
+    b: i64,
+}
+
+struct DoMathEvent;
+impl EventSpec for DoMathEvent {
+    type Payload = DoMathPayload;
+    type Result = i64;
+
+    const EVENT_TYPE: &'static str = "DoMathEvent";
+}
+
+let bus = EventBus::new(Some("AppBus".to_string()));
+bus.on_typed_sync::<DoMathEvent, _>("add", |event| {
+    let payload = event.payload();
+    Ok(payload.a + payload.b)
+});
+
+let event = bus.emit::<DoMathEvent>(TypedEvent::new(DoMathPayload { a: 2, b: 3 }));
+let result = block_on(event.event_result(Default::default()))?;
+```
+
+</Tab>
 <Tab title="Go">
 
 ```go
-package main
-
-import (
-	"context"
-
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
-)
-
 type DoMathPayload struct {
 	A int `json:"a"`
 	B int `json:"b"`
 }
 
-func main() {
-	bus := abxbus.NewEventBus("AppBus", nil)
+bus := abxbus.NewEventBus("AppBus", nil)
+abxbus.OnTyped[DoMathPayload, int](
+	bus,
+	"DoMathEvent",
+	"add",
+	func(ctx context.Context, payload DoMathPayload) (int, error) {
+		return payload.A + payload.B, nil
+	},
+	nil,
+)
 
-	abxbus.OnTyped[DoMathPayload, int](
-		bus,
-		"DoMathEvent",
-		"add",
-		func(ctx context.Context, payload DoMathPayload) (int, error) {
-			return payload.A + payload.B, nil
-		},
-		nil,
-	)
-
-	event, err := abxbus.NewTypedEventWithResult[DoMathPayload, int](
-		"DoMathEvent",
-		DoMathPayload{A: 2, B: 3},
-	)
-	if err != nil {
-		panic(err)
-	}
-
-	event = bus.Emit(event)
-	result, err := event.EventResult(context.Background())
-	if err != nil {
-		panic(err)
-	}
-	typedResult, err := abxbus.EventResultAs[int](result)
-	if err != nil {
-		panic(err)
-	}
-	_ = typedResult
+event, err := abxbus.NewTypedEventWithResult[DoMathPayload, int](
+	"DoMathEvent",
+	DoMathPayload{A: 2, B: 3},
+)
+if err != nil {
+	panic(err)
 }
+result, err := bus.Emit(event).EventResult(context.Background())
 ```
 
 </Tab>
@@ -110,123 +125,68 @@ func main() {
 
 ## Aggregating multiple handler results
 
-When multiple handlers respond to the same event, collect all results.
+When multiple handlers respond to the same event, collect all successful values with the list helpers.
 
 <Tabs>
 <Tab title="Python">
 
 ```python
-from abxbus import BaseEvent, EventBus
-
-class GetConfigEvent(BaseEvent[dict]):
-    pass
-
-async def user_config(_: GetConfigEvent) -> dict:
-    return {'debug': True, 'port': 8080}
-
-async def system_config(_: GetConfigEvent) -> dict:
-    return {'debug': False, 'timeout': 30}
-
-bus = EventBus('AppBus')
-bus.on(GetConfigEvent, user_config)
-bus.on(GetConfigEvent, system_config)
-
 event = await bus.emit(GetConfigEvent())
 values = await event.event_results_list(raise_if_any=False, raise_if_none=False)
-# [
-#   {'debug': True, 'port': 8080},
-#   {'debug': False, 'timeout': 30}
-# ]
-
-merged_config = {key: val for config in values for key, val in config.items()}
-# {'debug': False, 'port': 8080, 'timeout': 30}
 ```
 
 </Tab>
 <Tab title="TypeScript">
 
 ```ts
-import { BaseEvent, EventBus } from 'abxbus'
-import { z } from 'zod'
-
-const GetConfigEvent = BaseEvent.extend('GetConfigEvent', {
-  event_result_type: z.record(z.string(), z.unknown()),
-})
-
-const bus = new EventBus('AppBus')
-bus.on(GetConfigEvent, async () => ({ debug: true, port: 8080 }))
-bus.on(GetConfigEvent, async () => ({ debug: false, timeout: 30 }))
-
 const event = bus.emit(GetConfigEvent({}))
 const values = await event.eventResultsList({ raise_if_any: false, raise_if_none: false })
-// [
-//   {debug: true, port: 8080},
-//   {debug: false, timeout: 30}
-// ]
-const merged_config = values.reduce((acc, value) => {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    Object.assign(acc, value)
-  }
-  return acc
-}, {})
-// {debug: false, port: 8080, timeout: 30}
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::base_event::{BaseEvent, EventResultsOptions};
+use futures::executor::block_on;
+use serde_json::{json, Map};
+
+bus.on_sync("GetConfigEvent", "user_config", |_event| {
+    Ok(json!({"debug": true, "port": 8080}))
+});
+bus.on_sync("GetConfigEvent", "system_config", |_event| {
+    Ok(json!({"debug": false, "timeout": 30}))
+});
+
+let event = bus.emit_base(BaseEvent::new("GetConfigEvent", Map::new()));
+let values = block_on(event.event_results_list(EventResultsOptions {
+    raise_if_any: false,
+    raise_if_none: false,
+    timeout: None,
+}))?;
 ```
 
 </Tab>
 <Tab title="Go">
 
 ```go
-bus := abxbus.NewEventBus("AppBus", nil)
-
-bus.On("GetConfigEvent", "user_config", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
-	return map[string]any{"debug": true, "port": 8080}, nil
-}, nil)
-bus.On("GetConfigEvent", "system_config", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
-	return map[string]any{"debug": false, "timeout": 30}, nil
-}, nil)
-
 event := bus.Emit(abxbus.NewBaseEvent("GetConfigEvent", nil))
 values, err := event.EventResultsList(
 	context.Background(),
 	nil,
 	&abxbus.EventResultsListOptions{RaiseIfAny: false, RaiseIfNone: false},
 )
-if err != nil {
-	panic(err)
-}
-// []any{
-//   map[string]any{"debug": true, "port": 8080},
-//   map[string]any{"debug": false, "timeout": 30},
-// }
-
-mergedConfig := map[string]any{}
-for _, value := range values {
-	if config, ok := value.(map[string]any); ok {
-		for key, val := range config {
-			mergedConfig[key] = val
-		}
-	}
-}
-// map[string]any{"debug": false, "port": 8080, "timeout": 30}
 ```
 
 </Tab>
 </Tabs>
 
-## `event_results_list` / `eventResultsList` options
+## Result list options
 
 <Tabs>
 <Tab title="Python">
 
 ```python
-event_results_list(
-    timeout: float | None = None,
-    include: EventResultFilter = ...,
-    raise_if_any: bool = True,
-    raise_if_none: bool = True,
-) -> list[Any]
-
-# examples
 await event.event_results_list(raise_if_any=False, raise_if_none=False)
 await event.event_results_list(include=lambda event_result: isinstance(event_result.result, dict), raise_if_any=False)
 await event.event_results_list(timeout=0.25)
@@ -236,47 +196,36 @@ await event.event_results_list(timeout=0.25)
 <Tab title="TypeScript">
 
 ```ts
-eventResultsList(
-  include?: (result: EventResultType<this> | undefined, event_result: EventResult<this>) => boolean,
-  options?: {
-    timeout?: number | null
-    include?: (result: EventResultType<this> | undefined, event_result: EventResult<this>) => boolean
-    raise_if_any?: boolean
-    raise_if_none?: boolean
-  }
-): Promise<Array<EventResultType<this> | undefined>>
-
-// examples
 await event.eventResultsList({ raise_if_any: false, raise_if_none: false })
 await event.eventResultsList((result) => typeof result === 'object', { raise_if_any: false })
 await event.eventResultsList({ timeout: 0.25 })
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::base_event::EventResultsOptions;
+
+event.event_results_list(EventResultsOptions {
+    raise_if_any: false,
+    raise_if_none: false,
+    timeout: None,
+}).await?;
+event.event_results_list(EventResultsOptions {
+    timeout: Some(0.25),
+    ..EventResultsOptions::default()
+}).await?;
+```
+
+</Tab>
 <Tab title="Go">
 
 ```go
-EventResultsList(
-	ctx context.Context,
-	include func(result any, eventResult *EventResult) bool,
-	options *EventResultsListOptions,
-) ([]any, error)
-
-type EventResultsListOptions struct {
-	Timeout     *float64
-	RaiseIfAny  bool
-	RaiseIfNone bool
-}
-
-// examples
 event.EventResultsList(ctx, nil, &abxbus.EventResultsListOptions{
 	RaiseIfAny: false,
 	RaiseIfNone: false,
 })
-event.EventResultsList(ctx, func(result any, eventResult *abxbus.EventResult) bool {
-	_, ok := result.(map[string]any)
-	return ok
-}, &abxbus.EventResultsListOptions{RaiseIfAny: false})
 timeout := 0.25
 event.EventResultsList(ctx, nil, &abxbus.EventResultsListOptions{Timeout: &timeout})
 ```
@@ -286,11 +235,11 @@ event.EventResultsList(ctx, nil, &abxbus.EventResultsListOptions{Timeout: &timeo
 
 - `raise_if_any`: raise if any handler ended with an error.
 - `raise_if_none`: raise only when no handlers returned a valid value after filtering; it does not raise just because one handler returned `None`/`null`/`undefined`.
-- Default filtering in both runtimes includes only completed, successful, non-empty scalar/object/list values (and excludes forwarded `BaseEvent` returns).
+- Default filtering includes only completed, successful, non-empty scalar/object/list values and excludes forwarded `BaseEvent` returns.
 
 ## Per-handler inspection
 
-Both implementations keep per-handler result metadata in addition to `event_results_list` / `eventResultsList`.
+All runtimes keep per-handler result metadata in addition to the aggregate result helpers.
 
 <Tabs>
 <Tab title="Python">
@@ -304,6 +253,19 @@ by_name = {result.handler_name: result.result for result in event.event_results.
 
 ```ts
 const byHandler = event.event_results
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+let by_name: std::collections::HashMap<_, _> = event
+    .inner
+    .lock()
+    .event_results
+    .values()
+    .map(|result| (result.handler.handler_name.clone(), result.result.clone()))
+    .collect();
 ```
 
 </Tab>

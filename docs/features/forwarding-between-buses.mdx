@@ -8,6 +8,7 @@ You can forward events across multiple buses while preserving event path metadat
 Repository example files:
 - [`examples/forwarding_between_busses.py`](https://github.com/ArchiveBox/abxbus/blob/main/examples/forwarding_between_busses.py)
 - [`abxbus-ts/examples/forwarding_between_busses.ts`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-ts/examples/forwarding_between_busses.ts)
+- [`abxbus-rust/tests/test_eventbus_forwarding.rs`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-rust/tests/test_eventbus_forwarding.rs)
 
 ## Why multiple buses are useful
 
@@ -150,6 +151,70 @@ console.log(event.event_path)
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::{
+    base_event::BaseEvent,
+    event_bus::{EventBus, EventBusOptions},
+    types::{EventConcurrencyMode, EventHandlerConcurrencyMode},
+};
+use futures::executor::block_on;
+use serde_json::{json, Map};
+
+let auth = EventBus::new_with_options(
+    Some("AuthBus".to_string()),
+    EventBusOptions {
+        event_concurrency: EventConcurrencyMode::BusSerial,
+        event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+        max_history_size: Some(100),
+        ..EventBusOptions::default()
+    },
+);
+let relay = EventBus::new_with_options(
+    Some("RelayBus".to_string()),
+    EventBusOptions {
+        event_concurrency: EventConcurrencyMode::Parallel,
+        max_history_size: Some(0),
+        ..EventBusOptions::default()
+    },
+);
+let billing = EventBus::new_with_options(
+    Some("BillingBus".to_string()),
+    EventBusOptions {
+        event_concurrency: EventConcurrencyMode::BusSerial,
+        event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+        max_history_size: Some(100),
+        ..EventBusOptions::default()
+    },
+);
+
+auth.on_sync("UserCreatedEvent", "on_user_created", |event| {
+    Ok(json!(format!("auth-ok:{}", event.inner.lock().payload["user_id"])))
+});
+billing.on_sync("UserCreatedEvent", "on_user_created", |event| {
+    Ok(json!(format!("billing-ok:{}", event.inner.lock().payload["user_id"])))
+});
+
+let relay_for_handler = relay.clone();
+auth.on_sync("*", "forward_to_relay", move |event| {
+    Ok(relay_for_handler.emit_base(event).to_json_value())
+});
+let billing_for_handler = billing.clone();
+relay.on_sync("*", "forward_to_billing", move |event| {
+    Ok(billing_for_handler.emit_base(event).to_json_value())
+});
+
+let mut payload = Map::new();
+payload.insert("user_id".to_string(), json!("u-a8d1"));
+let event = auth.emit_base(BaseEvent::new("UserCreatedEvent", payload));
+let result = block_on(event.event_result(Default::default()))?;
+block_on(event.wait_completed());
+println!("{result}");
+println!("{:?}", event.inner.lock().event_path);
+```
+
+</Tab>
 <Tab title="Go">
 
 ```go
@@ -258,6 +323,24 @@ right.on('*', left.emit)
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+let left = EventBus::new(Some("LeftBus".to_string()));
+let right = EventBus::new(Some("RightBus".to_string()));
+
+let right_for_handler = right.clone();
+left.on_sync("*", "forward_to_right", move |event| {
+    Ok(right_for_handler.emit_base(event).to_json_value())
+});
+
+let left_for_handler = left.clone();
+right.on_sync("*", "forward_to_left", move |event| {
+    Ok(left_for_handler.emit_base(event).to_json_value())
+});
+```
+
+</Tab>
 <Tab title="Go">
 
 ```go
@@ -340,6 +423,33 @@ await event.done()
 
 console.log(event.event_path)
 // ['BusA#a8d1', 'BusB#3f2c', 'BusC#b91e']
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+let bus_a = EventBus::new(Some("BusA".to_string()));
+let bus_b = EventBus::new(Some("BusB".to_string()));
+let bus_c = EventBus::new(Some("BusC".to_string()));
+
+let bus_b_for_handler = bus_b.clone();
+bus_a.on_sync("*", "forward_to_b", move |event| {
+    Ok(bus_b_for_handler.emit_base(event).to_json_value())
+});
+let bus_c_for_handler = bus_c.clone();
+bus_b.on_sync("*", "forward_to_c", move |event| {
+    Ok(bus_c_for_handler.emit_base(event).to_json_value())
+});
+let bus_a_for_handler = bus_a.clone();
+bus_c.on_sync("*", "forward_to_a", move |event| {
+    Ok(bus_a_for_handler.emit_base(event).to_json_value())
+});
+
+let event = bus_a.emit_base(BaseEvent::new("PingEvent", Map::new()));
+block_on(event.wait_completed());
+
+println!("{:?}", event.inner.lock().event_path);
 ```
 
 </Tab>

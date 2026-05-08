@@ -4,6 +4,7 @@ description: EventHistory ordered store API for lookup, retention, and trimming.
 ---
 
 `EventHistory` is the ordered event store owned by each `EventBus` as `bus.event_history`.
+Rust stores the same history inside `EventBus` runtime state and exposes it through `EventBus` history methods rather than a standalone public `EventHistory` type.
 
 It is the canonical history backend in each runtime and exposes ordered access, lookup (`find`), and retention controls.
 
@@ -70,6 +71,19 @@ for _, item := range history.Values() {
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+let bus = EventBus::new_with_history(Some("HistoryBus".to_string()), Some(100), true);
+let event = bus.emit_base(BaseEvent::new("SomeEvent", Default::default()));
+block_on(event.wait_completed());
+
+let count = bus.event_history_size();
+let ids = bus.event_history_ids();
+let loaded = bus.runtime_payload_for_test().get(&ids[0]).cloned();
+```
+
+</Tab>
 </Tabs>
 
 ## Accessor methods
@@ -108,6 +122,16 @@ All runtimes expose explicit accessors in addition to mapping methods where the 
 - `Find(...)`
 - `Filter(...)`
 - `TrimEventHistory(...)`
+
+</Tab>
+<Tab title="Rust">
+
+- `event_history_size()`
+- `event_history_ids()`
+- `find(...)`
+- `filter(...)`
+- `max_history_size()`
+- `max_history_drop()`
 
 </Tab>
 </Tabs>
@@ -158,6 +182,13 @@ const history = new EventHistory({ max_history_size: 100, max_history_drop: fals
 ```go
 maxSize := 100
 history := abxbus.NewEventHistory(&maxSize, false)
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+let bus = EventBus::new_with_history(Some("HistoryBus".to_string()), Some(100), false);
 ```
 
 </Tab>

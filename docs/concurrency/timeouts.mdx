@@ -12,6 +12,7 @@ Timeout controls operate at three levels:
 Repository example files:
 - [`examples/concurrency_options.py`](https://github.com/ArchiveBox/abxbus/blob/main/examples/concurrency_options.py)
 - [`abxbus-ts/examples/concurrency_options.ts`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-ts/examples/concurrency_options.ts)
+- [`abxbus-rust/tests/test_eventbus_timeout.rs`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-rust/tests/test_eventbus_timeout.rs)
 - [`examples/log_tree_demo.py`](https://github.com/ArchiveBox/abxbus/blob/main/examples/log_tree_demo.py)
 - [`abxbus-ts/examples/log_tree_demo.ts`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-ts/examples/log_tree_demo.ts)
 
@@ -89,6 +90,23 @@ bus := abxbus.NewEventBus("TimeoutBus", &abxbus.EventBusOptions{
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::event_bus::{EventBus, EventBusOptions};
+
+let bus = EventBus::new_with_options(
+    Some("TimeoutBus".to_string()),
+    EventBusOptions {
+        event_timeout: Some(30.0),
+        event_slow_timeout: Some(10.0),
+        event_handler_slow_timeout: Some(3.0),
+        ..EventBusOptions::default()
+    },
+);
+```
+
+</Tab>
 </Tabs>
 
 ## Event-level overrides
@@ -151,6 +169,23 @@ event = bus.Emit(event)
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::base_event::BaseEvent;
+
+let event = BaseEvent::new("WorkEvent", Default::default());
+{
+    let mut inner = event.inner.lock();
+    inner.event_timeout = Some(8.0);
+    inner.event_handler_timeout = Some(2.0);
+    inner.event_slow_timeout = Some(4.0);
+    inner.event_handler_slow_timeout = Some(1.0);
+}
+let event = bus.emit_base(event);
+```
+
+</Tab>
 </Tabs>
 
 ## Handler-level overrides
@@ -185,6 +220,24 @@ handlerTimeout := 1.5
 handlerSlowTimeout := 0.5
 entry.HandlerTimeout = &handlerTimeout
 entry.HandlerSlowTimeout = &handlerSlowTimeout
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::event_handler::EventHandlerOptions;
+
+let entry = bus.on_sync_with_options(
+    "WorkEvent",
+    "slow_handler",
+    EventHandlerOptions {
+        handler_timeout: Some(1.5),
+        handler_slow_timeout: Some(0.5),
+        ..EventHandlerOptions::default()
+    },
+    |_event| Ok(serde_json::Value::Null),
+);
 ```
 
 </Tab>
@@ -302,6 +355,28 @@ err = runWithTimeout(ctx, resolvedHandlerTimeout, handlerTimeoutError, func(ctx 
 		return err
 	})
 })
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+// EventBus::process_event(...)
+match resolved_event_concurrency {
+    EventConcurrencyMode::GlobalSerial => {
+        let _guard = EventBus::global_serial_lock().lock();
+        self.process_event_inner(event).await;
+    }
+    EventConcurrencyMode::BusSerial => {
+        let _guard = self.event_bus_serial_lock().lock();
+        self.process_event_inner(event).await;
+    }
+    EventConcurrencyMode::Parallel => self.process_event_inner(event).await,
+}
+
+// EventBus::run_handler(...)
+let effective_timeout = min_handler_and_event_timeout(...);
+let timed_out = run_handler_with_context(event, handler, effective_timeout).await;
 ```
 
 </Tab>

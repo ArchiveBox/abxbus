@@ -14,14 +14,14 @@ Both accept the same pattern forms:
 - string event type name
 - `'*'` wildcard (match everything)
 
-Go does not have runtime event classes in the same way Python and TypeScript do. It uses string event type names for registration/lookup, plus `OnTyped[...]` and typed constructors when you want static payload/result typing.
+Go and Rust use string event type names for low-level registration/lookup, plus typed helpers (`OnTyped[...]` in Go, `EventSpec`/`TypedEvent` in Rust) when you want static payload/result typing.
 
 ## Supported pattern forms
 
 | Pattern | Matches | Best for |
 | --- | --- | --- |
 | Event class (`UserActionEvent`) | One concrete event type | Strong typing end-to-end |
-| String (`'UserActionEvent'`) | Events by type name | Dynamic routing/config-driven keys; primary Go pattern form |
+| String (`'UserActionEvent'`) | Events by type name | Dynamic routing/config-driven keys; primary Go/Rust pattern form |
 | `'*'` | All event types | Global observers, logging, bridges |
 
 ## `.on(...)` and `.find(...)` use the same pattern model
@@ -107,6 +107,57 @@ const wildcardMatch = await bus.find('*', { future: 5 }) // BaseEvent | null
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::{
+    event_bus::EventBus,
+    typed::{EventSpec, TypedEvent},
+};
+use futures::executor::block_on;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+#[derive(Clone, Serialize, Deserialize)]
+struct UserActionPayload {
+    action: String,
+}
+
+struct UserActionEvent;
+impl EventSpec for UserActionEvent {
+    type Payload = UserActionPayload;
+    type Result = String;
+
+    const EVENT_TYPE: &'static str = "UserActionEvent";
+}
+
+let bus = EventBus::new(Some("AppBus".to_string()));
+
+bus.on_typed_sync::<UserActionEvent, _>("on_typed", |event| {
+    Ok(format!("action:{}", event.payload().action))
+});
+
+bus.on_sync("UserActionEvent", "on_by_name", |event| {
+    println!("by-name {}", event.inner.lock().event_type);
+    Ok(Value::Null)
+});
+
+bus.on_sync("*", "on_any", |event| {
+    println!("wildcard {}", event.inner.lock().event_type);
+    Ok(Value::Null)
+});
+
+let event = bus.emit::<UserActionEvent>(TypedEvent::new(UserActionPayload {
+    action: "click".to_string(),
+}));
+block_on(event.wait_completed());
+
+let typed_match = block_on(bus.find_typed::<UserActionEvent>(true, None));
+let named_match = block_on(bus.find("UserActionEvent", true, None, None));
+let wildcard_match = block_on(bus.find("*", false, Some(5.0), None));
+```
+
+</Tab>
 <Tab title="Go">
 
 ```go
@@ -187,6 +238,7 @@ String keys and `'*'` are intentionally looser:
 
 - Python: treat as `BaseEvent[Any]`
 - TypeScript: typed as base `BaseEvent`/unknown-oriented handler return checks
+- Rust: typed handlers use `on_typed(...)`; string/wildcard handlers receive `Arc<BaseEvent>`
 - Go: typed handlers use `OnTyped[...]`; string/wildcard handlers receive `*BaseEvent`
 
 Use string/wildcard patterns when you need dynamic behavior. Use classes whenever you want strict payload/result type hints through handlers and lookups.

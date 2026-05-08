@@ -18,6 +18,7 @@ Backpressure in `abxbus` is history-policy based, not queue-capacity based.
 | Python | `emit()` called with no running event loop | `RuntimeError` (`emit() called but no event loop is running`) |
 | Python | `max_history_size > 0`, `max_history_drop=False`, and history already at limit | `RuntimeError` (`history limit reached`) |
 | TypeScript | `emit()` with `max_history_size > 0`, `max_history_drop=false`, and history already at limit | `Error` (message contains `history limit reached`) |
+| Rust | `emit_base()` with `max_history_size > 0`, `max_history_drop=false`, and history already at limit | panic with `history limit reached` |
 | Go | `Emit()` with `MaxHistorySize > 0`, `MaxHistoryDrop=false`, and history already at limit | panic with `history limit reached` |
 | All | Process runs out of memory under extreme load | Runtime/VM OOM failure (not a bus-specific exception type) |
 
@@ -50,6 +51,25 @@ import { EventBus } from 'abxbus'
 
 const rejectBus = new EventBus('RejectBus', { max_history_size: 10_000, max_history_drop: false })
 const dropBus = new EventBus('DropBus', { max_history_size: 10_000, max_history_drop: true })
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::event_bus::{EventBus, EventBusOptions};
+
+let reject_bus = EventBus::new_with_options(Some("RejectBus".to_string()), EventBusOptions {
+    max_history_size: Some(10_000),
+    max_history_drop: false,
+    ..EventBusOptions::default()
+});
+
+let drop_bus = EventBus::new_with_options(Some("DropBus".to_string()), EventBusOptions {
+    max_history_size: Some(10_000),
+    max_history_drop: true,
+    ..EventBusOptions::default()
+});
 ```
 
 </Tab>
@@ -144,6 +164,15 @@ Events do not "move from queue to history." They are added to history at `emit()
 5. Runloop dequeues the event and executes handlers.
 6. Event remains in `EventHistory` unless trimmed/removed by policy.
 
+### Rust timeline (`emit_base`)
+
+1. Validate pressure policy against the runtime history store.
+2. Add event to history and append its id to history order.
+3. Apply history trimming according to `max_history_size` + `max_history_drop`.
+4. Push event into the pending queue.
+5. Runloop dequeues the event and executes handlers.
+6. Event remains in history unless trimmed/removed by policy.
+
 So yes:
 
 - an event can be in both `pending_event_queue` and `event_history` at the same time,
@@ -168,6 +197,17 @@ print('pending_event_queue=', pending_count, 'event_history=', history_count)
 ```ts
 const event = bus.emit(MyEvent({}))
 console.log('pending_event_queue=', bus.pending_event_queue.length, 'event_history=', bus.event_history.size)
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+let event = bus.emit_base(BaseEvent::new("MyEvent", Default::default()));
+let snapshot = bus.to_json_value();
+let pending_count = snapshot["pending_event_queue"].as_array().map(Vec::len).unwrap_or(0);
+let history_count = snapshot["event_history"].as_object().map(|items| items.len()).unwrap_or(0);
+println!("pending_event_queue={pending_count} event_history={history_count}");
 ```
 
 </Tab>

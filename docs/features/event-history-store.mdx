@@ -99,6 +99,32 @@ inFlightOnly := abxbus.NewEventBus("InFlightBus", &abxbus.EventBusOptions{
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::event_bus::{EventBus, EventBusOptions};
+
+let bounded_drop = EventBus::new_with_options(Some("BoundedDropBus".to_string()), EventBusOptions {
+    max_history_size: Some(100),
+    max_history_drop: true,
+    ..EventBusOptions::default()
+});
+let bounded_reject = EventBus::new_with_options(Some("BoundedRejectBus".to_string()), EventBusOptions {
+    max_history_size: Some(100),
+    max_history_drop: false,
+    ..EventBusOptions::default()
+});
+let unbounded = EventBus::new_with_options(Some("UnboundedBus".to_string()), EventBusOptions {
+    max_history_size: None,
+    ..EventBusOptions::default()
+});
+let in_flight_only = EventBus::new_with_options(Some("InFlightBus".to_string()), EventBusOptions {
+    max_history_size: Some(0),
+    ..EventBusOptions::default()
+});
+```
+
+</Tab>
 </Tabs>
 
 ## Inspecting queue vs history at runtime
@@ -168,6 +194,17 @@ if err := json.Unmarshal(snapshot, &after); err != nil {
 }
 fmt.Println("after completion -> pending_event_queue=", len(after.PendingEventQueue), "event_history=", len(after.EventHistory))
 // after completion -> pending_event_queue= 0 event_history= 1
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+let event = bus.emit_base(BaseEvent::new("MyEvent", Default::default()));
+println!("pending_event_queue/event_history snapshot={}", bus.to_json_value());
+
+block_on(event.wait_completed());
+println!("after completion -> event_history={}", bus.event_history_size());
 ```
 
 </Tab>

@@ -59,6 +59,14 @@ bridge.On("*", "bus_emit", func(ctx context.Context, event *abxbus.BaseEvent) (a
 Go currently implements `JSONLEventBridge`. The HTTP, socket, Redis, NATS, Postgres, SQLite, and Tachyon bridges are Python/TypeScript-only for now.
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+// Not implemented in abxbus-rust yet.
+// Use the core EventBus/BaseEvent JSON APIs and external transport/wrappers for now.
+```
+
+</Tab>
 </Tabs>
 
 ## Bridge pages

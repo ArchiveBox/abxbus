@@ -59,6 +59,40 @@ bus.Find(
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::event_bus::FindOptions;
+use futures::executor::block_on;
+use serde_json::json;
+use std::{collections::HashMap, sync::Arc};
+
+block_on(bus.find(
+    "ResponseEvent",        // event type string or "*"
+    true,                   // past history lookup
+    Some(5.0),              // future wait timeout in seconds
+    None,                   // child_of parent event
+));
+
+block_on(bus.find_with_options(
+    "ResponseEvent",
+    FindOptions {
+        past: false,
+        future: Some(5.0),
+        child_of: Some(parent_event.clone()),
+        where_filter: Some(HashMap::from([
+            ("event_status".to_string(), json!("completed")),
+            ("request_id".to_string(), json!("abc")),
+        ])),
+        where_predicate: Some(Arc::new(|event| {
+            event.inner.lock().payload.contains_key("request_id")
+        })),
+        ..FindOptions::default()
+    },
+));
+```
+
+</Tab>
 </Tabs>
 
 ## Option semantics
@@ -103,6 +137,13 @@ existing, err := bus.Find("ResponseEvent", nil, nil)
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+let existing = block_on(bus.find("ResponseEvent", true, None, None));
+```
+
+</Tab>
 </Tabs>
 
 ### 2) Wait only for future events
@@ -132,6 +173,13 @@ future, err := bus.Find("ResponseEvent", nil, &abxbus.FindOptions{
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+let future = block_on(bus.find("ResponseEvent", false, Some(5.0), None));
+```
+
+</Tab>
 </Tabs>
 
 ### 3) Check recent history, then keep waiting briefly
@@ -158,6 +206,20 @@ match, err := bus.Find("ResponseEvent", nil, &abxbus.FindOptions{
 	Past: 5.0,
 	Future: 5.0,
 })
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+let match_event = block_on(bus.find_with_options(
+    "ResponseEvent",
+    FindOptions {
+        past_window: Some(5.0),
+        future: Some(5.0),
+        ..FindOptions::default()
+    },
+));
 ```
 
 </Tab>
@@ -202,6 +264,32 @@ match, err := bus.Find(
 		Equals: map[string]any{"event_status": "completed"},
 	},
 )
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+let match_event = block_on(bus.find_with_options(
+    "ResponseEvent",
+    FindOptions {
+        future: Some(5.0),
+        where_filter: Some(HashMap::from([(
+            "event_status".to_string(),
+            json!("completed"),
+        )])),
+        where_predicate: Some(Arc::new(|event| {
+            event
+                .inner
+                .lock()
+                .payload
+                .get("request_id")
+                .and_then(serde_json::Value::as_str)
+                == Some(my_id)
+        })),
+        ..FindOptions::default()
+    },
+));
 ```
 
 </Tab>

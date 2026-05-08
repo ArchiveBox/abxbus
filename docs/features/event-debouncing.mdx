@@ -62,6 +62,35 @@ const result = event.event_result
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::{base_event::BaseEvent, event_bus::FindOptions};
+use futures::executor::block_on;
+use serde_json::json;
+use std::{collections::HashMap, sync::Arc};
+
+let existing = block_on(bus.find_with_options(
+    "ScreenshotEvent",
+    FindOptions {
+        past_window: Some(10.0),
+        future: None,
+        where_filter: Some(HashMap::from([("url".to_string(), json!(url))])),
+        ..FindOptions::default()
+    },
+));
+
+let event = existing.unwrap_or_else(|| {
+    bus.emit_base(BaseEvent::new(
+        "ScreenshotEvent",
+        HashMap::from([("url".to_string(), json!(url))]).into_iter().collect(),
+    ))
+});
+block_on(event.wait_completed());
+let result = block_on(event.event_result(Default::default()))?;
+```
+
+</Tab>
 <Tab title="Go">
 
 ```go
@@ -123,6 +152,30 @@ const inFlight = await bus.find(
 const event = inFlight ?? bus.emit(ScreenshotEvent({ url }))
 await event.done()
 const result = event.event_result
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+let in_flight = block_on(bus.find_with_options(
+    "ScreenshotEvent",
+    FindOptions {
+        past: false,
+        future: Some(2.0),
+        where_filter: Some(HashMap::from([("url".to_string(), json!(url))])),
+        ..FindOptions::default()
+    },
+));
+
+let event = in_flight.unwrap_or_else(|| {
+    bus.emit_base(BaseEvent::new(
+        "ScreenshotEvent",
+        HashMap::from([("url".to_string(), json!(url))]).into_iter().collect(),
+    ))
+});
+block_on(event.wait_completed());
+let result = block_on(event.event_result(Default::default()))?;
 ```
 
 </Tab>
@@ -188,6 +241,42 @@ const result = event.event_result
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+let by_url = HashMap::from([("url".to_string(), json!(url))]);
+let event = block_on(bus.find_with_options(
+    "ScreenshotEvent",
+    FindOptions {
+        past_window: Some(10.0),
+        future: None,
+        where_filter: Some(by_url.clone()),
+        ..FindOptions::default()
+    },
+))
+.or_else(|| {
+    block_on(bus.find_with_options(
+        "ScreenshotEvent",
+        FindOptions {
+            past: false,
+            future: Some(2.0),
+            where_filter: Some(by_url.clone()),
+            ..FindOptions::default()
+        },
+    ))
+})
+.unwrap_or_else(|| {
+    bus.emit_base(BaseEvent::new(
+        "ScreenshotEvent",
+        HashMap::from([("url".to_string(), json!(url))]).into_iter().collect(),
+    ))
+});
+
+block_on(event.wait_completed());
+let result = block_on(event.event_result(Default::default()))?;
+```
+
+</Tab>
 <Tab title="Go">
 
 ```go
@@ -248,6 +337,44 @@ const emitDebouncedScreenshot = async (url: string) => {
 
   await event.done()
   return event.event_result
+}
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+fn emit_debounced_screenshot(bus: &EventBus, url: &str) -> Result<Option<serde_json::Value>, String> {
+    let by_url = HashMap::from([("url".to_string(), json!(url))]);
+    let event = block_on(bus.find_with_options(
+        "ScreenshotEvent",
+        FindOptions {
+            past_window: Some(15.0),
+            future: None,
+            where_filter: Some(by_url.clone()),
+            ..FindOptions::default()
+        },
+    ))
+    .or_else(|| {
+        block_on(bus.find_with_options(
+            "ScreenshotEvent",
+            FindOptions {
+                past: false,
+                future: Some(3.0),
+                where_filter: Some(by_url),
+                ..FindOptions::default()
+            },
+        ))
+    })
+    .unwrap_or_else(|| {
+        bus.emit_base(BaseEvent::new(
+            "ScreenshotEvent",
+            HashMap::from([("url".to_string(), json!(url))]).into_iter().collect(),
+        ))
+    });
+
+    block_on(event.wait_completed());
+    block_on(event.event_result(Default::default()))
 }
 ```
 

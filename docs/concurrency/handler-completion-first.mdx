@@ -150,6 +150,43 @@ func main() {
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::{
+    base_event::BaseEvent,
+    event_bus::{EventBus, EventBusOptions},
+    types::{EventHandlerCompletionMode, EventHandlerConcurrencyMode},
+};
+use futures::executor::block_on;
+use futures_timer::Delay;
+use serde_json::json;
+use std::time::Duration;
+
+let bus = EventBus::new_with_options(
+    Some("CompletionFirstBus".to_string()),
+    EventBusOptions {
+        event_handler_concurrency: EventHandlerConcurrencyMode::Parallel,
+        event_handler_completion: EventHandlerCompletionMode::First,
+        ..EventBusOptions::default()
+    },
+);
+
+bus.on("CompletionEvent", "slow_handler", |_event| async move {
+    Delay::new(Duration::from_millis(500)).await;
+    Ok(json!("slow"))
+});
+bus.on("CompletionEvent", "fast_handler", |_event| async move {
+    Delay::new(Duration::from_millis(10)).await;
+    Ok(json!("winner"))
+});
+
+let event = bus.emit_base(BaseEvent::new("CompletionEvent", Default::default()));
+let value = block_on(event.event_result(Default::default()))?;
+assert_eq!(value, Some(json!("winner")));
+```
+
+</Tab>
 </Tabs>
 
 ## Notes
