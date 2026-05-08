@@ -58,7 +58,7 @@ event, err := abxbus.NewBaseEventWithResult[FooPayload, FooResult]("FooCreateEve
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event, BaseEvent};
+use abxbus_rust::{event, BaseEventHandle};
 
 event! {
     struct FooCreateEvent {
@@ -69,7 +69,7 @@ event! {
     }
 }
 
-let event = BaseEvent::<FooCreateEvent>::new(FooCreateEvent {
+let event = BaseEventHandle::<FooCreateEvent>::new(FooCreateEvent {
     id: None,
     name: "Ada".to_string(),
     age: 37,
@@ -157,11 +157,11 @@ value, err := completed.EventResult(context.Background())
 ```rust
 use abxbus_rust::{
     base_event::EventResultsOptions,
-    BaseEvent,
+    BaseEventHandle,
 };
 use futures::executor::block_on;
 
-let pending = bus.emit(BaseEvent::<MyEvent>::new(MyPayload::default()));
+let pending = bus.emit(BaseEventHandle::<MyEvent>::new(MyPayload::default()));
 block_on(pending.done());
 block_on(pending.event_completed());
 let value = block_on(pending.event_result(EventResultsOptions::default()))?;
@@ -503,7 +503,7 @@ event.EventTimeout = &timeout // allowed built-in event_* override
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event, BaseEvent};
+use abxbus_rust::{event, BaseEventHandle};
 
 event! {
     struct AllowedEvent {
@@ -512,7 +512,7 @@ event! {
     }
 }
 
-let event = BaseEvent::<AllowedEvent>::new(AllowedEvent {
+let event = BaseEventHandle::<AllowedEvent>::new(AllowedEvent {
     payload: "ok".to_string(),
 });
 event.inner.inner.lock().event_timeout = Some(30.0);

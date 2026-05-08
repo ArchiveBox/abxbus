@@ -82,7 +82,7 @@ bus.on(SomeEvent, |event: SomeEvent| async move {
     Ok(format!("did something with {}", event.some_data))
 });
 
-let event = bus.emit(SomeEvent { some_data: 132 });
+let event = bus.emit(SomeEvent { some_data: 132, ..Default::default() });
 block_on(event.done());
 ```
 

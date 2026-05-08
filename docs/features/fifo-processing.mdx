@@ -194,7 +194,7 @@ bus.on(JobEvent, move |event: JobEvent| async move {
 });
 
 for order in 0..3 {
-    bus.emit(JobEvent { order });
+    bus.emit(JobEvent { order, ..Default::default() });
 }
 block_on(bus.wait_until_idle(None));
 
@@ -369,8 +369,8 @@ bus.on(FastEvent, move |_event: FastEvent| async move {
     Ok(())
 });
 
-let slow = bus.emit(SlowEvent {});
-let fast = bus.emit(FastEvent {});
+let slow = bus.emit(SlowEvent { ..Default::default() });
+let fast = bus.emit(FastEvent { ..Default::default() });
 block_on(bus.wait_until_idle(None));
 
 assert!(slow.inner.inner.lock().event_completed_at <= fast.inner.inner.lock().event_started_at);

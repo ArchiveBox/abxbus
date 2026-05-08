@@ -123,15 +123,15 @@ fn test_events_forward_between_buses_without_duplication() {
     let event_id = event.inner.inner.lock().event_id.clone();
     assert_eq!(
         seen_a.lock().expect("seen_a lock").as_slice(),
-        &[event_id.clone()]
+        std::slice::from_ref(&event_id)
     );
     assert_eq!(
         seen_b.lock().expect("seen_b lock").as_slice(),
-        &[event_id.clone()]
+        std::slice::from_ref(&event_id)
     );
     assert_eq!(
         seen_c.lock().expect("seen_c lock").as_slice(),
-        &[event_id.clone()]
+        std::slice::from_ref(&event_id)
     );
     assert_eq!(
         event.inner.inner.lock().event_path,
@@ -199,15 +199,15 @@ fn test_tresultsee_level_hierarchy_bubbling() {
     let bottom_id = bottom.inner.inner.lock().event_id.clone();
     assert_eq!(
         events_at_subchild.lock().expect("subchild lock").as_slice(),
-        &[bottom_id.clone()]
+        std::slice::from_ref(&bottom_id)
     );
     assert_eq!(
         events_at_child.lock().expect("child lock").as_slice(),
-        &[bottom_id.clone()]
+        std::slice::from_ref(&bottom_id)
     );
     assert_eq!(
         events_at_parent.lock().expect("parent lock").as_slice(),
-        &[bottom_id]
+        std::slice::from_ref(&bottom_id)
     );
     assert_eq!(
         bottom.inner.inner.lock().event_path,
@@ -227,11 +227,11 @@ fn test_tresultsee_level_hierarchy_bubbling() {
     assert!(events_at_subchild.lock().expect("subchild lock").is_empty());
     assert_eq!(
         events_at_child.lock().expect("child lock").as_slice(),
-        &[middle_id.clone()]
+        std::slice::from_ref(&middle_id)
     );
     assert_eq!(
         events_at_parent.lock().expect("parent lock").as_slice(),
-        &[middle_id]
+        std::slice::from_ref(&middle_id)
     );
     assert_eq!(
         middle.inner.inner.lock().event_path,
@@ -289,11 +289,11 @@ fn test_forwarding_disambiguates_buses_that_share_the_same_name() {
     let event_id = event.inner.inner.lock().event_id.clone();
     assert_eq!(
         seen_a.lock().expect("seen_a lock").as_slice(),
-        &[event_id.clone()]
+        std::slice::from_ref(&event_id)
     );
     assert_eq!(
         seen_b.lock().expect("seen_b lock").as_slice(),
-        &[event_id.clone()]
+        std::slice::from_ref(&event_id)
     );
     assert_ne!(bus_a.label(), bus_b.label());
     assert_eq!(
@@ -364,15 +364,15 @@ fn test_circular_subscription_prevention() {
     let event_id = event.inner.inner.lock().event_id.clone();
     assert_eq!(
         events_at_peer1.lock().expect("peer1 lock").as_slice(),
-        &[event_id.clone()]
+        std::slice::from_ref(&event_id)
     );
     assert_eq!(
         events_at_peer2.lock().expect("peer2 lock").as_slice(),
-        &[event_id.clone()]
+        std::slice::from_ref(&event_id)
     );
     assert_eq!(
         events_at_peer3.lock().expect("peer3 lock").as_slice(),
-        &[event_id]
+        std::slice::from_ref(&event_id)
     );
     assert_eq!(
         event.inner.inner.lock().event_path,
@@ -392,11 +392,11 @@ fn test_circular_subscription_prevention() {
     let event2_id = event2.inner.inner.lock().event_id.clone();
     assert_eq!(
         events_at_peer1.lock().expect("peer1 lock").as_slice(),
-        &[event2_id.clone()]
+        std::slice::from_ref(&event2_id)
     );
     assert_eq!(
         events_at_peer2.lock().expect("peer2 lock").as_slice(),
-        &[event2_id.clone()]
+        std::slice::from_ref(&event2_id)
     );
     assert_eq!(
         events_at_peer3.lock().expect("peer3 lock").as_slice(),

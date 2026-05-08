@@ -30,7 +30,6 @@ thread_local! {
     static CURRENT_BUS_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     static CURRENT_EVENT_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     static CURRENT_HANDLER_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
-    static DISPATCH_CONTEXT: std::cell::RefCell<HashMap<String, Value>> = std::cell::RefCell::new(HashMap::new());
 }
 
 struct FindWaiter {
@@ -48,7 +47,7 @@ struct BusRuntime {
     stop: Mutex<bool>,
     loop_started: Mutex<bool>,
     events: Mutex<HashMap<String, Arc<BaseEvent>>>,
-    event_contexts: Mutex<HashMap<String, HashMap<String, Value>>>,
+    event_contexts: Mutex<HashMap<String, Option<dcontext::ContextSnapshot>>>,
     history_order: Mutex<VecDeque<String>>,
     max_history_size: Option<usize>,
     max_history_drop: bool,
@@ -168,18 +167,6 @@ impl Default for FilterOptions {
 }
 
 pub type FindPredicate = Arc<dyn Fn(&Arc<BaseEvent>) -> bool + Send + Sync>;
-
-pub struct DispatchContextGuard {
-    previous: Option<HashMap<String, Value>>,
-}
-
-impl Drop for DispatchContextGuard {
-    fn drop(&mut self) {
-        if let Some(previous) = self.previous.take() {
-            EventBus::replace_context(previous);
-        }
-    }
-}
 
 impl Default for EventBusOptions {
     fn default() -> Self {
@@ -405,32 +392,6 @@ impl EventBus {
         Self::start_loop(bus);
     }
 
-    fn is_inside_handler_context() -> bool {
-        CURRENT_HANDLER_ID.with(|handler_id| handler_id.borrow().is_some())
-    }
-
-    fn process_parallel_event_from_queue(&self, event: Arc<BaseEvent>) {
-        let bus = self.clone();
-        thread::spawn(move || {
-            let event_id = event.inner.lock().event_id.clone();
-            let removed = {
-                let mut queue = bus.runtime.queue.lock();
-                if let Some(index) = queue
-                    .iter()
-                    .position(|queued| queued.inner.lock().event_id == event_id)
-                {
-                    queue.remove(index);
-                    true
-                } else {
-                    false
-                }
-            };
-            if removed {
-                block_on(bus.process_event(event));
-            }
-        });
-    }
-
     fn notify_all_queues() {
         for bus in Self::live_instances() {
             bus.ensure_loop_started();
@@ -496,41 +457,6 @@ impl EventBus {
 
     pub fn max_history_drop(&self) -> bool {
         self.runtime.max_history_drop
-    }
-
-    pub fn context_get(key: &str) -> Option<Value> {
-        DISPATCH_CONTEXT.with(|context| context.borrow().get(key).cloned())
-    }
-
-    pub fn context_set(key: impl Into<String>, value: Value) -> Option<Value> {
-        DISPATCH_CONTEXT.with(|context| context.borrow_mut().insert(key.into(), value))
-    }
-
-    pub fn context_remove(key: &str) -> Option<Value> {
-        DISPATCH_CONTEXT.with(|context| context.borrow_mut().remove(key))
-    }
-
-    pub fn context_clear() {
-        DISPATCH_CONTEXT.with(|context| context.borrow_mut().clear());
-    }
-
-    pub fn context_snapshot() -> HashMap<String, Value> {
-        DISPATCH_CONTEXT.with(|context| context.borrow().clone())
-    }
-
-    pub fn enter_context(context: HashMap<String, Value>) -> DispatchContextGuard {
-        DispatchContextGuard {
-            previous: Some(Self::replace_context(context)),
-        }
-    }
-
-    pub fn with_context<R>(context: HashMap<String, Value>, run: impl FnOnce() -> R) -> R {
-        let _guard = Self::enter_context(context);
-        run()
-    }
-
-    fn replace_context(context: HashMap<String, Value>) -> HashMap<String, Value> {
-        DISPATCH_CONTEXT.with(|current| std::mem::replace(&mut *current.borrow_mut(), context))
     }
 
     pub fn event_history_size(&self) -> usize {
@@ -706,6 +632,7 @@ impl EventBus {
         lines.join("\n")
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn push_log_event_lines(
         &self,
         lines: &mut Vec<String>,
@@ -799,6 +726,7 @@ impl EventBus {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn push_log_result_lines(
         &self,
         lines: &mut Vec<String>,
@@ -1303,22 +1231,8 @@ impl EventBus {
         }
 
         self.notify_find_waiters(event.clone());
-        let should_process_parallel_now = {
-            let mode = event
-                .inner
-                .lock()
-                .event_concurrency
-                .unwrap_or(self.event_concurrency);
-            !queue_jump
-                && Self::is_inside_handler_context()
-                && mode == EventConcurrencyMode::Parallel
-        };
-        if should_process_parallel_now {
-            self.process_parallel_event_from_queue(event.clone());
-        } else if queue_jump || !Self::is_inside_handler_context() {
-            self.ensure_loop_started();
-            self.runtime.queue_notify.notify(1);
-        }
+        self.ensure_loop_started();
+        self.runtime.queue_notify.notify(1);
         event
     }
 
@@ -1390,9 +1304,7 @@ impl EventBus {
                 })
             })
         });
-        let Some((current_bus_id, current_event_id, current_handler_id)) = context else {
-            return None;
-        };
+        let (current_bus_id, current_event_id, current_handler_id) = context?;
 
         {
             let mut inner = event.inner.lock();
@@ -1454,28 +1366,17 @@ impl EventBus {
             return;
         }
 
-        let event_type = event.inner.lock().event_type.clone();
-        let mut handlers = self
-            .handlers
-            .lock()
-            .get(&event_type)
-            .cloned()
-            .unwrap_or_default();
-        handlers.extend(self.handlers.lock().get("*").cloned().unwrap_or_default());
-        let event_timeout = event.inner.lock().event_timeout.or(self.event_timeout);
-        self.create_pending_handler_results(&event, &handlers, event_timeout);
-
         let bus = self.clone();
-        let handle = thread::spawn(move || {
+        let (tx, rx) = std_mpsc::channel();
+        Self::handler_call_executor().spawn(move || {
             if bypass_event_lock {
                 block_on(bus.process_event_inner(event));
             } else {
                 block_on(bus.process_event(event));
             }
+            let _ = tx.send(());
         });
-        handle
-            .join()
-            .expect("immediate event processing thread panicked");
+        let _ = rx.recv();
     }
 
     fn register_in_history(&self, event: Arc<BaseEvent>) -> bool {
@@ -1494,7 +1395,7 @@ impl EventBus {
         self.runtime
             .event_contexts
             .lock()
-            .insert(event_id.clone(), Self::context_snapshot());
+            .insert(event_id.clone(), Self::capture_context_snapshot());
         self.runtime.events.lock().insert(event_id.clone(), event);
         self.runtime.history_order.lock().push_back(event_id);
         true
@@ -1531,14 +1432,19 @@ impl EventBus {
         }
     }
 
-    fn context_for_event(&self, event: &Arc<BaseEvent>) -> HashMap<String, Value> {
+    fn context_for_event(&self, event: &Arc<BaseEvent>) -> dcontext::ContextSnapshot {
         let event_id = event.inner.lock().event_id.clone();
         self.runtime
             .event_contexts
             .lock()
             .get(&event_id)
             .cloned()
+            .flatten()
             .unwrap_or_default()
+    }
+
+    fn capture_context_snapshot() -> Option<dcontext::ContextSnapshot> {
+        (!dcontext::scope_chain().is_empty()).then(dcontext::snapshot)
     }
 
     pub async fn find(
@@ -2251,7 +2157,7 @@ impl EventBus {
                     && !result
                         .result
                         .as_ref()
-                        .is_some_and(|value| BaseEvent::is_base_event_json(value))
+                        .is_some_and(BaseEvent::is_base_event_json)
                 {
                     Some((handler_id.clone(), result.clone()))
                 } else {
@@ -2339,14 +2245,12 @@ impl EventBus {
             if result.status == EventResultStatus::Pending {
                 result.error =
                     Some("EventHandlerCancelledError: Cancelled: first() resolved".to_string());
-            } else if result.status == EventResultStatus::Started {
-                result.error =
-                    Some("EventHandlerAbortedError: Aborted: first() resolved".to_string());
-            } else if result.status == EventResultStatus::Completed
-                && winner_completed_at
-                    .as_ref()
-                    .zip(result.completed_at.as_ref())
-                    .is_some_and(|(winner_at, result_at)| result_at >= winner_at)
+            } else if result.status == EventResultStatus::Started
+                || (result.status == EventResultStatus::Completed
+                    && winner_completed_at
+                        .as_ref()
+                        .zip(result.completed_at.as_ref())
+                        .is_some_and(|(winner_at, result_at)| result_at >= winner_at))
             {
                 result.error =
                     Some("EventHandlerAbortedError: Aborted: first() resolved".to_string());
@@ -2428,7 +2332,7 @@ impl EventBus {
         inline_call: bool,
     ) -> bool {
         let handler_id = handler.id.clone();
-        let previous_context = Self::replace_context(self.context_for_event(&event));
+        let _context_guard = dcontext::attach(self.context_for_event(&event));
         CURRENT_BUS_ID.with(|id| *id.borrow_mut() = Some(self.id.clone()));
         CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = Some(event.inner.lock().event_id.clone()));
         CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = Some(handler_id.clone()));
@@ -2438,7 +2342,6 @@ impl EventBus {
         CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = None);
         CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = None);
         CURRENT_BUS_ID.with(|id| *id.borrow_mut() = None);
-        Self::replace_context(previous_context);
         timed_out
     }
 
@@ -2539,7 +2442,7 @@ impl EventBus {
             let context_handler_id = handler.id.clone();
             let dispatch_context = self.context_for_event(&event);
             Self::handler_call_executor().spawn(move || {
-                let previous_context = EventBus::replace_context(dispatch_context);
+                let _context_guard = dcontext::attach(dispatch_context);
                 CURRENT_BUS_ID.with(|id| *id.borrow_mut() = Some(context_bus_id));
                 CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = Some(context_event_id));
                 CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = Some(context_handler_id));
@@ -2547,7 +2450,6 @@ impl EventBus {
                 CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = None);
                 CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = None);
                 CURRENT_BUS_ID.with(|id| *id.borrow_mut() = None);
-                EventBus::replace_context(previous_context);
                 let _ = tx.send(response);
             });
 

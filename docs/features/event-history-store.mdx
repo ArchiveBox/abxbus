@@ -200,7 +200,7 @@ fmt.Println("after completion -> pending_event_queue=", len(after.PendingEventQu
 <Tab title="Rust">
 
 ```rust
-let event = bus.emit(BaseEvent::<MyEvent>::new(MyPayload::default()));
+let event = bus.emit(BaseEventHandle::<MyEvent>::new(MyPayload::default()));
 println!("pending_event_queue/event_history snapshot={}", bus.to_json_value());
 
 block_on(event.done());

@@ -12,6 +12,32 @@ use crate::{
     event_handler::{EventHandler, EventHandlerOptions},
 };
 
+#[allow(clippy::ptr_arg)]
+pub fn is_string_empty(value: &String) -> bool {
+    value.is_empty()
+}
+
+#[allow(clippy::ptr_arg)]
+pub fn is_vec_empty<T>(value: &Vec<T>) -> bool {
+    value.is_empty()
+}
+
+pub fn is_hashmap_empty<K, V, S>(value: &std::collections::HashMap<K, V, S>) -> bool {
+    value.is_empty()
+}
+
+pub fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+pub fn is_zero_usize(value: &usize) -> bool {
+    *value == 0
+}
+
+pub fn is_event_status_pending(value: &crate::types::EventStatus) -> bool {
+    *value == crate::types::EventStatus::Pending
+}
+
 pub struct EventType<E: EventSpec>(PhantomData<E>);
 
 impl<E: EventSpec> Clone for EventType<E> {
@@ -25,6 +51,12 @@ impl<E: EventSpec> Copy for EventType<E> {}
 impl<E: EventSpec> EventType<E> {
     pub const fn new() -> Self {
         Self(PhantomData)
+    }
+}
+
+impl<E: EventSpec> Default for EventType<E> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -425,25 +457,6 @@ where
     }
 }
 
-pub trait TypedEventHandleHandler<E: EventSpec>: Send + Sync + 'static {
-    type Future: Future<Output = Result<E::event_result_type, String>> + Send + 'static;
-
-    fn call(&self, event: BaseEventHandle<E>) -> Self::Future;
-}
-
-impl<E, F, Fut> TypedEventHandleHandler<E> for F
-where
-    E: EventSpec,
-    F: Fn(BaseEventHandle<E>) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<E::event_result_type, String>> + Send + 'static,
-{
-    type Future = Fut;
-
-    fn call(&self, event: BaseEventHandle<E>) -> Self::Future {
-        self(event)
-    }
-}
-
 impl EventBus {
     pub fn emit<I: IntoBaseEventHandle>(&self, event: I) -> BaseEventHandle<I::Event> {
         let event = event.into_base_event_handle();
@@ -508,42 +521,6 @@ impl EventBus {
         self.on_raw_with_options(M::Event::event_type, handler_name, options, move |event| {
             let typed = BaseEventHandle::<M::Event>::from_base_event(event);
             let fut = handler_fn.call((*typed.payload).clone());
-            async move {
-                let result = fut.await?;
-                serde_json::to_value(result).map_err(|error| error.to_string())
-            }
-        })
-    }
-
-    #[track_caller]
-    pub fn on_handle<E, F, Fut>(&self, handler_name: &str, handler_fn: F) -> EventHandler
-    where
-        E: EventSpec,
-        F: Fn(BaseEventHandle<E>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<E::event_result_type, String>> + Send + 'static,
-    {
-        self.on_handle_with_options::<E, _, _>(
-            handler_name,
-            EventHandlerOptions::default(),
-            handler_fn,
-        )
-    }
-
-    #[track_caller]
-    pub fn on_handle_with_options<E, F, Fut>(
-        &self,
-        handler_name: &str,
-        options: EventHandlerOptions,
-        handler_fn: F,
-    ) -> EventHandler
-    where
-        E: EventSpec,
-        F: Fn(BaseEventHandle<E>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<E::event_result_type, String>> + Send + 'static,
-    {
-        self.on_raw_with_options(E::event_type, handler_name, options, move |event| {
-            let typed = BaseEventHandle::<E>::from_base_event(event);
-            let fut = handler_fn(typed);
             async move {
                 let result = fut.await?;
                 serde_json::to_value(result).map_err(|error| error.to_string())
@@ -1120,14 +1097,71 @@ macro_rules! __abxbus_event_parse {
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
         event_result_schema[$($event_result_schema:tt)*]
     ) => {
-        #[derive(Clone, Debug, PartialEq, $crate::serde::Serialize, $crate::serde::Deserialize)]
+        #[derive(Clone, Default, $crate::serde::Serialize, $crate::serde::Deserialize)]
         $($attr)*
         $vis struct $name {
             $($payload)*
+            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_string_empty")]
+            pub event_type: String,
+            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_string_empty")]
+            pub event_version: String,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub event_timeout: Option<f64>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub event_slow_timeout: Option<f64>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub event_concurrency: Option<$crate::types::EventConcurrencyMode>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub event_handler_timeout: Option<f64>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub event_handler_slow_timeout: Option<f64>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub event_handler_concurrency: Option<$crate::types::EventHandlerConcurrencyMode>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub event_handler_completion: Option<$crate::types::EventHandlerCompletionMode>,
+            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_false")]
+            pub event_blocks_parent_completion: bool,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub event_result_type: Option<$crate::serde_json::Value>,
+            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_string_empty")]
+            pub event_id: String,
+            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_vec_empty")]
+            pub event_path: Vec<String>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub event_parent_id: Option<String>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub event_emitted_by_handler_id: Option<String>,
+            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_zero_usize")]
+            pub event_pending_bus_count: usize,
+            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_string_empty")]
+            pub event_created_at: String,
+            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_event_status_pending")]
+            pub event_status: $crate::types::EventStatus,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub event_started_at: Option<String>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub event_completed_at: Option<String>,
+            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_hashmap_empty")]
+            pub event_results: std::collections::HashMap<String, $crate::event_result::EventResult>,
         }
 
         #[allow(non_upper_case_globals)]
         $vis const $name: $crate::typed::EventType<$name> = $crate::typed::EventType::new();
+
+        impl std::fmt::Debug for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match $crate::serde_json::to_value(self) {
+                    Ok(value) => write!(f, "{}({value})", stringify!($name)),
+                    Err(_) => write!(f, "{}(<unserializable>)", stringify!($name)),
+                }
+            }
+        }
+
+        impl PartialEq for $name {
+            fn eq(&self, other: &Self) -> bool {
+                $crate::serde_json::to_value(self).ok() == $crate::serde_json::to_value(other).ok()
+            }
+        }
 
         #[allow(non_camel_case_types, non_upper_case_globals)]
         impl $crate::typed::EventSpec for $name {

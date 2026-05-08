@@ -525,17 +525,17 @@ fn test_eventhandler_computehandlerid_matches_uuidv5_seed_algorithm() {
 
     let eventbus_id = "018f8e40-1234-7000-8000-000000001234";
     let handler_name = "pkg.module.handler";
-    let handler_file_path = Some("~/project/app.py:123");
+    let handler_file_path = "~/project/app.py:123";
     let handler_registered_at = "2025-01-02T03:04:05.678901000Z";
     let event_pattern = "StandaloneEvent";
     let actual_seed = format!(
         "{eventbus_id}|{handler_name}|{}|{handler_registered_at}|{event_pattern}",
-        handler_file_path.expect("handler path")
+        handler_file_path
     );
     let computed_id = compute_handler_id(
         eventbus_id,
         handler_name,
-        handler_file_path,
+        Some(handler_file_path),
         handler_registered_at,
         event_pattern,
     );

@@ -132,6 +132,7 @@ bus.on(UserActionEvent, |event: UserActionEvent| async move {
 
 let event = bus.emit(UserActionEvent {
     action: "click".to_string(),
+    ..Default::default()
 });
 block_on(event.done());
 

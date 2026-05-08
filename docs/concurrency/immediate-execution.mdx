@@ -86,7 +86,7 @@ let bus = EventBus::new(Some("RpcBus".to_string()));
 
 bus.on(ParentEvent, |event: ParentEvent| async move {
     let current_bus = event.event_bus().expect("handler bus");
-    let child = current_bus.emit_child(ChildEvent {});
+    let child = current_bus.emit_child(ChildEvent { ..Default::default() });
     child.done().await; // queue-jump while still inside this handler
     let value = child.event_result(Default::default()).await?;
     Ok(json!(format!("parent got: {value}")))

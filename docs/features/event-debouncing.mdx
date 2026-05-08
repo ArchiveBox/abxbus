@@ -91,7 +91,7 @@ let existing = block_on(bus.find_with_options(
 ));
 
 let event = existing.unwrap_or_else(|| {
-    bus.emit(ScreenshotEvent { url: url.to_string() }).inner
+    bus.emit(ScreenshotEvent { url: url.to_string(), ..Default::default() }).inner
 });
 block_on(event.done());
 let result = block_on(event.event_result(Default::default()))?;
@@ -176,7 +176,7 @@ let in_flight = block_on(bus.find_with_options(
 ));
 
 let event = in_flight.unwrap_or_else(|| {
-    bus.emit(ScreenshotEvent { url: url.to_string() }).inner
+    bus.emit(ScreenshotEvent { url: url.to_string(), ..Default::default() }).inner
 });
 block_on(event.done());
 let result = block_on(event.event_result(Default::default()))?;
@@ -270,7 +270,7 @@ let event = block_on(bus.find_with_options(
     ))
 })
 .unwrap_or_else(|| {
-    bus.emit(ScreenshotEvent { url: url.to_string() }).inner
+    bus.emit(ScreenshotEvent { url: url.to_string(), ..Default::default() }).inner
 });
 
 block_on(event.done());
@@ -368,7 +368,7 @@ fn emit_debounced_screenshot(bus: &EventBus, url: &str) -> Result<Option<serde_j
         ))
     })
     .unwrap_or_else(|| {
-        bus.emit(ScreenshotEvent { url: url.to_string() }).inner
+        bus.emit(ScreenshotEvent { url: url.to_string(), ..Default::default() }).inner
     });
 
     block_on(event.done());

@@ -272,7 +272,7 @@ impl BaseEvent {
         let Some(first) = chars.next() else {
             return Err("Invalid event name: empty".to_string());
         };
-        if first == '_' || !(first == '_' || first.is_ascii_alphabetic()) {
+        if first == '_' || !first.is_ascii_alphabetic() {
             return Err(format!("Invalid event name: {event_type}"));
         }
         if !chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric()) {
@@ -542,13 +542,12 @@ impl BaseEvent {
                     schema_type.as_str().unwrap_or("matching schema type")
                 ));
             }
-        } else if schema.get("properties").is_some()
+        } else if (schema.get("properties").is_some()
             || schema.get("required").is_some()
-            || schema.get("additionalProperties").is_some()
+            || schema.get("additionalProperties").is_some())
+            && !value.is_object()
         {
-            if !value.is_object() {
-                return Err(format!("{path} expected object"));
-            }
+            return Err(format!("{path} expected object"));
         }
 
         Self::validate_json_schema_children(root_schema, schema, value, path)

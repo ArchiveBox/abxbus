@@ -220,6 +220,7 @@ relay.on(UserCreatedEvent, move |event: UserCreatedEvent| {
 
 let event = auth.emit(UserCreatedEvent {
     user_id: "u-a8d1".to_string(),
+    ..Default::default()
 });
 let result = block_on(event.event_result(Default::default()))?;
 block_on(event.done());
@@ -491,7 +492,7 @@ bus_c.on(PingEvent, move |event: PingEvent| {
     }
 });
 
-let event = bus_a.emit(PingEvent {});
+let event = bus_a.emit(PingEvent { ..Default::default() });
 block_on(event.done());
 
 println!("{:?}", event.inner.lock().event_path);

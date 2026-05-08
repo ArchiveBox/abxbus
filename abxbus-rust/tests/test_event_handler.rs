@@ -419,7 +419,7 @@ fn test_event_first_skips_baseevent_result_and_uses_next_winner() {
 
     bus.on_raw("CompletionEvent",
         "baseevent_handler",
-        |_event| async move { Ok(BaseEvent::new("ChildCompletionEvent", Map::new()).to_json_value()) },
+        |_event| async move { Ok(BaseEvent::new("ChildCompletionEvent", Map::new()).to_json_value())},
     );
     bus.on_raw("CompletionEvent", "winner_handler", |_event| async move {
         Ok(json!("winner"))

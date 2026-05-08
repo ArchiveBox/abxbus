@@ -1210,7 +1210,7 @@ fn test_emit_alias_dispatches_event() {
             .lock()
             .expect("handled ids lock")
             .as_slice(),
-        &[event_id.clone()]
+        std::slice::from_ref(&event_id)
     );
     assert_eq!(
         event.inner.inner.lock().event_status,
@@ -1240,7 +1240,7 @@ fn test_handler_registration() {
     });
 
     let model_for_handler = model.clone();
-    bus.on_handle::<RuntimeSerializationEvent, _, _>("system_handler", move |_event| {
+    bus.on(RuntimeSerializationEvent, move |_event: EmptyPayload| {
         let model = model_for_handler.clone();
         async move {
             model

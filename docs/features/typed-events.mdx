@@ -81,6 +81,7 @@ let event = bus.emit(OrderCreatedEvent {
     order_id: "order-123".to_string(),
     customer_id: "customer-456".to_string(),
     total_amount: 42.50,
+    ..Default::default()
 });
 
 let typed_result = block_on(event.event_result(Default::default()))?

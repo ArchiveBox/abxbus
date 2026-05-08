@@ -288,7 +288,7 @@ event! {
 }
 
 let bus = EventBus::new(Some("EmitBus".to_string()));
-let event = bus.emit(MyEvent { data: "x".to_string() });
+let event = bus.emit(MyEvent { data: "x".to_string(), ..Default::default() });
 let result = block_on(event.event_result(Default::default()))?;
 ```
 

@@ -37,7 +37,7 @@ In short: use `event.emit(...)` when you want parent-child lineage, and add `awa
 
 In Rust, the same split is explicit:
 
-- `current_bus.emit_child(ChildEvent { ... })` creates linked child work while inside a handler.
+- `current_bus.emit_child(ChildEvent { ..., ..Default::default() })` creates linked child work while inside a handler.
 - `child.done().await` queue-jumps and waits for that linked child.
 - `bus.emit(EventType { ... })` creates detached top-level work.
 - calling `done().await` on a bus-emitted event waits for it without adding parent-child lineage.
@@ -245,12 +245,14 @@ bus.on(CheckoutEvent, |event: CheckoutEvent| async move {
 
     let reserve = current_bus.emit_child(ReserveInventoryEvent {
         order_id: order_id.clone(),
+        ..Default::default()
     });
     reserve.done().await;
     let reserve_id = reserve.event_result(Default::default()).await?;
 
     let receipt = current_bus.emit_child(SendReceiptEvent {
         order_id,
+        ..Default::default()
     });
     receipt.done().await;
     let receipt_id = receipt.event_result(Default::default()).await?;
@@ -267,6 +269,7 @@ bus.on(SendReceiptEvent, |event: SendReceiptEvent| async move {
 
 let root = bus.emit(CheckoutEvent {
     order_id: "ord-123".to_string(),
+    ..Default::default()
 });
 let result = block_on(root.event_result(Default::default()))?;
 block_on(bus.wait_until_idle(None));

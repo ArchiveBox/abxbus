@@ -119,6 +119,7 @@ bus.on(CreateUserEvent, |event: CreateUserEvent| async move {
 
 let event = bus.emit(CreateUserEvent {
     email: "someuser@example.com".to_string(),
+    ..Default::default()
 });
 block_on(event.done());
 ```

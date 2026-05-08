@@ -116,7 +116,7 @@ fn test_event_handler_model_is_serializable() {
     let loaded = EventHandler::from_json_value(dumped);
     assert_eq!(loaded.id, entry.id);
     assert_eq!(loaded.event_pattern, entry.event_pattern);
-    assert_eq!(loaded.callable.is_none(), true);
+    assert!(loaded.callable.is_none());
 }
 
 #[test]

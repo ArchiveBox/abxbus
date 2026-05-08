@@ -24,8 +24,6 @@ event! {
 event! {
     struct TimeoutOverrideEvent {
         name: String,
-        event_timeout: Option<f64>,
-        event_handler_timeout: Option<f64>,
         event_result_type: serde_json::Value,
     }
 }
@@ -40,7 +38,11 @@ fn test_on_and_emit_typed_roundtrip() {
         })
     });
 
-    let event = bus.emit(AddEvent { a: 4, b: 9 });
+    let event = bus.emit(AddEvent {
+        a: 4,
+        b: 9,
+        ..Default::default()
+    });
     block_on(event.done());
 
     let first = event.first_result();
@@ -52,7 +54,11 @@ fn test_on_and_emit_typed_roundtrip() {
 fn test_find_returns_typed_payload() {
     let bus = EventBus::new(Some("TypedFindBus".to_string()));
 
-    let event = bus.emit(AddEvent { a: 7, b: 1 });
+    let event = bus.emit(AddEvent {
+        a: 7,
+        b: 1,
+        ..Default::default()
+    });
     block_on(event.done());
 
     let found = block_on(bus.find(AddEvent::event_type, true, None, None))
@@ -70,7 +76,11 @@ fn test_find_type_inference() {
 
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(10));
-        bus_for_thread.emit(AddEvent { a: 57, b: 42 });
+        bus_for_thread.emit(AddEvent {
+            a: 57,
+            b: 42,
+            ..Default::default()
+        });
     });
 
     let found = block_on(bus.find(AddEvent::event_type, false, Some(1.0), None))
@@ -82,8 +92,16 @@ fn test_find_type_inference() {
     let bus_for_filter = bus.clone();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(10));
-        bus_for_filter.emit(AddEvent { a: 32, b: 1 });
-        bus_for_filter.emit(AddEvent { a: 51, b: 96 });
+        bus_for_filter.emit(AddEvent {
+            a: 32,
+            b: 1,
+            ..Default::default()
+        });
+        bus_for_filter.emit(AddEvent {
+            a: 51,
+            b: 96,
+            ..Default::default()
+        });
     });
 
     let filtered = block_on(bus.find_with_options(
@@ -114,7 +132,11 @@ fn test_find_type_inference() {
 fn test_find_past_type_inference() {
     let bus = EventBus::new(Some("query_type_test_bus".to_string()));
 
-    let event = bus.emit(AddEvent { a: 10, b: 20 });
+    let event = bus.emit(AddEvent {
+        a: 10,
+        b: 20,
+        ..Default::default()
+    });
     block_on(event.done());
 
     let found = block_on(bus.find(AddEvent::event_type, true, None, None))
@@ -123,7 +145,9 @@ fn test_find_past_type_inference() {
     let found_event_id = found.inner.inner.lock().event_id.clone();
     let emitted_event_id = event.inner.inner.lock().event_id.clone();
     assert_eq!(found_event_id, emitted_event_id);
-    assert_eq!(&*found, &AddEvent { a: 10, b: 20 });
+    assert_eq!(found.a, 10);
+    assert_eq!(found.b, 20);
+    assert_eq!(found.event_type, "AddEvent");
     bus.stop();
 }
 
@@ -137,8 +161,14 @@ fn test_dispatch_type_inference() {
         })
     });
 
-    let dispatched_event: BaseEventHandle<AddEvent> = bus.emit(AddEvent { a: 4, b: 6 });
-    assert_eq!(&*dispatched_event, &AddEvent { a: 4, b: 6 });
+    let dispatched_event: BaseEventHandle<AddEvent> = bus.emit(AddEvent {
+        a: 4,
+        b: 6,
+        ..Default::default()
+    });
+    assert_eq!(dispatched_event.a, 4);
+    assert_eq!(dispatched_event.b, 6);
+    assert_eq!(dispatched_event.event_type, "AddEvent");
 
     let result = block_on(dispatched_event.event_result(EventResultsOptions::default()))
         .expect("typed event result")
@@ -156,16 +186,17 @@ fn test_typed_event_result_accessors_decode_handler_values() {
             sum: event.a + event.b,
         })
     });
-    bus.on_handle::<AddEvent, _, _>(
-        "second_add",
-        |event: BaseEventHandle<AddEvent>| async move {
-            Ok(AddResult {
-                sum: event.a * event.b,
-            })
-        },
-    );
+    bus.on(AddEvent, |event: AddEvent| async move {
+        Ok(AddResult {
+            sum: event.a * event.b,
+        })
+    });
 
-    let event = bus.emit(AddEvent { a: 3, b: 5 });
+    let event = bus.emit(AddEvent {
+        a: 3,
+        b: 5,
+        ..Default::default()
+    });
 
     let first = block_on(event.event_result(EventResultsOptions {
         raise_if_any: false,
@@ -191,6 +222,7 @@ fn test_builtin_event_fields_in_payload_become_runtime_overrides() {
         name: "job".to_string(),
         event_timeout: Some(12.0),
         event_handler_timeout: Some(3.0),
+        ..Default::default()
     });
     let inner = event.inner.inner.lock();
     assert_eq!(inner.event_timeout, Some(12.0));

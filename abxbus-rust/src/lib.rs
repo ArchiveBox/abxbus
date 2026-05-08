@@ -10,5 +10,4 @@ pub mod types;
 pub use serde;
 pub use serde_json;
 pub use typed::BaseEventHandle;
-pub use typed::BaseEventHandle as BaseEvent;
 pub use types::*;

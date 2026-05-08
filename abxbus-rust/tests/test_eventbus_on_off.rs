@@ -1,41 +1,27 @@
 use abxbus_rust::{
-    base_event::BaseEvent,
-    event_bus::EventBus,
-    event_handler::EventHandlerOptions,
+    base_event::BaseEvent, event, event_bus::EventBus, event_handler::EventHandlerOptions,
     event_result::EventResultStatus,
-    typed::{BaseEventHandle, EventSpec},
 };
 use futures::executor::block_on;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-#[derive(Clone, Serialize, Deserialize)]
-struct EmptyPayload {}
-#[derive(Clone, Serialize, Deserialize)]
-struct EmptyResult {}
-struct WorkEvent;
-impl EventSpec for WorkEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "work";
+event! {
+    struct WorkEvent {
+        event_type: "work",
+    }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-struct TokenPayload {
-    required_token: String,
-}
-struct RegistryTypingEvent;
-impl EventSpec for RegistryTypingEvent {
-    type payload = TokenPayload;
-    type event_result_type = String;
-    const event_type: &'static str = "RegistryTypingEvent";
+event! {
+    struct RegistryTypingEvent {
+        required_token: String,
+        event_result_type: String,
+    }
 }
 
-struct OtherEvent;
-impl EventSpec for OtherEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "other";
+event! {
+    struct OtherEvent {
+        event_type: "other",
+    }
 }
 
 #[test]
@@ -56,7 +42,9 @@ fn test_on_stores_eventhandler_entry_and_index() {
         json!([entry.id.clone()])
     );
 
-    let dispatched = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
+    let dispatched = bus.emit(WorkEvent {
+        ..Default::default()
+    });
     block_on(dispatched.done());
     let results = dispatched.inner.inner.lock().event_results.clone();
     assert!(results.contains_key(&entry.id));
@@ -69,12 +57,16 @@ fn test_on_returns_handler_and_off_removes_handler() {
     let bus = EventBus::new(Some("OnOffBus".to_string()));
 
     let handler = bus.on_raw("work", "h1", |_event| async move { Ok(json!("ok")) });
-    let event_1 = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
+    let event_1 = bus.emit(WorkEvent {
+        ..Default::default()
+    });
     block_on(event_1.done());
     assert_eq!(event_1.inner.inner.lock().event_results.len(), 1);
 
     bus.off("work", Some(&handler.id));
-    let event_2 = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
+    let event_2 = bus.emit(WorkEvent {
+        ..Default::default()
+    });
     block_on(event_2.done());
     assert_eq!(event_2.inner.inner.lock().event_results.len(), 0);
 
@@ -132,7 +124,9 @@ fn test_off_removes_handler_id_or_all_and_prunes_empty_index() {
         .values()
         .all(|entry| entry["event_pattern"] != "work"));
 
-    let dispatched = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
+    let dispatched = bus.emit(WorkEvent {
+        ..Default::default()
+    });
     block_on(dispatched.done());
     assert_eq!(dispatched.inner.inner.lock().event_results.len(), 0);
     bus.stop();
@@ -197,7 +191,9 @@ fn test_on_accepts_handlers_and_dispatch_captures_return_values() {
         Ok(json!("normalized"))
     });
 
-    let dispatched = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
+    let dispatched = bus.emit(WorkEvent {
+        ..Default::default()
+    });
     block_on(dispatched.done());
     let result = dispatched.inner.inner.lock().event_results[&entry.id].clone();
 
@@ -228,7 +224,9 @@ fn test_on_normalizes_sync_handler_to_async_callable() {
     .expect("direct sync wrapper");
     assert_eq!(direct_result, json!("normalized"));
 
-    let dispatched = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
+    let dispatched = bus.emit(WorkEvent {
+        ..Default::default()
+    });
     block_on(dispatched.done());
     let result = dispatched.inner.inner.lock().event_results[&entry.id].clone();
 
@@ -260,7 +258,9 @@ fn test_on_keeps_async_handlers_normalized_through_handler_async() {
         .expect("direct async handler");
     assert_eq!(direct_result, json!("async_normalized"));
 
-    let dispatched = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
+    let dispatched = bus.emit(WorkEvent {
+        ..Default::default()
+    });
     block_on(dispatched.done());
     let result = dispatched.inner.inner.lock().event_results[&entry.id].clone();
 
@@ -274,14 +274,15 @@ fn test_on_keeps_async_handlers_normalized_through_handler_async() {
 fn test_handler_async_preserves_typed_arg_return_contracts_for_sync_handlers() {
     let bus = EventBus::new(Some("RegistryTypingSyncBus".to_string()));
 
-    let entry = bus
-        .on_handle::<RegistryTypingEvent, _, _>("typed_sync_handler", |event| async move {
-            Ok(event.required_token.clone())
-        });
+    let entry = bus.on(
+        RegistryTypingEvent,
+        |event: RegistryTypingEvent| async move { Ok(event.required_token.clone()) },
+    );
 
-    let event = bus.emit(BaseEventHandle::<RegistryTypingEvent>::new(TokenPayload {
+    let event = bus.emit(RegistryTypingEvent {
         required_token: "sync".to_string(),
-    }));
+        ..Default::default()
+    });
     block_on(event.done());
 
     let result = event.inner.inner.lock().event_results[&entry.id].clone();
@@ -295,14 +296,15 @@ fn test_handler_async_preserves_typed_arg_return_contracts_for_sync_handlers() {
 fn test_handler_async_preserves_typed_arg_return_contracts_for_async_handlers() {
     let bus = EventBus::new(Some("RegistryTypingSyncBus".to_string()));
 
-    let entry = bus
-        .on_handle::<RegistryTypingEvent, _, _>("typed_sync_handler", |event| async move {
-            Ok(event.required_token.clone())
-        });
+    let entry = bus.on(
+        RegistryTypingEvent,
+        |event: RegistryTypingEvent| async move { Ok(event.required_token.clone()) },
+    );
 
-    let event = bus.emit(BaseEventHandle::<RegistryTypingEvent>::new(TokenPayload {
+    let event = bus.emit(RegistryTypingEvent {
         required_token: "sync".to_string(),
-    }));
+        ..Default::default()
+    });
     block_on(event.done());
 
     let result = event.inner.inner.lock().event_results[&entry.id].clone();
@@ -336,8 +338,12 @@ fn test_off_removing_all_for_one_event_key_preserves_other_event_keys() {
         json!([other_entry.id.clone()])
     );
 
-    let work = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
-    let other = bus.emit(BaseEventHandle::<OtherEvent>::new(EmptyPayload {}));
+    let work = bus.emit(WorkEvent {
+        ..Default::default()
+    });
+    let other = bus.emit(OtherEvent {
+        ..Default::default()
+    });
     block_on(async {
         work.done().await;
         other.done().await;
@@ -362,7 +368,9 @@ fn test_on_uses_explicit_handler_name_in_json_and_log_tree() {
         handler_name,
         |_event| async move { Ok(json!("ok")) },
     );
-    let event = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
+    let event = bus.emit(WorkEvent {
+        ..Default::default()
+    });
     block_on(event.done());
     let payload = bus.to_json_value();
     let output = bus.log_tree();

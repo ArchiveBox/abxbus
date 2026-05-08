@@ -79,7 +79,7 @@ bus.on(DoMathEvent, |event: DoMathEvent| async move {
     Ok(event.a + event.b)
 });
 
-let event = bus.emit(DoMathEvent { a: 2, b: 3 });
+let event = bus.emit(DoMathEvent { a: 2, b: 3, ..Default::default() });
 let result = block_on(event.event_result(Default::default()))?;
 ```
 
@@ -164,7 +164,7 @@ bus.on(GetConfigEvent, |_event: GetConfigEvent| async move {
     Ok(json!({"debug": false, "timeout": 30}))
 });
 
-let event = bus.emit(GetConfigEvent {});
+let event = bus.emit(GetConfigEvent { ..Default::default() });
 let values = block_on(event.event_results_list(EventResultsOptions {
     raise_if_any: false,
     raise_if_none: false,

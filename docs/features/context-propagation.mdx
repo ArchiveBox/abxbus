@@ -15,7 +15,7 @@ This is commonly used in:
 
 - Python uses `ContextVars` (`contextvars.ContextVar`).
 - TypeScript (Node/Bun) uses `AsyncLocalStorage`.
-- Rust uses `EventBus::context_set(...)` / `context_snapshot()` thread-local dispatch context captured at emit time and restored for handlers.
+- Rust uses normal Rust context propagation (`dcontext` snapshots are captured at emit time and restored for handlers).
 - Go uses `context.Context` values passed through `Done(ctx)`, `EventCompleted(ctx)`, `EventResult(ctx)`, and handler execution.
 
 Python/TypeScript/Rust AbxBus captures ambient context at `emit(...)` time and restores it when handlers execute. Go propagates the explicit `context.Context` passed to the event wait call. In both cases, handler code sees the same request-local values.
@@ -73,8 +73,8 @@ await requestContext.run({ requestId: 'req-123' }, async () => {
 
 ```rust
 use abxbus_rust::{event, event_bus::EventBus};
+use dcontext::{enter_named_scope, get_context, set_context, try_initialize, RegistryBuilder};
 use futures::executor::block_on;
-use serde_json::json;
 
 event! {
     struct RequestEvent {
@@ -82,16 +82,22 @@ event! {
     }
 }
 
+let mut registry = RegistryBuilder::new();
+registry.register::<String>("request_id");
+let _ = try_initialize(registry);
+
 let bus = EventBus::new(Some("AppBus".to_string()));
 
 bus.on(RequestEvent, |_event: RequestEvent| async move {
-    println!("{}", EventBus::context_get("request_id").unwrap());
-    // "req-123"
+    println!("{}", get_context::<String>("request_id"));
+    // req-123
     Ok(())
 });
 
-EventBus::context_set("request_id", json!("req-123"));
-let event = bus.emit(RequestEvent {});
+let _scope = enter_named_scope("request");
+set_context("request_id", "req-123".to_string());
+
+let event = bus.emit(RequestEvent { ..Default::default() });
 block_on(event.done());
 ```
 
@@ -159,10 +165,12 @@ await requestContext.run({ requestId: req.id }, async () => {
 <Tab title="Rust">
 
 ```rust
-EventBus::context_set("request_id", json!(incoming_request_id));
-let event = bus.emit(RequestEvent {});
+let _scope = enter_named_scope("request");
+set_context("request_id", incoming_request_id.to_string());
+
+let event = bus.emit(RequestEvent { ..Default::default() });
 block_on(event.done());
-// handlers can still read EventBus::context_get("request_id")
+// handlers can still read get_context::<String>("request_id")
 ```
 
 </Tab>

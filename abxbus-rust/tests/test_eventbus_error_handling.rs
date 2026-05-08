@@ -285,7 +285,7 @@ fn test_error_in_forwarded_event_handler_does_not_block_source_bus() {
         })
         .expect("bus_b result should exist");
     assert_eq!(bus_b_result.status, EventResultStatus::Error);
-    assert!(event.inner.event_errors().len() >= 1);
+    assert!(!event.inner.event_errors().is_empty());
     bus_a.stop();
     bus_b.stop();
 }

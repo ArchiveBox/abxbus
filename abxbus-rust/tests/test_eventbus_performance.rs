@@ -1,7 +1,7 @@
 use std::{
     sync::{
         atomic::{AtomicI64, Ordering},
-        Arc,
+        Arc, Mutex, MutexGuard, OnceLock,
     },
     time::{Duration, Instant},
 };
@@ -17,6 +17,14 @@ use futures_timer::Delay;
 use serde_json::{json, Map, Value};
 
 const PERFORMANCE_MAX_MS_PER_UNIT: f64 = 0.3;
+static PERFORMANCE_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn performance_test_guard() -> MutexGuard<'static, ()> {
+    PERFORMANCE_TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("performance test lock poisoned")
+}
 
 fn payload(entries: impl IntoIterator<Item = (&'static str, Value)>) -> Map<String, Value> {
     entries
@@ -53,6 +61,7 @@ fn no_path_handler_options(id: impl Into<String>) -> EventHandlerOptions {
 
 #[test]
 fn test_performance_50k_events() {
+    let _perf_guard = performance_test_guard();
     let total_events = 50_000usize;
     let batch_size = 512usize;
     let history_size = 512usize;
@@ -125,6 +134,7 @@ fn test_performance_50k_events() {
 
 #[test]
 fn test_performance_ephemeral_buses() {
+    let _perf_guard = performance_test_guard();
     let total_buses = 500usize;
     let events_per_bus = 100usize;
     let history_size = 128usize;
@@ -171,6 +181,7 @@ fn test_performance_ephemeral_buses() {
     ignore = "50k parallel handler performance budget is measured with cargo test --release"
 )]
 fn test_performance_single_event_many_parallel_handlers() {
+    let _perf_guard = performance_test_guard();
     let total_handlers = 50_000usize;
     let bus = EventBus::new_with_options(
         Some("PerfFixedHandlersBus".to_string()),
@@ -217,6 +228,7 @@ fn test_performance_single_event_many_parallel_handlers() {
 
 #[test]
 fn test_performance_on_off_churn() {
+    let _perf_guard = performance_test_guard();
     let total_events = 50_000usize;
     let bus = EventBus::new_with_options(
         Some("PerfOnOffChurnBus".to_string()),
@@ -261,6 +273,7 @@ fn test_performance_on_off_churn() {
 
 #[test]
 fn test_performance_worst_case_forwarding_queue_jump_timeouts() {
+    let _perf_guard = performance_test_guard();
     let total_events = 2_000usize;
     let child_bus = EventBus::new_with_options(
         Some("PerfWorstChildBus".to_string()),

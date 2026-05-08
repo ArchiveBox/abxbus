@@ -1100,7 +1100,7 @@ fn test_bus_emit_inside_handler_does_not_link_parent_when_not_using_event_emit()
 }
 
 #[test]
-fn test_outside_wait_completed_of_bus_emit_child_keeps_it_independent_of_active_handler() {
+fn test_outside_done_of_bus_emit_child_keeps_it_independent_of_active_handler() {
     let bus = EventBus::new(Some("RootChildExternalDoneBus".to_string()));
     let bus_for_handler = bus.clone();
     let child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
@@ -1423,7 +1423,7 @@ fn test_bus_emit_inside_a_handler_dispatches_a_root_event_by_default() {
 
 #[test]
 fn test_outside_await_of_bus_emit_child_done_keeps_it_independent_of_the_active_handler() {
-    test_outside_wait_completed_of_bus_emit_child_keeps_it_independent_of_active_handler();
+    test_outside_done_of_bus_emit_child_keeps_it_independent_of_active_handler();
 }
 
 #[test]

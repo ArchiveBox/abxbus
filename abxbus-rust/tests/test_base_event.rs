@@ -427,7 +427,6 @@ fn test_parallel_event_concurrency_plus_immediate_execution_races_child_events_i
         let in_flight = in_flight.clone();
         let max_in_flight = max_in_flight.clone();
         let all_started_tx = all_started_tx.clone();
-        let track_child = track_child.clone();
         bus.on_raw(event_type, label, move |_event| {
             track_child(
                 label,
@@ -555,7 +554,7 @@ fn test_monotonicdatetime_emits_parseable_monotonic_iso_timestamps() {
 
     assert!(chrono::DateTime::parse_from_rfc3339(&first).is_ok());
     assert!(chrono::DateTime::parse_from_rfc3339(&second).is_ok());
-    assert!(second > first || second == first);
+    assert!(second >= first);
 }
 
 #[test]

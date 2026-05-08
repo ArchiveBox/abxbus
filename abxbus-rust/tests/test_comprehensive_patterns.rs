@@ -847,14 +847,26 @@ fn test_is_inside_handler_is_per_bus_not_global() {
 fn test_dispatch_multiple_await_one_skips_others_until_after_handler_completes() {
     let bus = EventBus::new(Some("ComprehensiveMultiDispatchBus".to_string()));
     let execution_order = Arc::new(Mutex::new(Vec::new()));
+    let (event1_started_tx, event1_started_rx) = mpsc::channel();
+    let (allow_children_tx, allow_children_rx) = mpsc::channel();
+    let allow_children_rx = Arc::new(Mutex::new(allow_children_rx));
 
     let bus_for_event1 = bus.clone();
     let order_for_event1 = execution_order.clone();
+    let allow_children_for_event1 = allow_children_rx.clone();
     bus.on_raw("Event1", "event1_handler", move |_event| {
         let bus = bus_for_event1.clone();
         let order = order_for_event1.clone();
+        let event1_started_tx = event1_started_tx.clone();
+        let allow_children = allow_children_for_event1.clone();
         async move {
             push(&order, "Event1_start");
+            event1_started_tx.send(()).expect("signal Event1 start");
+            allow_children
+                .lock()
+                .expect("allow children lock")
+                .recv()
+                .expect("wait for queued sibling events");
             bus.emit_child(BaseEventHandle::<ChildA>::new(EmptyPayload {}));
             push(&order, "ChildA_dispatched");
             let child_b = bus.emit_child(BaseEventHandle::<ChildB>::new(EmptyPayload {}));
@@ -887,8 +899,10 @@ fn test_dispatch_multiple_await_one_skips_others_until_after_handler_completes()
     }
 
     let event1 = bus.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
+    event1_started_rx.recv().expect("Event1 handler started");
     bus.emit(BaseEventHandle::<Event2>::new(EmptyPayload {}));
     bus.emit(BaseEventHandle::<Event3>::new(EmptyPayload {}));
+    allow_children_tx.send(()).expect("release Event1 children");
 
     block_on(event1.done());
     block_on(bus.wait_until_idle(Some(2.0)));

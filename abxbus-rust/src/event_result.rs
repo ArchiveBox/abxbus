@@ -458,7 +458,7 @@ impl EventResult {
             id: record
                 .get("id")
                 .and_then(Value::as_str)
-                .unwrap_or_else(|| "")
+                .unwrap_or("")
                 .to_string(),
             status,
             event_id,

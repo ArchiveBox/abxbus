@@ -172,9 +172,9 @@ event = bus.Emit(event)
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::BaseEvent;
+use abxbus_rust::BaseEventHandle;
 
-let event = BaseEvent::<WorkEvent>::new(WorkPayload::default());
+let event = BaseEventHandle::<WorkEvent>::new(WorkPayload::default());
 {
     let mut inner = event.inner.inner.lock();
     inner.event_timeout = Some(8.0);
@@ -226,10 +226,7 @@ entry.HandlerSlowTimeout = &handlerSlowTimeout
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{
-    event_handler::EventHandlerOptions,
-    BaseEvent,
-};
+use abxbus_rust::event_handler::EventHandlerOptions;
 
 let entry = bus.on_with_options(
     WorkEvent,
