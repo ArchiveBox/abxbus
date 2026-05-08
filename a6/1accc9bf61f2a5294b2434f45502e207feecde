@@ -1,0 +1,126 @@
+docs/features/event-pattern-matching.mdx
+  s_6a8c07f028b30c::t_743d4a1522fa61 119
+  s_6a8c07f028b30c::t_0a3deb1fde290a 17,24,109-118,120-159,241
+docs/features/parent-child-tracking.mdx
+  s_6a8c07f028b30c::t_1d7b85bb58d0fb 11,38-44,211-260
+docs/integrations/bridge-postgres.mdx
+  s_6a8c07f028b30c::t_0320b63355a7a8 16-22
+docs/features/event-debouncing.mdx
+  s_6a8c07f028b30c::t_09b74201119423 65-92,157-180,243-278,343-377
+docs/features/fifo-processing.mdx
+  s_6a8c07f028b30c::t_065c1aa8ab862c 169-200,331-357
+docs/features/return-value-handling.mdx
+  s_6a8c07f028b30c::t_0eb9da6a507df9 11,59-73,75-78,80-81,83-91,93-96,102-118,120,128,144-166,184,204-220,238,242,258-270
+docs/concurrency/events-bus-serial.mdx
+  s_6a8c07f028b30c::t_d3573b2200edec 183-219
+docs/integrations/bridge-sqlite.mdx
+  s_6a8c07f028b30c::t_0320b63355a7a8 16-22
+docs/integrations/bridge-tachyon.mdx
+  s_6a8c07f028b30c::t_0320b63355a7a8 16-22
+docs/api/eventhistory.mdx
+  s_6a8c07f028b30c::t_fd9fabbe9a02fd 7,73-85,126-135,187-191
+docs/api/eventbus.mdx
+  s_6a8c07f028b30c::t_8aeed33c229c6a 70-98,165-186,222-230,265-272,275-276,278-281,322-340,384-390,392-405,438-447,477-482
+  s_6a8c07f028b30c::t_d9161e2d326058 273-274,277,391
+docs/features/typed-events.mdx
+  s_6a8c07f028b30c::t_3e043cabb5a639 11,42-95,146
+docs/api/eventbusmiddleware.mdx
+  s_6a8c07f028b30c::t_d1f57499d4a180 8-9,69-78,122-128,235-241,270-273
+docs/features/context-propagation.mdx
+  s_6a8c07f028b30c::t_0f4a9509012082 18,21,71-91,152-159
+docs/concurrency/timeouts.mdx
+  s_6a8c07f028b30c::t_feb984eac41680 15,92-108,171-187,225-242,360-379
+README.md
+  s_6a8c07f028b30c::t_86db7c9a601995 1170
+  s_6a8c07f028b30c::t_fc415383157efa 9,1156,1159-1162,1167,1169
+  s_6a8c07f028b30c::t_aa0c4b76960ff9 1168
+docs/api/retry.mdx
+  s_6a8c07f028b30c::t_ce8e5bd2d14f17 47-56,131-140,182-191,215
+docs/api/eventresult.mdx
+  s_6a8c07f028b30c::t_23adeb3b0b5b40 184,197
+  s_6a8c07f028b30c::t_2d03496d604b34 56-69,107-115,180-183,185-196
+docs/features/forwarding-between-buses.mdx
+  s_6a8c07f028b30c::t_71b45d4146d25f 11,153-216,325-342,428-452
+docs/integrations/bridges.mdx
+  s_6a8c07f028b30c::t_0320b63355a7a8 62-68
+docs/concurrency/events-parallel.mdx
+  s_6a8c07f028b30c::t_67bea1bab68952 152-176
+docs/concurrency/handler-completion-first.mdx
+  s_6a8c07f028b30c::t_db745b90f500ea 153-188
+docs/integrations/middlewares.mdx
+  s_6a8c07f028b30c::t_0320b63355a7a8 60-66
+docs/features/event-history-store.mdx
+  s_6a8c07f028b30c::t_ce4d893789aac5 102-126,199-207
+docs/concurrency/handlers-serial.mdx
+  s_6a8c07f028b30c::t_f28a790fe2d21d 128-152
+docs/integrations/bridge-jsonl.mdx
+  s_6a8c07f028b30c::t_0320b63355a7a8 44-50
+docs/integrations/bridge-redis.mdx
+  s_6a8c07f028b30c::t_0320b63355a7a8 16-22
+docs/index.mdx
+  s_6a8c07f028b30c::t_ae22f95f6f4a0f 17
+docs/features/async-sync-handlers.mdx
+  s_6a8c07f028b30c::t_fae3b052b43bf7 6,125-170
+docs/integrations/bridge-nats.mdx
+  s_6a8c07f028b30c::t_0320b63355a7a8 16-22
+docs/api/eventhandler.mdx
+  s_6a8c07f028b30c::t_e6fb90fd7a08b7 48-54,114-129
+docs/concurrency/handler-completion-all.mdx
+  s_6a8c07f028b30c::t_63bd704f2926d9 158-189
+docs/further-reading/events-suck.mdx
+  s_6a8c07f028b30c::t_0320b63355a7a8 70-76
+abxbus-rust/tests/test_eventbus_performance.rs
+  s_6a8c07f028b30c::t_ad8c046c082a94 332-336
+  s_6a8c07f028b30c::t_fcaf71ada7a8e9 1-15,17-168,173-193,195-238,240-290,314-316,318-329,338-371
+  s_6a8c07f028b30c::t_44dc714b7f3ca5 169-172
+  s_6a8c07f028b30c::t_7d65e22f39cd10 194,239,291-313
+  s_6a8c07f028b30c::t_a0ea816667a22e 16,317,330-331,337
+docs/operations/performance.mdx
+  s_6a8c07f028b30c::t_aa0c4b76960ff9 20
+  s_6a8c07f028b30c::t_1ccf40205c3cab 6,9-12,15,17-19,21-22,26-29
+abxbus-rust/src/event_bus.rs
+  s_6a8c07f028b30c::t_638fcc9a738a73 26,59-75,81-92,203-204
+  s_6a8c07f028b30c::t_46ebd821e4f853 2495-2496,2503
+  s_6a8c07f028b30c::t_9d177416a3323b 76-80
+  s_6a8c07f028b30c::t_0b42adb88fbe28 27,205-208
+  s_6a8c07f028b30c::t_64e3138ae3e685 1980-1986,2390,2398,2413,2498-2502,2504-2507,2509-2521
+  s_6a8c07f028b30c::t_599a7c55ec670b 209-210,2041-2042,2055-2056,2058-2060
+  s_6a8c07f028b30c::t_ff043d09b9dfd8 2015,2021,2047-2048,2053-2054,2508
+docs/api/baseevent.mdx
+  s_6a8c07f028b30c::t_af6f560e813d20 58-85,94,161-173,203-209,251-262,302-324,353-359,421-438,506-519
+docs/features/find-events.mdx
+  s_6a8c07f028b30c::t_8899f40ee17141 62-94,139-145,175-181,211-224,269-292
+docs/concurrency/events-global-serial.mdx
+  s_6a8c07f028b30c::t_d769481a03b786 167-195
+docs/integrations/bridge-socket.mdx
+  s_6a8c07f028b30c::t_0320b63355a7a8 16-22
+docs/concurrency/backpressure.mdx
+  s_6a8c07f028b30c::t_977ae862409c8a 21,56-74,167-175,202-210
+docs/concurrency/immediate-execution.mdx
+  s_6a8c07f028b30c::t_60f471a5f2f30b 13,66-70,72-87,215
+  s_6a8c07f028b30c::t_88c241d0e5ce96 71
+.gitignore
+  s_6a8c07f028b30c::t_227314f9a65dd0 24
+docs/concurrency/handlers-parallel.mdx
+  s_6a8c07f028b30c::t_d57cfd3b458596 148-172
+docs/integrations/bridge-http.mdx
+  s_6a8c07f028b30c::t_0320b63355a7a8 16-22
+docs/integrations/middleware-otel-tracing.mdx
+  s_6a8c07f028b30c::t_0320b63355a7a8 53-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "a61accc9bf61f2a5294b2434f45502e207feecde",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
