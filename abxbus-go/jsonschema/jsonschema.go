@@ -36,6 +36,96 @@ func Validate(schema map[string]any, value any) error {
 	return validateValue(schema, schema, Normalize(value), "$")
 }
 
+// SchemaFor returns a small JSON Schema object for T using Go reflection and
+// encoding/json field names. It is intentionally limited to the same JSON
+// Schema subset implemented by Validate so callers can generate schemas for
+// runtime boundary checks without pulling in a separate reflection package.
+func SchemaFor[T any]() map[string]any {
+	var zero T
+	return SchemaForValue(zero)
+}
+
+// SchemaForValue returns a small JSON Schema object for value's concrete type.
+func SchemaForValue(value any) map[string]any {
+	return SchemaForType(reflect.TypeOf(value))
+}
+
+// SchemaForType returns a small JSON Schema object for t.
+func SchemaForType(t reflect.Type) map[string]any {
+	for t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t == nil {
+		return map[string]any{"type": "object"}
+	}
+	switch t.Kind() {
+	case reflect.Struct:
+		properties := map[string]any{}
+		required := []any{}
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			if field.PkgPath != "" {
+				continue
+			}
+			name, omitEmpty, skip := jsonFieldName(field)
+			if skip {
+				continue
+			}
+			properties[name] = SchemaForType(field.Type)
+			if !omitEmpty && !isOptionalType(field.Type) {
+				required = append(required, name)
+			}
+		}
+		schema := map[string]any{
+			"type":                 "object",
+			"properties":           properties,
+			"additionalProperties": false,
+		}
+		if len(required) > 0 {
+			schema["required"] = required
+		}
+		return schema
+	case reflect.String:
+		return map[string]any{"type": "string"}
+	case reflect.Bool:
+		return map[string]any{"type": "boolean"}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return map[string]any{"type": "integer"}
+	case reflect.Float32, reflect.Float64:
+		return map[string]any{"type": "number"}
+	case reflect.Slice, reflect.Array:
+		return map[string]any{"type": "array", "items": SchemaForType(t.Elem())}
+	case reflect.Map:
+		return map[string]any{"type": "object", "additionalProperties": SchemaForType(t.Elem())}
+	default:
+		return map[string]any{}
+	}
+}
+
+func jsonFieldName(field reflect.StructField) (string, bool, bool) {
+	tag := field.Tag.Get("json")
+	if tag == "-" {
+		return "", false, true
+	}
+	parts := strings.Split(tag, ",")
+	name := parts[0]
+	if name == "" {
+		name = field.Name
+	}
+	omitEmpty := false
+	for _, part := range parts[1:] {
+		if part == "omitempty" {
+			omitEmpty = true
+		}
+	}
+	return name, omitEmpty, false
+}
+
+func isOptionalType(t reflect.Type) bool {
+	return t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Map
+}
+
 func validateValue(root map[string]any, schema any, value any, path string) error {
 	schemaMap, ok := schema.(map[string]any)
 	if !ok {

@@ -62,3 +62,27 @@ func TestValidateReferencesAndCompositeSchemas(t *testing.T) {
 		t.Fatalf("expected payload to fail")
 	}
 }
+
+func TestSchemaForStructUsesJSONNamesAndValidates(t *testing.T) {
+	type Params struct {
+		ID    string   `json:"id"`
+		Count int      `json:"count,omitempty"`
+		Tags  []string `json:"tags,omitempty"`
+		Skip  string   `json:"-"`
+	}
+
+	schema := jsonschema.SchemaFor[Params]()
+	properties := schema["properties"].(map[string]any)
+	if _, ok := properties["ID"]; ok {
+		t.Fatalf("expected json field names, got %#v", properties)
+	}
+	if _, ok := properties["skip"]; ok {
+		t.Fatalf("expected json:- field to be skipped, got %#v", properties)
+	}
+	if err := jsonschema.Validate(schema, Params{ID: "abc"}); err != nil {
+		t.Fatalf("expected struct value to validate: %v", err)
+	}
+	if err := jsonschema.Validate(schema, map[string]any{"id": 123}); err == nil || !strings.Contains(err.Error(), "expected string") {
+		t.Fatalf("expected generated schema to reject wrong id type, got %v", err)
+	}
+}
