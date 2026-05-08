@@ -915,82 +915,81 @@ func (b *EventBus) processEventImmediatelyAcrossBuses(ctx context.Context, event
 		return originalEvent, nil
 	}
 
-	instances := eventBusInstancesSnapshot()
-	ordered := []*EventBus{}
-	seen := map[*EventBus]bool{}
-	skippedActiveBuses := 0
-	originalEvent.mu.Lock()
-	eventPath := append([]string{}, originalEvent.EventPath...)
-	originalEvent.mu.Unlock()
-	for _, label := range eventPath {
-		for _, bus := range instances {
-			if seen[bus] || bus.Label() != label || bus.EventHistory.GetEvent(originalEvent.EventID) != originalEvent {
-				continue
-			}
-			if bus.eventHasLocalActiveResults(originalEvent) {
-				skippedActiveBuses++
+	for {
+		instances := eventBusInstancesSnapshot()
+		ordered := []*EventBus{}
+		seen := map[*EventBus]bool{}
+		skippedActiveBuses := 0
+		originalEvent.mu.Lock()
+		eventPath := append([]string{}, originalEvent.EventPath...)
+		originalEvent.mu.Unlock()
+		for _, label := range eventPath {
+			for _, bus := range instances {
+				if seen[bus] || bus.Label() != label || bus.EventHistory.GetEvent(originalEvent.EventID) != originalEvent {
+					continue
+				}
+				if bus.eventHasLocalActiveResults(originalEvent) {
+					skippedActiveBuses++
+					seen[bus] = true
+					continue
+				}
+				ordered = append(ordered, bus)
 				seen[bus] = true
+			}
+		}
+		if !seen[b] && b.EventHistory.GetEvent(originalEvent.EventID) == originalEvent && !b.eventHasLocalActiveResults(originalEvent) {
+			ordered = append(ordered, b)
+			seen[b] = true
+		}
+		if len(ordered) == 0 {
+			settleSkippedActiveBuses(originalEvent, skippedActiveBuses)
+			if err := originalEvent.EventCompleted(ctx); err != nil {
+				return nil, err
+			}
+			return originalEvent, nil
+		}
+
+		initiatingLock := b.locks.getLockForEvent(originalEvent)
+		activeHandlerResult := b.locks.getActiveHandlerResult()
+		releases := []func(){}
+		for _, bus := range ordered {
+			if bus != b {
+				releases = append(releases, bus.locks.requestRunloopPause())
+			}
+		}
+
+		for _, bus := range ordered {
+			busEventLock := bus.locks.getLockForEvent(originalEvent)
+			bypassEventLocks := activeHandlerResult != nil && (bus == b || (initiatingLock != nil && busEventLock == initiatingLock))
+			bus.mu.Lock()
+			for i := len(bus.pendingEventQueue) - 1; i >= 0; i-- {
+				if bus.pendingEventQueue[i].EventID == originalEvent.EventID {
+					bus.pendingEventQueue = append(bus.pendingEventQueue[:i], bus.pendingEventQueue[i+1:]...)
+				}
+			}
+			alreadyInFlight := bus.inFlightEventIDs[originalEvent.EventID]
+			if !alreadyInFlight {
+				bus.inFlightEventIDs[originalEvent.EventID] = true
+			}
+			bus.mu.Unlock()
+			if alreadyInFlight && (!bypassEventLocks || bus.eventHasLocalActiveResults(originalEvent)) {
 				continue
 			}
-			ordered = append(ordered, bus)
-			seen[bus] = true
-		}
-	}
-	if !seen[b] && b.EventHistory.GetEvent(originalEvent.EventID) == originalEvent && !b.eventHasLocalActiveResults(originalEvent) {
-		ordered = append(ordered, b)
-		seen[b] = true
-	}
-	if len(ordered) == 0 {
-		settleSkippedActiveBuses(originalEvent, skippedActiveBuses)
-		if err := originalEvent.EventCompleted(ctx); err != nil {
-			return nil, err
-		}
-		return originalEvent, nil
-	}
 
-	initiatingLock := b.locks.getLockForEvent(originalEvent)
-	activeHandlerResult := b.locks.getActiveHandlerResult()
-	releases := []func(){}
-	for _, bus := range ordered {
-		if bus != b {
-			releases = append(releases, bus.locks.requestRunloopPause())
+			if err := bus.processEvent(ctx, originalEvent, bypassEventLocks, nil, nil); err != nil {
+				for _, release := range releases {
+					release()
+				}
+				return nil, err
+			}
 		}
-	}
-	defer func() {
 		for _, release := range releases {
 			release()
 		}
-	}()
-
-	for _, bus := range ordered {
-		busEventLock := bus.locks.getLockForEvent(originalEvent)
-		bypassEventLocks := activeHandlerResult != nil && (bus == b || (initiatingLock != nil && busEventLock == initiatingLock))
-		bus.mu.Lock()
-		for i := len(bus.pendingEventQueue) - 1; i >= 0; i-- {
-			if bus.pendingEventQueue[i].EventID == originalEvent.EventID {
-				bus.pendingEventQueue = append(bus.pendingEventQueue[:i], bus.pendingEventQueue[i+1:]...)
-			}
-		}
-		alreadyInFlight := bus.inFlightEventIDs[originalEvent.EventID]
-		if !alreadyInFlight {
-			bus.inFlightEventIDs[originalEvent.EventID] = true
-		}
-		bus.mu.Unlock()
-		if alreadyInFlight && (!bypassEventLocks || bus.eventHasLocalActiveResults(originalEvent)) {
-			continue
-		}
-
-		if err := bus.processEvent(ctx, originalEvent, bypassEventLocks, nil, nil); err != nil {
-			return nil, err
+		if originalEvent.status() == "completed" {
+			return originalEvent, nil
 		}
 	}
-	if originalEvent.status() != "completed" {
-		settleSkippedActiveBuses(originalEvent, skippedActiveBuses)
-		if err := originalEvent.EventCompleted(ctx); err != nil {
-			return nil, err
-		}
-	}
-	return originalEvent, nil
 }
 
 func (b *EventBus) startRunloop() {

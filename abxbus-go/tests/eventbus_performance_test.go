@@ -41,6 +41,7 @@ func TestPerformance50kEvents(t *testing.T) {
 		MaxHistorySize: &historySize,
 		MaxHistoryDrop: true,
 	})
+	defer bus.Destroy()
 
 	var processed int64
 	var checksum int64
@@ -110,6 +111,7 @@ func TestPerformanceEphemeralBuses(t *testing.T) {
 		if !bus.WaitUntilIdle(&timeout) {
 			t.Fatal("timed out waiting for ephemeral bus")
 		}
+		bus.Destroy()
 	}
 	elapsed := time.Since(started)
 	totalEvents := totalBuses * eventsPerBus
@@ -129,6 +131,7 @@ func TestPerformanceSingleEventManyParallelHandlers(t *testing.T) {
 		EventHandlerCompletion:      abxbus.EventHandlerCompletionAll,
 		EventHandlerDetectFilePaths: ptrBool(false),
 	})
+	defer bus.Destroy()
 
 	var handled int64
 	for index := 0; index < totalHandlers; index++ {
@@ -161,6 +164,7 @@ func TestPerformanceOnOffChurn(t *testing.T) {
 		MaxHistorySize: &historySize,
 		MaxHistoryDrop: true,
 	})
+	defer bus.Destroy()
 
 	var handled int64
 	started := time.Now()
@@ -194,11 +198,13 @@ func TestPerformanceWorstCaseForwardingQueueJumpTimeouts(t *testing.T) {
 		MaxHistorySize: &historySize,
 		MaxHistoryDrop: true,
 	})
+	defer parentBus.Destroy()
 	childBus := abxbus.NewEventBus("PerfWorstChildBus", &abxbus.EventBusOptions{
 		MaxHistorySize: &historySize,
 		MaxHistoryDrop: true,
 		EventTimeout:   &eventTimeout,
 	})
+	defer childBus.Destroy()
 
 	var parents int64
 	var children int64
@@ -339,6 +345,7 @@ func runFanoutBenchmark(t *testing.T, mode abxbus.EventHandlerConcurrencyMode) (
 		EventHandlerConcurrency:     mode,
 		EventHandlerDetectFilePaths: ptrBool(false),
 	})
+	defer bus.Destroy()
 
 	var handled int64
 	for index := 0; index < handlersPerEvent; index++ {
