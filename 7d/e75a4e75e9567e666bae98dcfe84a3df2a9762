@@ -1,0 +1,95 @@
+abxbus-go/lock_manager.go
+  s_6a8c07f028b30c::t_7edba8d4be4952 205-208
+  s_6a8c07f028b30c::t_7ff28f675175b8 68-70,180-187,189,192-204,209-233
+abxbus-rust/tests/test_eventbus_find.rs
+  s_6a8c07f028b30c::t_cd43db078130af 237-238
+  s_6a8c07f028b30c::t_cbfab6197ec831 239-251
+abxbus-go/tests/bridges_test.go
+  s_6a8c07f028b30c::t_2b06ed655b7aeb 51-57
+docs/api/eventresult.mdx
+  s_6a8c07f028b30c::t_062ab806dc0e23 86
+docs/quickstart.mdx
+  s_6a8c07f028b30c::t_dcb4cab7c851c0 122
+abxbus-go/base_event.go
+  s_b97125cfd29900::t_ef076f121f738d 13-14,17,616,628
+  s_b97125cfd29900::t_573621ef1e8e56 439
+  s_b97125cfd29900::t_aacda51bef1b3a 437-438
+  s_6a8c07f028b30c::t_a887b0fe07729a 586
+abxbus-rust/Cargo.lock
+  ai_agent 12,200-204
+abxbus-go/jsonl_bridge.go
+  s_6a8c07f028b30c::t_68980ed55133b2 36-39,43
+docs/operations/development.mdx
+  s_6a8c07f028b30c::t_b3384361588479 96
+abxbus-go/event_bus.go
+  s_6a8c07f028b30c::t_e8101379dde697 1145-1150
+  s_6a8c07f028b30c::t_de4b1e00813f39 212,219,459-464,939
+abxbus-rust/Cargo.toml
+  s_6a8c07f028b30c::t_5e79f6b0dab401 11
+abxbus-go/event_result.go
+  s_b97125cfd29900::t_2c79835ee53338 202-220
+  s_6a8c07f028b30c::t_2b995947f49a47 275-276
+abxbus-go/otel_middleware.go
+  s_6a8c07f028b30c::t_cd0f454d0b4ff1 87-88
+abxbus-rust/src/event_result.rs
+  s_6a8c07f028b30c::t_ad5d8096a02869 1,4,192-196,212,216
+  ai_agent 215,226
+  s_6a8c07f028b30c::t_709e10c89a5deb 213-214
+  s_6a8c07f028b30c::t_547ae22d078792 217
+  s_6a8c07f028b30c::t_780c2b118fe890 3
+abxbus-rust/src/base_event.rs
+  s_6a8c07f028b30c::t_780c2b118fe890 12
+  s_6a8c07f028b30c::t_fa1de5ffe84b92 13,271
+abxbus-go/jsonschema/jsonschema.go
+  s_b97125cfd29900::t_ca5eae6eef9c4d 1-346
+abxbus-go/tests/typed_events_test.go
+  s_6a8c07f028b30c::t_8e4068e4915f52 143-183,185-187,189-200
+  s_6a8c07f028b30c::t_22f607d612dbc5 184,188
+  s_6a8c07f028b30c::t_81965cb0c813c4 49-54
+abxbus-go/jsonschema/jsonschema_test.go
+  s_b97125cfd29900::t_ca5eae6eef9c4d 1-64
+abxbus-go/tests/event_history_store_test.go
+  s_6a8c07f028b30c::t_4609c2c58011a9 98-99
+abxbus-go/event_history.go
+  s_6a8c07f028b30c::t_c81f678bb0ef96 220
+abxbus-go/tests/event_result_test.go
+  s_6a8c07f028b30c::t_a10a9809e71d1f 46-48,63-116
+abxbus-go/helpers.go
+  s_6a8c07f028b30c::t_0fef06ce4f3b3c 10-11,24
+abxbus-go/tests/base_event_test.go
+  s_6a8c07f028b30c::t_7ac4c8631a34eb 16-20
+abxbus-go/typed.go
+  s_b97125cfd29900::t_2761bab75bad75 9-10,61
+  s_6a8c07f028b30c::t_dbce294ab25264 76-78
+  s_6a8c07f028b30c::t_48d2189d9e216c 135,151-152,155-173,188,192,195,200,208
+abxbus-go/tests/eventbus_test.go
+  s_6a8c07f028b30c::t_e1a4677c232c53 5,59-60
+abxbus-rust/src/event_bus.rs
+  s_6a8c07f028b30c::t_077f4c0a8f026c 2,1841,1844-1846
+abxbus-go/tests/eventbus_serialization_test.go
+  s_6a8c07f028b30c::t_72b037d1ef5e83 173-190
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "7de75a4e75e9567e666bae98dcfe84a3df2a9762",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    },
+    "s_b97125cfd29900": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dfbaf-cdd3-7450-a6a6-0d68da00b802",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
