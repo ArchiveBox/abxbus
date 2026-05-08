@@ -22,8 +22,11 @@ func baseEventFromAny(value any) (*BaseEvent, error) {
 		}
 		return event, nil
 	}
-	if event, ok := value.(BaseEvent); ok {
-		return &event, nil
+
+	baseEventType := reflect.TypeOf((*BaseEvent)(nil)).Elem()
+	rawType := reflect.TypeOf(value)
+	if rawType == baseEventType {
+		return nil, fmt.Errorf("event must be *BaseEvent, got BaseEvent")
 	}
 
 	raw := reflect.ValueOf(value)

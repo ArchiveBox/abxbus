@@ -19,7 +19,7 @@ Not yet implemented in this crate revision:
 ## Quickstart
 
 ```rust
-use abxbus_rust::{event, BaseEvent, event_bus::EventBus};
+use abxbus_rust::{event, event_bus::EventBus};
 use futures::executor::block_on;
 use serde_json::json;
 
@@ -31,16 +31,17 @@ event! {
 }
 
 let bus = EventBus::new(Some("MainBus".to_string()));
-bus.on::<UserLoginEvent, _, _>("handle_login", |event| async move {
-    Ok(json!({"ok": true, "username": event.payload().username}))
+bus.on(UserLoginEvent, |event: UserLoginEvent| async move {
+    Ok(json!({"ok": true, "username": event.username}))
 });
 
-let event = bus.emit::<UserLoginEvent>(BaseEvent::new(UserLoginEvent {
+let event = bus.emit(UserLoginEvent {
     username: "alice".to_string(),
-}));
+    ..Default::default()
+});
 
 block_on(async {
-    event.wait_completed().await;
+    event.done().await;
     println!("{}", event.inner.to_json_value());
 });
 ```
