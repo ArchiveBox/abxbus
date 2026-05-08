@@ -1,6 +1,9 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    sync::{mpsc as std_mpsc, Arc, OnceLock, Weak},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc as std_mpsc, Arc, OnceLock, Weak,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -47,7 +50,8 @@ struct BusRuntime {
     stop: Mutex<bool>,
     loop_started: Mutex<bool>,
     events: Mutex<HashMap<String, Arc<BaseEvent>>>,
-    event_contexts: Mutex<HashMap<String, Option<dcontext::ContextSnapshot>>>,
+    event_contexts: Mutex<HashMap<String, dcontext::ContextSnapshot>>,
+    event_context_count: AtomicUsize,
     history_order: Mutex<VecDeque<String>>,
     max_history_size: Option<usize>,
     max_history_drop: bool,
@@ -319,6 +323,7 @@ impl EventBus {
                 loop_started: Mutex::new(false),
                 events: Mutex::new(HashMap::new()),
                 event_contexts: Mutex::new(HashMap::new()),
+                event_context_count: AtomicUsize::new(0),
                 history_order: Mutex::new(VecDeque::new()),
                 max_history_size: options.max_history_size,
                 max_history_drop: options.max_history_drop,
@@ -954,6 +959,7 @@ impl EventBus {
 
         bus.runtime.events.lock().clear();
         bus.runtime.event_contexts.lock().clear();
+        bus.runtime.event_context_count.store(0, Ordering::SeqCst);
         bus.runtime.history_order.lock().clear();
         if let Some(Value::Object(raw_event_history)) = payload.get("event_history") {
             for (event_id_hint, event_value) in raw_event_history {
@@ -1392,10 +1398,14 @@ impl EventBus {
             }
         }
 
-        self.runtime
-            .event_contexts
-            .lock()
-            .insert(event_id.clone(), Self::capture_context_snapshot());
+        if let Some(snapshot) = Self::capture_context_snapshot() {
+            let mut contexts = self.runtime.event_contexts.lock();
+            if contexts.insert(event_id.clone(), snapshot).is_none() {
+                self.runtime
+                    .event_context_count
+                    .fetch_add(1, Ordering::SeqCst);
+            }
+        }
         self.runtime.events.lock().insert(event_id.clone(), event);
         self.runtime.history_order.lock().push_back(event_id);
         true
@@ -1428,19 +1438,20 @@ impl EventBus {
             }
             self.runtime.history_order.lock().pop_front();
             self.runtime.events.lock().remove(&oldest);
-            self.runtime.event_contexts.lock().remove(&oldest);
+            if self.runtime.event_contexts.lock().remove(&oldest).is_some() {
+                self.runtime
+                    .event_context_count
+                    .fetch_sub(1, Ordering::SeqCst);
+            }
         }
     }
 
-    fn context_for_event(&self, event: &Arc<BaseEvent>) -> dcontext::ContextSnapshot {
+    fn context_for_event(&self, event: &Arc<BaseEvent>) -> Option<dcontext::ContextSnapshot> {
+        if self.runtime.event_context_count.load(Ordering::SeqCst) == 0 {
+            return None;
+        }
         let event_id = event.inner.lock().event_id.clone();
-        self.runtime
-            .event_contexts
-            .lock()
-            .get(&event_id)
-            .cloned()
-            .flatten()
-            .unwrap_or_default()
+        self.runtime.event_contexts.lock().get(&event_id).cloned()
     }
 
     fn capture_context_snapshot() -> Option<dcontext::ContextSnapshot> {
@@ -2042,7 +2053,17 @@ impl EventBus {
         if self.runtime.max_history_size == Some(0) {
             let event_id = event.inner.lock().event_id.clone();
             self.runtime.events.lock().remove(&event_id);
-            self.runtime.event_contexts.lock().remove(&event_id);
+            if self
+                .runtime
+                .event_contexts
+                .lock()
+                .remove(&event_id)
+                .is_some()
+            {
+                self.runtime
+                    .event_context_count
+                    .fetch_sub(1, Ordering::SeqCst);
+            }
             self.runtime
                 .history_order
                 .lock()
@@ -2332,12 +2353,20 @@ impl EventBus {
         inline_call: bool,
     ) -> bool {
         let handler_id = handler.id.clone();
-        let _context_guard = dcontext::attach(self.context_for_event(&event));
+        let context_snapshot = self.context_for_event(&event);
+        let _context_guard = context_snapshot.clone().map(dcontext::attach);
         CURRENT_BUS_ID.with(|id| *id.borrow_mut() = Some(self.id.clone()));
         CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = Some(event.inner.lock().event_id.clone()));
         CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = Some(handler_id.clone()));
         let timed_out = self
-            .run_handler(event, handler, event_started_at, event_timeout, inline_call)
+            .run_handler(
+                event,
+                handler,
+                event_started_at,
+                event_timeout,
+                context_snapshot,
+                inline_call,
+            )
             .await;
         CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = None);
         CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = None);
@@ -2351,6 +2380,7 @@ impl EventBus {
         handler: EventHandler,
         event_started_at: Instant,
         event_timeout: Option<f64>,
+        context_snapshot: Option<dcontext::ContextSnapshot>,
         inline_call: bool,
     ) -> bool {
         let explicit_handler_timeout = handler
@@ -2440,9 +2470,8 @@ impl EventBus {
             let context_bus_id = self.id.clone();
             let context_event_id = event.inner.lock().event_id.clone();
             let context_handler_id = handler.id.clone();
-            let dispatch_context = self.context_for_event(&event);
             Self::handler_call_executor().spawn(move || {
-                let _context_guard = dcontext::attach(dispatch_context);
+                let _context_guard = context_snapshot.map(dcontext::attach);
                 CURRENT_BUS_ID.with(|id| *id.borrow_mut() = Some(context_bus_id));
                 CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = Some(context_event_id));
                 CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = Some(context_handler_id));
