@@ -1,0 +1,50 @@
+name: test-rust-go
+
+on:
+  push:
+    branches:
+      - main
+      - stable
+      - 'releases/**'
+    tags:
+      - '*'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: ${{ matrix.runtime }} full suite
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runtime: rust
+            working-directory: abxbus-rust
+            test-command: cargo test --locked --all-targets --all-features
+          - runtime: go
+            working-directory: abxbus-go
+            test-command: go test ./... -count=1 -timeout=240s
+    defaults:
+      run:
+        working-directory: ${{ matrix.working-directory }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        if: matrix.runtime == 'rust'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Go
+        if: matrix.runtime == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: abxbus-go/go.mod
+          cache-dependency-path: abxbus-go/go.sum
+
+      - name: Run ${{ matrix.runtime }} tests
+        run: ${{ matrix.test-command }}
