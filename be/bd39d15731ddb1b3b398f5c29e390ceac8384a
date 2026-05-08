@@ -1,0 +1,24 @@
+abxbus-rust/src/base_event.rs
+  s_6a8c07f028b30c::t_410de188d0e2cb 184,186-188,193-196,199-212,217-219,225-244
+  s_6a8c07f028b30c::t_a68cf061d7fd3c 104-113,117-118,123-132,137-139,144-165,185,191-192,197-198,215-216
+  s_6a8c07f028b30c::t_9e92114d0115d0 114-116,119-122,133-136,140-143,213-214,295
+abxbus-rust/src/typed.rs
+  s_6a8c07f028b30c::t_9e92114d0115d0 108-109
+  s_6a8c07f028b30c::t_9d4d0b2e3b7411 103-107,110-113,118-147,163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "bebd39d15731ddb1b3b398f5c29e390ceac8384a",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
