@@ -1,0 +1,151 @@
+docs/concurrency/events-global-serial.mdx
+  s_9acf3592297ead::t_dbab2f3286b353 195-196
+docs/features/event-debouncing.mdx
+  s_9acf3592297ead::t_dbab2f3286b353 94,179,273,371
+docs/concurrency/backpressure.mdx
+  s_9acf3592297ead::t_3459d4a20dcf69 206
+abxbus-rust/tests/test_eventbus_error_handling.rs
+  s_6a8c07f028b30c::t_e191c34200f408 288
+abxbus-rust/src/event_result.rs
+  s_6a8c07f028b30c::t_17f3414f7103ba 461
+docs/concurrency/events-bus-serial.mdx
+  s_9acf3592297ead::t_dbab2f3286b353 219-220
+docs/api/eventbusmiddleware.mdx
+  s_6a8c07f028b30c::t_fa86caab1f209b 75
+abxbus-rust/src/types.rs
+  s_6a8c07f028b30c::t_17f3414f7103ba 25,28
+abxbus-rust/tests/test_eventbus_dispatch_parent_tracking.rs
+  s_6a8c07f028b30c::t_901c3d030eb24d 1103,1426
+docs/features/parent-child-tracking.mdx
+  s_9acf3592297ead::t_c8fb6e3b43f9d0 248,255,272
+  s_9acf3592297ead::t_1f71389df7f4a3 40
+docs/api/baseevent.mdx
+  s_9acf3592297ead::t_3459d4a20dcf69 61,72,164,506,515
+  s_9acf3592297ead::t_19cb5faf435be0 160
+abxbus-rust/tests/test_event_handler.rs
+  s_6a8c07f028b30c::t_d92c321902b6e9 422
+abxbus-rust/tests/test_comprehensive_patterns.rs
+  s_6a8c07f028b30c::t_7c7e8a947a02a1 850-852,856,860-861,864-869,902,905
+abxbus-rust/src/base_event.rs
+  s_6a8c07f028b30c::t_17f3414f7103ba 275,545,547-548,550
+docs/features/forwarding-between-buses.mdx
+  s_9acf3592297ead::t_dbab2f3286b353 495
+  s_9acf3592297ead::t_c8fb6e3b43f9d0 223
+docs/features/fifo-processing.mdx
+  s_9acf3592297ead::t_dbab2f3286b353 372-373
+  s_9acf3592297ead::t_1f71389df7f4a3 197
+abxbus-rust/tests/test_event_handler_ids.rs
+  s_6a8c07f028b30c::t_37ecad440812dd 8,15
+  s_5f24dff79e9241::t_d926fb6233bb90 23
+docs/concurrency/handlers-serial.mdx
+  s_9acf3592297ead::t_dbab2f3286b353 156
+abxbus-rust/Cargo.lock
+  ai_agent 10,41-55,116-128,569-595
+docs/features/event-pattern-matching.mdx
+  s_9acf3592297ead::t_c8fb6e3b43f9d0 135
+abxbus-rust/tests/test_typed_events.rs
+  s_6a8c07f028b30c::t_e1fae0b4c0ab98 41-45,57-61,79-83,95-104,135-139,164-168,195-199
+  s_6a8c07f028b30c::t_108335297ac906 189-193
+  s_9acf3592297ead::t_d20d5d2ca7fe98 148-150,169-171
+  s_6a8c07f028b30c::t_6869cdfb4d911c 225
+abxbus-rust/tests/test_base_event.rs
+  s_6a8c07f028b30c::t_a89653b1dab67c 557
+abxbus-rust/src/typed.rs
+  s_6a8c07f028b30c::t_17f3414f7103ba 15,20,57-59
+  s_6a8c07f028b30c::t_1aa8fdae739477 1100,1151-1164
+  s_6a8c07f028b30c::t_67a8dbe0beae33 16-19,21-40,1105,1107-1121,1123-1125,1127,1129-1133,1135,1137,1139-1143,1145
+  s_6a8c07f028b30c::t_fb78f34380d306 1104,1106,1122,1126,1128,1134,1136,1138,1144
+docs/features/context-propagation.mdx
+  s_6a8c07f028b30c::t_fa86caab1f209b 18,85-88,92-93,98-99,169-170,173
+  s_9acf3592297ead::t_466e221d4aad1f 76
+  s_6a8c07f028b30c::t_500e39c80bcaaf 97,168
+  s_9acf3592297ead::t_dbab2f3286b353 100,171
+docs/concurrency/handlers-parallel.mdx
+  s_9acf3592297ead::t_dbab2f3286b353 176
+docs/features/return-value-handling.mdx
+  s_9acf3592297ead::t_dbab2f3286b353 82,167
+docs/api/eventbus.mdx
+  s_9acf3592297ead::t_dbab2f3286b353 291
+docs/concurrency/events-parallel.mdx
+  s_9acf3592297ead::t_dbab2f3286b353 179-180
+abxbus-rust/tests/test_eventbus_performance.rs
+  s_9acf3592297ead::t_87e65527656abc 4,20-27,64,137,184,231,276
+docs/concurrency/immediate-execution.mdx
+  s_9acf3592297ead::t_dbab2f3286b353 89
+abxbus-rust/tests/test_eventbus_dispatch_contextvars.rs
+  s_6a8c07f028b30c::t_e1fae0b4c0ab98 76,103-107,145-147,171-175,218-220,223-225,272-274,327-329,375-377,407-409,447-449,461-463,491-493,510-512,551-553,577-579,619-621,641-643,666-668
+  s_6a8c07f028b30c::t_6e2e68d11666d4 14-16
+  s_6a8c07f028b30c::t_b0008aafe0590f 366-373,378-380,486-490,494-497,500,504,539-550,554-557,560,567,608-618,622-625,629,633-634,650,653-654
+  s_6a8c07f028b30c::t_7e1c44907a09f7 3,18,44-62,65-66,68,70-75,81,101-102,121,126,169-170,195,200,217,222,237,242,271,282,287,326,354,359,374,406,431,436,446,457,474,479,509,528,533,576,597,602,665,692
+  s_6a8c07f028b30c::t_500e39c80bcaaf 67
+  s_6a8c07f028b30c::t_e191c34200f408 69
+abxbus-rust/tests/test_event_result.rs
+  s_6a8c07f028b30c::t_e191c34200f408 528,533,538
+docs/features/typed-events.mdx
+  s_9acf3592297ead::t_c8fb6e3b43f9d0 84
+abxbus-rust/src/event_bus.rs
+  s_6a8c07f028b30c::t_17f3414f7103ba 635,729,1307,2160,2248-2253
+  s_9acf3592297ead::t_33aa905bd0f4b1 1234-1235,1435,2335,2445
+  s_9acf3592297ead::t_6d71c646b59a7e 1370-1371,1377,1379
+  s_6a8c07f028b30c::t_500e39c80bcaaf 50,1398,1442,1446-1447
+abxbus-rust/tests/test_eventbus_on_off.rs
+  s_6a8c07f028b30c::t_396a0d69023abf 282,284-285,304,306-307
+  s_6a8c07f028b30c::t_e1fae0b4c0ab98 2,45-47,60-62,67-69,127-129,194-196,227-229,261-263,277-280,299-302,341-346,371-373
+  s_6a8c07f028b30c::t_e3e481c6d085e3 8-11,14-18,21-24
+docs/quickstart.mdx
+  s_9acf3592297ead::t_c8fb6e3b43f9d0 122
+docs/concurrency/handler-completion-first.mdx
+  s_9acf3592297ead::t_dbab2f3286b353 191
+abxbus-rust/tests/test_eventbus.rs
+  s_6a8c07f028b30c::t_37ecad440812dd 1213
+  s_6a8c07f028b30c::t_108335297ac906 1243
+docs/index.mdx
+  s_9acf3592297ead::t_dbab2f3286b353 85
+docs/concurrency/timeouts.mdx
+  s_9acf3592297ead::t_3459d4a20dcf69 175,177
+  s_9acf3592297ead::t_19cb5faf435be0 229
+docs/api/eventhistory.mdx
+  s_9acf3592297ead::t_3459d4a20dcf69 78
+abxbus-rust/tests/test_eventbus_forwarding.rs
+  s_6a8c07f028b30c::t_e191c34200f408 126,130,134,202,206,210,230,234,292,296,367,371,375,395,399
+docs/features/event-history-store.mdx
+  s_9acf3592297ead::t_3459d4a20dcf69 203
+docs/concurrency/handler-completion-all.mdx
+  s_9acf3592297ead::t_dbab2f3286b353 189
+abxbus-rust/Cargo.toml
+  s_6a8c07f028b30c::t_2ba2b0fc3011a9 15
+abxbus-rust/tests/test_event_result_handler_metadata.rs
+  s_6a8c07f028b30c::t_e191c34200f408 119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "eb45390689924130bda6c28e610a4baa5c6c3bd0",
+  "prompts": {},
+  "sessions": {
+    "s_5f24dff79e9241": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e06e9-28ac-73b3-b24d-361167f9c067",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    },
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    },
+    "s_9acf3592297ead": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e06db-4834-7f40-95b3-aa902418130d",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
