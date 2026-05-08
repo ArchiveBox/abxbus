@@ -60,8 +60,10 @@ jobs:
           echo "GO_TASKS=${GO_TEST_TASKS}" >> "$GITHUB_OUTPUT"
           echo "$GO_TEST_TASKS"
       - name: Check that at least one test file is found
+        env:
+          GO_TEST_TASKS: ${{ steps.lsgrep.outputs.GO_TEST_TASKS }}
         run: |
-          if [[ -z "${{ steps.lsgrep.outputs.GO_TEST_TASKS }}" || "${{ steps.lsgrep.outputs.GO_TEST_TASKS }}" == "[]" ]]; then
+          if [[ -z "${GO_TEST_TASKS}" || "${GO_TEST_TASKS}" == "[]" ]]; then
             echo "Failed to find any *_test.go files in abxbus-go/" > /dev/stderr
             exit 1
           fi
