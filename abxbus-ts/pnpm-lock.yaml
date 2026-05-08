@@ -7,6 +7,8 @@ settings:
 overrides:
   flatted: 3.4.2
 
+packageExtensionsChecksum: sha256-PunKmwj4MNKissO9RnDbsnPg7/+Mdn4VDkJSYfN5IOg=
+
 importers:
 
   .:
@@ -1453,7 +1455,10 @@ snapshots:
 
   '@tachyon-ipc/core@0.5.0':
     dependencies:
+      cmake-js: 8.0.0
       node-addon-api: 8.7.0
+    transitivePeerDependencies:
+      - supports-color
 
   '@types/esrecurse@4.3.1': {}
 
