@@ -1,0 +1,19 @@
+abxbus-rust/tests/test_eventbus_performance.rs
+  s_6a8c07f028b30c::t_8d4dcbc9514e22 19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "9206e9a953b21e518d5fe982b8fe9153208480e6",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
