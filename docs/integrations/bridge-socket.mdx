@@ -5,6 +5,16 @@ description: Forward events through Unix domain sockets.
 
 `SocketEventBridge` uses a Unix socket path for both send and listen directions.
 
+## Go support
+
+<Tabs>
+<Tab title="Go">
+
+`SocketEventBridge` is not implemented in `abxbus-go` yet. Use [JSONLEventBridge](./bridge-jsonl) for the currently supported Go bridge.
+
+</Tab>
+</Tabs>
+
 ## Constructor params
 
 - `path`: Unix socket path (absolute path recommended)
@@ -26,6 +36,14 @@ bridge = SocketEventBridge('/tmp/abxbus_events.sock', name='SocketBridge')
 import { SocketEventBridge } from 'abxbus/bridges'
 
 const bridge = new SocketEventBridge('/tmp/abxbus_events.sock', 'SocketBridge')
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+// SocketEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
 ```
 
 </Tab>
@@ -59,6 +77,14 @@ const bridge = new SocketEventBridge('/tmp/abxbus_events.sock')
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+// SocketEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
 ```
 
 </Tab>

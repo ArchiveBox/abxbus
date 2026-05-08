@@ -42,6 +42,23 @@ bridge.on('*', bus.emit)
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+bus := abxbus.NewEventBus("AppBus", nil)
+bridge := abxbus.NewJSONLEventBridge("/tmp/abxbus_events.jsonl", 0.25, "JsonlBridge")
+
+bus.On("*", "jsonl_emit", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	return bridge.Emit(event)
+}, nil)
+bridge.On("*", "bus_emit", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	return bus.Emit(event), nil
+}, nil)
+```
+
+Go currently implements `JSONLEventBridge`. The HTTP, socket, Redis, NATS, Postgres, SQLite, and Tachyon bridges are Python/TypeScript-only for now.
+
+</Tab>
 </Tabs>
 
 ## Bridge pages

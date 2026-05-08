@@ -40,4 +40,21 @@ Notes:
 - Browser runtime does not expose memory usage directly, in practice memory performance in-browser is comparable to Node (they both use V8)
 
 </Tab>
+<Tab title="Go">
+
+```bash
+cd abxbus-go
+go test ./tests -run TestPerformance -count=1 -timeout=120s -v
+```
+
+Measured locally on an Apple Silicon development machine with Go's `testing` runner:
+
+| Runtime | 1 bus x 50k events x 1 handler | 500 buses x 100 events x 1 handler | 1 bus x 1 event x 50k parallel handlers | 1 bus x 50k events x 50k one-off handlers | Worst case (forwarding + queue-jump + timeouts) | Cleanup destroy + bounded history |
+| --- | --- | --- | --- | --- | --- | --- |
+| Go | `0.007ms/event` | `0.006ms/event` | `0.083ms/handler` | `0.009ms/event` | `0.028ms/event` | `0.023ms/event` |
+
+The Go performance tests assert a hard `0.300ms` per event/handler budget for the measured scenarios.
+Go cleanup tests use explicit `Destroy()` because Go does not have a Python/TypeScript-style weak instance set for automatic out-of-scope registry cleanup.
+
+</Tab>
 </Tabs>

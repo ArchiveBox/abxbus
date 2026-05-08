@@ -44,6 +44,19 @@ const bus = new EventBus('MyBus', {
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+bus := abxbus.NewEventBus("MyBus", &abxbus.EventBusOptions{
+	Middlewares: []abxbus.EventBusMiddleware{
+		abxbus.NewOtelTracingMiddleware(nil),
+	},
+})
+```
+
+Go currently ships the middleware interface plus `OtelTracingMiddleware`. The logger/WAL/auto-event/SQLite-history mirror middlewares are Python-only for now.
+
+</Tab>
 </Tabs>
 
 ## Middleware interface
@@ -83,6 +96,11 @@ Middleware hooks receive lifecycle statuses in strict order:
 <Tab title="TypeScript">
 
 - [OtelTracingMiddleware](./middleware-otel-tracing) via `abxbus/OtelTracingMiddleware`
+
+</Tab>
+<Tab title="Go">
+
+- [OtelTracingMiddleware](./middleware-otel-tracing)
 
 </Tab>
 </Tabs>

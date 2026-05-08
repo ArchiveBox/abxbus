@@ -95,6 +95,61 @@ if (slowCompleted) throw new Error('slow handler should not complete before even
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+package main
+
+import (
+	"context"
+	"time"
+
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+)
+
+func main() {
+	bus := abxbus.NewEventBus("CompletionFirstBus", &abxbus.EventBusOptions{
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
+		EventHandlerCompletion:  abxbus.EventHandlerCompletionFirst,
+	})
+
+	slowStarted := make(chan struct{}, 1)
+	slowCompleted := make(chan struct{}, 1)
+
+	bus.On("CompletionEvent", "slow_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		slowStarted <- struct{}{}
+		time.Sleep(500 * time.Millisecond)
+		slowCompleted <- struct{}{}
+		return "slow", nil
+	}, nil)
+
+	bus.On("CompletionEvent", "fast_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		time.Sleep(10 * time.Millisecond)
+		return "winner", nil
+	}, nil)
+
+	event := bus.Emit(abxbus.NewBaseEvent("CompletionEvent", nil))
+	value, err := event.First(context.Background())
+	if err != nil {
+		panic(err)
+	}
+	if value != "winner" {
+		panic("expected first winner result")
+	}
+	select {
+	case <-slowStarted:
+	default:
+		panic("expected slow handler to start")
+	}
+	select {
+	case <-slowCompleted:
+		panic("slow handler should not complete before event resolves")
+	default:
+	}
+}
+```
+
+</Tab>
 </Tabs>
 
 ## Notes

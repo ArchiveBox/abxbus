@@ -1,6 +1,6 @@
 ---
 title: Development
-description: Local development workflows for both Python and TypeScript.
+description: Local development workflows for Python, TypeScript, Rust, and Go.
 ---
 
 <Tabs>
@@ -65,6 +65,37 @@ prek run --all-files   # run pre-commit hooks on all files manually
 
 pnpm lint
 pnpm test
+```
+
+</Tab>
+<Tab title="Rust">
+
+```bash
+git clone https://github.com/ArchiveBox/abxbus abxbus && cd abxbus
+
+cargo test --manifest-path abxbus-rust/Cargo.toml
+cargo test --manifest-path abxbus-rust/Cargo.toml --test test_cross_runtime_roundtrip -- --test-threads=1
+```
+
+The Rust roundtrip CLI used by cross-runtime tests lives at `abxbus-rust/src/bin/abxbus-rust-roundtrip.rs`.
+
+</Tab>
+<Tab title="Go">
+
+```bash
+git clone https://github.com/ArchiveBox/abxbus abxbus && cd abxbus/abxbus-go
+
+go test ./...
+go run ./tests/roundtrip_cli events input.json output.json
+go run ./tests/roundtrip_cli bus input.json output.json
+```
+
+Cross-runtime Go parity is exercised from the repo root by:
+
+```bash
+cd ..
+uv run pytest tests/test_cross_runtime_roundtrip.py -q
+pnpm --dir abxbus-ts exec node --expose-gc --test --import tsx tests/cross_runtime_roundtrip.test.ts
 ```
 
 </Tab>

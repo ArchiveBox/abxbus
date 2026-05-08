@@ -62,6 +62,30 @@ const result = event.event_result
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+existing, err := bus.Find("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
+	return event.Payload["url"] == url
+}, &abxbus.FindOptions{
+	Past: 10.0,     // look back 10s
+	Future: false,  // do not wait
+})
+if err != nil {
+	panic(err)
+}
+
+event := existing
+if event == nil {
+	event = bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"url": url}))
+}
+if _, err := event.Done(ctx); err != nil {
+	panic(err)
+}
+result, err := event.EventResult(ctx)
+```
+
+</Tab>
 </Tabs>
 
 ## Pattern 2: Coalesce concurrent callers (future-only)
@@ -99,6 +123,30 @@ const inFlight = await bus.find(
 const event = inFlight ?? bus.emit(ScreenshotEvent({ url }))
 await event.done()
 const result = event.event_result
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+inFlight, err := bus.Find("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
+	return event.Payload["url"] == url
+}, &abxbus.FindOptions{
+	Past: false,  // skip history
+	Future: 2.0,  // wait up to 2s for another caller to emit
+})
+if err != nil {
+	panic(err)
+}
+
+event := inFlight
+if event == nil {
+	event = bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"url": url}))
+}
+if _, err := event.Done(ctx); err != nil {
+	panic(err)
+}
+result, err := event.EventResult(ctx)
 ```
 
 </Tab>
@@ -140,6 +188,34 @@ const result = event.event_result
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+sameURL := func(event *abxbus.BaseEvent) bool {
+	return event.Payload["url"] == url
+}
+
+event, err := bus.Find("ScreenshotEvent", sameURL, &abxbus.FindOptions{Past: 10.0, Future: false})
+if err != nil {
+	panic(err)
+}
+if event == nil {
+	event, err = bus.Find("ScreenshotEvent", sameURL, &abxbus.FindOptions{Past: false, Future: 2.0})
+	if err != nil {
+		panic(err)
+	}
+}
+if event == nil {
+	event = bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"url": url}))
+}
+
+if _, err := event.Done(ctx); err != nil {
+	panic(err)
+}
+result, err := event.EventResult(ctx)
+```
+
+</Tab>
 </Tabs>
 
 ## Pattern 4: Keyed helper for repeated use
@@ -176,6 +252,36 @@ const emitDebouncedScreenshot = async (url: string) => {
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+func emitDebouncedScreenshot(ctx context.Context, bus *abxbus.EventBus, url string) (any, error) {
+	sameURL := func(event *abxbus.BaseEvent) bool {
+		return event.Payload["url"] == url
+	}
+
+	event, err := bus.Find("ScreenshotEvent", sameURL, &abxbus.FindOptions{Past: 15.0, Future: false})
+	if err != nil {
+		return nil, err
+	}
+	if event == nil {
+		event, err = bus.Find("ScreenshotEvent", sameURL, &abxbus.FindOptions{Past: false, Future: 3.0})
+		if err != nil {
+			return nil, err
+		}
+	}
+	if event == nil {
+		event = bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"url": url}))
+	}
+
+	if _, err := event.Done(ctx); err != nil {
+		return nil, err
+	}
+	return event.EventResult(ctx)
+}
+```
+
+</Tab>
 </Tabs>
 
 ## Important behavior notes
@@ -184,6 +290,7 @@ const emitDebouncedScreenshot = async (url: string) => {
 - Always await completion after selecting a debounced event:
   - Python: `await event`, then `await event.event_result()`
   - TypeScript: `await event.done()`, then `event.event_result`
+  - Go: `event.Done(ctx)`, then `event.EventResult(ctx)`
 - Debouncing scope depends on your match key (`where` / event-field filters).  
   Use the narrowest key that represents "same work."
 - Debouncing depends on retained history. If history is aggressively trimmed, your `past` window can become less effective.

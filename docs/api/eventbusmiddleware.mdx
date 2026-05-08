@@ -50,6 +50,21 @@ export interface EventBusMiddleware {
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+type EventBusMiddleware interface {
+	OnEventChange(eventbus *abxbus.EventBus, event *abxbus.BaseEvent, status string)
+	OnEventResultChange(eventbus *abxbus.EventBus, event *abxbus.BaseEvent, eventResult *abxbus.EventResult, status string)
+	OnBusHandlersChange(eventbus *abxbus.EventBus, handler *abxbus.EventHandler, registered bool)
+}
+
+type AnalyticsMiddleware struct {
+	abxbus.EventBusMiddlewareBase
+}
+```
+
+</Tab>
 </Tabs>
 
 ## Setup with EventBus
@@ -77,6 +92,19 @@ import type { EventBusMiddleware } from 'abxbus/middlewares'
 class AnalyticsMiddleware implements EventBusMiddleware {}
 
 const bus = new EventBus('AppBus', { middlewares: [AnalyticsMiddleware] })
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+type AnalyticsMiddleware struct {
+	abxbus.EventBusMiddlewareBase
+}
+
+bus := abxbus.NewEventBus("AppBus", &abxbus.EventBusOptions{
+	Middlewares: []abxbus.EventBusMiddleware{&AnalyticsMiddleware{}},
+})
 ```
 
 </Tab>
@@ -153,6 +181,39 @@ const bus = new EventBus('AppBus', { middlewares: [AnalyticsMiddleware] })
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+type AnalyticsMiddleware struct {
+	abxbus.EventBusMiddlewareBase
+}
+
+func (m *AnalyticsMiddleware) OnEventResultChange(
+	eventbus *abxbus.EventBus,
+	event *abxbus.BaseEvent,
+	eventResult *abxbus.EventResult,
+	status string,
+) {
+	if status != "completed" || eventResult.Status == abxbus.EventResultError {
+		return
+	}
+	fmt.Println(event.EventType, eventResult.HandlerName)
+}
+
+func (m *AnalyticsMiddleware) OnBusHandlersChange(eventbus *abxbus.EventBus, handler *abxbus.EventHandler, registered bool) {
+	action := "unregistered"
+	if registered {
+		action = "registered"
+	}
+	fmt.Println(eventbus.Label(), handler.ID, action)
+}
+
+bus := abxbus.NewEventBus("AppBus", &abxbus.EventBusOptions{
+	Middlewares: []abxbus.EventBusMiddleware{&AnalyticsMiddleware{}},
+})
+```
+
+</Tab>
 </Tabs>
 
 ## Built-in implementations
@@ -172,6 +233,13 @@ const bus = new EventBus('AppBus', { middlewares: [AnalyticsMiddleware] })
 <Tab title="TypeScript">
 
 - `OtelTracingMiddleware` from `abxbus/OtelTracingMiddleware`
+
+</Tab>
+<Tab title="Go">
+
+- `OtelTracingMiddleware` via `abxbus.NewOtelTracingMiddleware(...)`
+
+Go intentionally only ships Otel middleware for now; retry/events_suck and the other middleware implementations are deferred.
 
 </Tab>
 </Tabs>

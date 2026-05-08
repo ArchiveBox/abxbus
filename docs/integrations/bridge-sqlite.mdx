@@ -5,6 +5,16 @@ description: Forward events through a local SQLite table with polling.
 
 `SQLiteEventBridge` writes events into a SQLite table and polls for newly inserted rows.
 
+## Go support
+
+<Tabs>
+<Tab title="Go">
+
+`SQLiteEventBridge` is not implemented in `abxbus-go` yet. Use [JSONLEventBridge](./bridge-jsonl) for the currently supported Go bridge.
+
+</Tab>
+</Tabs>
+
 ## Constructor params
 
 - `path`: SQLite database file path
@@ -33,6 +43,14 @@ bridge = SQLiteEventBridge(
 import { SQLiteEventBridge } from 'abxbus/bridges'
 
 const bridge = new SQLiteEventBridge('/tmp/abxbus_events.sqlite3', 'abxbus_events', 0.25, 'SqliteBridge')
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+// SQLiteEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
 ```
 
 </Tab>
@@ -66,6 +84,14 @@ const bridge = new SQLiteEventBridge('/tmp/abxbus_events.sqlite3')
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+// SQLiteEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
 ```
 
 </Tab>

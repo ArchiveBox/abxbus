@@ -74,6 +74,21 @@ const bus = new EventBus('TimeoutBus', {
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+eventTimeout := 30.0
+eventSlowTimeout := 10.0
+handlerSlowTimeout := 3.0
+
+bus := abxbus.NewEventBus("TimeoutBus", &abxbus.EventBusOptions{
+	EventTimeout:            &eventTimeout,
+	EventSlowTimeout:        &eventSlowTimeout,
+	EventHandlerSlowTimeout: &handlerSlowTimeout,
+})
+```
+
+</Tab>
 </Tabs>
 
 ## Event-level overrides
@@ -118,6 +133,24 @@ const event = bus.emit(
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+eventTimeout := 8.0
+eventHandlerTimeout := 2.0
+eventSlowTimeout := 4.0
+eventHandlerSlowTimeout := 1.0
+
+event := abxbus.NewBaseEvent("WorkEvent", nil)
+event.EventTimeout = &eventTimeout
+event.EventHandlerTimeout = &eventHandlerTimeout
+event.EventSlowTimeout = &eventSlowTimeout
+event.EventHandlerSlowTimeout = &eventHandlerSlowTimeout
+
+event = bus.Emit(event)
+```
+
+</Tab>
 </Tabs>
 
 ## Handler-level overrides
@@ -141,6 +174,17 @@ bus.on(WorkEvent, slowHandler, {
   handler_timeout: 1.5,
   handler_slow_timeout: 0.5,
 })
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+entry := bus.On("WorkEvent", "slow_handler", slowHandler, nil)
+handlerTimeout := 1.5
+handlerSlowTimeout := 0.5
+entry.HandlerTimeout = &handlerTimeout
+entry.HandlerSlowTimeout = &handlerSlowTimeout
 ```
 
 </Tab>
@@ -234,6 +278,33 @@ await this.event_bus.locks._runWithHandlerDispatchContext(this, async () => {
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+// EventBus.processEvent(...)
+eventLock := bus.locks.getLockForEvent(event)
+eventLock.Acquire(ctx)
+defer eventLock.Release()
+
+event.markStarted()
+err := runWithTimeout(ctx, resolvedEventTimeout, eventTimeoutError, func(ctx context.Context) error {
+	return event.runHandlers(ctx, bus, handlers, pendingResults, signalFirstHandlerStarted)
+})
+
+// BaseEvent.runHandlers(...) + EventBus.runHandler(...)
+handlerLock := bus.locks.getLockForEventHandler(event, result)
+handlerLock.Acquire(ctx)
+defer handlerLock.Release()
+
+err = runWithTimeout(ctx, resolvedHandlerTimeout, handlerTimeoutError, func(ctx context.Context) error {
+	return bus.locks.runWithHandlerDispatchContext(result, func() error {
+		returnValue, err := handler.Handle(ctx, event)
+		return err
+	})
+})
+```
+
+</Tab>
 </Tabs>
 
 Event-level timeout finalization keeps cancellation semantics explicit:
@@ -243,3 +314,5 @@ Event-level timeout finalization keeps cancellation semantics explicit:
 ## Note on retry
 
 Bus/event timeouts are outer budgets. If you need per-attempt limits for retried handlers, use the `retry` decorator's `timeout` option.
+
+Go does not include the retry decorator yet; for now, wrap retry behavior around your handler body explicitly and keep the bus/event timeout as the outer budget.

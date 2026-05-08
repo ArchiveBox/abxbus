@@ -15,8 +15,9 @@ This is commonly used in:
 
 - Python uses `ContextVars` (`contextvars.ContextVar`).
 - TypeScript (Node/Bun) uses `AsyncLocalStorage`.
+- Go uses `context.Context` values passed through `Done(ctx)`, `EventCompleted(ctx)`, `EventResult(ctx)`, and handler execution.
 
-AbxBus captures ambient context at `emit(...)` time and restores it when handlers execute, so handler code sees the same request-local values.
+Python/TypeScript AbxBus captures ambient context at `emit(...)` time and restores it when handlers execute. Go propagates the explicit `context.Context` passed to the event wait call. In both cases, handler code sees the same request-local values.
 
 ## Why this matters
 
@@ -67,6 +68,38 @@ await requestContext.run({ requestId: 'req-123' }, async () => {
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+)
+
+type contextKey string
+
+func main() {
+	requestIDKey := contextKey("request_id")
+	bus := abxbus.NewEventBus("AppBus", nil)
+
+	bus.On("RequestEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		fmt.Println(ctx.Value(requestIDKey))
+		// req-123
+		return nil, nil
+	}, nil)
+
+	ctx := context.WithValue(context.Background(), requestIDKey, "req-123")
+	if _, err := bus.Emit(abxbus.NewBaseEvent("RequestEvent", nil)).Done(ctx); err != nil {
+		panic(err)
+	}
+}
+```
+
+</Tab>
 </Tabs>
 
 ## Web server style examples
@@ -95,6 +128,18 @@ await requestContext.run({ requestId: req.id }, async () => {
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+// net/http-style shape (conceptual)
+ctx := context.WithValue(req.Context(), requestIDKey, req.Header.Get("x-request-id"))
+if _, err := bus.Emit(abxbus.NewBaseEvent("RequestEvent", nil)).Done(ctx); err != nil {
+	panic(err)
+}
+// handlers can still read ctx.Value(requestIDKey)
+```
+
+</Tab>
 </Tabs>
 
 ## Browser runtime note
@@ -108,3 +153,5 @@ In browsers:
 - pass correlation/tracing fields explicitly in event payloads when you need that metadata.
 
 See [Supported Runtimes](../operations/supported-runtimes) for runtime compatibility details.
+
+Go does not have ambient `AsyncLocalStorage`/`ContextVar` state; pass the request context into the event wait method (`Done`, `EventCompleted`, `EventResult`, or `EventResultsList`) and AbxBus propagates that `context.Context` into handlers and awaited child events.

@@ -1,5 +1,8 @@
+import asyncio
 from collections import deque
 from typing import Any, TypeAlias, cast
+
+import pytest
 
 from abxbus.base_event import BaseEvent, EventResult
 from abxbus.event_bus import EventBus
@@ -8,6 +11,10 @@ from abxbus.helpers import CleanShutdownQueue
 
 class SerializableEvent(BaseEvent[str]):
     value: str = 'payload'
+
+
+class HandlerOrderEvent(BaseEvent[str]):
+    value: str = 'order'
 
 
 JsonShape: TypeAlias = str | list['JsonShape'] | dict[str, 'JsonShape']
@@ -96,6 +103,64 @@ def test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() -> None:
     queue = cast(deque[BaseEvent[Any]], getattr(restored.pending_event_queue, '_queue'))
     assert len(queue) == 1
     assert queue[0] is restored_event
+
+
+@pytest.mark.asyncio
+async def test_eventbus_preserves_handler_registration_order_through_json_and_restore() -> None:
+    bus = EventBus(
+        name='HandlerOrderSourceBus',
+        event_handler_concurrency='serial',
+        event_handler_completion='all',
+        event_handler_detect_file_paths=False,
+    )
+    original_order: list[str] = []
+
+    async def first(event: HandlerOrderEvent) -> str:
+        original_order.append('first')
+        return event.value
+
+    async def second(event: HandlerOrderEvent) -> str:
+        original_order.append('second')
+        return event.value
+
+    first_entry = bus.on(HandlerOrderEvent, first)
+    second_entry = bus.on(HandlerOrderEvent, second)
+    assert first_entry.id is not None
+    assert second_entry.id is not None
+    expected_ids = [first_entry.id, second_entry.id]
+
+    payload = bus.model_dump()
+    assert list(payload['handlers'].keys()) == expected_ids
+    assert payload['handlers_by_key']['HandlerOrderEvent'] == expected_ids
+
+    await asyncio.wait_for(bus.emit(HandlerOrderEvent()), timeout=5)
+    assert original_order == ['first', 'second']
+
+    restored = EventBus.validate(payload)
+    restored_payload = restored.model_dump()
+    assert list(restored.handlers.keys()) == expected_ids
+    assert restored.handlers_by_key['HandlerOrderEvent'] == expected_ids
+    assert list(restored_payload['handlers'].keys()) == expected_ids
+    assert restored_payload['handlers_by_key']['HandlerOrderEvent'] == expected_ids
+
+    restored_order: list[str] = []
+
+    async def restored_first(event: BaseEvent[Any]) -> str:
+        restored_order.append('first')
+        return cast(HandlerOrderEvent, event).value
+
+    async def restored_second(event: BaseEvent[Any]) -> str:
+        restored_order.append('second')
+        return cast(HandlerOrderEvent, event).value
+
+    restored.handlers[first_entry.id].handler = restored_first
+    restored.handlers[second_entry.id].handler = restored_second
+
+    await asyncio.wait_for(restored.emit(HandlerOrderEvent()), timeout=5)
+    assert restored_order == ['first', 'second']
+
+    await bus.stop(clear=True)
+    await restored.stop(clear=True)
 
 
 def test_baseevent_model_validate_roundtrips_runtime_json_shape() -> None:

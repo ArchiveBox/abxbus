@@ -5,6 +5,16 @@ description: Same-machine SPSC IPC bridge over a shared-memory ring buffer.
 
 `TachyonEventBridge` forwards events between processes on the same machine via a single-producer/single-consumer shared-memory ring buffer (Unix-socket handshake, futex-backed wait). Tachyon's SPSC handshake pairs one producer with one consumer, so deployments typically use one bridge instance for sending and a separate one for receiving; calling both `emit()` and `on()` on the same instance creates a self-loop on the same path.
 
+## Go support
+
+<Tabs>
+<Tab title="Go">
+
+`TachyonEventBridge` is not implemented in `abxbus-go` yet. Use [JSONLEventBridge](./bridge-jsonl) for the currently supported Go bridge.
+
+</Tab>
+</Tabs>
+
 ## Optional dependencies
 
 The native Tachyon core requires GCC 14+ or Clang 17+ at install time, so it's exposed as its own extra and intentionally left out of the `bridges` aggregate (which would otherwise fail to install on stock environments). Install it explicitly when you want this bridge.
@@ -32,6 +42,14 @@ npm install @tachyon-ipc/core
 This bridge is Node.js-only. Blocking `listen`/`recv`/`connect` calls run inside `node:worker_threads` so the main event loop stays responsive.
 
 </Tab>
+<Tab title="Go">
+
+```go
+// TachyonEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for the currently supported Go bridge.
+```
+
+</Tab>
 </Tabs>
 
 ## Constructor params
@@ -56,6 +74,14 @@ bridge = TachyonEventBridge('/tmp/abxbus.sock', capacity=1 << 20, name='TachyonB
 import { TachyonEventBridge } from 'abxbus/bridges'
 
 const bridge = new TachyonEventBridge('/tmp/abxbus.sock', 1 << 20, 'TachyonBridge')
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+// TachyonEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
 ```
 
 </Tab>
@@ -99,6 +125,14 @@ inbound.on('*', bus.emit)
 // sender process (separate instance / process)
 const outbound = new TachyonEventBridge('/tmp/abxbus.sock')
 bus.on('*', outbound.emit)
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+// TachyonEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
 ```
 
 </Tab>

@@ -16,7 +16,9 @@
  *   const sender = new TachyonEventBridge('/tmp/abxbus.sock')
  *   await sender.emit(event)
  */
-import { existsSync, unlinkSync } from 'node:fs'
+import { existsSync, symlinkSync, unlinkSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 
 import { BaseEvent } from './BaseEvent.js'
@@ -33,9 +35,42 @@ const TACHYON_LISTEN_TIMEOUT_MS = 5000
 // reserved type id, which lets the consumer break out of its recv loop.
 const TACHYON_SHUTDOWN_TYPE_ID = 0xdead
 const TACHYON_DATA_TYPE_ID = 1
+const requireForTachyon = createRequire(import.meta.url)
+
+const ensureTachyonNativeLayout = (): void => {
+  try {
+    const package_json = requireForTachyon.resolve('@tachyon-ipc/core/package.json')
+    const core_dir = dirname(package_json)
+    const expected_build_dir = join(dirname(core_dir), 'build')
+    const actual_build_dir = join(core_dir, 'build')
+    if (!existsSync(expected_build_dir) && existsSync(actual_build_dir)) {
+      symlinkSync(actual_build_dir, expected_build_dir, 'dir')
+    }
+  } catch {
+    // Optional dependency availability and import errors are reported by the caller.
+  }
+}
+
+const TACHYON_NATIVE_LAYOUT_FIX = `
+const ensureTachyonNativeLayout = () => {
+  try {
+    const fs = require('node:fs')
+    const path = require('node:path')
+    const packageJson = require.resolve('@tachyon-ipc/core/package.json')
+    const coreDir = path.dirname(packageJson)
+    const expectedBuildDir = path.join(path.dirname(coreDir), 'build')
+    const actualBuildDir = path.join(coreDir, 'build')
+    if (!fs.existsSync(expectedBuildDir) && fs.existsSync(actualBuildDir)) {
+      fs.symlinkSync(actualBuildDir, expectedBuildDir, 'dir')
+    }
+  } catch {}
+}
+ensureTachyonNativeLayout()
+`
 
 const TACHYON_LISTENER_WORKER_CODE = `
 const { parentPort, workerData } = require('node:worker_threads')
+${TACHYON_NATIVE_LAYOUT_FIX}
 
 const SHUTDOWN_TYPE_ID = ${TACHYON_SHUTDOWN_TYPE_ID}
 
@@ -95,6 +130,7 @@ main().catch((err) => {
 
 const TACHYON_SENDER_WORKER_CODE = `
 const { parentPort, workerData } = require('node:worker_threads')
+${TACHYON_NATIVE_LAYOUT_FIX}
 
 const SHUTDOWN_TYPE_ID = ${TACHYON_SHUTDOWN_TYPE_ID}
 const DATA_TYPE_ID = ${TACHYON_DATA_TYPE_ID}
@@ -170,6 +206,7 @@ export class TachyonEventBridge {
       throw new Error(`TachyonEventBridge capacity must be a positive power of two, got: ${capacity}`)
     }
     assertOptionalDependencyAvailable('TachyonEventBridge', '@tachyon-ipc/core')
+    ensureTachyonNativeLayout()
 
     this.path = path
     this.capacity = capacity

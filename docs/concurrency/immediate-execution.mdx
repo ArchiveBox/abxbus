@@ -10,6 +10,7 @@ When this happens inside a handler, the child event is processed immediately (qu
 Repository example files:
 - [`examples/immediate_event_processing.py`](https://github.com/ArchiveBox/abxbus/blob/main/examples/immediate_event_processing.py)
 - [`abxbus-ts/examples/immediate_event_processing.ts`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-ts/examples/immediate_event_processing.ts)
+- [`abxbus-go/tests/eventbus_dispatch_parent_tracking_test.go`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-go/tests/eventbus_dispatch_parent_tracking_test.go)
 
 ## Core pattern
 
@@ -59,6 +60,29 @@ bus.on(ParentEvent, async (event) => {
 })
 
 bus.on(ChildEvent, async () => 'child response')
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+bus := abxbus.NewEventBus("RpcBus", nil)
+
+bus.On("ParentEvent", "on_parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	child := event.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
+	if _, err := child.Done(ctx); err != nil {
+		return nil, err
+	}
+	value, err := child.EventResult(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return fmt.Sprintf("parent got: %v", value), nil
+}, nil)
+
+bus.On("ChildEvent", "on_child", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	return "child response", nil
+}, nil)
 ```
 
 </Tab>
@@ -137,9 +161,35 @@ bus.on(ParentEvent, async (event) => {
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+bus := abxbus.NewEventBus("ParallelRpcBus", &abxbus.EventBusOptions{
+	EventConcurrency: abxbus.EventConcurrencyParallel,
+})
+
+bus.On("ParentEvent", "on_parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	children := []*abxbus.BaseEvent{
+		event.Emit(abxbus.NewBaseEvent("SomeChildEvent1", nil)),
+		event.Emit(abxbus.NewBaseEvent("SomeChildEvent2", nil)),
+		event.Emit(abxbus.NewBaseEvent("SomeChildEvent3", nil)),
+	}
+
+	for _, child := range children {
+		if _, err := child.Done(ctx); err != nil {
+			fmt.Printf("child failed: %v\n", err)
+			continue
+		}
+		fmt.Printf("child completed: %s\n", child.EventType)
+	}
+	return nil, nil
+}, nil)
+```
+
+</Tab>
 </Tabs>
 
-Python note: `asyncio.gather(..., return_exceptions=True)` is the closest `Promise.allSettled(...)` equivalent here. Each direct `await` on the emitted child events still uses the immediate queue-jump path.
+Python note: `asyncio.gather(..., return_exceptions=True)` is the closest `Promise.allSettled(...)` equivalent here. In Go, call `Done(ctx)` on each emitted child to take the same immediate queue-jump path.
 
 ## Execution order example
 
@@ -229,6 +279,47 @@ if (!(order.indexOf('parent_end') < order.indexOf('sibling'))) throw new Error('
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+bus := abxbus.NewEventBus("OrderBus", &abxbus.EventBusOptions{
+	EventConcurrency:        abxbus.EventConcurrencyBusSerial,
+	EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+})
+order := []string{}
+
+bus.On("ParentEvent", "on_parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	order = append(order, "parent_start")
+	// Detached top-level work: no parent link is recorded for the sibling.
+	bus.Emit(abxbus.NewBaseEvent("SiblingEvent", nil))
+	child := event.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
+	if _, err := child.Done(ctx); err != nil {
+		return nil, err
+	}
+	order = append(order, "parent_end")
+	return nil, nil
+}, nil)
+
+bus.On("ChildEvent", "on_child", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	order = append(order, "child")
+	return nil, nil
+}, nil)
+
+bus.On("SiblingEvent", "on_sibling", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	order = append(order, "sibling")
+	return nil, nil
+}, nil)
+
+parent := bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
+if _, err := parent.Done(context.Background()); err != nil {
+	panic(err)
+}
+if ok := bus.WaitUntilIdle(nil); !ok {
+	panic("bus did not become idle")
+}
+```
+
+</Tab>
 </Tabs>
 
 ## Interaction with concurrency modes
@@ -246,6 +337,8 @@ if (!(order.indexOf('parent_end') < order.indexOf('sibling'))) throw new Error('
 - In Python, `await child_event.event_completed()` keeps normal queue order (non-queue-jump wait).
 - In TypeScript, use `await child_event.done()`.
 - In TypeScript, `await child_event.eventCompleted()` keeps normal queue order (non-queue-jump wait).
+- In Go, use `childEvent.Done(ctx)` for the immediate path.
+- In Go, use `childEvent.EventCompleted(ctx)` to keep normal queue order.
 
 ## Related pages
 

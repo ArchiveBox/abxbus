@@ -14,6 +14,8 @@ const tests_dir = dirname(fileURLToPath(import.meta.url))
 const ts_root = resolve(tests_dir, '..')
 const repo_root = resolve(ts_root, '..')
 const PROCESS_TIMEOUT_MS = 30_000
+const RUST_PROCESS_TIMEOUT_MS = 120_000
+const GO_PROCESS_TIMEOUT_MS = 120_000
 const EVENT_WAIT_TIMEOUT_MS = 15_000
 
 const jsonSafe = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
@@ -340,12 +342,12 @@ const buildRoundtripCases = (): ResultSemanticsCase[] => {
   ]
 }
 
-const runCommand = (cmd: string, args: string[], cwd = repo_root): ReturnType<typeof spawnSync> =>
+const runCommand = (cmd: string, args: string[], cwd = repo_root, timeout_ms = PROCESS_TIMEOUT_MS): ReturnType<typeof spawnSync> =>
   spawnSync(cmd, args, {
     cwd,
     env: process.env,
     encoding: 'utf8',
-    timeout: PROCESS_TIMEOUT_MS,
+    timeout: timeout_ms,
     maxBuffer: 10 * 1024 * 1024,
   })
 
@@ -539,6 +541,120 @@ with open(output_path, 'w', encoding='utf-8') as f:
   }
 }
 
+const runRustRoundtrip = <T extends Array<Record<string, unknown>> | Record<string, unknown>>(mode: 'events' | 'bus', payload: T): T => {
+  const cargo_probe = runCommand('cargo', ['--version'])
+  assertProcessSucceeded(cargo_probe, 'cargo probe')
+
+  const temp_dir = mkdtempSync(join(tmpdir(), `abxbus-ts-${mode}-to-rust-`))
+  const input_path = join(temp_dir, `ts_${mode}.json`)
+  const output_path = join(temp_dir, `rust_${mode}.json`)
+  const rust_manifest = join(repo_root, 'abxbus-rust', 'Cargo.toml')
+
+  try {
+    writeFileSync(input_path, JSON.stringify(payload, null, 2), 'utf8')
+    const proc = runCommand(
+      'cargo',
+      ['run', '--quiet', '--manifest-path', rust_manifest, '--bin', 'abxbus-rust-roundtrip', '--', mode, input_path, output_path],
+      repo_root,
+      RUST_PROCESS_TIMEOUT_MS
+    )
+
+    assertProcessSucceeded(proc, `rust ${mode} roundtrip`)
+    assert.ok(existsSync(output_path), `rust ${mode} roundtrip did not produce output payload`)
+
+    return JSON.parse(readFileSync(output_path, 'utf8')) as T
+  } finally {
+    rmSync(temp_dir, { recursive: true, force: true })
+  }
+}
+
+const runGoRoundtrip = <T extends Array<Record<string, unknown>> | Record<string, unknown>>(mode: 'events' | 'bus', payload: T): T => {
+  const go_probe = runCommand('go', ['version'])
+  assertProcessSucceeded(go_probe, 'go probe')
+
+  const temp_dir = mkdtempSync(join(tmpdir(), `abxbus-ts-${mode}-to-go-`))
+  const input_path = join(temp_dir, `ts_${mode}.json`)
+  const output_path = join(temp_dir, `go_${mode}.json`)
+  const go_root = join(repo_root, 'abxbus-go')
+
+  try {
+    writeFileSync(input_path, JSON.stringify(payload, null, 2), 'utf8')
+    const proc = runCommand('go', ['run', './tests/roundtrip_cli', mode, input_path, output_path], go_root, GO_PROCESS_TIMEOUT_MS)
+
+    assertProcessSucceeded(proc, `go ${mode} roundtrip`)
+    assert.ok(existsSync(output_path), `go ${mode} roundtrip did not produce output payload`)
+
+    return JSON.parse(readFileSync(output_path, 'utf8')) as T
+  } finally {
+    rmSync(temp_dir, { recursive: true, force: true })
+  }
+}
+
+const assertTsSchemaEnforcementAfterRuntimeReload = async (
+  runtime_roundtripped: Array<Record<string, unknown>>,
+  wrong_bus_name: string,
+  right_bus_name: string
+): Promise<void> => {
+  const screenshot_payload = runtime_roundtripped.find((event) => event.event_type === 'TsPy_ScreenshotResultEvent')
+  assert.ok(screenshot_payload, 'missing TsPy_ScreenshotResultEvent in roundtrip payload')
+  assert.equal(typeof screenshot_payload.event_result_type, 'object')
+
+  const wrong_bus = new EventBus(wrong_bus_name)
+  wrong_bus.on('TsPy_ScreenshotResultEvent', () => ({
+    image_url: 123,
+    width: '1920',
+    height: 1080,
+    tags: ['hero', 'dashboard'],
+    is_animated: 'false',
+    confidence_scores: [0.95, 0.89],
+    metadata: { score: 0.99 },
+    regions: [{ id: '98f51f1d-b10a-7cd9-8ee6-cb706153f717', label: 'face', score: 0.9, visible: true }],
+  }))
+  const wrong_event = BaseEvent.fromJSON(screenshot_payload)
+  assert.equal(typeof (wrong_event.event_result_type as { safeParse?: unknown } | undefined)?.safeParse, 'function')
+  const wrong_dispatched = wrong_bus.emit(wrong_event)
+  await runWithTimeout(wrong_dispatched.done({ raise_if_any: false }), EVENT_WAIT_TIMEOUT_MS, 'wrong-shape event completion')
+  const wrong_result = Array.from(wrong_dispatched.event_results.values())[0]
+  assert.equal(wrong_result.status, 'error')
+  assert.equal((wrong_result.error as { name?: string } | undefined)?.name, 'EventHandlerResultSchemaError')
+  wrong_bus.destroy()
+
+  const right_bus = new EventBus(right_bus_name)
+  right_bus.on('TsPy_ScreenshotResultEvent', () => ({
+    image_url: 'https://img.local/1.png',
+    width: 1920,
+    height: 1080,
+    tags: ['hero', 'dashboard'],
+    is_animated: false,
+    confidence_scores: [0.95, 0.89],
+    metadata: { score: 0.99, variance: 0.01 },
+    regions: [
+      { id: '98f51f1d-b10a-7cd9-8ee6-cb706153f717', label: 'face', score: 0.9, visible: true },
+      { id: '5f234e9d-29e9-7921-8cf2-2a65f6ba3bdd', label: 'button', score: 0.7, visible: false },
+    ],
+  }))
+  const right_event = BaseEvent.fromJSON(screenshot_payload)
+  assert.equal(typeof (right_event.event_result_type as { safeParse?: unknown } | undefined)?.safeParse, 'function')
+  const right_dispatched = right_bus.emit(right_event)
+  await runWithTimeout(right_dispatched.done(), EVENT_WAIT_TIMEOUT_MS, 'right-shape event completion')
+  const right_result = Array.from(right_dispatched.event_results.values())[0]
+  assert.equal(right_result.status, 'completed')
+  assert.deepEqual(right_result.result, {
+    image_url: 'https://img.local/1.png',
+    width: 1920,
+    height: 1080,
+    tags: ['hero', 'dashboard'],
+    is_animated: false,
+    confidence_scores: [0.95, 0.89],
+    metadata: { score: 0.99, variance: 0.01 },
+    regions: [
+      { id: '98f51f1d-b10a-7cd9-8ee6-cb706153f717', label: 'face', score: 0.9, visible: true },
+      { id: '5f234e9d-29e9-7921-8cf2-2a65f6ba3bdd', label: 'button', score: 0.7, visible: false },
+    ],
+  })
+  right_bus.destroy()
+}
+
 test('ts_to_python_roundtrip preserves event fields and result type semantics', async () => {
   const python_runner = resolvePython()
   assert.ok(python_runner, 'python is required for ts<->python roundtrip tests')
@@ -605,64 +721,138 @@ test('ts_to_python_roundtrip preserves event fields and result type semantics', 
     }
   }
 
-  const screenshot_payload = python_roundtripped.find((event) => event.event_type === 'TsPy_ScreenshotResultEvent')
-  assert.ok(screenshot_payload, 'missing TsPy_ScreenshotResultEvent in roundtrip payload')
-  assert.equal(typeof screenshot_payload.event_result_type, 'object')
+  await assertTsSchemaEnforcementAfterRuntimeReload(python_roundtripped, 'TsPyTsWrongShape', 'TsPyTsRightShape')
+})
 
-  const wrong_bus = new EventBus('TsPyTsWrongShape')
-  wrong_bus.on('TsPy_ScreenshotResultEvent', () => ({
-    image_url: 123,
-    width: '1920',
-    height: 1080,
-    tags: ['hero', 'dashboard'],
-    is_animated: 'false',
-    confidence_scores: [0.95, 0.89],
-    metadata: { score: 0.99 },
-    regions: [{ id: '98f51f1d-b10a-7cd9-8ee6-cb706153f717', label: 'face', score: 0.9, visible: true }],
-  }))
-  const wrong_event = BaseEvent.fromJSON(screenshot_payload)
-  assert.equal(typeof (wrong_event.event_result_type as { safeParse?: unknown } | undefined)?.safeParse, 'function')
-  const wrong_dispatched = wrong_bus.emit(wrong_event)
-  await runWithTimeout(wrong_dispatched.done({ raise_if_any: false }), EVENT_WAIT_TIMEOUT_MS, 'wrong-shape event completion')
-  const wrong_result = Array.from(wrong_dispatched.event_results.values())[0]
-  assert.equal(wrong_result.status, 'error')
-  assert.equal((wrong_result.error as { name?: string } | undefined)?.name, 'EventHandlerResultSchemaError')
-  wrong_bus.destroy()
+test('ts_to_rust_roundtrip preserves event fields and result type semantics', async () => {
+  const roundtrip_cases = buildRoundtripCases()
+  const events = roundtrip_cases.map((entry) => entry.event)
+  const roundtrip_cases_by_type = new Map(roundtrip_cases.map((entry) => [entry.event.event_type, entry]))
+  const ts_dumped = events.map((event) => jsonSafe(event.toJSON()))
 
-  const right_bus = new EventBus('TsPyTsRightShape')
-  right_bus.on('TsPy_ScreenshotResultEvent', () => ({
-    image_url: 'https://img.local/1.png',
-    width: 1920,
-    height: 1080,
-    tags: ['hero', 'dashboard'],
-    is_animated: false,
-    confidence_scores: [0.95, 0.89],
-    metadata: { score: 0.99, variance: 0.01 },
-    regions: [
-      { id: '98f51f1d-b10a-7cd9-8ee6-cb706153f717', label: 'face', score: 0.9, visible: true },
-      { id: '5f234e9d-29e9-7921-8cf2-2a65f6ba3bdd', label: 'button', score: 0.7, visible: false },
-    ],
-  }))
-  const right_event = BaseEvent.fromJSON(screenshot_payload)
-  assert.equal(typeof (right_event.event_result_type as { safeParse?: unknown } | undefined)?.safeParse, 'function')
-  const right_dispatched = right_bus.emit(right_event)
-  await runWithTimeout(right_dispatched.done(), EVENT_WAIT_TIMEOUT_MS, 'right-shape event completion')
-  const right_result = Array.from(right_dispatched.event_results.values())[0]
-  assert.equal(right_result.status, 'completed')
-  assert.deepEqual(right_result.result, {
-    image_url: 'https://img.local/1.png',
-    width: 1920,
-    height: 1080,
-    tags: ['hero', 'dashboard'],
-    is_animated: false,
-    confidence_scores: [0.95, 0.89],
-    metadata: { score: 0.99, variance: 0.01 },
-    regions: [
-      { id: '98f51f1d-b10a-7cd9-8ee6-cb706153f717', label: 'face', score: 0.9, visible: true },
-      { id: '5f234e9d-29e9-7921-8cf2-2a65f6ba3bdd', label: 'button', score: 0.7, visible: false },
-    ],
-  })
-  right_bus.destroy()
+  for (const event_dump of ts_dumped) {
+    assert.ok('event_result_type' in event_dump)
+    assert.equal(typeof event_dump.event_result_type, 'object')
+  }
+
+  const rust_roundtripped = runRustRoundtrip('events', ts_dumped)
+  assert.equal(rust_roundtripped.length, ts_dumped.length)
+
+  for (let i = 0; i < ts_dumped.length; i += 1) {
+    const original = ts_dumped[i]
+    const rust_event = rust_roundtripped[i]
+
+    const event_type = String(original.event_type)
+    const semantics_case = roundtrip_cases_by_type.get(event_type)
+    assert.ok(semantics_case, `missing semantics case for event_type=${event_type}`)
+
+    assertJsonShapeEqual(rust_event, original, `rust roundtrip ${event_type}`)
+
+    for (const [key, value] of Object.entries(original)) {
+      assert.ok(key in rust_event, `missing key after rust roundtrip: ${key}`)
+      if (key === 'event_result_type') {
+        assert.equal(typeof rust_event[key], 'object')
+        assertSchemaSemanticsEqual(
+          value,
+          rust_event[key],
+          semantics_case.valid_results,
+          semantics_case.invalid_results,
+          `rust roundtrip ${event_type}`
+        )
+        continue
+      }
+      assertFieldEqual(key, rust_event[key], value, 'field changed after rust roundtrip')
+    }
+
+    const restored = BaseEvent.fromJSON(rust_event)
+    const restored_dump = jsonSafe(restored.toJSON())
+
+    assertJsonShapeEqual(restored_dump, original, `ts reload ${event_type}`)
+
+    for (const [key, value] of Object.entries(original)) {
+      assert.ok(key in restored_dump, `missing key after ts reload: ${key}`)
+      if (key === 'event_result_type') {
+        assert.equal(typeof restored_dump[key], 'object')
+        assertSchemaSemanticsEqual(
+          value,
+          restored_dump[key],
+          semantics_case.valid_results,
+          semantics_case.invalid_results,
+          `ts reload ${event_type}`
+        )
+        continue
+      }
+      assertFieldEqual(key, restored_dump[key], value, 'field changed after ts reload')
+    }
+  }
+
+  await assertTsSchemaEnforcementAfterRuntimeReload(rust_roundtripped, 'TsRustTsWrongShape', 'TsRustTsRightShape')
+})
+
+test('ts_to_go_roundtrip preserves event fields and result type semantics', async () => {
+  const roundtrip_cases = buildRoundtripCases()
+  const events = roundtrip_cases.map((entry) => entry.event)
+  const roundtrip_cases_by_type = new Map(roundtrip_cases.map((entry) => [entry.event.event_type, entry]))
+  const ts_dumped = events.map((event) => jsonSafe(event.toJSON()))
+
+  for (const event_dump of ts_dumped) {
+    assert.ok('event_result_type' in event_dump)
+    assert.equal(typeof event_dump.event_result_type, 'object')
+  }
+
+  const go_roundtripped = runGoRoundtrip('events', ts_dumped)
+  assert.equal(go_roundtripped.length, ts_dumped.length)
+
+  for (let i = 0; i < ts_dumped.length; i += 1) {
+    const original = ts_dumped[i]
+    const go_event = go_roundtripped[i]
+
+    const event_type = String(original.event_type)
+    const semantics_case = roundtrip_cases_by_type.get(event_type)
+    assert.ok(semantics_case, `missing semantics case for event_type=${event_type}`)
+
+    assertJsonShapeEqual(go_event, original, `go roundtrip ${event_type}`)
+
+    for (const [key, value] of Object.entries(original)) {
+      assert.ok(key in go_event, `missing key after go roundtrip: ${key}`)
+      if (key === 'event_result_type') {
+        assert.equal(typeof go_event[key], 'object')
+        assert.deepEqual(go_event[key], value, `event_result_type schema changed after go roundtrip: ${event_type}`)
+        assertSchemaSemanticsEqual(
+          value,
+          go_event[key],
+          semantics_case.valid_results,
+          semantics_case.invalid_results,
+          `go roundtrip ${event_type}`
+        )
+        continue
+      }
+      assertFieldEqual(key, go_event[key], value, 'field changed after go roundtrip')
+    }
+
+    const restored = BaseEvent.fromJSON(go_event)
+    const restored_dump = jsonSafe(restored.toJSON())
+
+    assertJsonShapeEqual(restored_dump, original, `ts reload ${event_type}`)
+
+    for (const [key, value] of Object.entries(original)) {
+      assert.ok(key in restored_dump, `missing key after ts reload: ${key}`)
+      if (key === 'event_result_type') {
+        assert.equal(typeof restored_dump[key], 'object')
+        assertSchemaSemanticsEqual(
+          value,
+          restored_dump[key],
+          semantics_case.valid_results,
+          semantics_case.invalid_results,
+          `ts reload ${event_type}`
+        )
+        continue
+      }
+      assertFieldEqual(key, restored_dump[key], value, 'field changed after ts reload')
+    }
+  }
+
+  await assertTsSchemaEnforcementAfterRuntimeReload(go_roundtripped, 'TsGoTsWrongShape', 'TsGoTsRightShape')
 })
 
 test('ts -> python -> ts bus roundtrip rehydrates and resumes pending queue', async () => {
@@ -699,6 +889,190 @@ test('ts -> python -> ts bus roundtrip rehydrates and resumes pending queue', as
   const source_dump = source_bus.toJSON()
   const py_roundtripped = runPythonBusRoundtrip(python_runner, source_dump)
   const restored = EventBus.fromJSON(py_roundtripped)
+  const restored_dump = restored.toJSON()
+
+  assert.deepEqual(Object.keys(restored_dump.handlers), Object.keys(source_dump.handlers))
+  for (const [handler_id, handler_payload] of Object.entries(source_dump.handlers as Record<string, Record<string, unknown>>)) {
+    const restored_handler = (restored_dump.handlers as Record<string, Record<string, unknown>>)[handler_id]
+    assert.ok(restored_handler, `missing handler ${handler_id}`)
+    assert.equal(restored_handler.eventbus_id, handler_payload.eventbus_id)
+    assert.equal(restored_handler.eventbus_name, handler_payload.eventbus_name)
+    assert.equal(restored_handler.event_pattern, handler_payload.event_pattern)
+  }
+  assert.deepEqual(restored_dump.handlers_by_key, source_dump.handlers_by_key)
+  assert.deepEqual(restored_dump.pending_event_queue, source_dump.pending_event_queue)
+  assert.deepEqual(Object.keys(restored_dump.event_history), Object.keys(source_dump.event_history))
+
+  const restored_event_one = restored.event_history.get(event_one.event_id)
+  assert.ok(restored_event_one)
+  const preseeded = Array.from(restored_event_one!.event_results.values()).find((result) => result.result === 'seeded')
+  assert.ok(preseeded)
+  assert.equal(preseeded!.status, 'completed')
+  assert.equal(preseeded!.result, 'seeded')
+  assert.equal(preseeded!.handler, restored.handlers.get(preseeded!.handler_id))
+
+  const run_order: string[] = []
+  const restored_handler_one = restored.handlers.get(handler_one.id)
+  const restored_handler_two = restored.handlers.get(handler_two.id)
+  assert.ok(restored_handler_one)
+  assert.ok(restored_handler_two)
+  const restored_handler_one_fn = (event: BaseEvent): string => {
+    const label = Reflect.get(event, 'label')
+    run_order.push(`h1:${String(label)}`)
+    return `h1:${String(label)}`
+  }
+  const restored_handler_two_fn = (event: BaseEvent): string => {
+    const label = Reflect.get(event, 'label')
+    run_order.push(`h2:${String(label)}`)
+    return `h2:${String(label)}`
+  }
+  restored_handler_one.handler = restored_handler_one_fn
+  restored_handler_two.handler = restored_handler_two_fn
+
+  const trigger = restored.emit(ResumeEvent({ label: 'e3' }))
+  await runWithTimeout(trigger.done(), EVENT_WAIT_TIMEOUT_MS, 'bus resume completion')
+
+  const done_one = restored.event_history.get(event_one.event_id)
+  const done_two = restored.event_history.get(event_two.event_id)
+  const done_three = restored.event_history.get(trigger.event_id)
+  assert.equal(done_three?.event_status, 'completed')
+  assert.equal(restored.pending_event_queue.length, 0)
+  assert.ok(Array.from(done_one?.event_results.values() ?? []).every((result) => result.status === 'completed'))
+  assert.ok(Array.from(done_two?.event_results.values() ?? []).every((result) => result.status === 'completed'))
+  assert.equal(done_one?.event_results.get(handler_one.id)?.result, 'seeded')
+  assert.equal(done_one?.event_results.get(handler_two.id)?.result, 'h2:e1')
+  assert.equal(done_two?.event_results.get(handler_one.id)?.result, 'h1:e2')
+  assert.equal(done_two?.event_results.get(handler_two.id)?.result, 'h2:e2')
+  assert.equal(done_three?.event_results.get(handler_one.id)?.result, 'h1:e3')
+  assert.equal(done_three?.event_results.get(handler_two.id)?.result, 'h2:e3')
+  assert.deepEqual(run_order, ['h2:e1', 'h1:e2', 'h2:e2', 'h1:e3', 'h2:e3'])
+
+  source_bus.destroy()
+  restored.destroy()
+})
+
+test('ts -> rust -> ts bus roundtrip rehydrates and resumes pending queue', async () => {
+  const ResumeEvent = BaseEvent.extend('TsRustBusResumeEvent', {
+    label: z.string(),
+    event_result_type: z.string(),
+  })
+
+  const source_bus = new EventBus('TsRustBusSource', {
+    id: '018f8e40-1234-7000-8000-00000000aa12',
+    event_handler_detect_file_paths: false,
+    event_handler_concurrency: 'serial',
+    event_handler_completion: 'all',
+  })
+
+  const handler_one = source_bus.on(ResumeEvent, (event) => `h1:${(event as unknown as { label: string }).label}`)
+  const handler_two = source_bus.on(ResumeEvent, (event) => `h2:${(event as unknown as { label: string }).label}`)
+
+  const event_one = ResumeEvent({ label: 'e1' })
+  const event_two = ResumeEvent({ label: 'e2' })
+
+  const seeded = event_one.eventResultUpdate(handler_one, { eventbus: source_bus, status: 'pending' })
+  event_one.eventResultUpdate(handler_two, { eventbus: source_bus, status: 'pending' })
+  seeded.update({ status: 'completed', result: 'seeded' })
+
+  source_bus.event_history.set(event_one.event_id, event_one)
+  source_bus.event_history.set(event_two.event_id, event_two)
+  source_bus.pending_event_queue = [event_one, event_two]
+
+  const source_dump = source_bus.toJSON()
+  const rust_roundtripped = runRustRoundtrip('bus', source_dump)
+  const restored = EventBus.fromJSON(rust_roundtripped)
+  const restored_dump = restored.toJSON()
+
+  assert.deepEqual(Object.keys(restored_dump.handlers), Object.keys(source_dump.handlers))
+  for (const [handler_id, handler_payload] of Object.entries(source_dump.handlers as Record<string, Record<string, unknown>>)) {
+    const restored_handler = (restored_dump.handlers as Record<string, Record<string, unknown>>)[handler_id]
+    assert.ok(restored_handler, `missing handler ${handler_id}`)
+    assert.equal(restored_handler.eventbus_id, handler_payload.eventbus_id)
+    assert.equal(restored_handler.eventbus_name, handler_payload.eventbus_name)
+    assert.equal(restored_handler.event_pattern, handler_payload.event_pattern)
+  }
+  assert.deepEqual(restored_dump.handlers_by_key, source_dump.handlers_by_key)
+  assert.deepEqual(restored_dump.pending_event_queue, source_dump.pending_event_queue)
+  assert.deepEqual(Object.keys(restored_dump.event_history), Object.keys(source_dump.event_history))
+
+  const restored_event_one = restored.event_history.get(event_one.event_id)
+  assert.ok(restored_event_one)
+  const preseeded = Array.from(restored_event_one!.event_results.values()).find((result) => result.result === 'seeded')
+  assert.ok(preseeded)
+  assert.equal(preseeded!.status, 'completed')
+  assert.equal(preseeded!.result, 'seeded')
+  assert.equal(preseeded!.handler, restored.handlers.get(preseeded!.handler_id))
+
+  const run_order: string[] = []
+  const restored_handler_one = restored.handlers.get(handler_one.id)
+  const restored_handler_two = restored.handlers.get(handler_two.id)
+  assert.ok(restored_handler_one)
+  assert.ok(restored_handler_two)
+  const restored_handler_one_fn = (event: BaseEvent): string => {
+    const label = Reflect.get(event, 'label')
+    run_order.push(`h1:${String(label)}`)
+    return `h1:${String(label)}`
+  }
+  const restored_handler_two_fn = (event: BaseEvent): string => {
+    const label = Reflect.get(event, 'label')
+    run_order.push(`h2:${String(label)}`)
+    return `h2:${String(label)}`
+  }
+  restored_handler_one.handler = restored_handler_one_fn
+  restored_handler_two.handler = restored_handler_two_fn
+
+  const trigger = restored.emit(ResumeEvent({ label: 'e3' }))
+  await runWithTimeout(trigger.done(), EVENT_WAIT_TIMEOUT_MS, 'bus resume completion')
+
+  const done_one = restored.event_history.get(event_one.event_id)
+  const done_two = restored.event_history.get(event_two.event_id)
+  const done_three = restored.event_history.get(trigger.event_id)
+  assert.equal(done_three?.event_status, 'completed')
+  assert.equal(restored.pending_event_queue.length, 0)
+  assert.ok(Array.from(done_one?.event_results.values() ?? []).every((result) => result.status === 'completed'))
+  assert.ok(Array.from(done_two?.event_results.values() ?? []).every((result) => result.status === 'completed'))
+  assert.equal(done_one?.event_results.get(handler_one.id)?.result, 'seeded')
+  assert.equal(done_one?.event_results.get(handler_two.id)?.result, 'h2:e1')
+  assert.equal(done_two?.event_results.get(handler_one.id)?.result, 'h1:e2')
+  assert.equal(done_two?.event_results.get(handler_two.id)?.result, 'h2:e2')
+  assert.equal(done_three?.event_results.get(handler_one.id)?.result, 'h1:e3')
+  assert.equal(done_three?.event_results.get(handler_two.id)?.result, 'h2:e3')
+  assert.deepEqual(run_order, ['h2:e1', 'h1:e2', 'h2:e2', 'h1:e3', 'h2:e3'])
+
+  source_bus.destroy()
+  restored.destroy()
+})
+
+test('ts -> go -> ts bus roundtrip rehydrates and resumes pending queue', async () => {
+  const ResumeEvent = BaseEvent.extend('TsGoBusResumeEvent', {
+    label: z.string(),
+    event_result_type: z.string(),
+  })
+
+  const source_bus = new EventBus('TsGoBusSource', {
+    id: '018f8e40-1234-7000-8000-00000000aa13',
+    event_handler_detect_file_paths: false,
+    event_handler_concurrency: 'serial',
+    event_handler_completion: 'all',
+  })
+
+  const handler_one = source_bus.on(ResumeEvent, (event) => `h1:${(event as unknown as { label: string }).label}`)
+  const handler_two = source_bus.on(ResumeEvent, (event) => `h2:${(event as unknown as { label: string }).label}`)
+
+  const event_one = ResumeEvent({ label: 'e1' })
+  const event_two = ResumeEvent({ label: 'e2' })
+
+  const seeded = event_one.eventResultUpdate(handler_one, { eventbus: source_bus, status: 'pending' })
+  event_one.eventResultUpdate(handler_two, { eventbus: source_bus, status: 'pending' })
+  seeded.update({ status: 'completed', result: 'seeded' })
+
+  source_bus.event_history.set(event_one.event_id, event_one)
+  source_bus.event_history.set(event_two.event_id, event_two)
+  source_bus.pending_event_queue = [event_one, event_two]
+
+  const source_dump = source_bus.toJSON()
+  const go_roundtripped = runGoRoundtrip('bus', source_dump)
+  const restored = EventBus.fromJSON(go_roundtripped)
   const restored_dump = restored.toJSON()
 
   assert.deepEqual(Object.keys(restored_dump.handlers), Object.keys(source_dump.handlers))

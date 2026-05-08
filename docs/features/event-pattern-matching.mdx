@@ -14,12 +14,14 @@ Both accept the same pattern forms:
 - string event type name
 - `'*'` wildcard (match everything)
 
+Go does not have runtime event classes in the same way Python and TypeScript do. It uses string event type names for registration/lookup, plus `OnTyped[...]` and typed constructors when you want static payload/result typing.
+
 ## Supported pattern forms
 
 | Pattern | Matches | Best for |
 | --- | --- | --- |
 | Event class (`UserActionEvent`) | One concrete event type | Strong typing end-to-end |
-| String (`'UserActionEvent'`) | Events by type name | Dynamic routing/config-driven keys |
+| String (`'UserActionEvent'`) | Events by type name | Dynamic routing/config-driven keys; primary Go pattern form |
 | `'*'` | All event types | Global observers, logging, bridges |
 
 ## `.on(...)` and `.find(...)` use the same pattern model
@@ -105,6 +107,72 @@ const wildcardMatch = await bus.find('*', { future: 5 }) // BaseEvent | null
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+)
+
+type UserActionPayload struct {
+	Action string `json:"action"`
+}
+
+func main() {
+	bus := abxbus.NewEventBus("AppBus", nil)
+
+	abxbus.OnTyped[UserActionPayload, string](
+		bus,
+		"UserActionEvent",
+		"on_typed",
+		func(ctx context.Context, payload UserActionPayload) (string, error) {
+			return fmt.Sprintf("action:%s", payload.Action), nil
+		},
+		nil,
+	)
+
+	bus.On("UserActionEvent", "on_by_name", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		fmt.Println("by-name", event.EventType, event.Payload["action"])
+		// by-name UserActionEvent click
+		return nil, nil
+	}, nil)
+
+	bus.On("*", "on_any", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		fmt.Println("wildcard", event.EventType)
+		// wildcard UserActionEvent
+		return nil, nil
+	}, nil)
+
+	event, err := abxbus.NewTypedEventWithResult[UserActionPayload, string](
+		"UserActionEvent",
+		UserActionPayload{Action: "click"},
+	)
+	if err != nil {
+		panic(err)
+	}
+	_, err = bus.Emit(event).EventResult(context.Background())
+	if err != nil {
+		panic(err)
+	}
+
+	namedMatch, err := bus.Find("UserActionEvent", nil, nil)
+	if err != nil {
+		panic(err)
+	}
+	wildcardMatch, err := bus.Find("*", nil, &abxbus.FindOptions{Future: 5.0})
+	if err != nil {
+		panic(err)
+	}
+	_, _ = namedMatch, wildcardMatch
+}
+```
+
+</Tab>
 </Tabs>
 
 ## Why event classes are preferred for typing
@@ -119,5 +187,6 @@ String keys and `'*'` are intentionally looser:
 
 - Python: treat as `BaseEvent[Any]`
 - TypeScript: typed as base `BaseEvent`/unknown-oriented handler return checks
+- Go: typed handlers use `OnTyped[...]`; string/wildcard handlers receive `*BaseEvent`
 
 Use string/wildcard patterns when you need dynamic behavior. Use classes whenever you want strict payload/result type hints through handlers and lookups.

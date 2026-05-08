@@ -7,8 +7,9 @@ description: Emit OpenTelemetry spans for events and handlers.
 
 ## Constructor params
 
-- `tracer`: optional explicit OpenTelemetry tracer instance
-- `trace_api`: optional explicit `opentelemetry.trace` module
+- `tracer` / `Tracer`: optional explicit OpenTelemetry tracer instance.
+- `trace_api`: optional explicit `opentelemetry.trace` module in Python/TypeScript.
+- `root_span_attributes` / `RootSpanAttributes`: attributes added to top-level event spans.
 
 ## Setup with EventBus
 
@@ -34,6 +35,17 @@ import { OtelTracingMiddleware } from 'abxbus/OtelTracingMiddleware'
 
 const bus = new EventBus('AppBus', {
   middlewares: [new OtelTracingMiddleware()],
+})
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+bus := abxbus.NewEventBus("AppBus", &abxbus.EventBusOptions{
+	Middlewares: []abxbus.EventBusMiddleware{
+		abxbus.NewOtelTracingMiddleware(nil),
+	},
 })
 ```
 

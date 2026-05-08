@@ -53,6 +53,20 @@ const updated = await client.update({ id: id ?? 'fallback-id', age: 46 }, { sour
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+// events_suck is not implemented in abxbus-go yet.
+//
+// Use the core EventBus APIs directly:
+event := bus.Emit(abxbus.NewBaseEvent("CreateUserEvent", map[string]any{
+	"name": "bob",
+	"age": 45,
+}))
+userID, err := event.EventResult(ctx)
+```
+
+</Tab>
 </Tabs>
 
 ### Minimal end-to-end `wrap(...)` wiring
@@ -153,6 +167,14 @@ const updated = await client.update({ id: user_id ?? 'fallback-id', age: 46 }, {
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+// events_suck.wrap/make_events/make_handler are not implemented in Go yet.
+// For typed event APIs, use OnTyped[...] and NewTypedEventWithResult[...].
+```
+
+</Tab>
 </Tabs>
 
 Related docs:
@@ -215,6 +237,25 @@ bus.on(CheckoutEvent, async (event) => {
 })
 
 bus.on(ChargeCardEvent, async (event) => `receipt-${event.order_id}`)
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+bus.On("CheckoutEvent", "on_checkout", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	orderID, _ := event.Payload["order_id"].(string)
+	child := event.Emit(abxbus.NewBaseEvent("ChargeCardEvent", map[string]any{"order_id": orderID}))
+	if _, err := child.Done(ctx); err != nil {
+		return nil, err
+	}
+	return child.EventResult(ctx)
+}, nil)
+
+bus.On("ChargeCardEvent", "on_charge", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	orderID, _ := event.Payload["order_id"].(string)
+	return "receipt-" + orderID, nil
+}, nil)
 ```
 
 </Tab>

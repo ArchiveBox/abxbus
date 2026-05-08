@@ -5,7 +5,7 @@ description: EventHistory ordered store API for lookup, retention, and trimming.
 
 `EventHistory` is the ordered event store owned by each `EventBus` as `bus.event_history`.
 
-It is the canonical history backend in both runtimes and exposes mapping-style access (`{event_id: event}`), lookup (`find`), and retention controls.
+It is the canonical history backend in each runtime and exposes ordered access, lookup (`find`), and retention controls.
 
 ## Common fields
 
@@ -15,7 +15,7 @@ It is the canonical history backend in both runtimes and exposes mapping-style a
 
 ## Mapping interface
 
-`EventHistory` behaves like an ordered mapping in both runtimes.
+`EventHistory` behaves like an ordered mapping in Python/TypeScript; Go exposes equivalent explicit methods.
 
 <Tabs>
 <Tab title="Python">
@@ -53,11 +53,28 @@ for (const [event_id, item] of history) {
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+maxSize := 100
+history := abxbus.NewEventHistory(&maxSize, true)
+history.AddEvent(event)
+
+exists := history.Has(event.EventID)
+loaded := history.GetEvent(event.EventID)
+count := history.Size()
+
+for _, item := range history.Values() {
+	fmt.Println(item.EventID, item.EventType)
+}
+```
+
+</Tab>
 </Tabs>
 
 ## Accessor methods
 
-Both runtimes expose explicit accessors in addition to mapping methods.
+All runtimes expose explicit accessors in addition to mapping methods where the language supports them.
 
 <Tabs>
 <Tab title="Python">
@@ -80,6 +97,17 @@ Both runtimes expose explicit accessors in addition to mapping methods.
 - `find(...)`
 - `filter(...)`
 - `trimEventHistory(...)`
+
+</Tab>
+<Tab title="Go">
+
+- `AddEvent(event)`
+- `GetEvent(event_id)`
+- `RemoveEvent(event_id)`
+- `Has(event_id)`
+- `Find(...)`
+- `Filter(...)`
+- `TrimEventHistory(...)`
 
 </Tab>
 </Tabs>
@@ -122,6 +150,14 @@ history = EventHistory(max_history_size=100, max_history_drop=False)
 
 ```ts
 const history = new EventHistory({ max_history_size: 100, max_history_drop: false })
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+maxSize := 100
+history := abxbus.NewEventHistory(&maxSize, false)
 ```
 
 </Tab>

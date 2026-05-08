@@ -5,6 +5,16 @@ description: Forward events over HTTP(S) endpoints.
 
 `HTTPEventBridge` forwards event JSON over HTTP and can optionally expose an inbound HTTP listener.
 
+## Go support
+
+<Tabs>
+<Tab title="Go">
+
+`HTTPEventBridge` is not implemented in `abxbus-go` yet. Use [JSONLEventBridge](./bridge-jsonl) for the currently supported Go bridge.
+
+</Tab>
+</Tabs>
+
 ## Constructor params
 
 - `send_to`: optional outbound endpoint (`http://` or `https://`)
@@ -35,6 +45,14 @@ const bridge = new HTTPEventBridge({
   listen_on: 'http://0.0.0.0:8002/abxbus_events',
   name: 'HttpBridge',
 })
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+// HTTPEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
 ```
 
 </Tab>
@@ -74,6 +92,14 @@ const bridge = new HTTPEventBridge({
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+// HTTPEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
 ```
 
 </Tab>

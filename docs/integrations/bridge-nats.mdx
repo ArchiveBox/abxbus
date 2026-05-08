@@ -5,6 +5,16 @@ description: Forward events over NATS subjects.
 
 `NATSEventBridge` publishes events to a NATS subject and subscribes to the same subject for inbound forwarding.
 
+## Go support
+
+<Tabs>
+<Tab title="Go">
+
+`NATSEventBridge` is not implemented in `abxbus-go` yet. Use [JSONLEventBridge](./bridge-jsonl) for the currently supported Go bridge.
+
+</Tab>
+</Tabs>
+
 ## Optional dependencies
 
 <Tabs>
@@ -32,6 +42,14 @@ npm install abxbus nats
 ```
 
 This bridge is Node.js-only.
+
+</Tab>
+<Tab title="Go">
+
+```go
+// NATSEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for the currently supported Go bridge.
+```
 
 </Tab>
 </Tabs>
@@ -69,6 +87,14 @@ const bridge = new NATSEventBridge(
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+// NATSEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
+```
+
+</Tab>
 </Tabs>
 
 ## Setup with a bus
@@ -99,6 +125,14 @@ const bridge = new NATSEventBridge('nats://localhost:4222', 'abxbus_events')
 
 bus.on('*', bridge.emit)
 bridge.on('*', bus.emit)
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+// NATSEventBridge is not implemented in abxbus-go yet.
+// Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
 ```
 
 </Tab>

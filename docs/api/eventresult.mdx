@@ -19,7 +19,8 @@ You usually access results through `event.event_results` (or high-level event he
 
 ## Await semantics
 
-Awaiting an `EventResult` resolves to handler return value or raises captured failure.
+Awaiting an `EventResult` resolves to handler return value or raises captured failure in Python.
+TypeScript and Go expose the stored result/error fields directly; Go's `Wait(...)` only waits for settlement.
 
 <Tabs>
 <Tab title="Python">
@@ -35,6 +36,20 @@ value = await entry
 ```ts
 const [, entry] = Array.from(event.event_results.entries())[0]
 const value = entry.result
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+for _, entry := range event.EventResults {
+	if err := entry.Wait(context.Background()); err != nil {
+		return err
+	}
+	value := entry.Result
+	_ = value
+	break
+}
 ```
 
 </Tab>
@@ -64,6 +79,15 @@ These are flow references for execution order, not public API method documentati
 - `_runWithTimeout(...)`
 - `_runWithSlowMonitor(...)`
 - `_runWithAbortMonitor(...)` around handler invocation
+
+</Tab>
+<Tab title="Go">
+
+- event-lock acquisition in `EventBus.processEvent(...)` via `LockManager.getLockForEvent(...)` and `AsyncLock.Acquire(...)`
+- `mergeHandlerContext(...)` for dispatch context values
+- `runWithTimeout(...)`
+- slow-handler timer setup in `EventBus.processEvent(...)`
+- `EventHandler.Handle(...)`
 
 </Tab>
 </Tabs>
@@ -107,6 +131,26 @@ console.log(payload)
 // }
 
 const restored = EventResult.fromJSON(event, payload)
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+payload, err := json.Marshal(entry)
+fmt.Println(string(payload))
+// {
+//   "id": "0190...",
+//   "status": "completed",
+//   "event_id": "018f...",
+//   "handler_id": "018g...",
+//   "handler_name": "on_user_created",
+//   "result": {"user_id": "u_123"},
+//   "error": null,
+//   ...
+// }
+
+restored, err := abxbus.EventResultFromJSON(payload)
 ```
 
 </Tab>

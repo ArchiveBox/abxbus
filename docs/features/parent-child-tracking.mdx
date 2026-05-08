@@ -34,6 +34,13 @@ Use the other styles only when you explicitly want linked background work or a f
 
 In short: use `event.emit(...)` when you want parent-child lineage, and add `await` when that child work is part of the parent's completion. Use `bus.emit(...)` when the event should be treated as a separate top-level event.
 
+In Go, the same split is explicit:
+
+- `child := event.Emit(abxbus.NewBaseEvent(...))` creates linked child work.
+- `child.Done(ctx)` queue-jumps and waits for that linked child.
+- `bus.Emit(abxbus.NewBaseEvent(...))` creates detached top-level work.
+- calling `Done(ctx)` on a bus-emitted event waits for it without adding parent-child lineage.
+
 ## Works across forwarded buses too
 
 Parent-child lineage is preserved even when the parent event has been forwarded between buses.
@@ -191,6 +198,95 @@ await bus.waitUntilIdle()
 
 console.log(root.event_result)
 console.log(bus.logTree())
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+)
+
+func main() {
+	bus := abxbus.NewEventBus("TreeBus", nil)
+
+	bus.On("CheckoutEvent", "on_checkout", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		orderID := event.Payload["order_id"].(string)
+
+		reserve := event.Emit(abxbus.NewBaseEvent("ReserveInventoryEvent", map[string]any{"order_id": orderID}))
+		if _, err := reserve.Done(ctx); err != nil {
+			return nil, err
+		}
+		reserveID, err := reserve.EventResult(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		charge := event.Emit(abxbus.NewBaseEvent("ChargeCardEvent", map[string]any{"order_id": orderID}))
+		if _, err := charge.Done(ctx); err != nil {
+			return nil, err
+		}
+		chargeID, err := charge.EventResult(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		receipt := event.Emit(abxbus.NewBaseEvent("SendReceiptEvent", map[string]any{"order_id": orderID}))
+		if _, err := receipt.Done(ctx); err != nil {
+			return nil, err
+		}
+		receiptID, err := receipt.EventResult(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		return fmt.Sprintf("%v|%v|%v", reserveID, chargeID, receiptID), nil
+	}, nil)
+
+	bus.On("ReserveInventoryEvent", "on_reserve", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return fmt.Sprintf("reserve:%s", event.Payload["order_id"]), nil
+	}, nil)
+
+	bus.On("ChargeCardEvent", "on_charge", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		orderID := event.Payload["order_id"].(string)
+		fraud := event.Emit(abxbus.NewBaseEvent("FraudCheckEvent", map[string]any{"order_id": orderID}))
+		if _, err := fraud.Done(ctx); err != nil {
+			return nil, err
+		}
+		fraudStatus, err := fraud.EventResult(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return fmt.Sprintf("charge:%s:%v", orderID, fraudStatus), nil
+	}, nil)
+
+	bus.On("FraudCheckEvent", "on_fraud", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return fmt.Sprintf("fraud-ok:%s", event.Payload["order_id"]), nil
+	}, nil)
+	bus.On("SendReceiptEvent", "on_receipt", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return fmt.Sprintf("receipt:%s", event.Payload["order_id"]), nil
+	}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	root := bus.Emit(abxbus.NewBaseEvent("CheckoutEvent", map[string]any{"order_id": "ord-123"}))
+	result, err := root.EventResult(ctx)
+	if err != nil {
+		panic(err)
+	}
+	bus.WaitUntilIdle(nil)
+
+	fmt.Println(result)
+	fmt.Println(bus.LogTree())
+}
 ```
 
 </Tab>

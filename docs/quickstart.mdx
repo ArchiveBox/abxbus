@@ -1,13 +1,15 @@
 ---
 title: Quickstart
-description: Get started quickly with abxbus in Python or TypeScript.
+description: Get started quickly with abxbus in Python, TypeScript, Rust, or Go.
 ---
 
-Install abxbus, define one typed event, register a handler, and emit the event.
+Install abxbus, define one typed event, register a handler, and emit the event. Rust and Go support is currently alpha while cross-runtime parity coverage continues to expand.
 
 Repository example files:
 - [`examples/simple.py`](https://github.com/ArchiveBox/abxbus/blob/main/examples/simple.py)
 - [`abxbus-ts/examples/simple.ts`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-ts/examples/simple.ts)
+- [`abxbus-rust/README.md`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-rust/README.md)
+- [`abxbus-go/README.md`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-go/README.md)
 
 ## Install
 
@@ -23,6 +25,21 @@ pip install abxbus
 
 ```bash
 npm install abxbus
+```
+
+</Tab>
+<Tab title="Rust">
+
+```bash
+cargo test --manifest-path abxbus-rust/Cargo.toml
+```
+
+</Tab>
+<Tab title="Go">
+
+```bash
+cd abxbus-go
+go test ./...
 ```
 
 </Tab>
@@ -77,6 +94,58 @@ bus.on(CreateUserEvent, async (event) => {
 const event = bus.emit(CreateUserEvent({ email: 'someuser@example.com' }))
 await event.done()
 console.log(event.event_result) // { user_id: 'some-user-uuid' }
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::{event_bus::EventBus, typed::{EventSpec, TypedEvent}};
+use futures::executor::block_on;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+#[derive(Clone, Serialize, Deserialize)]
+struct CreateUserPayload {
+    email: String,
+}
+
+struct CreateUserEvent;
+impl EventSpec for CreateUserEvent {
+    type Payload = CreateUserPayload;
+    type Result = serde_json::Value;
+    const EVENT_TYPE: &'static str = "CreateUserEvent";
+}
+
+let bus = EventBus::new(Some("MyAuthEventBus".to_string()));
+bus.on("CreateUserEvent", "on_create_user", |event| async move {
+    let email = event.inner.lock().payload["email"].as_str().unwrap_or_default().to_string();
+    Ok(json!({"user_id": format!("created:{email}")}))
+});
+
+let event = bus.emit::<CreateUserEvent>(TypedEvent::new(CreateUserPayload {
+    email: "someuser@example.com".to_string(),
+}));
+block_on(event.wait_completed());
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+bus := abxbus.NewEventBus("MyAuthEventBus", nil)
+bus.On("CreateUserEvent", "on_create_user", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	return map[string]any{"user_id": "some-user-uuid"}, nil
+}, nil)
+
+event := bus.Emit(abxbus.NewBaseEvent("CreateUserEvent", map[string]any{
+	"email": "someuser@example.com",
+}))
+result, err := event.EventResult(context.Background())
+if err != nil {
+	panic(err)
+}
+fmt.Println(result)
 ```
 
 </Tab>

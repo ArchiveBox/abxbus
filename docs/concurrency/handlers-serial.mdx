@@ -79,6 +79,52 @@ if (JSON.stringify(log) !== JSON.stringify(['h1_start', 'h1_end', 'h2_start', 'h
 ```
 
 </Tab>
+<Tab title="Go">
+
+```go
+package main
+
+import (
+	"context"
+	"reflect"
+	"time"
+
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+)
+
+func main() {
+	bus := abxbus.NewEventBus("SerialHandlerBus", &abxbus.EventBusOptions{
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+	})
+	log := []string{}
+
+	bus.On("HandlerEvent", "h1", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		log = append(log, "h1_start")
+		time.Sleep(10 * time.Millisecond)
+		log = append(log, "h1_end")
+		return nil, nil
+	}, nil)
+
+	bus.On("HandlerEvent", "h2", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		log = append(log, "h2_start")
+		time.Sleep(10 * time.Millisecond)
+		log = append(log, "h2_end")
+		return nil, nil
+	}, nil)
+
+	event := bus.Emit(abxbus.NewBaseEvent("HandlerEvent", nil))
+	if _, err := event.Done(context.Background()); err != nil {
+		panic(err)
+	}
+
+	expected := []string{"h1_start", "h1_end", "h2_start", "h2_end"}
+	if !reflect.DeepEqual(log, expected) {
+		panic("expected serial handler execution order")
+	}
+}
+```
+
+</Tab>
 </Tabs>
 
 ## Notes
