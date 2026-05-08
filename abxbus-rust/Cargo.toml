@@ -2,6 +2,8 @@
 name = "abxbus-rust"
 version = "2.4.32"
 edition = "2021"
+license = "MIT"
+description = "Rust implementation of the abxbus Event Bus library"
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
