@@ -168,11 +168,18 @@ func main() {
 
 ```rust
 use abxbus_rust::{
-    base_event::BaseEvent,
+    event,
     event_bus::{EventBus, EventBusOptions},
+    BaseEvent,
     types::EventConcurrencyMode,
 };
 use futures::executor::block_on;
+
+event! {
+    struct SerialEvent {
+        event_result_type: (),
+    }
+}
 
 let options = EventBusOptions {
     event_concurrency: EventConcurrencyMode::GlobalSerial,
@@ -181,12 +188,12 @@ let options = EventBusOptions {
 let bus_a = EventBus::new_with_options(Some("GlobalSerialA".to_string()), options.clone());
 let bus_b = EventBus::new_with_options(Some("GlobalSerialB".to_string()), options);
 
-bus_a.on_sync("SerialEvent", "handler", |_event| Ok(serde_json::Value::Null));
-bus_b.on_sync("SerialEvent", "handler", |_event| Ok(serde_json::Value::Null));
+bus_a.on::<SerialEvent, _, _>("handler", |_event| async move { Ok(()) });
+bus_b.on::<SerialEvent, _, _>("handler", |_event| async move { Ok(()) });
 
 for _ in 0..3 {
-    bus_a.emit_base(BaseEvent::new("SerialEvent", Default::default()));
-    bus_b.emit_base(BaseEvent::new("SerialEvent", Default::default()));
+    bus_a.emit::<SerialEvent>(BaseEvent::new(SerialEvent {}));
+    bus_b.emit::<SerialEvent>(BaseEvent::new(SerialEvent {}));
 }
 
 block_on(bus_a.wait_until_idle(None));

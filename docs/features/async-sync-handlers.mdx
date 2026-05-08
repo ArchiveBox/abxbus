@@ -127,33 +127,27 @@ bus.on(WorkEvent, handlers.instanceAsync.bind(handlers))
 
 ```rust
 use abxbus_rust::{
+    event,
     event_bus::EventBus,
-    typed::{EventSpec, TypedEvent},
+    BaseEvent,
 };
 use futures_timer::Delay;
-use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-#[derive(Clone, Serialize, Deserialize)]
-struct WorkPayload {
-    task_id: String,
-}
-
-struct WorkEvent;
-impl EventSpec for WorkEvent {
-    type Payload = WorkPayload;
-    type Result = String;
-
-    const EVENT_TYPE: &'static str = "WorkEvent";
+event! {
+    struct WorkEvent {
+        task_id: String,
+        event_result_type: String,
+    }
 }
 
 let bus = EventBus::new(Some("AppBus".to_string()));
 
-bus.on_typed_sync::<WorkEvent, _>("bare_sync", |event| {
+bus.on::<WorkEvent, _, _>("bare_sync", |event| async move {
     Ok(format!("bare-sync:{}", event.payload().task_id))
 });
 
-bus.on_typed::<WorkEvent, _, _>("bare_async", |event| async move {
+bus.on::<WorkEvent, _, _>("bare_async", |event| async move {
     Delay::new(Duration::from_millis(10)).await;
     Ok(format!("bare-async:{}", event.payload().task_id))
 });
@@ -165,7 +159,7 @@ struct HandlerSet {
 let handlers = HandlerSet {
     prefix: "svc".to_string(),
 };
-bus.on_typed_sync::<WorkEvent, _>("instance_sync", move |event| {
+bus.on::<WorkEvent, _, _>("instance_sync", move |event| async move {
     Ok(format!("{}-instance:{}", handlers.prefix, event.payload().task_id))
 });
 ```

@@ -100,30 +100,24 @@ console.log(event.event_result) // { user_id: 'some-user-uuid' }
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event_bus::EventBus, typed::{EventSpec, TypedEvent}};
+use abxbus_rust::{event, BaseEvent, event_bus::EventBus};
 use futures::executor::block_on;
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-#[derive(Clone, Serialize, Deserialize)]
-struct CreateUserPayload {
-    email: String,
-}
-
-struct CreateUserEvent;
-impl EventSpec for CreateUserEvent {
-    type Payload = CreateUserPayload;
-    type Result = serde_json::Value;
-    const EVENT_TYPE: &'static str = "CreateUserEvent";
+event! {
+    struct CreateUserEvent {
+        email: String,
+        event_result_type: serde_json::Value,
+    }
 }
 
 let bus = EventBus::new(Some("MyAuthEventBus".to_string()));
-bus.on("CreateUserEvent", "on_create_user", |event| async move {
-    let email = event.inner.lock().payload["email"].as_str().unwrap_or_default().to_string();
+bus.on::<CreateUserEvent, _, _>("on_create_user", |event| async move {
+    let email = event.payload().email;
     Ok(json!({"user_id": format!("created:{email}")}))
 });
 
-let event = bus.emit::<CreateUserEvent>(TypedEvent::new(CreateUserPayload {
+let event = bus.emit::<CreateUserEvent>(BaseEvent::new(CreateUserEvent {
     email: "someuser@example.com".to_string(),
 }));
 block_on(event.wait_completed());

@@ -319,6 +319,58 @@ test('bus pause state clears after queue-jump completes', async () => {
   assert.equal(bus.locks._isPaused(), false, 'bus should no longer be paused after handler completes')
 })
 
+test('awaited parallel queue-jump child does not pause later parallel child events', async () => {
+  const bus = new EventBus('ParallelQueueJumpDoesNotPauseBus', {
+    event_concurrency: 'bus-serial',
+    event_handler_concurrency: 'serial',
+    max_history_size: 100,
+  })
+  const ParentEvent = BaseEvent.extend('ParallelPauseParentEvent', {})
+  const ChildEvent = BaseEvent.extend('ParallelPauseChildEvent', {
+    name: z.string(),
+  })
+  const DoneEvent = BaseEvent.extend('ParallelPauseDoneEvent', {
+    name: z.string(),
+  })
+  const log: string[] = []
+
+  bus.on(ParentEvent, async (event) => {
+    log.push('parent_start')
+    await event.emit(ChildEvent({ name: 'awaited', event_concurrency: 'parallel' } as any)).first()
+    log.push('parent_after_awaited')
+
+    event.emit(ChildEvent({ name: 'bg', event_concurrency: 'parallel' } as any))
+    log.push('parent_after_bg_emit')
+    const found = await bus.find(DoneEvent, (candidate) => candidate.name === 'bg', {
+      past: true,
+      future: 0.2,
+    })
+    log.push(`parent_found_${found !== null}`)
+    assert.notEqual(found, null, `background parallel child should run while parent handler is waiting. Log: [${log.join(', ')}]`)
+  })
+
+  bus.on(ChildEvent, async (event) => {
+    log.push(`child_start_${event.name}`)
+    if (event.name === 'bg') {
+      event.emit(DoneEvent({ name: 'bg' }))
+    }
+    log.push(`child_end_${event.name}`)
+    return event.name
+  })
+  bus.on(DoneEvent, () => {
+    log.push('done_seen')
+  })
+
+  const parent = bus.emit(ParentEvent({ event_timeout: null }))
+  await parent.done()
+  await bus.waitUntilIdle()
+
+  assert.ok(
+    log.indexOf('child_start_bg') < log.indexOf('parent_found_true'),
+    `background child must run before find returns. Log: [${log.join(', ')}]`
+  )
+})
+
 test('isInsideHandler() is per-bus, not global', async () => {
   const bus_a = new EventBus('InsideHandlerA', { max_history_size: 100 })
   const bus_b = new EventBus('InsideHandlerB', { max_history_size: 100 })

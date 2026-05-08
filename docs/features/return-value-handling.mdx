@@ -60,33 +60,27 @@ const result = event.event_result
 
 ```rust
 use abxbus_rust::{
+    event,
     event_bus::EventBus,
-    typed::{EventSpec, TypedEvent},
+    BaseEvent,
 };
 use futures::executor::block_on;
-use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Serialize, Deserialize)]
-struct DoMathPayload {
-    a: i64,
-    b: i64,
-}
-
-struct DoMathEvent;
-impl EventSpec for DoMathEvent {
-    type Payload = DoMathPayload;
-    type Result = i64;
-
-    const EVENT_TYPE: &'static str = "DoMathEvent";
+event! {
+    struct DoMathEvent {
+        a: i64,
+        b: i64,
+        event_result_type: i64,
+    }
 }
 
 let bus = EventBus::new(Some("AppBus".to_string()));
-bus.on_typed_sync::<DoMathEvent, _>("add", |event| {
+bus.on::<DoMathEvent, _, _>("add", |event| async move {
     let payload = event.payload();
     Ok(payload.a + payload.b)
 });
 
-let event = bus.emit::<DoMathEvent>(TypedEvent::new(DoMathPayload { a: 2, b: 3 }));
+let event = bus.emit::<DoMathEvent>(BaseEvent::new(DoMathEvent { a: 2, b: 3 }));
 let result = block_on(event.event_result(Default::default()))?;
 ```
 
@@ -110,7 +104,7 @@ abxbus.OnTyped[DoMathPayload, int](
 	nil,
 )
 
-event, err := abxbus.NewTypedEventWithResult[DoMathPayload, int](
+event, err := abxbus.NewBaseEventWithResult[DoMathPayload, int](
 	"DoMathEvent",
 	DoMathPayload{A: 2, B: 3},
 )
@@ -147,18 +141,31 @@ const values = await event.eventResultsList({ raise_if_any: false, raise_if_none
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::base_event::{BaseEvent, EventResultsOptions};
+use abxbus_rust::{
+    base_event::EventResultsOptions,
+    event,
+    event_bus::EventBus,
+    BaseEvent,
+};
 use futures::executor::block_on;
-use serde_json::{json, Map};
+use serde_json::json;
 
-bus.on_sync("GetConfigEvent", "user_config", |_event| {
+event! {
+    struct GetConfigEvent {
+        event_result_type: serde_json::Value,
+    }
+}
+
+let bus = EventBus::new(Some("ConfigBus".to_string()));
+
+bus.on::<GetConfigEvent, _, _>("user_config", |_event| async move {
     Ok(json!({"debug": true, "port": 8080}))
 });
-bus.on_sync("GetConfigEvent", "system_config", |_event| {
+bus.on::<GetConfigEvent, _, _>("system_config", |_event| async move {
     Ok(json!({"debug": false, "timeout": 30}))
 });
 
-let event = bus.emit_base(BaseEvent::new("GetConfigEvent", Map::new()));
+let event = bus.emit::<GetConfigEvent>(BaseEvent::new(GetConfigEvent {}));
 let values = block_on(event.event_results_list(EventResultsOptions {
     raise_if_any: false,
     raise_if_none: false,

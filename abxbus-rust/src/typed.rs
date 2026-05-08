@@ -5,35 +5,36 @@ use serde_json::{json, Map, Value};
 
 use crate::types::{EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode};
 use crate::{
-    base_event::{BaseEvent, EventResultsOptions},
+    base_event::{BaseEvent as RawBaseEvent, EventResultsOptions},
     event_bus::EventBus,
     event_handler::{EventHandler, EventHandlerOptions},
 };
 
+#[allow(non_camel_case_types, non_upper_case_globals)]
 pub trait EventSpec: Send + Sync + 'static {
-    type Payload: Serialize + DeserializeOwned + Clone + Send + Sync + 'static;
-    type Result: Serialize + DeserializeOwned + Clone + Send + Sync + 'static;
+    type payload: Serialize + DeserializeOwned + Clone + Send + Sync + 'static;
+    type event_result_type: Serialize + DeserializeOwned + Clone + Send + Sync + 'static;
 
-    const EVENT_TYPE: &'static str;
-    const EVENT_VERSION: &'static str = "0.0.1";
-    const EVENT_TIMEOUT: Option<f64> = None;
-    const EVENT_SLOW_TIMEOUT: Option<f64> = None;
-    const EVENT_CONCURRENCY: Option<EventConcurrencyMode> = None;
-    const EVENT_HANDLER_TIMEOUT: Option<f64> = None;
-    const EVENT_HANDLER_SLOW_TIMEOUT: Option<f64> = None;
-    const EVENT_HANDLER_CONCURRENCY: Option<EventHandlerConcurrencyMode> = None;
-    const EVENT_HANDLER_COMPLETION: Option<EventHandlerCompletionMode> = None;
-    const EVENT_BLOCKS_PARENT_COMPLETION: bool = false;
-    const EVENT_RESULT_TYPE: Option<&'static str> = None;
+    const event_type: &'static str;
+    const event_version: &'static str = "0.0.1";
+    const event_timeout: Option<f64> = None;
+    const event_slow_timeout: Option<f64> = None;
+    const event_concurrency: Option<EventConcurrencyMode> = None;
+    const event_handler_timeout: Option<f64> = None;
+    const event_handler_slow_timeout: Option<f64> = None;
+    const event_handler_concurrency: Option<EventHandlerConcurrencyMode> = None;
+    const event_handler_completion: Option<EventHandlerCompletionMode> = None;
+    const event_blocks_parent_completion: bool = false;
+    const event_result_type_schema: Option<&'static str> = None;
 
     fn event_result_type_json() -> Option<Value> {
-        if let Some(schema) = Self::EVENT_RESULT_TYPE {
+        if let Some(schema) = Self::event_result_type_schema {
             return Some(
                 serde_json::from_str(schema)
-                    .expect("EVENT_RESULT_TYPE must be valid JSON Schema JSON"),
+                    .expect("event_result_type_schema must be valid JSON Schema JSON"),
             );
         }
-        primitive_result_type_schema::<Self::Result>()
+        primitive_result_type_schema::<Self::event_result_type>()
     }
 }
 
@@ -63,30 +64,55 @@ fn primitive_result_type_schema<T: 'static>() -> Option<Value> {
 }
 
 #[derive(Clone)]
-pub struct TypedEvent<E: EventSpec> {
-    pub inner: Arc<BaseEvent>,
+pub struct BaseEventHandle<E: EventSpec> {
+    pub inner: Arc<RawBaseEvent>,
     marker: PhantomData<E>,
 }
 
-impl<E: EventSpec> TypedEvent<E> {
-    pub fn new(payload: E::Payload) -> Self {
-        let value = serde_json::to_value(payload).expect("typed payload serialization failed");
+pub trait IntoBaseEventHandle {
+    type Event: EventSpec;
+
+    fn into_base_event_handle(self) -> BaseEventHandle<Self::Event>;
+}
+
+impl<E> IntoBaseEventHandle for E
+where
+    E: EventSpec<payload = E>,
+{
+    type Event = E;
+
+    fn into_base_event_handle(self) -> BaseEventHandle<Self::Event> {
+        BaseEventHandle::new(self)
+    }
+}
+
+impl<E: EventSpec> IntoBaseEventHandle for BaseEventHandle<E> {
+    type Event = E;
+
+    fn into_base_event_handle(self) -> BaseEventHandle<Self::Event> {
+        self
+    }
+}
+
+impl<E: EventSpec> BaseEventHandle<E> {
+    pub fn new(payload: E::payload) -> Self {
+        let value = serde_json::to_value(payload).expect("event payload serialization failed");
         let Value::Object(payload_map) = value else {
-            panic!("typed payload must serialize to a JSON object");
+            panic!("event payload must serialize to a JSON object");
         };
 
-        let inner = BaseEvent::new(E::EVENT_TYPE, payload_map);
+        let inner = RawBaseEvent::new(E::event_type, payload_map);
         {
             let mut event = inner.inner.lock();
-            event.event_version = E::EVENT_VERSION.to_string();
-            event.event_timeout = E::EVENT_TIMEOUT;
-            event.event_slow_timeout = E::EVENT_SLOW_TIMEOUT;
-            event.event_concurrency = E::EVENT_CONCURRENCY;
-            event.event_handler_timeout = E::EVENT_HANDLER_TIMEOUT;
-            event.event_handler_slow_timeout = E::EVENT_HANDLER_SLOW_TIMEOUT;
-            event.event_handler_concurrency = E::EVENT_HANDLER_CONCURRENCY;
-            event.event_handler_completion = E::EVENT_HANDLER_COMPLETION;
-            event.event_blocks_parent_completion = E::EVENT_BLOCKS_PARENT_COMPLETION;
+            event.event_version = E::event_version.to_string();
+            event.event_timeout = E::event_timeout;
+            event.event_slow_timeout = E::event_slow_timeout;
+            event.event_concurrency = E::event_concurrency;
+            event.event_handler_timeout = E::event_handler_timeout;
+            event.event_handler_slow_timeout = E::event_handler_slow_timeout;
+            event.event_handler_concurrency = E::event_handler_concurrency;
+            event.event_handler_completion = E::event_handler_completion;
+            event.event_blocks_parent_completion = E::event_blocks_parent_completion;
             event.event_result_type = E::event_result_type_json();
         }
 
@@ -96,17 +122,29 @@ impl<E: EventSpec> TypedEvent<E> {
         }
     }
 
-    pub fn from_base_event(event: Arc<BaseEvent>) -> Self {
+    pub fn from_base_event(event: Arc<RawBaseEvent>) -> Self {
         Self {
             inner: event,
             marker: PhantomData,
         }
     }
 
-    pub fn payload(&self) -> E::Payload {
+    pub fn payload(&self) -> E::payload {
         let payload = self.inner.inner.lock().payload.clone();
         let value = Value::Object(payload);
-        serde_json::from_value(value).expect("typed payload decode failed")
+        serde_json::from_value(value).expect("event payload decode failed")
+    }
+
+    pub fn event_bus(&self) -> Option<Arc<EventBus>> {
+        self.inner.event_bus()
+    }
+
+    pub fn bus(&self) -> Option<Arc<EventBus>> {
+        self.inner.bus()
+    }
+
+    pub fn to_json_value(&self) -> Value {
+        self.inner.to_json_value()
     }
 
     pub async fn wait_completed(&self) {
@@ -117,7 +155,7 @@ impl<E: EventSpec> TypedEvent<E> {
         self.inner.event_completed().await;
     }
 
-    pub async fn first(&self) -> Result<Option<E::Result>, String> {
+    pub async fn first(&self) -> Result<Option<E::event_result_type>, String> {
         {
             let event = self.inner.inner.lock();
             if event.event_status == crate::types::EventStatus::Pending
@@ -136,7 +174,7 @@ impl<E: EventSpec> TypedEvent<E> {
     pub async fn event_result(
         &self,
         options: EventResultsOptions,
-    ) -> Result<Option<E::Result>, String> {
+    ) -> Result<Option<E::event_result_type>, String> {
         self.inner
             .event_result(options)
             .await?
@@ -147,7 +185,7 @@ impl<E: EventSpec> TypedEvent<E> {
     pub async fn event_results_list(
         &self,
         options: EventResultsOptions,
-    ) -> Result<Vec<E::Result>, String> {
+    ) -> Result<Vec<E::event_result_type>, String> {
         self.inner
             .event_results_list(options)
             .await?
@@ -156,11 +194,11 @@ impl<E: EventSpec> TypedEvent<E> {
             .collect()
     }
 
-    pub fn first_result(&self) -> Option<E::Result> {
+    pub fn first_result(&self) -> Option<E::event_result_type> {
         self.first_result_from_completed().ok().flatten()
     }
 
-    pub fn first_result_or_error(&self) -> Result<Option<E::Result>, String> {
+    pub fn first_result_or_error(&self) -> Result<Option<E::event_result_type>, String> {
         let results: HashMap<String, crate::event_result::EventResult> =
             self.inner.inner.lock().event_results.clone();
         let mut error_results: Vec<_> = results
@@ -195,7 +233,7 @@ impl<E: EventSpec> TypedEvent<E> {
         self.first_result_from_completed()
     }
 
-    fn first_result_from_completed(&self) -> Result<Option<E::Result>, String> {
+    fn first_result_from_completed(&self) -> Result<Option<E::event_result_type>, String> {
         let results: HashMap<String, crate::event_result::EventResult> =
             self.inner.inner.lock().event_results.clone();
         let mut ordered_results: Vec<_> = results
@@ -216,10 +254,10 @@ impl<E: EventSpec> TypedEvent<E> {
         for result in ordered_results {
             if result.error.is_none() {
                 if let Some(value) = &result.result {
-                    if value.is_null() || BaseEvent::is_base_event_json(value) {
+                    if value.is_null() || RawBaseEvent::is_base_event_json(value) {
                         continue;
                     }
-                    let decoded: E::Result =
+                    let decoded: E::event_result_type =
                         serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
                     return Ok(Some(decoded));
                 }
@@ -228,54 +266,54 @@ impl<E: EventSpec> TypedEvent<E> {
         Ok(None)
     }
 
-    fn decode_result_value(value: Value) -> Result<E::Result, String> {
+    fn decode_result_value(value: Value) -> Result<E::event_result_type, String> {
         serde_json::from_value(value).map_err(|error| error.to_string())
     }
 }
 
 impl EventBus {
-    pub fn emit<E: EventSpec>(&self, event: TypedEvent<E>) -> TypedEvent<E> {
+    pub fn emit<I: IntoBaseEventHandle>(&self, event: I) -> BaseEventHandle<I::Event> {
+        let event = event.into_base_event_handle();
         let emitted = self.enqueue_base(event.inner.clone());
-        TypedEvent::from_base_event(emitted)
+        BaseEventHandle::from_base_event(emitted)
     }
 
-    pub fn emit_with_options<E: EventSpec>(
+    pub fn emit_with_options<I: IntoBaseEventHandle>(
         &self,
-        event: TypedEvent<E>,
+        event: I,
         queue_jump: bool,
-    ) -> TypedEvent<E> {
+    ) -> BaseEventHandle<I::Event> {
+        let event = event.into_base_event_handle();
         let emitted = self.enqueue_base_with_options(event.inner.clone(), queue_jump);
-        TypedEvent::from_base_event(emitted)
+        BaseEventHandle::from_base_event(emitted)
     }
 
-    pub fn emit_child<E: EventSpec>(&self, event: TypedEvent<E>) -> TypedEvent<E> {
+    pub fn emit_child<I: IntoBaseEventHandle>(&self, event: I) -> BaseEventHandle<I::Event> {
+        let event = event.into_base_event_handle();
         let emitted = self.enqueue_child_base(event.inner.clone());
-        TypedEvent::from_base_event(emitted)
+        BaseEventHandle::from_base_event(emitted)
     }
 
-    pub fn emit_child_with_options<E: EventSpec>(
+    pub fn emit_child_with_options<I: IntoBaseEventHandle>(
         &self,
-        event: TypedEvent<E>,
+        event: I,
         queue_jump: bool,
-    ) -> TypedEvent<E> {
+    ) -> BaseEventHandle<I::Event> {
+        let event = event.into_base_event_handle();
         let emitted = self.enqueue_child_base_with_options(event.inner.clone(), queue_jump);
-        TypedEvent::from_base_event(emitted)
+        BaseEventHandle::from_base_event(emitted)
     }
 
-    pub fn on_typed<E, F, Fut>(&self, handler_name: &str, handler_fn: F) -> EventHandler
+    pub fn on<E, F, Fut>(&self, handler_name: &str, handler_fn: F) -> EventHandler
     where
         E: EventSpec,
-        F: Fn(TypedEvent<E>) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Result<E::Result, String>> + Send + 'static,
+        F: Fn(BaseEventHandle<E>) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<E::event_result_type, String>> + Send + 'static,
     {
-        self.on_typed_with_options::<E, _, _>(
-            handler_name,
-            EventHandlerOptions::default(),
-            handler_fn,
-        )
+        self.on_with_options::<E, _, _>(handler_name, EventHandlerOptions::default(), handler_fn)
     }
 
-    pub fn on_typed_with_options<E, F, Fut>(
+    pub fn on_with_options<E, F, Fut>(
         &self,
         handler_name: &str,
         options: EventHandlerOptions,
@@ -283,55 +321,17 @@ impl EventBus {
     ) -> EventHandler
     where
         E: EventSpec,
-        F: Fn(TypedEvent<E>) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Result<E::Result, String>> + Send + 'static,
+        F: Fn(BaseEventHandle<E>) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<E::event_result_type, String>> + Send + 'static,
     {
-        self.on_with_options(E::EVENT_TYPE, handler_name, options, move |event| {
-            let typed = TypedEvent::<E>::from_base_event(event);
+        self.on_raw_with_options(E::event_type, handler_name, options, move |event| {
+            let typed = BaseEventHandle::<E>::from_base_event(event);
             let fut = handler_fn(typed);
             async move {
                 let result = fut.await?;
                 serde_json::to_value(result).map_err(|error| error.to_string())
             }
         })
-    }
-
-    pub fn on_typed_sync<E, F>(&self, handler_name: &str, handler_fn: F) -> EventHandler
-    where
-        E: EventSpec,
-        F: Fn(TypedEvent<E>) -> Result<E::Result, String> + Send + Sync + 'static,
-    {
-        self.on_typed_sync_with_options::<E, _>(
-            handler_name,
-            EventHandlerOptions::default(),
-            handler_fn,
-        )
-    }
-
-    pub fn on_typed_sync_with_options<E, F>(
-        &self,
-        handler_name: &str,
-        options: EventHandlerOptions,
-        handler_fn: F,
-    ) -> EventHandler
-    where
-        E: EventSpec,
-        F: Fn(TypedEvent<E>) -> Result<E::Result, String> + Send + Sync + 'static,
-    {
-        self.on_sync_with_options(E::EVENT_TYPE, handler_name, options, move |event| {
-            let typed = TypedEvent::<E>::from_base_event(event);
-            let result = handler_fn(typed)?;
-            serde_json::to_value(result).map_err(|error| error.to_string())
-        })
-    }
-
-    pub async fn find_typed<E: EventSpec>(
-        &self,
-        past: bool,
-        future: Option<f64>,
-    ) -> Option<TypedEvent<E>> {
-        let found = self.find(E::EVENT_TYPE, past, future, None).await?;
-        Some(TypedEvent::from_base_event(found))
     }
 }
 
@@ -340,4 +340,736 @@ pub fn payload_map_from_value(value: Value) -> Map<String, Value> {
         Value::Object(map) => map,
         _ => panic!("typed payload must be a JSON object"),
     }
+}
+
+#[macro_export]
+macro_rules! event {
+    ($(#[$attr:meta])* $vis:vis struct $name:ident { $($body:tt)* }) => {
+        $crate::__abxbus_event_parse! {
+            @parse
+            [$(#[$attr])*] [$vis] [$name]
+            payload[]
+            result[]
+            event_type[]
+            event_version[]
+            event_timeout[]
+            event_slow_timeout[]
+            event_concurrency[]
+            event_handler_timeout[]
+            event_handler_slow_timeout[]
+            event_handler_concurrency[]
+            event_handler_completion[]
+            event_blocks_parent_completion[]
+            event_result_schema[]
+            $($body)* ,
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __abxbus_event_parse {
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        ,
+        $($rest:tt)*
+    ) => {
+        $crate::__abxbus_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)*]
+            result[$($result)*]
+            event_type[$($event_type)*]
+            event_version[$($event_version)*]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        event_result_type: $next_result:ty,
+        $($rest:tt)*
+    ) => {
+        $crate::__abxbus_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)*]
+            result[$next_result]
+            event_type[$($event_type)*]
+            event_version[$($event_version)*]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        event_type: $next_event_type:literal,
+        $($rest:tt)*
+    ) => {
+        $crate::__abxbus_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)*]
+            result[$($result)*]
+            event_type[$next_event_type]
+            event_version[$($event_version)*]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        event_version: $next_event_version:literal,
+        $($rest:tt)*
+    ) => {
+        $crate::__abxbus_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)*]
+            result[$($result)*]
+            event_type[$($event_type)*]
+            event_version[$next_event_version]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        event_timeout: $next_timeout:literal,
+        $($rest:tt)*
+    ) => {
+        $crate::__abxbus_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)*]
+            result[$($result)*]
+            event_type[$($event_type)*]
+            event_version[$($event_version)*]
+            event_timeout[$next_timeout]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        event_slow_timeout: $next_timeout:literal,
+        $($rest:tt)*
+    ) => {
+        $crate::__abxbus_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)*]
+            result[$($result)*]
+            event_type[$($event_type)*]
+            event_version[$($event_version)*]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$next_timeout]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        event_concurrency: $next_mode:tt,
+        $($rest:tt)*
+    ) => {
+        $crate::__abxbus_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)*]
+            result[$($result)*]
+            event_type[$($event_type)*]
+            event_version[$($event_version)*]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$next_mode]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        event_handler_timeout: $next_timeout:literal,
+        $($rest:tt)*
+    ) => {
+        $crate::__abxbus_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)*]
+            result[$($result)*]
+            event_type[$($event_type)*]
+            event_version[$($event_version)*]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$next_timeout]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        event_handler_slow_timeout: $next_timeout:literal,
+        $($rest:tt)*
+    ) => {
+        $crate::__abxbus_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)*]
+            result[$($result)*]
+            event_type[$($event_type)*]
+            event_version[$($event_version)*]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$next_timeout]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        event_handler_concurrency: $next_mode:tt,
+        $($rest:tt)*
+    ) => {
+        $crate::__abxbus_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)*]
+            result[$($result)*]
+            event_type[$($event_type)*]
+            event_version[$($event_version)*]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_handler_concurrency[$next_mode]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        event_handler_completion: $next_mode:tt,
+        $($rest:tt)*
+    ) => {
+        $crate::__abxbus_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)*]
+            result[$($result)*]
+            event_type[$($event_type)*]
+            event_version[$($event_version)*]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$next_mode]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        event_blocks_parent_completion: $next_blocks:literal,
+        $($rest:tt)*
+    ) => {
+        $crate::__abxbus_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)*]
+            result[$($result)*]
+            event_type[$($event_type)*]
+            event_version[$($event_version)*]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$next_blocks]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        event_result_schema: $next_schema:literal,
+        $($rest:tt)*
+    ) => {
+        $crate::__abxbus_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)*]
+            result[$($result)*]
+            event_type[$($event_type)*]
+            event_version[$($event_version)*]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$next_schema]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        $field_vis:vis $field:ident : $field_ty:ty,
+        $($rest:tt)*
+    ) => {
+        $crate::__abxbus_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)* $field_vis $field: $field_ty,]
+            result[$($result)*]
+            event_type[$($event_type)*]
+            event_version[$($event_version)*]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+    ) => {
+        #[derive(Clone, Debug, PartialEq, $crate::serde::Serialize, $crate::serde::Deserialize)]
+        $($attr)*
+        $vis struct $name {
+            $($payload)*
+        }
+
+        #[allow(non_camel_case_types, non_upper_case_globals)]
+        impl $crate::typed::EventSpec for $name {
+            type payload = $name;
+            type event_result_type = $crate::__abxbus_event_result_type!($($result)*);
+
+            const event_type: &'static str = $crate::__abxbus_event_type!($name; $($event_type)*);
+            const event_version: &'static str = $crate::__abxbus_event_version!($($event_version)*);
+            const event_timeout: Option<f64> = $crate::__abxbus_event_optional_f64!($($event_timeout)*);
+            const event_slow_timeout: Option<f64> = $crate::__abxbus_event_optional_f64!($($event_slow_timeout)*);
+            const event_concurrency: Option<$crate::types::EventConcurrencyMode> =
+                $crate::__abxbus_event_concurrency!($($event_concurrency)*);
+            const event_handler_timeout: Option<f64> =
+                $crate::__abxbus_event_optional_f64!($($event_handler_timeout)*);
+            const event_handler_slow_timeout: Option<f64> =
+                $crate::__abxbus_event_optional_f64!($($event_handler_slow_timeout)*);
+            const event_handler_concurrency: Option<$crate::types::EventHandlerConcurrencyMode> =
+                $crate::__abxbus_event_handler_concurrency!($($event_handler_concurrency)*);
+            const event_handler_completion: Option<$crate::types::EventHandlerCompletionMode> =
+                $crate::__abxbus_event_handler_completion!($($event_handler_completion)*);
+            const event_blocks_parent_completion: bool =
+                $crate::__abxbus_event_bool_false!($($event_blocks_parent_completion)*);
+            const event_result_type_schema: Option<&'static str> =
+                $crate::__abxbus_event_optional_str!($($event_result_schema)*);
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __abxbus_event_result_type {
+    () => {
+        $crate::serde_json::Value
+    };
+    ($result:ty) => {
+        $result
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __abxbus_event_type {
+    ($name:ident;) => {
+        stringify!($name)
+    };
+    ($name:ident; $event_type:literal) => {
+        $event_type
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __abxbus_event_version {
+    () => {
+        "0.0.1"
+    };
+    ($version:literal) => {
+        $version
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __abxbus_event_optional_f64 {
+    () => {
+        None
+    };
+    ($value:literal) => {
+        Some($value as f64)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __abxbus_event_optional_str {
+    () => {
+        None
+    };
+    ($value:literal) => {
+        Some($value)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __abxbus_event_bool_false {
+    () => {
+        false
+    };
+    ($value:literal) => {
+        $value
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __abxbus_event_concurrency {
+    () => {
+        None
+    };
+    (global_serial) => {
+        Some($crate::types::EventConcurrencyMode::GlobalSerial)
+    };
+    ("global-serial") => {
+        Some($crate::types::EventConcurrencyMode::GlobalSerial)
+    };
+    ("global_serial") => {
+        Some($crate::types::EventConcurrencyMode::GlobalSerial)
+    };
+    (bus_serial) => {
+        Some($crate::types::EventConcurrencyMode::BusSerial)
+    };
+    ("bus-serial") => {
+        Some($crate::types::EventConcurrencyMode::BusSerial)
+    };
+    ("bus_serial") => {
+        Some($crate::types::EventConcurrencyMode::BusSerial)
+    };
+    (parallel) => {
+        Some($crate::types::EventConcurrencyMode::Parallel)
+    };
+    ("parallel") => {
+        Some($crate::types::EventConcurrencyMode::Parallel)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __abxbus_event_handler_concurrency {
+    () => {
+        None
+    };
+    (serial) => {
+        Some($crate::types::EventHandlerConcurrencyMode::Serial)
+    };
+    ("serial") => {
+        Some($crate::types::EventHandlerConcurrencyMode::Serial)
+    };
+    (parallel) => {
+        Some($crate::types::EventHandlerConcurrencyMode::Parallel)
+    };
+    ("parallel") => {
+        Some($crate::types::EventHandlerConcurrencyMode::Parallel)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __abxbus_event_handler_completion {
+    () => {
+        None
+    };
+    (all) => {
+        Some($crate::types::EventHandlerCompletionMode::All)
+    };
+    ("all") => {
+        Some($crate::types::EventHandlerCompletionMode::All)
+    };
+    (first) => {
+        Some($crate::types::EventHandlerCompletionMode::First)
+    };
+    ("first") => {
+        Some($crate::types::EventHandlerCompletionMode::First)
+    };
 }

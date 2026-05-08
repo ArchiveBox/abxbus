@@ -48,7 +48,7 @@ type FooPayload struct {
 
 type FooResult string
 
-event, err := abxbus.NewTypedEventWithResult[FooPayload, FooResult]("FooCreateEvent", FooPayload{
+event, err := abxbus.NewBaseEventWithResult[FooPayload, FooResult]("FooCreateEvent", FooPayload{
 	Name: "Ada",
 	Age:  37,
 })
@@ -58,25 +58,18 @@ event, err := abxbus.NewTypedEventWithResult[FooPayload, FooResult]("FooCreateEv
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::typed::{EventSpec, TypedEvent};
-use serde::{Deserialize, Serialize};
+use abxbus_rust::{event, BaseEvent};
 
-#[derive(Clone, Serialize, Deserialize)]
-struct FooPayload {
-    id: Option<String>,
-    name: String,
-    age: i64,
+event! {
+    struct FooCreateEvent {
+        id: Option<String>,
+        name: String,
+        age: i64,
+        event_result_type: String,
+    }
 }
 
-struct FooCreateEvent;
-impl EventSpec for FooCreateEvent {
-    type Payload = FooPayload;
-    type Result = String;
-
-    const EVENT_TYPE: &'static str = "FooCreateEvent";
-}
-
-let event = TypedEvent::<FooCreateEvent>::new(FooPayload {
+let event = BaseEvent::<FooCreateEvent>::new(FooCreateEvent {
     id: None,
     name: "Ada".to_string(),
     age: 37,
@@ -162,10 +155,13 @@ value, err := completed.EventResult(context.Background())
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::base_event::{BaseEvent, EventResultsOptions};
+use abxbus_rust::{
+    base_event::EventResultsOptions,
+    BaseEvent,
+};
 use futures::executor::block_on;
 
-let pending = bus.emit_base(BaseEvent::new("MyEvent", Default::default()));
+let pending = bus.emit::<MyEvent>(BaseEvent::new(MyPayload::default()));
 block_on(pending.wait_completed());
 block_on(pending.event_completed());
 let value = block_on(pending.event_result(EventResultsOptions::default()))?;
@@ -507,15 +503,21 @@ event.EventTimeout = &timeout // allowed built-in event_* override
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::base_event::BaseEvent;
-use serde_json::{json, Map};
+use abxbus_rust::{event, BaseEvent};
 
-let mut payload = Map::new();
-payload.insert("payload".to_string(), json!("ok"));
-let event = BaseEvent::new("AllowedEvent", payload);
-event.inner.lock().event_timeout = Some(30.0);
+event! {
+    struct AllowedEvent {
+        payload: String,
+        event_result_type: (),
+    }
+}
 
-// Rust validates unknown event_* / model_* keys in BaseEvent::new(...)
+let event = BaseEvent::<AllowedEvent>::new(AllowedEvent {
+    payload: "ok".to_string(),
+});
+event.inner.inner.lock().event_timeout = Some(30.0);
+
+// Rust validates unknown event_* / model_* keys during typed event construction
 // and uses explicit BaseEventData fields for built-in runtime overrides.
 ```
 

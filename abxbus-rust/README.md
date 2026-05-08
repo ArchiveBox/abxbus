@@ -19,22 +19,28 @@ Not yet implemented in this crate revision:
 ## Quickstart
 
 ```rust
-use abxbus_rust::{base_event, event_bus};
+use abxbus_rust::{event, BaseEvent, event_bus::EventBus};
 use futures::executor::block_on;
-use serde_json::{Map, json};
+use serde_json::json;
 
-let bus = event_bus::new(Some("MainBus".to_string()));
-bus.on("UserLoginEvent", "handle_login", |event| async move {
-    Ok(json!({"ok": true, "event_id": event.inner.lock().event_id}))
+event! {
+    struct UserLoginEvent {
+        username: String,
+        event_result_type: serde_json::Value,
+    }
+}
+
+let bus = EventBus::new(Some("MainBus".to_string()));
+bus.on::<UserLoginEvent, _, _>("handle_login", |event| async move {
+    Ok(json!({"ok": true, "username": event.payload().username}))
 });
 
-let mut payload = Map::new();
-payload.insert("username".to_string(), json!("alice"));
-let event = base_event::new("UserLoginEvent", payload);
-bus.emit(event.clone());
+let event = bus.emit::<UserLoginEvent>(BaseEvent::new(UserLoginEvent {
+    username: "alice".to_string(),
+}));
 
 block_on(async {
     event.wait_completed().await;
-    println!("{}", event.to_json_value());
+    println!("{}", event.inner.to_json_value());
 });
 ```

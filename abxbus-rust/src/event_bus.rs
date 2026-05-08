@@ -409,6 +409,28 @@ impl EventBus {
         CURRENT_HANDLER_ID.with(|handler_id| handler_id.borrow().is_some())
     }
 
+    fn process_parallel_event_from_queue(&self, event: Arc<BaseEvent>) {
+        let bus = self.clone();
+        thread::spawn(move || {
+            let event_id = event.inner.lock().event_id.clone();
+            let removed = {
+                let mut queue = bus.runtime.queue.lock();
+                if let Some(index) = queue
+                    .iter()
+                    .position(|queued| queued.inner.lock().event_id == event_id)
+                {
+                    queue.remove(index);
+                    true
+                } else {
+                    false
+                }
+            };
+            if removed {
+                block_on(bus.process_event(event));
+            }
+        });
+    }
+
     fn notify_all_queues() {
         for bus in Self::live_instances() {
             bus.ensure_loop_started();
@@ -1045,12 +1067,12 @@ impl EventBus {
     }
 
     #[track_caller]
-    pub fn on<F, Fut>(&self, pattern: &str, handler_name: &str, handler_fn: F) -> EventHandler
+    pub fn on_raw<F, Fut>(&self, pattern: &str, handler_name: &str, handler_fn: F) -> EventHandler
     where
         F: Fn(Arc<BaseEvent>) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<Value, String>> + Send + 'static,
     {
-        self.on_with_options(
+        self.on_raw_with_options(
             pattern,
             handler_name,
             EventHandlerOptions::default(),
@@ -1059,7 +1081,7 @@ impl EventBus {
     }
 
     #[track_caller]
-    pub fn on_with_options<F, Fut>(
+    pub fn on_raw_with_options<F, Fut>(
         &self,
         pattern: &str,
         handler_name: &str,
@@ -1089,11 +1111,11 @@ impl EventBus {
     }
 
     #[track_caller]
-    pub fn on_sync<F>(&self, pattern: &str, handler_name: &str, handler_fn: F) -> EventHandler
+    pub fn on_raw_sync<F>(&self, pattern: &str, handler_name: &str, handler_fn: F) -> EventHandler
     where
         F: Fn(Arc<BaseEvent>) -> Result<Value, String> + Send + Sync + 'static,
     {
-        self.on_sync_with_options(
+        self.on_raw_sync_with_options(
             pattern,
             handler_name,
             EventHandlerOptions::default(),
@@ -1102,7 +1124,7 @@ impl EventBus {
     }
 
     #[track_caller]
-    pub fn on_sync_with_options<F>(
+    pub fn on_raw_sync_with_options<F>(
         &self,
         pattern: &str,
         handler_name: &str,
@@ -1170,6 +1192,10 @@ impl EventBus {
                 handlers.remove(pattern);
             }
         }
+    }
+
+    pub fn off_event<E: crate::typed::EventSpec>(&self, handler_id: Option<&str>) {
+        self.off(E::event_type, handler_id);
     }
 
     pub fn emit_base(&self, event: Arc<BaseEvent>) -> Arc<BaseEvent> {
@@ -1277,7 +1303,19 @@ impl EventBus {
         }
 
         self.notify_find_waiters(event.clone());
-        if queue_jump || !Self::is_inside_handler_context() {
+        let should_process_parallel_now = {
+            let mode = event
+                .inner
+                .lock()
+                .event_concurrency
+                .unwrap_or(self.event_concurrency);
+            !queue_jump
+                && Self::is_inside_handler_context()
+                && mode == EventConcurrencyMode::Parallel
+        };
+        if should_process_parallel_now {
+            self.process_parallel_event_from_queue(event.clone());
+        } else if queue_jump || !Self::is_inside_handler_context() {
             self.ensure_loop_started();
             self.runtime.queue_notify.notify(1);
         }

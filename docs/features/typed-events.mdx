@@ -44,46 +44,41 @@ const OrderCreatedEvent = BaseEvent.extend('OrderCreatedEvent', {
 
 ```rust
 use abxbus_rust::{
+    event,
     event_bus::EventBus,
-    typed::{EventSpec, TypedEvent},
+    BaseEvent,
 };
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Serialize, Deserialize)]
-struct OrderCreatedPayload {
-    order_id: String,
-    customer_id: String,
-    total_amount: f64,
-}
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 struct OrderResult {
     ok: bool,
 }
 
-struct OrderCreatedEvent;
-impl EventSpec for OrderCreatedEvent {
-    type Payload = OrderCreatedPayload;
-    type Result = OrderResult;
-
-    const EVENT_TYPE: &'static str = "OrderCreatedEvent";
-    const EVENT_RESULT_TYPE: Option<&'static str> = Some(r#"{
-        "type": "object",
-        "properties": {"ok": {"type": "boolean"}},
-        "required": ["ok"]
-    }"#);
+event! {
+    struct OrderCreatedEvent {
+        order_id: String,
+        customer_id: String,
+        total_amount: f64,
+        event_result_type: OrderResult,
+        event_result_schema: r#"{
+            "type": "object",
+            "properties": {"ok": {"type": "boolean"}},
+            "required": ["ok"]
+        }"#,
+    }
 }
 
 let bus = EventBus::new(Some("OrdersBus".to_string()));
-bus.on_typed::<OrderCreatedEvent, _, _>("handle_order", |event| async move {
+bus.on::<OrderCreatedEvent, _, _>("handle_order", |event| async move {
     let payload = event.payload();
     Ok(OrderResult {
         ok: payload.total_amount > 0.0,
     })
 });
 
-let event = bus.emit::<OrderCreatedEvent>(TypedEvent::new(OrderCreatedPayload {
+let event = bus.emit::<OrderCreatedEvent>(BaseEvent::new(OrderCreatedEvent {
     order_id: "order-123".to_string(),
     customer_id: "customer-456".to_string(),
     total_amount: 42.50,
@@ -118,7 +113,7 @@ abxbus.OnTyped[OrderCreatedPayload, OrderResult](
 	nil,
 )
 
-event, err := abxbus.NewTypedEventWithResult[OrderCreatedPayload, OrderResult]("OrderCreatedEvent", OrderCreatedPayload{
+event, err := abxbus.NewBaseEventWithResult[OrderCreatedPayload, OrderResult]("OrderCreatedEvent", OrderCreatedPayload{
 	OrderID:     "order-123",
 	CustomerID:  "customer-456",
 	TotalAmount: 42.50,
@@ -143,5 +138,5 @@ _ = typedResult
 
 - Python payload validation is powered by Pydantic models.
 - TypeScript payload and result validation is powered by Zod schemas.
-- Rust uses `EventSpec` plus `serde` payload/result types. Primitive result schemas are derived automatically; structured result schemas are supplied as JSON Schema through `EVENT_RESULT_TYPE`.
+- Rust uses `event!` to keep event fields and event metadata in one block. Primitive result schemas are derived automatically; structured result schemas are supplied through `event_result_schema`.
 - Go uses typed struct helpers for static shape at call sites, validates typed handler payloads against the declared payload struct, and derives JSON Schema from the declared result type for runtime result validation.

@@ -1023,8 +1023,13 @@ export class EventBus {
       original_event.event_blocks_parent_completion = true
     }
 
-    // ensure a pause request is set so the bus _runloop pauses and (will resume when the handler exits)
-    currently_active_event_result._ensureQueueJumpPause(this)
+    // Serial event modes need the runloop paused while the queue-jumped child
+    // runs so queued siblings cannot overshoot the suspended parent handler.
+    // Parallel events have no event lock, so pausing here would incorrectly
+    // block later parallel work emitted by the same parent.
+    if (this.locks.getLockForEvent(original_event) !== null) {
+      currently_active_event_result._ensureQueueJumpPause(this)
+    }
     if (original_event.event_status === 'completed') {
       return event
     }

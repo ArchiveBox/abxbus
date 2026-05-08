@@ -39,7 +39,7 @@ In Rust, the same split is explicit:
 
 - `current_bus.emit_child_base(BaseEvent::new(...))` creates linked child work while inside a handler.
 - `child.wait_completed().await` queue-jumps and waits for that linked child.
-- `bus.emit_base(BaseEvent::new(...))` creates detached top-level work.
+- `bus.emit::<EventType>(BaseEvent::new(...))` creates detached top-level work.
 - calling `wait_completed().await` on a bus-emitted event waits for it without adding parent-child lineage.
 
 In Go, the same split is explicit:
@@ -212,47 +212,62 @@ console.log(bus.logTree())
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{base_event::BaseEvent, event_bus::EventBus};
+use abxbus_rust::{event, BaseEvent, event_bus::EventBus};
 use futures::executor::block_on;
-use serde_json::{json, Map};
+use serde_json::json;
+
+event! {
+    struct CheckoutEvent {
+        order_id: String,
+        event_result_type: serde_json::Value,
+    }
+}
+
+event! {
+    struct ReserveInventoryEvent {
+        order_id: String,
+        event_result_type: serde_json::Value,
+    }
+}
+
+event! {
+    struct SendReceiptEvent {
+        order_id: String,
+        event_result_type: serde_json::Value,
+    }
+}
 
 let bus = EventBus::new(Some("TreeBus".to_string()));
 
-bus.on("CheckoutEvent", "on_checkout", |event| async move {
+bus.on::<CheckoutEvent, _, _>("on_checkout", |event| async move {
     let current_bus = event.event_bus().expect("handler bus");
-    let order_id = event
-        .inner
-        .lock()
-        .payload
-        .get("order_id")
-        .cloned()
-        .unwrap_or_else(|| json!("ord-123"));
+    let order_id = event.payload().order_id;
 
-    let mut reserve_payload = Map::new();
-    reserve_payload.insert("order_id".to_string(), order_id.clone());
-    let reserve = current_bus.emit_child_base(BaseEvent::new("ReserveInventoryEvent", reserve_payload));
+    let reserve = current_bus.emit_child::<ReserveInventoryEvent>(BaseEvent::new(ReserveInventoryEvent {
+        order_id: order_id.clone(),
+    }));
     reserve.wait_completed().await;
     let reserve_id = reserve.event_result(Default::default()).await?;
 
-    let mut receipt_payload = Map::new();
-    receipt_payload.insert("order_id".to_string(), order_id);
-    let receipt = current_bus.emit_child_base(BaseEvent::new("SendReceiptEvent", receipt_payload));
+    let receipt = current_bus.emit_child::<SendReceiptEvent>(BaseEvent::new(SendReceiptEvent {
+        order_id,
+    }));
     receipt.wait_completed().await;
     let receipt_id = receipt.event_result(Default::default()).await?;
 
     Ok(json!(format!("{reserve_id}|{receipt_id}")))
 });
 
-bus.on_sync("ReserveInventoryEvent", "on_reserve", |event| {
-    Ok(json!(format!("reserve:{}", event.inner.lock().payload["order_id"])))
+bus.on::<ReserveInventoryEvent, _, _>("on_reserve", |event| async move {
+    Ok(json!(format!("reserve:{}", event.payload().order_id)))
 });
-bus.on_sync("SendReceiptEvent", "on_receipt", |event| {
-    Ok(json!(format!("receipt:{}", event.inner.lock().payload["order_id"])))
+bus.on::<SendReceiptEvent, _, _>("on_receipt", |event| async move {
+    Ok(json!(format!("receipt:{}", event.payload().order_id)))
 });
 
-let mut payload = Map::new();
-payload.insert("order_id".to_string(), json!("ord-123"));
-let root = bus.emit_base(BaseEvent::new("CheckoutEvent", payload));
+let root = bus.emit::<CheckoutEvent>(BaseEvent::new(OrderPayload {
+    order_id: "ord-123".to_string(),
+}));
 let result = block_on(root.event_result(Default::default()))?;
 block_on(bus.wait_until_idle(None));
 

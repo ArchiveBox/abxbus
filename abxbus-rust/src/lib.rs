@@ -7,4 +7,7 @@ pub mod lock_manager;
 pub mod typed;
 pub mod types;
 
+pub use serde;
+pub use serde_json;
+pub use typed::BaseEventHandle;
 pub use types::*;

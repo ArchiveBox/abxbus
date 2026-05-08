@@ -722,6 +722,41 @@ class EventBus:
         except ValueError:
             pass
 
+    def _start_parallel_event_task_from_queue(self, event: BaseEvent[Any]) -> None:
+        """Process a queued parallel event even when the main runloop is inside a handler."""
+
+        async def process_parallel_event() -> None:
+            removed = self.remove_event_from_pending_queue(event)
+            if not removed:
+                return
+            try:
+                await self.step(event=event)
+            finally:
+                self.mark_pending_queue_task_done()
+
+        task = asyncio.create_task(
+            process_parallel_event(),
+            name=f'{self}._process_parallel_event({event.event_id[-4:]})',
+            context=contextvars.Context(),
+        )
+        self._parallel_event_tasks.add(task)
+
+        def _on_done(done_task: asyncio.Task[None]) -> None:
+            self._parallel_event_tasks.discard(done_task)
+            if self._on_idle and self.pending_event_queue:
+                if not self._has_inflight_events_fast() and self.pending_event_queue.qsize() == 0:
+                    self._on_idle.set()
+            if done_task.cancelled():
+                return
+            try:
+                exc = done_task.exception()
+            except asyncio.CancelledError:
+                return
+            if exc is not None:
+                logger.exception('❌ Parallel event task error: %s %s', type(exc).__name__, exc)
+
+        task.add_done_callback(_on_done)
+
     def queue_contains_event_id(self, event_id: str) -> bool:
         if self.pending_event_queue is None:
             return False
@@ -1175,6 +1210,8 @@ class EventBus:
                 # Resolve future find waiters immediately on emit so callers
                 # don't wait for queue position or handler execution.
                 self._resolve_find_waiters(event)
+                if in_handler_context() and self.locks.get_lock_for_event(self, event) is None:
+                    self._start_parallel_event_task_from_queue(event)
                 if logger.isEnabledFor(logging.INFO):
                     logger.info(
                         '🗣️ %s.emit(%s) ➡️ %s#%s (#%d %s)',

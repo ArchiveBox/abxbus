@@ -172,17 +172,17 @@ event = bus.Emit(event)
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::base_event::BaseEvent;
+use abxbus_rust::BaseEvent;
 
-let event = BaseEvent::new("WorkEvent", Default::default());
+let event = BaseEvent::<WorkEvent>::new(WorkPayload::default());
 {
-    let mut inner = event.inner.lock();
+    let mut inner = event.inner.inner.lock();
     inner.event_timeout = Some(8.0);
     inner.event_handler_timeout = Some(2.0);
     inner.event_slow_timeout = Some(4.0);
     inner.event_handler_slow_timeout = Some(1.0);
 }
-let event = bus.emit_base(event);
+let event = bus.emit::<WorkEvent>(event);
 ```
 
 </Tab>
@@ -226,17 +226,19 @@ entry.HandlerSlowTimeout = &handlerSlowTimeout
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::event_handler::EventHandlerOptions;
+use abxbus_rust::{
+    event_handler::EventHandlerOptions,
+    BaseEvent,
+};
 
-let entry = bus.on_sync_with_options(
-    "WorkEvent",
+let entry = bus.on_with_options::<WorkEvent, _, _>(
     "slow_handler",
     EventHandlerOptions {
         handler_timeout: Some(1.5),
         handler_slow_timeout: Some(0.5),
         ..EventHandlerOptions::default()
     },
-    |_event| Ok(serde_json::Value::Null),
+    |_event| async move { Ok(()) },
 );
 ```
 

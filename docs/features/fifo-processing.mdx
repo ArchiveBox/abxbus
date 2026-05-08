@@ -169,10 +169,22 @@ func main() {
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{base_event::BaseEvent, event_bus::EventBus};
+use abxbus_rust::{event_bus::EventBus, BaseEvent};
 use futures::executor::block_on;
-use serde_json::{json, Map};
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
+
+#[derive(Clone, Serialize, Deserialize)]
+struct JobPayload {
+    order: i64,
+}
+
+struct JobEvent;
+impl EventSpec for JobEvent {
+    type Payload = JobPayload;
+    type Result = ();
+    const EVENT_TYPE: &'static str = "JobEvent";
+}
 
 let bus = EventBus::new(Some("FifoBus".to_string()));
 let started_order = Arc::new(Mutex::new(Vec::new()));
@@ -180,17 +192,15 @@ let completed_order = Arc::new(Mutex::new(Vec::new()));
 
 let started = started_order.clone();
 let completed = completed_order.clone();
-bus.on_sync("JobEvent", "on_job", move |event| {
-    let order = event.inner.lock().payload["order"].as_i64().unwrap();
+bus.on::<JobEvent, _, _>("on_job", move |event| async move {
+    let order = event.payload().order;
     started.lock().unwrap().push(order);
     completed.lock().unwrap().push(order);
-    Ok(serde_json::Value::Null)
+    Ok(())
 });
 
 for order in 0..3 {
-    let mut payload = Map::new();
-    payload.insert("order".to_string(), json!(order));
-    bus.emit_base(BaseEvent::new("JobEvent", payload));
+    bus.emit::<JobEvent>(BaseEvent::new(JobPayload { order }));
 }
 block_on(bus.wait_until_idle(None));
 
@@ -332,28 +342,50 @@ fmt.Println(bus.LogTree())
 <Tab title="Rust">
 
 ```rust
+use abxbus_rust::{event_bus::EventBus, BaseEvent};
+use futures::executor::block_on;
+use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
+
+#[derive(Clone, Serialize, Deserialize)]
+struct EmptyPayload;
+
+struct SlowEvent;
+impl EventSpec for SlowEvent {
+    type Payload = EmptyPayload;
+    type Result = ();
+    const EVENT_TYPE: &'static str = "SlowEvent";
+}
+
+struct FastEvent;
+impl EventSpec for FastEvent {
+    type Payload = EmptyPayload;
+    type Result = ();
+    const EVENT_TYPE: &'static str = "FastEvent";
+}
+
 let bus = EventBus::new(Some("FifoBus".to_string()));
 let trace = Arc::new(Mutex::new(Vec::new()));
 
 let trace_for_slow = trace.clone();
-bus.on_sync("SlowEvent", "on_slow", move |_event| {
+bus.on::<SlowEvent, _, _>("on_slow", move |_event| async move {
     trace_for_slow.lock().unwrap().push("start:SlowEvent".to_string());
     trace_for_slow.lock().unwrap().push("end:SlowEvent".to_string());
-    Ok(serde_json::Value::Null)
+    Ok(())
 });
 
 let trace_for_fast = trace.clone();
-bus.on_sync("FastEvent", "on_fast", move |_event| {
+bus.on::<FastEvent, _, _>("on_fast", move |_event| async move {
     trace_for_fast.lock().unwrap().push("start:FastEvent".to_string());
     trace_for_fast.lock().unwrap().push("end:FastEvent".to_string());
-    Ok(serde_json::Value::Null)
+    Ok(())
 });
 
-let slow = bus.emit_base(BaseEvent::new("SlowEvent", Default::default()));
-let fast = bus.emit_base(BaseEvent::new("FastEvent", Default::default()));
+let slow = bus.emit::<SlowEvent>(BaseEvent::new(EmptyPayload));
+let fast = bus.emit::<FastEvent>(BaseEvent::new(EmptyPayload));
 block_on(bus.wait_until_idle(None));
 
-assert!(slow.inner.lock().event_completed_at <= fast.inner.lock().event_started_at);
+assert!(slow.inner.inner.lock().event_completed_at <= fast.inner.inner.lock().event_started_at);
 println!("{}", bus.log_tree());
 ```
 

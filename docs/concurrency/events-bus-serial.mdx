@@ -184,11 +184,18 @@ func main() {
 
 ```rust
 use abxbus_rust::{
-    base_event::BaseEvent,
+    event,
     event_bus::{EventBus, EventBusOptions},
+    BaseEvent,
     types::EventConcurrencyMode,
 };
 use futures::executor::block_on;
+
+event! {
+    struct WorkEvent {
+        event_result_type: (),
+    }
+}
 
 let bus_a = EventBus::new_with_options(
     Some("BusSerialA".to_string()),
@@ -205,12 +212,12 @@ let bus_b = EventBus::new_with_options(
     },
 );
 
-bus_a.on_sync("WorkEvent", "handler_a", |_event| Ok(serde_json::Value::Null));
-bus_b.on_sync("WorkEvent", "handler_b", |_event| Ok(serde_json::Value::Null));
+bus_a.on::<WorkEvent, _, _>("handler_a", |_event| async move { Ok(()) });
+bus_b.on::<WorkEvent, _, _>("handler_b", |_event| async move { Ok(()) });
 
 for _ in 0..4 {
-    bus_a.emit_base(BaseEvent::new("WorkEvent", Default::default()));
-    bus_b.emit_base(BaseEvent::new("WorkEvent", Default::default()));
+    bus_a.emit::<WorkEvent>(BaseEvent::new(WorkEvent {}));
+    bus_b.emit::<WorkEvent>(BaseEvent::new(WorkEvent {}));
 }
 
 block_on(bus_a.wait_until_idle(None));

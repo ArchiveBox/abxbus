@@ -4,7 +4,7 @@ import gc
 import pytest
 from pydantic import ValidationError
 
-from abxbus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus, EventConcurrencyMode
 
 
 @pytest.fixture(autouse=True)
@@ -164,6 +164,60 @@ async def test_parallel_event_concurrency_plus_immediate_execution_races_child_e
         assert order.index(f'{label}_start') < parent_end_index
         assert order.index(f'{label}_end') < parent_end_index
 
+    await bus.stop()
+
+
+async def test_awaited_parallel_queue_jump_child_does_not_pause_later_parallel_child_events():
+    class ParentEvent(BaseEvent[None]):
+        pass
+
+    class ChildEvent(BaseEvent[str]):
+        name: str
+
+    class DoneEvent(BaseEvent[None]):
+        name: str
+
+    bus = EventBus(
+        name='ParallelQueueJumpDoesNotPauseBus',
+        event_concurrency='bus-serial',
+        event_handler_concurrency='serial',
+    )
+    log: list[str] = []
+
+    async def on_parent(event: ParentEvent) -> None:
+        log.append('parent_start')
+        await event.emit(ChildEvent(name='awaited', event_concurrency=EventConcurrencyMode.PARALLEL)).first()
+        log.append('parent_after_awaited')
+
+        event.emit(ChildEvent(name='bg', event_concurrency=EventConcurrencyMode.PARALLEL))
+        log.append('parent_after_bg_emit')
+        found = await bus.find(
+            DoneEvent,
+            lambda candidate: candidate.name == 'bg',
+            past=True,
+            future=0.2,
+        )
+        log.append(f'parent_found_{found is not None}')
+        assert found is not None, f'background parallel child should run while parent handler is waiting: {log}'
+
+    async def on_child(event: ChildEvent) -> str:
+        log.append(f'child_start_{event.name}')
+        if event.name == 'bg':
+            event.emit(DoneEvent(name='bg'))
+        log.append(f'child_end_{event.name}')
+        return event.name
+
+    async def on_done(_: DoneEvent) -> None:
+        log.append('done_seen')
+
+    bus.on(ParentEvent, on_parent)
+    bus.on(ChildEvent, on_child)
+    bus.on(DoneEvent, on_done)
+
+    await bus.emit(ParentEvent(event_timeout=None))
+    await bus.wait_until_idle()
+
+    assert log.index('child_start_bg') < log.index('parent_found_True'), log
     await bus.stop()
 
 

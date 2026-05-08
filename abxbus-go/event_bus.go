@@ -346,8 +346,13 @@ func (b *EventBus) Emit(event *BaseEvent) *BaseEvent {
 	b.pendingEventQueue = append(b.pendingEventQueue, original_event)
 	b.mu.Unlock()
 	b.notifyEventChange(original_event, "pending")
-	if b.locks.getActiveHandlerResult() == nil {
+	activeHandler := b.locks.getActiveHandlerResult()
+	if activeHandler == nil {
 		b.startRunloop()
+	} else if b.locks.getLockForEvent(original_event) == nil {
+		go func() {
+			_, _ = b.processEventImmediately(context.Background(), original_event, nil)
+		}()
 	}
 	return original_event
 }

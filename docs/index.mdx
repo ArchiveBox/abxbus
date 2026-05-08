@@ -67,30 +67,22 @@ await bus.emit(SomeEvent({ some_data: 132 })).done();
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event_bus::EventBus, typed::{EventSpec, TypedEvent}};
+use abxbus_rust::{event, BaseEvent, event_bus::EventBus};
 use futures::executor::block_on;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
 
-#[derive(Clone, Serialize, Deserialize)]
-struct SomePayload {
-    some_data: i64,
-}
-
-struct SomeEvent;
-impl EventSpec for SomeEvent {
-    type Payload = SomePayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "SomeEvent";
+event! {
+    struct SomeEvent {
+        some_data: i64,
+        event_result_type: String,
+    }
 }
 
 let bus = EventBus::new(Some("MyBus".to_string()));
-bus.on("SomeEvent", "on_some_event", |event| async move {
-    let data = event.inner.lock().payload["some_data"].clone();
-    Ok(json!(format!("{data}")))
+bus.on::<SomeEvent, _, _>("on_some_event", |event| async move {
+    Ok(format!("did something with {}", event.payload().some_data))
 });
 
-let event = bus.emit::<SomeEvent>(TypedEvent::new(SomePayload { some_data: 132 }));
+let event = bus.emit::<SomeEvent>(BaseEvent::new(SomeEvent { some_data: 132 }));
 block_on(event.wait_completed());
 ```
 
