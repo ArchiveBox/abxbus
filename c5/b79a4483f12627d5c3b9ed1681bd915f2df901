@@ -1,0 +1,21 @@
+abxbus-go/jsonschema/jsonschema_test.go
+  s_b97125cfd29900::t_31d02ca0ce3f7c 65-88
+abxbus-go/jsonschema/jsonschema.go
+  s_b97125cfd29900::t_9513f0aa17fc09 39-128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "c5b79a4483f12627d5c3b9ed1681bd915f2df901",
+  "prompts": {},
+  "sessions": {
+    "s_b97125cfd29900": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dfbaf-cdd3-7450-a6a6-0d68da00b802",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
