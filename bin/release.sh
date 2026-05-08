@@ -72,6 +72,16 @@ package_json = json.loads(Path('abxbus-ts/package.json').read_text())
 if 'version' in package_json:
     versions.append(package_json['version'])
 
+cargo_text = Path('abxbus-rust/Cargo.toml').read_text()
+cargo_match = re.search(r'^version = "([^"]+)"$', cargo_text, re.MULTILINE)
+if cargo_match:
+    versions.append(cargo_match.group(1))
+
+go_version_text = Path('abxbus-go/version.go').read_text()
+go_version_match = re.search(r'const Version = "([^"]+)"', go_version_text)
+if go_version_match:
+    versions.append(go_version_match.group(1))
+
 def parse(version: str) -> tuple[int, int, int, int]:
     match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:rc(\d+))?', version)
     if not match:
@@ -107,7 +117,31 @@ package_json = json.loads(package_path.read_text())
 if 'version' not in package_json:
     raise SystemExit('Failed to find version in abxbus-ts/package.json')
 
-current_version = max([pyproject_match.group(1), package_json['version']], key=parse)
+cargo_path = Path('abxbus-rust/Cargo.toml')
+cargo_text = cargo_path.read_text()
+cargo_match = re.search(r'^version = "([^"]+)"$', cargo_text, re.MULTILINE)
+if not cargo_match:
+    raise SystemExit('Failed to find version in abxbus-rust/Cargo.toml')
+
+cargo_lock_path = Path('abxbus-rust/Cargo.lock')
+cargo_lock_text = cargo_lock_path.read_text()
+cargo_lock_match = re.search(r'(?m)^name = "abxbus-rust"\nversion = "([^"]+)"$', cargo_lock_text)
+if not cargo_lock_match:
+    raise SystemExit('Failed to find abxbus-rust version in abxbus-rust/Cargo.lock')
+
+go_version_path = Path('abxbus-go/version.go')
+go_version_text = go_version_path.read_text()
+go_version_match = re.search(r'const Version = "([^"]+)"', go_version_text)
+if not go_version_match:
+    raise SystemExit('Failed to find version in abxbus-go/version.go')
+
+current_version = max([
+    pyproject_match.group(1),
+    package_json['version'],
+    cargo_match.group(1),
+    cargo_lock_match.group(1),
+    go_version_match.group(1),
+], key=parse)
 major, minor, patch, _ = parse(current_version)
 next_version = f'{major}.{minor}.{patch + 1}'
 
@@ -116,6 +150,20 @@ pyproject_path.write_text(
 )
 package_json['version'] = next_version
 package_path.write_text(json.dumps(package_json, indent=2) + '\n')
+cargo_path.write_text(
+    re.sub(r'^version = "[^"]+"$', f'version = "{next_version}"', cargo_text, count=1, flags=re.MULTILINE)
+)
+cargo_lock_path.write_text(
+    re.sub(
+        r'(?m)^(name = "abxbus-rust"\nversion = ")[^"]+(")$',
+        rf'\g<1>{next_version}\2',
+        cargo_lock_text,
+        count=1,
+    )
+)
+go_version_path.write_text(
+    re.sub(r'const Version = "[^"]+"', f'const Version = "{next_version}"', go_version_text, count=1)
+)
 print(next_version)
 PY
 }
