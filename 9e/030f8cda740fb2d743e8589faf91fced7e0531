@@ -1,0 +1,19 @@
+abxbus-go/event_bus.go
+  s_9acf3592297ead::t_2ffd93c876e443 357
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "9e030f8cda740fb2d743e8589faf91fced7e0531",
+  "prompts": {},
+  "sessions": {
+    "s_9acf3592297ead": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e06db-4834-7f40-95b3-aa902418130d",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
