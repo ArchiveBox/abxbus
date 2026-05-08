@@ -1,3 +1,4 @@
+use abxbus_rust::event;
 use std::{
     sync::{Arc, Mutex},
     thread,
@@ -7,7 +8,7 @@ use std::{
 use abxbus_rust::{
     base_event::BaseEvent,
     event_bus::{EventBus, EventBusOptions},
-    typed::{BaseEventHandle, EventSpec},
+    typed::BaseEventHandle,
     types::{EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
@@ -15,32 +16,26 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 #[derive(Clone, Serialize, Deserialize)]
-struct EmptyPayload {}
-
-#[derive(Clone, Serialize, Deserialize)]
 struct EmptyResult {}
 
-struct ParentEvent;
-impl EventSpec for ParentEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "ParentEvent";
+event! {
+    struct ParentEvent {
+        event_result_type: EmptyResult,
+        event_type: "ParentEvent",
+    }
 }
-
-struct ChildEvent;
-impl EventSpec for ChildEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "ChildEvent";
+event! {
+    struct ChildEvent {
+        event_result_type: EmptyResult,
+        event_type: "ChildEvent",
+    }
 }
-
-struct GrandchildEvent;
-impl EventSpec for GrandchildEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "GrandchildEvent";
+event! {
+    struct GrandchildEvent {
+        event_result_type: EmptyResult,
+        event_type: "GrandchildEvent",
+    }
 }
-
 fn child_ids_for(event: &Arc<BaseEvent>) -> Vec<String> {
     event
         .inner
@@ -67,7 +62,9 @@ fn test_basic_parent_tracking_child_events_get_event_parent_id() {
     bus.on_raw("ParentEvent", "parent_handler", move |_event| {
         let bus = bus_for_handler.clone();
         async move {
-            bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            bus.emit_child(ChildEvent {
+                ..Default::default()
+            });
             Ok(json!("parent"))
         }
     });
@@ -75,7 +72,9 @@ fn test_basic_parent_tracking_child_events_get_event_parent_id() {
         Ok(json!("child"))
     });
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     block_on(bus.wait_until_idle(None));
 
     let parent_id = parent.inner.inner.lock().event_id.clone();
@@ -103,14 +102,18 @@ fn test_multi_level_parent_tracking_preserves_lineage() {
     bus.on_raw("ParentEvent", "parent_handler", move |_event| {
         let bus = bus_for_parent.clone();
         async move {
-            bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            bus.emit_child(ChildEvent {
+                ..Default::default()
+            });
             Ok(json!("parent"))
         }
     });
     bus.on_raw("ChildEvent", "child_handler", move |_event| {
         let bus = bus_for_child.clone();
         async move {
-            bus.emit_child(BaseEventHandle::<GrandchildEvent>::new(EmptyPayload {}));
+            bus.emit_child(GrandchildEvent {
+                ..Default::default()
+            });
             Ok(json!("child"))
         }
     });
@@ -120,7 +123,9 @@ fn test_multi_level_parent_tracking_preserves_lineage() {
         |_event| async move { Ok(json!("grandchild")) },
     );
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     block_on(bus.wait_until_idle(None));
 
     let payload = bus.runtime_payload_for_test();
@@ -157,7 +162,9 @@ fn test_multiple_children_from_same_parent_keep_same_event_parent_id() {
         let bus = bus_for_handler.clone();
         async move {
             for _ in 0..3 {
-                bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+                bus.emit_child(ChildEvent {
+                    ..Default::default()
+                });
             }
             Ok(json!("spawned_children"))
         }
@@ -166,7 +173,9 @@ fn test_multiple_children_from_same_parent_keep_same_event_parent_id() {
         Ok(json!("child"))
     });
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     block_on(bus.wait_until_idle(None));
 
     let parent_id = parent.inner.inner.lock().event_id.clone();
@@ -202,7 +211,9 @@ fn test_parallel_parent_handlers_preserve_parent_tracking() {
         let bus = bus_for_handler_1.clone();
         async move {
             thread::sleep(Duration::from_millis(10));
-            bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            bus.emit_child(ChildEvent {
+                ..Default::default()
+            });
             Ok(json!("h1"))
         }
     });
@@ -210,7 +221,9 @@ fn test_parallel_parent_handlers_preserve_parent_tracking() {
         let bus = bus_for_handler_2.clone();
         async move {
             thread::sleep(Duration::from_millis(20));
-            bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            bus.emit_child(ChildEvent {
+                ..Default::default()
+            });
             Ok(json!("h2"))
         }
     });
@@ -218,7 +231,9 @@ fn test_parallel_parent_handlers_preserve_parent_tracking() {
         Ok(json!("child"))
     });
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     block_on(bus.wait_until_idle(None));
 
     let parent_id = parent.inner.inner.lock().event_id.clone();
@@ -247,7 +262,9 @@ fn test_sync_handler_parent_tracking() {
     let bus_for_sync = bus.clone();
     let child_events_for_sync = child_events.clone();
     bus.on_raw_sync("ParentEvent", "sync_handler", move |_event| {
-        let child = bus_for_sync.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+        let child = bus_for_sync.emit_child(ChildEvent {
+            ..Default::default()
+        });
         child_events_for_sync
             .lock()
             .expect("child events lock")
@@ -258,7 +275,9 @@ fn test_sync_handler_parent_tracking() {
     let bus_for_failing = bus.clone();
     let child_events_for_failing = child_events.clone();
     bus.on_raw_sync("ParentEvent", "failing_handler", move |_event| {
-        let child = bus_for_failing.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+        let child = bus_for_failing.emit_child(ChildEvent {
+            ..Default::default()
+        });
         child_events_for_failing
             .lock()
             .expect("child events lock")
@@ -269,7 +288,9 @@ fn test_sync_handler_parent_tracking() {
     let bus_for_success = bus.clone();
     let child_events_for_success = child_events.clone();
     bus.on_raw_sync("ParentEvent", "success_handler", move |_event| {
-        let child = bus_for_success.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+        let child = bus_for_success.emit_child(ChildEvent {
+            ..Default::default()
+        });
         child_events_for_success
             .lock()
             .expect("child events lock")
@@ -281,7 +302,9 @@ fn test_sync_handler_parent_tracking() {
         Ok(json!("child_handled"))
     });
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     block_on(parent.done());
     block_on(bus.wait_until_idle(None));
 
@@ -308,9 +331,15 @@ fn test_event_children_tracks_multiple_children_from_a_single_handler() {
     let parent_handler = bus.on_raw("ParentEvent", "parent_handler", move |_event| {
         let bus = bus_for_handler.clone();
         async move {
-            bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
-            bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
-            bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            bus.emit_child(ChildEvent {
+                ..Default::default()
+            });
+            bus.emit_child(ChildEvent {
+                ..Default::default()
+            });
+            bus.emit_child(ChildEvent {
+                ..Default::default()
+            });
             Ok(json!("parent"))
         }
     });
@@ -318,7 +347,9 @@ fn test_event_children_tracks_multiple_children_from_a_single_handler() {
         Ok(json!("child"))
     });
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     block_on(bus.wait_until_idle(None));
 
     let event_children = {
@@ -372,14 +403,18 @@ fn test_event_children_tracks_direct_and_nested_descendants() {
     let parent_handler = bus.on_raw("ParentEvent", "parent_handler", move |_event| {
         let bus = bus_for_parent.clone();
         async move {
-            bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            bus.emit_child(ChildEvent {
+                ..Default::default()
+            });
             Ok(json!("parent"))
         }
     });
     let child_handler = bus.on_raw("ChildEvent", "child_handler", move |_event| {
         let bus = bus_for_child.clone();
         async move {
-            bus.emit_child(BaseEventHandle::<GrandchildEvent>::new(EmptyPayload {}));
+            bus.emit_child(GrandchildEvent {
+                ..Default::default()
+            });
             Ok(json!("child"))
         }
     });
@@ -389,7 +424,9 @@ fn test_event_children_tracks_direct_and_nested_descendants() {
         |_event| async move { Ok(json!("grandchild")) },
     );
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     block_on(bus.wait_until_idle(None));
 
     let payload = bus.runtime_payload_for_test();
@@ -454,15 +491,21 @@ fn test_multiple_parent_handlers_contribute_to_one_event_children_list() {
     let handler_1 = bus.on_raw("ParentEvent", "handler_1", move |_event| {
         let bus = bus_for_handler_1.clone();
         async move {
-            bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            bus.emit_child(ChildEvent {
+                ..Default::default()
+            });
             Ok(json!("h1"))
         }
     });
     let handler_2 = bus.on_raw("ParentEvent", "handler_2", move |_event| {
         let bus = bus_for_handler_2.clone();
         async move {
-            bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
-            bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            bus.emit_child(ChildEvent {
+                ..Default::default()
+            });
+            bus.emit_child(ChildEvent {
+                ..Default::default()
+            });
             Ok(json!("h2"))
         }
     });
@@ -470,7 +513,9 @@ fn test_multiple_parent_handlers_contribute_to_one_event_children_list() {
         Ok(json!("child"))
     });
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     block_on(bus.wait_until_idle(None));
 
     let parent_inner = parent.inner.inner.lock();
@@ -509,14 +554,18 @@ fn test_explicit_event_parent_id_is_not_overridden() {
         let bus = bus_for_handler.clone();
         let explicit_parent_id = explicit_parent_id_for_handler.clone();
         async move {
-            let child = BaseEventHandle::<ChildEvent>::new(EmptyPayload {});
-            child.inner.inner.lock().event_parent_id = Some(explicit_parent_id);
+            let mut child = ChildEvent {
+                ..Default::default()
+            };
+            child.event_parent_id = Some(explicit_parent_id);
             bus.emit_child(child);
             Ok(json!("parent"))
         }
     });
 
-    let _parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let _parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     block_on(bus.wait_until_idle(None));
 
     let payload = bus.runtime_payload_for_test();
@@ -543,7 +592,9 @@ fn test_cross_eventbus_dispatch_preserves_parent_tracking() {
         let bus_1 = bus_1_for_handler.clone();
         let bus_2 = bus_2_for_handler.clone();
         async move {
-            let child = bus_1.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            let child = bus_1.emit_child(ChildEvent {
+                ..Default::default()
+            });
             bus_2.emit(BaseEventHandle::<ChildEvent>::from_base_event(
                 child.inner.clone(),
             ));
@@ -554,7 +605,9 @@ fn test_cross_eventbus_dispatch_preserves_parent_tracking() {
         Ok(json!("bus2"))
     });
 
-    let parent = bus_1.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus_1.emit(ParentEvent {
+        ..Default::default()
+    });
     block_on(async {
         bus_1.wait_until_idle(None).await;
         bus_2.wait_until_idle(None).await;
@@ -588,7 +641,9 @@ fn test_cross_bus_bus_emit_inside_handler_does_not_link_parent_when_exactly_one_
         let bus_2 = bus_2_for_handler.clone();
         let child_ref = child_ref_for_handler.clone();
         async move {
-            let child = bus_2.emit(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            let child = bus_2.emit(ChildEvent {
+                ..Default::default()
+            });
             *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
             Ok(json!("parent"))
         }
@@ -597,7 +652,9 @@ fn test_cross_bus_bus_emit_inside_handler_does_not_link_parent_when_exactly_one_
         Ok(json!("child"))
     });
 
-    let parent = bus_1.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus_1.emit(ParentEvent {
+        ..Default::default()
+    });
     block_on(async {
         bus_1.wait_until_idle(None).await;
         bus_2.wait_until_idle(None).await;
@@ -664,8 +721,12 @@ fn test_bus_emit_outside_handler_does_not_guess_a_parent_when_multiple_handlers_
         Ok(json!("child_done"))
     });
 
-    let parent_a = bus_1.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
-    let parent_b = bus_2.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent_a = bus_1.emit(ParentEvent {
+        ..Default::default()
+    });
+    let parent_b = bus_2.emit(ParentEvent {
+        ..Default::default()
+    });
     started_a_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("parent a started");
@@ -673,7 +734,9 @@ fn test_bus_emit_outside_handler_does_not_guess_a_parent_when_multiple_handlers_
         .recv_timeout(Duration::from_secs(1))
         .expect("parent b started");
 
-    let unrelated_child = bus_3.emit(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+    let unrelated_child = bus_3.emit(ChildEvent {
+        ..Default::default()
+    });
     release_a_tx.send(()).expect("release a send");
     release_b_tx.send(()).expect("release b send");
     block_on(async {
@@ -708,14 +771,18 @@ fn test_erroring_parent_handlers_still_preserve_child_event_parent_id() {
     bus.on_raw("ParentEvent", "failing_handler", move |_event| {
         let bus = bus_for_failing_handler.clone();
         async move {
-            bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            bus.emit_child(ChildEvent {
+                ..Default::default()
+            });
             Err("expected parent handler failure".to_string())
         }
     });
     bus.on_raw("ParentEvent", "success_handler", move |_event| {
         let bus = bus_for_success_handler.clone();
         async move {
-            bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            bus.emit_child(ChildEvent {
+                ..Default::default()
+            });
             Ok(json!("recovered"))
         }
     });
@@ -723,7 +790,9 @@ fn test_erroring_parent_handlers_still_preserve_child_event_parent_id() {
         Ok(json!("child"))
     });
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     block_on(bus.wait_until_idle(None));
 
     let parent_id = parent.inner.inner.lock().event_id.clone();
@@ -759,7 +828,9 @@ fn test_event_children_is_empty_when_handlers_do_not_emit_children() {
         Ok(json!("parent"))
     });
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     block_on(parent.done());
 
     let parent_inner = parent.inner.inner.lock();
@@ -787,8 +858,12 @@ fn test_parent_completion_waits_for_awaited_children() {
         let bus = bus_for_handler.clone();
         let child_refs = child_refs_for_handler.clone();
         async move {
-            let child_a = bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
-            let child_b = bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            let child_a = bus.emit_child(ChildEvent {
+                ..Default::default()
+            });
+            let child_b = bus.emit_child(ChildEvent {
+                ..Default::default()
+            });
             assert!(!child_a.inner.inner.lock().event_blocks_parent_completion);
             assert!(!child_b.inner.inner.lock().event_blocks_parent_completion);
             {
@@ -815,7 +890,9 @@ fn test_parent_completion_waits_for_awaited_children() {
         }
     });
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     child_started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("child should start");
@@ -866,7 +943,9 @@ fn test_event_emit_without_await_sets_parentage_without_blocking_parent_completi
         let bus = bus_for_handler.clone();
         let child_ref = child_ref_for_handler.clone();
         async move {
-            let child = bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            let child = bus.emit_child(ChildEvent {
+                ..Default::default()
+            });
             assert!(!child.inner.inner.lock().event_blocks_parent_completion);
             *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
             Ok(json!("parent"))
@@ -886,7 +965,9 @@ fn test_event_emit_without_await_sets_parentage_without_blocking_parent_completi
         }
     });
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     block_on(parent.done());
     assert_eq!(
         parent.inner.inner.lock().event_status,
@@ -935,7 +1016,9 @@ fn test_awaited_event_emit_child_blocks_parent_completion_and_queue_jumps() {
         let bus = bus_for_handler.clone();
         let child_ref = child_ref_for_handler.clone();
         async move {
-            let child = bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            let child = bus.emit_child(ChildEvent {
+                ..Default::default()
+            });
             assert!(!child.inner.inner.lock().event_blocks_parent_completion);
             *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
             child.done().await;
@@ -957,7 +1040,9 @@ fn test_awaited_event_emit_child_blocks_parent_completion_and_queue_jumps() {
         }
     });
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     child_started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("child should queue-jump and start");
@@ -996,7 +1081,9 @@ fn test_bus_emit_inside_handler_dispatches_root_event_by_default() {
     bus.on_raw("ParentEvent", "parent_handler", move |_event| {
         let bus = bus_for_handler.clone();
         async move {
-            bus.emit(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            bus.emit(ChildEvent {
+                ..Default::default()
+            });
             Ok(json!("parent"))
         }
     });
@@ -1004,7 +1091,9 @@ fn test_bus_emit_inside_handler_dispatches_root_event_by_default() {
         Ok(json!("child"))
     });
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     block_on(bus.wait_until_idle(None));
 
     let payload = bus.runtime_payload_for_test();
@@ -1043,7 +1132,9 @@ fn test_bus_emit_inside_handler_does_not_link_parent_when_not_using_event_emit()
         let bus = bus_for_handler.clone();
         let child_ref = child_ref_for_handler.clone();
         async move {
-            let child = bus.emit(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            let child = bus.emit(ChildEvent {
+                ..Default::default()
+            });
             *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
             Ok(json!("parent"))
         }
@@ -1062,7 +1153,9 @@ fn test_bus_emit_inside_handler_does_not_link_parent_when_not_using_event_emit()
         }
     });
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     child_started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("child should start");
@@ -1117,7 +1210,9 @@ fn test_outside_done_of_bus_emit_child_keeps_it_independent_of_active_handler() 
         let parent_holding_tx = parent_holding_tx.clone();
         let release_parent_rx = release_parent_rx.clone();
         async move {
-            let child = bus.emit(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            let child = bus.emit(ChildEvent {
+                ..Default::default()
+            });
             *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
             let _ = parent_holding_tx.send(());
             release_parent_rx
@@ -1140,7 +1235,9 @@ fn test_outside_done_of_bus_emit_child_keeps_it_independent_of_active_handler() 
         }
     });
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     parent_holding_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("parent holding");
@@ -1193,7 +1290,9 @@ fn test_outside_event_completed_wait_of_bus_emit_child_keeps_it_independent_of_a
         let parent_holding_tx = parent_holding_tx.clone();
         let release_parent_rx = release_parent_rx.clone();
         async move {
-            let child = bus.emit(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            let child = bus.emit(ChildEvent {
+                ..Default::default()
+            });
             *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
             let _ = parent_holding_tx.send(());
             release_parent_rx
@@ -1216,7 +1315,9 @@ fn test_outside_event_completed_wait_of_bus_emit_child_keeps_it_independent_of_a
         }
     });
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     parent_holding_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("parent holding");
@@ -1262,7 +1363,9 @@ fn test_awaited_bus_emit_child_remains_independent_and_does_not_block_parent_com
         let bus = bus_for_handler.clone();
         let child_ref = child_ref_for_handler.clone();
         async move {
-            let child = bus.emit(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            let child = bus.emit(ChildEvent {
+                ..Default::default()
+            });
             assert_eq!(child.inner.inner.lock().event_parent_id, None);
             assert_eq!(child.inner.inner.lock().event_emitted_by_handler_id, None);
             assert!(!child.inner.inner.lock().event_blocks_parent_completion);
@@ -1276,7 +1379,9 @@ fn test_awaited_bus_emit_child_remains_independent_and_does_not_block_parent_com
         Ok(json!("child"))
     });
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     block_on(parent.done());
     let child = child_ref
         .lock()
@@ -1311,7 +1416,9 @@ fn test_forwarded_events_are_not_counted_as_parent_event_children() {
         }
     });
 
-    let parent = bus_1.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus_1.emit(ParentEvent {
+        ..Default::default()
+    });
     block_on(async {
         bus_1.wait_until_idle(None).await;
         bus_2.wait_until_idle(None).await;

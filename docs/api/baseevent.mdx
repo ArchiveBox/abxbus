@@ -58,7 +58,7 @@ event, err := abxbus.NewBaseEventWithResult[FooPayload, FooResult]("FooCreateEve
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event, BaseEventHandle};
+use abxbus_rust::event;
 
 event! {
     struct FooCreateEvent {
@@ -69,10 +69,11 @@ event! {
     }
 }
 
-let event = BaseEventHandle::<FooCreateEvent>::new(FooCreateEvent {
+let event = bus.emit(FooCreateEvent {
     id: None,
     name: "Ada".to_string(),
     age: 37,
+    ..Default::default()
 });
 ```
 
@@ -157,11 +158,12 @@ value, err := completed.EventResult(context.Background())
 ```rust
 use abxbus_rust::{
     base_event::EventResultsOptions,
-    BaseEventHandle,
 };
 use futures::executor::block_on;
 
-let pending = bus.emit(BaseEventHandle::<MyEvent>::new(MyPayload::default()));
+let pending = bus.emit(MyEvent {
+    ..Default::default()
+});
 block_on(pending.done());
 block_on(pending.event_completed());
 let value = block_on(pending.event_result(EventResultsOptions::default()))?;
@@ -512,10 +514,11 @@ event! {
     }
 }
 
-let event = BaseEventHandle::<AllowedEvent>::new(AllowedEvent {
+let event = bus.emit(AllowedEvent {
     payload: "ok".to_string(),
+    event_timeout: Some(30.0),
+    ..Default::default()
 });
-event.inner.inner.lock().event_timeout = Some(30.0);
 
 // Rust validates unknown event_* / model_* keys during typed event construction
 // and uses explicit BaseEventData fields for built-in runtime overrides.

@@ -1,8 +1,8 @@
+use abxbus_rust::event;
 use abxbus_rust::{
     base_event::BaseEvent,
     event_bus::{EventBus, EventBusOptions},
     event_result::EventResultStatus,
-    typed::{BaseEventHandle, EventSpec},
     types::{EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
@@ -18,55 +18,46 @@ use std::{
 };
 
 #[derive(Clone, Serialize, Deserialize)]
-struct EmptyPayload {}
-
-#[derive(Clone, Serialize, Deserialize)]
 struct EmptyResult {}
 
-struct TestEvent;
-impl EventSpec for TestEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "TestEvent";
+event! {
+    struct TestEvent {
+        event_result_type: EmptyResult,
+        event_type: "TestEvent",
+    }
 }
-
-struct Event1;
-impl EventSpec for Event1 {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "Event1";
+event! {
+    struct Event1 {
+        event_result_type: EmptyResult,
+        event_type: "Event1",
+    }
 }
-
-struct Event2;
-impl EventSpec for Event2 {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "Event2";
+event! {
+    struct Event2 {
+        event_result_type: EmptyResult,
+        event_type: "Event2",
+    }
 }
-
-struct OrphanEvent;
-impl EventSpec for OrphanEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "OrphanEvent";
+event! {
+    struct OrphanEvent {
+        event_result_type: EmptyResult,
+        event_type: "OrphanEvent",
+    }
 }
-
-struct ForwardEvent;
-impl EventSpec for ForwardEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "ForwardEvent";
+event! {
+    struct ForwardEvent {
+        event_result_type: EmptyResult,
+        event_type: "ForwardEvent",
+    }
 }
-
-struct TimeoutTaxonomyEvent;
-impl EventSpec for TimeoutTaxonomyEvent {
-    type payload = EmptyPayload;
-    type event_result_type = String;
-    const event_type: &'static str = "TimeoutTaxonomyEvent";
-    const event_timeout: Option<f64> = Some(0.2);
-    const event_handler_timeout: Option<f64> = Some(0.01);
+event! {
+    struct TimeoutTaxonomyEvent {
+        event_result_type: String,
+        event_type: "TimeoutTaxonomyEvent",
+        event_timeout: 0.2,
+        event_handler_timeout: 0.01,
+    }
 }
-
 fn schema_event(event_type: &str, schema: Value) -> Arc<BaseEvent> {
     let event = BaseEvent::new(event_type, serde_json::Map::new());
     event.inner.lock().event_result_type = Some(schema);
@@ -90,7 +81,9 @@ fn test_handler_error_is_captured_and_does_not_prevent_other_handlers_from_runni
         }
     });
 
-    let event = bus.emit(BaseEventHandle::<TestEvent>::new(EmptyPayload {}));
+    let event = bus.emit(TestEvent {
+        ..Default::default()
+    });
     block_on(event.done());
 
     let event_results = event.inner.inner.lock().event_results.clone();
@@ -136,7 +129,9 @@ fn test_event_event_errors_collects_handler_errors() {
         |_event| async move { Ok(json!("ok")) },
     );
 
-    let event = bus.emit(BaseEventHandle::<TestEvent>::new(EmptyPayload {}));
+    let event = bus.emit(TestEvent {
+        ..Default::default()
+    });
     block_on(event.done());
 
     let mut errors = event.inner.event_errors();
@@ -155,7 +150,9 @@ fn test_handler_error_does_not_prevent_event_completion() {
         Err("handler failed".to_string())
     });
 
-    let event = bus.emit(BaseEventHandle::<TestEvent>::new(EmptyPayload {}));
+    let event = bus.emit(TestEvent {
+        ..Default::default()
+    });
     block_on(event.done());
 
     assert_eq!(
@@ -178,8 +175,12 @@ fn test_error_in_one_event_does_not_affect_subsequent_queued_events() {
         Ok(json!("event2 ok"))
     });
 
-    let event_1 = bus.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
-    let event_2 = bus.emit(BaseEventHandle::<Event2>::new(EmptyPayload {}));
+    let event_1 = bus.emit(Event1 {
+        ..Default::default()
+    });
+    let event_2 = bus.emit(Event2 {
+        ..Default::default()
+    });
     block_on(bus.wait_until_idle(None));
 
     assert_eq!(
@@ -215,7 +216,9 @@ fn test_async_handler_rejection_is_captured_as_error() {
         Err("async rejection".to_string())
     });
 
-    let event = bus.emit(BaseEventHandle::<TestEvent>::new(EmptyPayload {}));
+    let event = bus.emit(TestEvent {
+        ..Default::default()
+    });
     block_on(event.done());
 
     assert_eq!(
@@ -260,7 +263,9 @@ fn test_error_in_forwarded_event_handler_does_not_block_source_bus() {
         Ok(json!("bus_a ok"))
     });
 
-    let event = bus_a.emit(BaseEventHandle::<ForwardEvent>::new(EmptyPayload {}));
+    let event = bus_a.emit(ForwardEvent {
+        ..Default::default()
+    });
     block_on(event.done());
 
     assert_eq!(
@@ -294,7 +299,9 @@ fn test_error_in_forwarded_event_handler_does_not_block_source_bus() {
 fn test_event_with_no_handlers_completes_without_errors() {
     let bus = EventBus::new(Some("NoHandlerBus".to_string()));
 
-    let event = bus.emit(BaseEventHandle::<OrphanEvent>::new(EmptyPayload {}));
+    let event = bus.emit(OrphanEvent {
+        ..Default::default()
+    });
     block_on(event.done());
 
     assert_eq!(
@@ -314,7 +321,9 @@ fn test_error_handler_result_fields_are_populated_correctly() {
         Err("RangeError: out of range".to_string())
     });
 
-    let event = bus.emit(BaseEventHandle::<TestEvent>::new(EmptyPayload {}));
+    let event = bus.emit(TestEvent {
+        ..Default::default()
+    });
     block_on(event.done());
 
     let result = event
@@ -392,9 +401,9 @@ fn test_handler_timeout_uses_event_handler_timeout_error() {
         },
     );
 
-    let event = bus.emit(BaseEventHandle::<TimeoutTaxonomyEvent>::new(
-        EmptyPayload {},
-    ));
+    let event = bus.emit(TimeoutTaxonomyEvent {
+        ..Default::default()
+    });
     block_on(event.done());
 
     let result = event

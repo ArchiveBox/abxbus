@@ -1,3 +1,4 @@
+use abxbus_rust::event;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -10,7 +11,7 @@ use std::{
 use abxbus_rust::{
     base_event::BaseEvent,
     event_bus::EventBus,
-    typed::{BaseEventHandle, EventSpec},
+    typed::IntoBaseEventHandle,
     types::{EventHandlerCompletionMode, EventHandlerConcurrencyMode},
 };
 use futures::executor::block_on;
@@ -18,32 +19,27 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 #[derive(Clone, Serialize, Deserialize)]
-struct EmptyPayload {}
-#[derive(Clone, Serialize, Deserialize)]
 struct WorkResult {
     value: String,
 }
-struct WorkEvent;
-impl EventSpec for WorkEvent {
-    type payload = EmptyPayload;
-    type event_result_type = WorkResult;
-    const event_type: &'static str = "work";
+event! {
+    struct WorkEvent {
+        event_result_type: WorkResult,
+        event_type: "work",
+    }
 }
-
-struct ValueEvent;
-impl EventSpec for ValueEvent {
-    type payload = EmptyPayload;
-    type event_result_type = Value;
-    const event_type: &'static str = "value";
+event! {
+    struct ValueEvent {
+        event_result_type: Value,
+        event_type: "value",
+    }
 }
-
-struct ChildEvent;
-impl EventSpec for ChildEvent {
-    type payload = EmptyPayload;
-    type event_result_type = Value;
-    const event_type: &'static str = "child";
+event! {
+    struct ChildEvent {
+        event_result_type: Value,
+        event_type: "child",
+    }
 }
-
 #[test]
 fn test_event_handler_first_serial_stops_after_first_success() {
     let bus = EventBus::new(Some("BusFirstSerial".to_string()));
@@ -54,12 +50,11 @@ fn test_event_handler_first_serial_stops_after_first_success() {
         Ok(json!("late"))
     });
 
-    let event = BaseEventHandle::<WorkEvent>::new(EmptyPayload {});
-    {
-        let mut inner = event.inner.inner.lock();
-        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
-        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
-    }
+    let event = WorkEvent {
+        event_handler_completion: Some(EventHandlerCompletionMode::First),
+        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Serial),
+        ..Default::default()
+    };
     let emitted = bus.emit(event);
     block_on(emitted.done());
 
@@ -92,12 +87,11 @@ fn test_event_first_skips_none_result_and_uses_next_winner() {
     );
     bus.on_raw("value", "late", |_event| async move { Ok(json!("late")) });
 
-    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
-    {
-        let mut inner = event.inner.inner.lock();
-        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
-        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
-    }
+    let event = ValueEvent {
+        event_handler_completion: Some(EventHandlerCompletionMode::First),
+        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Serial),
+        ..Default::default()
+    };
     let emitted = bus.emit(event);
     block_on(emitted.done());
 
@@ -131,12 +125,11 @@ fn test_event_first_preserves_false_and_empty_string_results() {
     );
     false_bus.on_raw("value", "late", |_event| async move { Ok(json!("late")) });
 
-    let false_event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
-    {
-        let mut inner = false_event.inner.inner.lock();
-        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
-        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
-    }
+    let false_event = ValueEvent {
+        event_handler_completion: Some(EventHandlerCompletionMode::First),
+        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Serial),
+        ..Default::default()
+    };
     let false_event = false_bus.emit(false_event);
     block_on(false_event.done());
     assert_eq!(false_event.first_result(), Some(json!(false)));
@@ -151,12 +144,11 @@ fn test_event_first_preserves_false_and_empty_string_results() {
     );
     empty_bus.on_raw("value", "late", |_event| async move { Ok(json!("late")) });
 
-    let empty_event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
-    {
-        let mut inner = empty_event.inner.inner.lock();
-        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
-        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
-    }
+    let empty_event = ValueEvent {
+        event_handler_completion: Some(EventHandlerCompletionMode::First),
+        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Serial),
+        ..Default::default()
+    };
     let empty_event = empty_bus.emit(empty_event);
     block_on(empty_event.done());
     assert_eq!(empty_event.first_result(), Some(json!("")));
@@ -180,7 +172,9 @@ fn test_event_first_shortcut_sets_mode_and_returns_winner() {
     );
     bus.on_raw("value", "late", |_event| async move { Ok(json!("late")) });
 
-    let event = bus.emit(BaseEventHandle::<ValueEvent>::new(EmptyPayload {}));
+    let event = bus.emit(ValueEvent {
+        ..Default::default()
+    });
     assert_eq!(event.inner.inner.lock().event_handler_completion, None);
     let result = block_on(event.first()).expect("first result");
 
@@ -205,7 +199,9 @@ fn test_first_event_handler_completion_is_set_to_first_after_calling_first() {
         Ok(json!("result"))
     });
 
-    let event = bus.emit(BaseEventHandle::<ValueEvent>::new(EmptyPayload {}));
+    let event = bus.emit(ValueEvent {
+        ..Default::default()
+    });
     assert_eq!(event.inner.inner.lock().event_handler_completion, None);
 
     let result = block_on(event.first()).expect("first result");
@@ -231,7 +227,9 @@ fn test_first_event_handler_completion_appears_in_tojson_output() {
         Ok(json!("json result"))
     });
 
-    let event = bus.emit(BaseEventHandle::<ValueEvent>::new(EmptyPayload {}));
+    let event = bus.emit(ValueEvent {
+        ..Default::default()
+    });
     block_on(event.first()).expect("first result");
 
     let payload = event.inner.to_json_value();
@@ -252,12 +250,11 @@ fn test_first_event_handler_completion_can_be_set_via_event_constructor() {
         Ok(json!("fast handler"))
     });
 
-    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
-    {
-        let mut inner = event.inner.inner.lock();
-        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
-        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
-    }
+    let event = ValueEvent {
+        event_handler_completion: Some(EventHandlerCompletionMode::First),
+        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Parallel),
+        ..Default::default()
+    };
     let event = bus.emit(event);
     let result = block_on(event.first()).expect("first result");
 
@@ -282,12 +279,11 @@ fn test_event_handler_first_parallel_returns_earliest_completed_non_null_result(
         Ok(json!("fast"))
     });
 
-    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
-    {
-        let mut inner = event.inner.inner.lock();
-        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
-        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
-    }
+    let event = ValueEvent {
+        event_handler_completion: Some(EventHandlerCompletionMode::First),
+        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Parallel),
+        ..Default::default()
+    };
     let event = bus.emit(event);
     block_on(event.done());
 
@@ -344,12 +340,11 @@ fn test_event_first_parallel_returns_before_slow_loser_finishes() {
         }
     });
 
-    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
-    {
-        let mut inner = event.inner.inner.lock();
-        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
-        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
-    }
+    let event = ValueEvent {
+        event_handler_completion: Some(EventHandlerCompletionMode::First),
+        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Parallel),
+        ..Default::default()
+    };
     let event = bus.emit(event);
 
     let started = Instant::now();
@@ -383,8 +378,10 @@ fn test_first_returns_undefined_when_no_handlers_are_registered() {
     let bus = EventBus::new(Some("FirstNoHandlerBus".to_string()));
 
     let result = block_on(
-        bus.emit(BaseEventHandle::<ValueEvent>::new(EmptyPayload {}))
-            .first(),
+        bus.emit(ValueEvent {
+            ..Default::default()
+        })
+        .first(),
     )
     .expect("first result");
 
@@ -394,7 +391,10 @@ fn test_first_returns_undefined_when_no_handlers_are_registered() {
 
 #[test]
 fn test_first_rejects_when_event_has_no_bus_attached() {
-    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
+    let event = ValueEvent {
+        ..Default::default()
+    }
+    .into_base_event_handle();
 
     let error = block_on(event.first()).expect_err("unemitted event should reject");
 
@@ -412,12 +412,11 @@ fn test_first_re_raises_first_processing_error_when_all_handlers_throw() {
         Err("handler 2 error".to_string())
     });
 
-    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
-    {
-        let mut inner = event.inner.inner.lock();
-        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
-        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
-    }
+    let event = ValueEvent {
+        event_handler_completion: Some(EventHandlerCompletionMode::First),
+        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Parallel),
+        ..Default::default()
+    };
     let error = block_on(bus.emit(event).first()).expect_err("first should surface handler error");
 
     assert!(
@@ -439,12 +438,11 @@ fn test_first_re_raises_processing_errors_even_when_another_handler_succeeds() {
         Ok(json!("slow but succeeds"))
     });
 
-    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
-    {
-        let mut inner = event.inner.inner.lock();
-        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
-        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
-    }
+    let event = ValueEvent {
+        event_handler_completion: Some(EventHandlerCompletionMode::First),
+        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Parallel),
+        ..Default::default()
+    };
     let event = bus.emit(event);
     let error = block_on(event.first()).expect_err("first should surface fast handler error");
 
@@ -479,19 +477,20 @@ fn test_first_cancels_child_events_emitted_by_losing_handlers() {
         let bus = bus_for_slow_parent.clone();
         let child_ref = child_ref_for_slow_parent.clone();
         async move {
-            let child = bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            let child = bus.emit_child(ChildEvent {
+                ..Default::default()
+            });
             *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
             child.done().await;
             Ok(json!("slow parent with child"))
         }
     });
 
-    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
-    {
-        let mut inner = event.inner.inner.lock();
-        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
-        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
-    }
+    let event = ValueEvent {
+        event_handler_completion: Some(EventHandlerCompletionMode::First),
+        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Parallel),
+        ..Default::default()
+    };
     let result = block_on(bus.emit(event).first()).expect("first result");
     assert_eq!(result, Some(json!("fast parent")));
 
@@ -525,12 +524,11 @@ fn test_event_first_returns_zero_as_valid_first_result() {
     bus.on_raw("value", "zero_winner", |_event| async move { Ok(json!(0)) });
     bus.on_raw("value", "late", |_event| async move { Ok(json!("late")) });
 
-    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
-    {
-        let mut inner = event.inner.inner.lock();
-        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
-        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
-    }
+    let event = ValueEvent {
+        event_handler_completion: Some(EventHandlerCompletionMode::First),
+        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Serial),
+        ..Default::default()
+    };
     let event = bus.emit(event);
     block_on(event.done());
 
@@ -549,8 +547,10 @@ fn test_first_returns_empty_string_as_a_valid_first_result() {
     );
 
     let result = block_on(
-        bus.emit(BaseEventHandle::<ValueEvent>::new(EmptyPayload {}))
-            .first(),
+        bus.emit(ValueEvent {
+            ..Default::default()
+        })
+        .first(),
     )
     .expect("first result");
 
@@ -569,8 +569,10 @@ fn test_first_returns_false_as_a_valid_first_result() {
     );
 
     let result = block_on(
-        bus.emit(BaseEventHandle::<ValueEvent>::new(EmptyPayload {}))
-            .first(),
+        bus.emit(ValueEvent {
+            ..Default::default()
+        })
+        .first(),
     )
     .expect("first result");
 
@@ -586,8 +588,10 @@ fn test_event_first_returns_none_when_all_handlers_return_null() {
     bus.on_raw("value", "null_b", |_event| async move { Ok(Value::Null) });
 
     let result = block_on(
-        bus.emit(BaseEventHandle::<ValueEvent>::new(EmptyPayload {}))
-            .first(),
+        bus.emit(ValueEvent {
+            ..Default::default()
+        })
+        .first(),
     )
     .expect("first result");
 
@@ -602,8 +606,10 @@ fn test_event_first_works_with_single_handler() {
     bus.on_raw("value", "single", |_event| async move { Ok(json!(42)) });
 
     let result = block_on(
-        bus.emit(BaseEventHandle::<ValueEvent>::new(EmptyPayload {}))
-            .first(),
+        bus.emit(ValueEvent {
+            ..Default::default()
+        })
+        .first(),
     )
     .expect("first result");
 
@@ -633,12 +639,11 @@ fn test_event_first_skips_base_event_json_result_and_uses_next_winner() {
         }
     });
 
-    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
-    {
-        let mut inner = event.inner.inner.lock();
-        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
-        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
-    }
+    let event = ValueEvent {
+        event_handler_completion: Some(EventHandlerCompletionMode::First),
+        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Serial),
+        ..Default::default()
+    };
     let event = bus.emit(event);
     block_on(event.done());
 

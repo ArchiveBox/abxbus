@@ -6,30 +6,24 @@ use std::{
 
 use abxbus_rust::{
     base_event::BaseEvent,
+    event,
     event_bus::{EventBus, EventBusOptions},
     event_result::EventResultStatus,
-    typed::{BaseEventHandle, EventSpec},
     types::{EventHandlerCompletionMode, EventHandlerConcurrencyMode},
 };
 use futures::executor::block_on;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
-#[derive(Clone, Serialize, Deserialize)]
-struct EmptyPayload {}
-
-struct CompletionEvent;
-impl EventSpec for CompletionEvent {
-    type payload = EmptyPayload;
-    type event_result_type = Value;
-    const event_type: &'static str = "CompletionEvent";
+event! {
+    struct CompletionEvent {
+        event_result_type: Value,
+    }
 }
 
-struct ConcurrencyEvent;
-impl EventSpec for ConcurrencyEvent {
-    type payload = EmptyPayload;
-    type event_result_type = Value;
-    const event_type: &'static str = "ConcurrencyEvent";
+event! {
+    struct ConcurrencyEvent {
+        event_result_type: Value,
+    }
 }
 
 fn bump_in_flight(in_flight: &Arc<Mutex<i64>>, max_in_flight: &Arc<Mutex<i64>>) {
@@ -47,9 +41,13 @@ fn drop_in_flight(in_flight: &Arc<Mutex<i64>>) {
     *in_flight -= 1;
 }
 
-fn emit_with_first_completion(bus: &Arc<EventBus>) -> BaseEventHandle<CompletionEvent> {
-    let event = BaseEventHandle::<CompletionEvent>::new(EmptyPayload {});
-    event.inner.inner.lock().event_handler_completion = Some(EventHandlerCompletionMode::First);
+fn emit_with_first_completion(
+    bus: &Arc<EventBus>,
+) -> abxbus_rust::typed::BaseEventHandle<CompletionEvent> {
+    let event = CompletionEvent {
+        event_handler_completion: Some(EventHandlerCompletionMode::First),
+        ..Default::default()
+    };
     let event = bus.emit(event);
     block_on(event.done());
     event
@@ -79,7 +77,9 @@ fn test_event_handler_completion_bus_default_first_serial() {
         }
     });
 
-    let event = bus.emit(BaseEventHandle::<CompletionEvent>::new(EmptyPayload {}));
+    let event = bus.emit(CompletionEvent {
+        ..Default::default()
+    });
     assert_eq!(event.inner.inner.lock().event_handler_completion, None);
     block_on(event.done());
 
@@ -128,8 +128,10 @@ fn test_event_handler_completion_explicit_override_beats_bus_default() {
         }
     });
 
-    let event = BaseEventHandle::<CompletionEvent>::new(EmptyPayload {});
-    event.inner.inner.lock().event_handler_completion = Some(EventHandlerCompletionMode::All);
+    let event = CompletionEvent {
+        event_handler_completion: Some(EventHandlerCompletionMode::All),
+        ..Default::default()
+    };
     let event = bus.emit(event);
     assert_eq!(
         event.inner.inner.lock().event_handler_completion,
@@ -179,12 +181,11 @@ fn test_event_parallel_first_races_and_cancels_non_winners() {
         },
     );
 
-    let event = BaseEventHandle::<CompletionEvent>::new(EmptyPayload {});
-    {
-        let mut inner = event.inner.inner.lock();
-        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
-        inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
-    }
+    let event = CompletionEvent {
+        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Parallel),
+        event_handler_completion: Some(EventHandlerCompletionMode::First),
+        ..Default::default()
+    };
     let event = bus.emit(event);
     let started = std::time::Instant::now();
     block_on(event.done());
@@ -243,7 +244,9 @@ fn test_event_first_shortcut_sets_mode_and_cancels_parallel_losers() {
         }
     });
 
-    let event = bus.emit(BaseEventHandle::<CompletionEvent>::new(EmptyPayload {}));
+    let event = bus.emit(CompletionEvent {
+        ..Default::default()
+    });
     assert_eq!(event.inner.inner.lock().event_handler_completion, None);
     let first_value = block_on(event.first()).expect("first result");
 
@@ -470,7 +473,9 @@ fn test_event_handler_concurrency_bus_default_remains_unset_on_dispatch() {
         Ok(json!("ok"))
     });
 
-    let event = bus.emit(BaseEventHandle::<ConcurrencyEvent>::new(EmptyPayload {}));
+    let event = bus.emit(ConcurrencyEvent {
+        ..Default::default()
+    });
     assert_eq!(event.inner.inner.lock().event_handler_concurrency, None);
     block_on(event.done());
     bus.stop();
@@ -503,18 +508,20 @@ fn test_event_handler_concurrency_per_event_override_controls_execution_mode() {
         });
     }
 
-    let serial_event = BaseEventHandle::<ConcurrencyEvent>::new(EmptyPayload {});
-    serial_event.inner.inner.lock().event_handler_concurrency =
-        Some(EventHandlerConcurrencyMode::Serial);
+    let serial_event = ConcurrencyEvent {
+        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Serial),
+        ..Default::default()
+    };
     let serial_event = bus.emit(serial_event);
     block_on(serial_event.done());
     assert_eq!(*max_in_flight.lock().expect("max lock"), 1);
 
     *in_flight.lock().expect("in flight lock") = 0;
     *max_in_flight.lock().expect("max lock") = 0;
-    let parallel_event = BaseEventHandle::<ConcurrencyEvent>::new(EmptyPayload {});
-    parallel_event.inner.inner.lock().event_handler_concurrency =
-        Some(EventHandlerConcurrencyMode::Parallel);
+    let parallel_event = ConcurrencyEvent {
+        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Parallel),
+        ..Default::default()
+    };
     let parallel_event = bus.emit(parallel_event);
     block_on(parallel_event.done());
     assert!(*max_in_flight.lock().expect("max lock") >= 2);

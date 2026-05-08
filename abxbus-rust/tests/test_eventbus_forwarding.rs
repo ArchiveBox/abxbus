@@ -1,61 +1,44 @@
+use abxbus_rust::event;
 use std::{
     sync::{Arc, Mutex},
     thread,
     time::Duration,
 };
 
-use abxbus_rust::{
-    event_bus::EventBus,
-    typed::{BaseEventHandle, EventSpec},
-};
+use abxbus_rust::event_bus::EventBus;
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 #[derive(Clone, Serialize, Deserialize)]
-struct PingPayload {
-    value: i64,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct EmptyPayload {}
-
-#[derive(Clone, Serialize, Deserialize)]
 struct EmptyResult {}
 
-struct PingEvent;
-impl EventSpec for PingEvent {
-    type payload = PingPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "PingEvent";
+event! {
+    struct PingEvent {
+        value: i64,
+        event_result_type: EmptyResult,
+        event_type: "PingEvent",
+    }
 }
-
-#[derive(Clone, Serialize, Deserialize)]
-struct OrderPayload {
-    order: i64,
+event! {
+    struct OrderEvent {
+        order: i64,
+        event_result_type: EmptyResult,
+        event_type: "OrderEvent",
+    }
 }
-
-struct OrderEvent;
-impl EventSpec for OrderEvent {
-    type payload = OrderPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "OrderEvent";
+event! {
+    struct ProxyDispatchRootEvent {
+        event_result_type: EmptyResult,
+        event_type: "ProxyDispatchRootEvent",
+    }
 }
-
-struct ProxyDispatchRootEvent;
-impl EventSpec for ProxyDispatchRootEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "ProxyDispatchRootEvent";
+event! {
+    struct ProxyDispatchChildEvent {
+        event_result_type: EmptyResult,
+        event_type: "ProxyDispatchChildEvent",
+    }
 }
-
-struct ProxyDispatchChildEvent;
-impl EventSpec for ProxyDispatchChildEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "ProxyDispatchChildEvent";
-}
-
 #[test]
 fn test_events_forward_between_buses_without_duplication() {
     let bus_a = EventBus::new(Some("BusA".to_string()));
@@ -114,7 +97,10 @@ fn test_events_forward_between_buses_without_duplication() {
         }
     });
 
-    let event = bus_a.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 1 }));
+    let event = bus_a.emit(PingEvent {
+        value: 1,
+        ..Default::default()
+    });
     block_on(event.done());
     block_on(bus_a.wait_until_idle(None));
     block_on(bus_b.wait_until_idle(None));
@@ -190,7 +176,10 @@ fn test_tresultsee_level_hierarchy_bubbling() {
         }
     });
 
-    let bottom = subchild_bus.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 1 }));
+    let bottom = subchild_bus.emit(PingEvent {
+        value: 1,
+        ..Default::default()
+    });
     block_on(bottom.done());
     block_on(subchild_bus.wait_until_idle(None));
     block_on(child_bus.wait_until_idle(None));
@@ -218,7 +207,10 @@ fn test_tresultsee_level_hierarchy_bubbling() {
     events_at_child.lock().expect("child lock").clear();
     events_at_subchild.lock().expect("subchild lock").clear();
 
-    let middle = child_bus.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 2 }));
+    let middle = child_bus.emit(PingEvent {
+        value: 2,
+        ..Default::default()
+    });
     block_on(middle.done());
     block_on(child_bus.wait_until_idle(None));
     block_on(parent_bus.wait_until_idle(None));
@@ -281,7 +273,10 @@ fn test_forwarding_disambiguates_buses_that_share_the_same_name() {
         }
     });
 
-    let event = bus_a.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 99 }));
+    let event = bus_a.emit(PingEvent {
+        value: 99,
+        ..Default::default()
+    });
     block_on(event.done());
     block_on(bus_a.wait_until_idle(None));
     block_on(bus_b.wait_until_idle(None));
@@ -355,7 +350,10 @@ fn test_circular_subscription_prevention() {
         }
     });
 
-    let event = peer1.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 42 }));
+    let event = peer1.emit(PingEvent {
+        value: 42,
+        ..Default::default()
+    });
     block_on(event.done());
     block_on(peer1.wait_until_idle(None));
     block_on(peer2.wait_until_idle(None));
@@ -383,7 +381,10 @@ fn test_circular_subscription_prevention() {
     events_at_peer2.lock().expect("peer2 lock").clear();
     events_at_peer3.lock().expect("peer3 lock").clear();
 
-    let event2 = peer2.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 99 }));
+    let event2 = peer2.emit(PingEvent {
+        value: 99,
+        ..Default::default()
+    });
     block_on(event2.done());
     block_on(peer1.wait_until_idle(None));
     block_on(peer2.wait_until_idle(None));
@@ -470,7 +471,10 @@ fn test_forwarding_loop_prevention() {
         }
     });
 
-    let event = bus_a.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 7 }));
+    let event = bus_a.emit(PingEvent {
+        value: 7,
+        ..Default::default()
+    });
     block_on(event.done());
     block_on(bus_a.wait_until_idle(None));
     block_on(bus_b.wait_until_idle(None));
@@ -523,7 +527,10 @@ fn test_await_forwarded_event_waits_for_target_bus_handlers() {
         }
     });
 
-    let event = bus_a.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 2 }));
+    let event = bus_a.emit(PingEvent {
+        value: 2,
+        ..Default::default()
+    });
     block_on(event.done());
 
     let mut log = completion_log.lock().expect("log lock").clone();
@@ -576,7 +583,10 @@ fn test_await_forwarded_event_waits_when_forwarding_handler_is_async_delayed() {
         }
     });
 
-    let event = bus_a.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 3 }));
+    let event = bus_a.emit(PingEvent {
+        value: 3,
+        ..Default::default()
+    });
     block_on(event.done());
 
     assert!(*bus_a_done.lock().expect("bus_a_done lock"));
@@ -626,7 +636,10 @@ fn test_forwarding_same_event_does_not_set_self_parent_id() {
         }
     });
 
-    let event = origin.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 9 }));
+    let event = origin.emit(PingEvent {
+        value: 9,
+        ..Default::default()
+    });
     block_on(event.done());
     block_on(origin.wait_until_idle(None));
     block_on(target.wait_until_idle(None));
@@ -648,9 +661,9 @@ fn test_proxy_dispatch_auto_links_child_events_like_emit() {
     bus.on_raw("ProxyDispatchRootEvent", "root_handler", move |_event| {
         let bus = bus_for_root.clone();
         async move {
-            bus.emit_child(BaseEventHandle::<ProxyDispatchChildEvent>::new(
-                EmptyPayload {},
-            ));
+            bus.emit_child(ProxyDispatchChildEvent {
+                ..Default::default()
+            });
             Ok(json!("root"))
         }
     });
@@ -660,9 +673,9 @@ fn test_proxy_dispatch_auto_links_child_events_like_emit() {
         |_event| async move { Ok(json!("child")) },
     );
 
-    let root = bus.emit(BaseEventHandle::<ProxyDispatchRootEvent>::new(
-        EmptyPayload {},
-    ));
+    let root = bus.emit(ProxyDispatchRootEvent {
+        ..Default::default()
+    });
     block_on(root.done());
     block_on(bus.wait_until_idle(None));
 
@@ -699,9 +712,9 @@ fn test_proxy_dispatch_of_same_event_does_not_self_parent_or_self_link_child() {
         }
     });
 
-    let root = bus.emit(BaseEventHandle::<ProxyDispatchRootEvent>::new(
-        EmptyPayload {},
-    ));
+    let root = bus.emit(ProxyDispatchRootEvent {
+        ..Default::default()
+    });
     block_on(root.done());
     block_on(bus.wait_until_idle(None));
 
@@ -744,7 +757,10 @@ fn test_events_are_processed_in_fifo_order() {
     });
 
     for order in 0..10 {
-        bus.emit(BaseEventHandle::<OrderEvent>::new(OrderPayload { order }));
+        bus.emit(OrderEvent {
+            order,
+            ..Default::default()
+        });
     }
 
     block_on(bus.wait_until_idle(None));

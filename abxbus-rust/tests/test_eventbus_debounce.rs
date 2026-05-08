@@ -1,3 +1,4 @@
+use abxbus_rust::event;
 use std::{
     sync::{mpsc, Arc, Mutex},
     thread,
@@ -6,7 +7,6 @@ use std::{
 
 use abxbus_rust::{
     event_bus::{EventBus, FindOptions},
-    typed::{BaseEventHandle, EventSpec},
     types::EventStatus,
 };
 use futures::executor::block_on;
@@ -14,35 +14,27 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 #[derive(Clone, Serialize, Deserialize)]
-struct EmptyPayload {}
-#[derive(Clone, Serialize, Deserialize)]
 struct EmptyResult {}
 
-struct ParentEvent;
-impl EventSpec for ParentEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "ParentEvent";
+event! {
+    struct ParentEvent {
+        event_result_type: EmptyResult,
+        event_type: "ParentEvent",
+    }
 }
-
-#[derive(Clone, Serialize, Deserialize)]
-struct ScreenshotPayload {
-    target_id: String,
+event! {
+    struct ScreenshotEvent {
+        target_id: String,
+        event_result_type: EmptyResult,
+        event_type: "ScreenshotEvent",
+    }
 }
-struct ScreenshotEvent;
-impl EventSpec for ScreenshotEvent {
-    type payload = ScreenshotPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "ScreenshotEvent";
+event! {
+    struct SyncEvent {
+        event_result_type: EmptyResult,
+        event_type: "SyncEvent",
+    }
 }
-
-struct SyncEvent;
-impl EventSpec for SyncEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "SyncEvent";
-}
-
 const TARGET_ID_1: &str = "9b447756-908c-7b75-8a51-4a2c2b4d9b14";
 const TARGET_ID_2: &str = "194870e1-fa02-70a4-8101-d10d57c3449c";
 
@@ -77,10 +69,10 @@ fn test_simple_debounce_with_child_of_reuses_recent_event() {
         let bus = bus_for_parent.clone();
         let child_id = child_id_for_parent.clone();
         async move {
-            let child =
-                bus.emit_child(BaseEventHandle::<ScreenshotEvent>::new(ScreenshotPayload {
-                    target_id: TARGET_ID_1.to_string(),
-                }));
+            let child = bus.emit_child(ScreenshotEvent {
+                target_id: TARGET_ID_1.to_string(),
+                ..Default::default()
+            });
             *child_id.lock().expect("child id lock") =
                 Some(child.inner.inner.lock().event_id.clone());
             child.done().await;
@@ -93,7 +85,9 @@ fn test_simple_debounce_with_child_of_reuses_recent_event() {
         |_event| async move { Ok(json!("screenshot_done")) },
     );
 
-    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let parent = bus.emit(ParentEvent {
+        ..Default::default()
+    });
     block_on(parent.done());
     let emitted_child_id = wait_for_string(&child_id);
 
@@ -109,9 +103,10 @@ fn test_simple_debounce_with_child_of_reuses_recent_event() {
         },
     ))
     .unwrap_or_else(|| {
-        bus.emit(BaseEventHandle::<ScreenshotEvent>::new(ScreenshotPayload {
+        bus.emit(ScreenshotEvent {
             target_id: TARGET_ID_2.to_string(),
-        }))
+            ..Default::default()
+        })
         .inner
     });
     block_on(reused.event_completed());
@@ -143,7 +138,9 @@ fn test_debounce_uses_future_match_before_dispatch_fallback() {
 
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(50));
-        bus_for_emit.emit(BaseEventHandle::<SyncEvent>::new(EmptyPayload {}));
+        bus_for_emit.emit(SyncEvent {
+            ..Default::default()
+        });
     });
 
     let resolved = block_on(bus.find("SyncEvent", true, None, None)).or_else(|| {
@@ -151,8 +148,10 @@ fn test_debounce_uses_future_match_before_dispatch_fallback() {
             .expect("future find")
     });
     let resolved = resolved.unwrap_or_else(|| {
-        bus.emit(BaseEventHandle::<SyncEvent>::new(EmptyPayload {}))
-            .inner
+        bus.emit(SyncEvent {
+            ..Default::default()
+        })
+        .inner
     });
     block_on(resolved.event_completed());
 
@@ -177,9 +176,10 @@ fn test_debounce_prefers_recent_history() {
         Ok(json!("done"))
     });
 
-    let original = bus.emit(BaseEventHandle::<ScreenshotEvent>::new(ScreenshotPayload {
+    let original = bus.emit(ScreenshotEvent {
         target_id: TARGET_ID_1.to_string(),
-    }));
+        ..Default::default()
+    });
     block_on(original.done());
 
     let found = block_on(bus.find_with_options(
@@ -192,9 +192,10 @@ fn test_debounce_prefers_recent_history() {
         },
     ))
     .unwrap_or_else(|| {
-        bus.emit(BaseEventHandle::<ScreenshotEvent>::new(ScreenshotPayload {
+        bus.emit(ScreenshotEvent {
             target_id: TARGET_ID_1.to_string(),
-        }))
+            ..Default::default()
+        })
         .inner
     });
     block_on(found.event_completed());
@@ -231,9 +232,10 @@ fn test_debounce_dispatches_when_recent_missing() {
         },
     ))
     .unwrap_or_else(|| {
-        bus.emit(BaseEventHandle::<ScreenshotEvent>::new(ScreenshotPayload {
+        bus.emit(ScreenshotEvent {
             target_id: TARGET_ID_1.to_string(),
-        }))
+            ..Default::default()
+        })
         .inner
     });
     block_on(result.event_completed());
@@ -263,9 +265,10 @@ fn test_dispatches_new_when_stale() {
         Ok(json!("done"))
     });
 
-    let original = bus.emit(BaseEventHandle::<ScreenshotEvent>::new(ScreenshotPayload {
+    let original = bus.emit(ScreenshotEvent {
         target_id: TARGET_ID_1.to_string(),
-    }));
+        ..Default::default()
+    });
     block_on(original.done());
 
     let result = block_on(bus.find_with_options(
@@ -277,9 +280,10 @@ fn test_dispatches_new_when_stale() {
         },
     ))
     .unwrap_or_else(|| {
-        bus.emit(BaseEventHandle::<ScreenshotEvent>::new(ScreenshotPayload {
+        bus.emit(ScreenshotEvent {
             target_id: TARGET_ID_1.to_string(),
-        }))
+            ..Default::default()
+        })
         .inner
     });
     block_on(result.event_completed());
@@ -345,9 +349,10 @@ fn test_or_chain_without_waiting_finds_existing() {
         Ok(json!("done"))
     });
 
-    let original = bus.emit(BaseEventHandle::<ScreenshotEvent>::new(ScreenshotPayload {
+    let original = bus.emit(ScreenshotEvent {
         target_id: TARGET_ID_1.to_string(),
-    }));
+        ..Default::default()
+    });
     block_on(original.done());
 
     let start = Instant::now();
@@ -361,9 +366,10 @@ fn test_or_chain_without_waiting_finds_existing() {
         },
     ))
     .unwrap_or_else(|| {
-        bus.emit(BaseEventHandle::<ScreenshotEvent>::new(ScreenshotPayload {
+        bus.emit(ScreenshotEvent {
             target_id: TARGET_ID_1.to_string(),
-        }))
+            ..Default::default()
+        })
         .inner
     });
     block_on(result.event_completed());
@@ -394,9 +400,10 @@ fn test_or_chain_without_waiting_dispatches_when_no_match() {
         },
     ))
     .unwrap_or_else(|| {
-        bus.emit(BaseEventHandle::<ScreenshotEvent>::new(ScreenshotPayload {
+        bus.emit(ScreenshotEvent {
             target_id: TARGET_ID_1.to_string(),
-        }))
+            ..Default::default()
+        })
         .inner
     });
     block_on(result.event_completed());
@@ -427,9 +434,10 @@ fn test_or_chain_multiple_sequential_lookups() {
         },
     ))
     .unwrap_or_else(|| {
-        bus.emit(BaseEventHandle::<ScreenshotEvent>::new(ScreenshotPayload {
+        bus.emit(ScreenshotEvent {
             target_id: TARGET_ID_1.to_string(),
-        }))
+            ..Default::default()
+        })
         .inner
     });
     let result_2 = block_on(bus.find_with_options(
@@ -441,9 +449,10 @@ fn test_or_chain_multiple_sequential_lookups() {
         },
     ))
     .unwrap_or_else(|| {
-        bus.emit(BaseEventHandle::<ScreenshotEvent>::new(ScreenshotPayload {
+        bus.emit(ScreenshotEvent {
             target_id: TARGET_ID_1.to_string(),
-        }))
+            ..Default::default()
+        })
         .inner
     });
     let result_3 = block_on(bus.find_with_options(
@@ -455,9 +464,10 @@ fn test_or_chain_multiple_sequential_lookups() {
         },
     ))
     .unwrap_or_else(|| {
-        bus.emit(BaseEventHandle::<ScreenshotEvent>::new(ScreenshotPayload {
+        bus.emit(ScreenshotEvent {
             target_id: TARGET_ID_2.to_string(),
-        }))
+            ..Default::default()
+        })
         .inner
     });
 

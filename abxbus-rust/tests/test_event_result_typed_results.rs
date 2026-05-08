@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use abxbus_rust::event;
 use abxbus_rust::{
     base_event::BaseEvent,
     event_bus::EventBus,
@@ -138,39 +139,39 @@ fn test_simple_typed_result_model_roundtrip_and_status() {
     bus.stop();
 }
 
-struct BuiltinStringEvent;
-impl abxbus_rust::typed::EventSpec for BuiltinStringEvent {
-    type payload = Map<String, Value>;
-    type event_result_type = String;
-    const event_type: &'static str = "BuiltinStringEvent";
+event! {
+    struct BuiltinStringEvent {
+        event_result_type: String,
+        event_type: "BuiltinStringEvent",
+    }
 }
 
-struct BuiltinIntEvent;
-impl abxbus_rust::typed::EventSpec for BuiltinIntEvent {
-    type payload = Map<String, Value>;
-    type event_result_type = i64;
-    const event_type: &'static str = "BuiltinIntEvent";
+event! {
+    struct BuiltinIntEvent {
+        event_result_type: i64,
+        event_type: "BuiltinIntEvent",
+    }
 }
 
-struct BuiltinFloatEvent;
-impl abxbus_rust::typed::EventSpec for BuiltinFloatEvent {
-    type payload = Map<String, Value>;
-    type event_result_type = f64;
-    const event_type: &'static str = "BuiltinFloatEvent";
+event! {
+    struct BuiltinFloatEvent {
+        event_result_type: f64,
+        event_type: "BuiltinFloatEvent",
+    }
 }
 
-struct PlainSchemaEvent;
-impl abxbus_rust::typed::EventSpec for PlainSchemaEvent {
-    type payload = Map<String, Value>;
-    type event_result_type = Value;
-    const event_type: &'static str = "PlainSchemaEvent";
+event! {
+    struct PlainSchemaEvent {
+        event_result_type: Value,
+        event_type: "PlainSchemaEvent",
+    }
 }
 
-struct NoneSchemaEvent;
-impl abxbus_rust::typed::EventSpec for NoneSchemaEvent {
-    type payload = Map<String, Value>;
-    type event_result_type = ();
-    const event_type: &'static str = "NoneSchemaEvent";
+event! {
+    struct NoneSchemaEvent {
+        event_result_type: (),
+        event_type: "NoneSchemaEvent",
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -180,13 +181,11 @@ struct ModuleLevelResult {
     success: bool,
 }
 
-struct RuntimeSchemaEvent;
-impl abxbus_rust::typed::EventSpec for RuntimeSchemaEvent {
-    type payload = Map<String, Value>;
-    type event_result_type = ModuleLevelResult;
-    const event_type: &'static str = "RuntimeSchemaEvent";
-    const event_result_type_schema: Option<&'static str> = Some(
-        r#"{
+event! {
+    struct RuntimeSchemaEvent {
+        event_result_type: ModuleLevelResult,
+        event_type: "RuntimeSchemaEvent",
+        event_result_schema: r#"{
             "type": "object",
             "properties": {
                 "result_id": {"type": "string"},
@@ -196,7 +195,7 @@ impl abxbus_rust::typed::EventSpec for RuntimeSchemaEvent {
             "required": ["result_id", "data", "success"],
             "additionalProperties": false
         }"#,
-    );
+    }
 }
 
 struct DictIntSchemaEvent;
@@ -263,9 +262,16 @@ impl abxbus_rust::typed::EventSpec for SpecificUserEvent {
 
 #[test]
 fn test_builtin_types_auto_extraction() {
-    let string_event = abxbus_rust::typed::BaseEventHandle::<BuiltinStringEvent>::new(Map::new());
-    let int_event = abxbus_rust::typed::BaseEventHandle::<BuiltinIntEvent>::new(Map::new());
-    let float_event = abxbus_rust::typed::BaseEventHandle::<BuiltinFloatEvent>::new(Map::new());
+    let bus = EventBus::new(Some("BuiltinResultSchemaBus".to_string()));
+    let string_event = bus.emit(BuiltinStringEvent {
+        ..Default::default()
+    });
+    let int_event = bus.emit(BuiltinIntEvent {
+        ..Default::default()
+    });
+    let float_event = bus.emit(BuiltinFloatEvent {
+        ..Default::default()
+    });
 
     assert_eq!(
         string_event.inner.inner.lock().event_result_type,
@@ -279,20 +285,29 @@ fn test_builtin_types_auto_extraction() {
         float_event.inner.inner.lock().event_result_type,
         Some(json!({"type": "number"}))
     );
+    bus.stop();
 }
 
 #[test]
 fn test_no_generic_parameter() {
-    let plain_event = abxbus_rust::typed::BaseEventHandle::<PlainSchemaEvent>::new(Map::new());
+    let bus = EventBus::new(Some("PlainResultSchemaBus".to_string()));
+    let plain_event = bus.emit(PlainSchemaEvent {
+        ..Default::default()
+    });
 
     assert_eq!(plain_event.inner.inner.lock().event_result_type, None);
+    bus.stop();
 }
 
 #[test]
 fn test_none_generic_parameter() {
-    let none_event = abxbus_rust::typed::BaseEventHandle::<NoneSchemaEvent>::new(Map::new());
+    let bus = EventBus::new(Some("NoneResultSchemaBus".to_string()));
+    let none_event = bus.emit(NoneSchemaEvent {
+        ..Default::default()
+    });
 
     assert_eq!(none_event.inner.inner.lock().event_result_type, None);
+    bus.stop();
 }
 
 #[test]
@@ -311,8 +326,9 @@ fn test_eventspec_result_schema_runtime_enforcement() {
         },
     );
 
-    let event =
-        bus.emit(abxbus_rust::typed::BaseEventHandle::<RuntimeSchemaEvent>::new(Map::new()));
+    let event = bus.emit(RuntimeSchemaEvent {
+        ..Default::default()
+    });
     wait(&event.inner);
     let result = first_result(&event.inner);
     assert_eq!(result.status, EventResultStatus::Completed);
@@ -329,8 +345,9 @@ fn test_eventspec_result_schema_runtime_enforcement() {
         |_event| async move { Ok(json!({"wrong": "format"})) },
     );
 
-    let invalid_event =
-        bus.emit(abxbus_rust::typed::BaseEventHandle::<RuntimeSchemaEvent>::new(Map::new()));
+    let invalid_event = bus.emit(RuntimeSchemaEvent {
+        ..Default::default()
+    });
     wait(&invalid_event.inner);
     let invalid_result = first_result(&invalid_event.inner);
     assert_eq!(invalid_result.status, EventResultStatus::Error);
@@ -754,7 +771,10 @@ fn test_json_schema_primitive_deserialization() {
 
 #[test]
 fn test_custom_pydantic_models_auto_extraction() {
-    let event = abxbus_rust::typed::BaseEventHandle::<RuntimeSchemaEvent>::new(Map::new());
+    let bus = EventBus::new(Some("RuntimeSchemaExtractionBus".to_string()));
+    let event = bus.emit(RuntimeSchemaEvent {
+        ..Default::default()
+    });
     assert_eq!(
         event.inner.inner.lock().event_result_type,
         Some(
@@ -762,6 +782,7 @@ fn test_custom_pydantic_models_auto_extraction() {
                 .expect("runtime schema")
         )
     );
+    bus.stop();
 }
 
 #[test]

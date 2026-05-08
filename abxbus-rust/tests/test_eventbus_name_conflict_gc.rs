@@ -1,3 +1,4 @@
+use abxbus_rust::event;
 use std::{
     collections::BTreeSet,
     sync::{
@@ -8,16 +9,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use abxbus_rust::{
-    event_bus::{EventBus, EventBusOptions},
-    typed::{BaseEventHandle, EventSpec},
-};
+use abxbus_rust::event_bus::{EventBus, EventBusOptions};
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-
-#[derive(Clone, Serialize, Deserialize)]
-struct EmptyPayload {}
 
 #[derive(Clone, Serialize, Deserialize)]
 struct EmptyResult {}
@@ -37,20 +32,18 @@ fn assert_eventually_collected(weak_ref: &Weak<EventBus>) {
     assert!(weak_ref.upgrade().is_none());
 }
 
-struct GcHistoryEvent;
-impl EventSpec for GcHistoryEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "GcHistoryEvent";
+event! {
+    struct GcHistoryEvent {
+        event_result_type: EmptyResult,
+        event_type: "GcHistoryEvent",
+    }
 }
-
-struct GcImplicitEvent;
-impl EventSpec for GcImplicitEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "GcImplicitEvent";
+event! {
+    struct GcImplicitEvent {
+        event_result_type: EmptyResult,
+        event_type: "GcImplicitEvent",
+    }
 }
-
 #[test]
 fn test_name_conflict_with_live_reference() {
     let requested_name = unique_bus_name("GCTestConflict");
@@ -244,7 +237,9 @@ fn test_unreferenced_buses_with_history_can_be_cleaned_without_instance_leak() {
             Ok(json!("ok"))
         });
         for _ in 0..20 {
-            let event = bus.emit(BaseEventHandle::<GcHistoryEvent>::new(EmptyPayload {}));
+            let event = bus.emit(GcHistoryEvent {
+                ..Default::default()
+            });
             block_on(event.done());
         }
         block_on(bus.wait_until_idle(Some(1.0)));
@@ -280,7 +275,9 @@ fn test_unreferenced_buses_with_history_are_collected_without_stop() {
             Ok(json!("ok"))
         });
         for _ in 0..20 {
-            let event = bus.emit(BaseEventHandle::<GcImplicitEvent>::new(EmptyPayload {}));
+            let event = bus.emit(GcImplicitEvent {
+                ..Default::default()
+            });
             block_on(event.done());
         }
         block_on(bus.wait_until_idle(Some(1.0)));

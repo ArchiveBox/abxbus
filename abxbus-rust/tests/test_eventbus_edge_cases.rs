@@ -1,7 +1,6 @@
+use abxbus_rust::event;
 use abxbus_rust::{
-    event_bus::EventBus,
-    event_result::EventResultStatus,
-    typed::{BaseEventHandle, EventSpec},
+    event_bus::EventBus, event_result::EventResultStatus, typed::BaseEventHandle,
     types::EventStatus,
 };
 use futures::executor::block_on;
@@ -13,53 +12,45 @@ use std::{
 };
 
 #[derive(Clone, Serialize, Deserialize)]
-struct EmptyPayload {}
-#[derive(Clone, Serialize, Deserialize)]
 struct EmptyResult {}
 
-struct NothingEvent;
-impl EventSpec for NothingEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "nothing";
+event! {
+    struct NothingEvent {
+        event_result_type: EmptyResult,
+        event_type: "nothing",
+    }
 }
-struct SpecificEvent;
-impl EventSpec for SpecificEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "specific_event";
+event! {
+    struct SpecificEvent {
+        event_result_type: EmptyResult,
+        event_type: "specific_event",
+    }
 }
-struct WorkEvent;
-impl EventSpec for WorkEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "work";
+event! {
+    struct WorkEvent {
+        event_result_type: EmptyResult,
+        event_type: "work",
+    }
 }
-#[derive(Clone, Serialize, Deserialize)]
-struct ResetPayload {
-    label: String,
+event! {
+    struct ResetCoverageEvent {
+        label: String,
+        event_result_type: EmptyResult,
+        event_type: "ResetCoverageEvent",
+    }
 }
-struct ResetCoverageEvent;
-impl EventSpec for ResetCoverageEvent {
-    type payload = ResetPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "ResetCoverageEvent";
+event! {
+    struct IdleTimeoutCoverageEvent {
+        event_result_type: EmptyResult,
+        event_type: "IdleTimeoutCoverageEvent",
+    }
 }
-
-struct IdleTimeoutCoverageEvent;
-impl EventSpec for IdleTimeoutCoverageEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "IdleTimeoutCoverageEvent";
+event! {
+    struct StopCoverageEvent {
+        event_result_type: EmptyResult,
+        event_type: "StopCoverageEvent",
+    }
 }
-
-struct StopCoverageEvent;
-impl EventSpec for StopCoverageEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "StopCoverageEvent";
-}
-
 #[test]
 fn test_event_reset_creates_fresh_pending_event_for_cross_bus_dispatch() {
     let bus_a = EventBus::new(Some("ResetCoverageBusA".to_string()));
@@ -100,9 +91,10 @@ fn test_event_reset_creates_fresh_pending_event_for_cross_bus_dispatch() {
         }
     });
 
-    let completed = bus_a.emit(BaseEventHandle::<ResetCoverageEvent>::new(ResetPayload {
+    let completed = bus_a.emit(ResetCoverageEvent {
         label: "hello".to_string(),
-    }));
+        ..Default::default()
+    });
     block_on(completed.done());
     assert_eq!(
         completed.inner.inner.lock().event_status,
@@ -164,9 +156,9 @@ fn test_wait_until_idle_timeout_path_recovers_after_inflight_handler_finishes() 
         }
     });
 
-    let pending = bus.emit(BaseEventHandle::<IdleTimeoutCoverageEvent>::new(
-        EmptyPayload {},
-    ));
+    let pending = bus.emit(IdleTimeoutCoverageEvent {
+        ..Default::default()
+    });
     started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("handler should start");
@@ -212,7 +204,9 @@ fn test_stop_timeout_zero_clears_running_bus_and_releases_name() {
         }
     });
 
-    let _pending = bus.emit(BaseEventHandle::<StopCoverageEvent>::new(EmptyPayload {}));
+    let _pending = bus.emit(StopCoverageEvent {
+        ..Default::default()
+    });
     started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("handler should start");
@@ -230,7 +224,9 @@ fn test_stop_timeout_zero_clears_running_bus_and_releases_name() {
     replacement.on_raw("StopCoverageEvent", "handler", |_event| async move {
         Ok(json!(null))
     });
-    let event = replacement.emit(BaseEventHandle::<StopCoverageEvent>::new(EmptyPayload {}));
+    let event = replacement.emit(StopCoverageEvent {
+        ..Default::default()
+    });
     block_on(event.done());
     assert_eq!(
         event.inner.inner.lock().event_status,
@@ -242,7 +238,9 @@ fn test_stop_timeout_zero_clears_running_bus_and_releases_name() {
 #[test]
 fn test_emit_with_no_handlers_completes_event() {
     let bus = EventBus::new(Some("NoHandlers".to_string()));
-    let event = bus.emit(BaseEventHandle::<NothingEvent>::new(EmptyPayload {}));
+    let event = bus.emit(NothingEvent {
+        ..Default::default()
+    });
 
     block_on(event.done());
 
@@ -259,7 +257,9 @@ fn test_emit_with_no_handlers_completes_event() {
 fn test_wildcard_handler_runs_for_any_event_type() {
     let bus = EventBus::new(Some("WildcardBus".to_string()));
     bus.on_raw("*", "catch_all", |_event| async move { Ok(json!("all")) });
-    let event = bus.emit(BaseEventHandle::<SpecificEvent>::new(EmptyPayload {}));
+    let event = bus.emit(SpecificEvent {
+        ..Default::default()
+    });
 
     block_on(event.done());
 
@@ -278,7 +278,9 @@ fn test_handler_error_populates_error_status() {
         "bad",
         |_event| async move { Err("boom".to_string()) },
     );
-    let event = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
+    let event = bus.emit(WorkEvent {
+        ..Default::default()
+    });
 
     block_on(event.done());
 

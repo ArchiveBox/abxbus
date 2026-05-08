@@ -1,3 +1,4 @@
+use abxbus_rust::event;
 use std::{
     sync::{mpsc, Arc, Mutex},
     thread,
@@ -8,32 +9,25 @@ use abxbus_rust::{
     base_event::{now_iso, BaseEvent},
     event_bus::EventBus,
     event_result::EventResultStatus,
-    typed::{BaseEventHandle, EventSpec},
     types::EventStatus,
 };
 use futures::executor::block_on;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
-#[derive(Clone, Serialize, Deserialize)]
-struct RuntimePayload {
-    data: String,
+event! {
+    struct RuntimeSampleEvent {
+        data: String,
+        event_result_type: String,
+        event_type: "RuntimeSampleEvent",
+    }
 }
-
-struct RuntimeSampleEvent;
-impl EventSpec for RuntimeSampleEvent {
-    type payload = RuntimePayload;
-    type event_result_type = String;
-    const event_type: &'static str = "RuntimeSampleEvent";
+event! {
+    struct RuntimeSeededEvent {
+        data: String,
+        event_result_type: String,
+        event_type: "RuntimeSeededEvent",
+    }
 }
-
-struct RuntimeSeededEvent;
-impl EventSpec for RuntimeSeededEvent {
-    type payload = RuntimePayload;
-    type event_result_type = String;
-    const event_type: &'static str = "RuntimeSeededEvent";
-}
-
 fn sample_event(data: &str) -> Arc<BaseEvent> {
     let mut payload = Map::new();
     payload.insert("data".to_string(), json!(data));
@@ -73,9 +67,10 @@ fn test_event_started_at_after_processing() {
         Ok(json!("done"))
     });
 
-    let event = bus.emit(BaseEventHandle::<RuntimeSampleEvent>::new(RuntimePayload {
+    let event = bus.emit(RuntimeSampleEvent {
         data: "processing_test".to_string(),
-    }));
+        ..Default::default()
+    });
     block_on(event.done());
 
     let event = event.inner.inner.lock();
@@ -87,13 +82,14 @@ fn test_event_started_at_after_processing() {
 
 #[test]
 fn test_event_without_handlers_completes_and_serializes_runtime_state() {
-    let event = BaseEventHandle::<RuntimeSampleEvent>::new(RuntimePayload {
+    let event = RuntimeSampleEvent {
         data: "no_handlers".to_string(),
-    });
+        ..Default::default()
+    };
     let bus = EventBus::new(Some("RuntimeStateNoHandlersBus".to_string()));
 
-    assert_eq!(event.inner.inner.lock().event_started_at, None);
-    assert_eq!(event.inner.inner.lock().event_completed_at, None);
+    assert_eq!(event.event_started_at, None);
+    assert_eq!(event.event_completed_at, None);
 
     let processed_event = bus.emit(event);
     block_on(processed_event.done());
@@ -135,26 +131,22 @@ fn test_event_with_manually_set_completed_at_reconciles_through_dispatch() {
         assert!(processed.event_completed_at.is_some());
     }
 
-    let seeded_event = BaseEventHandle::<RuntimeSeededEvent>::new(RuntimePayload {
-        data: "manual_seeded_result".to_string(),
-    });
+    let mut seeded_payload = Map::new();
+    seeded_payload.insert("data".to_string(), json!("manual_seeded_result"));
+    let seeded_event = BaseEvent::new("RuntimeSeededEvent", seeded_payload);
     let handler_entry = bus.on_raw("RuntimeSeededEvent", "handler", |_event| async {
         Ok(json!("done"))
     });
-    let seeded_result = seeded_event.inner.event_result_update(
+    let seeded_result = seeded_event.event_result_update(
         &handler_entry,
         Some(EventResultStatus::Started),
         None,
         None,
         None,
     );
-    assert_eq!(
-        seeded_event.inner.inner.lock().event_status,
-        EventStatus::Started
-    );
-    assert_eq!(seeded_event.inner.inner.lock().event_completed_at, None);
+    assert_eq!(seeded_event.inner.lock().event_status, EventStatus::Started);
+    assert_eq!(seeded_event.inner.lock().event_completed_at, None);
     seeded_event
-        .inner
         .inner
         .lock()
         .event_results
@@ -165,11 +157,11 @@ fn test_event_with_manually_set_completed_at_reconciles_through_dispatch() {
             Some(Some(json!("done"))),
             None,
         );
-    assert_eq!(seeded_event.inner.inner.lock().event_completed_at, None);
+    assert_eq!(seeded_event.inner.lock().event_completed_at, None);
 
-    let reconciled = bus.emit(seeded_event);
+    let reconciled = bus.emit_base(seeded_event);
     block_on(reconciled.done());
-    let reconciled = reconciled.inner.inner.lock();
+    let reconciled = reconciled.inner.lock();
     assert_eq!(reconciled.event_status, EventStatus::Completed);
     assert!(reconciled.event_started_at.is_some());
     assert!(reconciled.event_completed_at.is_some());
@@ -198,10 +190,8 @@ fn test_event_copy_preserves_private_attrs() {
 #[test]
 fn test_event_started_at_is_serialized_and_stateful() {
     let bus = EventBus::new(Some("RuntimeStateStartedAtBus".to_string()));
-    let event = BaseEventHandle::<RuntimeSampleEvent>::new(RuntimePayload {
-        data: "serialize_started_at".to_string(),
-    });
-    let pending_payload = event.inner.to_json_value();
+    let event = sample_event("serialize_started_at");
+    let pending_payload = event.to_json_value();
     assert!(pending_payload
         .as_object()
         .unwrap()
@@ -211,14 +201,14 @@ fn test_event_started_at_is_serialized_and_stateful() {
     let handler_entry = bus.on_raw("RuntimeSampleEvent", "handler", |_event| async {
         Ok(json!("ok"))
     });
-    event.inner.event_result_update(
+    event.event_result_update(
         &handler_entry,
         Some(EventResultStatus::Started),
         None,
         None,
         None,
     );
-    let first_started_at = event.inner.to_json_value()["event_started_at"]
+    let first_started_at = event.to_json_value()["event_started_at"]
         .as_str()
         .expect("started at")
         .to_string();
@@ -226,14 +216,13 @@ fn test_event_started_at_is_serialized_and_stateful() {
     let forced_started_at = "2020-01-01T00:00:00.000000000Z".to_string();
     event
         .inner
-        .inner
         .lock()
         .event_results
         .get_mut(&handler_entry.id)
         .expect("handler result")
         .started_at = Some(forced_started_at.clone());
 
-    let second_started_at = event.inner.to_json_value()["event_started_at"]
+    let second_started_at = event.to_json_value()["event_started_at"]
         .as_str()
         .expect("started at")
         .to_string();
@@ -245,15 +234,13 @@ fn test_event_started_at_is_serialized_and_stateful() {
 #[test]
 fn test_event_result_update_started_marks_event_started_and_clears_completion() {
     let bus = EventBus::new(Some("RuntimeStateResultUpdateStartedBus".to_string()));
-    let event = BaseEventHandle::<RuntimeSampleEvent>::new(RuntimePayload {
-        data: "result_update_started".to_string(),
-    });
-    event.inner.inner.lock().event_completed_at = Some(now_iso());
+    let event = sample_event("result_update_started");
+    event.inner.lock().event_completed_at = Some(now_iso());
     let handler_entry = bus.on_raw("RuntimeSampleEvent", "handler", |_event| async {
         Ok(json!("ok"))
     });
 
-    let result = event.inner.event_result_update(
+    let result = event.event_result_update(
         &handler_entry,
         Some(EventResultStatus::Started),
         None,
@@ -262,7 +249,7 @@ fn test_event_result_update_started_marks_event_started_and_clears_completion() 
     );
 
     assert_eq!(result.status, EventResultStatus::Started);
-    let event = event.inner.inner.lock();
+    let event = event.inner.lock();
     assert_eq!(event.event_status, EventStatus::Started);
     assert!(event.event_started_at.is_some());
     assert_eq!(event.event_completed_at, None);
@@ -272,10 +259,8 @@ fn test_event_result_update_started_marks_event_started_and_clears_completion() 
 #[test]
 fn test_event_status_is_serialized_and_stateful() {
     let bus = EventBus::new(Some("RuntimeStateStatusBus".to_string()));
-    let event = BaseEventHandle::<RuntimeSampleEvent>::new(RuntimePayload {
-        data: "serialize_status".to_string(),
-    });
-    assert_eq!(event.inner.to_json_value()["event_status"], "pending");
+    let event = sample_event("serialize_status");
+    assert_eq!(event.to_json_value()["event_status"], "pending");
 
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
@@ -294,19 +279,16 @@ fn test_event_status_is_serialized_and_stateful() {
         }
     });
 
-    let processing_event = bus.emit(event);
+    let processing_event = bus.emit_base(event);
     entered_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("handler entered");
-    assert_eq!(
-        processing_event.inner.to_json_value()["event_status"],
-        "started"
-    );
+    assert_eq!(processing_event.to_json_value()["event_status"], "started");
 
     release_tx.send(()).expect("release send");
     block_on(processing_event.done());
     assert_eq!(
-        processing_event.inner.to_json_value()["event_status"],
+        processing_event.to_json_value()["event_status"],
         "completed"
     );
     bus.stop();

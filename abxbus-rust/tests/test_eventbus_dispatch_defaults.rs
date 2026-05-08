@@ -1,6 +1,6 @@
+use abxbus_rust::event;
 use abxbus_rust::{
     event_bus::{EventBus, EventBusOptions},
-    typed::{BaseEventHandle, EventSpec},
     types::{EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode},
 };
 use futures::executor::block_on;
@@ -8,64 +8,57 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 #[derive(Clone, Serialize, Deserialize)]
-struct Payload {
-    value: i64,
-}
-#[derive(Clone, Serialize, Deserialize)]
 struct ResultT {
     value: String,
 }
-struct WorkEvent;
-impl EventSpec for WorkEvent {
-    type payload = Payload;
-    type event_result_type = ResultT;
-    const event_type: &'static str = "work";
+event! {
+    struct WorkEvent {
+        value: i64,
+        event_result_type: ResultT,
+        event_type: "work",
+    }
 }
-
-struct ConcurrencyOverrideEvent;
-impl EventSpec for ConcurrencyOverrideEvent {
-    type payload = Payload;
-    type event_result_type = ResultT;
-    const event_type: &'static str = "ConcurrencyOverrideEvent";
-    const event_concurrency: Option<EventConcurrencyMode> =
-        Some(EventConcurrencyMode::GlobalSerial);
+event! {
+    struct ConcurrencyOverrideEvent {
+        value: i64,
+        event_result_type: ResultT,
+        event_type: "ConcurrencyOverrideEvent",
+        event_concurrency: global_serial,
+    }
 }
-
-struct HandlerOverrideEvent;
-impl EventSpec for HandlerOverrideEvent {
-    type payload = Payload;
-    type event_result_type = ResultT;
-    const event_type: &'static str = "HandlerOverrideEvent";
-    const event_handler_concurrency: Option<EventHandlerConcurrencyMode> =
-        Some(EventHandlerConcurrencyMode::Serial);
-    const event_handler_completion: Option<EventHandlerCompletionMode> =
-        Some(EventHandlerCompletionMode::All);
+event! {
+    struct HandlerOverrideEvent {
+        value: i64,
+        event_result_type: ResultT,
+        event_type: "HandlerOverrideEvent",
+        event_handler_concurrency: serial,
+        event_handler_completion: all,
+    }
 }
-
-struct ConfiguredEvent;
-impl EventSpec for ConfiguredEvent {
-    type payload = Payload;
-    type event_result_type = ResultT;
-    const event_type: &'static str = "ConfiguredEvent";
-    const event_version: &'static str = "2.0.0";
-    const event_timeout: Option<f64> = Some(12.0);
-    const event_slow_timeout: Option<f64> = Some(30.0);
-    const event_handler_timeout: Option<f64> = Some(3.0);
-    const event_handler_slow_timeout: Option<f64> = Some(4.0);
-    const event_blocks_parent_completion: bool = true;
+event! {
+    struct ConfiguredEvent {
+        value: i64,
+        event_result_type: ResultT,
+        event_type: "ConfiguredEvent",
+        event_version: "2.0.0",
+        event_timeout: 12.0,
+        event_slow_timeout: 30.0,
+        event_handler_timeout: 3.0,
+        event_handler_slow_timeout: 4.0,
+        event_blocks_parent_completion: true,
+    }
 }
-
 #[test]
 fn test_bus_default_handler_settings_are_applied() {
     let bus = EventBus::new(Some("BusDefaults".to_string()));
 
     bus.on_raw("work", "h1", |_event| async move { Ok(json!("ok")) });
-    let event = BaseEventHandle::<WorkEvent>::new(Payload { value: 1 });
-    {
-        let mut inner = event.inner.inner.lock();
-        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
-        inner.event_handler_completion = Some(EventHandlerCompletionMode::All);
-    }
+    let event = WorkEvent {
+        value: 1,
+        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Serial),
+        event_handler_completion: Some(EventHandlerCompletionMode::All),
+        ..Default::default()
+    };
     let event = bus.emit(event);
     block_on(event.done());
 
@@ -84,10 +77,15 @@ fn test_event_concurrency_remains_unset_on_dispatch_and_resolves_during_processi
     );
     bus.on_raw("work", "h1", |_event| async move { Ok(json!("ok")) });
 
-    let implicit = BaseEventHandle::<WorkEvent>::new(Payload { value: 1 });
-    let explicit_none = BaseEventHandle::<WorkEvent>::new(Payload { value: 2 });
-    explicit_none.inner.inner.lock().event_concurrency = None;
-
+    let implicit = WorkEvent {
+        value: 1,
+        ..Default::default()
+    };
+    let explicit_none = WorkEvent {
+        value: 2,
+        event_concurrency: None,
+        ..Default::default()
+    };
     let implicit = bus.emit(implicit);
     let explicit_none = bus.emit(explicit_none);
 
@@ -114,7 +112,10 @@ fn test_event_concurrency_class_override_beats_bus_default() {
         Ok(json!("ok"))
     });
 
-    let event = BaseEventHandle::<ConcurrencyOverrideEvent>::new(Payload { value: 1 });
+    let event = ConcurrencyOverrideEvent {
+        value: 1,
+        ..Default::default()
+    };
     let event = bus.emit(event);
 
     assert_eq!(
@@ -138,13 +139,16 @@ fn test_handler_defaults_remain_unset_on_dispatch_and_resolve_during_processing(
     );
     bus.on_raw("work", "h1", |_event| async move { Ok(json!("ok")) });
 
-    let implicit = BaseEventHandle::<WorkEvent>::new(Payload { value: 1 });
-    let explicit_none = BaseEventHandle::<WorkEvent>::new(Payload { value: 2 });
-    {
-        let mut inner = explicit_none.inner.inner.lock();
-        inner.event_handler_concurrency = None;
-        inner.event_handler_completion = None;
-    }
+    let implicit = WorkEvent {
+        value: 1,
+        ..Default::default()
+    };
+    let explicit_none = WorkEvent {
+        value: 2,
+        event_handler_concurrency: None,
+        event_handler_completion: None,
+        ..Default::default()
+    };
 
     let implicit = bus.emit(implicit);
     let explicit_none = bus.emit(explicit_none);
@@ -181,7 +185,10 @@ fn test_handler_class_override_beats_bus_defaults() {
         Ok(json!("ok"))
     });
 
-    let event = BaseEventHandle::<HandlerOverrideEvent>::new(Payload { value: 1 });
+    let event = HandlerOverrideEvent {
+        value: 1,
+        ..Default::default()
+    };
     let event = bus.emit(event);
 
     assert_eq!(
@@ -204,22 +211,35 @@ fn test_handler_class_override_beats_bus_default() {
 
 #[test]
 fn test_event_instance_override_beats_typed_event_defaults() {
-    let event = BaseEventHandle::<ConcurrencyOverrideEvent>::new(Payload { value: 1 });
+    let bus = EventBus::new(Some("EventInstanceOverrideBus".to_string()));
+    let class_default = bus.emit(ConcurrencyOverrideEvent {
+        value: 1,
+        ..Default::default()
+    });
     assert_eq!(
-        event.inner.inner.lock().event_concurrency,
+        class_default.inner.inner.lock().event_concurrency,
         Some(EventConcurrencyMode::GlobalSerial)
     );
 
-    event.inner.inner.lock().event_concurrency = Some(EventConcurrencyMode::Parallel);
+    let event = bus.emit(ConcurrencyOverrideEvent {
+        value: 1,
+        event_concurrency: Some(EventConcurrencyMode::Parallel),
+        ..Default::default()
+    });
     assert_eq!(
         event.inner.inner.lock().event_concurrency,
         Some(EventConcurrencyMode::Parallel)
     );
+    bus.stop();
 }
 
 #[test]
 fn test_typed_event_config_defaults_populate_base_event_fields() {
-    let event = BaseEventHandle::<ConfiguredEvent>::new(Payload { value: 1 });
+    let bus = EventBus::new(Some("ConfiguredEventDefaultsBus".to_string()));
+    let event = bus.emit(ConfiguredEvent {
+        value: 1,
+        ..Default::default()
+    });
     let inner = event.inner.inner.lock();
     assert_eq!(inner.event_version, "2.0.0");
     assert_eq!(inner.event_timeout, Some(12.0));
@@ -227,6 +247,8 @@ fn test_typed_event_config_defaults_populate_base_event_fields() {
     assert_eq!(inner.event_handler_timeout, Some(3.0));
     assert_eq!(inner.event_handler_slow_timeout, Some(4.0));
     assert!(inner.event_blocks_parent_completion);
+    drop(inner);
+    bus.stop();
 }
 
 #[test]

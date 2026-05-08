@@ -172,16 +172,13 @@ event = bus.Emit(event)
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::BaseEventHandle;
-
-let event = BaseEventHandle::<WorkEvent>::new(WorkPayload::default());
-{
-    let mut inner = event.inner.inner.lock();
-    inner.event_timeout = Some(8.0);
-    inner.event_handler_timeout = Some(2.0);
-    inner.event_slow_timeout = Some(4.0);
-    inner.event_handler_slow_timeout = Some(1.0);
-}
+let event = WorkEvent {
+    event_timeout: Some(8.0),
+    event_handler_timeout: Some(2.0),
+    event_slow_timeout: Some(4.0),
+    event_handler_slow_timeout: Some(1.0),
+    ..Default::default()
+};
 let event = bus.emit(event);
 ```
 

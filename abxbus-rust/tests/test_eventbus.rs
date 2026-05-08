@@ -1,3 +1,4 @@
+use abxbus_rust::event;
 use std::{
     collections::BTreeSet,
     sync::{
@@ -12,7 +13,6 @@ use abxbus_rust::{
     base_event::{BaseEvent, EventResultsOptions},
     event_bus::{EventBus, EventBusOptions},
     event_result::{EventResult, EventResultStatus},
-    typed::{BaseEventHandle, EventSpec},
     types::{
         EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventStatus,
     },
@@ -22,25 +22,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 #[derive(Clone, Serialize, Deserialize)]
-struct EmptyPayload {}
-
-#[derive(Clone, Serialize, Deserialize)]
 struct EmptyResult {}
 
-struct LifecycleMethodInvocationEvent;
-impl EventSpec for LifecycleMethodInvocationEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "LifecycleMethodInvocationEvent";
+event! {
+    struct LifecycleMethodInvocationEvent {
+        event_result_type: EmptyResult,
+        event_type: "LifecycleMethodInvocationEvent",
+    }
 }
-
-struct WaitForIdleTimeoutEvent;
-impl EventSpec for WaitForIdleTimeoutEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "WaitForIdleTimeoutEvent";
+event! {
+    struct WaitForIdleTimeoutEvent {
+        event_result_type: EmptyResult,
+        event_type: "WaitForIdleTimeoutEvent",
+    }
 }
-
 fn wait_for_eventbus_weak_refs_to_drop(refs: &[Weak<EventBus>]) -> bool {
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
@@ -55,13 +50,12 @@ fn wait_for_eventbus_weak_refs_to_drop(refs: &[Weak<EventBus>]) -> bool {
     }
 }
 
-struct UserActionEvent;
-impl EventSpec for UserActionEvent {
-    type payload = EmptyPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "UserActionEvent";
+event! {
+    struct UserActionEvent {
+        event_result_type: EmptyResult,
+        event_type: "UserActionEvent",
+    }
 }
-
 #[test]
 fn test_eventbus_exposes_locks_api_surface() {
     let bus = EventBus::new(Some("GateSurfaceBus".to_string()));
@@ -178,48 +172,37 @@ fn test_eventbus_locks_methods_are_callable_and_preserve_lock_resolution_behavio
     bus.stop();
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-struct VersionPayload {
-    data: String,
+event! {
+    struct VersionedEvent {
+        data: String,
+        event_result_type: EmptyResult,
+        event_type: "VersionedEvent",
+        event_version: "1.2.3",
+    }
 }
-
-struct VersionedEvent;
-impl EventSpec for VersionedEvent {
-    type payload = VersionPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "VersionedEvent";
-    const event_version: &'static str = "1.2.3";
+event! {
+    struct CreateAgentTaskEvent {
+        user_id: String,
+        agent_session_id: String,
+        llm_model: String,
+        task: String,
+        event_result_type: EmptyResult,
+        event_type: "CreateAgentTaskEvent",
+    }
 }
-
-#[derive(Clone, Serialize, Deserialize)]
-struct CreateAgentTaskPayload {
-    user_id: String,
-    agent_session_id: String,
-    llm_model: String,
-    task: String,
+event! {
+    struct ExplicitOverrideEvent {
+        data: String,
+        event_result_type: EmptyResult,
+        event_type: "CustomEventType",
+    }
 }
-
-struct CreateAgentTaskEvent;
-impl EventSpec for CreateAgentTaskEvent {
-    type payload = CreateAgentTaskPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "CreateAgentTaskEvent";
+event! {
+    struct RuntimeSerializationEvent {
+        event_result_type: String,
+        event_type: "RuntimeSerializationEvent",
+    }
 }
-
-struct ExplicitOverrideEvent;
-impl EventSpec for ExplicitOverrideEvent {
-    type payload = VersionPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "CustomEventType";
-}
-
-struct RuntimeSerializationEvent;
-impl EventSpec for RuntimeSerializationEvent {
-    type payload = EmptyPayload;
-    type event_result_type = String;
-    const event_type: &'static str = "RuntimeSerializationEvent";
-}
-
 fn object_keys(value: &Value) -> BTreeSet<String> {
     value
         .as_object()
@@ -410,7 +393,9 @@ fn test_auto_start_and_stop() {
     let bus = EventBus::new(Some("AutoStartStopBus".to_string()));
     assert!(!bus.is_running_for_test());
 
-    let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
+    let event = bus.emit(UserActionEvent {
+        ..Default::default()
+    });
     block_on(event.done());
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
     assert!(bus.is_running_for_test());
@@ -428,7 +413,9 @@ fn test_wait_until_idle_recovers_when_idle_flag_was_cleared() {
         Ok(json!(null))
     });
 
-    let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
+    let event = bus.emit(UserActionEvent {
+        ..Default::default()
+    });
     block_on(event.done());
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
 
@@ -938,7 +925,9 @@ fn test_wait_for_result() {
         }
     });
 
-    let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
+    let event = bus.emit(UserActionEvent {
+        ..Default::default()
+    });
     completion_order
         .lock()
         .expect("completion order lock")
@@ -986,7 +975,9 @@ fn test_error_handling() {
         }
     });
 
-    let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
+    let event = bus.emit(UserActionEvent {
+        ..Default::default()
+    });
     block_on(event.done());
     let event_results = event.inner.inner.lock().event_results.clone();
 
@@ -1029,7 +1020,9 @@ fn test_event_result_raises_exception_group_when_multiple_handlers_fail() {
         |_event| async move { Err("RuntimeError: second failure".to_string()) },
     );
 
-    let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
+    let event = bus.emit(UserActionEvent {
+        ..Default::default()
+    });
     block_on(event.done());
 
     let error = block_on(event.inner.event_result(EventResultsOptions::default()))
@@ -1048,7 +1041,9 @@ fn test_event_result_single_handler_error_raises_original_exception() {
         Err("ValueError: single failure".to_string())
     });
 
-    let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
+    let event = bus.emit(UserActionEvent {
+        ..Default::default()
+    });
     block_on(event.done());
 
     let error = block_on(event.inner.event_result(EventResultsOptions::default()))
@@ -1201,7 +1196,9 @@ fn test_emit_alias_dispatches_event() {
         }
     });
 
-    let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
+    let event = bus.emit(UserActionEvent {
+        ..Default::default()
+    });
     let event_id = event.inner.inner.lock().event_id.clone();
     block_on(event.done());
 
@@ -1240,16 +1237,19 @@ fn test_handler_registration() {
     });
 
     let model_for_handler = model.clone();
-    bus.on(RuntimeSerializationEvent, move |_event: EmptyPayload| {
-        let model = model_for_handler.clone();
-        async move {
-            model
-                .lock()
-                .expect("model lock")
-                .push("startup".to_string());
-            Ok("system_handled".to_string())
-        }
-    });
+    bus.on(
+        RuntimeSerializationEvent,
+        move |_event: RuntimeSerializationEvent| {
+            let model = model_for_handler.clone();
+            async move {
+                model
+                    .lock()
+                    .expect("model lock")
+                    .push("startup".to_string());
+                Ok("system_handled".to_string())
+            }
+        },
+    );
 
     let universal_for_handler = universal.clone();
     bus.on_raw("*", "universal_handler", move |event| {
@@ -1264,9 +1264,9 @@ fn test_handler_registration() {
     });
 
     let user = bus.emit_base(base_event("UserActionEvent", json!({"action": "login"})));
-    let system = bus.emit(BaseEventHandle::<RuntimeSerializationEvent>::new(
-        EmptyPayload {},
-    ));
+    let system = bus.emit(RuntimeSerializationEvent {
+        ..Default::default()
+    });
     block_on(async {
         user.event_completed().await;
         system.done().await;
@@ -1290,12 +1290,13 @@ fn test_handler_registration() {
 #[test]
 fn test_event_subclass_type() {
     let bus = EventBus::new(Some("EventSubclassTypeBus".to_string()));
-    let event = BaseEventHandle::<CreateAgentTaskEvent>::new(CreateAgentTaskPayload {
+    let event = CreateAgentTaskEvent {
         user_id: "371bbd3c-5231-7ff0-8aef-e63732a8d40f".to_string(),
         agent_session_id: "12345678-1234-5678-1234-567812345678".to_string(),
         llm_model: "test-model".to_string(),
         task: "test task".to_string(),
-    });
+        ..Default::default()
+    };
 
     let result = bus.emit(event);
     assert_eq!(result.inner.inner.lock().event_type, "CreateAgentTaskEvent");
@@ -1311,20 +1312,19 @@ fn test_event_type_and_version_identity_fields() {
     assert_eq!(base.inner.lock().event_type, "TestEvent");
     assert_eq!(base.inner.lock().event_version, "0.0.1");
 
-    let task = BaseEventHandle::<CreateAgentTaskEvent>::new(CreateAgentTaskPayload {
+    let task = CreateAgentTaskEvent {
         user_id: "371bbd3c-5231-7ff0-8aef-e63732a8d40f".to_string(),
         agent_session_id: "12345678-1234-5678-1234-567812345678".to_string(),
         llm_model: "test-model".to_string(),
         task: "test task".to_string(),
-    });
-    assert_eq!(task.inner.inner.lock().event_type, "CreateAgentTaskEvent");
-    assert_eq!(task.inner.inner.lock().event_version, "0.0.1");
-
-    let expected_type = task.inner.inner.lock().event_type.clone();
-    let expected_version = task.inner.inner.lock().event_version.clone();
+        ..Default::default()
+    };
     let emitted = bus.emit(task);
-    assert_eq!(emitted.inner.inner.lock().event_type, expected_type);
-    assert_eq!(emitted.inner.inner.lock().event_version, expected_version);
+    assert_eq!(
+        emitted.inner.inner.lock().event_type,
+        "CreateAgentTaskEvent"
+    );
+    assert_eq!(emitted.inner.inner.lock().event_version, "0.0.1");
     block_on(emitted.done());
     bus.stop();
 }
@@ -1336,20 +1336,24 @@ fn test_event_version_defaults_and_overrides() {
     let base = base_event("TestVersionEvent", json!({}));
     assert_eq!(base.inner.lock().event_version, "0.0.1");
 
-    let class_default = BaseEventHandle::<VersionedEvent>::new(VersionPayload {
+    let class_default = bus.emit(VersionedEvent {
         data: "x".to_string(),
+        ..Default::default()
     });
     assert_eq!(class_default.inner.inner.lock().event_version, "1.2.3");
 
-    let runtime_override = BaseEventHandle::<VersionedEvent>::new(VersionPayload {
+    let mut runtime_override = VersionedEvent {
         data: "x".to_string(),
-    });
-    runtime_override.inner.inner.lock().event_version = "9.9.9".to_string();
+        ..Default::default()
+    };
+    runtime_override.event_version = "9.9.9".to_string();
+    let runtime_override = bus.emit(runtime_override);
     assert_eq!(runtime_override.inner.inner.lock().event_version, "9.9.9");
 
-    let dispatched = bus.emit(BaseEventHandle::<VersionedEvent>::new(VersionPayload {
+    let dispatched = bus.emit(VersionedEvent {
         data: "queued".to_string(),
-    }));
+        ..Default::default()
+    });
     assert_eq!(dispatched.inner.inner.lock().event_version, "1.2.3");
     block_on(dispatched.done());
 
@@ -1370,11 +1374,18 @@ fn test_automatic_event_type_derivation() {
     let bus = EventBus::new(Some("AutomaticEventTypeBus".to_string()));
     let received = Arc::new(Mutex::new(Vec::new()));
 
-    let user = BaseEventHandle::<UserActionEvent>::new(EmptyPayload {});
-    assert_eq!(user.inner.inner.lock().event_type, "UserActionEvent");
-    let system = BaseEventHandle::<RuntimeSerializationEvent>::new(EmptyPayload {});
+    let user = UserActionEvent {
+        ..Default::default()
+    };
     assert_eq!(
-        system.inner.inner.lock().event_type,
+        <UserActionEvent as abxbus_rust::typed::EventSpec>::event_type,
+        "UserActionEvent"
+    );
+    let system = RuntimeSerializationEvent {
+        ..Default::default()
+    };
+    assert_eq!(
+        <RuntimeSerializationEvent as abxbus_rust::typed::EventSpec>::event_type,
         "RuntimeSerializationEvent"
     );
 
@@ -1456,11 +1467,12 @@ fn test_explicit_event_type_override() {
         }
     });
 
-    let event = BaseEventHandle::<ExplicitOverrideEvent>::new(VersionPayload {
+    let event = ExplicitOverrideEvent {
         data: "test".to_string(),
-    });
-    assert_eq!(event.inner.inner.lock().event_type, "CustomEventType");
+        ..Default::default()
+    };
     let event = bus.emit(event);
+    assert_eq!(event.inner.inner.lock().event_type, "CustomEventType");
     block_on(event.done());
 
     assert_eq!(
@@ -1508,7 +1520,9 @@ fn test_multiple_handlers_parallel() {
     }
 
     let start = std::time::Instant::now();
-    let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
+    let event = bus.emit(UserActionEvent {
+        ..Default::default()
+    });
     block_on(event.done());
     let duration = start.elapsed();
 
@@ -1863,7 +1877,9 @@ fn test_dispatch_returns_event_results() {
         Ok(json!({"result": "test_result"}))
     });
 
-    let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
+    let event = bus.emit(UserActionEvent {
+        ..Default::default()
+    });
     block_on(event.done());
     let all_results = block_on(
         event
@@ -2693,7 +2709,9 @@ fn test_unreferenced_buses_with_event_history_are_garbage_collected_without_dest
             Ok(json!("ok"))
         });
         for _ in 0..10 {
-            let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
+            let event = bus.emit(UserActionEvent {
+                ..Default::default()
+            });
             block_on(event.done());
         }
         block_on(bus.wait_until_idle(Some(2.0)));
@@ -2785,9 +2803,9 @@ fn test_base_event_to_json_from_json_roundtrips_runtime_fields_and_event_results
         |_event| async move { Ok(json!("ok")) },
     );
 
-    let event = bus.emit(BaseEventHandle::<RuntimeSerializationEvent>::new(
-        EmptyPayload {},
-    ));
+    let event = bus.emit(RuntimeSerializationEvent {
+        ..Default::default()
+    });
     block_on(event.done());
 
     let serialized = event.inner.to_json_value();
@@ -2901,9 +2919,9 @@ fn test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() {
         "handler",
         |_event| async move { Ok(json!("ok")) },
     );
-    let event = bus.emit(BaseEventHandle::<RuntimeSerializationEvent>::new(
-        EmptyPayload {},
-    ));
+    let event = bus.emit(RuntimeSerializationEvent {
+        ..Default::default()
+    });
     block_on(event.done());
 
     let payload = bus.to_json_value();
@@ -2970,9 +2988,9 @@ fn test_eventbus_validate_creates_missing_handler_entries_from_event_results() {
         "handler",
         |_event| async move { Ok(json!("ok")) },
     );
-    let event = bus.emit(BaseEventHandle::<RuntimeSerializationEvent>::new(
-        EmptyPayload {},
-    ));
+    let event = bus.emit(RuntimeSerializationEvent {
+        ..Default::default()
+    });
     block_on(event.done());
 
     let mut payload = bus.to_json_value();
@@ -3016,15 +3034,15 @@ fn test_eventbus_model_dump_promotes_pending_events_into_event_history() {
         },
     );
 
-    let first = bus.emit(BaseEventHandle::<RuntimeSerializationEvent>::new(
-        EmptyPayload {},
-    ));
+    let first = bus.emit(RuntimeSerializationEvent {
+        ..Default::default()
+    });
     started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("first handler should start");
-    let second = bus.emit(BaseEventHandle::<RuntimeSerializationEvent>::new(
-        EmptyPayload {},
-    ));
+    let second = bus.emit(RuntimeSerializationEvent {
+        ..Default::default()
+    });
 
     let first_id = first.inner.inner.lock().event_id.clone();
     let second_id = second.inner.inner.lock().event_id.clone();
@@ -3058,9 +3076,9 @@ fn test_wait_until_idle_timeout_returns_after_timeout_when_work_is_still_in_flig
         Ok(json!(null))
     });
 
-    let event = bus.emit(BaseEventHandle::<WaitForIdleTimeoutEvent>::new(
-        EmptyPayload {},
-    ));
+    let event = bus.emit(WaitForIdleTimeoutEvent {
+        ..Default::default()
+    });
     let started = std::time::Instant::now();
     let became_idle = block_on(bus.wait_until_idle(Some(0.02)));
     let elapsed = started.elapsed();
@@ -3130,7 +3148,9 @@ fn test_unbounded_history_disables_history_rejection() {
     );
 
     for _ in 0..150 {
-        let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
+        let event = bus.emit(UserActionEvent {
+            ..Default::default()
+        });
         block_on(event.done());
     }
 
@@ -3354,22 +3374,16 @@ fn test_default_handler_recursion_depth_still_catches_runaway_loops() {
 fn test_base_event_lifecycle_methods_are_callable_and_preserve_lifecycle_behavior() {
     let bus = EventBus::new(Some("LifecycleMethodInvocationBus".to_string()));
 
-    let standalone = BaseEventHandle::<LifecycleMethodInvocationEvent>::new(EmptyPayload {});
-    standalone.inner.mark_started();
-    assert_eq!(
-        standalone.inner.inner.lock().event_status,
-        EventStatus::Started
-    );
-    standalone.inner.mark_completed();
-    assert_eq!(
-        standalone.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
+    let standalone = BaseEvent::new("LifecycleMethodInvocationEvent", serde_json::Map::new());
+    standalone.mark_started();
+    assert_eq!(standalone.inner.lock().event_status, EventStatus::Started);
+    standalone.mark_completed();
+    assert_eq!(standalone.inner.lock().event_status, EventStatus::Completed);
     block_on(standalone.done());
 
-    let dispatched = bus.emit(BaseEventHandle::<LifecycleMethodInvocationEvent>::new(
-        EmptyPayload {},
-    ));
+    let dispatched = bus.emit(LifecycleMethodInvocationEvent {
+        ..Default::default()
+    });
     block_on(dispatched.done());
     assert_eq!(
         dispatched.inner.inner.lock().event_status,

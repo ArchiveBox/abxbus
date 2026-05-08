@@ -1,3 +1,4 @@
+use abxbus_rust::event;
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
@@ -7,28 +8,17 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use abxbus_rust::{
-    base_event::BaseEvent,
-    event_bus::EventBus,
-    event_handler::EventHandlerOptions,
-    typed::{BaseEventHandle, EventSpec},
-};
+use abxbus_rust::{base_event::BaseEvent, event_bus::EventBus, event_handler::EventHandlerOptions};
 use futures::executor::block_on;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-#[derive(Clone, Serialize, Deserialize)]
-struct ResumePayload {
-    label: String,
+event! {
+    struct CrossRuntimeResumeEvent {
+        label: String,
+        event_result_type: Value,
+        event_type: "CrossRuntimeResumeEvent",
+    }
 }
-
-struct CrossRuntimeResumeEvent;
-impl EventSpec for CrossRuntimeResumeEvent {
-    type payload = ResumePayload;
-    type event_result_type = Value;
-    const event_type: &'static str = "CrossRuntimeResumeEvent";
-}
-
 fn assert_original_fields_survive(original: &Value, roundtripped: &Value) {
     let original = original.as_object().expect("original object");
     let roundtripped = roundtripped.as_object().expect("roundtripped object");
@@ -452,11 +442,10 @@ fn assert_bus_roundtrip_rehydrates_and_resumes_pending_queue(payload: Value) {
         },
     );
 
-    let trigger = bus.emit(BaseEventHandle::<CrossRuntimeResumeEvent>::new(
-        ResumePayload {
-            label: "e3".to_string(),
-        },
-    ));
+    let trigger = bus.emit(CrossRuntimeResumeEvent {
+        label: "e3".to_string(),
+        ..Default::default()
+    });
     block_on(trigger.done());
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
 

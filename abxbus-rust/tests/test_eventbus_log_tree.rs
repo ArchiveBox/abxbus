@@ -1,3 +1,4 @@
+use abxbus_rust::event;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -9,7 +10,6 @@ use std::{
 
 use abxbus_rust::{
     event_bus::{EventBus, EventBusOptions},
-    typed::{BaseEventHandle, EventSpec},
     types::{EventHandlerCompletionMode, EventHandlerConcurrencyMode},
 };
 use futures::executor::block_on;
@@ -17,51 +17,43 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 #[derive(Clone, Serialize, Deserialize)]
-struct RootPayload {
-    data: Option<String>,
-}
-#[derive(Clone, Serialize, Deserialize)]
-struct ChildPayload {
-    value: Option<i64>,
-}
-#[derive(Clone, Serialize, Deserialize)]
-struct GrandchildPayload {
-    nested: Option<std::collections::HashMap<String, i64>>,
-}
-#[derive(Clone, Serialize, Deserialize)]
 struct EmptyResult {}
 
-struct RootEvent;
-impl EventSpec for RootEvent {
-    type payload = RootPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "RootEvent";
+event! {
+    struct RootEvent {
+        data: Option<String>,
+        event_result_type: EmptyResult,
+        event_type: "RootEvent",
+    }
 }
-struct ChildEvent;
-impl EventSpec for ChildEvent {
-    type payload = ChildPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "ChildEvent";
+event! {
+    struct ChildEvent {
+        value: Option<i64>,
+        event_result_type: EmptyResult,
+        event_type: "ChildEvent",
+    }
 }
-struct GrandchildEvent;
-impl EventSpec for GrandchildEvent {
-    type payload = GrandchildPayload;
-    type event_result_type = EmptyResult;
-    const event_type: &'static str = "GrandchildEvent";
+event! {
+    struct GrandchildEvent {
+        nested: Option<std::collections::HashMap<String, i64>>,
+        event_result_type: EmptyResult,
+        event_type: "GrandchildEvent",
+    }
 }
-struct CancelledLogEvent;
-impl EventSpec for CancelledLogEvent {
-    type payload = RootPayload;
-    type event_result_type = String;
-    const event_type: &'static str = "CancelledLogEvent";
+event! {
+    struct CancelledLogEvent {
+        data: Option<String>,
+        event_result_type: String,
+        event_type: "CancelledLogEvent",
+    }
 }
-
 #[test]
 fn test_log_tree_single_event() {
     let bus = EventBus::new(Some("SingleBus".to_string()));
-    let event = bus.emit(BaseEventHandle::<RootEvent>::new(RootPayload {
+    let event = bus.emit(RootEvent {
         data: Some("test".to_string()),
-    }));
+        ..Default::default()
+    });
     block_on(event.done());
 
     let output = bus.log_tree();
@@ -87,9 +79,10 @@ fn test_log_tree_with_handler_results() {
         Ok(json!("status: success"))
     });
 
-    let event = bus.emit(BaseEventHandle::<RootEvent>::new(RootPayload {
+    let event = bus.emit(RootEvent {
         data: Some("test".to_string()),
-    }));
+        ..Default::default()
+    });
     block_on(event.done());
 
     let output = bus.log_tree();
@@ -116,9 +109,10 @@ fn test_log_tree_with_handler_errors() {
         Err("ValueError: Test error message".to_string())
     });
 
-    let event = bus.emit(BaseEventHandle::<RootEvent>::new(RootPayload {
+    let event = bus.emit(RootEvent {
         data: Some("test".to_string()),
-    }));
+        ..Default::default()
+    });
     block_on(event.done());
 
     let output = bus.log_tree();
@@ -156,8 +150,11 @@ fn test_log_tree_first_mode_control_cancellations_use_cancelled_icon() {
         Ok(json!("slow result"))
     });
 
-    let event = BaseEventHandle::<CancelledLogEvent>::new(RootPayload { data: None });
-    event.inner.inner.lock().event_handler_completion = Some(EventHandlerCompletionMode::First);
+    let event = CancelledLogEvent {
+        data: None,
+        event_handler_completion: Some(EventHandlerCompletionMode::First),
+        ..Default::default()
+    };
     let event = bus.emit(event);
     let first = block_on(event.first()).expect("first result");
     assert_eq!(first, Some("fast result".to_string()));
@@ -183,9 +180,10 @@ fn test_log_tree_complex_nested() {
     bus.on_raw("RootEvent", "root_handler", move |_event| {
         let bus = bus_for_root.clone();
         async move {
-            let child = bus.emit_child(BaseEventHandle::<ChildEvent>::new(ChildPayload {
+            let child = bus.emit_child(ChildEvent {
                 value: Some(100),
-            }));
+                ..Default::default()
+            });
             child.done().await;
             Ok(json!("Root processed"))
         }
@@ -193,10 +191,10 @@ fn test_log_tree_complex_nested() {
     bus.on_raw("ChildEvent", "child_handler", move |_event| {
         let bus = bus_for_child.clone();
         async move {
-            let grandchild =
-                bus.emit_child(BaseEventHandle::<GrandchildEvent>::new(GrandchildPayload {
-                    nested: None,
-                }));
+            let grandchild = bus.emit_child(GrandchildEvent {
+                nested: None,
+                ..Default::default()
+            });
             grandchild.done().await;
             Ok(json!([1, 2, 3]))
         }
@@ -207,9 +205,10 @@ fn test_log_tree_complex_nested() {
         |_event| async move { Ok(json!(null)) },
     );
 
-    let root = bus.emit(BaseEventHandle::<RootEvent>::new(RootPayload {
+    let root = bus.emit(RootEvent {
         data: Some("root_data".to_string()),
-    }));
+        ..Default::default()
+    });
     block_on(root.done());
 
     let output = bus.log_tree();
@@ -239,12 +238,14 @@ fn test_logtree_complex_nested() {
 fn test_log_tree_multiple_roots() {
     let bus = EventBus::new(Some("MultiBus".to_string()));
 
-    let root_1 = bus.emit(BaseEventHandle::<RootEvent>::new(RootPayload {
+    let root_1 = bus.emit(RootEvent {
         data: Some("first".to_string()),
-    }));
-    let root_2 = bus.emit(BaseEventHandle::<RootEvent>::new(RootPayload {
+        ..Default::default()
+    });
+    let root_2 = bus.emit(RootEvent {
         data: Some("second".to_string()),
-    }));
+        ..Default::default()
+    });
     block_on(root_1.done());
     block_on(root_2.done());
 
@@ -272,9 +273,10 @@ fn test_log_tree_timing_info() {
         Ok(json!("done"))
     });
 
-    let event = bus.emit(BaseEventHandle::<RootEvent>::new(RootPayload {
+    let event = bus.emit(RootEvent {
         data: None,
-    }));
+        ..Default::default()
+    });
     block_on(event.done());
 
     let output = bus.log_tree();
@@ -312,9 +314,10 @@ fn test_log_tree_running_handler() {
         }
     });
 
-    let event = bus.emit(BaseEventHandle::<RootEvent>::new(RootPayload {
+    let event = bus.emit(RootEvent {
         data: None,
-    }));
+        ..Default::default()
+    });
     started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("handler should start");

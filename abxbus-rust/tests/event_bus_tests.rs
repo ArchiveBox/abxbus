@@ -1,8 +1,8 @@
+use abxbus_rust::event;
 use std::{thread, time::Duration};
 
 use abxbus_rust::{
     event_bus::EventBus,
-    typed::{BaseEventHandle, EventSpec},
     types::{EventConcurrencyMode, EventHandlerConcurrencyMode},
 };
 use futures::executor::block_on;
@@ -10,27 +10,25 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 #[derive(Clone, Serialize, Deserialize)]
-struct WorkPayload {
-    value: i64,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
 struct WorkResult {
     value: i64,
 }
 
-struct WorkEvent;
-impl EventSpec for WorkEvent {
-    type payload = WorkPayload;
-    type event_result_type = WorkResult;
-    const event_type: &'static str = "work";
+event! {
+    struct WorkEvent {
+        value: i64,
+        event_result_type: WorkResult,
+        event_type: "work",
+    }
 }
-
 #[test]
 fn test_emit_and_handler_result() {
     let bus = EventBus::new(Some("BusA".to_string()));
     bus.on_raw("work", "h1", |_event| async move { Ok(json!("ok")) });
-    let event = bus.emit(BaseEventHandle::<WorkEvent>::new(WorkPayload { value: 1 }));
+    let event = bus.emit(WorkEvent {
+        value: 1,
+        ..Default::default()
+    });
     block_on(event.done());
 
     let results = event.inner.inner.lock().event_results.clone();
@@ -53,12 +51,12 @@ fn test_parallel_handler_concurrency() {
         Ok(json!(2))
     });
 
-    let event = BaseEventHandle::<WorkEvent>::new(WorkPayload { value: 1 });
-    {
-        let mut inner = event.inner.inner.lock();
-        inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
-        inner.event_concurrency = Some(EventConcurrencyMode::Parallel);
-    }
+    let event = WorkEvent {
+        value: 1,
+        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Parallel),
+        event_concurrency: Some(EventConcurrencyMode::Parallel),
+        ..Default::default()
+    };
     let emitted = bus.emit(event);
     block_on(emitted.done());
     assert_eq!(emitted.inner.inner.lock().event_results.len(), 2);

@@ -218,7 +218,8 @@ fn test_typed_event_result_accessors_decode_handler_values() {
 
 #[test]
 fn test_builtin_event_fields_in_payload_become_runtime_overrides() {
-    let event = BaseEventHandle::<TimeoutOverrideEvent>::new(TimeoutOverrideEvent {
+    let bus = EventBus::new(Some("TypedRuntimeOverrideBus".to_string()));
+    let event = bus.emit(TimeoutOverrideEvent {
         name: "job".to_string(),
         event_timeout: Some(12.0),
         event_handler_timeout: Some(3.0),
@@ -230,4 +231,6 @@ fn test_builtin_event_fields_in_payload_become_runtime_overrides() {
     assert_eq!(inner.payload.get("name"), Some(&serde_json::json!("job")));
     assert!(!inner.payload.contains_key("event_timeout"));
     assert!(!inner.payload.contains_key("event_handler_timeout"));
+    drop(inner);
+    bus.stop();
 }
