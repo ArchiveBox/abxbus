@@ -62,7 +62,7 @@ fn run_go_roundtrip(mode: &str, payload: &Value) -> Value {
     let output = Command::new("go")
         .args([
             "run",
-            "./cmd/abxbus-go-roundtrip",
+            "./tests/roundtrip_cli",
             mode,
             input_path.to_str().expect("input path utf8"),
             output_path.to_str().expect("output path utf8"),
