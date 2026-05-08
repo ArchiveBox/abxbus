@@ -1,0 +1,173 @@
+docs/concurrency/immediate-execution.mdx
+  s_9acf3592297ead::t_3bc3641882ebb3 90,227
+  s_6a8c07f028b30c::t_86cb6df8f01367 87,95
+docs/features/event-debouncing.mdx
+  s_9acf3592297ead::t_3bc3641882ebb3 96,181,276,374
+docs/concurrency/events-global-serial.mdx
+  s_6a8c07f028b30c::t_86cb6df8f01367 191-192
+abxbus-rust/tests/test_eventbus_forwarding.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 118,194,222,285,359,387,474,527,580,630,666,705
+docs/concurrency/timeouts.mdx
+  s_6a8c07f028b30c::t_bc568360496d62 234-235,242
+docs/concurrency/events-parallel.mdx
+  s_6a8c07f028b30c::t_86cb6df8f01367 178
+docs/index.mdx
+  s_6a8c07f028b30c::t_1a07bed425babd 82
+  s_9acf3592297ead::t_3bc3641882ebb3 86
+  s_6a8c07f028b30c::t_86cb6df8f01367 81
+docs/api/eventhandler.mdx
+  s_6a8c07f028b30c::t_86cb6df8f01367 61
+abxbus-rust/tests/test_base_event_eventbus_proxy.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 330,370,424,446,543
+abxbus-rust/tests/test_event_handler.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 76,130,182,478,513,522
+abxbus-rust/tests/event_bus_tests.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 34,63
+docs/concurrency/handler-completion-all.mdx
+  s_6a8c07f028b30c::t_86cb6df8f01367 186-187
+docs/api/baseevent.mdx
+  s_9acf3592297ead::t_3bc3641882ebb3 87,165
+docs/features/event-history-store.mdx
+  s_9acf3592297ead::t_3bc3641882ebb3 206
+docs/features/typed-events.mdx
+  s_6a8c07f028b30c::t_86cb6df8f01367 74
+  s_6a8c07f028b30c::t_33a845466f6f26 76
+abxbus-rust/src/typed.rs
+  s_6a8c07f028b30c::t_83eb4f6ebb4d33 15-30,407-412,415-421,423-424,428,434,480,489-490,492-497,504-505,507,510-518,532,1129-1130
+  s_6a8c07f028b30c::t_0da2974bec8b0e 1-3,401-405
+  s_6a8c07f028b30c::t_4bc36b94acd554 99,130,184,190,193,198-231,236-245,250-251,256-260,406,413-414,422,425-427,429-433,435-443
+  s_6a8c07f028b30c::t_eea19734a7a986 31-42,487,491,498-503,506,508-509
+  s_9acf3592297ead::t_1a81fc328b3086 232-235,246-249,252-255,481-485
+  s_6a8c07f028b30c::t_bdd2bf1c35bfbd 277-278,297
+  s_9acf3592297ead::t_0d5ad195db2966 519,523,525-529,533,542,1131
+abxbus-rust/tests/test_eventbus_debounce.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 86,97,183,269,351
+docs/concurrency/handlers-parallel.mdx
+  s_6a8c07f028b30c::t_86cb6df8f01367 173-174
+  s_9acf3592297ead::t_3bc3641882ebb3 177
+abxbus-rust/tests/test_eventbus_on_off.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 60,73,78,136,201,232,264,285,306,342-343,366
+  s_9acf3592297ead::t_255671ebef7284 277-278,280,298-299,301
+  s_9acf3592297ead::t_a8740100491348 279,300
+docs/features/forwarding-between-buses.mdx
+  s_6a8c07f028b30c::t_86cb6df8f01367 199,202,207,214,354,362,473,480,487
+  s_9acf3592297ead::t_3bc3641882ebb3 225,495
+  s_6a8c07f028b30c::t_1a07bed425babd 200,203
+docs/concurrency/events-bus-serial.mdx
+  s_6a8c07f028b30c::t_86cb6df8f01367 215-216
+docs/features/async-sync-handlers.mdx
+  s_6a8c07f028b30c::t_86cb6df8f01367 146,150,162
+  s_6a8c07f028b30c::t_1a07bed425babd 147,152,163
+abxbus-rust/tests/test_eventbus_error_handling.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 94,140,159,219,264,298,318,398
+abxbus-rust/tests/test_eventbus_find.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 152,161,184,195,204,232,268,277,301,310,333,344,353,370,385,388,442,455,469,492,579,607,629,671,731,759,781,808,839,869-870,1185,1191,1428,1437,1446,1480,1490,1526,1535,1585,1599-1600,1628,1644,1664,1675,1704,1737,1763,1815,1824,1880,1883,1928,1933,1974
+abxbus-rust/tests/test_base_event_runtime_state.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 79,99,129,171,307
+docs/concurrency/handler-completion-first.mdx
+  s_6a8c07f028b30c::t_86cb6df8f01367 182,186
+abxbus-rust/tests/test_eventbus_timeout.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 178,196,237,285,336,393,400,476,532,593,646,705,756,798,850,888,919,959,1018,1126,1202,1263,1271,1377,1430,1438,1483,1500,1518,1553,1575,1594,1628,1660,1678,1717,1742,1777,1853,1904,1912,2081,2089,2247,2304,2318,2503,2523
+abxbus-rust/tests/test_eventbus_dispatch_parent_tracking.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 285,680-682,763,799-800,840,890,941,982,1069,1158,1164,1240,1269,1280,1318
+abxbus-rust/tests/test_base_event.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 319,346,411-413,455,523,548
+docs/features/return-value-handling.mdx
+  s_6a8c07f028b30c::t_86cb6df8f01367 78,160,163
+  s_6a8c07f028b30c::t_33a845466f6f26 79
+abxbus-rust/tests/test_eventbus_dispatch_defaults.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 70,97-98,124,163-164,195
+abxbus-rust/tests/test_comprehensive_patterns.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 280,338,444,465,501,555,590,631,670,706,736,748,777,830,832,864,893,919,950,954-955,983,987,1021,1048,1062,1091,1128,1160,1196,1226,1283,1315,1350,1382,1457,1466,1472,1597,1605,1662,1670,1726,1734
+abxbus-rust/tests/test_eventbus_serialization.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 67,173,223,247,268,330-331
+docs/api/eventbus.mdx
+  s_6a8c07f028b30c::t_86cb6df8f01367 180,235
+  s_6a8c07f028b30c::t_bc568360496d62 183-184,190
+  s_6a8c07f028b30c::t_1a07bed425babd 181
+docs/quickstart.mdx
+  s_9acf3592297ead::t_3bc3641882ebb3 123
+  s_6a8c07f028b30c::t_33a845466f6f26 116
+  s_6a8c07f028b30c::t_86cb6df8f01367 115
+abxbus-rust/tests/test_eventbus_locking.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 112-114,173-175,199-200,454,464,558,689,720,809,923,965-966,1247,1333,1343,1388,1398,1439,1473,1544,1564
+abxbus-rust/tests/test_typed_events.rs
+  s_6a8c07f028b30c::t_d24a5b5f796442 37,134,154
+  s_6a8c07f028b30c::t_f1a431930f5620 39,79-80,126,136,141,156,163
+  s_9acf3592297ead::t_3bc3641882ebb3 44,56,118
+  s_9acf3592297ead::t_255671ebef7284 159
+  s_6a8c07f028b30c::t_08db7c084f4bf6 61-62,108-109
+docs/concurrency/handlers-serial.mdx
+  s_6a8c07f028b30c::t_86cb6df8f01367 153-154
+  s_9acf3592297ead::t_3bc3641882ebb3 157
+abxbus-rust/tests/test_event_result.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 345,460
+abxbus-rust/tests/test_eventbus_performance.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 30,310
+abxbus-rust/tests/test_eventbus_edge_cases.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 106,125,185,234,247,264,283
+abxbus-rust/tests/test_eventbus_name_conflict_gc.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 248,284
+docs/api/eventhistory.mdx
+  s_9acf3592297ead::t_3bc3641882ebb3 79
+docs/features/fifo-processing.mdx
+  s_6a8c07f028b30c::t_86cb6df8f01367 189,359,366
+  s_6a8c07f028b30c::t_1a07bed425babd 190
+abxbus-rust/tests/test_event_history_store.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 26,41
+abxbus-rust/tests/test_eventbus_log_tree.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 65,93,122,189,200,213,248-249,278,326
+docs/features/context-propagation.mdx
+  s_6a8c07f028b30c::t_86cb6df8f01367 87
+  s_9acf3592297ead::t_3bc3641882ebb3 95,164
+abxbus-rust/tests/test_cross_runtime_roundtrip.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 460
+abxbus-rust/tests/test_eventbus_cross_runtime_features.rs
+  s_9acf3592297ead::t_cf20430c4ccd2e 402-405,408-409
+  s_9acf3592297ead::t_3bc3641882ebb3 143,176-177,275,333,349,393,469,485,585-586,627
+docs/features/parent-child-tracking.mdx
+  s_6a8c07f028b30c::t_86cb6df8f01367 242,261,264
+  s_6a8c07f028b30c::t_1a07bed425babd 244,262,265
+  s_9acf3592297ead::t_3bc3641882ebb3 41,43,249,255
+abxbus-rust/src/base_event.rs
+  s_6a8c07f028b30c::t_bdd2bf1c35bfbd 307
+abxbus-rust/tests/test_eventbus_dispatch_contextvars.rs
+  s_6a8c07f028b30c::t_e645ec5dafe2a5 9,11-12,18-21,24-27,30-33,36-39,62,79,105,117,124,141,171,184,187,216-220,234,254,275,287,342,354,366,399,404,411,416,465,537,605,630
+  s_9acf3592297ead::t_3bc3641882ebb3 81,118,143,191-192,236,290,369,405,417,448,467,507,539,580,606,632
+  s_9acf3592297ead::t_1a81fc328b3086 221-230,325-339,440-447,449-452,493-506,508-511,567-579,581-584
+  s_9acf3592297ead::t_255671ebef7284 324,439,455,492,514,566,588,612
+abxbus-rust/tests/test_eventbus.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 175,414,432,947,990,1033,1052,1206,1272,1302,1328,1354,1411-1412,1464,1512,1867,2697,2791,2907,2976,3037-3038,3073,3134,3284,3318,3368,3373
+  s_9acf3592297ead::t_255671ebef7284 1243
+abxbus-rust/tests/test_event_handler_first.rs
+  s_9acf3592297ead::t_3bc3641882ebb3 64,102,141,161,292,484,535,643
+docs/features/event-pattern-matching.mdx
+  s_6a8c07f028b30c::t_86cb6df8f01367 129
+  s_6a8c07f028b30c::t_1a07bed425babd 130
+  s_9acf3592297ead::t_3bc3641882ebb3 136
+  s_6a8c07f028b30c::t_bc568360496d62 224
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "67dee77336349e8dc0068399d24d755e1cd525f4",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    },
+    "s_9acf3592297ead": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e06db-4834-7f40-95b3-aa902418130d",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
