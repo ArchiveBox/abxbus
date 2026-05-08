@@ -100,20 +100,51 @@ impl<E: EventSpec> BaseEventHandle<E> {
         let Value::Object(payload_map) = value else {
             panic!("event payload must serialize to a JSON object");
         };
+        let has_event_version = payload_map.contains_key("event_version");
+        let has_event_timeout = payload_map.contains_key("event_timeout");
+        let has_event_slow_timeout = payload_map.contains_key("event_slow_timeout");
+        let has_event_concurrency = payload_map.contains_key("event_concurrency");
+        let has_event_handler_timeout = payload_map.contains_key("event_handler_timeout");
+        let has_event_handler_slow_timeout = payload_map.contains_key("event_handler_slow_timeout");
+        let has_event_handler_concurrency = payload_map.contains_key("event_handler_concurrency");
+        let has_event_handler_completion = payload_map.contains_key("event_handler_completion");
+        let has_event_blocks_parent_completion =
+            payload_map.contains_key("event_blocks_parent_completion");
+        let has_event_result_type = payload_map.contains_key("event_result_type");
 
         let inner = RawBaseEvent::new(E::event_type, payload_map);
         {
             let mut event = inner.inner.lock();
-            event.event_version = E::event_version.to_string();
-            event.event_timeout = E::event_timeout;
-            event.event_slow_timeout = E::event_slow_timeout;
-            event.event_concurrency = E::event_concurrency;
-            event.event_handler_timeout = E::event_handler_timeout;
-            event.event_handler_slow_timeout = E::event_handler_slow_timeout;
-            event.event_handler_concurrency = E::event_handler_concurrency;
-            event.event_handler_completion = E::event_handler_completion;
-            event.event_blocks_parent_completion = E::event_blocks_parent_completion;
-            event.event_result_type = E::event_result_type_json();
+            if !has_event_version {
+                event.event_version = E::event_version.to_string();
+            }
+            if !has_event_timeout {
+                event.event_timeout = E::event_timeout;
+            }
+            if !has_event_slow_timeout {
+                event.event_slow_timeout = E::event_slow_timeout;
+            }
+            if !has_event_concurrency {
+                event.event_concurrency = E::event_concurrency;
+            }
+            if !has_event_handler_timeout {
+                event.event_handler_timeout = E::event_handler_timeout;
+            }
+            if !has_event_handler_slow_timeout {
+                event.event_handler_slow_timeout = E::event_handler_slow_timeout;
+            }
+            if !has_event_handler_concurrency {
+                event.event_handler_concurrency = E::event_handler_concurrency;
+            }
+            if !has_event_handler_completion {
+                event.event_handler_completion = E::event_handler_completion;
+            }
+            if !has_event_blocks_parent_completion {
+                event.event_blocks_parent_completion = E::event_blocks_parent_completion;
+            }
+            if !has_event_result_type {
+                event.event_result_type = E::event_result_type_json();
+            }
         }
 
         Self {
@@ -129,7 +160,7 @@ impl<E: EventSpec> BaseEventHandle<E> {
         }
     }
 
-    pub fn payload(&self) -> E::payload {
+    pub fn event_payload(&self) -> E::payload {
         let payload = self.inner.inner.lock().payload.clone();
         let value = Value::Object(payload);
         serde_json::from_value(value).expect("event payload decode failed")

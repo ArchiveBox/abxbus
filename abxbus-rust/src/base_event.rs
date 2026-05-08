@@ -101,6 +101,68 @@ fn short_id(id: &str) -> String {
     id[start..].to_string()
 }
 
+fn take_from_value<T>(payload: &mut Map<String, Value>, key: &str) -> Result<Option<T>, String>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let Some(value) = payload.remove(key) else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(|error| format!("Invalid {key}: {error}"))
+}
+
+fn take_option_from_value<T>(
+    payload: &mut Map<String, Value>,
+    key: &str,
+) -> Result<Option<T>, String>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    take_from_value(payload, key)
+}
+
+fn take_string(payload: &mut Map<String, Value>, key: &str) -> Result<Option<String>, String> {
+    take_from_value(payload, key)
+}
+
+fn take_option_string(
+    payload: &mut Map<String, Value>,
+    key: &str,
+) -> Result<Option<String>, String> {
+    take_from_value(payload, key)
+}
+
+fn take_vec_string(
+    payload: &mut Map<String, Value>,
+    key: &str,
+) -> Result<Option<Vec<String>>, String> {
+    take_from_value(payload, key)
+}
+
+fn take_bool(payload: &mut Map<String, Value>, key: &str) -> Result<Option<bool>, String> {
+    take_from_value(payload, key)
+}
+
+fn take_usize(payload: &mut Map<String, Value>, key: &str) -> Result<Option<usize>, String> {
+    take_from_value(payload, key)
+}
+
+fn take_option_f64(payload: &mut Map<String, Value>, key: &str) -> Result<Option<f64>, String> {
+    take_from_value(payload, key)
+}
+
+fn take_option_value(payload: &mut Map<String, Value>, key: &str) -> Option<Value> {
+    match payload.remove(key) {
+        Some(Value::Null) | None => None,
+        Some(value) => Some(value),
+    }
+}
+
 impl Serialize for BaseEvent {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -119,33 +181,67 @@ impl BaseEvent {
         event_type: impl Into<String>,
         payload: Map<String, Value>,
     ) -> Result<Arc<Self>, String> {
-        let event_type = event_type.into();
+        let mut payload = payload;
+        let event_type = payload
+            .remove("event_type")
+            .and_then(|value| serde_json::from_value::<String>(value).ok())
+            .unwrap_or_else(|| event_type.into());
         Self::validate_event_type(&event_type)?;
+
+        let event_version =
+            take_string(&mut payload, "event_version")?.unwrap_or_else(|| "0.0.1".to_string());
+        let event_timeout = take_option_f64(&mut payload, "event_timeout")?;
+        let event_slow_timeout = take_option_f64(&mut payload, "event_slow_timeout")?;
+        let event_concurrency = take_option_from_value(&mut payload, "event_concurrency")?;
+        let event_handler_timeout = take_option_f64(&mut payload, "event_handler_timeout")?;
+        let event_handler_slow_timeout =
+            take_option_f64(&mut payload, "event_handler_slow_timeout")?;
+        let event_handler_concurrency =
+            take_option_from_value(&mut payload, "event_handler_concurrency")?;
+        let event_handler_completion =
+            take_option_from_value(&mut payload, "event_handler_completion")?;
+        let event_blocks_parent_completion =
+            take_bool(&mut payload, "event_blocks_parent_completion")?.unwrap_or(false);
+        let event_result_type = take_option_value(&mut payload, "event_result_type");
+        let event_id = take_string(&mut payload, "event_id")?.unwrap_or_else(uuid_v7_string);
+        let event_path = take_vec_string(&mut payload, "event_path")?.unwrap_or_default();
+        let event_parent_id = take_option_string(&mut payload, "event_parent_id")?;
+        let event_emitted_by_handler_id =
+            take_option_string(&mut payload, "event_emitted_by_handler_id")?;
+        let event_pending_bus_count =
+            take_usize(&mut payload, "event_pending_bus_count")?.unwrap_or(0);
+        let event_created_at =
+            take_string(&mut payload, "event_created_at")?.unwrap_or_else(now_iso);
+        let event_status =
+            take_from_value(&mut payload, "event_status")?.unwrap_or(EventStatus::Pending);
+        let event_started_at = take_option_string(&mut payload, "event_started_at")?;
+        let event_completed_at = take_option_string(&mut payload, "event_completed_at")?;
+        let event_results = take_from_value(&mut payload, "event_results")?.unwrap_or_default();
         Self::validate_payload_fields(&payload)?;
 
         Ok(Arc::new(Self {
             inner: Mutex::new(BaseEventData {
                 event_type,
-                event_version: "0.0.1".to_string(),
-                event_timeout: None,
-                event_slow_timeout: None,
-                event_concurrency: None,
-                event_handler_timeout: None,
-                event_handler_slow_timeout: None,
-                event_handler_concurrency: None,
-                event_handler_completion: None,
-                event_blocks_parent_completion: false,
-                event_result_type: None,
-                event_id: uuid_v7_string(),
-                event_path: vec![],
-                event_parent_id: None,
-                event_emitted_by_handler_id: None,
-                event_pending_bus_count: 0,
-                event_created_at: now_iso(),
-                event_status: EventStatus::Pending,
-                event_started_at: None,
-                event_completed_at: None,
-                event_results: HashMap::new(),
+                event_version,
+                event_timeout,
+                event_slow_timeout,
+                event_concurrency,
+                event_handler_timeout,
+                event_handler_slow_timeout,
+                event_handler_concurrency,
+                event_handler_completion,
+                event_blocks_parent_completion,
+                event_result_type,
+                event_id,
+                event_path,
+                event_parent_id,
+                event_emitted_by_handler_id,
+                event_pending_bus_count,
+                event_created_at,
+                event_status,
+                event_started_at,
+                event_completed_at,
+                event_results,
                 event_result_order: Vec::new(),
                 payload,
             }),
@@ -196,7 +292,7 @@ impl BaseEvent {
             }
             if key.starts_with("event_") {
                 return Err(format!(
-                    "Unknown event-prefixed field is not allowed in payload: {key}"
+                    "Field starts with event_ but is not a recognized BaseEvent field: {key}"
                 ));
             }
             if key.starts_with("model_") {
