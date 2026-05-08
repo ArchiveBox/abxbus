@@ -47,6 +47,14 @@ fn drop_in_flight(in_flight: &Arc<Mutex<i64>>) {
     *in_flight -= 1;
 }
 
+fn emit_with_first_completion(bus: &Arc<EventBus>) -> BaseEventHandle<CompletionEvent> {
+    let event = BaseEventHandle::<CompletionEvent>::new(EmptyPayload {});
+    event.inner.inner.lock().event_handler_completion = Some(EventHandlerCompletionMode::First);
+    let event = bus.emit(event);
+    block_on(event.done());
+    event
+}
+
 #[test]
 fn test_event_handler_completion_bus_default_first_serial() {
     let bus = EventBus::new_with_options(
@@ -284,11 +292,8 @@ fn test_event_first_preserves_falsy_results() {
         }
     });
 
-    let result = block_on(
-        bus.emit(BaseEventHandle::<CompletionEvent>::new(EmptyPayload {}))
-            .first(),
-    )
-    .expect("first result");
+    let event = emit_with_first_completion(&bus);
+    let result = event.first_result_or_error().expect("first result");
     assert_eq!(result, Some(json!(0)));
     assert!(!*second_handler_called.lock().expect("called lock"));
     bus.stop();
@@ -316,12 +321,8 @@ fn test_event_first_preserves_false_and_empty_string_results() {
             Ok(json!(true))
         }
     });
-    let false_result = block_on(
-        false_bus
-            .emit(BaseEventHandle::<CompletionEvent>::new(EmptyPayload {}))
-            .first(),
-    )
-    .expect("first result");
+    let false_event = emit_with_first_completion(&false_bus);
+    let false_result = false_event.first_result_or_error().expect("first result");
     assert_eq!(false_result, Some(json!(false)));
     assert!(!*false_second_called.lock().expect("called lock"));
     false_bus.stop();
@@ -346,12 +347,8 @@ fn test_event_first_preserves_false_and_empty_string_results() {
             Ok(json!("second"))
         }
     });
-    let str_result = block_on(
-        str_bus
-            .emit(BaseEventHandle::<CompletionEvent>::new(EmptyPayload {}))
-            .first(),
-    )
-    .expect("first result");
+    let str_event = emit_with_first_completion(&str_bus);
+    let str_result = str_event.first_result_or_error().expect("first result");
     assert_eq!(str_result, Some(json!("")));
     assert!(!*str_second_called.lock().expect("called lock"));
     str_bus.stop();
@@ -384,8 +381,8 @@ fn test_event_first_skips_none_result_and_uses_next_winner() {
         }
     });
 
-    let event = bus.emit(BaseEventHandle::<CompletionEvent>::new(EmptyPayload {}));
-    let result = block_on(event.first()).expect("first result");
+    let event = emit_with_first_completion(&bus);
+    let result = event.first_result_or_error().expect("first result");
 
     assert_eq!(result, Some(json!("winner")));
     assert!(!*third_handler_called.lock().expect("called lock"));
@@ -433,8 +430,8 @@ fn test_event_first_skips_baseevent_result_and_uses_next_winner() {
         }
     });
 
-    let event = bus.emit(BaseEventHandle::<CompletionEvent>::new(EmptyPayload {}));
-    let result = block_on(event.first()).expect("first result");
+    let event = emit_with_first_completion(&bus);
+    let result = event.first_result_or_error().expect("first result");
 
     assert_eq!(result, Some(json!("winner")));
     assert!(!*third_handler_called.lock().expect("called lock"));
