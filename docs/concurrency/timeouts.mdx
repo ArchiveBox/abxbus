@@ -231,14 +231,15 @@ use abxbus_rust::{
     BaseEvent,
 };
 
-let entry = bus.on_with_options::<WorkEvent, _, _>(
+let entry = bus.on_with_options(
+    WorkEvent,
     "slow_handler",
     EventHandlerOptions {
         handler_timeout: Some(1.5),
         handler_slow_timeout: Some(0.5),
         ..EventHandlerOptions::default()
     },
-    |_event| async move { Ok(()) },
+    |_event: WorkEvent| async move { Ok(()) },
 );
 ```
 

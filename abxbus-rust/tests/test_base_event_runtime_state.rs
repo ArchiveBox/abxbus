@@ -76,7 +76,7 @@ fn test_event_started_at_after_processing() {
     let event = bus.emit(BaseEventHandle::<RuntimeSampleEvent>::new(RuntimePayload {
         data: "processing_test".to_string(),
     }));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let event = event.inner.inner.lock();
     assert!(event.event_started_at.is_some());
@@ -96,7 +96,7 @@ fn test_event_without_handlers_completes_and_serializes_runtime_state() {
     assert_eq!(event.inner.inner.lock().event_completed_at, None);
 
     let processed_event = bus.emit(event);
-    block_on(processed_event.wait_completed());
+    block_on(processed_event.done());
 
     let processed = processed_event.inner.inner.lock();
     assert_eq!(processed.event_status, EventStatus::Completed);
@@ -126,7 +126,7 @@ fn test_event_with_manually_set_completed_at_reconciles_through_dispatch() {
     }
 
     let processed_event = bus.emit_base(event);
-    block_on(processed_event.wait_completed());
+    block_on(processed_event.done());
 
     {
         let processed = processed_event.inner.lock();
@@ -168,7 +168,7 @@ fn test_event_with_manually_set_completed_at_reconciles_through_dispatch() {
     assert_eq!(seeded_event.inner.inner.lock().event_completed_at, None);
 
     let reconciled = bus.emit(seeded_event);
-    block_on(reconciled.wait_completed());
+    block_on(reconciled.done());
     let reconciled = reconciled.inner.inner.lock();
     assert_eq!(reconciled.event_status, EventStatus::Completed);
     assert!(reconciled.event_started_at.is_some());
@@ -304,7 +304,7 @@ fn test_event_status_is_serialized_and_stateful() {
     );
 
     release_tx.send(()).expect("release send");
-    block_on(processing_event.wait_completed());
+    block_on(processing_event.done());
     assert_eq!(
         processing_event.inner.to_json_value()["event_status"],
         "completed"

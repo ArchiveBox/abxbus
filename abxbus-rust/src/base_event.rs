@@ -304,7 +304,7 @@ impl BaseEvent {
         Ok(())
     }
 
-    pub async fn wait_completed(self: &Arc<Self>) {
+    pub async fn done(self: &Arc<Self>) {
         crate::event_bus::EventBus::queue_jump_if_waited(self.clone());
         self.event_completed().await;
     }

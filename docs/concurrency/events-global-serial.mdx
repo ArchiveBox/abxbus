@@ -188,8 +188,8 @@ let options = EventBusOptions {
 let bus_a = EventBus::new_with_options(Some("GlobalSerialA".to_string()), options.clone());
 let bus_b = EventBus::new_with_options(Some("GlobalSerialB".to_string()), options);
 
-bus_a.on::<SerialEvent, _, _>("handler", |_event| async move { Ok(()) });
-bus_b.on::<SerialEvent, _, _>("handler", |_event| async move { Ok(()) });
+bus_a.on(SerialEvent, |_event: SerialEvent| async move { Ok(()) });
+bus_b.on(SerialEvent, |_event: SerialEvent| async move { Ok(()) });
 
 for _ in 0..3 {
     bus_a.emit(SerialEvent {});

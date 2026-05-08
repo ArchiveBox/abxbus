@@ -115,7 +115,7 @@ fn test_events_forward_between_buses_without_duplication() {
     });
 
     let event = bus_a.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 1 }));
-    block_on(event.wait_completed());
+    block_on(event.done());
     block_on(bus_a.wait_until_idle(None));
     block_on(bus_b.wait_until_idle(None));
     block_on(bus_c.wait_until_idle(None));
@@ -191,7 +191,7 @@ fn test_tresultsee_level_hierarchy_bubbling() {
     });
 
     let bottom = subchild_bus.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 1 }));
-    block_on(bottom.wait_completed());
+    block_on(bottom.done());
     block_on(subchild_bus.wait_until_idle(None));
     block_on(child_bus.wait_until_idle(None));
     block_on(parent_bus.wait_until_idle(None));
@@ -219,7 +219,7 @@ fn test_tresultsee_level_hierarchy_bubbling() {
     events_at_subchild.lock().expect("subchild lock").clear();
 
     let middle = child_bus.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 2 }));
-    block_on(middle.wait_completed());
+    block_on(middle.done());
     block_on(child_bus.wait_until_idle(None));
     block_on(parent_bus.wait_until_idle(None));
 
@@ -282,7 +282,7 @@ fn test_forwarding_disambiguates_buses_that_share_the_same_name() {
     });
 
     let event = bus_a.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 99 }));
-    block_on(event.wait_completed());
+    block_on(event.done());
     block_on(bus_a.wait_until_idle(None));
     block_on(bus_b.wait_until_idle(None));
 
@@ -356,7 +356,7 @@ fn test_circular_subscription_prevention() {
     });
 
     let event = peer1.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 42 }));
-    block_on(event.wait_completed());
+    block_on(event.done());
     block_on(peer1.wait_until_idle(None));
     block_on(peer2.wait_until_idle(None));
     block_on(peer3.wait_until_idle(None));
@@ -384,7 +384,7 @@ fn test_circular_subscription_prevention() {
     events_at_peer3.lock().expect("peer3 lock").clear();
 
     let event2 = peer2.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 99 }));
-    block_on(event2.wait_completed());
+    block_on(event2.done());
     block_on(peer1.wait_until_idle(None));
     block_on(peer2.wait_until_idle(None));
     block_on(peer3.wait_until_idle(None));
@@ -471,7 +471,7 @@ fn test_forwarding_loop_prevention() {
     });
 
     let event = bus_a.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 7 }));
-    block_on(event.wait_completed());
+    block_on(event.done());
     block_on(bus_a.wait_until_idle(None));
     block_on(bus_b.wait_until_idle(None));
     block_on(bus_c.wait_until_idle(None));
@@ -524,7 +524,7 @@ fn test_await_forwarded_event_waits_for_target_bus_handlers() {
     });
 
     let event = bus_a.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 2 }));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let mut log = completion_log.lock().expect("log lock").clone();
     log.sort();
@@ -577,7 +577,7 @@ fn test_await_forwarded_event_waits_when_forwarding_handler_is_async_delayed() {
     });
 
     let event = bus_a.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 3 }));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     assert!(*bus_a_done.lock().expect("bus_a_done lock"));
     assert!(*bus_b_done.lock().expect("bus_b_done lock"));
@@ -627,7 +627,7 @@ fn test_forwarding_same_event_does_not_set_self_parent_id() {
     });
 
     let event = origin.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 9 }));
-    block_on(event.wait_completed());
+    block_on(event.done());
     block_on(origin.wait_until_idle(None));
     block_on(target.wait_until_idle(None));
 
@@ -663,7 +663,7 @@ fn test_proxy_dispatch_auto_links_child_events_like_emit() {
     let root = bus.emit(BaseEventHandle::<ProxyDispatchRootEvent>::new(
         EmptyPayload {},
     ));
-    block_on(root.wait_completed());
+    block_on(root.done());
     block_on(bus.wait_until_idle(None));
 
     let root_id = root.inner.inner.lock().event_id.clone();
@@ -702,7 +702,7 @@ fn test_proxy_dispatch_of_same_event_does_not_self_parent_or_self_link_child() {
     let root = bus.emit(BaseEventHandle::<ProxyDispatchRootEvent>::new(
         EmptyPayload {},
     ));
-    block_on(root.wait_completed());
+    block_on(root.done());
     block_on(bus.wait_until_idle(None));
 
     let inner = root.inner.inner.lock();

@@ -62,7 +62,7 @@ fn test_log_tree_single_event() {
     let event = bus.emit(BaseEventHandle::<RootEvent>::new(RootPayload {
         data: Some("test".to_string()),
     }));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let output = bus.log_tree();
     assert!(output.contains("└── ✅ RootEvent#"));
@@ -90,7 +90,7 @@ fn test_log_tree_with_handler_results() {
     let event = bus.emit(BaseEventHandle::<RootEvent>::new(RootPayload {
         data: Some("test".to_string()),
     }));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let output = bus.log_tree();
     assert!(output.contains("└── ✅ RootEvent#"));
@@ -119,7 +119,7 @@ fn test_log_tree_with_handler_errors() {
     let event = bus.emit(BaseEventHandle::<RootEvent>::new(RootPayload {
         data: Some("test".to_string()),
     }));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let output = bus.log_tree();
     assert!(output.contains(&format!("{}.error_handler#", bus.label())));
@@ -186,7 +186,7 @@ fn test_log_tree_complex_nested() {
             let child = bus.emit_child(BaseEventHandle::<ChildEvent>::new(ChildPayload {
                 value: Some(100),
             }));
-            child.wait_completed().await;
+            child.done().await;
             Ok(json!("Root processed"))
         }
     });
@@ -197,7 +197,7 @@ fn test_log_tree_complex_nested() {
                 bus.emit_child(BaseEventHandle::<GrandchildEvent>::new(GrandchildPayload {
                     nested: None,
                 }));
-            grandchild.wait_completed().await;
+            grandchild.done().await;
             Ok(json!([1, 2, 3]))
         }
     });
@@ -210,7 +210,7 @@ fn test_log_tree_complex_nested() {
     let root = bus.emit(BaseEventHandle::<RootEvent>::new(RootPayload {
         data: Some("root_data".to_string()),
     }));
-    block_on(root.wait_completed());
+    block_on(root.done());
 
     let output = bus.log_tree();
     assert!(output.contains("✅ RootEvent#"));
@@ -245,8 +245,8 @@ fn test_log_tree_multiple_roots() {
     let root_2 = bus.emit(BaseEventHandle::<RootEvent>::new(RootPayload {
         data: Some("second".to_string()),
     }));
-    block_on(root_1.wait_completed());
-    block_on(root_2.wait_completed());
+    block_on(root_1.done());
+    block_on(root_2.done());
 
     let output = bus.log_tree();
     assert_eq!(output.matches("├── ✅ RootEvent#").count(), 1);
@@ -275,7 +275,7 @@ fn test_log_tree_timing_info() {
     let event = bus.emit(BaseEventHandle::<RootEvent>::new(RootPayload {
         data: None,
     }));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let output = bus.log_tree();
     assert!(output.contains('('));
@@ -323,7 +323,7 @@ fn test_log_tree_running_handler() {
     assert!(output.contains(&format!("{}.running_handler#", bus.label())));
     assert!(output.contains("🏃 RootEvent#"));
     release_handler.store(true, Ordering::SeqCst);
-    block_on(event.wait_completed());
+    block_on(event.done());
     bus.stop();
 }
 

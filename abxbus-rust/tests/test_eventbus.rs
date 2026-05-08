@@ -172,7 +172,7 @@ fn test_eventbus_locks_methods_are_callable_and_preserve_lock_resolution_behavio
         "GateInvocationEvent",
         serde_json::Map::new(),
     ));
-    block_on(emitted.wait_completed());
+    block_on(emitted.done());
     assert!(bus.locks.wait_for_idle(Some(Duration::from_secs(1)), || bus
         .is_idle_and_queue_empty()));
     bus.stop();
@@ -411,7 +411,7 @@ fn test_auto_start_and_stop() {
     assert!(!bus.is_running_for_test());
 
     let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
-    block_on(event.wait_completed());
+    block_on(event.done());
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
     assert!(bus.is_running_for_test());
 
@@ -429,7 +429,7 @@ fn test_wait_until_idle_recovers_when_idle_flag_was_cleared() {
     });
 
     let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
-    block_on(event.wait_completed());
+    block_on(event.done());
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
 
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
@@ -944,7 +944,7 @@ fn test_wait_for_result() {
         .expect("completion order lock")
         .push("enqueue_done".to_string());
 
-    block_on(event.wait_completed());
+    block_on(event.done());
     completion_order
         .lock()
         .expect("completion order lock")
@@ -987,7 +987,7 @@ fn test_error_handling() {
     });
 
     let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
-    block_on(event.wait_completed());
+    block_on(event.done());
     let event_results = event.inner.inner.lock().event_results.clone();
 
     let failing_result = event_results
@@ -1030,7 +1030,7 @@ fn test_event_result_raises_exception_group_when_multiple_handlers_fail() {
     );
 
     let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let error = block_on(event.inner.event_result(EventResultsOptions::default()))
         .expect_err("multiple handler errors should be raised");
@@ -1049,7 +1049,7 @@ fn test_event_result_single_handler_error_raises_original_exception() {
     });
 
     let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let error = block_on(event.inner.event_result(EventResultsOptions::default()))
         .expect_err("single handler error should be raised");
@@ -1203,7 +1203,7 @@ fn test_emit_alias_dispatches_event() {
 
     let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
     let event_id = event.inner.inner.lock().event_id.clone();
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     assert_eq!(
         handled_event_ids
@@ -1240,7 +1240,7 @@ fn test_handler_registration() {
     });
 
     let model_for_handler = model.clone();
-    bus.on::<RuntimeSerializationEvent, _, _>("system_handler", move |_event| {
+    bus.on_handle::<RuntimeSerializationEvent, _, _>("system_handler", move |_event| {
         let model = model_for_handler.clone();
         async move {
             model
@@ -1269,7 +1269,7 @@ fn test_handler_registration() {
     ));
     block_on(async {
         user.event_completed().await;
-        system.wait_completed().await;
+        system.done().await;
         assert!(bus.wait_until_idle(Some(1.0)).await);
     });
 
@@ -1299,7 +1299,7 @@ fn test_event_subclass_type() {
 
     let result = bus.emit(event);
     assert_eq!(result.inner.inner.lock().event_type, "CreateAgentTaskEvent");
-    block_on(result.wait_completed());
+    block_on(result.done());
     bus.stop();
 }
 
@@ -1325,7 +1325,7 @@ fn test_event_type_and_version_identity_fields() {
     let emitted = bus.emit(task);
     assert_eq!(emitted.inner.inner.lock().event_type, expected_type);
     assert_eq!(emitted.inner.inner.lock().event_version, expected_version);
-    block_on(emitted.wait_completed());
+    block_on(emitted.done());
     bus.stop();
 }
 
@@ -1351,7 +1351,7 @@ fn test_event_version_defaults_and_overrides() {
         data: "queued".to_string(),
     }));
     assert_eq!(dispatched.inner.inner.lock().event_version, "1.2.3");
-    block_on(dispatched.wait_completed());
+    block_on(dispatched.done());
 
     let restored = BaseEvent::from_json_value(dispatched.inner.to_json_value());
     assert_eq!(restored.inner.lock().event_version, "1.2.3");
@@ -1408,8 +1408,8 @@ fn test_automatic_event_type_derivation() {
     let user = bus.emit(user);
     let system = bus.emit(system);
     block_on(async {
-        user.wait_completed().await;
-        system.wait_completed().await;
+        user.done().await;
+        system.done().await;
         assert!(bus.wait_until_idle(Some(1.0)).await);
     });
 
@@ -1461,7 +1461,7 @@ fn test_explicit_event_type_override() {
     });
     assert_eq!(event.inner.inner.lock().event_type, "CustomEventType");
     let event = bus.emit(event);
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     assert_eq!(
         received.lock().expect("received lock").as_slice(),
@@ -1509,7 +1509,7 @@ fn test_multiple_handlers_parallel() {
 
     let start = std::time::Instant::now();
     let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
-    block_on(event.wait_completed());
+    block_on(event.done());
     let duration = start.elapsed();
 
     assert!(
@@ -1864,7 +1864,7 @@ fn test_dispatch_returns_event_results() {
     });
 
     let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
-    block_on(event.wait_completed());
+    block_on(event.done());
     let all_results = block_on(
         event
             .inner
@@ -2694,7 +2694,7 @@ fn test_unreferenced_buses_with_event_history_are_garbage_collected_without_dest
         });
         for _ in 0..10 {
             let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
-            block_on(event.wait_completed());
+            block_on(event.done());
         }
         block_on(bus.wait_until_idle(Some(2.0)));
         assert_eq!(bus.event_history_size(), 10);
@@ -2788,7 +2788,7 @@ fn test_base_event_to_json_from_json_roundtrips_runtime_fields_and_event_results
     let event = bus.emit(BaseEventHandle::<RuntimeSerializationEvent>::new(
         EmptyPayload {},
     ));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let serialized = event.inner.to_json_value();
     assert_eq!(
@@ -2904,7 +2904,7 @@ fn test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() {
     let event = bus.emit(BaseEventHandle::<RuntimeSerializationEvent>::new(
         EmptyPayload {},
     ));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let payload = bus.to_json_value();
     assert_eq!(serde_json::to_value(&*bus).expect("bus serde"), payload);
@@ -2973,7 +2973,7 @@ fn test_eventbus_validate_creates_missing_handler_entries_from_event_results() {
     let event = bus.emit(BaseEventHandle::<RuntimeSerializationEvent>::new(
         EmptyPayload {},
     ));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let mut payload = bus.to_json_value();
     payload["handlers"] = json!({});
@@ -3034,8 +3034,8 @@ fn test_eventbus_model_dump_promotes_pending_events_into_event_history() {
     assert!(event_history.contains_key(&second_id));
     assert_eq!(payload["pending_event_queue"], json!([second_id]));
 
-    block_on(first.wait_completed());
-    block_on(second.wait_completed());
+    block_on(first.done());
+    block_on(second.done());
     bus.stop();
 }
 
@@ -3070,7 +3070,7 @@ fn test_wait_until_idle_timeout_returns_after_timeout_when_work_is_still_in_flig
     assert!(elapsed < Duration::from_secs(1));
     assert!(!bus.is_idle_and_queue_empty());
 
-    block_on(event.wait_completed());
+    block_on(event.done());
     assert!(block_on(bus.wait_until_idle(None)));
     bus.stop();
 }
@@ -3131,7 +3131,7 @@ fn test_unbounded_history_disables_history_rejection() {
 
     for _ in 0..150 {
         let event = bus.emit(BaseEventHandle::<UserActionEvent>::new(EmptyPayload {}));
-        block_on(event.wait_completed());
+        block_on(event.done());
     }
 
     assert_eq!(bus.event_history_size(), 150);
@@ -3281,7 +3281,7 @@ fn test_custom_handler_recursion_depth_allows_deeper_nested_handlers() {
                     "RecursiveEvent",
                     json!({"level": level + 1, "max_level": max_level}),
                 ));
-                child.wait_completed().await;
+                child.done().await;
             }
             Ok(json!(null))
         }
@@ -3315,7 +3315,7 @@ fn test_default_handler_recursion_depth_still_catches_runaway_loops() {
                     "RecursiveEvent",
                     json!({"level": level + 1, "max_level": max_level}),
                 ));
-                child.wait_completed().await;
+                child.done().await;
             }
             Ok(json!(null))
         }
@@ -3365,12 +3365,12 @@ fn test_base_event_lifecycle_methods_are_callable_and_preserve_lifecycle_behavio
         standalone.inner.inner.lock().event_status,
         EventStatus::Completed
     );
-    block_on(standalone.wait_completed());
+    block_on(standalone.done());
 
     let dispatched = bus.emit(BaseEventHandle::<LifecycleMethodInvocationEvent>::new(
         EmptyPayload {},
     ));
-    block_on(dispatched.wait_completed());
+    block_on(dispatched.done());
     assert_eq!(
         dispatched.inner.inner.lock().event_status,
         EventStatus::Completed

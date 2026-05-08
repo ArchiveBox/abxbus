@@ -84,15 +84,15 @@ event! {
 
 let bus = EventBus::new(Some("RpcBus".to_string()));
 
-bus.on::<ParentEvent, _, _>("on_parent", |event| async move {
+bus.on(ParentEvent, |event: ParentEvent| async move {
     let current_bus = event.event_bus().expect("handler bus");
     let child = current_bus.emit_child(ChildEvent {});
-    child.wait_completed().await; // queue-jump while still inside this handler
+    child.done().await; // queue-jump while still inside this handler
     let value = child.event_result(Default::default()).await?;
     Ok(json!(format!("parent got: {value}")))
 });
 
-bus.on::<ChildEvent, _, _>("on_child", |_event| async move {
+bus.on(ChildEvent, |_event: ChildEvent| async move {
     Ok(json!("child response"))
 });
 ```
@@ -224,7 +224,7 @@ bus.On("ParentEvent", "on_parent", func(ctx context.Context, event *abxbus.BaseE
 </Tab>
 </Tabs>
 
-Python note: `asyncio.gather(..., return_exceptions=True)` is the closest `Promise.allSettled(...)` equivalent here. In Rust, call `wait_completed().await` on each emitted child to take the same immediate queue-jump path. In Go, call `Done(ctx)` on each emitted child.
+Python note: `asyncio.gather(..., return_exceptions=True)` is the closest `Promise.allSettled(...)` equivalent here. In Rust, call `done().await` on each emitted child to take the same immediate queue-jump path. In Go, call `Done(ctx)` on each emitted child.
 
 ## Execution order example
 

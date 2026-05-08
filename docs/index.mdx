@@ -78,12 +78,12 @@ event! {
 }
 
 let bus = EventBus::new(Some("MyBus".to_string()));
-bus.on::<SomeEvent, _, _>("on_some_event", |event| async move {
-    Ok(format!("did something with {}", event.event_payload().some_data))
+bus.on(SomeEvent, |event: SomeEvent| async move {
+    Ok(format!("did something with {}", event.some_data))
 });
 
 let event = bus.emit(SomeEvent { some_data: 132 });
-block_on(event.wait_completed());
+block_on(event.done());
 ```
 
 </Tab>

@@ -38,9 +38,9 @@ In short: use `event.emit(...)` when you want parent-child lineage, and add `awa
 In Rust, the same split is explicit:
 
 - `current_bus.emit_child(ChildEvent { ... })` creates linked child work while inside a handler.
-- `child.wait_completed().await` queue-jumps and waits for that linked child.
+- `child.done().await` queue-jumps and waits for that linked child.
 - `bus.emit(EventType { ... })` creates detached top-level work.
-- calling `wait_completed().await` on a bus-emitted event waits for it without adding parent-child lineage.
+- calling `done().await` on a bus-emitted event waits for it without adding parent-child lineage.
 
 In Go, the same split is explicit:
 
@@ -239,30 +239,30 @@ event! {
 
 let bus = EventBus::new(Some("TreeBus".to_string()));
 
-bus.on::<CheckoutEvent, _, _>("on_checkout", |event| async move {
+bus.on(CheckoutEvent, |event: CheckoutEvent| async move {
     let current_bus = event.event_bus().expect("handler bus");
-    let order_id = event.event_payload().order_id;
+    let order_id = event.order_id;
 
     let reserve = current_bus.emit_child(ReserveInventoryEvent {
         order_id: order_id.clone(),
     });
-    reserve.wait_completed().await;
+    reserve.done().await;
     let reserve_id = reserve.event_result(Default::default()).await?;
 
     let receipt = current_bus.emit_child(SendReceiptEvent {
         order_id,
     });
-    receipt.wait_completed().await;
+    receipt.done().await;
     let receipt_id = receipt.event_result(Default::default()).await?;
 
     Ok(json!(format!("{reserve_id}|{receipt_id}")))
 });
 
-bus.on::<ReserveInventoryEvent, _, _>("on_reserve", |event| async move {
-    Ok(json!(format!("reserve:{}", event.event_payload().order_id)))
+bus.on(ReserveInventoryEvent, |event: ReserveInventoryEvent| async move {
+    Ok(json!(format!("reserve:{}", event.order_id)))
 });
-bus.on::<SendReceiptEvent, _, _>("on_receipt", |event| async move {
-    Ok(json!(format!("receipt:{}", event.event_payload().order_id)))
+bus.on(SendReceiptEvent, |event: SendReceiptEvent| async move {
+    Ok(json!(format!("receipt:{}", event.order_id)))
 });
 
 let root = bus.emit(CheckoutEvent {

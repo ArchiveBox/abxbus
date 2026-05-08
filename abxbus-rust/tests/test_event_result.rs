@@ -342,7 +342,7 @@ fn test_event_results_capture_handler_return_values() {
     });
 
     let event = bus.emit(BaseEventHandle::<StringResultEvent>::new(EmptyPayload {}));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let results = event.inner.inner.lock().event_results.clone();
     assert_eq!(results.len(), 1);
@@ -457,7 +457,7 @@ fn test_event_result_json_omits_result_type_and_derives_from_parent_event() {
     });
 
     let event = bus.emit(BaseEventHandle::<StringResultEvent>::new(EmptyPayload {}));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let result = event
         .inner

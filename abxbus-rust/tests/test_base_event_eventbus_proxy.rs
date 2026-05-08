@@ -327,7 +327,7 @@ fn test_event_event_bus_in_nested_handlers_sees_the_same_bus() {
             let current_bus = event.event_bus().expect("outer bus");
             *outer_bus_name.lock().expect("outer bus lock") = Some(current_bus.name.clone());
             let child = current_bus.emit_child_base(base_event("ChildEvent", json!({})));
-            child.wait_completed().await;
+            child.done().await;
             Ok(json!(null))
         }
     });
@@ -367,7 +367,7 @@ fn test_event_emit_awaited_children_pass_explicit_handler_context_to_immediate_p
         async move {
             let current_bus = event.event_bus().expect("handler bus");
             let child = current_bus.emit_child_base(base_event("ChildEvent", json!({})));
-            child.wait_completed().await;
+            child.done().await;
             *child_ref.lock().expect("child lock") = Some(child);
             Ok(json!(null))
         }
@@ -421,7 +421,7 @@ fn test_event_emit_sets_parent_child_relationships_through_3_levels() {
                 .push("parent_start".to_string());
             let current_bus = event.event_bus().expect("parent bus");
             let child = current_bus.emit_child_base(base_event("ChildEvent", json!({})));
-            child.wait_completed().await;
+            child.done().await;
             *child_ref.lock().expect("child lock") = Some(child);
             order
                 .lock()
@@ -443,7 +443,7 @@ fn test_event_emit_sets_parent_child_relationships_through_3_levels() {
                 .push("child_start".to_string());
             let current_bus = event.event_bus().expect("child bus");
             let grandchild = current_bus.emit_child_base(base_event("GrandchildEvent", json!({})));
-            grandchild.wait_completed().await;
+            grandchild.done().await;
             *grandchild_ref.lock().expect("grandchild lock") = Some(grandchild);
             order
                 .lock()
@@ -540,7 +540,7 @@ fn test_event_emit_with_forwarding_child_dispatch_goes_to_the_correct_bus() {
             let current_bus = event.event_bus().expect("forwarded handler bus");
             assert_eq!(current_bus.name, bus2_name);
             let child = current_bus.emit_child_base(base_event("ChildEvent", json!({})));
-            child.wait_completed().await;
+            child.done().await;
             *child_ref.lock().expect("child_ref lock") = Some(child);
             Ok(json!(null))
         }

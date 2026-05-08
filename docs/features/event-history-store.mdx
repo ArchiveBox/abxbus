@@ -203,7 +203,7 @@ fmt.Println("after completion -> pending_event_queue=", len(after.PendingEventQu
 let event = bus.emit(BaseEvent::<MyEvent>::new(MyPayload::default()));
 println!("pending_event_queue/event_history snapshot={}", bus.to_json_value());
 
-block_on(event.wait_completed());
+block_on(event.done());
 println!("after completion -> event_history={}", bus.event_history_size());
 ```
 

@@ -112,15 +112,15 @@ event! {
 }
 
 let bus = EventBus::new(Some("MyAuthEventBus".to_string()));
-bus.on::<CreateUserEvent, _, _>("on_create_user", |event| async move {
-    let email = event.event_payload().email;
+bus.on(CreateUserEvent, |event: CreateUserEvent| async move {
+    let email = event.email.clone();
     Ok(json!({"user_id": format!("created:{email}")}))
 });
 
 let event = bus.emit(CreateUserEvent {
     email: "someuser@example.com".to_string(),
 });
-block_on(event.wait_completed());
+block_on(event.done());
 ```
 
 </Tab>

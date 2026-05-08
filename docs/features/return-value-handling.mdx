@@ -75,9 +75,8 @@ event! {
 }
 
 let bus = EventBus::new(Some("AppBus".to_string()));
-bus.on::<DoMathEvent, _, _>("add", |event| async move {
-    let payload = event.event_payload();
-    Ok(payload.a + payload.b)
+bus.on(DoMathEvent, |event: DoMathEvent| async move {
+    Ok(event.a + event.b)
 });
 
 let event = bus.emit(DoMathEvent { a: 2, b: 3 });
@@ -158,10 +157,10 @@ event! {
 
 let bus = EventBus::new(Some("ConfigBus".to_string()));
 
-bus.on::<GetConfigEvent, _, _>("user_config", |_event| async move {
+bus.on(GetConfigEvent, |_event: GetConfigEvent| async move {
     Ok(json!({"debug": true, "port": 8080}))
 });
-bus.on::<GetConfigEvent, _, _>("system_config", |_event| async move {
+bus.on(GetConfigEvent, |_event: GetConfigEvent| async move {
     Ok(json!({"debug": false, "timeout": 30}))
 });
 

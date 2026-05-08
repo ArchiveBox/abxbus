@@ -31,7 +31,7 @@ fn test_emit_and_handler_result() {
     let bus = EventBus::new(Some("BusA".to_string()));
     bus.on_raw("work", "h1", |_event| async move { Ok(json!("ok")) });
     let event = bus.emit(BaseEventHandle::<WorkEvent>::new(WorkPayload { value: 1 }));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let results = event.inner.inner.lock().event_results.clone();
     assert_eq!(results.len(), 1);
@@ -60,7 +60,7 @@ fn test_parallel_handler_concurrency() {
         inner.event_concurrency = Some(EventConcurrencyMode::Parallel);
     }
     let emitted = bus.emit(event);
-    block_on(emitted.wait_completed());
+    block_on(emitted.done());
     assert_eq!(emitted.inner.inner.lock().event_results.len(), 2);
     bus.stop();
 }

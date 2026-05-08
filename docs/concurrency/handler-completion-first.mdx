@@ -179,11 +179,11 @@ let bus = EventBus::new_with_options(
     },
 );
 
-bus.on::<CompletionEvent, _, _>("slow_handler", |_event| async move {
+bus.on(CompletionEvent, |_event: CompletionEvent| async move {
     Delay::new(Duration::from_millis(500)).await;
     Ok(json!("slow"))
 });
-bus.on::<CompletionEvent, _, _>("fast_handler", |_event| async move {
+bus.on(CompletionEvent, |_event: CompletionEvent| async move {
     Delay::new(Duration::from_millis(10)).await;
     Ok(json!("winner"))
 });

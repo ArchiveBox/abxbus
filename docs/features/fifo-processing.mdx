@@ -186,8 +186,8 @@ let completed_order = Arc::new(Mutex::new(Vec::new()));
 
 let started = started_order.clone();
 let completed = completed_order.clone();
-bus.on::<JobEvent, _, _>("on_job", move |event| async move {
-    let order = event.event_payload().order;
+bus.on(JobEvent, move |event: JobEvent| async move {
+    let order = event.order;
     started.lock().unwrap().push(order);
     completed.lock().unwrap().push(order);
     Ok(())
@@ -356,14 +356,14 @@ let bus = EventBus::new(Some("FifoBus".to_string()));
 let trace = Arc::new(Mutex::new(Vec::new()));
 
 let trace_for_slow = trace.clone();
-bus.on::<SlowEvent, _, _>("on_slow", move |_event| async move {
+bus.on(SlowEvent, move |_event: SlowEvent| async move {
     trace_for_slow.lock().unwrap().push("start:SlowEvent".to_string());
     trace_for_slow.lock().unwrap().push("end:SlowEvent".to_string());
     Ok(())
 });
 
 let trace_for_fast = trace.clone();
-bus.on::<FastEvent, _, _>("on_fast", move |_event| async move {
+bus.on(FastEvent, move |_event: FastEvent| async move {
     trace_for_fast.lock().unwrap().push("start:FastEvent".to_string());
     trace_for_fast.lock().unwrap().push("end:FastEvent".to_string());
     Ok(())

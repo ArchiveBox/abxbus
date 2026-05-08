@@ -457,7 +457,7 @@ fn assert_bus_roundtrip_rehydrates_and_resumes_pending_queue(payload: Value) {
             label: "e3".to_string(),
         },
     ));
-    block_on(trigger.wait_completed());
+    block_on(trigger.done());
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
 
     let payload = bus.to_json_value();

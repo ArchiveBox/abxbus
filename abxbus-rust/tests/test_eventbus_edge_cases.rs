@@ -103,7 +103,7 @@ fn test_event_reset_creates_fresh_pending_event_for_cross_bus_dispatch() {
     let completed = bus_a.emit(BaseEventHandle::<ResetCoverageEvent>::new(ResetPayload {
         label: "hello".to_string(),
     }));
-    block_on(completed.wait_completed());
+    block_on(completed.done());
     assert_eq!(
         completed.inner.inner.lock().event_status,
         EventStatus::Completed
@@ -122,7 +122,7 @@ fn test_event_reset_creates_fresh_pending_event_for_cross_bus_dispatch() {
     assert_eq!(fresh.inner.inner.lock().event_results.len(), 0);
 
     let forwarded = bus_b.emit(fresh);
-    block_on(forwarded.wait_completed());
+    block_on(forwarded.done());
 
     assert_eq!(
         seen_a.lock().expect("seen_a lock").as_slice(),
@@ -182,7 +182,7 @@ fn test_wait_until_idle_timeout_path_recovers_after_inflight_handler_finishes() 
     );
 
     release_tx.send(()).expect("release handler");
-    block_on(pending.wait_completed());
+    block_on(pending.done());
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
     assert_eq!(
         pending.inner.inner.lock().event_status,
@@ -231,7 +231,7 @@ fn test_stop_timeout_zero_clears_running_bus_and_releases_name() {
         Ok(json!(null))
     });
     let event = replacement.emit(BaseEventHandle::<StopCoverageEvent>::new(EmptyPayload {}));
-    block_on(event.wait_completed());
+    block_on(event.done());
     assert_eq!(
         event.inner.inner.lock().event_status,
         EventStatus::Completed
@@ -244,7 +244,7 @@ fn test_emit_with_no_handlers_completes_event() {
     let bus = EventBus::new(Some("NoHandlers".to_string()));
     let event = bus.emit(BaseEventHandle::<NothingEvent>::new(EmptyPayload {}));
 
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let inner = event.inner.inner.lock();
     assert_eq!(inner.event_results.len(), 0);
@@ -261,7 +261,7 @@ fn test_wildcard_handler_runs_for_any_event_type() {
     bus.on_raw("*", "catch_all", |_event| async move { Ok(json!("all")) });
     let event = bus.emit(BaseEventHandle::<SpecificEvent>::new(EmptyPayload {}));
 
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let results = event.inner.inner.lock().event_results.clone();
     assert_eq!(results.len(), 1);
@@ -280,7 +280,7 @@ fn test_handler_error_populates_error_status() {
     );
     let event = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
 
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let results = event.inner.inner.lock().event_results.clone();
     assert_eq!(results.len(), 1);

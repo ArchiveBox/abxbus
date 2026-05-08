@@ -61,7 +61,7 @@ fn test_event_handler_first_serial_stops_after_first_success() {
         inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
     }
     let emitted = bus.emit(event);
-    block_on(emitted.wait_completed());
+    block_on(emitted.done());
 
     let results = emitted.inner.inner.lock().event_results.clone();
     assert_eq!(results.len(), 2);
@@ -99,7 +99,7 @@ fn test_event_first_skips_none_result_and_uses_next_winner() {
         inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
     }
     let emitted = bus.emit(event);
-    block_on(emitted.wait_completed());
+    block_on(emitted.done());
 
     let results = emitted.inner.inner.lock().event_results.clone();
     assert_eq!(results.len(), 3);
@@ -138,7 +138,7 @@ fn test_event_first_preserves_false_and_empty_string_results() {
         inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
     }
     let false_event = false_bus.emit(false_event);
-    block_on(false_event.wait_completed());
+    block_on(false_event.done());
     assert_eq!(false_event.first_result(), Some(json!(false)));
     assert_eq!(false_event.inner.inner.lock().event_results.len(), 2);
     false_bus.stop();
@@ -158,7 +158,7 @@ fn test_event_first_preserves_false_and_empty_string_results() {
         inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
     }
     let empty_event = empty_bus.emit(empty_event);
-    block_on(empty_event.wait_completed());
+    block_on(empty_event.done());
     assert_eq!(empty_event.first_result(), Some(json!("")));
     assert_eq!(empty_event.inner.inner.lock().event_results.len(), 2);
     empty_bus.stop();
@@ -289,7 +289,7 @@ fn test_event_handler_first_parallel_returns_earliest_completed_non_null_result(
         inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
     }
     let event = bus.emit(event);
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     assert_eq!(event.first_result(), Some(json!("fast")));
     let results = event.inner.inner.lock().event_results.clone();
@@ -481,7 +481,7 @@ fn test_first_cancels_child_events_emitted_by_losing_handlers() {
         async move {
             let child = bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
             *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
-            child.wait_completed().await;
+            child.done().await;
             Ok(json!("slow parent with child"))
         }
     });
@@ -532,7 +532,7 @@ fn test_event_first_returns_zero_as_valid_first_result() {
         inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
     }
     let event = bus.emit(event);
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     assert_eq!(event.first_result(), Some(json!(0)));
     bus.stop();
@@ -640,7 +640,7 @@ fn test_event_first_skips_base_event_json_result_and_uses_next_winner() {
         inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
     }
     let event = bus.emit(event);
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     assert_eq!(event.first_result(), Some(json!("winner")));
     assert!(!third_handler_called.load(Ordering::SeqCst));

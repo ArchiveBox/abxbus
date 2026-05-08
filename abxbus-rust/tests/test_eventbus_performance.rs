@@ -27,7 +27,7 @@ fn payload(entries: impl IntoIterator<Item = (&'static str, Value)>) -> Map<Stri
 
 fn wait_for_performance_batch(events: &[Arc<BaseEvent>]) {
     for event in events {
-        block_on(event.wait_completed());
+        block_on(event.done());
     }
 }
 
@@ -307,7 +307,7 @@ fn test_performance_worst_case_forwarding_queue_jump_timeouts() {
                     ("iteration", iteration),
                 ]),
             ));
-            child.wait_completed().await;
+            child.done().await;
             Ok(Value::Null)
         }
     });

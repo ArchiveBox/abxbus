@@ -140,7 +140,7 @@ fn test_queue_jump_preserves_parent_child_lineage_and_find_visibility() {
             push(&order, "root:start");
             let child =
                 bus.emit_child(BaseEventHandle::<QueueJumpChildEvent>::new(EmptyPayload {}));
-            child.wait_completed().await;
+            child.done().await;
             push(&order, "root:end");
             Ok(json!("root-ok"))
         }
@@ -173,8 +173,8 @@ fn test_queue_jump_preserves_parent_child_lineage_and_find_visibility() {
     let sibling = bus.emit(BaseEventHandle::<QueueJumpSiblingEvent>::new(
         EmptyPayload {},
     ));
-    block_on(root.wait_completed());
-    block_on(sibling.wait_completed());
+    block_on(root.done());
+    block_on(sibling.done());
     block_on(bus.wait_until_idle(Some(2.0)));
 
     assert_eq!(
@@ -272,7 +272,7 @@ fn test_concurrency_intersection_parallel_events_with_serial_handlers_stays_seri
         })
         .collect();
     for event in &events {
-        block_on(event.wait_completed());
+        block_on(event.done());
     }
     block_on(bus.wait_until_idle(Some(2.0)));
 
@@ -330,7 +330,7 @@ fn test_timeout_enforcement_preserves_follow_up_processing_and_queue_state() {
     let timed_out = bus.emit(BaseEventHandle::<TimeoutEnforcementEvent>::new(
         EmptyPayload {},
     ));
-    block_on(timed_out.wait_completed());
+    block_on(timed_out.done());
     assert_eq!(
         timed_out.inner.inner.lock().event_status,
         EventStatus::Completed
@@ -346,7 +346,7 @@ fn test_timeout_enforcement_preserves_follow_up_processing_and_queue_state() {
     let followup = bus.emit(BaseEventHandle::<TimeoutFollowupEvent>::new(
         EmptyPayload {},
     ));
-    block_on(followup.wait_completed());
+    block_on(followup.done());
     assert!(followup
         .inner
         .inner
@@ -390,7 +390,7 @@ fn test_zero_history_backpressure_with_find_future_still_resolves_new_events() {
         value: "first".to_string(),
     }));
     let first_id = first.inner.inner.lock().event_id.clone();
-    block_on(first.wait_completed());
+    block_on(first.done());
     assert!(!bus.event_history_ids().contains(&first_id));
     assert!(block_on(bus.find("ZeroHistoryEvent", true, None, None)).is_none());
 
@@ -399,14 +399,14 @@ fn test_zero_history_backpressure_with_find_future_still_resolves_new_events() {
     let captured_for_dispatch = captured_future_id.clone();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(20));
-        let future_event =
-            bus_for_dispatch.emit(BaseEventHandle::<ZeroHistoryEvent>::new(ValuePayload {
-                value: "future".to_string(),
-            }));
+        let future_event = BaseEventHandle::<ZeroHistoryEvent>::new(ValuePayload {
+            value: "future".to_string(),
+        });
+        let future_event_id = future_event.inner.inner.lock().event_id.clone();
         *captured_for_dispatch
             .lock()
-            .expect("captured future id lock") =
-            Some(future_event.inner.inner.lock().event_id.clone());
+            .expect("captured future id lock") = Some(future_event_id);
+        bus_for_dispatch.emit(future_event);
     });
 
     let future_match = block_on(bus.find_with_options(
@@ -466,7 +466,7 @@ fn test_context_propagates_through_forwarding_and_child_dispatch_with_lineage_in
                 Some(event.inner.lock().event_id.clone());
             let child =
                 bus_b.emit_child(BaseEventHandle::<ContextChildEvent>::new(EmptyPayload {}));
-            child.wait_completed().await;
+            child.done().await;
             Ok(json!("parent-ok"))
         }
     });
@@ -482,7 +482,7 @@ fn test_context_propagates_through_forwarding_and_child_dispatch_with_lineage_in
     });
 
     let parent = bus_a.emit(BaseEventHandle::<ContextParentEvent>::new(EmptyPayload {}));
-    block_on(parent.wait_completed());
+    block_on(parent.done());
     block_on(bus_b.wait_until_idle(Some(2.0)));
 
     let parent_event_id = parent_event_id
@@ -582,8 +582,8 @@ fn test_pending_queue_find_visibility_transitions_to_completed_after_release() {
     let queued_id = queued.inner.inner.lock().event_id.clone();
     assert_eq!(pending_id, queued_id);
 
-    block_on(blocking.wait_completed());
-    block_on(queued.wait_completed());
+    block_on(blocking.done());
+    block_on(queued.done());
     block_on(bus.wait_until_idle(Some(2.0)));
 
     let completed = block_on(bus.find_with_options(
@@ -624,7 +624,7 @@ fn test_history_backpressure_rejects_overflow_and_preserves_findable_history() {
         value: "first".to_string(),
     }));
     let first_id = first.inner.inner.lock().event_id.clone();
-    block_on(first.wait_completed());
+    block_on(first.done());
     assert_eq!(bus.event_history_size(), 1);
     assert!(bus.event_history_ids().contains(&first_id));
 

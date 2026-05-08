@@ -1,4 +1,6 @@
-use std::{any::TypeId, collections::HashMap, marker::PhantomData, sync::Arc};
+use std::{
+    any::TypeId, collections::HashMap, future::Future, marker::PhantomData, ops::Deref, sync::Arc,
+};
 
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Map, Value};
@@ -9,6 +11,34 @@ use crate::{
     event_bus::EventBus,
     event_handler::{EventHandler, EventHandlerOptions},
 };
+
+pub struct EventType<E: EventSpec>(PhantomData<E>);
+
+impl<E: EventSpec> Clone for EventType<E> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<E: EventSpec> Copy for EventType<E> {}
+
+impl<E: EventSpec> EventType<E> {
+    pub const fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+pub trait EventMarker: Send + Sync + 'static {
+    type Event: EventSpec;
+}
+
+impl<E: EventSpec> EventMarker for EventType<E> {
+    type Event = E;
+}
+
+impl<E: EventSpec> EventMarker for E {
+    type Event = E;
+}
 
 #[allow(non_camel_case_types, non_upper_case_globals)]
 pub trait EventSpec: Send + Sync + 'static {
@@ -66,6 +96,7 @@ fn primitive_result_type_schema<T: 'static>() -> Option<Value> {
 #[derive(Clone)]
 pub struct BaseEventHandle<E: EventSpec> {
     pub inner: Arc<RawBaseEvent>,
+    payload: Arc<E::payload>,
     marker: PhantomData<E>,
 }
 
@@ -96,6 +127,7 @@ impl<E: EventSpec> IntoBaseEventHandle for BaseEventHandle<E> {
 
 impl<E: EventSpec> BaseEventHandle<E> {
     pub fn new(payload: E::payload) -> Self {
+        let typed_payload = Arc::new(payload.clone());
         let value = serde_json::to_value(payload).expect("event payload serialization failed");
         let Value::Object(payload_map) = value else {
             panic!("event payload must serialize to a JSON object");
@@ -149,19 +181,83 @@ impl<E: EventSpec> BaseEventHandle<E> {
 
         Self {
             inner,
+            payload: typed_payload,
             marker: PhantomData,
         }
     }
 
     pub fn from_base_event(event: Arc<RawBaseEvent>) -> Self {
+        let payload = Arc::new(Self::decode_payload_from_base_event(&event));
         Self {
             inner: event,
+            payload,
             marker: PhantomData,
         }
     }
 
-    pub fn event_payload(&self) -> E::payload {
-        let payload = self.inner.inner.lock().payload.clone();
+    fn decode_payload_from_base_event(event: &Arc<RawBaseEvent>) -> E::payload {
+        let event = event.inner.lock();
+        let mut payload = event.payload.clone();
+        payload.insert("event_type".to_string(), json!(event.event_type));
+        payload.insert("event_version".to_string(), json!(event.event_version));
+        payload.insert("event_timeout".to_string(), json!(event.event_timeout));
+        payload.insert(
+            "event_slow_timeout".to_string(),
+            json!(event.event_slow_timeout),
+        );
+        payload.insert(
+            "event_concurrency".to_string(),
+            json!(event.event_concurrency),
+        );
+        payload.insert(
+            "event_handler_timeout".to_string(),
+            json!(event.event_handler_timeout),
+        );
+        payload.insert(
+            "event_handler_slow_timeout".to_string(),
+            json!(event.event_handler_slow_timeout),
+        );
+        payload.insert(
+            "event_handler_concurrency".to_string(),
+            json!(event.event_handler_concurrency),
+        );
+        payload.insert(
+            "event_handler_completion".to_string(),
+            json!(event.event_handler_completion),
+        );
+        payload.insert(
+            "event_blocks_parent_completion".to_string(),
+            json!(event.event_blocks_parent_completion),
+        );
+        payload.insert(
+            "event_result_type".to_string(),
+            json!(event.event_result_type),
+        );
+        payload.insert("event_id".to_string(), json!(event.event_id));
+        payload.insert("event_path".to_string(), json!(event.event_path));
+        payload.insert("event_parent_id".to_string(), json!(event.event_parent_id));
+        payload.insert(
+            "event_emitted_by_handler_id".to_string(),
+            json!(event.event_emitted_by_handler_id),
+        );
+        payload.insert(
+            "event_pending_bus_count".to_string(),
+            json!(event.event_pending_bus_count),
+        );
+        payload.insert(
+            "event_created_at".to_string(),
+            json!(event.event_created_at),
+        );
+        payload.insert("event_status".to_string(), json!(event.event_status));
+        payload.insert(
+            "event_started_at".to_string(),
+            json!(event.event_started_at),
+        );
+        payload.insert(
+            "event_completed_at".to_string(),
+            json!(event.event_completed_at),
+        );
+        payload.insert("event_results".to_string(), json!(event.event_results));
         let value = Value::Object(payload);
         serde_json::from_value(value).expect("event payload decode failed")
     }
@@ -178,8 +274,8 @@ impl<E: EventSpec> BaseEventHandle<E> {
         self.inner.to_json_value()
     }
 
-    pub async fn wait_completed(&self) {
-        self.inner.wait_completed().await;
+    pub async fn done(&self) {
+        self.inner.done().await;
     }
 
     pub async fn event_completed(&self) {
@@ -198,7 +294,7 @@ impl<E: EventSpec> BaseEventHandle<E> {
             }
         }
         self.inner.inner.lock().event_handler_completion = Some(EventHandlerCompletionMode::First);
-        self.wait_completed().await;
+        self.done().await;
         self.first_result_or_error()
     }
 
@@ -302,6 +398,52 @@ impl<E: EventSpec> BaseEventHandle<E> {
     }
 }
 
+impl<E: EventSpec> Deref for BaseEventHandle<E> {
+    type Target = E::payload;
+
+    fn deref(&self) -> &Self::Target {
+        &self.payload
+    }
+}
+
+pub trait TypedEventHandler<E: EventSpec>: Send + Sync + 'static {
+    type Future: Future<Output = Result<E::event_result_type, String>> + Send + 'static;
+
+    fn call(&self, event: E::payload) -> Self::Future;
+}
+
+impl<E, F, Fut> TypedEventHandler<E> for F
+where
+    E: EventSpec,
+    F: Fn(E::payload) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<E::event_result_type, String>> + Send + 'static,
+{
+    type Future = Fut;
+
+    fn call(&self, event: E::payload) -> Self::Future {
+        self(event)
+    }
+}
+
+pub trait TypedEventHandleHandler<E: EventSpec>: Send + Sync + 'static {
+    type Future: Future<Output = Result<E::event_result_type, String>> + Send + 'static;
+
+    fn call(&self, event: BaseEventHandle<E>) -> Self::Future;
+}
+
+impl<E, F, Fut> TypedEventHandleHandler<E> for F
+where
+    E: EventSpec,
+    F: Fn(BaseEventHandle<E>) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<E::event_result_type, String>> + Send + 'static,
+{
+    type Future = Fut;
+
+    fn call(&self, event: BaseEventHandle<E>) -> Self::Future {
+        self(event)
+    }
+}
+
 impl EventBus {
     pub fn emit<I: IntoBaseEventHandle>(&self, event: I) -> BaseEventHandle<I::Event> {
         let event = event.into_base_event_handle();
@@ -335,16 +477,60 @@ impl EventBus {
         BaseEventHandle::from_base_event(emitted)
     }
 
-    pub fn on<E, F, Fut>(&self, handler_name: &str, handler_fn: F) -> EventHandler
+    #[track_caller]
+    pub fn on<M>(
+        &self,
+        _event_type: M,
+        handler_fn: impl TypedEventHandler<M::Event>,
+    ) -> EventHandler
+    where
+        M: EventMarker,
+    {
+        self.on_with_options(
+            _event_type,
+            &format!("on_{}", M::Event::event_type),
+            EventHandlerOptions::default(),
+            handler_fn,
+        )
+    }
+
+    #[track_caller]
+    pub fn on_with_options<M>(
+        &self,
+        _event_type: M,
+        handler_name: &str,
+        options: EventHandlerOptions,
+        handler_fn: impl TypedEventHandler<M::Event>,
+    ) -> EventHandler
+    where
+        M: EventMarker,
+    {
+        self.on_raw_with_options(M::Event::event_type, handler_name, options, move |event| {
+            let typed = BaseEventHandle::<M::Event>::from_base_event(event);
+            let fut = handler_fn.call((*typed.payload).clone());
+            async move {
+                let result = fut.await?;
+                serde_json::to_value(result).map_err(|error| error.to_string())
+            }
+        })
+    }
+
+    #[track_caller]
+    pub fn on_handle<E, F, Fut>(&self, handler_name: &str, handler_fn: F) -> EventHandler
     where
         E: EventSpec,
         F: Fn(BaseEventHandle<E>) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Result<E::event_result_type, String>> + Send + 'static,
+        Fut: Future<Output = Result<E::event_result_type, String>> + Send + 'static,
     {
-        self.on_with_options::<E, _, _>(handler_name, EventHandlerOptions::default(), handler_fn)
+        self.on_handle_with_options::<E, _, _>(
+            handler_name,
+            EventHandlerOptions::default(),
+            handler_fn,
+        )
     }
 
-    pub fn on_with_options<E, F, Fut>(
+    #[track_caller]
+    pub fn on_handle_with_options<E, F, Fut>(
         &self,
         handler_name: &str,
         options: EventHandlerOptions,
@@ -353,7 +539,7 @@ impl EventBus {
     where
         E: EventSpec,
         F: Fn(BaseEventHandle<E>) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Result<E::event_result_type, String>> + Send + 'static,
+        Fut: Future<Output = Result<E::event_result_type, String>> + Send + 'static,
     {
         self.on_raw_with_options(E::event_type, handler_name, options, move |event| {
             let typed = BaseEventHandle::<E>::from_base_event(event);
@@ -939,6 +1125,9 @@ macro_rules! __abxbus_event_parse {
         $vis struct $name {
             $($payload)*
         }
+
+        #[allow(non_upper_case_globals)]
+        $vis const $name: $crate::typed::EventType<$name> = $crate::typed::EventType::new();
 
         #[allow(non_camel_case_types, non_upper_case_globals)]
         impl $crate::typed::EventSpec for $name {

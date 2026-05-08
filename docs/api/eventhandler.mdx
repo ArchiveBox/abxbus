@@ -58,7 +58,7 @@ event! {
 }
 
 let bus = EventBus::new(Some("HandlerBus".to_string()));
-let entry = bus.on::<MyEvent, _, _>("handler", |_event| async move {
+let entry = bus.on(MyEvent, |_event: MyEvent| async move {
     Ok(serde_json::Value::Null)
 });
 bus.off(MyEvent::event_type, Some(&entry.id));

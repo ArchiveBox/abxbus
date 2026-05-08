@@ -73,7 +73,7 @@ fn test_event_handler_completion_bus_default_first_serial() {
 
     let event = bus.emit(BaseEventHandle::<CompletionEvent>::new(EmptyPayload {}));
     assert_eq!(event.inner.inner.lock().event_handler_completion, None);
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     assert!(!*second_handler_called.lock().expect("called lock"));
     assert_eq!(event.first_result(), Some(json!("first")));
@@ -127,7 +127,7 @@ fn test_event_handler_completion_explicit_override_beats_bus_default() {
         event.inner.inner.lock().event_handler_completion,
         Some(EventHandlerCompletionMode::All)
     );
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     assert!(*second_handler_called.lock().expect("called lock"));
     let results = event.inner.inner.lock().event_results.clone();
@@ -179,7 +179,7 @@ fn test_event_parallel_first_races_and_cancels_non_winners() {
     }
     let event = bus.emit(event);
     let started = std::time::Instant::now();
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     assert!(started.elapsed() < Duration::from_millis(200));
     assert!(*slow_started.lock().expect("slow started lock"));
@@ -475,7 +475,7 @@ fn test_event_handler_concurrency_bus_default_remains_unset_on_dispatch() {
 
     let event = bus.emit(BaseEventHandle::<ConcurrencyEvent>::new(EmptyPayload {}));
     assert_eq!(event.inner.inner.lock().event_handler_concurrency, None);
-    block_on(event.wait_completed());
+    block_on(event.done());
     bus.stop();
 }
 
@@ -510,7 +510,7 @@ fn test_event_handler_concurrency_per_event_override_controls_execution_mode() {
     serial_event.inner.inner.lock().event_handler_concurrency =
         Some(EventHandlerConcurrencyMode::Serial);
     let serial_event = bus.emit(serial_event);
-    block_on(serial_event.wait_completed());
+    block_on(serial_event.done());
     assert_eq!(*max_in_flight.lock().expect("max lock"), 1);
 
     *in_flight.lock().expect("in flight lock") = 0;
@@ -519,7 +519,7 @@ fn test_event_handler_concurrency_per_event_override_controls_execution_mode() {
     parallel_event.inner.inner.lock().event_handler_concurrency =
         Some(EventHandlerConcurrencyMode::Parallel);
     let parallel_event = bus.emit(parallel_event);
-    block_on(parallel_event.wait_completed());
+    block_on(parallel_event.done());
     assert!(*max_in_flight.lock().expect("max lock") >= 2);
     bus.stop();
 }

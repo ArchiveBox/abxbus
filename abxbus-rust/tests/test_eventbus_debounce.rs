@@ -83,7 +83,7 @@ fn test_simple_debounce_with_child_of_reuses_recent_event() {
                 }));
             *child_id.lock().expect("child id lock") =
                 Some(child.inner.inner.lock().event_id.clone());
-            child.wait_completed().await;
+            child.done().await;
             Ok(json!("parent_done"))
         }
     });
@@ -94,7 +94,7 @@ fn test_simple_debounce_with_child_of_reuses_recent_event() {
     );
 
     let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
-    block_on(parent.wait_completed());
+    block_on(parent.done());
     let emitted_child_id = wait_for_string(&child_id);
 
     let reused = block_on(bus.find_with_options(
@@ -180,7 +180,7 @@ fn test_debounce_prefers_recent_history() {
     let original = bus.emit(BaseEventHandle::<ScreenshotEvent>::new(ScreenshotPayload {
         target_id: TARGET_ID_1.to_string(),
     }));
-    block_on(original.wait_completed());
+    block_on(original.done());
 
     let found = block_on(bus.find_with_options(
         "ScreenshotEvent",
@@ -266,7 +266,7 @@ fn test_dispatches_new_when_stale() {
     let original = bus.emit(BaseEventHandle::<ScreenshotEvent>::new(ScreenshotPayload {
         target_id: TARGET_ID_1.to_string(),
     }));
-    block_on(original.wait_completed());
+    block_on(original.done());
 
     let result = block_on(bus.find_with_options(
         "ScreenshotEvent",
@@ -348,7 +348,7 @@ fn test_or_chain_without_waiting_finds_existing() {
     let original = bus.emit(BaseEventHandle::<ScreenshotEvent>::new(ScreenshotPayload {
         target_id: TARGET_ID_1.to_string(),
     }));
-    block_on(original.wait_completed());
+    block_on(original.done());
 
     let start = Instant::now();
     let result = block_on(bus.find_with_options(

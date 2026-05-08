@@ -196,22 +196,22 @@ let billing = EventBus::new_with_options(
     },
 );
 
-auth.on::<UserCreatedEvent, _, _>("on_user_created", |event| async move {
-    Ok(json!(format!("auth-ok:{}", event.event_payload().user_id)))
+auth.on(UserCreatedEvent, |event: UserCreatedEvent| async move {
+    Ok(json!(format!("auth-ok:{}", event.user_id)))
 });
-billing.on::<UserCreatedEvent, _, _>("on_user_created", |event| async move {
-    Ok(json!(format!("billing-ok:{}", event.event_payload().user_id)))
+billing.on(UserCreatedEvent, |event: UserCreatedEvent| async move {
+    Ok(json!(format!("billing-ok:{}", event.user_id)))
 });
 
 let relay_for_handler = relay.clone();
-auth.on::<UserCreatedEvent, _, _>("forward_to_relay", move |event| {
+auth.on(UserCreatedEvent, move |event: UserCreatedEvent| {
     let relay_for_handler = relay_for_handler.clone();
     async move {
         Ok(relay_for_handler.emit(event).to_json_value())
     }
 });
 let billing_for_handler = billing.clone();
-relay.on::<UserCreatedEvent, _, _>("forward_to_billing", move |event| {
+relay.on(UserCreatedEvent, move |event: UserCreatedEvent| {
     let billing_for_handler = billing_for_handler.clone();
     async move {
         Ok(billing_for_handler.emit(event).to_json_value())
@@ -222,7 +222,7 @@ let event = auth.emit(UserCreatedEvent {
     user_id: "u-a8d1".to_string(),
 });
 let result = block_on(event.event_result(Default::default()))?;
-block_on(event.wait_completed());
+block_on(event.done());
 println!("{result}");
 println!("{:?}", event.inner.lock().event_path);
 ```
@@ -351,7 +351,7 @@ let left = EventBus::new(Some("LeftBus".to_string()));
 let right = EventBus::new(Some("RightBus".to_string()));
 
 let right_for_handler = right.clone();
-left.on::<PingEvent, _, _>("forward_to_right", move |event| {
+left.on(PingEvent, move |event: PingEvent| {
     let right_for_handler = right_for_handler.clone();
     async move {
         Ok(right_for_handler.emit(event).to_json_value())
@@ -359,7 +359,7 @@ left.on::<PingEvent, _, _>("forward_to_right", move |event| {
 });
 
 let left_for_handler = left.clone();
-right.on::<PingEvent, _, _>("forward_to_left", move |event| {
+right.on(PingEvent, move |event: PingEvent| {
     let left_for_handler = left_for_handler.clone();
     async move {
         Ok(left_for_handler.emit(event).to_json_value())
@@ -470,21 +470,21 @@ let bus_b = EventBus::new(Some("BusB".to_string()));
 let bus_c = EventBus::new(Some("BusC".to_string()));
 
 let bus_b_for_handler = bus_b.clone();
-bus_a.on::<PingEvent, _, _>("forward_to_b", move |event| {
+bus_a.on(PingEvent, move |event: PingEvent| {
     let bus_b_for_handler = bus_b_for_handler.clone();
     async move {
         Ok(bus_b_for_handler.emit(event).to_json_value())
     }
 });
 let bus_c_for_handler = bus_c.clone();
-bus_b.on::<PingEvent, _, _>("forward_to_c", move |event| {
+bus_b.on(PingEvent, move |event: PingEvent| {
     let bus_c_for_handler = bus_c_for_handler.clone();
     async move {
         Ok(bus_c_for_handler.emit(event).to_json_value())
     }
 });
 let bus_a_for_handler = bus_a.clone();
-bus_c.on::<PingEvent, _, _>("forward_to_a", move |event| {
+bus_c.on(PingEvent, move |event: PingEvent| {
     let bus_a_for_handler = bus_a_for_handler.clone();
     async move {
         Ok(bus_a_for_handler.emit(event).to_json_value())
@@ -492,7 +492,7 @@ bus_c.on::<PingEvent, _, _>("forward_to_a", move |event| {
 });
 
 let event = bus_a.emit(PingEvent {});
-block_on(event.wait_completed());
+block_on(event.done());
 
 println!("{:?}", event.inner.lock().event_path);
 ```

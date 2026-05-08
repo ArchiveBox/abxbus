@@ -109,9 +109,9 @@ fn test_queue_jump() {
     let jumped = bus.emit_with_options(BaseEventHandle::<QEvent>::new(QPayload { idx: 2 }), true);
 
     block_on(async {
-        blocker.wait_completed().await;
-        sibling.wait_completed().await;
-        jumped.wait_completed().await;
+        blocker.done().await;
+        sibling.done().await;
+        jumped.done().await;
     });
 
     let order = order.lock().expect("order lock").clone();
@@ -170,9 +170,9 @@ fn test_emit_with_queue_jump_preempts_queued_sibling_on_same_bus() {
     let jumped = bus.emit_with_options(BaseEventHandle::<QEvent>::new(QPayload { idx: 2 }), true);
 
     block_on(async {
-        blocker.wait_completed().await;
-        sibling.wait_completed().await;
-        jumped.wait_completed().await;
+        blocker.done().await;
+        sibling.done().await;
+        jumped.done().await;
     });
 
     assert_eq!(order.lock().expect("order lock").as_slice(), &[0, 2, 1]);
@@ -196,8 +196,8 @@ fn test_bus_serial_processes_in_order() {
     let event2 = bus.emit(event2);
 
     block_on(async {
-        event1.wait_completed().await;
-        event2.wait_completed().await;
+        event1.done().await;
+        event2.done().await;
     });
 
     let event1_started = event1
@@ -451,7 +451,7 @@ fn test_global_serial_awaited_child_jumps_ahead_of_queued_events_across_buses() 
                 .lock()
                 .expect("order lock")
                 .push("child_dispatched".to_string());
-            child.wait_completed().await;
+            child.done().await;
             order
                 .lock()
                 .expect("order lock")
@@ -461,7 +461,7 @@ fn test_global_serial_awaited_child_jumps_ahead_of_queued_events_across_buses() 
     });
 
     let parent = bus_a.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
-    block_on(parent.wait_completed());
+    block_on(parent.done());
     block_on(bus_b.wait_until_idle(Some(2.0)));
 
     let order = order.lock().expect("order lock").clone();
@@ -555,7 +555,7 @@ fn test_event_completed_waits_in_queue_order_inside_handler_without_queue_jump()
     });
 
     let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
-    block_on(parent.wait_completed());
+    block_on(parent.done());
     block_on(bus.wait_until_idle(Some(2.0)));
 
     let order = order.lock().expect("order lock").clone();
@@ -686,7 +686,7 @@ fn test_bus_serial_awaiting_child_on_one_bus_does_not_block_other_bus_queue() {
                 .expect("order lock")
                 .push("parent_start".to_string());
             let child = bus_a.emit_child(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
-            child.wait_completed().await;
+            child.done().await;
             order
                 .lock()
                 .expect("order lock")
@@ -717,7 +717,7 @@ fn test_bus_serial_awaiting_child_on_one_bus_does_not_block_other_bus_queue() {
     bus_b.emit(BaseEventHandle::<SiblingEvent>::new(EmptyPayload {}));
 
     block_on(async {
-        parent.wait_completed().await;
+        parent.done().await;
         assert!(bus_a.wait_until_idle(Some(2.0)).await);
         assert!(bus_b.wait_until_idle(Some(2.0)).await);
     });
@@ -806,7 +806,7 @@ fn test_event_handler_concurrency_parallel_runs_handlers_for_same_event_concurre
     }
 
     let event = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
-    block_on(event.wait_completed());
+    block_on(event.done());
     assert!(*max_in_flight.lock().expect("max lock") >= 2);
     bus.stop();
 }
@@ -920,7 +920,7 @@ fn test_queue_jump_awaited_child_preempts_queued_sibling_on_same_bus() {
                 .push("parent_start".to_string());
             let child = bus.emit_child(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
             *captured_child.lock().expect("captured child lock") = Some(child.inner.clone());
-            child.wait_completed().await;
+            child.done().await;
             order
                 .lock()
                 .expect("order lock")
@@ -962,8 +962,8 @@ fn test_queue_jump_awaited_child_preempts_queued_sibling_on_same_bus() {
     let sibling = bus.emit(BaseEventHandle::<SiblingEvent>::new(EmptyPayload {}));
 
     block_on(async {
-        parent.wait_completed().await;
-        sibling.wait_completed().await;
+        parent.done().await;
+        sibling.done().await;
         assert!(bus.wait_until_idle(Some(1.0)).await);
     });
 
@@ -1244,7 +1244,7 @@ fn test_event_handler_concurrency_null_resolves_to_bus_defaults() {
     let event = BaseEventHandle::<WorkEvent>::new(EmptyPayload {});
     event.inner.inner.lock().event_handler_concurrency = None;
     let event = bus.emit(event);
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     assert_eq!(*max_in_flight.lock().expect("max lock"), 1);
     bus.stop();
@@ -1330,7 +1330,7 @@ fn test_queue_jump_same_event_handlers_on_separate_buses_stay_isolated_without_f
                 .lock()
                 .expect("order lock")
                 .push("shared_dispatched".to_string());
-            shared.wait_completed().await;
+            shared.done().await;
             order
                 .lock()
                 .expect("order lock")
@@ -1340,7 +1340,7 @@ fn test_queue_jump_same_event_handlers_on_separate_buses_stay_isolated_without_f
     });
 
     let parent = bus_a.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
-    block_on(parent.wait_completed());
+    block_on(parent.done());
     block_on(async {
         assert!(bus_a.wait_until_idle(Some(2.0)).await);
         assert!(bus_b.wait_until_idle(Some(2.0)).await);
@@ -1385,7 +1385,7 @@ fn test_awaited_bus_emit_inside_handler_queue_jumps_but_stays_untracked_root_eve
             assert_eq!(child.inner.inner.lock().event_emitted_by_handler_id, None);
             assert!(!child.inner.inner.lock().event_blocks_parent_completion);
             *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
-            child.wait_completed().await;
+            child.done().await;
             assert!(!child.inner.inner.lock().event_blocks_parent_completion);
             Ok(json!(null))
         }
@@ -1395,7 +1395,7 @@ fn test_awaited_bus_emit_inside_handler_queue_jumps_but_stays_untracked_root_eve
     });
 
     let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
-    block_on(parent.wait_completed());
+    block_on(parent.done());
     block_on(bus.wait_until_idle(Some(2.0)));
 
     let child = child_ref
@@ -1436,7 +1436,7 @@ fn test_awaited_bus_emit_inside_handler_preempts_queued_sibling_without_parentag
             bus.emit(BaseEventHandle::<SiblingEvent>::new(EmptyPayload {}));
             let child = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
             *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
-            child.wait_completed().await;
+            child.done().await;
             order
                 .lock()
                 .expect("order lock")
@@ -1470,7 +1470,7 @@ fn test_awaited_bus_emit_inside_handler_preempts_queued_sibling_without_parentag
     });
 
     let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
-    block_on(parent.wait_completed());
+    block_on(parent.done());
     block_on(bus.wait_until_idle(Some(2.0)));
 
     let order = order.lock().expect("order lock").clone();
@@ -1541,7 +1541,7 @@ fn test_awaiting_in_flight_event_does_not_double_run_handlers() {
     let child_for_wait = BaseEventHandle::<WorkEvent>::from_base_event(child.inner.clone());
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     thread::spawn(move || {
-        block_on(child_for_wait.wait_completed());
+        block_on(child_for_wait.done());
         let _ = done_tx.send(());
     });
     assert!(done_rx.recv_timeout(Duration::from_millis(30)).is_err());
@@ -1561,7 +1561,7 @@ fn test_edge_case_event_with_no_handlers_completes_immediately() {
 
     let event = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
     block_on(async {
-        event.wait_completed().await;
+        event.done().await;
         assert!(bus.wait_until_idle(Some(2.0)).await);
     });
 

@@ -84,7 +84,7 @@ Queue semantics are split in each runtime:
 - Queue-order path: `await event.event_completed()` (Python) / `await event.eventCompleted()` (TypeScript)
 
 In Go the same split is exposed as `event.Done(ctx)` for immediate queue-jump execution and `event.EventCompleted(ctx)` for normal queue-order waiting.
-In Rust the same split is exposed as `event.wait_completed().await` for immediate queue-jump execution and `event.event_completed().await` for normal queue-order waiting.
+In Rust the same split is exposed as `event.done().await` for immediate queue-jump execution and `event.event_completed().await` for normal queue-order waiting.
 
 ## Core metadata fields
 
@@ -162,7 +162,7 @@ use abxbus_rust::{
 use futures::executor::block_on;
 
 let pending = bus.emit(BaseEvent::<MyEvent>::new(MyPayload::default()));
-block_on(pending.wait_completed());
+block_on(pending.done());
 block_on(pending.event_completed());
 let value = block_on(pending.event_result(EventResultsOptions::default()))?;
 ```

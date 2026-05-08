@@ -71,10 +71,9 @@ event! {
 }
 
 let bus = EventBus::new(Some("OrdersBus".to_string()));
-bus.on::<OrderCreatedEvent, _, _>("handle_order", |event| async move {
-    let payload = event.event_payload();
+bus.on(OrderCreatedEvent, |event: OrderCreatedEvent| async move {
     Ok(OrderResult {
-        ok: payload.total_amount > 0.0,
+        ok: event.total_amount > 0.0,
     })
 });
 

@@ -91,7 +91,7 @@ fn test_handler_error_is_captured_and_does_not_prevent_other_handlers_from_runni
     });
 
     let event = bus.emit(BaseEventHandle::<TestEvent>::new(EmptyPayload {}));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let event_results = event.inner.inner.lock().event_results.clone();
     assert_eq!(event_results.len(), 2);
@@ -137,7 +137,7 @@ fn test_event_event_errors_collects_handler_errors() {
     );
 
     let event = bus.emit(BaseEventHandle::<TestEvent>::new(EmptyPayload {}));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let mut errors = event.inner.event_errors();
     errors.sort();
@@ -156,7 +156,7 @@ fn test_handler_error_does_not_prevent_event_completion() {
     });
 
     let event = bus.emit(BaseEventHandle::<TestEvent>::new(EmptyPayload {}));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     assert_eq!(
         event.inner.inner.lock().event_status,
@@ -216,7 +216,7 @@ fn test_async_handler_rejection_is_captured_as_error() {
     });
 
     let event = bus.emit(BaseEventHandle::<TestEvent>::new(EmptyPayload {}));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     assert_eq!(
         event.inner.inner.lock().event_status,
@@ -261,7 +261,7 @@ fn test_error_in_forwarded_event_handler_does_not_block_source_bus() {
     });
 
     let event = bus_a.emit(BaseEventHandle::<ForwardEvent>::new(EmptyPayload {}));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     assert_eq!(
         event.inner.inner.lock().event_status,
@@ -295,7 +295,7 @@ fn test_event_with_no_handlers_completes_without_errors() {
     let bus = EventBus::new(Some("NoHandlerBus".to_string()));
 
     let event = bus.emit(BaseEventHandle::<OrphanEvent>::new(EmptyPayload {}));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     assert_eq!(
         event.inner.inner.lock().event_status,
@@ -315,7 +315,7 @@ fn test_error_handler_result_fields_are_populated_correctly() {
     });
 
     let event = bus.emit(BaseEventHandle::<TestEvent>::new(EmptyPayload {}));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let result = event
         .inner
@@ -395,7 +395,7 @@ fn test_handler_timeout_uses_event_handler_timeout_error() {
     let event = bus.emit(BaseEventHandle::<TimeoutTaxonomyEvent>::new(
         EmptyPayload {},
     ));
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let result = event
         .inner

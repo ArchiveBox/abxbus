@@ -177,16 +177,17 @@ event! {
 }
 
 let bus = EventBus::new(Some("ApiBus".to_string()));
-let entry = bus.on::<UserEvent, _, _>("handler", |event| async move {
-    Ok(json!(event.event_payload().user_id))
+let entry = bus.on(UserEvent, |event: UserEvent| async move {
+    Ok(json!(event.user_id))
 });
-bus.on_with_options::<UserEvent, _, _>(
+bus.on_with_options(
+    UserEvent,
     "custom",
     EventHandlerOptions {
         handler_timeout: Some(5.0),
         ..EventHandlerOptions::default()
     },
-    |_event| async move { Ok(serde_json::Value::Null) },
+    |_event: UserEvent| async move { Ok(serde_json::Value::Null) },
 );
 ```
 
@@ -231,7 +232,7 @@ bus.Off("*", nil)
 ```rust
 use abxbus_rust::typed::EventSpec;
 
-let handler = bus.on::<UserEvent, _, _>("handler", |_event| async move {
+let handler = bus.on(UserEvent, |_event: UserEvent| async move {
     Ok(serde_json::Value::Null)
 });
 bus.off(UserEvent::event_type, Some(&handler.id));

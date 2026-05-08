@@ -245,7 +245,7 @@ fn test_unreferenced_buses_with_history_can_be_cleaned_without_instance_leak() {
         });
         for _ in 0..20 {
             let event = bus.emit(BaseEventHandle::<GcHistoryEvent>::new(EmptyPayload {}));
-            block_on(event.wait_completed());
+            block_on(event.done());
         }
         block_on(bus.wait_until_idle(Some(1.0)));
         refs.push(Arc::downgrade(&bus));
@@ -281,7 +281,7 @@ fn test_unreferenced_buses_with_history_are_collected_without_stop() {
         });
         for _ in 0..20 {
             let event = bus.emit(BaseEventHandle::<GcImplicitEvent>::new(EmptyPayload {}));
-            block_on(event.wait_completed());
+            block_on(event.done());
         }
         block_on(bus.wait_until_idle(Some(1.0)));
         refs.push(Arc::downgrade(&bus));

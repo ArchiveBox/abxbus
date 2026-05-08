@@ -316,7 +316,7 @@ fn test_await_event_queue_jumps_inside_handler() {
             let child = bus.emit_child(BaseEventHandle::<BaseEventImmediateChildEvent>::new(
                 EmptyPayload {},
             ));
-            child.wait_completed().await;
+            child.done().await;
             push(&order, "parent_end");
             Ok(json!("parent"))
         }
@@ -343,7 +343,7 @@ fn test_await_event_queue_jumps_inside_handler() {
     let parent = bus.emit(BaseEventHandle::<BaseEventImmediateParentEvent>::new(
         EmptyPayload {},
     ));
-    block_on(parent.wait_completed());
+    block_on(parent.done());
     block_on(bus.wait_until_idle(Some(2.0)));
 
     assert_eq!(
@@ -408,9 +408,9 @@ fn test_parallel_event_concurrency_plus_immediate_execution_races_child_events_i
                 let child3 = bus.emit_child(
                     BaseEventHandle::<BaseEventParallelImmediateChildEvent3>::new(EmptyPayload {}),
                 );
-                child1.wait_completed().await;
-                child2.wait_completed().await;
-                child3.wait_completed().await;
+                child1.done().await;
+                child2.done().await;
+                child3.done().await;
                 push(&order, "parent_end");
                 Ok(json!("parent"))
             }
@@ -452,7 +452,7 @@ fn test_parallel_event_concurrency_plus_immediate_execution_races_child_events_i
         .contains(&"parent_end".to_string()));
 
     release.store(true, Ordering::SeqCst);
-    block_on(parent.wait_completed());
+    block_on(parent.done());
     block_on(bus.wait_until_idle(Some(2.0)));
 
     let order = order.lock().expect("order lock").clone();
@@ -520,7 +520,7 @@ fn test_event_completed_waits_in_queue_order_inside_handler() {
     let parent = bus.emit(BaseEventHandle::<BaseEventQueuedParentEvent>::new(
         EmptyPayload {},
     ));
-    block_on(parent.wait_completed());
+    block_on(parent.done());
     block_on(bus.wait_until_idle(Some(2.0)));
 
     let order = order.lock().expect("order lock").clone();
@@ -545,7 +545,7 @@ fn test_base_event_runtime_state_transitions() {
     assert_eq!(event.inner.lock().event_status, EventStatus::Started);
     event.mark_completed();
     assert_eq!(event.inner.lock().event_status, EventStatus::Completed);
-    block_on(event.wait_completed());
+    block_on(event.done());
 }
 
 #[test]

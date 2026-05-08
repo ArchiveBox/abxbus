@@ -143,13 +143,13 @@ event! {
 
 let bus = EventBus::new(Some("AppBus".to_string()));
 
-bus.on::<WorkEvent, _, _>("bare_sync", |event| async move {
-    Ok(format!("bare-sync:{}", event.event_payload().task_id))
+bus.on(WorkEvent, |event: WorkEvent| async move {
+    Ok(format!("bare-sync:{}", event.task_id))
 });
 
-bus.on::<WorkEvent, _, _>("bare_async", |event| async move {
+bus.on(WorkEvent, |event: WorkEvent| async move {
     Delay::new(Duration::from_millis(10)).await;
-    Ok(format!("bare-async:{}", event.event_payload().task_id))
+    Ok(format!("bare-async:{}", event.task_id))
 });
 
 struct HandlerSet {
@@ -159,8 +159,8 @@ struct HandlerSet {
 let handlers = HandlerSet {
     prefix: "svc".to_string(),
 };
-bus.on::<WorkEvent, _, _>("instance_sync", move |event| async move {
-    Ok(format!("{}-instance:{}", handlers.prefix, event.event_payload().task_id))
+bus.on(WorkEvent, move |event: WorkEvent| async move {
+    Ok(format!("{}-instance:{}", handlers.prefix, event.task_id))
 });
 ```
 

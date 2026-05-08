@@ -84,7 +84,7 @@ event! {
 
 let bus = EventBus::new(Some("AppBus".to_string()));
 
-bus.on::<RequestEvent, _, _>("handler", |_event| async move {
+bus.on(RequestEvent, |_event: RequestEvent| async move {
     println!("{}", EventBus::context_get("request_id").unwrap());
     // "req-123"
     Ok(())
@@ -92,7 +92,7 @@ bus.on::<RequestEvent, _, _>("handler", |_event| async move {
 
 EventBus::context_set("request_id", json!("req-123"));
 let event = bus.emit(RequestEvent {});
-block_on(event.wait_completed());
+block_on(event.done());
 ```
 
 </Tab>
@@ -161,7 +161,7 @@ await requestContext.run({ requestId: req.id }, async () => {
 ```rust
 EventBus::context_set("request_id", json!(incoming_request_id));
 let event = bus.emit(RequestEvent {});
-block_on(event.wait_completed());
+block_on(event.done());
 // handlers can still read EventBus::context_get("request_id")
 ```
 

@@ -34,15 +34,14 @@ event! {
 fn test_on_and_emit_typed_roundtrip() {
     let bus = EventBus::new(Some("TypedBus".to_string()));
 
-    bus.on::<AddEvent, _, _>("add", |event: BaseEventHandle<AddEvent>| async move {
-        let payload = event.event_payload();
+    bus.on(AddEvent, |event: AddEvent| async move {
         Ok(AddResult {
-            sum: payload.a + payload.b,
+            sum: event.a + event.b,
         })
     });
 
     let event = bus.emit(AddEvent { a: 4, b: 9 });
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let first = event.first_result();
     assert_eq!(first, Some(AddResult { sum: 13 }));
@@ -54,13 +53,13 @@ fn test_find_returns_typed_payload() {
     let bus = EventBus::new(Some("TypedFindBus".to_string()));
 
     let event = bus.emit(AddEvent { a: 7, b: 1 });
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let found = block_on(bus.find(AddEvent::event_type, true, None, None))
         .map(BaseEventHandle::<AddEvent>::from_base_event)
         .expect("expected typed event");
-    assert_eq!(found.event_payload().a, 7);
-    assert_eq!(found.event_payload().b, 1);
+    assert_eq!(found.a, 7);
+    assert_eq!(found.b, 1);
     bus.stop();
 }
 
@@ -77,9 +76,8 @@ fn test_find_type_inference() {
     let found = block_on(bus.find(AddEvent::event_type, false, Some(1.0), None))
         .map(BaseEventHandle::<AddEvent>::from_base_event)
         .expect("expected future typed event");
-    let payload = found.event_payload();
-    assert_eq!(payload.a, 57);
-    assert_eq!(payload.b, 42);
+    assert_eq!(found.a, 57);
+    assert_eq!(found.b, 42);
 
     let bus_for_filter = bus.clone();
     thread::spawn(move || {
@@ -107,8 +105,8 @@ fn test_find_type_inference() {
     ))
     .map(BaseEventHandle::<AddEvent>::from_base_event)
     .expect("expected filtered typed event");
-    assert_eq!(filtered.event_payload().a, 51);
-    assert_eq!(filtered.event_payload().b, 96);
+    assert_eq!(filtered.a, 51);
+    assert_eq!(filtered.b, 96);
     bus.stop();
 }
 
@@ -117,7 +115,7 @@ fn test_find_past_type_inference() {
     let bus = EventBus::new(Some("query_type_test_bus".to_string()));
 
     let event = bus.emit(AddEvent { a: 10, b: 20 });
-    block_on(event.wait_completed());
+    block_on(event.done());
 
     let found = block_on(bus.find(AddEvent::event_type, true, None, None))
         .map(BaseEventHandle::<AddEvent>::from_base_event)
@@ -125,7 +123,7 @@ fn test_find_past_type_inference() {
     let found_event_id = found.inner.inner.lock().event_id.clone();
     let emitted_event_id = event.inner.inner.lock().event_id.clone();
     assert_eq!(found_event_id, emitted_event_id);
-    assert_eq!(found.event_payload(), AddEvent { a: 10, b: 20 });
+    assert_eq!(&*found, &AddEvent { a: 10, b: 20 });
     bus.stop();
 }
 
@@ -133,15 +131,14 @@ fn test_find_past_type_inference() {
 fn test_dispatch_type_inference() {
     let bus = EventBus::new(Some("type_inference_test_bus".to_string()));
 
-    bus.on::<AddEvent, _, _>("add", |event: BaseEventHandle<AddEvent>| async move {
-        let payload = event.event_payload();
+    bus.on(AddEvent, |event: AddEvent| async move {
         Ok(AddResult {
-            sum: payload.a + payload.b,
+            sum: event.a + event.b,
         })
     });
 
     let dispatched_event: BaseEventHandle<AddEvent> = bus.emit(AddEvent { a: 4, b: 6 });
-    assert_eq!(dispatched_event.event_payload(), AddEvent { a: 4, b: 6 });
+    assert_eq!(&*dispatched_event, &AddEvent { a: 4, b: 6 });
 
     let result = block_on(dispatched_event.event_result(EventResultsOptions::default()))
         .expect("typed event result")
@@ -154,18 +151,16 @@ fn test_dispatch_type_inference() {
 fn test_typed_event_result_accessors_decode_handler_values() {
     let bus = EventBus::new(Some("TypedResultAccessorsBus".to_string()));
 
-    bus.on::<AddEvent, _, _>("first_add", |event: BaseEventHandle<AddEvent>| async move {
-        let payload = event.event_payload();
+    bus.on(AddEvent, |event: AddEvent| async move {
         Ok(AddResult {
-            sum: payload.a + payload.b,
+            sum: event.a + event.b,
         })
     });
-    bus.on::<AddEvent, _, _>(
+    bus.on_handle::<AddEvent, _, _>(
         "second_add",
         |event: BaseEventHandle<AddEvent>| async move {
-            let payload = event.event_payload();
             Ok(AddResult {
-                sum: payload.a * payload.b,
+                sum: event.a * event.b,
             })
         },
     );

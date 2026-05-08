@@ -126,14 +126,14 @@ event! {
 
 let bus = EventBus::new(Some("AppBus".to_string()));
 
-bus.on::<UserActionEvent, _, _>("on", |event| async move {
-    Ok(format!("action:{}", event.event_payload().action))
+bus.on(UserActionEvent, |event: UserActionEvent| async move {
+    Ok(format!("action:{}", event.action))
 });
 
 let event = bus.emit(UserActionEvent {
     action: "click".to_string(),
 });
-block_on(event.wait_completed());
+block_on(event.done());
 
 let typed_match = block_on(bus.find::<UserActionEvent>(true, None));
 let named_match = block_on(bus.find("UserActionEvent", true, None, None));
@@ -221,7 +221,7 @@ String keys and `'*'` are intentionally looser:
 
 - Python: treat as `BaseEvent[Any]`
 - TypeScript: typed as base `BaseEvent`/unknown-oriented handler return checks
-- Rust: typed handlers use `bus.on::<MyEvent, _, _>(...)`; raw string/wildcard registration is reserved for low-level forwarding internals.
+- Rust: typed handlers use `bus.on(MyEvent, ...)`; raw string/wildcard registration is reserved for low-level forwarding internals.
 - Go: typed handlers use `OnTyped[...]`; string/wildcard handlers receive `*BaseEvent`
 
 Use string/wildcard patterns when you need dynamic behavior. Use classes whenever you want strict payload/result type hints through handlers and lookups.
