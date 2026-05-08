@@ -27,16 +27,12 @@ jobs:
             test-command: cargo test --locked --all-targets --all-features
           - runtime: go
             working-directory: abxbus-go
-            test-command: go test ./... -count=1 -timeout=240s
-    defaults:
-      run:
-        working-directory: ${{ matrix.working-directory }}
+            test-command: go test ./... -count=1 -timeout=600s
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Rust
-        if: matrix.runtime == 'rust'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Set up Go
@@ -46,5 +42,45 @@ jobs:
           go-version-file: abxbus-go/go.mod
           cache-dependency-path: abxbus-go/go.sum
 
+      - uses: astral-sh/setup-uv@v6
+        if: matrix.runtime == 'go'
+        with:
+          enable-cache: true
+          activate-environment: true
+
+      - uses: pnpm/action-setup@v4
+        if: matrix.runtime == 'go'
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        if: matrix.runtime == 'go'
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: abxbus-ts/pnpm-lock.yaml
+
+      - name: Install native TypeScript build tools
+        if: matrix.runtime == 'go'
+        run: |
+          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null \
+            | gpg --dearmor \
+            | sudo tee /usr/share/keyrings/kitware-archive-keyring.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ noble main" \
+            | sudo tee /etc/apt/sources.list.d/kitware.list
+          sudo apt-get update
+          sudo apt-get install -y cmake gcc-14 g++-14
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+          cmake --version
+          gcc-14 --version
+
+      - name: Install Go cross-runtime test dependencies
+        if: matrix.runtime == 'go'
+        run: |
+          uv sync --dev --all-extras --no-extra tachyon
+          pnpm --dir abxbus-ts install --frozen-lockfile
+
       - name: Run ${{ matrix.runtime }} tests
+        working-directory: ${{ matrix.working-directory }}
         run: ${{ matrix.test-command }}
