@@ -354,9 +354,7 @@ func (b *EventBus) Emit(input any) *BaseEvent {
 	if activeHandler == nil {
 		b.startRunloop()
 	} else if b.locks.getLockForEvent(original_event) == nil {
-		go func() {
-			_, _ = b.processEventImmediately(context.Background(), original_event, nil)
-		}()
+		b.startRunloop()
 	}
 	return original_event
 }
