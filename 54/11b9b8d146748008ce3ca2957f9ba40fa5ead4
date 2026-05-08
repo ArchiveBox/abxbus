@@ -1,0 +1,27 @@
+.github/workflows/pre-commit-hooks.yaml
+  s_6a8c07f028b30c::t_89e071bee4fd18 35-49
+.github/workflows/test_ts.yaml
+  s_6a8c07f028b30c::t_9d05e5cbcbeef8 33-46,150,158-160,162,241-254,381-393
+.github/workflows/test_py.yaml
+  s_6a8c07f028b30c::t_a1e3ab1b7b37b1 119-133
+abxbus-ts/pnpm-lock.yaml
+  ai_agent 10-11,1458,1460-1461
+abxbus-ts/package.json
+  s_6a8c07f028b30c::t_9e26b9423881cc 148-154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "5411b9b8d146748008ce3ca2957f9ba40fa5ead4",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
