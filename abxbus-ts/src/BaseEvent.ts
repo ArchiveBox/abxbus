@@ -82,8 +82,7 @@ const KNOWN_BASE_EVENT_FIELDS = new Set(Object.keys(BaseEventSchema.shape))
 
 export type BaseEventData = z.infer<typeof BaseEventSchema>
 export type BaseEventJSON = BaseEventData & Record<string, unknown>
-type BaseEventFields = Pick<
-  BaseEventData,
+type BaseEventFieldName =
   | 'event_id'
   | 'event_created_at'
   | 'event_type'
@@ -105,7 +104,7 @@ type BaseEventFields = Pick<
   | 'event_concurrency'
   | 'event_handler_concurrency'
   | 'event_handler_completion'
->
+type BaseEventFields = { [K in BaseEventFieldName]: BaseEventData[K] }
 
 export type BaseEventInit<TFields extends Record<string, unknown>> = TFields & Partial<BaseEventFields>
 
