@@ -76,11 +76,11 @@ event! {
 
 let bus = EventBus::new(Some("AppBus".to_string()));
 bus.on::<DoMathEvent, _, _>("add", |event| async move {
-    let payload = event.payload();
+    let payload = event.event_payload();
     Ok(payload.a + payload.b)
 });
 
-let event = bus.emit::<DoMathEvent>(BaseEvent::new(DoMathEvent { a: 2, b: 3 }));
+let event = bus.emit(DoMathEvent { a: 2, b: 3 });
 let result = block_on(event.event_result(Default::default()))?;
 ```
 
@@ -165,7 +165,7 @@ bus.on::<GetConfigEvent, _, _>("system_config", |_event| async move {
     Ok(json!({"debug": false, "timeout": 30}))
 });
 
-let event = bus.emit::<GetConfigEvent>(BaseEvent::new(GetConfigEvent {}));
+let event = bus.emit(GetConfigEvent {});
 let values = block_on(event.event_results_list(EventResultsOptions {
     raise_if_any: false,
     raise_if_none: false,

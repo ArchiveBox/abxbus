@@ -8,7 +8,7 @@ use std::{
 use abxbus_rust::{
     event_bus::{EventBus, EventBusOptions},
     event_result::EventResultStatus,
-    typed::{EventSpec, TypedEvent},
+    typed::{BaseEventHandle, EventSpec},
     types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
@@ -25,27 +25,27 @@ struct EmptyPayload {}
 struct EmptyResult {}
 struct QEvent;
 impl EventSpec for QEvent {
-    type Payload = QPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "q";
+    type payload = QPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "q";
 }
 struct WorkEvent;
 impl EventSpec for WorkEvent {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "work";
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "work";
 }
 struct ParentEvent;
 impl EventSpec for ParentEvent {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "parent";
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "parent";
 }
 struct SiblingEvent;
 impl EventSpec for SiblingEvent {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "sibling";
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "sibling";
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct SerialPayload {
@@ -54,9 +54,9 @@ struct SerialPayload {
 }
 struct SerialEvent;
 impl EventSpec for SerialEvent {
-    type Payload = SerialPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "serial";
+    type payload = SerialPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "serial";
 }
 
 fn bump_in_flight(in_flight: &Arc<Mutex<i64>>, max_in_flight: &Arc<Mutex<i64>>) {
@@ -81,7 +81,7 @@ fn test_queue_jump() {
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let order_for_handler = order.clone();
 
-    bus.on("q", "h", move |event| {
+    bus.on_raw("q", "h", move |event| {
         let order = order_for_handler.clone();
         let started_tx = started_tx.clone();
         async move {
@@ -101,13 +101,12 @@ fn test_queue_jump() {
         }
     });
 
-    let blocker = bus.emit::<QEvent>(TypedEvent::<QEvent>::new(QPayload { idx: 0 }));
+    let blocker = bus.emit(BaseEventHandle::<QEvent>::new(QPayload { idx: 0 }));
     started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("blocker should start");
-    let sibling = bus.emit::<QEvent>(TypedEvent::<QEvent>::new(QPayload { idx: 1 }));
-    let jumped =
-        bus.emit_with_options::<QEvent>(TypedEvent::<QEvent>::new(QPayload { idx: 2 }), true);
+    let sibling = bus.emit(BaseEventHandle::<QEvent>::new(QPayload { idx: 1 }));
+    let jumped = bus.emit_with_options(BaseEventHandle::<QEvent>::new(QPayload { idx: 2 }), true);
 
     block_on(async {
         blocker.wait_completed().await;
@@ -143,7 +142,7 @@ fn test_emit_with_queue_jump_preempts_queued_sibling_on_same_bus() {
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let order_for_handler = order.clone();
 
-    bus.on("q", "h", move |event| {
+    bus.on_raw("q", "h", move |event| {
         let order = order_for_handler.clone();
         let started_tx = started_tx.clone();
         async move {
@@ -163,13 +162,12 @@ fn test_emit_with_queue_jump_preempts_queued_sibling_on_same_bus() {
         }
     });
 
-    let blocker = bus.emit::<QEvent>(TypedEvent::<QEvent>::new(QPayload { idx: 0 }));
+    let blocker = bus.emit(BaseEventHandle::<QEvent>::new(QPayload { idx: 0 }));
     started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("blocker should start");
-    let sibling = bus.emit::<QEvent>(TypedEvent::<QEvent>::new(QPayload { idx: 1 }));
-    let jumped =
-        bus.emit_with_options::<QEvent>(TypedEvent::<QEvent>::new(QPayload { idx: 2 }), true);
+    let sibling = bus.emit(BaseEventHandle::<QEvent>::new(QPayload { idx: 1 }));
+    let jumped = bus.emit_with_options(BaseEventHandle::<QEvent>::new(QPayload { idx: 2 }), true);
 
     block_on(async {
         blocker.wait_completed().await;
@@ -185,13 +183,13 @@ fn test_emit_with_queue_jump_preempts_queued_sibling_on_same_bus() {
 fn test_bus_serial_processes_in_order() {
     let bus = EventBus::new(Some("BusSerial".to_string()));
 
-    bus.on("work", "slow", |_event| async move {
+    bus.on_raw("work", "slow", |_event| async move {
         thread::sleep(Duration::from_millis(15));
         Ok(json!(1))
     });
 
-    let event1 = TypedEvent::<WorkEvent>::new(EmptyPayload {});
-    let event2 = TypedEvent::<WorkEvent>::new(EmptyPayload {});
+    let event1 = BaseEventHandle::<WorkEvent>::new(EmptyPayload {});
+    let event2 = BaseEventHandle::<WorkEvent>::new(EmptyPayload {});
     event1.inner.inner.lock().event_concurrency = Some(EventConcurrencyMode::BusSerial);
     event2.inner.inner.lock().event_concurrency = Some(EventConcurrencyMode::BusSerial);
     let event1 = bus.emit(event1);
@@ -240,7 +238,7 @@ fn test_bus_serial_fifo_order_preserved_per_bus_with_interleaving() {
     let starts_b = Arc::new(Mutex::new(Vec::new()));
 
     let starts_a_for_handler = starts_a.clone();
-    bus_a.on("serial", "record_a", move |event| {
+    bus_a.on_raw("serial", "record_a", move |event| {
         let starts = starts_a_for_handler.clone();
         async move {
             let order = event
@@ -256,7 +254,7 @@ fn test_bus_serial_fifo_order_preserved_per_bus_with_interleaving() {
         }
     });
     let starts_b_for_handler = starts_b.clone();
-    bus_b.on("serial", "record_b", move |event| {
+    bus_b.on_raw("serial", "record_b", move |event| {
         let starts = starts_b_for_handler.clone();
         async move {
             let order = event
@@ -273,11 +271,11 @@ fn test_bus_serial_fifo_order_preserved_per_bus_with_interleaving() {
     });
 
     for order in 0..4 {
-        bus_a.emit::<SerialEvent>(TypedEvent::new(SerialPayload {
+        bus_a.emit(BaseEventHandle::<SerialEvent>::new(SerialPayload {
             order,
             source: "a".to_string(),
         }));
-        bus_b.emit::<SerialEvent>(TypedEvent::new(SerialPayload {
+        bus_b.emit(BaseEventHandle::<SerialEvent>::new(SerialPayload {
             order,
             source: "b".to_string(),
         }));
@@ -324,7 +322,7 @@ fn test_event_concurrency_global_serial_allows_only_one_inflight_across_buses() 
         let in_flight = in_flight.clone();
         let max_in_flight = max_in_flight.clone();
         let starts = starts.clone();
-        bus.on("serial", "global_serial_handler", move |event| {
+        bus.on_raw("serial", "global_serial_handler", move |event| {
             let in_flight = in_flight.clone();
             let max_in_flight = max_in_flight.clone();
             let starts = starts.clone();
@@ -352,11 +350,11 @@ fn test_event_concurrency_global_serial_allows_only_one_inflight_across_buses() 
     }
 
     for i in 0..3 {
-        bus_a.emit::<SerialEvent>(TypedEvent::new(SerialPayload {
+        bus_a.emit(BaseEventHandle::<SerialEvent>::new(SerialPayload {
             order: i,
             source: "a".to_string(),
         }));
-        bus_b.emit::<SerialEvent>(TypedEvent::new(SerialPayload {
+        bus_b.emit(BaseEventHandle::<SerialEvent>::new(SerialPayload {
             order: i,
             source: "b".to_string(),
         }));
@@ -404,7 +402,7 @@ fn test_global_serial_awaited_child_jumps_ahead_of_queued_events_across_buses() 
     let order = Arc::new(Mutex::new(Vec::new()));
 
     let order_for_child = order.clone();
-    bus_b.on("work", "child_handler", move |_event| {
+    bus_b.on_raw("work", "child_handler", move |_event| {
         let order = order_for_child.clone();
         async move {
             order
@@ -421,7 +419,7 @@ fn test_global_serial_awaited_child_jumps_ahead_of_queued_events_across_buses() 
     });
 
     let order_for_queued = order.clone();
-    bus_b.on("q", "queued_handler", move |_event| {
+    bus_b.on_raw("q", "queued_handler", move |_event| {
         let order = order_for_queued.clone();
         async move {
             order
@@ -435,7 +433,7 @@ fn test_global_serial_awaited_child_jumps_ahead_of_queued_events_across_buses() 
     let bus_a_for_parent = bus_a.clone();
     let bus_b_for_parent = bus_b.clone();
     let order_for_parent = order.clone();
-    bus_a.on("parent", "parent_handler", move |_event| {
+    bus_a.on_raw("parent", "parent_handler", move |_event| {
         let bus_a = bus_a_for_parent.clone();
         let bus_b = bus_b_for_parent.clone();
         let order = order_for_parent.clone();
@@ -444,9 +442,11 @@ fn test_global_serial_awaited_child_jumps_ahead_of_queued_events_across_buses() 
                 .lock()
                 .expect("order lock")
                 .push("parent_start".to_string());
-            bus_b.emit::<QEvent>(TypedEvent::new(QPayload { idx: 1 }));
-            let child = bus_a.emit_child::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
-            bus_b.emit::<WorkEvent>(TypedEvent::from_base_event(child.inner.clone()));
+            bus_b.emit(BaseEventHandle::<QEvent>::new(QPayload { idx: 1 }));
+            let child = bus_a.emit_child(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
+            bus_b.emit(BaseEventHandle::<WorkEvent>::from_base_event(
+                child.inner.clone(),
+            ));
             order
                 .lock()
                 .expect("order lock")
@@ -460,7 +460,7 @@ fn test_global_serial_awaited_child_jumps_ahead_of_queued_events_across_buses() 
         }
     });
 
-    let parent = bus_a.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let parent = bus_a.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
     block_on(parent.wait_completed());
     block_on(bus_b.wait_until_idle(Some(2.0)));
 
@@ -499,7 +499,7 @@ fn test_event_completed_waits_in_queue_order_inside_handler_without_queue_jump()
 
     let order_for_parent = order.clone();
     let child_ref_for_parent = child_ref.clone();
-    bus.on("parent", "parent_handler", move |_event| {
+    bus.on_raw("parent", "parent_handler", move |_event| {
         let bus = bus_for_parent.clone();
         let order = order_for_parent.clone();
         let child_ref = child_ref_for_parent.clone();
@@ -508,8 +508,8 @@ fn test_event_completed_waits_in_queue_order_inside_handler_without_queue_jump()
                 .lock()
                 .expect("order lock")
                 .push("parent_start".to_string());
-            bus.emit::<SiblingEvent>(TypedEvent::new(EmptyPayload {}));
-            let child = bus.emit_child::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+            bus.emit(BaseEventHandle::<SiblingEvent>::new(EmptyPayload {}));
+            let child = bus.emit_child(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
             *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
             child.event_completed().await;
             order
@@ -521,7 +521,7 @@ fn test_event_completed_waits_in_queue_order_inside_handler_without_queue_jump()
     });
 
     let order_for_sibling = order.clone();
-    bus.on("sibling", "sibling_handler", move |_event| {
+    bus.on_raw("sibling", "sibling_handler", move |_event| {
         let order = order_for_sibling.clone();
         async move {
             order
@@ -538,7 +538,7 @@ fn test_event_completed_waits_in_queue_order_inside_handler_without_queue_jump()
     });
 
     let order_for_child = order.clone();
-    bus.on("work", "child_handler", move |_event| {
+    bus.on_raw("work", "child_handler", move |_event| {
         let order = order_for_child.clone();
         async move {
             order
@@ -554,7 +554,7 @@ fn test_event_completed_waits_in_queue_order_inside_handler_without_queue_jump()
         }
     });
 
-    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
     block_on(parent.wait_completed());
     block_on(bus.wait_until_idle(Some(2.0)));
 
@@ -609,7 +609,7 @@ fn test_event_concurrency_bus_serial_serializes_per_bus_but_overlaps_across_buse
     for bus in [&bus_a, &bus_b] {
         let in_flight_global = in_flight_global.clone();
         let max_in_flight_global = max_in_flight_global.clone();
-        bus.on("serial", "bus_serial_handler", move |_event| {
+        bus.on_raw("serial", "bus_serial_handler", move |_event| {
             let in_flight_global = in_flight_global.clone();
             let max_in_flight_global = max_in_flight_global.clone();
             async move {
@@ -621,11 +621,11 @@ fn test_event_concurrency_bus_serial_serializes_per_bus_but_overlaps_across_buse
         });
     }
 
-    bus_a.emit::<SerialEvent>(TypedEvent::new(SerialPayload {
+    bus_a.emit(BaseEventHandle::<SerialEvent>::new(SerialPayload {
         order: 0,
         source: "a".to_string(),
     }));
-    bus_b.emit::<SerialEvent>(TypedEvent::new(SerialPayload {
+    bus_b.emit(BaseEventHandle::<SerialEvent>::new(SerialPayload {
         order: 0,
         source: "b".to_string(),
     }));
@@ -659,7 +659,7 @@ fn test_bus_serial_awaiting_child_on_one_bus_does_not_block_other_bus_queue() {
     let order = Arc::new(Mutex::new(Vec::new()));
 
     let order_for_child = order.clone();
-    bus_a.on("work", "child_handler", move |_event| {
+    bus_a.on_raw("work", "child_handler", move |_event| {
         let order = order_for_child.clone();
         async move {
             order
@@ -677,7 +677,7 @@ fn test_bus_serial_awaiting_child_on_one_bus_does_not_block_other_bus_queue() {
 
     let bus_a_for_parent = bus_a.clone();
     let order_for_parent = order.clone();
-    bus_a.on("parent", "parent_handler", move |_event| {
+    bus_a.on_raw("parent", "parent_handler", move |_event| {
         let bus_a = bus_a_for_parent.clone();
         let order = order_for_parent.clone();
         async move {
@@ -685,7 +685,7 @@ fn test_bus_serial_awaiting_child_on_one_bus_does_not_block_other_bus_queue() {
                 .lock()
                 .expect("order lock")
                 .push("parent_start".to_string());
-            let child = bus_a.emit_child::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+            let child = bus_a.emit_child(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
             child.wait_completed().await;
             order
                 .lock()
@@ -696,7 +696,7 @@ fn test_bus_serial_awaiting_child_on_one_bus_does_not_block_other_bus_queue() {
     });
 
     let order_for_other = order.clone();
-    bus_b.on("sibling", "other_handler", move |_event| {
+    bus_b.on_raw("sibling", "other_handler", move |_event| {
         let order = order_for_other.clone();
         async move {
             order
@@ -712,9 +712,9 @@ fn test_bus_serial_awaiting_child_on_one_bus_does_not_block_other_bus_queue() {
         }
     });
 
-    let parent = bus_a.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let parent = bus_a.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
     thread::sleep(Duration::from_millis(1));
-    bus_b.emit::<SiblingEvent>(TypedEvent::new(EmptyPayload {}));
+    bus_b.emit(BaseEventHandle::<SiblingEvent>::new(EmptyPayload {}));
 
     block_on(async {
         parent.wait_completed().await;
@@ -750,7 +750,7 @@ fn test_event_concurrency_parallel_allows_same_bus_events_to_overlap() {
     let max_in_flight = Arc::new(Mutex::new(0));
     let in_flight_for_handler = in_flight.clone();
     let max_for_handler = max_in_flight.clone();
-    bus.on("serial", "parallel_event_handler", move |_event| {
+    bus.on_raw("serial", "parallel_event_handler", move |_event| {
         let in_flight = in_flight_for_handler.clone();
         let max_in_flight = max_for_handler.clone();
         async move {
@@ -761,11 +761,11 @@ fn test_event_concurrency_parallel_allows_same_bus_events_to_overlap() {
         }
     });
 
-    bus.emit::<SerialEvent>(TypedEvent::new(SerialPayload {
+    bus.emit(BaseEventHandle::<SerialEvent>::new(SerialPayload {
         order: 0,
         source: "same".to_string(),
     }));
-    bus.emit::<SerialEvent>(TypedEvent::new(SerialPayload {
+    bus.emit(BaseEventHandle::<SerialEvent>::new(SerialPayload {
         order: 1,
         source: "same".to_string(),
     }));
@@ -793,7 +793,7 @@ fn test_event_handler_concurrency_parallel_runs_handlers_for_same_event_concurre
     for handler_name in ["handler_a", "handler_b"] {
         let in_flight = in_flight.clone();
         let max_in_flight = max_in_flight.clone();
-        bus.on("work", handler_name, move |_event| {
+        bus.on_raw("work", handler_name, move |_event| {
             let in_flight = in_flight.clone();
             let max_in_flight = max_in_flight.clone();
             async move {
@@ -805,7 +805,7 @@ fn test_event_handler_concurrency_parallel_runs_handlers_for_same_event_concurre
         });
     }
 
-    let event = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
     block_on(event.wait_completed());
     assert!(*max_in_flight.lock().expect("max lock") >= 2);
     bus.stop();
@@ -825,7 +825,7 @@ fn test_event_concurrency_override_parallel_beats_bus_serial_default() {
     let max_in_flight = Arc::new(Mutex::new(0));
     let in_flight_for_handler = in_flight.clone();
     let max_for_handler = max_in_flight.clone();
-    bus.on("serial", "override_parallel_handler", move |_event| {
+    bus.on_raw("serial", "override_parallel_handler", move |_event| {
         let in_flight = in_flight_for_handler.clone();
         let max_in_flight = max_for_handler.clone();
         async move {
@@ -837,7 +837,7 @@ fn test_event_concurrency_override_parallel_beats_bus_serial_default() {
     });
 
     for order in 0..2 {
-        let event = TypedEvent::<SerialEvent>::new(SerialPayload {
+        let event = BaseEventHandle::<SerialEvent>::new(SerialPayload {
             order,
             source: "override".to_string(),
         });
@@ -866,7 +866,7 @@ fn test_event_concurrency_override_bus_serial_beats_bus_parallel_default() {
     let max_in_flight = Arc::new(Mutex::new(0));
     let in_flight_for_handler = in_flight.clone();
     let max_for_handler = max_in_flight.clone();
-    bus.on("serial", "override_bus_serial_handler", move |_event| {
+    bus.on_raw("serial", "override_bus_serial_handler", move |_event| {
         let in_flight = in_flight_for_handler.clone();
         let max_in_flight = max_for_handler.clone();
         async move {
@@ -878,7 +878,7 @@ fn test_event_concurrency_override_bus_serial_beats_bus_parallel_default() {
     });
 
     for order in 0..2 {
-        let event = TypedEvent::<SerialEvent>::new(SerialPayload {
+        let event = BaseEventHandle::<SerialEvent>::new(SerialPayload {
             order,
             source: "override".to_string(),
         });
@@ -909,7 +909,7 @@ fn test_queue_jump_awaited_child_preempts_queued_sibling_on_same_bus() {
     let bus_for_parent = bus.clone();
     let order_for_parent = order.clone();
     let child_for_parent = captured_child.clone();
-    bus.on("parent", "parent_handler", move |_event| {
+    bus.on_raw("parent", "parent_handler", move |_event| {
         let bus = bus_for_parent.clone();
         let order = order_for_parent.clone();
         let captured_child = child_for_parent.clone();
@@ -918,7 +918,7 @@ fn test_queue_jump_awaited_child_preempts_queued_sibling_on_same_bus() {
                 .lock()
                 .expect("order lock")
                 .push("parent_start".to_string());
-            let child = bus.emit_child::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+            let child = bus.emit_child(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
             *captured_child.lock().expect("captured child lock") = Some(child.inner.clone());
             child.wait_completed().await;
             order
@@ -930,7 +930,7 @@ fn test_queue_jump_awaited_child_preempts_queued_sibling_on_same_bus() {
     });
 
     let order_for_child = order.clone();
-    bus.on("work", "child_handler", move |_event| {
+    bus.on_raw("work", "child_handler", move |_event| {
         let order = order_for_child.clone();
         async move {
             order
@@ -947,7 +947,7 @@ fn test_queue_jump_awaited_child_preempts_queued_sibling_on_same_bus() {
     });
 
     let order_for_sibling = order.clone();
-    bus.on("sibling", "sibling_handler", move |_event| {
+    bus.on_raw("sibling", "sibling_handler", move |_event| {
         let order = order_for_sibling.clone();
         async move {
             order
@@ -958,8 +958,8 @@ fn test_queue_jump_awaited_child_preempts_queued_sibling_on_same_bus() {
         }
     });
 
-    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
-    let sibling = bus.emit::<SiblingEvent>(TypedEvent::new(EmptyPayload {}));
+    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
+    let sibling = bus.emit(BaseEventHandle::<SiblingEvent>::new(EmptyPayload {}));
 
     block_on(async {
         parent.wait_completed().await;
@@ -1019,7 +1019,7 @@ fn test_global_serial_with_handler_parallel_allows_handlers_but_not_events_to_ov
         for handler_name in ["handler_a", "handler_b"] {
             let in_flight = in_flight.clone();
             let max_in_flight = max_in_flight.clone();
-            bus.on("work", handler_name, move |_event| {
+            bus.on_raw("work", handler_name, move |_event| {
                 let in_flight = in_flight.clone();
                 let max_in_flight = max_in_flight.clone();
                 async move {
@@ -1032,8 +1032,8 @@ fn test_global_serial_with_handler_parallel_allows_handlers_but_not_events_to_ov
         }
     }
 
-    bus_a.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
-    bus_b.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    bus_a.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
+    bus_b.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
 
     block_on(async {
         assert!(bus_a.wait_until_idle(Some(2.0)).await);
@@ -1065,7 +1065,7 @@ fn test_event_parallel_with_handler_serial_serializes_handlers_within_each_event
         let global_max = global_max.clone();
         let per_event_in_flight = per_event_in_flight.clone();
         let per_event_max = per_event_max.clone();
-        bus.on("serial", handler_name, move |event| {
+        bus.on_raw("serial", handler_name, move |event| {
             let global_in_flight = global_in_flight.clone();
             let global_max = global_max.clone();
             let per_event_in_flight = per_event_in_flight.clone();
@@ -1100,7 +1100,7 @@ fn test_event_parallel_with_handler_serial_serializes_handlers_within_each_event
     }
 
     for order in 0..2 {
-        bus.emit::<SerialEvent>(TypedEvent::new(SerialPayload {
+        bus.emit(BaseEventHandle::<SerialEvent>::new(SerialPayload {
             order,
             source: "parallel".to_string(),
         }));
@@ -1143,7 +1143,7 @@ fn test_event_parallel_with_handler_serial_handlers_overlap_across_buses() {
     for bus in [&bus_a, &bus_b] {
         let in_flight = in_flight.clone();
         let max_in_flight = max_in_flight.clone();
-        bus.on("serial", "cross_bus_handler", move |_event| {
+        bus.on_raw("serial", "cross_bus_handler", move |_event| {
             let in_flight = in_flight.clone();
             let max_in_flight = max_in_flight.clone();
             async move {
@@ -1155,11 +1155,11 @@ fn test_event_parallel_with_handler_serial_handlers_overlap_across_buses() {
         });
     }
 
-    bus_a.emit::<SerialEvent>(TypedEvent::new(SerialPayload {
+    bus_a.emit(BaseEventHandle::<SerialEvent>::new(SerialPayload {
         order: 0,
         source: "a".to_string(),
     }));
-    bus_b.emit::<SerialEvent>(TypedEvent::new(SerialPayload {
+    bus_b.emit(BaseEventHandle::<SerialEvent>::new(SerialPayload {
         order: 0,
         source: "b".to_string(),
     }));
@@ -1187,7 +1187,7 @@ fn test_event_concurrency_null_resolves_to_bus_defaults() {
     let max_in_flight = Arc::new(Mutex::new(0));
     let in_flight_for_handler = in_flight.clone();
     let max_for_handler = max_in_flight.clone();
-    bus.on("serial", "auto_event_handler", move |_event| {
+    bus.on_raw("serial", "auto_event_handler", move |_event| {
         let in_flight = in_flight_for_handler.clone();
         let max_in_flight = max_for_handler.clone();
         async move {
@@ -1199,7 +1199,7 @@ fn test_event_concurrency_null_resolves_to_bus_defaults() {
     });
 
     for order in 0..2 {
-        let event = TypedEvent::<SerialEvent>::new(SerialPayload {
+        let event = BaseEventHandle::<SerialEvent>::new(SerialPayload {
             order,
             source: "auto".to_string(),
         });
@@ -1229,7 +1229,7 @@ fn test_event_handler_concurrency_null_resolves_to_bus_defaults() {
     for handler_name in ["handler_a", "handler_b"] {
         let in_flight = in_flight.clone();
         let max_in_flight = max_in_flight.clone();
-        bus.on("work", handler_name, move |_event| {
+        bus.on_raw("work", handler_name, move |_event| {
             let in_flight = in_flight.clone();
             let max_in_flight = max_in_flight.clone();
             async move {
@@ -1241,7 +1241,7 @@ fn test_event_handler_concurrency_null_resolves_to_bus_defaults() {
         });
     }
 
-    let event = TypedEvent::<WorkEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<WorkEvent>::new(EmptyPayload {});
     event.inner.inner.lock().event_handler_concurrency = None;
     let event = bus.emit(event);
     block_on(event.wait_completed());
@@ -1272,7 +1272,7 @@ fn test_queue_jump_same_event_handlers_on_separate_buses_stay_isolated_without_f
 
     let order_for_a = order.clone();
     let runs_for_a = bus_a_shared_runs.clone();
-    bus_a.on("work", "bus_a_shared", move |_event| {
+    bus_a.on_raw("work", "bus_a_shared", move |_event| {
         let order = order_for_a.clone();
         let runs = runs_for_a.clone();
         async move {
@@ -1291,7 +1291,7 @@ fn test_queue_jump_same_event_handlers_on_separate_buses_stay_isolated_without_f
     });
     let order_for_b = order.clone();
     let runs_for_b = bus_b_shared_runs.clone();
-    bus_b.on("work", "bus_b_shared", move |_event| {
+    bus_b.on_raw("work", "bus_b_shared", move |_event| {
         let order = order_for_b.clone();
         let runs = runs_for_b.clone();
         async move {
@@ -1304,7 +1304,7 @@ fn test_queue_jump_same_event_handlers_on_separate_buses_stay_isolated_without_f
         }
     });
     let order_for_sibling = order.clone();
-    bus_a.on("q", "bus_a_sibling", move |_event| {
+    bus_a.on_raw("q", "bus_a_sibling", move |_event| {
         let order = order_for_sibling.clone();
         async move {
             order
@@ -1316,7 +1316,7 @@ fn test_queue_jump_same_event_handlers_on_separate_buses_stay_isolated_without_f
     });
     let bus_a_for_parent = bus_a.clone();
     let order_for_parent = order.clone();
-    bus_a.on("parent", "parent_handler", move |_event| {
+    bus_a.on_raw("parent", "parent_handler", move |_event| {
         let bus_a = bus_a_for_parent.clone();
         let order = order_for_parent.clone();
         async move {
@@ -1324,8 +1324,8 @@ fn test_queue_jump_same_event_handlers_on_separate_buses_stay_isolated_without_f
                 .lock()
                 .expect("order lock")
                 .push("parent_start".to_string());
-            bus_a.emit::<QEvent>(TypedEvent::new(QPayload { idx: 1 }));
-            let shared = bus_a.emit_child::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+            bus_a.emit(BaseEventHandle::<QEvent>::new(QPayload { idx: 1 }));
+            let shared = bus_a.emit_child(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
             order
                 .lock()
                 .expect("order lock")
@@ -1339,7 +1339,7 @@ fn test_queue_jump_same_event_handlers_on_separate_buses_stay_isolated_without_f
         }
     });
 
-    let parent = bus_a.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let parent = bus_a.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
     block_on(parent.wait_completed());
     block_on(async {
         assert!(bus_a.wait_until_idle(Some(2.0)).await);
@@ -1376,11 +1376,11 @@ fn test_awaited_bus_emit_inside_handler_queue_jumps_but_stays_untracked_root_eve
     let child_ref = Arc::new(Mutex::new(None::<Arc<abxbus_rust::base_event::BaseEvent>>));
     let child_ref_for_handler = child_ref.clone();
 
-    bus.on("parent", "parent_handler", move |_event| {
+    bus.on_raw("parent", "parent_handler", move |_event| {
         let bus = bus_for_handler.clone();
         let child_ref = child_ref_for_handler.clone();
         async move {
-            let child = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+            let child = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
             assert_eq!(child.inner.inner.lock().event_parent_id, None);
             assert_eq!(child.inner.inner.lock().event_emitted_by_handler_id, None);
             assert!(!child.inner.inner.lock().event_blocks_parent_completion);
@@ -1390,11 +1390,11 @@ fn test_awaited_bus_emit_inside_handler_queue_jumps_but_stays_untracked_root_eve
             Ok(json!(null))
         }
     });
-    bus.on("work", "child_handler", |_event| async move {
+    bus.on_raw("work", "child_handler", |_event| async move {
         Ok(json!("child"))
     });
 
-    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
     block_on(parent.wait_completed());
     block_on(bus.wait_until_idle(Some(2.0)));
 
@@ -1424,7 +1424,7 @@ fn test_awaited_bus_emit_inside_handler_preempts_queued_sibling_without_parentag
 
     let order_for_parent = order.clone();
     let child_ref_for_parent = child_ref.clone();
-    bus.on("parent", "parent_handler", move |_event| {
+    bus.on_raw("parent", "parent_handler", move |_event| {
         let bus = bus_for_handler.clone();
         let order = order_for_parent.clone();
         let child_ref = child_ref_for_parent.clone();
@@ -1433,8 +1433,8 @@ fn test_awaited_bus_emit_inside_handler_preempts_queued_sibling_without_parentag
                 .lock()
                 .expect("order lock")
                 .push("parent_start".to_string());
-            bus.emit::<SiblingEvent>(TypedEvent::new(EmptyPayload {}));
-            let child = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+            bus.emit(BaseEventHandle::<SiblingEvent>::new(EmptyPayload {}));
+            let child = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
             *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
             child.wait_completed().await;
             order
@@ -1446,7 +1446,7 @@ fn test_awaited_bus_emit_inside_handler_preempts_queued_sibling_without_parentag
     });
 
     let order_for_child = order.clone();
-    bus.on("work", "child_handler", move |_event| {
+    bus.on_raw("work", "child_handler", move |_event| {
         let order = order_for_child.clone();
         async move {
             order
@@ -1458,7 +1458,7 @@ fn test_awaited_bus_emit_inside_handler_preempts_queued_sibling_without_parentag
     });
 
     let order_for_sibling = order.clone();
-    bus.on("sibling", "sibling_handler", move |_event| {
+    bus.on_raw("sibling", "sibling_handler", move |_event| {
         let order = order_for_sibling.clone();
         async move {
             order
@@ -1469,7 +1469,7 @@ fn test_awaited_bus_emit_inside_handler_preempts_queued_sibling_without_parentag
         }
     });
 
-    let parent = bus.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let parent = bus.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
     block_on(parent.wait_completed());
     block_on(bus.wait_until_idle(Some(2.0)));
 
@@ -1517,7 +1517,7 @@ fn test_awaiting_in_flight_event_does_not_double_run_handlers() {
 
     let runs_for_handler = handler_runs.clone();
     let release_for_handler = release_rx.clone();
-    bus.on("work", "in_flight_handler", move |_event| {
+    bus.on_raw("work", "in_flight_handler", move |_event| {
         let started_tx = started_tx.clone();
         let runs = runs_for_handler.clone();
         let release_rx = release_for_handler.clone();
@@ -1533,12 +1533,12 @@ fn test_awaiting_in_flight_event_does_not_double_run_handlers() {
         }
     });
 
-    let child = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    let child = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
     started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("handler should start");
 
-    let child_for_wait = TypedEvent::<WorkEvent>::from_base_event(child.inner.clone());
+    let child_for_wait = BaseEventHandle::<WorkEvent>::from_base_event(child.inner.clone());
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     thread::spawn(move || {
         block_on(child_for_wait.wait_completed());
@@ -1559,7 +1559,7 @@ fn test_awaiting_in_flight_event_does_not_double_run_handlers() {
 fn test_edge_case_event_with_no_handlers_completes_immediately() {
     let bus = EventBus::new(Some("NoHandlerBus".to_string()));
 
-    let event = bus.emit::<WorkEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<WorkEvent>::new(EmptyPayload {}));
     block_on(async {
         event.wait_completed().await;
         assert!(bus.wait_until_idle(Some(2.0)).await);
@@ -1594,7 +1594,7 @@ fn test_fifo_forwarded_events_preserve_order_on_target_bus_bus_serial() {
 
     let order_a_for_handler = order_a.clone();
     let bus_b_for_forward = bus_b.clone();
-    bus_a.on("serial", "forward_order_a", move |event| {
+    bus_a.on_raw("serial", "forward_order_a", move |event| {
         let order_a = order_a_for_handler.clone();
         let bus_b = bus_b_for_forward.clone();
         async move {
@@ -1614,7 +1614,7 @@ fn test_fifo_forwarded_events_preserve_order_on_target_bus_bus_serial() {
 
     let order_b_for_handler = order_b.clone();
     let bus_b_id_for_handler = bus_b_id.clone();
-    bus_b.on("serial", "forward_order_b", move |event| {
+    bus_b.on_raw("serial", "forward_order_b", move |event| {
         let order_b = order_b_for_handler.clone();
         let bus_b_id = bus_b_id_for_handler.clone();
         async move {
@@ -1644,7 +1644,7 @@ fn test_fifo_forwarded_events_preserve_order_on_target_bus_bus_serial() {
     });
 
     for order in 0..5 {
-        bus_a.emit::<SerialEvent>(TypedEvent::new(SerialPayload {
+        bus_a.emit(BaseEventHandle::<SerialEvent>::new(SerialPayload {
             order,
             source: "a".to_string(),
         }));
@@ -1775,13 +1775,13 @@ fn test_fifo_forwarded_events_preserve_order_across_chained_buses_bus_serial() {
     );
     let order_c = Arc::new(Mutex::new(Vec::new()));
 
-    bus_b.on("serial", "forward_chain_b_handler", |_event| async move {
+    bus_b.on_raw("serial", "forward_chain_b_handler", |_event| async move {
         thread::sleep(Duration::from_millis(2));
         Ok(json!(null))
     });
 
     let order_c_for_handler = order_c.clone();
-    bus_c.on("serial", "forward_chain_c_handler", move |event| {
+    bus_c.on_raw("serial", "forward_chain_c_handler", move |event| {
         let order_c = order_c_for_handler.clone();
         async move {
             let order = event
@@ -1798,7 +1798,7 @@ fn test_fifo_forwarded_events_preserve_order_across_chained_buses_bus_serial() {
     });
 
     let bus_b_for_forward = bus_b.clone();
-    bus_a.on("*", "forward_chain_a_to_b", move |event| {
+    bus_a.on_raw("*", "forward_chain_a_to_b", move |event| {
         let bus_b = bus_b_for_forward.clone();
         async move {
             bus_b.emit_base(event);
@@ -1806,7 +1806,7 @@ fn test_fifo_forwarded_events_preserve_order_across_chained_buses_bus_serial() {
         }
     });
     let bus_c_for_forward = bus_c.clone();
-    bus_b.on("*", "forward_chain_b_to_c", move |event| {
+    bus_b.on_raw("*", "forward_chain_b_to_c", move |event| {
         let bus_c = bus_c_for_forward.clone();
         async move {
             bus_c.emit_base(event);
@@ -1815,7 +1815,7 @@ fn test_fifo_forwarded_events_preserve_order_across_chained_buses_bus_serial() {
     });
 
     for order in 0..6 {
-        bus_a.emit::<SerialEvent>(TypedEvent::new(SerialPayload {
+        bus_a.emit(BaseEventHandle::<SerialEvent>::new(SerialPayload {
             order,
             source: "a".to_string(),
         }));

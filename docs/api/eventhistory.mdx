@@ -75,7 +75,7 @@ for _, item := range history.Values() {
 
 ```rust
 let bus = EventBus::new_with_history(Some("HistoryBus".to_string()), Some(100), true);
-let event = bus.emit::<SomeEvent>(BaseEvent::new(SomePayload::default()));
+let event = bus.emit(BaseEvent::<SomeEvent>::new(SomePayload::default()));
 block_on(event.wait_completed());
 
 let count = bus.event_history_size();

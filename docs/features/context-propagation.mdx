@@ -72,7 +72,7 @@ await requestContext.run({ requestId: 'req-123' }, async () => {
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event, BaseEvent, event_bus::EventBus};
+use abxbus_rust::{event, event_bus::EventBus};
 use futures::executor::block_on;
 use serde_json::json;
 
@@ -91,7 +91,7 @@ bus.on::<RequestEvent, _, _>("handler", |_event| async move {
 });
 
 EventBus::context_set("request_id", json!("req-123"));
-let event = bus.emit::<RequestEvent>(BaseEvent::new(RequestEvent {}));
+let event = bus.emit(RequestEvent {});
 block_on(event.wait_completed());
 ```
 
@@ -160,7 +160,7 @@ await requestContext.run({ requestId: req.id }, async () => {
 
 ```rust
 EventBus::context_set("request_id", json!(incoming_request_id));
-let event = bus.emit::<RequestEvent>(BaseEvent::new(EmptyPayload));
+let event = bus.emit(RequestEvent {});
 block_on(event.wait_completed());
 // handlers can still read EventBus::context_get("request_id")
 ```

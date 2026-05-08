@@ -11,7 +11,7 @@ use abxbus_rust::{
     base_event::BaseEvent,
     event_bus::EventBus,
     event_handler::EventHandlerOptions,
-    typed::{EventSpec, TypedEvent},
+    typed::{BaseEventHandle, EventSpec},
 };
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
@@ -24,9 +24,9 @@ struct ResumePayload {
 
 struct CrossRuntimeResumeEvent;
 impl EventSpec for CrossRuntimeResumeEvent {
-    type Payload = ResumePayload;
-    type Result = Value;
-    const EVENT_TYPE: &'static str = "CrossRuntimeResumeEvent";
+    type payload = ResumePayload;
+    type event_result_type = Value;
+    const event_type: &'static str = "CrossRuntimeResumeEvent";
 }
 
 fn assert_original_fields_survive(original: &Value, roundtripped: &Value) {
@@ -397,7 +397,7 @@ fn assert_bus_roundtrip_rehydrates_and_resumes_pending_queue(payload: Value) {
     let run_order = Arc::new(Mutex::new(Vec::<String>::new()));
 
     let run_order_for_h1 = run_order.clone();
-    bus.on_with_options(
+    bus.on_raw_with_options(
         "CrossRuntimeResumeEvent",
         "handler_one",
         EventHandlerOptions {
@@ -425,7 +425,7 @@ fn assert_bus_roundtrip_rehydrates_and_resumes_pending_queue(payload: Value) {
     );
 
     let run_order_for_h2 = run_order.clone();
-    bus.on_with_options(
+    bus.on_raw_with_options(
         "CrossRuntimeResumeEvent",
         "handler_two",
         EventHandlerOptions {
@@ -452,9 +452,11 @@ fn assert_bus_roundtrip_rehydrates_and_resumes_pending_queue(payload: Value) {
         },
     );
 
-    let trigger = bus.emit::<CrossRuntimeResumeEvent>(TypedEvent::new(ResumePayload {
-        label: "e3".to_string(),
-    }));
+    let trigger = bus.emit(BaseEventHandle::<CrossRuntimeResumeEvent>::new(
+        ResumePayload {
+            label: "e3".to_string(),
+        },
+    ));
     block_on(trigger.wait_completed());
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
 

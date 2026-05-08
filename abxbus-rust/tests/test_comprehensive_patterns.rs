@@ -9,7 +9,7 @@ use std::{
 
 use abxbus_rust::{
     event_bus::{EventBus, EventBusOptions},
-    typed::{EventSpec, TypedEvent},
+    typed::{BaseEventHandle, EventSpec},
     types::{
         EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventStatus,
     },
@@ -31,107 +31,107 @@ struct EmptyPayload {}
 
 struct Event1;
 impl EventSpec for Event1 {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "Event1";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "Event1";
 }
 
 struct Event2;
 impl EventSpec for Event2 {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "Event2";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "Event2";
 }
 
 struct Event3;
 impl EventSpec for Event3 {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "Event3";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "Event3";
 }
 
 struct ChildEvent;
 impl EventSpec for ChildEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "ChildEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "ChildEvent";
 }
 
 struct ChildA;
 impl EventSpec for ChildA {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "ChildA";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "ChildA";
 }
 
 struct ChildB;
 impl EventSpec for ChildB {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "ChildB";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "ChildB";
 }
 
 struct ChildC;
 impl EventSpec for ChildC {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "ChildC";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "ChildC";
 }
 
 struct Child1;
 impl EventSpec for Child1 {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "Child1";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "Child1";
 }
 
 struct Child2;
 impl EventSpec for Child2 {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "Child2";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "Child2";
 }
 
 struct ParentEvent;
 impl EventSpec for ParentEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "ParentEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "ParentEvent";
 }
 
 struct ImmediateChildEvent;
 impl EventSpec for ImmediateChildEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "ImmediateChildEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "ImmediateChildEvent";
 }
 
 struct QueuedChildEvent;
 impl EventSpec for QueuedChildEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "QueuedChildEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "QueuedChildEvent";
 }
 
 struct RootEvent;
 impl EventSpec for RootEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "RootEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "RootEvent";
 }
 
 struct Event4;
 impl EventSpec for Event4 {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "Event4";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "Event4";
 }
 
 struct SlowEvent;
 impl EventSpec for SlowEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "SlowEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "SlowEvent";
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -141,16 +141,16 @@ struct ModePayload {
 
 struct DefaultsChildEvent;
 impl EventSpec for DefaultsChildEvent {
-    type Payload = ModePayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "DefaultsChildEvent";
+    type payload = ModePayload;
+    type event_result_type = String;
+    const event_type: &'static str = "DefaultsChildEvent";
 }
 
 struct ForwardedFirstEvent;
 impl EventSpec for ForwardedFirstEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "ForwardedFirstEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "ForwardedFirstEvent";
 }
 
 fn push(order: &Arc<Mutex<Vec<String>>>, entry: &str) {
@@ -214,7 +214,7 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
 
     let bus2_results = results.clone();
     let bus2_counter = execution_counter.clone();
-    bus2.on("*", "child_bus2_event_handler", move |event| {
+    bus2.on_raw("*", "child_bus2_event_handler", move |event| {
         let results = bus2_results.clone();
         let counter = bus2_counter.clone();
         async move {
@@ -238,7 +238,7 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
     });
 
     let bus2_for_forward = bus2.clone();
-    bus1.on("*", "emit", move |event| {
+    bus1.on_raw("*", "emit", move |event| {
         let bus2 = bus2_for_forward.clone();
         async move {
             bus2.emit_base(event);
@@ -250,7 +250,7 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
     let bus2_label = bus2.label();
     let parent_results = results.clone();
     let parent_counter = execution_counter.clone();
-    bus1.on("ParentEvent", "parent_bus1_handler", move |event| {
+    bus1.on_raw("ParentEvent", "parent_bus1_handler", move |event| {
         let bus = bus1_for_parent.clone();
         let bus2_label = bus2_label.clone();
         let results = parent_results.clone();
@@ -269,14 +269,14 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
                 .push((seq, "parent_start".to_string()));
 
             let child_event_async =
-                bus.emit_child::<QueuedChildEvent>(TypedEvent::new(EmptyPayload {}));
+                bus.emit_child(BaseEventHandle::<QueuedChildEvent>::new(EmptyPayload {}));
             assert_ne!(
                 child_event_async.inner.inner.lock().event_status,
                 EventStatus::Completed
             );
 
             let child_event_sync =
-                bus.emit_child::<ImmediateChildEvent>(TypedEvent::new(EmptyPayload {}));
+                bus.emit_child(BaseEventHandle::<ImmediateChildEvent>::new(EmptyPayload {}));
             child_event_sync.wait_completed().await;
             assert_eq!(
                 child_event_sync.inner.inner.lock().event_status,
@@ -334,7 +334,7 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
         }
     });
 
-    let parent_event = bus1.emit::<ParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let parent_event = bus1.emit(BaseEventHandle::<ParentEvent>::new(EmptyPayload {}));
     block_on(parent_event.wait_completed());
     block_on(bus1.wait_until_idle(Some(2.0)));
     block_on(bus2.wait_until_idle(Some(2.0)));
@@ -396,7 +396,7 @@ fn test_race_condition_stress() {
     let results = Arc::new(Mutex::new(Vec::<String>::new()));
 
     let bus2_for_forward = bus2.clone();
-    bus1.on("*", "forward_to_bus2", move |event| {
+    bus1.on_raw("*", "forward_to_bus2", move |event| {
         let bus2 = bus2_for_forward.clone();
         async move {
             bus2.emit_base(event);
@@ -408,7 +408,7 @@ fn test_race_condition_stress() {
         for pattern in ["QueuedChildEvent", "ImmediateChildEvent"] {
             let results = results.clone();
             let label = bus.label();
-            bus.on(
+            bus.on_raw(
                 pattern,
                 &format!("{pattern}_child_handler"),
                 move |_event| {
@@ -428,18 +428,19 @@ fn test_race_condition_stress() {
     }
 
     let bus1_for_parent = bus1.clone();
-    bus1.on("RootEvent", "parent_handler", move |event| {
+    bus1.on_raw("RootEvent", "parent_handler", move |event| {
         let bus = bus1_for_parent.clone();
         async move {
             let mut children = Vec::new();
             for _ in 0..3 {
                 children.push(
-                    bus.emit_child::<QueuedChildEvent>(TypedEvent::new(EmptyPayload {}))
+                    bus.emit_child(BaseEventHandle::<QueuedChildEvent>::new(EmptyPayload {}))
                         .inner,
                 );
             }
             for _ in 0..3 {
-                let child = bus.emit_child::<ImmediateChildEvent>(TypedEvent::new(EmptyPayload {}));
+                let child =
+                    bus.emit_child(BaseEventHandle::<ImmediateChildEvent>::new(EmptyPayload {}));
                 child.wait_completed().await;
                 assert_eq!(
                     child.inner.inner.lock().event_status,
@@ -454,13 +455,13 @@ fn test_race_condition_stress() {
             Ok(json!("parent_done"))
         }
     });
-    bus1.on("RootEvent", "bad_handler", |_event| async move {
+    bus1.on_raw("RootEvent", "bad_handler", |_event| async move {
         Ok(json!(null))
     });
 
     for run in 0..5 {
         results.lock().expect("results lock").clear();
-        let event = bus1.emit::<RootEvent>(TypedEvent::new(EmptyPayload {}));
+        let event = bus1.emit(BaseEventHandle::<RootEvent>::new(EmptyPayload {}));
         block_on(event.wait_completed());
         block_on(bus1.wait_until_idle(Some(2.0)));
         block_on(bus2.wait_until_idle(Some(2.0)));
@@ -490,12 +491,12 @@ fn test_multi_bus_queues_are_independent_when_awaiting_child() {
 
     let bus1_for_event1 = bus1.clone();
     let order_for_event1 = execution_order.clone();
-    bus1.on("Event1", "event1_handler", move |_event| {
+    bus1.on_raw("Event1", "event1_handler", move |_event| {
         let bus = bus1_for_event1.clone();
         let order = order_for_event1.clone();
         async move {
             push(&order, "Bus1_Event1_start");
-            let child = bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            let child = bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
             push(&order, "Child_dispatched_to_Bus1");
             child.wait_completed().await;
             push(&order, "Child_await_returned");
@@ -535,7 +536,7 @@ fn test_multi_bus_queues_are_independent_when_awaiting_child() {
         ),
     ] {
         let order = execution_order.clone();
-        bus.on(pattern, &format!("{pattern}_handler"), move |_event| {
+        bus.on_raw(pattern, &format!("{pattern}_handler"), move |_event| {
             let order = order.clone();
             async move {
                 push(&order, start);
@@ -545,10 +546,10 @@ fn test_multi_bus_queues_are_independent_when_awaiting_child() {
         });
     }
 
-    let event1 = bus1.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
-    bus1.emit::<Event2>(TypedEvent::new(EmptyPayload {}));
-    bus2.emit::<Event3>(TypedEvent::new(EmptyPayload {}));
-    bus2.emit::<Event4>(TypedEvent::new(EmptyPayload {}));
+    let event1 = bus1.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
+    bus1.emit(BaseEventHandle::<Event2>::new(EmptyPayload {}));
+    bus2.emit(BaseEventHandle::<Event3>::new(EmptyPayload {}));
+    bus2.emit(BaseEventHandle::<Event4>::new(EmptyPayload {}));
 
     wait_for_entry(&execution_order, "Bus2_Event3_start");
     block_on(event1.wait_completed());
@@ -579,12 +580,12 @@ fn test_awaited_child_jumps_queue_without_overshoot() {
 
     let bus_for_event1 = bus.clone();
     let order_for_event1 = execution_order.clone();
-    bus.on("Event1", "event1_handler", move |_event| {
+    bus.on_raw("Event1", "event1_handler", move |_event| {
         let bus = bus_for_event1.clone();
         let order = order_for_event1.clone();
         async move {
             push(&order, "Event1_start");
-            let child = bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            let child = bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
             push(&order, "Child_dispatched");
             child.wait_completed().await;
             push(&order, "Child_await_returned");
@@ -594,7 +595,7 @@ fn test_awaited_child_jumps_queue_without_overshoot() {
     });
 
     let order_for_event2 = execution_order.clone();
-    bus.on("Event2", "event2_handler", move |_event| {
+    bus.on_raw("Event2", "event2_handler", move |_event| {
         let order = order_for_event2.clone();
         async move {
             push(&order, "Event2_start");
@@ -604,7 +605,7 @@ fn test_awaited_child_jumps_queue_without_overshoot() {
     });
 
     let order_for_event3 = execution_order.clone();
-    bus.on("Event3", "event3_handler", move |_event| {
+    bus.on_raw("Event3", "event3_handler", move |_event| {
         let order = order_for_event3.clone();
         async move {
             push(&order, "Event3_start");
@@ -614,7 +615,7 @@ fn test_awaited_child_jumps_queue_without_overshoot() {
     });
 
     let order_for_child = execution_order.clone();
-    bus.on("ChildEvent", "child_handler", move |_event| {
+    bus.on_raw("ChildEvent", "child_handler", move |_event| {
         let order = order_for_child.clone();
         async move {
             push(&order, "Child_start");
@@ -623,9 +624,9 @@ fn test_awaited_child_jumps_queue_without_overshoot() {
         }
     });
 
-    let event1 = bus.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
-    let event2 = bus.emit::<Event2>(TypedEvent::new(EmptyPayload {}));
-    let event3 = bus.emit::<Event3>(TypedEvent::new(EmptyPayload {}));
+    let event1 = bus.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
+    let event2 = bus.emit(BaseEventHandle::<Event2>::new(EmptyPayload {}));
+    let event3 = bus.emit(BaseEventHandle::<Event3>::new(EmptyPayload {}));
 
     block_on(event1.wait_completed());
     block_on(bus.wait_until_idle(Some(2.0)));
@@ -660,12 +661,12 @@ fn test_done_on_non_proxied_event_keeps_bus_paused_during_queue_jump() {
 
     let bus_for_event1 = bus.clone();
     let order_for_event1 = execution_order.clone();
-    bus.on("Event1", "event1_handler", move |_event| {
+    bus.on_raw("Event1", "event1_handler", move |_event| {
         let bus = bus_for_event1.clone();
         let order = order_for_event1.clone();
         async move {
             push(&order, "Event1_start");
-            let child = bus.emit::<ChildA>(TypedEvent::new(EmptyPayload {}));
+            let child = bus.emit(BaseEventHandle::<ChildA>::new(EmptyPayload {}));
             child.wait_completed().await;
             push(&order, "RawChild_await_returned");
             assert!(
@@ -681,7 +682,7 @@ fn test_done_on_non_proxied_event_keeps_bus_paused_during_queue_jump() {
     });
 
     let order_for_child = execution_order.clone();
-    bus.on("ChildA", "raw_child_handler", move |_event| {
+    bus.on_raw("ChildA", "raw_child_handler", move |_event| {
         let order = order_for_child.clone();
         async move {
             push(&order, "RawChild_start");
@@ -691,7 +692,7 @@ fn test_done_on_non_proxied_event_keeps_bus_paused_during_queue_jump() {
     });
 
     let order_for_event2 = execution_order.clone();
-    bus.on("Event2", "event2_handler", move |_event| {
+    bus.on_raw("Event2", "event2_handler", move |_event| {
         let order = order_for_event2.clone();
         async move {
             push(&order, "Event2_start");
@@ -700,8 +701,8 @@ fn test_done_on_non_proxied_event_keeps_bus_paused_during_queue_jump() {
         }
     });
 
-    let event1 = bus.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
-    bus.emit::<Event2>(TypedEvent::new(EmptyPayload {}));
+    let event1 = bus.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
+    bus.emit(BaseEventHandle::<Event2>::new(EmptyPayload {}));
     block_on(event1.wait_completed());
     block_on(bus.wait_until_idle(Some(2.0)));
 
@@ -726,12 +727,12 @@ fn test_bus_pause_state_clears_after_queue_jump_completes() {
 
     let bus_for_event1 = bus.clone();
     let order_for_event1 = execution_order.clone();
-    bus.on("Event1", "event1_handler", move |_event| {
+    bus.on_raw("Event1", "event1_handler", move |_event| {
         let bus = bus_for_event1.clone();
         let order = order_for_event1.clone();
         async move {
             push(&order, "Event1_start");
-            let child_a = bus.emit_child::<ChildA>(TypedEvent::new(EmptyPayload {}));
+            let child_a = bus.emit_child(BaseEventHandle::<ChildA>::new(EmptyPayload {}));
             child_a.wait_completed().await;
             push(&order, "ChildA_await_returned");
             assert!(!order
@@ -739,7 +740,7 @@ fn test_bus_pause_state_clears_after_queue_jump_completes() {
                 .expect("order lock")
                 .contains(&"Event2_start".to_string()));
 
-            let child_b = bus.emit_child::<ChildB>(TypedEvent::new(EmptyPayload {}));
+            let child_b = bus.emit_child(BaseEventHandle::<ChildB>::new(EmptyPayload {}));
             assert!(!order
                 .lock()
                 .expect("order lock")
@@ -761,7 +762,7 @@ fn test_bus_pause_state_clears_after_queue_jump_completes() {
         ("Event2", "Event2_start", "Event2_end"),
     ] {
         let order = execution_order.clone();
-        bus.on(pattern, &format!("{pattern}_handler"), move |_event| {
+        bus.on_raw(pattern, &format!("{pattern}_handler"), move |_event| {
             let order = order.clone();
             async move {
                 push(&order, start);
@@ -771,8 +772,8 @@ fn test_bus_pause_state_clears_after_queue_jump_completes() {
         });
     }
 
-    let event1 = bus.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
-    bus.emit::<Event2>(TypedEvent::new(EmptyPayload {}));
+    let event1 = bus.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
+    bus.emit(BaseEventHandle::<Event2>::new(EmptyPayload {}));
     block_on(event1.wait_completed());
     block_on(bus.wait_until_idle(Some(2.0)));
 
@@ -794,7 +795,7 @@ fn test_isinsidehandler_is_per_bus_not_global() {
 
     let order_for_a = execution_order.clone();
     let release_for_a = release_rx.clone();
-    bus_a.on("Event1", "bus_a_handler", move |_event| {
+    bus_a.on_raw("Event1", "bus_a_handler", move |_event| {
         let order = order_for_a.clone();
         let release = release_for_a.clone();
         let started_tx = started_tx.clone();
@@ -812,7 +813,7 @@ fn test_isinsidehandler_is_per_bus_not_global() {
     });
 
     let order_for_b = execution_order.clone();
-    bus_b.on("Event2", "bus_b_handler", move |_event| {
+    bus_b.on_raw("Event2", "bus_b_handler", move |_event| {
         let order = order_for_b.clone();
         async move {
             push(&order, "bus_b_start");
@@ -821,11 +822,11 @@ fn test_isinsidehandler_is_per_bus_not_global() {
         }
     });
 
-    let event_a = bus_a.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    let event_a = bus_a.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
     started_rx
         .recv_timeout(Duration::from_secs(2))
         .expect("bus_a handler started");
-    let event_b = bus_b.emit::<Event2>(TypedEvent::new(EmptyPayload {}));
+    let event_b = bus_b.emit(BaseEventHandle::<Event2>::new(EmptyPayload {}));
     block_on(event_b.wait_completed());
     release_tx.send(()).expect("release bus_a handler");
     block_on(event_a.wait_completed());
@@ -849,16 +850,16 @@ fn test_dispatch_multiple_await_one_skips_others_until_after_handler_completes()
 
     let bus_for_event1 = bus.clone();
     let order_for_event1 = execution_order.clone();
-    bus.on("Event1", "event1_handler", move |_event| {
+    bus.on_raw("Event1", "event1_handler", move |_event| {
         let bus = bus_for_event1.clone();
         let order = order_for_event1.clone();
         async move {
             push(&order, "Event1_start");
-            bus.emit_child::<ChildA>(TypedEvent::new(EmptyPayload {}));
+            bus.emit_child(BaseEventHandle::<ChildA>::new(EmptyPayload {}));
             push(&order, "ChildA_dispatched");
-            let child_b = bus.emit_child::<ChildB>(TypedEvent::new(EmptyPayload {}));
+            let child_b = bus.emit_child(BaseEventHandle::<ChildB>::new(EmptyPayload {}));
             push(&order, "ChildB_dispatched");
-            bus.emit_child::<ChildC>(TypedEvent::new(EmptyPayload {}));
+            bus.emit_child(BaseEventHandle::<ChildC>::new(EmptyPayload {}));
             push(&order, "ChildC_dispatched");
             child_b.wait_completed().await;
             push(&order, "ChildB_await_returned");
@@ -875,7 +876,7 @@ fn test_dispatch_multiple_await_one_skips_others_until_after_handler_completes()
         ("ChildC", "ChildC_start", "ChildC_end", "child_c_done"),
     ] {
         let order = execution_order.clone();
-        bus.on(pattern, &format!("{pattern}_handler"), move |_event| {
+        bus.on_raw(pattern, &format!("{pattern}_handler"), move |_event| {
             let order = order.clone();
             async move {
                 push(&order, start);
@@ -885,9 +886,9 @@ fn test_dispatch_multiple_await_one_skips_others_until_after_handler_completes()
         });
     }
 
-    let event1 = bus.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
-    bus.emit::<Event2>(TypedEvent::new(EmptyPayload {}));
-    bus.emit::<Event3>(TypedEvent::new(EmptyPayload {}));
+    let event1 = bus.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
+    bus.emit(BaseEventHandle::<Event2>::new(EmptyPayload {}));
+    bus.emit(BaseEventHandle::<Event3>::new(EmptyPayload {}));
 
     block_on(event1.wait_completed());
     block_on(bus.wait_until_idle(Some(2.0)));
@@ -914,7 +915,7 @@ fn test_dispatch_multiple_await_one_skips_others_until_after_handler_completes()
 #[test]
 fn test_awaiting_an_already_completed_event_is_a_no_op() {
     let bus = EventBus::new(Some("AlreadyCompletedBus".to_string()));
-    let event1 = bus.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    let event1 = bus.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
     block_on(event1.wait_completed());
     assert_eq!(
         event1.inner.inner.lock().event_status,
@@ -924,7 +925,7 @@ fn test_awaiting_an_already_completed_event_is_a_no_op() {
     let (started_tx, started_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
     let release_rx = Arc::new(Mutex::new(release_rx));
-    bus.on("SlowEvent", "blocker", move |_event| {
+    bus.on_raw("SlowEvent", "blocker", move |_event| {
         let release_rx = release_rx.clone();
         let started_tx = started_tx.clone();
         async move {
@@ -937,15 +938,15 @@ fn test_awaiting_an_already_completed_event_is_a_no_op() {
             Ok(json!(null))
         }
     });
-    bus.on("Event2", "event2_handler", |_event| async move {
+    bus.on_raw("Event2", "event2_handler", |_event| async move {
         Ok(json!("event2_done"))
     });
 
-    let blocker = bus.emit::<SlowEvent>(TypedEvent::new(EmptyPayload {}));
+    let blocker = bus.emit(BaseEventHandle::<SlowEvent>::new(EmptyPayload {}));
     started_rx
         .recv_timeout(Duration::from_secs(2))
         .expect("blocker started");
-    let event2 = bus.emit::<Event2>(TypedEvent::new(EmptyPayload {}));
+    let event2 = bus.emit(BaseEventHandle::<Event2>::new(EmptyPayload {}));
     block_on(event1.wait_completed());
     assert_eq!(event2.inner.inner.lock().event_status, EventStatus::Pending);
 
@@ -964,15 +965,17 @@ fn test_multiple_awaits_on_same_event() {
     let bus_for_event1 = bus.clone();
     let order_for_event1 = execution_order.clone();
     let await_results_for_event1 = await_results.clone();
-    bus.on("Event1", "event1_handler", move |_event| {
+    bus.on_raw("Event1", "event1_handler", move |_event| {
         let bus = bus_for_event1.clone();
         let order = order_for_event1.clone();
         let await_results = await_results_for_event1.clone();
         async move {
             push(&order, "Event1_start");
-            let child = bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
-            let child_for_await1 = TypedEvent::<ChildEvent>::from_base_event(child.inner.clone());
-            let child_for_await2 = TypedEvent::<ChildEvent>::from_base_event(child.inner.clone());
+            let child = bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
+            let child_for_await1 =
+                BaseEventHandle::<ChildEvent>::from_base_event(child.inner.clone());
+            let child_for_await2 =
+                BaseEventHandle::<ChildEvent>::from_base_event(child.inner.clone());
             let await_results_1 = await_results.clone();
             let await_results_2 = await_results.clone();
             join!(
@@ -992,7 +995,7 @@ fn test_multiple_awaits_on_same_event() {
     });
 
     let order_for_event2 = execution_order.clone();
-    bus.on("Event2", "event2_handler", move |_event| {
+    bus.on_raw("Event2", "event2_handler", move |_event| {
         let order = order_for_event2.clone();
         async move {
             push(&order, "Event2_start");
@@ -1002,7 +1005,7 @@ fn test_multiple_awaits_on_same_event() {
     });
 
     let order_for_child = execution_order.clone();
-    bus.on("ChildEvent", "child_handler", move |_event| {
+    bus.on_raw("ChildEvent", "child_handler", move |_event| {
         let order = order_for_child.clone();
         async move {
             push(&order, "Child_start");
@@ -1012,8 +1015,8 @@ fn test_multiple_awaits_on_same_event() {
         }
     });
 
-    let event1 = bus.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
-    bus.emit::<Event2>(TypedEvent::new(EmptyPayload {}));
+    let event1 = bus.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
+    bus.emit(BaseEventHandle::<Event2>::new(EmptyPayload {}));
 
     block_on(event1.wait_completed());
 
@@ -1036,12 +1039,12 @@ fn test_deeply_nested_awaited_children() {
 
     let bus_for_event1 = bus.clone();
     let order_for_event1 = execution_order.clone();
-    bus.on("Event1", "event1_handler", move |_event| {
+    bus.on_raw("Event1", "event1_handler", move |_event| {
         let bus = bus_for_event1.clone();
         let order = order_for_event1.clone();
         async move {
             push(&order, "Event1_start");
-            let child1 = bus.emit_child::<Child1>(TypedEvent::new(EmptyPayload {}));
+            let child1 = bus.emit_child(BaseEventHandle::<Child1>::new(EmptyPayload {}));
             child1.wait_completed().await;
             push(&order, "Event1_end");
             Ok(json!("event1_done"))
@@ -1050,12 +1053,12 @@ fn test_deeply_nested_awaited_children() {
 
     let bus_for_child1 = bus.clone();
     let order_for_child1 = execution_order.clone();
-    bus.on("Child1", "child1_handler", move |_event| {
+    bus.on_raw("Child1", "child1_handler", move |_event| {
         let bus = bus_for_child1.clone();
         let order = order_for_child1.clone();
         async move {
             push(&order, "Child1_start");
-            let child2 = bus.emit_child::<Child2>(TypedEvent::new(EmptyPayload {}));
+            let child2 = bus.emit_child(BaseEventHandle::<Child2>::new(EmptyPayload {}));
             child2.wait_completed().await;
             push(&order, "Child1_end");
             Ok(json!("child1_done"))
@@ -1063,7 +1066,7 @@ fn test_deeply_nested_awaited_children() {
     });
 
     let order_for_child2 = execution_order.clone();
-    bus.on("Child2", "child2_handler", move |_event| {
+    bus.on_raw("Child2", "child2_handler", move |_event| {
         let order = order_for_child2.clone();
         async move {
             push(&order, "Child2_start");
@@ -1073,7 +1076,7 @@ fn test_deeply_nested_awaited_children() {
     });
 
     let order_for_event2 = execution_order.clone();
-    bus.on("Event2", "event2_handler", move |_event| {
+    bus.on_raw("Event2", "event2_handler", move |_event| {
         let order = order_for_event2.clone();
         async move {
             push(&order, "Event2_start");
@@ -1082,8 +1085,8 @@ fn test_deeply_nested_awaited_children() {
         }
     });
 
-    let event1 = bus.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
-    bus.emit::<Event2>(TypedEvent::new(EmptyPayload {}));
+    let event1 = bus.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
+    bus.emit(BaseEventHandle::<Event2>::new(EmptyPayload {}));
 
     block_on(event1.wait_completed());
 
@@ -1116,11 +1119,11 @@ fn test_bug_queue_jump_two_bus_serial_handlers_should_serialize_on_each_bus() {
 
     let bus_a_for_trigger = bus_a.clone();
     let bus_b_for_trigger = bus_b.clone();
-    bus_a.on("Event1", "trigger_handler", move |_event| {
+    bus_a.on_raw("Event1", "trigger_handler", move |_event| {
         let bus_a = bus_a_for_trigger.clone();
         let bus_b = bus_b_for_trigger.clone();
         async move {
-            let child = bus_a.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            let child = bus_a.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
             bus_b.emit_base(child.inner.clone());
             child.wait_completed().await;
             Ok(json!(null))
@@ -1132,7 +1135,7 @@ fn test_bug_queue_jump_two_bus_serial_handlers_should_serialize_on_each_bus() {
         (bus_b.clone(), "b1_start", "b1_end", "b2_start", "b2_end"),
     ] {
         let log_first = log.clone();
-        bus.on("ChildEvent", first_start, move |_event| {
+        bus.on_raw("ChildEvent", first_start, move |_event| {
             let log = log_first.clone();
             async move {
                 push(&log, first_start);
@@ -1142,7 +1145,7 @@ fn test_bug_queue_jump_two_bus_serial_handlers_should_serialize_on_each_bus() {
             }
         });
         let log_second = log.clone();
-        bus.on("ChildEvent", second_start, move |_event| {
+        bus.on_raw("ChildEvent", second_start, move |_event| {
             let log = log_second.clone();
             async move {
                 push(&log, second_start);
@@ -1153,7 +1156,7 @@ fn test_bug_queue_jump_two_bus_serial_handlers_should_serialize_on_each_bus() {
         });
     }
 
-    let top = bus_a.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    let top = bus_a.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
     block_on(top.wait_completed());
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));
@@ -1184,11 +1187,11 @@ fn test_bug_queue_jump_two_bus_global_handler_lock_should_serialize_across_both_
 
     let bus_a_for_trigger = bus_a.clone();
     let bus_b_for_trigger = bus_b.clone();
-    bus_a.on("Event1", "trigger_handler", move |_event| {
+    bus_a.on_raw("Event1", "trigger_handler", move |_event| {
         let bus_a = bus_a_for_trigger.clone();
         let bus_b = bus_b_for_trigger.clone();
         async move {
-            let child = bus_a.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            let child = bus_a.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
             bus_b.emit_base(child.inner.clone());
             child.wait_completed().await;
             Ok(json!(null))
@@ -1201,7 +1204,7 @@ fn test_bug_queue_jump_two_bus_global_handler_lock_should_serialize_across_both_
     ] {
         let log_first = log.clone();
         let lock_first = global_handler_lock.clone();
-        bus.on_sync("ChildEvent", first_start, move |_event| {
+        bus.on_raw_sync("ChildEvent", first_start, move |_event| {
             let _guard = lock_first.lock().expect("global handler lock");
             push(&log_first, first_start);
             thread::sleep(Duration::from_millis(15));
@@ -1210,7 +1213,7 @@ fn test_bug_queue_jump_two_bus_global_handler_lock_should_serialize_across_both_
         });
         let log_second = log.clone();
         let lock_second = global_handler_lock.clone();
-        bus.on_sync("ChildEvent", second_start, move |_event| {
+        bus.on_raw_sync("ChildEvent", second_start, move |_event| {
             let _guard = lock_second.lock().expect("global handler lock");
             push(&log_second, second_start);
             thread::sleep(Duration::from_millis(5));
@@ -1219,7 +1222,7 @@ fn test_bug_queue_jump_two_bus_global_handler_lock_should_serialize_across_both_
         });
     }
 
-    let top = bus_a.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    let top = bus_a.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
     block_on(top.wait_completed());
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));
@@ -1271,11 +1274,11 @@ fn test_bug_queue_jump_two_bus_mixed_bus_a_serial_bus_b_parallel() {
 
     let bus_a_for_trigger = bus_a.clone();
     let bus_b_for_trigger = bus_b.clone();
-    bus_a.on("Event1", "trigger_handler", move |_event| {
+    bus_a.on_raw("Event1", "trigger_handler", move |_event| {
         let bus_a = bus_a_for_trigger.clone();
         let bus_b = bus_b_for_trigger.clone();
         async move {
-            let child = bus_a.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            let child = bus_a.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
             bus_b.emit_base(child.inner.clone());
             child.wait_completed().await;
             Ok(json!(null))
@@ -1287,7 +1290,7 @@ fn test_bug_queue_jump_two_bus_mixed_bus_a_serial_bus_b_parallel() {
         (bus_b.clone(), "b1_start", "b1_end", "b2_start", "b2_end"),
     ] {
         let log_first = log.clone();
-        bus.on("ChildEvent", first_start, move |_event| {
+        bus.on_raw("ChildEvent", first_start, move |_event| {
             let log = log_first.clone();
             async move {
                 push(&log, first_start);
@@ -1297,7 +1300,7 @@ fn test_bug_queue_jump_two_bus_mixed_bus_a_serial_bus_b_parallel() {
             }
         });
         let log_second = log.clone();
-        bus.on("ChildEvent", second_start, move |_event| {
+        bus.on_raw("ChildEvent", second_start, move |_event| {
             let log = log_second.clone();
             async move {
                 push(&log, second_start);
@@ -1308,7 +1311,7 @@ fn test_bug_queue_jump_two_bus_mixed_bus_a_serial_bus_b_parallel() {
         });
     }
 
-    let top = bus_a.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    let top = bus_a.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
     block_on(top.wait_completed());
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));
@@ -1338,11 +1341,11 @@ fn test_bug_queue_jump_two_bus_mixed_bus_a_parallel_bus_b_serial() {
 
     let bus_a_for_trigger = bus_a.clone();
     let bus_b_for_trigger = bus_b.clone();
-    bus_a.on("Event1", "trigger_handler", move |_event| {
+    bus_a.on_raw("Event1", "trigger_handler", move |_event| {
         let bus_a = bus_a_for_trigger.clone();
         let bus_b = bus_b_for_trigger.clone();
         async move {
-            let child = bus_a.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            let child = bus_a.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
             bus_b.emit_base(child.inner.clone());
             child.wait_completed().await;
             Ok(json!(null))
@@ -1354,7 +1357,7 @@ fn test_bug_queue_jump_two_bus_mixed_bus_a_parallel_bus_b_serial() {
         (bus_b.clone(), "b1_start", "b1_end", "b2_start", "b2_end"),
     ] {
         let log_first = log.clone();
-        bus.on("ChildEvent", first_start, move |_event| {
+        bus.on_raw("ChildEvent", first_start, move |_event| {
             let log = log_first.clone();
             async move {
                 push(&log, first_start);
@@ -1364,7 +1367,7 @@ fn test_bug_queue_jump_two_bus_mixed_bus_a_parallel_bus_b_serial() {
             }
         });
         let log_second = log.clone();
-        bus.on("ChildEvent", second_start, move |_event| {
+        bus.on_raw("ChildEvent", second_start, move |_event| {
             let log = log_second.clone();
             async move {
                 push(&log, second_start);
@@ -1375,7 +1378,7 @@ fn test_bug_queue_jump_two_bus_mixed_bus_a_parallel_bus_b_serial() {
         });
     }
 
-    let top = bus_a.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    let top = bus_a.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
     block_on(top.wait_completed());
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));
@@ -1404,7 +1407,7 @@ fn test_forwarded_event_uses_processing_bus_defaults_unless_explicit_overrides_a
     let log = Arc::new(Mutex::new(Vec::new()));
 
     let log_b1 = log.clone();
-    bus_b.on("DefaultsChildEvent", "b1", move |event| {
+    bus_b.on_raw("DefaultsChildEvent", "b1", move |event| {
         let log = log_b1.clone();
         async move {
             let mode = event
@@ -1422,7 +1425,7 @@ fn test_forwarded_event_uses_processing_bus_defaults_unless_explicit_overrides_a
         }
     });
     let log_b2 = log.clone();
-    bus_b.on("DefaultsChildEvent", "b2", move |event| {
+    bus_b.on_raw("DefaultsChildEvent", "b2", move |event| {
         let log = log_b2.clone();
         async move {
             let mode = event
@@ -1442,17 +1445,18 @@ fn test_forwarded_event_uses_processing_bus_defaults_unless_explicit_overrides_a
 
     let bus_a_for_trigger = bus_a.clone();
     let bus_b_for_trigger = bus_b.clone();
-    bus_a.on("Event1", "trigger_handler", move |_event| {
+    bus_a.on_raw("Event1", "trigger_handler", move |_event| {
         let bus_a = bus_a_for_trigger.clone();
         let bus_b = bus_b_for_trigger.clone();
         async move {
-            let inherited = bus_a.emit_child::<DefaultsChildEvent>(TypedEvent::new(ModePayload {
-                mode: "inherited".to_string(),
-            }));
+            let inherited =
+                bus_a.emit_child(BaseEventHandle::<DefaultsChildEvent>::new(ModePayload {
+                    mode: "inherited".to_string(),
+                }));
             bus_b.emit_base(inherited.inner.clone());
             inherited.wait_completed().await;
 
-            let override_event = TypedEvent::<DefaultsChildEvent>::new(ModePayload {
+            let override_event = BaseEventHandle::<DefaultsChildEvent>::new(ModePayload {
                 mode: "override".to_string(),
             });
             override_event.inner.inner.lock().event_handler_concurrency =
@@ -1464,7 +1468,7 @@ fn test_forwarded_event_uses_processing_bus_defaults_unless_explicit_overrides_a
         }
     });
 
-    let top = bus_a.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    let top = bus_a.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
     block_on(top.wait_completed());
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));
@@ -1493,7 +1497,7 @@ fn test_forwarded_first_mode_uses_processing_bus_handler_concurrency_defaults() 
     let log = Arc::new(Mutex::new(Vec::new()));
 
     let bus_b_for_forward = bus_b.clone();
-    bus_a.on("*", "forward_to_b", move |event| {
+    bus_a.on_raw("*", "forward_to_b", move |event| {
         let bus_b = bus_b_for_forward.clone();
         async move {
             bus_b.emit_base(event);
@@ -1502,7 +1506,7 @@ fn test_forwarded_first_mode_uses_processing_bus_handler_concurrency_defaults() 
     });
 
     let slow_log = log.clone();
-    bus_b.on("ForwardedFirstEvent", "slow", move |_event| {
+    bus_b.on_raw("ForwardedFirstEvent", "slow", move |_event| {
         let log = slow_log.clone();
         async move {
             push(&log, "slow_start");
@@ -1512,7 +1516,7 @@ fn test_forwarded_first_mode_uses_processing_bus_handler_concurrency_defaults() 
         }
     });
     let fast_log = log.clone();
-    bus_b.on("ForwardedFirstEvent", "fast", move |_event| {
+    bus_b.on_raw("ForwardedFirstEvent", "fast", move |_event| {
         let log = fast_log.clone();
         async move {
             push(&log, "fast_start");
@@ -1522,7 +1526,7 @@ fn test_forwarded_first_mode_uses_processing_bus_handler_concurrency_defaults() 
         }
     });
 
-    let event = bus_a.emit::<ForwardedFirstEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus_a.emit(BaseEventHandle::<ForwardedFirstEvent>::new(EmptyPayload {}));
     let result = block_on(event.first()).expect("first result");
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));
@@ -1552,7 +1556,7 @@ fn test_bug_queue_jump_should_respect_bus_serial_event_concurrency_on_forward_bu
     let log = Arc::new(Mutex::new(Vec::new()));
 
     let slow_log = log.clone();
-    bus_b.on("SlowEvent", "slow", move |_event| {
+    bus_b.on_raw("SlowEvent", "slow", move |_event| {
         let log = slow_log.clone();
         async move {
             push(&log, "slow_start");
@@ -1562,7 +1566,7 @@ fn test_bug_queue_jump_should_respect_bus_serial_event_concurrency_on_forward_bu
         }
     });
     let child_b_log = log.clone();
-    bus_b.on("ChildEvent", "child_b", move |_event| {
+    bus_b.on_raw("ChildEvent", "child_b", move |_event| {
         let log = child_b_log.clone();
         async move {
             push(&log, "child_b_start");
@@ -1572,7 +1576,7 @@ fn test_bug_queue_jump_should_respect_bus_serial_event_concurrency_on_forward_bu
         }
     });
     let child_a_log = log.clone();
-    bus_a.on("ChildEvent", "child_a", move |_event| {
+    bus_a.on_raw("ChildEvent", "child_a", move |_event| {
         let log = child_a_log.clone();
         async move {
             push(&log, "child_a_start");
@@ -1584,20 +1588,20 @@ fn test_bug_queue_jump_should_respect_bus_serial_event_concurrency_on_forward_bu
 
     let bus_a_for_trigger = bus_a.clone();
     let bus_b_for_trigger = bus_b.clone();
-    bus_a.on("Event1", "trigger_handler", move |_event| {
+    bus_a.on_raw("Event1", "trigger_handler", move |_event| {
         let bus_a = bus_a_for_trigger.clone();
         let bus_b = bus_b_for_trigger.clone();
         async move {
-            let child = bus_a.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            let child = bus_a.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
             bus_b.emit_base(child.inner.clone());
             child.wait_completed().await;
             Ok(json!(null))
         }
     });
 
-    bus_b.emit::<SlowEvent>(TypedEvent::new(EmptyPayload {}));
+    bus_b.emit(BaseEventHandle::<SlowEvent>::new(EmptyPayload {}));
     wait_for_entry(&log, "slow_start");
-    let top = bus_a.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    let top = bus_a.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
     block_on(top.wait_completed());
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));
@@ -1627,7 +1631,7 @@ fn test_queue_jump_with_fully_parallel_forward_bus_starts_immediately() {
     let log = Arc::new(Mutex::new(Vec::new()));
 
     let slow_log = log.clone();
-    bus_b.on("SlowEvent", "slow", move |_event| {
+    bus_b.on_raw("SlowEvent", "slow", move |_event| {
         let log = slow_log.clone();
         async move {
             push(&log, "slow_start");
@@ -1637,7 +1641,7 @@ fn test_queue_jump_with_fully_parallel_forward_bus_starts_immediately() {
         }
     });
     let child_log = log.clone();
-    bus_b.on("ChildEvent", "child_b", move |_event| {
+    bus_b.on_raw("ChildEvent", "child_b", move |_event| {
         let log = child_log.clone();
         async move {
             push(&log, "child_b_start");
@@ -1649,20 +1653,20 @@ fn test_queue_jump_with_fully_parallel_forward_bus_starts_immediately() {
 
     let bus_a_for_trigger = bus_a.clone();
     let bus_b_for_trigger = bus_b.clone();
-    bus_a.on("Event1", "trigger_handler", move |_event| {
+    bus_a.on_raw("Event1", "trigger_handler", move |_event| {
         let bus_a = bus_a_for_trigger.clone();
         let bus_b = bus_b_for_trigger.clone();
         async move {
-            let child = bus_a.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            let child = bus_a.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
             bus_b.emit_base(child.inner.clone());
             child.wait_completed().await;
             Ok(json!(null))
         }
     });
 
-    bus_b.emit::<SlowEvent>(TypedEvent::new(EmptyPayload {}));
+    bus_b.emit(BaseEventHandle::<SlowEvent>::new(EmptyPayload {}));
     wait_for_entry(&log, "slow_start");
-    let top = bus_a.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    let top = bus_a.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
     block_on(top.wait_completed());
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));
@@ -1691,7 +1695,7 @@ fn test_queue_jump_with_parallel_events_and_serial_handlers_on_forward_bus_still
     let log = Arc::new(Mutex::new(Vec::new()));
 
     let slow_log = log.clone();
-    bus_b.on("SlowEvent", "slow", move |_event| {
+    bus_b.on_raw("SlowEvent", "slow", move |_event| {
         let log = slow_log.clone();
         async move {
             push(&log, "slow_start");
@@ -1701,7 +1705,7 @@ fn test_queue_jump_with_parallel_events_and_serial_handlers_on_forward_bus_still
         }
     });
     let child_log = log.clone();
-    bus_b.on("ChildEvent", "child_b", move |_event| {
+    bus_b.on_raw("ChildEvent", "child_b", move |_event| {
         let log = child_log.clone();
         async move {
             push(&log, "child_b_start");
@@ -1713,20 +1717,20 @@ fn test_queue_jump_with_parallel_events_and_serial_handlers_on_forward_bus_still
 
     let bus_a_for_trigger = bus_a.clone();
     let bus_b_for_trigger = bus_b.clone();
-    bus_a.on("Event1", "trigger_handler", move |_event| {
+    bus_a.on_raw("Event1", "trigger_handler", move |_event| {
         let bus_a = bus_a_for_trigger.clone();
         let bus_b = bus_b_for_trigger.clone();
         async move {
-            let child = bus_a.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            let child = bus_a.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
             bus_b.emit_base(child.inner.clone());
             child.wait_completed().await;
             Ok(json!(null))
         }
     });
 
-    bus_b.emit::<SlowEvent>(TypedEvent::new(EmptyPayload {}));
+    bus_b.emit(BaseEventHandle::<SlowEvent>::new(EmptyPayload {}));
     wait_for_entry(&log, "slow_start");
-    let top = bus_a.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
+    let top = bus_a.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
     block_on(top.wait_completed());
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));

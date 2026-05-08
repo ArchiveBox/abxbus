@@ -176,8 +176,8 @@ let bus = EventBus::new_with_options(
 );
 
 bus.on::<ParallelEvent, _, _>("handler", |_event| async move { Ok(()) });
-bus.emit::<ParallelEvent>(BaseEvent::new(ParallelEvent {}));
-bus.emit::<ParallelEvent>(BaseEvent::new(ParallelEvent {}));
+bus.emit(ParallelEvent {});
+bus.emit(ParallelEvent {});
 block_on(bus.wait_until_idle(None));
 ```
 

@@ -11,7 +11,7 @@ use abxbus_rust::{
     base_event::BaseEvent,
     event_bus::{EventBus, EventBusOptions},
     event_handler::EventHandlerOptions,
-    typed::{EventSpec, TypedEvent},
+    typed::{BaseEventHandle, EventSpec},
     types::{EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode},
 };
 use futures::executor::block_on;
@@ -26,16 +26,16 @@ struct EmptyResult {}
 
 struct SerializableEvent;
 impl EventSpec for SerializableEvent {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "SerializableEvent";
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "SerializableEvent";
 }
 
 struct HandlerOrderEvent;
 impl EventSpec for HandlerOrderEvent {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "HandlerOrderEvent";
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "HandlerOrderEvent";
 }
 
 fn json_object_keys(value: &Value, key: &str) -> Vec<String> {
@@ -60,10 +60,10 @@ fn assert_eventbus_json_roundtrip_uses_id_keyed_structures(bus_name: &str, bus_i
         },
     );
 
-    let handler = bus.on("SerializableEvent", "handler", |_event| async move {
+    let handler = bus.on_raw("SerializableEvent", "handler", |_event| async move {
         Ok(json!("ok"))
     });
-    let event = bus.emit::<SerializableEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<SerializableEvent>::new(EmptyPayload {}));
     block_on(event.wait_completed());
 
     let payload = bus.to_json_value();
@@ -133,7 +133,7 @@ fn test_eventbus_preserves_handler_registration_order_through_json_and_restore()
     let original_order = Arc::new(Mutex::new(Vec::<String>::new()));
 
     let order = original_order.clone();
-    let first = bus.on_sync_with_options(
+    let first = bus.on_raw_sync_with_options(
         "HandlerOrderEvent",
         "first",
         EventHandlerOptions {
@@ -147,7 +147,7 @@ fn test_eventbus_preserves_handler_registration_order_through_json_and_restore()
         },
     );
     let order = original_order.clone();
-    let second = bus.on_sync_with_options(
+    let second = bus.on_raw_sync_with_options(
         "HandlerOrderEvent",
         "second",
         EventHandlerOptions {
@@ -169,7 +169,7 @@ fn test_eventbus_preserves_handler_registration_order_through_json_and_restore()
         json!(expected_ids.clone())
     );
 
-    let event = bus.emit::<HandlerOrderEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<HandlerOrderEvent>::new(EmptyPayload {}));
     block_on(event.wait_completed());
     assert_eq!(
         original_order.lock().expect("order").clone(),
@@ -189,7 +189,7 @@ fn test_eventbus_preserves_handler_registration_order_through_json_and_restore()
 
     let restored_order = Arc::new(Mutex::new(Vec::<String>::new()));
     let order = restored_order.clone();
-    restored.on_sync_with_options(
+    restored.on_raw_sync_with_options(
         "HandlerOrderEvent",
         "first",
         EventHandlerOptions {
@@ -204,7 +204,7 @@ fn test_eventbus_preserves_handler_registration_order_through_json_and_restore()
         },
     );
     let order = restored_order.clone();
-    restored.on_sync_with_options(
+    restored.on_raw_sync_with_options(
         "HandlerOrderEvent",
         "second",
         EventHandlerOptions {
@@ -219,7 +219,7 @@ fn test_eventbus_preserves_handler_registration_order_through_json_and_restore()
         },
     );
 
-    let restored_event = restored.emit::<HandlerOrderEvent>(TypedEvent::new(EmptyPayload {}));
+    let restored_event = restored.emit(BaseEventHandle::<HandlerOrderEvent>::new(EmptyPayload {}));
     block_on(restored_event.wait_completed());
     assert_eq!(
         restored_order.lock().expect("order").clone(),
@@ -240,10 +240,10 @@ fn test_baseevent_model_validate_roundtrips_runtime_json_shape() {
         },
     );
 
-    bus.on("SerializableEvent", "handler", |_event| async move {
+    bus.on_raw("SerializableEvent", "handler", |_event| async move {
         Ok(json!("ok"))
     });
-    let event = bus.emit::<SerializableEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<SerializableEvent>::new(EmptyPayload {}));
     block_on(event.wait_completed());
 
     let payload = event.inner.to_json_value();
@@ -261,10 +261,10 @@ fn assert_eventbus_recreates_missing_handler_entries_from_event_result_metadata(
         },
     );
 
-    let handler = bus.on("SerializableEvent", "handler", |_event| async move {
+    let handler = bus.on_raw("SerializableEvent", "handler", |_event| async move {
         Ok(json!("ok"))
     });
-    let event = bus.emit::<SerializableEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<SerializableEvent>::new(EmptyPayload {}));
     block_on(event.wait_completed());
 
     let mut payload = bus.to_json_value();
@@ -301,7 +301,7 @@ fn assert_eventbus_promotes_pending_events_into_event_history() {
     let sent_started = Arc::new(AtomicBool::new(false));
     let sent_started_for_handler = sent_started.clone();
 
-    bus.on("SerializableEvent", "blocking_handler", move |_event| {
+    bus.on_raw("SerializableEvent", "blocking_handler", move |_event| {
         let started_tx = started_tx.clone();
         let sent_started = sent_started_for_handler.clone();
         async move {
@@ -313,11 +313,11 @@ fn assert_eventbus_promotes_pending_events_into_event_history() {
         }
     });
 
-    let first = bus.emit::<SerializableEvent>(TypedEvent::new(EmptyPayload {}));
+    let first = bus.emit(BaseEventHandle::<SerializableEvent>::new(EmptyPayload {}));
     started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("first handler should start");
-    let pending = bus.emit::<SerializableEvent>(TypedEvent::new(EmptyPayload {}));
+    let pending = bus.emit(BaseEventHandle::<SerializableEvent>::new(EmptyPayload {}));
 
     let first_id = first.inner.inner.lock().event_id.clone();
     let pending_id = pending.inner.inner.lock().event_id.clone();

@@ -28,7 +28,7 @@ fn register_active_handler(
     active: Arc<AtomicUsize>,
     max_active: Arc<AtomicUsize>,
 ) {
-    bus.on(event_type, handler_name, move |_event| {
+    bus.on_raw(event_type, handler_name, move |_event| {
         let active = active.clone();
         let max_active = max_active.clone();
         async move {

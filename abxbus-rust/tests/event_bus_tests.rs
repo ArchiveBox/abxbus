@@ -2,7 +2,7 @@ use std::{thread, time::Duration};
 
 use abxbus_rust::{
     event_bus::EventBus,
-    typed::{EventSpec, TypedEvent},
+    typed::{BaseEventHandle, EventSpec},
     types::{EventConcurrencyMode, EventHandlerConcurrencyMode},
 };
 use futures::executor::block_on;
@@ -21,16 +21,16 @@ struct WorkResult {
 
 struct WorkEvent;
 impl EventSpec for WorkEvent {
-    type Payload = WorkPayload;
-    type Result = WorkResult;
-    const EVENT_TYPE: &'static str = "work";
+    type payload = WorkPayload;
+    type event_result_type = WorkResult;
+    const event_type: &'static str = "work";
 }
 
 #[test]
 fn test_emit_and_handler_result() {
     let bus = EventBus::new(Some("BusA".to_string()));
-    bus.on("work", "h1", |_event| async move { Ok(json!("ok")) });
-    let event = bus.emit::<WorkEvent>(TypedEvent::<WorkEvent>::new(WorkPayload { value: 1 }));
+    bus.on_raw("work", "h1", |_event| async move { Ok(json!("ok")) });
+    let event = bus.emit(BaseEventHandle::<WorkEvent>::new(WorkPayload { value: 1 }));
     block_on(event.wait_completed());
 
     let results = event.inner.inner.lock().event_results.clone();
@@ -44,16 +44,16 @@ fn test_emit_and_handler_result() {
 fn test_parallel_handler_concurrency() {
     let bus = EventBus::new(Some("BusPar".to_string()));
 
-    bus.on("work", "h1", |_event| async move {
+    bus.on_raw("work", "h1", |_event| async move {
         thread::sleep(Duration::from_millis(20));
         Ok(json!(1))
     });
-    bus.on("work", "h2", |_event| async move {
+    bus.on_raw("work", "h2", |_event| async move {
         thread::sleep(Duration::from_millis(20));
         Ok(json!(2))
     });
 
-    let event = TypedEvent::<WorkEvent>::new(WorkPayload { value: 1 });
+    let event = BaseEventHandle::<WorkEvent>::new(WorkPayload { value: 1 });
     {
         let mut inner = event.inner.inner.lock();
         inner.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);

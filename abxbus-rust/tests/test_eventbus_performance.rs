@@ -70,7 +70,7 @@ fn test_performance_50k_events() {
     let checksum = Arc::new(AtomicI64::new(0));
     let processed_for_handler = processed.clone();
     let checksum_for_handler = checksum.clone();
-    bus.on_sync_with_options(
+    bus.on_raw_sync_with_options(
         "PerfSimpleEvent",
         "handler",
         no_path_handler_options("perf-simple-handler"),
@@ -142,7 +142,7 @@ fn test_performance_ephemeral_buses() {
             },
         );
         let processed_for_handler = processed.clone();
-        bus.on_sync_with_options(
+        bus.on_raw_sync_with_options(
             "PerfEphemeralEvent",
             "handler",
             no_path_handler_options(format!("perf-ephemeral-handler-{bus_index}")),
@@ -188,7 +188,7 @@ fn test_performance_single_event_many_parallel_handlers() {
     for index in 0..total_handlers {
         let handled_for_handler = handled.clone();
         let handler_id = format!("perf-fixed-handler-{index:05}");
-        bus.on_sync_with_options(
+        bus.on_raw_sync_with_options(
             "PerfFixedHandlersEvent",
             &handler_id,
             no_path_handler_options(handler_id.clone()),
@@ -233,7 +233,7 @@ fn test_performance_on_off_churn() {
     for index in 0..total_events {
         let handled_for_handler = handled.clone();
         let handler_id = format!("perf-one-off-handler-{index:05}");
-        let handler = bus.on_sync_with_options(
+        let handler = bus.on_raw_sync_with_options(
             "PerfOneOffEvent",
             &handler_id,
             no_path_handler_options(handler_id.clone()),
@@ -288,7 +288,7 @@ fn test_performance_worst_case_forwarding_queue_jump_timeouts() {
 
     let parents_for_handler = parents.clone();
     let child_bus_for_handler = child_bus.clone();
-    parent_bus.on("WCParent", "forward", move |event| {
+    parent_bus.on_raw("WCParent", "forward", move |event| {
         let child_bus = child_bus_for_handler.clone();
         let parents = parents_for_handler.clone();
         async move {
@@ -314,7 +314,7 @@ fn test_performance_worst_case_forwarding_queue_jump_timeouts() {
 
     let children_for_handler = children.clone();
     let timed_out_for_handler = timed_out.clone();
-    child_bus.on_with_options(
+    child_bus.on_raw_with_options(
         "WCChild",
         "child",
         no_path_handler_options("perf-worst-child-handler"),

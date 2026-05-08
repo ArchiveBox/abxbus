@@ -10,7 +10,7 @@ use std::{
 use abxbus_rust::{
     base_event::BaseEvent,
     event_bus::EventBus,
-    typed::{EventSpec, TypedEvent},
+    typed::{BaseEventHandle, EventSpec},
     types::{EventHandlerCompletionMode, EventHandlerConcurrencyMode},
 };
 use futures::executor::block_on;
@@ -25,36 +25,36 @@ struct WorkResult {
 }
 struct WorkEvent;
 impl EventSpec for WorkEvent {
-    type Payload = EmptyPayload;
-    type Result = WorkResult;
-    const EVENT_TYPE: &'static str = "work";
+    type payload = EmptyPayload;
+    type event_result_type = WorkResult;
+    const event_type: &'static str = "work";
 }
 
 struct ValueEvent;
 impl EventSpec for ValueEvent {
-    type Payload = EmptyPayload;
-    type Result = Value;
-    const EVENT_TYPE: &'static str = "value";
+    type payload = EmptyPayload;
+    type event_result_type = Value;
+    const event_type: &'static str = "value";
 }
 
 struct ChildEvent;
 impl EventSpec for ChildEvent {
-    type Payload = EmptyPayload;
-    type Result = Value;
-    const EVENT_TYPE: &'static str = "child";
+    type payload = EmptyPayload;
+    type event_result_type = Value;
+    const event_type: &'static str = "child";
 }
 
 #[test]
 fn test_event_handler_first_serial_stops_after_first_success() {
     let bus = EventBus::new(Some("BusFirstSerial".to_string()));
 
-    bus.on("work", "first", |_event| async move { Ok(json!("winner")) });
-    bus.on("work", "second", |_event| async move {
+    bus.on_raw("work", "first", |_event| async move { Ok(json!("winner")) });
+    bus.on_raw("work", "second", |_event| async move {
         thread::sleep(Duration::from_millis(20));
         Ok(json!("late"))
     });
 
-    let event = TypedEvent::<WorkEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<WorkEvent>::new(EmptyPayload {});
     {
         let mut inner = event.inner.inner.lock();
         inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
@@ -84,15 +84,15 @@ fn test_event_handler_first_serial_stops_after_first_success() {
 fn test_event_first_skips_none_result_and_uses_next_winner() {
     let bus = EventBus::new(Some("BusFirstSkipsNull".to_string()));
 
-    bus.on("value", "none", |_event| async move { Ok(Value::Null) });
-    bus.on(
+    bus.on_raw("value", "none", |_event| async move { Ok(Value::Null) });
+    bus.on_raw(
         "value",
         "winner",
         |_event| async move { Ok(json!("winner")) },
     );
-    bus.on("value", "late", |_event| async move { Ok(json!("late")) });
+    bus.on_raw("value", "late", |_event| async move { Ok(json!("late")) });
 
-    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
     {
         let mut inner = event.inner.inner.lock();
         inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
@@ -124,14 +124,14 @@ fn test_event_first_skips_none_result_and_uses_next_winner() {
 #[test]
 fn test_event_first_preserves_false_and_empty_string_results() {
     let false_bus = EventBus::new(Some("BusFirstFalse".to_string()));
-    false_bus.on(
+    false_bus.on_raw(
         "value",
         "false_winner",
         |_event| async move { Ok(json!(false)) },
     );
-    false_bus.on("value", "late", |_event| async move { Ok(json!("late")) });
+    false_bus.on_raw("value", "late", |_event| async move { Ok(json!("late")) });
 
-    let false_event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    let false_event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
     {
         let mut inner = false_event.inner.inner.lock();
         inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
@@ -144,14 +144,14 @@ fn test_event_first_preserves_false_and_empty_string_results() {
     false_bus.stop();
 
     let empty_bus = EventBus::new(Some("BusFirstEmptyString".to_string()));
-    empty_bus.on(
+    empty_bus.on_raw(
         "value",
         "empty_winner",
         |_event| async move { Ok(json!("")) },
     );
-    empty_bus.on("value", "late", |_event| async move { Ok(json!("late")) });
+    empty_bus.on_raw("value", "late", |_event| async move { Ok(json!("late")) });
 
-    let empty_event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    let empty_event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
     {
         let mut inner = empty_event.inner.inner.lock();
         inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
@@ -168,19 +168,19 @@ fn test_event_first_preserves_false_and_empty_string_results() {
 fn test_event_first_shortcut_sets_mode_and_returns_winner() {
     let bus = EventBus::new(Some("BusFirstShortcut".to_string()));
 
-    bus.on(
+    bus.on_raw(
         "value",
         "null_result",
         |_event| async move { Ok(Value::Null) },
     );
-    bus.on(
+    bus.on_raw(
         "value",
         "winner",
         |_event| async move { Ok(json!("winner")) },
     );
-    bus.on("value", "late", |_event| async move { Ok(json!("late")) });
+    bus.on_raw("value", "late", |_event| async move { Ok(json!("late")) });
 
-    let event = bus.emit::<ValueEvent>(TypedEvent::<ValueEvent>::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<ValueEvent>::new(EmptyPayload {}));
     assert_eq!(event.inner.inner.lock().event_handler_completion, None);
     let result = block_on(event.first()).expect("first result");
 
@@ -201,11 +201,11 @@ fn test_event_first_shortcut_sets_mode_and_returns_winner() {
 fn test_first_event_handler_completion_is_set_to_first_after_calling_first() {
     let bus = EventBus::new(Some("FirstFieldBus".to_string()));
 
-    bus.on("value", "result_handler", |_event| async move {
+    bus.on_raw("value", "result_handler", |_event| async move {
         Ok(json!("result"))
     });
 
-    let event = bus.emit::<ValueEvent>(TypedEvent::<ValueEvent>::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<ValueEvent>::new(EmptyPayload {}));
     assert_eq!(event.inner.inner.lock().event_handler_completion, None);
 
     let result = block_on(event.first()).expect("first result");
@@ -227,11 +227,11 @@ fn test_first_event_handler_completion_is_set_to() {
 fn test_first_event_handler_completion_appears_in_tojson_output() {
     let bus = EventBus::new(Some("FirstJsonBus".to_string()));
 
-    bus.on("value", "json_handler", |_event| async move {
+    bus.on_raw("value", "json_handler", |_event| async move {
         Ok(json!("json result"))
     });
 
-    let event = bus.emit::<ValueEvent>(TypedEvent::<ValueEvent>::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<ValueEvent>::new(EmptyPayload {}));
     block_on(event.first()).expect("first result");
 
     let payload = event.inner.to_json_value();
@@ -243,16 +243,16 @@ fn test_first_event_handler_completion_appears_in_tojson_output() {
 fn test_first_event_handler_completion_can_be_set_via_event_constructor() {
     let bus = EventBus::new(Some("FirstCtorBus".to_string()));
 
-    bus.on("value", "slow_handler", |_event| async move {
+    bus.on_raw("value", "slow_handler", |_event| async move {
         thread::sleep(Duration::from_millis(80));
         Ok(json!("slow handler"))
     });
-    bus.on("value", "fast_handler", |_event| async move {
+    bus.on_raw("value", "fast_handler", |_event| async move {
         thread::sleep(Duration::from_millis(10));
         Ok(json!("fast handler"))
     });
 
-    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
     {
         let mut inner = event.inner.inner.lock();
         inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
@@ -273,16 +273,16 @@ fn test_first_event_handler_completion_can_be_set_via_event_constructor() {
 fn test_event_handler_first_parallel_returns_earliest_completed_non_null_result() {
     let bus = EventBus::new(Some("BusFirstParallelWinner".to_string()));
 
-    bus.on("value", "slow_loser", |_event| async move {
+    bus.on_raw("value", "slow_loser", |_event| async move {
         thread::sleep(Duration::from_millis(80));
         Ok(json!("slow"))
     });
-    bus.on("value", "fast_winner", |_event| async move {
+    bus.on_raw("value", "fast_winner", |_event| async move {
         thread::sleep(Duration::from_millis(10));
         Ok(json!("fast"))
     });
 
-    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
     {
         let mut inner = event.inner.inner.lock();
         inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
@@ -329,13 +329,13 @@ fn test_event_first_parallel_returns_before_slow_loser_finishes() {
     let bus = EventBus::new(Some("BusFirstParallelEarlyReturn".to_string()));
     let slow_completed = Arc::new(AtomicBool::new(false));
 
-    bus.on("value", "fast_winner", |_event| async move {
+    bus.on_raw("value", "fast_winner", |_event| async move {
         thread::sleep(Duration::from_millis(10));
         Ok(json!("fast"))
     });
 
     let slow_completed_for_handler = slow_completed.clone();
-    bus.on("value", "slow_loser", move |_event| {
+    bus.on_raw("value", "slow_loser", move |_event| {
         let slow_completed = slow_completed_for_handler.clone();
         async move {
             thread::sleep(Duration::from_millis(400));
@@ -344,7 +344,7 @@ fn test_event_first_parallel_returns_before_slow_loser_finishes() {
         }
     });
 
-    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
     {
         let mut inner = event.inner.inner.lock();
         inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
@@ -383,7 +383,7 @@ fn test_first_returns_undefined_when_no_handlers_are_registered() {
     let bus = EventBus::new(Some("FirstNoHandlerBus".to_string()));
 
     let result = block_on(
-        bus.emit::<ValueEvent>(TypedEvent::new(EmptyPayload {}))
+        bus.emit(BaseEventHandle::<ValueEvent>::new(EmptyPayload {}))
             .first(),
     )
     .expect("first result");
@@ -394,7 +394,7 @@ fn test_first_returns_undefined_when_no_handlers_are_registered() {
 
 #[test]
 fn test_first_rejects_when_event_has_no_bus_attached() {
-    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
 
     let error = block_on(event.first()).expect_err("unemitted event should reject");
 
@@ -405,14 +405,14 @@ fn test_first_rejects_when_event_has_no_bus_attached() {
 fn test_first_re_raises_first_processing_error_when_all_handlers_throw() {
     let bus = EventBus::new(Some("FirstErrorBus".to_string()));
 
-    bus.on("value", "handler_1", |_event| async move {
+    bus.on_raw("value", "handler_1", |_event| async move {
         Err("handler 1 error".to_string())
     });
-    bus.on("value", "handler_2", |_event| async move {
+    bus.on_raw("value", "handler_2", |_event| async move {
         Err("handler 2 error".to_string())
     });
 
-    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
     {
         let mut inner = event.inner.inner.lock();
         inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
@@ -431,15 +431,15 @@ fn test_first_re_raises_first_processing_error_when_all_handlers_throw() {
 fn test_first_re_raises_processing_errors_even_when_another_handler_succeeds() {
     let bus = EventBus::new(Some("FirstMixBus".to_string()));
 
-    bus.on("value", "fast_failure", |_event| async move {
+    bus.on_raw("value", "fast_failure", |_event| async move {
         Err("fast but fails".to_string())
     });
-    bus.on("value", "slow_success", |_event| async move {
+    bus.on_raw("value", "slow_success", |_event| async move {
         thread::sleep(Duration::from_millis(20));
         Ok(json!("slow but succeeds"))
     });
 
-    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
     {
         let mut inner = event.inner.inner.lock();
         inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
@@ -467,26 +467,26 @@ fn test_first_cancels_child_events_emitted_by_losing_handlers() {
     let child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
     let child_ref_for_slow_parent = child_ref.clone();
 
-    bus.on("child", "slow_child", |_event| async move {
+    bus.on_raw("child", "slow_child", |_event| async move {
         thread::sleep(Duration::from_millis(500));
         Ok(json!("child result"))
     });
-    bus.on("value", "fast_parent", |_event| async move {
+    bus.on_raw("value", "fast_parent", |_event| async move {
         thread::sleep(Duration::from_millis(30));
         Ok(json!("fast parent"))
     });
-    bus.on("value", "slow_parent_with_child", move |_event| {
+    bus.on_raw("value", "slow_parent_with_child", move |_event| {
         let bus = bus_for_slow_parent.clone();
         let child_ref = child_ref_for_slow_parent.clone();
         async move {
-            let child = bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            let child = bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
             *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
             child.wait_completed().await;
             Ok(json!("slow parent with child"))
         }
     });
 
-    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
     {
         let mut inner = event.inner.inner.lock();
         inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
@@ -522,10 +522,10 @@ fn test_first_cancels_child_events_emitted_by_losing_handlers() {
 fn test_event_first_returns_zero_as_valid_first_result() {
     let bus = EventBus::new(Some("BusFirstZero".to_string()));
 
-    bus.on("value", "zero_winner", |_event| async move { Ok(json!(0)) });
-    bus.on("value", "late", |_event| async move { Ok(json!("late")) });
+    bus.on_raw("value", "zero_winner", |_event| async move { Ok(json!(0)) });
+    bus.on_raw("value", "late", |_event| async move { Ok(json!("late")) });
 
-    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
     {
         let mut inner = event.inner.inner.lock();
         inner.event_handler_completion = Some(EventHandlerCompletionMode::First);
@@ -542,14 +542,14 @@ fn test_event_first_returns_zero_as_valid_first_result() {
 fn test_first_returns_empty_string_as_a_valid_first_result() {
     let bus = EventBus::new(Some("FirstEmptyBus".to_string()));
 
-    bus.on(
+    bus.on_raw(
         "value",
         "empty_winner",
         |_event| async move { Ok(json!("")) },
     );
 
     let result = block_on(
-        bus.emit::<ValueEvent>(TypedEvent::new(EmptyPayload {}))
+        bus.emit(BaseEventHandle::<ValueEvent>::new(EmptyPayload {}))
             .first(),
     )
     .expect("first result");
@@ -562,14 +562,14 @@ fn test_first_returns_empty_string_as_a_valid_first_result() {
 fn test_first_returns_false_as_a_valid_first_result() {
     let bus = EventBus::new(Some("FirstFalseBus".to_string()));
 
-    bus.on(
+    bus.on_raw(
         "value",
         "false_winner",
         |_event| async move { Ok(json!(false)) },
     );
 
     let result = block_on(
-        bus.emit::<ValueEvent>(TypedEvent::new(EmptyPayload {}))
+        bus.emit(BaseEventHandle::<ValueEvent>::new(EmptyPayload {}))
             .first(),
     )
     .expect("first result");
@@ -582,11 +582,11 @@ fn test_first_returns_false_as_a_valid_first_result() {
 fn test_event_first_returns_none_when_all_handlers_return_null() {
     let bus = EventBus::new(Some("BusFirstAllNull".to_string()));
 
-    bus.on("value", "null_a", |_event| async move { Ok(Value::Null) });
-    bus.on("value", "null_b", |_event| async move { Ok(Value::Null) });
+    bus.on_raw("value", "null_a", |_event| async move { Ok(Value::Null) });
+    bus.on_raw("value", "null_b", |_event| async move { Ok(Value::Null) });
 
     let result = block_on(
-        bus.emit::<ValueEvent>(TypedEvent::new(EmptyPayload {}))
+        bus.emit(BaseEventHandle::<ValueEvent>::new(EmptyPayload {}))
             .first(),
     )
     .expect("first result");
@@ -599,10 +599,10 @@ fn test_event_first_returns_none_when_all_handlers_return_null() {
 fn test_event_first_works_with_single_handler() {
     let bus = EventBus::new(Some("BusFirstSingle".to_string()));
 
-    bus.on("value", "single", |_event| async move { Ok(json!(42)) });
+    bus.on_raw("value", "single", |_event| async move { Ok(json!(42)) });
 
     let result = block_on(
-        bus.emit::<ValueEvent>(TypedEvent::new(EmptyPayload {}))
+        bus.emit(BaseEventHandle::<ValueEvent>::new(EmptyPayload {}))
             .first(),
     )
     .expect("first result");
@@ -616,16 +616,16 @@ fn test_event_first_skips_base_event_json_result_and_uses_next_winner() {
     let bus = EventBus::new(Some("BusFirstSkipsBaseEventJson".to_string()));
     let third_handler_called = Arc::new(AtomicBool::new(false));
 
-    bus.on("value", "base_event_result", |_event| async move {
+    bus.on_raw("value", "base_event_result", |_event| async move {
         Ok(BaseEvent::new("FirstBaseEventSkipChild", Map::new()).to_json_value())
     });
-    bus.on(
+    bus.on_raw(
         "value",
         "winner",
         |_event| async move { Ok(json!("winner")) },
     );
     let third_called_for_handler = third_handler_called.clone();
-    bus.on("value", "third", move |_event| {
+    bus.on_raw("value", "third", move |_event| {
         let third_handler_called = third_called_for_handler.clone();
         async move {
             third_handler_called.store(true, Ordering::SeqCst);
@@ -633,7 +633,7 @@ fn test_event_first_skips_base_event_json_result_and_uses_next_winner() {
         }
     });
 
-    let event = TypedEvent::<ValueEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<ValueEvent>::new(EmptyPayload {});
     {
         let mut inner = event.inner.inner.lock();
         inner.event_handler_completion = Some(EventHandlerCompletionMode::First);

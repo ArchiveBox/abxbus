@@ -38,7 +38,7 @@ fn test_event_event_bus_inside_handler_returns_the_dispatching_bus() {
     let handler_called_for_handler = handler_called.clone();
     let handler_bus_name_for_handler = handler_bus_name.clone();
     let child_event_for_handler = child_event.clone();
-    bus.on("MainEvent", "main_handler", move |event| {
+    bus.on_raw("MainEvent", "main_handler", move |event| {
         let handler_called = handler_called_for_handler.clone();
         let handler_bus_name = handler_bus_name_for_handler.clone();
         let child_event = child_event_for_handler.clone();
@@ -52,7 +52,7 @@ fn test_event_event_bus_inside_handler_returns_the_dispatching_bus() {
             Ok(json!(null))
         }
     });
-    bus.on("ChildEvent", "child_handler", |_event| async move {
+    bus.on_raw("ChildEvent", "child_handler", |_event| async move {
         Ok(json!(null))
     });
 
@@ -87,7 +87,7 @@ fn test_legacy_bus_property_is_not_exposed_inside_handlers() {
     let has_serialized_legacy_bus = Arc::new(Mutex::new(true));
 
     let has_serialized_legacy_bus_for_handler = has_serialized_legacy_bus.clone();
-    bus.on("MainEvent", "handler", move |event| {
+    bus.on_raw("MainEvent", "handler", move |event| {
         let has_serialized_legacy_bus = has_serialized_legacy_bus_for_handler.clone();
         async move {
             *has_serialized_legacy_bus.lock().expect("legacy bus lock") =
@@ -114,7 +114,7 @@ fn test_event_bus_aliases_bus_property() {
 
     let seen_bus_id_for_handler = seen_bus_id.clone();
     let seen_event_bus_id_for_handler = seen_event_bus_id.clone();
-    bus.on("MainEvent", "handler", move |event| {
+    bus.on_raw("MainEvent", "handler", move |event| {
         let seen_bus_id = seen_bus_id_for_handler.clone();
         let seen_event_bus_id = seen_event_bus_id_for_handler.clone();
         async move {
@@ -154,7 +154,7 @@ fn test_event_event_bus_is_set_for_child_events_emitted_in_handler() {
     let child_bus_name = Arc::new(Mutex::new(None::<String>));
 
     let child_bus_name_for_handler = child_bus_name.clone();
-    bus.on("MainEvent", "handler", move |event| {
+    bus.on_raw("MainEvent", "handler", move |event| {
         let child_bus_name = child_bus_name_for_handler.clone();
         async move {
             let current_bus = event.event_bus().expect("handler bus");
@@ -164,7 +164,7 @@ fn test_event_event_bus_is_set_for_child_events_emitted_in_handler() {
             Ok(json!(null))
         }
     });
-    bus.on("ChildEvent", "child_handler", |_event| async move {
+    bus.on_raw("ChildEvent", "child_handler", |_event| async move {
         Ok(json!(null))
     });
 
@@ -182,7 +182,7 @@ fn test_event_event_bus_is_set_for_child_events_emitted_in_handler() {
 fn test_event_event_bus_is_absent_on_detached_events() {
     let bus_name = unique_bus_name("EventBusPropertyDetachedBus");
     let bus = EventBus::new(Some(bus_name.clone()));
-    bus.on(
+    bus.on_raw(
         "MainEvent",
         "handler",
         |_event| async move { Ok(json!(null)) },
@@ -225,7 +225,7 @@ fn test_event_event_bus_returns_correct_bus_when_multiple_buses_exist() {
     let handler2_bus_name = Arc::new(Mutex::new(None::<String>));
 
     let handler1_bus_name_for_handler = handler1_bus_name.clone();
-    bus1.on("MainEvent", "handler1", move |event| {
+    bus1.on_raw("MainEvent", "handler1", move |event| {
         let handler1_bus_name = handler1_bus_name_for_handler.clone();
         async move {
             *handler1_bus_name.lock().expect("handler1 bus lock") =
@@ -234,7 +234,7 @@ fn test_event_event_bus_returns_correct_bus_when_multiple_buses_exist() {
         }
     });
     let handler2_bus_name_for_handler = handler2_bus_name.clone();
-    bus2.on("MainEvent", "handler2", move |event| {
+    bus2.on_raw("MainEvent", "handler2", move |event| {
         let handler2_bus_name = handler2_bus_name_for_handler.clone();
         async move {
             *handler2_bus_name.lock().expect("handler2 bus lock") =
@@ -275,7 +275,7 @@ fn test_event_event_bus_reflects_the_currently_processing_bus_when_forwarded() {
     let bus2_handler_bus_name = Arc::new(Mutex::new(None::<String>));
 
     let bus2_for_forward = bus2.clone();
-    bus1.on("*", "forward_to_bus2", move |event| {
+    bus1.on_raw("*", "forward_to_bus2", move |event| {
         let bus2 = bus2_for_forward.clone();
         async move {
             bus2.emit_base(event);
@@ -284,7 +284,7 @@ fn test_event_event_bus_reflects_the_currently_processing_bus_when_forwarded() {
     });
 
     let handler_bus_name = bus2_handler_bus_name.clone();
-    bus2.on("MainEvent", "bus2_handler", move |event| {
+    bus2.on_raw("MainEvent", "bus2_handler", move |event| {
         let handler_bus_name = handler_bus_name.clone();
         async move {
             *handler_bus_name.lock().expect("handler_bus_name lock") =
@@ -321,7 +321,7 @@ fn test_event_event_bus_in_nested_handlers_sees_the_same_bus() {
     let inner_bus_name = Arc::new(Mutex::new(None::<String>));
 
     let outer_bus_name_for_handler = outer_bus_name.clone();
-    bus.on("MainEvent", "outer_handler", move |event| {
+    bus.on_raw("MainEvent", "outer_handler", move |event| {
         let outer_bus_name = outer_bus_name_for_handler.clone();
         async move {
             let current_bus = event.event_bus().expect("outer bus");
@@ -333,7 +333,7 @@ fn test_event_event_bus_in_nested_handlers_sees_the_same_bus() {
     });
 
     let inner_bus_name_for_handler = inner_bus_name.clone();
-    bus.on("ChildEvent", "inner_handler", move |event| {
+    bus.on_raw("ChildEvent", "inner_handler", move |event| {
         let inner_bus_name = inner_bus_name_for_handler.clone();
         async move {
             *inner_bus_name.lock().expect("inner bus lock") =
@@ -362,7 +362,7 @@ fn test_event_emit_awaited_children_pass_explicit_handler_context_to_immediate_p
     let child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
 
     let child_ref_for_handler = child_ref.clone();
-    bus.on("MainEvent", "main_handler", move |event| {
+    bus.on_raw("MainEvent", "main_handler", move |event| {
         let child_ref = child_ref_for_handler.clone();
         async move {
             let current_bus = event.event_bus().expect("handler bus");
@@ -372,7 +372,7 @@ fn test_event_emit_awaited_children_pass_explicit_handler_context_to_immediate_p
             Ok(json!(null))
         }
     });
-    bus.on("ChildEvent", "child_handler", |_event| async move {
+    bus.on_raw("ChildEvent", "child_handler", |_event| async move {
         Ok(json!("child-ok"))
     });
 
@@ -411,7 +411,7 @@ fn test_event_emit_sets_parent_child_relationships_through_3_levels() {
 
     let order_for_parent = execution_order.clone();
     let child_ref_for_parent = child_ref.clone();
-    bus.on("MainEvent", "parent_handler", move |event| {
+    bus.on_raw("MainEvent", "parent_handler", move |event| {
         let order = order_for_parent.clone();
         let child_ref = child_ref_for_parent.clone();
         async move {
@@ -433,7 +433,7 @@ fn test_event_emit_sets_parent_child_relationships_through_3_levels() {
 
     let order_for_child = execution_order.clone();
     let grandchild_ref_for_child = grandchild_ref.clone();
-    bus.on("ChildEvent", "child_handler", move |event| {
+    bus.on_raw("ChildEvent", "child_handler", move |event| {
         let order = order_for_child.clone();
         let grandchild_ref = grandchild_ref_for_child.clone();
         async move {
@@ -454,7 +454,7 @@ fn test_event_emit_sets_parent_child_relationships_through_3_levels() {
     });
 
     let order_for_grandchild = execution_order.clone();
-    bus.on("GrandchildEvent", "grandchild_handler", move |event| {
+    bus.on_raw("GrandchildEvent", "grandchild_handler", move |event| {
         let order = order_for_grandchild.clone();
         let bus_name = bus_name.clone();
         async move {
@@ -524,7 +524,7 @@ fn test_event_emit_with_forwarding_child_dispatch_goes_to_the_correct_bus() {
     let child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
 
     let bus2_for_forward = bus2.clone();
-    bus1.on("*", "forward_to_bus2", move |event| {
+    bus1.on_raw("*", "forward_to_bus2", move |event| {
         let bus2 = bus2_for_forward.clone();
         async move {
             bus2.emit_base(event);
@@ -533,7 +533,7 @@ fn test_event_emit_with_forwarding_child_dispatch_goes_to_the_correct_bus() {
     });
 
     let child_ref_for_handler = child_ref.clone();
-    bus2.on("MainEvent", "bus2_main_handler", move |event| {
+    bus2.on_raw("MainEvent", "bus2_main_handler", move |event| {
         let child_ref = child_ref_for_handler.clone();
         let bus2_name = bus2_name.clone();
         async move {
@@ -547,7 +547,7 @@ fn test_event_emit_with_forwarding_child_dispatch_goes_to_the_correct_bus() {
     });
 
     let child_bus_name = child_handler_bus_name.clone();
-    bus2.on("ChildEvent", "bus2_child_handler", move |event| {
+    bus2.on_raw("ChildEvent", "bus2_child_handler", move |event| {
         let child_bus_name = child_bus_name.clone();
         async move {
             *child_bus_name.lock().expect("child_bus_name lock") =
@@ -606,12 +606,12 @@ fn test_event_event_bus_is_set_on_the_event_after_dispatch_outside_handler() {
 fn test_event_emit_from_handler_correctly_attributes_event_emitted_by_handler_id() {
     let bus = EventBus::new(Some(unique_bus_name("TestBus")));
 
-    bus.on("MainEvent", "main_handler", move |event| async move {
+    bus.on_raw("MainEvent", "main_handler", move |event| async move {
         let current_bus = event.event_bus().expect("handler bus");
         current_bus.emit_child_base(base_event("ChildEvent", json!({})));
         Ok(json!(null))
     });
-    bus.on("ChildEvent", "child_handler", |_event| async move {
+    bus.on_raw("ChildEvent", "child_handler", |_event| async move {
         Ok(json!(null))
     });
 
@@ -639,7 +639,7 @@ fn test_dispatch_preserves_explicit_event_parent_id_and_does_not_override_it() {
     let explicit_parent_id = "018f8e40-1234-7000-8000-000000001234".to_string();
 
     let explicit_parent_id_for_handler = explicit_parent_id.clone();
-    bus.on("MainEvent", "main_handler", move |event| {
+    bus.on_raw("MainEvent", "main_handler", move |event| {
         let explicit_parent_id = explicit_parent_id_for_handler.clone();
         async move {
             let current_bus = event.event_bus().expect("handler bus");
@@ -667,7 +667,7 @@ fn test_dispatch_preserves_explicit_event_parent_id_and_does_not_override_it() {
 #[test]
 fn test_event_is_child_of_and_event_is_parent_of_work_for_direct_children() {
     let bus = EventBus::new(Some("ParentChildBus".to_string()));
-    bus.on(
+    bus.on_raw(
         "LineageParentEvent",
         "parent_handler",
         move |event| async move {
@@ -695,7 +695,7 @@ fn test_event_is_child_of_and_event_is_parent_of_work_for_direct_children() {
 #[test]
 fn test_event_is_child_of_works_for_grandchildren() {
     let bus = EventBus::new(Some("GrandchildBus".to_string()));
-    bus.on(
+    bus.on_raw(
         "LineageParentEvent",
         "parent_handler",
         move |event| async move {
@@ -706,7 +706,7 @@ fn test_event_is_child_of_works_for_grandchildren() {
             Ok(json!(null))
         },
     );
-    bus.on(
+    bus.on_raw(
         "LineageChildEvent",
         "child_handler",
         move |event| async move {

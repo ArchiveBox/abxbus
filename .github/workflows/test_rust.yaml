@@ -1,0 +1,106 @@
+name: test-rust
+
+on:
+  push:
+    branches:
+      - main
+      - stable
+      - 'releases/**'
+    tags:
+      - '*'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  find_rust_tests:
+    runs-on: ubuntu-latest
+    outputs:
+      RUST_TASKS: ${{ steps.lsgrep.outputs.RUST_TASKS }}
+      # [{ "kind": "lib" | "test" | "bin", "name": "test_eventbus" }, ...]
+      RUST_TEST_TASKS: ${{ steps.lsgrep.outputs.RUST_TEST_TASKS }}
+      # [{ "kind": "test", "name": "test_eventbus" }, ...]
+    steps:
+      - uses: actions/checkout@v4
+      - id: lsgrep
+        run: |
+          RUST_LIB_TASKS="$(jq -cn '[{kind: "lib", name: "lib"}]')"
+          RUST_TEST_TASKS="$(
+            find abxbus-rust/tests -maxdepth 1 -type f -name '*.rs' \
+              | sort \
+              | sed 's|^abxbus-rust/tests/||' \
+              | sed 's|\.rs$||' \
+              | jq -R -s -c 'split("\n")[:-1] | map({kind: "test", name: .})'
+          )"
+          RUST_BIN_TASKS="$(
+            (
+              if [[ -d abxbus-rust/src/bin ]]; then
+                find abxbus-rust/src/bin -maxdepth 1 -type f -name '*.rs' | sort
+              fi
+            ) \
+              | sed 's|^abxbus-rust/src/bin/||' \
+              | sed 's|\.rs$||' \
+              | jq -R -s -c 'split("\n")[:-1] | map({kind: "bin", name: .})'
+          )"
+          RUST_TASKS="$(jq -cn --argjson lib "$RUST_LIB_TASKS" --argjson tests "$RUST_TEST_TASKS" --argjson bins "$RUST_BIN_TASKS" '$lib + $tests + $bins')"
+
+          echo "RUST_TEST_TASKS=${RUST_TEST_TASKS}" >> "$GITHUB_OUTPUT"
+          echo "RUST_TASKS=${RUST_TASKS}" >> "$GITHUB_OUTPUT"
+          echo "$RUST_TASKS"
+      - name: Check that at least one test file is found
+        run: |
+          if [[ -z "${{ steps.lsgrep.outputs.RUST_TEST_TASKS }}" || "${{ steps.lsgrep.outputs.RUST_TEST_TASKS }}" == "[]" ]]; then
+            echo "Failed to find any *.rs files in abxbus-rust/tests/ folder!" > /dev/stderr
+            exit 1
+          fi
+
+  tests:
+    needs:
+      - find_rust_tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        task: ${{ fromJson(needs.find_rust_tests.outputs.RUST_TASKS || '[{"kind":"error","name":"FAILED_TO_DISCOVER_TASKS"}]') }}
+        # autodiscovers files in abxbus-rust/tests/*.rs and abxbus-rust/src/bin/*.rs
+        # - { kind: "lib", name: "lib" }
+        # - { kind: "test", name: "test_eventbus" }
+        # - { kind: "bin", name: "abxbus-rust-roundtrip" }
+        # ... and more
+    name: rust-${{ matrix.task.kind }}-${{ matrix.task.name }}
+    defaults:
+      run:
+        working-directory: abxbus-rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check that the previous step managed to find some tasks for us to run
+        run: |
+          if [[ "${{ matrix.task.kind }}" == "error" ]]; then
+            echo "Failed get list of tasks from find_rust_tests job" > /dev/stderr
+            exit 1
+          fi
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Go for cross-runtime roundtrip tests
+        if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: abxbus-go/go.mod
+          cache-dependency-path: abxbus-go/go.sum
+
+      - name: Run Rust library tests
+        if: matrix.task.kind == 'lib'
+        run: cargo test --locked --all-features --lib
+
+      - name: Run Rust integration test
+        if: matrix.task.kind == 'test'
+        run: cargo test --locked --all-features --test ${{ matrix.task.name }}
+
+      - name: Run Rust binary tests
+        if: matrix.task.kind == 'bin'
+        run: cargo test --locked --all-features --bin ${{ matrix.task.name }}

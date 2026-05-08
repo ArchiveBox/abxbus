@@ -10,7 +10,7 @@ use abxbus_rust::{
     event_bus::{EventBus, EventBusOptions},
     event_handler::EventHandlerOptions,
     event_result::{EventResult, EventResultStatus},
-    typed::{EventSpec, TypedEvent},
+    typed::{BaseEventHandle, EventSpec},
     types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
@@ -23,50 +23,50 @@ struct EmptyPayload {}
 struct EmptyResult {}
 struct TimeoutEvent;
 impl EventSpec for TimeoutEvent {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "timeout";
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "timeout";
 }
 struct ChildEvent;
 impl EventSpec for ChildEvent {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "child";
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "child";
 }
 struct ParentEvent;
 impl EventSpec for ParentEvent {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "parent";
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "parent";
 }
 struct TailEvent;
 impl EventSpec for TailEvent {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "tail";
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "tail";
 }
 struct GrandchildEvent;
 impl EventSpec for GrandchildEvent {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "grandchild";
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "grandchild";
 }
 struct QueuedSiblingEvent;
 impl EventSpec for QueuedSiblingEvent {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "queued_sibling";
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "queued_sibling";
 }
 struct TimeoutDefaultsEvent;
 impl EventSpec for TimeoutDefaultsEvent {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "timeout_defaults";
-    const EVENT_TIMEOUT: Option<f64> = Some(0.2);
-    const EVENT_HANDLER_TIMEOUT: Option<f64> = Some(0.05);
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "timeout_defaults";
+    const event_timeout: Option<f64> = Some(0.2);
+    const event_handler_timeout: Option<f64> = Some(0.05);
 }
 
-fn wait_until_completed(event: &TypedEvent<ParentEvent>, timeout_ms: u64) {
+fn wait_until_completed(event: &BaseEventHandle<ParentEvent>, timeout_ms: u64) {
     let started = std::time::Instant::now();
     while started.elapsed() < Duration::from_millis(timeout_ms) {
         if event.inner.inner.lock().event_status == abxbus_rust::types::EventStatus::Completed {
@@ -167,12 +167,14 @@ fn run_slow_warning_event(
             ..EventBusOptions::default()
         },
     );
-    bus.on("timeout_defaults", "slow_handler", |_event| async move {
+    bus.on_raw("timeout_defaults", "slow_handler", |_event| async move {
         thread::sleep(Duration::from_millis(30));
         Ok(json!("ok"))
     });
 
-    let event = bus.emit::<TimeoutDefaultsEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<TimeoutDefaultsEvent>::new(
+        EmptyPayload {},
+    ));
     block_on(event.wait_completed());
     bus.stop();
 }
@@ -182,12 +184,12 @@ fn test_event_timeout_aborts_in_flight_handler_result() {
     let _guard = timeout_test_guard();
     let bus = EventBus::new(Some("TimeoutBus".to_string()));
 
-    bus.on("timeout", "slow", |_event| async move {
+    bus.on_raw("timeout", "slow", |_event| async move {
         thread::sleep(Duration::from_millis(50));
         Ok(json!("slow"))
     });
 
-    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<TimeoutEvent>::new(EmptyPayload {});
     event.inner.inner.lock().event_timeout = Some(0.01);
 
     let event = bus.emit(event);
@@ -223,12 +225,12 @@ fn test_handler_completes_within_timeout() {
     let _guard = timeout_test_guard();
     let bus = EventBus::new(Some("TimeoutOkBus".to_string()));
 
-    bus.on("timeout", "fast", |_event| async move {
+    bus.on_raw("timeout", "fast", |_event| async move {
         thread::sleep(Duration::from_millis(5));
         Ok(json!("fast"))
     });
 
-    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<TimeoutEvent>::new(EmptyPayload {});
     event.inner.inner.lock().event_timeout = Some(0.5);
 
     let event = bus.emit(event);
@@ -272,12 +274,12 @@ fn test_event_timeouts_abort_handlers_across_concurrency_modes() {
                 },
             );
 
-            bus.on("timeout", "slow", |_event| async move {
+            bus.on_raw("timeout", "slow", |_event| async move {
                 thread::sleep(Duration::from_millis(50));
                 Ok(json!("slow"))
             });
 
-            let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+            let event = BaseEventHandle::<TimeoutEvent>::new(EmptyPayload {});
             event.inner.inner.lock().event_timeout = Some(0.01);
             let event = bus.emit(event);
             block_on(event.wait_completed());
@@ -321,7 +323,7 @@ fn test_event_handler_errors_expose_event_result_cause_and_timeout_metadata() {
         },
     );
 
-    bus.on(
+    bus.on_raw(
         "ErrorMetadataTimeout",
         "slow_timeout",
         |_event| async move {
@@ -366,7 +368,7 @@ fn test_event_handler_errors_expose_event_result_cause_and_timeout_metadata() {
         })
     );
 
-    bus.on(
+    bus.on_raw(
         "ErrorMetadataAwaitedChild",
         "awaited_child_slow",
         |_event| async move {
@@ -378,7 +380,7 @@ fn test_event_handler_errors_expose_event_result_cause_and_timeout_metadata() {
     let awaited_child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
     let bus_for_awaited_parent = bus.clone();
     let awaited_child_ref_for_handler = awaited_child_ref.clone();
-    bus.on(
+    bus.on_raw(
         "ErrorMetadataAwaitedParent",
         "awaits_child",
         move |_event| {
@@ -442,7 +444,7 @@ fn test_event_handler_errors_expose_event_result_cause_and_timeout_metadata() {
     assert_eq!(child_metadata["event_timeout"], json!(0.5));
     assert_eq!(child_metadata["timeout_seconds"], json!(0.5));
 
-    bus.on(
+    bus.on_raw(
         "ErrorMetadataUnawaitedChild",
         "unawaited_child_fast",
         |_event| async move {
@@ -454,7 +456,7 @@ fn test_event_handler_errors_expose_event_result_cause_and_timeout_metadata() {
     let unawaited_child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
     let bus_for_unawaited_parent = bus.clone();
     let unawaited_child_ref_for_handler = unawaited_child_ref.clone();
-    bus.on(
+    bus.on_raw(
         "ErrorMetadataUnawaitedParent",
         "emits_unawaited_child",
         move |_event| {
@@ -507,7 +509,7 @@ fn assert_event_timeout_does_not_relabel_preexisting_handler_timeout() {
         },
     );
 
-    bus.on_with_options(
+    bus.on_raw_with_options(
         "timeout",
         "handler_with_own_timeout",
         EventHandlerOptions {
@@ -519,12 +521,12 @@ fn assert_event_timeout_does_not_relabel_preexisting_handler_timeout() {
             Ok(json!("own-timeout"))
         },
     );
-    bus.on("timeout", "long_running_handler", |_event| async move {
+    bus.on_raw("timeout", "long_running_handler", |_event| async move {
         thread::sleep(Duration::from_millis(200));
         Ok(json!("long-running"))
     });
 
-    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<TimeoutEvent>::new(EmptyPayload {});
     event.inner.inner.lock().event_timeout = Some(0.05);
     let event = bus.emit(event);
     block_on(event.wait_completed());
@@ -572,7 +574,7 @@ fn test_timeout_still_marks_event_failed_when_other_handlers_finish() {
     let completed = Arc::new(Mutex::new(Vec::new()));
 
     let completed_fast = completed.clone();
-    bus.on("timeout", "fast", move |_event| {
+    bus.on_raw("timeout", "fast", move |_event| {
         let completed = completed_fast.clone();
         async move {
             thread::sleep(Duration::from_millis(1));
@@ -580,12 +582,12 @@ fn test_timeout_still_marks_event_failed_when_other_handlers_finish() {
             Ok(json!("fast"))
         }
     });
-    bus.on("timeout", "slow", |_event| async move {
+    bus.on_raw("timeout", "slow", |_event| async move {
         thread::sleep(Duration::from_millis(50));
         Ok(json!("slow"))
     });
 
-    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<TimeoutEvent>::new(EmptyPayload {});
     event.inner.inner.lock().event_timeout = Some(0.01);
     let event = bus.emit(event);
     block_on(event.wait_completed());
@@ -622,16 +624,16 @@ fn test_event_timeout_is_hard_cap_in_parallel_mode() {
         },
     );
 
-    bus.on("timeout", "slow_a", |_event| async move {
+    bus.on_raw("timeout", "slow_a", |_event| async move {
         thread::sleep(Duration::from_millis(100));
         Ok(json!("a"))
     });
-    bus.on("timeout", "slow_b", |_event| async move {
+    bus.on_raw("timeout", "slow_b", |_event| async move {
         thread::sleep(Duration::from_millis(100));
         Ok(json!("b"))
     });
 
-    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<TimeoutEvent>::new(EmptyPayload {});
     {
         let mut inner = event.inner.inner.lock();
         inner.event_timeout = Some(0.02);
@@ -677,7 +679,7 @@ fn test_event_level_timeout_marks_started_parallel_handlers_as_aborted_or_timed_
 
     for handler_name in ["slow_a", "slow_b"] {
         let started = started.clone();
-        bus.on("timeout", handler_name, move |_event| {
+        bus.on_raw("timeout", handler_name, move |_event| {
             let started = started.clone();
             async move {
                 {
@@ -690,7 +692,7 @@ fn test_event_level_timeout_marks_started_parallel_handlers_as_aborted_or_timed_
         });
     }
 
-    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<TimeoutEvent>::new(EmptyPayload {});
     event.inner.inner.lock().event_timeout = Some(0.03);
     let event = bus.emit(event);
     for _ in 0..40 {
@@ -738,12 +740,12 @@ fn test_event_level_concurrency_overrides_do_not_bypass_timeout_aborts() {
         },
     );
 
-    bus.on("timeout", "slow", |_event| async move {
+    bus.on_raw("timeout", "slow", |_event| async move {
         thread::sleep(Duration::from_millis(50));
         Ok(json!("slow"))
     });
 
-    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<TimeoutEvent>::new(EmptyPayload {});
     {
         let mut inner = event.inner.inner.lock();
         inner.event_timeout = Some(0.01);
@@ -778,19 +780,19 @@ fn test_event_timeout_is_hard_cap_across_serial_handlers() {
         },
     );
 
-    bus.on("timeout", "first_handler", |_event| async move {
+    bus.on_raw("timeout", "first_handler", |_event| async move {
         thread::sleep(Duration::from_millis(30));
         Ok(json!("first"))
     });
-    bus.on("timeout", "second_handler", |_event| async move {
+    bus.on_raw("timeout", "second_handler", |_event| async move {
         thread::sleep(Duration::from_millis(30));
         Ok(json!("second"))
     });
-    bus.on("timeout", "pending_handler", |_event| async move {
+    bus.on_raw("timeout", "pending_handler", |_event| async move {
         Ok(json!("pending"))
     });
 
-    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<TimeoutEvent>::new(EmptyPayload {});
     event.inner.inner.lock().event_timeout = Some(0.05);
     let event = bus.emit(event);
     block_on(event.wait_completed());
@@ -837,11 +839,11 @@ fn test_forwarded_timeout_path_does_not_stall_followup_events() {
 
     let bus_a_for_parent = bus_a.clone();
     let child_ref_for_parent = child_ref.clone();
-    bus_a.on("parent", "parent_handler", move |_event| {
+    bus_a.on_raw("parent", "parent_handler", move |_event| {
         let bus_a = bus_a_for_parent.clone();
         let child_ref = child_ref_for_parent.clone();
         async move {
-            let child = TypedEvent::<ChildEvent>::new(EmptyPayload {});
+            let child = BaseEventHandle::<ChildEvent>::new(EmptyPayload {});
             child.inner.inner.lock().event_timeout = Some(0.01);
             let child = bus_a.emit_child(child);
             *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
@@ -851,20 +853,20 @@ fn test_forwarded_timeout_path_does_not_stall_followup_events() {
     });
 
     let bus_b_for_forward = bus_b.clone();
-    bus_a.on("*", "forward_to_b", move |event| {
+    bus_a.on_raw("*", "forward_to_b", move |event| {
         let bus_b = bus_b_for_forward.clone();
         async move {
             bus_b.emit_base(event);
             Ok(json!(null))
         }
     });
-    bus_b.on("child", "slow_child_handler", |_event| async move {
+    bus_b.on_raw("child", "slow_child_handler", |_event| async move {
         thread::sleep(Duration::from_millis(50));
         Ok(json!("child_done"))
     });
 
     let bus_a_tail_runs_for_handler = bus_a_tail_runs.clone();
-    bus_a.on("tail", "tail_handler_a", move |_event| {
+    bus_a.on_raw("tail", "tail_handler_a", move |_event| {
         let runs = bus_a_tail_runs_for_handler.clone();
         async move {
             *runs.lock().expect("bus a tail runs lock") += 1;
@@ -872,7 +874,7 @@ fn test_forwarded_timeout_path_does_not_stall_followup_events() {
         }
     });
     let bus_b_tail_runs_for_handler = bus_b_tail_runs.clone();
-    bus_b.on("tail", "tail_handler_b", move |_event| {
+    bus_b.on_raw("tail", "tail_handler_b", move |_event| {
         let runs = bus_b_tail_runs_for_handler.clone();
         async move {
             *runs.lock().expect("bus b tail runs lock") += 1;
@@ -880,7 +882,7 @@ fn test_forwarded_timeout_path_does_not_stall_followup_events() {
         }
     });
 
-    let parent = TypedEvent::<ParentEvent>::new(EmptyPayload {});
+    let parent = BaseEventHandle::<ParentEvent>::new(EmptyPayload {});
     parent.inner.inner.lock().event_timeout = Some(1.0);
     let parent = bus_a.emit(parent);
     block_on(parent.wait_completed());
@@ -911,7 +913,7 @@ fn test_forwarded_timeout_path_does_not_stall_followup_events() {
         )
     }));
 
-    let tail = TypedEvent::<TailEvent>::new(EmptyPayload {});
+    let tail = BaseEventHandle::<TailEvent>::new(EmptyPayload {});
     tail.inner.inner.lock().event_timeout = Some(0.2);
     let tail = bus_a.emit(tail);
     block_on(tail.wait_completed());
@@ -939,15 +941,15 @@ fn test_handler_timeout_marks_error_and_other_handlers_still_complete() {
         },
     );
 
-    bus.on("timeout", "slow_handler", |_event| async move {
+    bus.on_raw("timeout", "slow_handler", |_event| async move {
         thread::sleep(Duration::from_millis(50));
         Ok(json!("slow"))
     });
-    bus.on("timeout", "fast_handler", |_event| async move {
+    bus.on_raw("timeout", "fast_handler", |_event| async move {
         Ok(json!("fast"))
     });
 
-    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<TimeoutEvent>::new(EmptyPayload {});
     {
         let mut inner = event.inner.inner.lock();
         inner.event_timeout = Some(0.2);
@@ -990,13 +992,13 @@ fn test_processing_time_timeout_defaults_do_not_mutate_event_fields() {
         },
     );
 
-    bus.on(
+    bus.on_raw(
         "timeout",
         "handler",
         |_event| async move { Ok(json!("ok")) },
     );
 
-    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<TimeoutEvent>::new(EmptyPayload {});
     {
         let inner = event.inner.inner.lock();
         assert_eq!(inner.event_timeout, None);
@@ -1033,15 +1035,15 @@ fn test_parent_timeout_does_not_cancel_unawaited_child_with_own_timeout() {
     let bus = EventBus::new(Some("ParentTimeoutBus".to_string()));
     let bus_for_handler = bus.clone();
 
-    bus.on("child", "child_slow", |_event| async move {
+    bus.on_raw("child", "child_slow", |_event| async move {
         thread::sleep(Duration::from_millis(80));
         Ok(json!("child"))
     });
 
-    bus.on("parent", "emit_child", move |_event| {
+    bus.on_raw("parent", "emit_child", move |_event| {
         let bus_local = bus_for_handler.clone();
         async move {
-            let child = TypedEvent::<ChildEvent>::new(EmptyPayload {});
+            let child = BaseEventHandle::<ChildEvent>::new(EmptyPayload {});
             child.inner.inner.lock().event_timeout = Some(1.0);
             bus_local.emit_child(child);
             thread::sleep(Duration::from_millis(80));
@@ -1049,7 +1051,7 @@ fn test_parent_timeout_does_not_cancel_unawaited_child_with_own_timeout() {
         }
     });
 
-    let parent = TypedEvent::<ParentEvent>::new(EmptyPayload {});
+    let parent = BaseEventHandle::<ParentEvent>::new(EmptyPayload {});
     parent.inner.inner.lock().event_timeout = Some(0.01);
 
     let parent = bus.emit(parent);
@@ -1101,15 +1103,15 @@ fn test_parent_timeout_does_not_cancel_unawaited_children_that_have_no_timeout_o
     let child_ref = Arc::new(Mutex::new(None::<Arc<abxbus_rust::base_event::BaseEvent>>));
     let child_ref_for_parent = child_ref.clone();
 
-    bus.on("child", "child_slow_handler", |_event| async move {
+    bus.on_raw("child", "child_slow_handler", |_event| async move {
         thread::sleep(Duration::from_millis(80));
         Ok(json!("child_done"))
     });
-    bus.on("parent", "parent_handler", move |_event| {
+    bus.on_raw("parent", "parent_handler", move |_event| {
         let bus = bus_for_parent.clone();
         let child_ref = child_ref_for_parent.clone();
         async move {
-            let child = TypedEvent::<ChildEvent>::new(EmptyPayload {});
+            let child = BaseEventHandle::<ChildEvent>::new(EmptyPayload {});
             child.inner.inner.lock().event_timeout = None;
             let child = bus.emit_child(child);
             *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
@@ -1118,7 +1120,7 @@ fn test_parent_timeout_does_not_cancel_unawaited_children_that_have_no_timeout_o
         }
     });
 
-    let parent = TypedEvent::<ParentEvent>::new(EmptyPayload {});
+    let parent = BaseEventHandle::<ParentEvent>::new(EmptyPayload {});
     parent.inner.inner.lock().event_timeout = Some(0.03);
     let parent = bus.emit(parent);
     block_on(parent.wait_completed());
@@ -1173,19 +1175,19 @@ fn test_parent_timeout_does_not_cancel_unawaited_child_handler_results_under_ser
     );
     let bus_for_handler = bus.clone();
 
-    bus.on("child", "child_first", |_event| async move {
+    bus.on_raw("child", "child_first", |_event| async move {
         thread::sleep(Duration::from_millis(30));
         Ok(json!("first"))
     });
-    bus.on("child", "child_second", |_event| async move {
+    bus.on_raw("child", "child_second", |_event| async move {
         thread::sleep(Duration::from_millis(10));
         Ok(json!("second"))
     });
 
-    bus.on("parent", "emit_unawaited_child", move |_event| {
+    bus.on_raw("parent", "emit_unawaited_child", move |_event| {
         let bus = bus_for_handler.clone();
         async move {
-            let child = TypedEvent::<ChildEvent>::new(EmptyPayload {});
+            let child = BaseEventHandle::<ChildEvent>::new(EmptyPayload {});
             child.inner.inner.lock().event_timeout = Some(0.2);
             let child = bus.emit_child(child);
             assert!(!child.inner.inner.lock().event_blocks_parent_completion);
@@ -1194,7 +1196,7 @@ fn test_parent_timeout_does_not_cancel_unawaited_child_handler_results_under_ser
         }
     });
 
-    let parent = TypedEvent::<ParentEvent>::new(EmptyPayload {});
+    let parent = BaseEventHandle::<ParentEvent>::new(EmptyPayload {});
     parent.inner.inner.lock().event_timeout = Some(0.01);
     let parent = bus.emit(parent);
     block_on(parent.wait_completed());
@@ -1247,15 +1249,15 @@ fn test_parent_timeout_cancels_awaited_child_handler_results() {
     );
     let bus_for_handler = bus.clone();
 
-    bus.on("child", "child_slow", |_event| async move {
+    bus.on_raw("child", "child_slow", |_event| async move {
         thread::sleep(Duration::from_millis(80));
         Ok(json!("child"))
     });
 
-    bus.on("parent", "emit_awaited_child", move |_event| {
+    bus.on_raw("parent", "emit_awaited_child", move |_event| {
         let bus = bus_for_handler.clone();
         async move {
-            let child = TypedEvent::<ChildEvent>::new(EmptyPayload {});
+            let child = BaseEventHandle::<ChildEvent>::new(EmptyPayload {});
             child.inner.inner.lock().event_timeout = Some(1.0);
             let child = bus.emit_child(child);
             child.wait_completed().await;
@@ -1263,7 +1265,7 @@ fn test_parent_timeout_cancels_awaited_child_handler_results() {
         }
     });
 
-    let parent = TypedEvent::<ParentEvent>::new(EmptyPayload {});
+    let parent = BaseEventHandle::<ParentEvent>::new(EmptyPayload {});
     parent.inner.inner.lock().event_timeout = Some(0.01);
     let parent = bus.emit(parent);
     block_on(parent.wait_completed());
@@ -1312,12 +1314,12 @@ fn test_multi_bus_timeout_is_recorded_on_target_bus() {
     let bus_a = EventBus::new(Some("MultiTimeoutA".to_string()));
     let bus_b = EventBus::new(Some("MultiTimeoutB".to_string()));
 
-    bus_b.on("timeout", "slow_target_handler", |_event| async move {
+    bus_b.on_raw("timeout", "slow_target_handler", |_event| async move {
         thread::sleep(Duration::from_millis(50));
         Ok(json!("slow"))
     });
 
-    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<TimeoutEvent>::new(EmptyPayload {});
     event.inner.inner.lock().event_timeout = Some(0.01);
     let event = bus_a.emit(event);
     bus_b.emit_base(event.inner.clone());
@@ -1357,19 +1359,19 @@ fn test_forwarded_event_timeout_aborts_apply_across_buses() {
     );
 
     let bus_b_for_forward = bus_b.clone();
-    bus_a.on("timeout", "forward_to_b", move |event| {
+    bus_a.on_raw("timeout", "forward_to_b", move |event| {
         let bus_b = bus_b_for_forward.clone();
         async move {
             bus_b.emit_base(event);
             Ok(json!(null))
         }
     });
-    bus_b.on("timeout", "slow_target_handler", |_event| async move {
+    bus_b.on_raw("timeout", "slow_target_handler", |_event| async move {
         thread::sleep(Duration::from_millis(50));
         Ok(json!("slow"))
     });
 
-    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<TimeoutEvent>::new(EmptyPayload {});
     event.inner.inner.lock().event_timeout = Some(0.01);
     let event = bus_a.emit(event);
     block_on(event.wait_completed());
@@ -1407,7 +1409,7 @@ fn test_queue_jump_awaited_child_timeout_aborts_still_fire_across_buses() {
     );
     let child_ref = Arc::new(Mutex::new(None));
 
-    bus_b.on("child", "slow_child_handler", |_event| async move {
+    bus_b.on_raw("child", "slow_child_handler", |_event| async move {
         thread::sleep(Duration::from_millis(50));
         Ok(json!("slow"))
     });
@@ -1415,12 +1417,12 @@ fn test_queue_jump_awaited_child_timeout_aborts_still_fire_across_buses() {
     let bus_a_for_parent = bus_a.clone();
     let bus_b_for_parent = bus_b.clone();
     let child_ref_for_parent = child_ref.clone();
-    bus_a.on("parent", "parent_handler", move |_event| {
+    bus_a.on_raw("parent", "parent_handler", move |_event| {
         let bus_a = bus_a_for_parent.clone();
         let bus_b = bus_b_for_parent.clone();
         let child_ref = child_ref_for_parent.clone();
         async move {
-            let child = TypedEvent::<ChildEvent>::new(EmptyPayload {});
+            let child = BaseEventHandle::<ChildEvent>::new(EmptyPayload {});
             child.inner.inner.lock().event_timeout = Some(0.01);
             let child = bus_a.emit_child(child);
             bus_b.emit_base(child.inner.clone());
@@ -1430,7 +1432,7 @@ fn test_queue_jump_awaited_child_timeout_aborts_still_fire_across_buses() {
         }
     });
 
-    let parent = TypedEvent::<ParentEvent>::new(EmptyPayload {});
+    let parent = BaseEventHandle::<ParentEvent>::new(EmptyPayload {});
     parent.inner.inner.lock().event_timeout = Some(2.0);
     let parent = bus_a.emit(parent);
     block_on(parent.wait_completed());
@@ -1468,14 +1470,14 @@ fn test_followup_event_runs_after_parent_timeout_in_queue_jump_path() {
     let bus_for_parent = bus.clone();
     let tail_runs = Arc::new(Mutex::new(0usize));
 
-    bus.on("child", "child_handler", |_event| async move {
+    bus.on_raw("child", "child_handler", |_event| async move {
         thread::sleep(Duration::from_millis(1));
         Ok(json!("child_done"))
     });
-    bus.on("parent", "parent_handler", move |_event| {
+    bus.on_raw("parent", "parent_handler", move |_event| {
         let bus = bus_for_parent.clone();
         async move {
-            let child = TypedEvent::<ChildEvent>::new(EmptyPayload {});
+            let child = BaseEventHandle::<ChildEvent>::new(EmptyPayload {});
             child.inner.inner.lock().event_timeout = Some(0.2);
             let child = bus.emit_child(child);
             child.wait_completed().await;
@@ -1484,7 +1486,7 @@ fn test_followup_event_runs_after_parent_timeout_in_queue_jump_path() {
         }
     });
     let tail_runs_for_handler = tail_runs.clone();
-    bus.on("tail", "tail_handler", move |_event| {
+    bus.on_raw("tail", "tail_handler", move |_event| {
         let tail_runs = tail_runs_for_handler.clone();
         async move {
             *tail_runs.lock().expect("tail runs lock") += 1;
@@ -1492,7 +1494,7 @@ fn test_followup_event_runs_after_parent_timeout_in_queue_jump_path() {
         }
     });
 
-    let parent = TypedEvent::<ParentEvent>::new(EmptyPayload {});
+    let parent = BaseEventHandle::<ParentEvent>::new(EmptyPayload {});
     parent.inner.inner.lock().event_timeout = Some(0.02);
     let parent = bus.emit(parent);
     block_on(parent.wait_completed());
@@ -1510,7 +1512,7 @@ fn test_followup_event_runs_after_parent_timeout_in_queue_jump_path() {
     assert_eq!(parent_result.status, EventResultStatus::Error);
     assert_eq!(error_type(&parent_result), "EventHandlerAbortedError");
 
-    let tail = TypedEvent::<TailEvent>::new(EmptyPayload {});
+    let tail = BaseEventHandle::<TailEvent>::new(EmptyPayload {});
     tail.inner.inner.lock().event_timeout = Some(0.2);
     let tail = bus.emit(tail);
     block_on(tail.wait_completed());
@@ -1536,16 +1538,16 @@ fn test_regression_parent_timeout_while_reacquire_waits_behind_third_serial_hand
     );
     let tail_runs = Arc::new(Mutex::new(0usize));
 
-    bus.on("child", "child_handler", |_event| async move {
+    bus.on_raw("child", "child_handler", |_event| async move {
         thread::sleep(Duration::from_millis(20));
         Ok(json!("child_done"))
     });
 
     let bus_for_parent = bus.clone();
-    bus.on("parent", "parent_main", move |_event| {
+    bus.on_raw("parent", "parent_main", move |_event| {
         let bus = bus_for_parent.clone();
         async move {
-            let child = TypedEvent::<ChildEvent>::new(EmptyPayload {});
+            let child = BaseEventHandle::<ChildEvent>::new(EmptyPayload {});
             child.inner.inner.lock().event_timeout = Some(0.2);
             let child = bus.emit_child(child);
             child.wait_completed().await;
@@ -1553,13 +1555,13 @@ fn test_regression_parent_timeout_while_reacquire_waits_behind_third_serial_hand
             Ok(json!("parent_main"))
         }
     });
-    bus.on("parent", "parent_blocker", |_event| async move {
+    bus.on_raw("parent", "parent_blocker", |_event| async move {
         thread::sleep(Duration::from_millis(40));
         Ok(json!("parent_blocker"))
     });
 
     let tail_runs_for_handler = tail_runs.clone();
-    bus.on("tail", "tail_handler", move |_event| {
+    bus.on_raw("tail", "tail_handler", move |_event| {
         let tail_runs = tail_runs_for_handler.clone();
         async move {
             *tail_runs.lock().expect("tail runs lock") += 1;
@@ -1567,7 +1569,7 @@ fn test_regression_parent_timeout_while_reacquire_waits_behind_third_serial_hand
         }
     });
 
-    let parent = TypedEvent::<ParentEvent>::new(EmptyPayload {});
+    let parent = BaseEventHandle::<ParentEvent>::new(EmptyPayload {});
     parent.inner.inner.lock().event_timeout = Some(0.01);
     let parent = bus.emit(parent);
     block_on(parent.wait_completed());
@@ -1586,7 +1588,7 @@ fn test_regression_parent_timeout_while_reacquire_waits_behind_third_serial_hand
             && error_type(result) == "EventHandlerAbortedError"
     }));
 
-    let tail = TypedEvent::<TailEvent>::new(EmptyPayload {});
+    let tail = BaseEventHandle::<TailEvent>::new(EmptyPayload {});
     tail.inner.inner.lock().event_timeout = Some(0.05);
     let tail = bus.emit(tail);
     block_on(tail.wait_completed());
@@ -1611,16 +1613,16 @@ fn test_regression_nested_queue_jump_with_timeout_cancellation_remains_lock_safe
     let tail_runs = Arc::new(Mutex::new(0usize));
     let queued_sibling_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
 
-    bus.on("grandchild", "grandchild_handler", |_event| async move {
+    bus.on_raw("grandchild", "grandchild_handler", |_event| async move {
         thread::sleep(Duration::from_millis(1));
         Ok(json!("grandchild_done"))
     });
 
     let bus_for_child = bus.clone();
-    bus.on("child", "child_handler", move |_event| {
+    bus.on_raw("child", "child_handler", move |_event| {
         let bus = bus_for_child.clone();
         async move {
-            let grandchild = TypedEvent::<GrandchildEvent>::new(EmptyPayload {});
+            let grandchild = BaseEventHandle::<GrandchildEvent>::new(EmptyPayload {});
             grandchild.inner.inner.lock().event_timeout = Some(0.2);
             let grandchild = bus.emit_child(grandchild);
             grandchild.wait_completed().await;
@@ -1630,7 +1632,7 @@ fn test_regression_nested_queue_jump_with_timeout_cancellation_remains_lock_safe
     });
 
     let queued_sibling_runs_for_handler = queued_sibling_runs.clone();
-    bus.on("queued_sibling", "queued_sibling_handler", move |_event| {
+    bus.on_raw("queued_sibling", "queued_sibling_handler", move |_event| {
         let queued_sibling_runs = queued_sibling_runs_for_handler.clone();
         async move {
             *queued_sibling_runs
@@ -1642,17 +1644,17 @@ fn test_regression_nested_queue_jump_with_timeout_cancellation_remains_lock_safe
 
     let bus_for_parent = bus.clone();
     let queued_sibling_ref_for_parent = queued_sibling_ref.clone();
-    bus.on("parent", "parent_handler", move |_event| {
+    bus.on_raw("parent", "parent_handler", move |_event| {
         let bus = bus_for_parent.clone();
         let queued_sibling_ref = queued_sibling_ref_for_parent.clone();
         async move {
-            let queued_sibling = TypedEvent::<QueuedSiblingEvent>::new(EmptyPayload {});
+            let queued_sibling = BaseEventHandle::<QueuedSiblingEvent>::new(EmptyPayload {});
             queued_sibling.inner.inner.lock().event_timeout = Some(0.2);
             let queued_sibling = bus.emit_child(queued_sibling);
             *queued_sibling_ref.lock().expect("queued sibling ref lock") =
                 Some(queued_sibling.inner.clone());
 
-            let child = TypedEvent::<ChildEvent>::new(EmptyPayload {});
+            let child = BaseEventHandle::<ChildEvent>::new(EmptyPayload {});
             child.inner.inner.lock().event_timeout = Some(0.02);
             let child = bus.emit_child(child);
             child.wait_completed().await;
@@ -1662,7 +1664,7 @@ fn test_regression_nested_queue_jump_with_timeout_cancellation_remains_lock_safe
     });
 
     let tail_runs_for_handler = tail_runs.clone();
-    bus.on("tail", "tail_handler", move |_event| {
+    bus.on_raw("tail", "tail_handler", move |_event| {
         let tail_runs = tail_runs_for_handler.clone();
         async move {
             *tail_runs.lock().expect("tail runs lock") += 1;
@@ -1670,7 +1672,7 @@ fn test_regression_nested_queue_jump_with_timeout_cancellation_remains_lock_safe
         }
     });
 
-    let parent = TypedEvent::<ParentEvent>::new(EmptyPayload {});
+    let parent = BaseEventHandle::<ParentEvent>::new(EmptyPayload {});
     parent.inner.inner.lock().event_timeout = Some(0.03);
     let parent = bus.emit(parent);
     block_on(parent.wait_completed());
@@ -1709,7 +1711,7 @@ fn test_regression_nested_queue_jump_with_timeout_cancellation_remains_lock_safe
             .collect::<Vec<_>>()
     );
 
-    let tail = TypedEvent::<TailEvent>::new(EmptyPayload {});
+    let tail = BaseEventHandle::<TailEvent>::new(EmptyPayload {});
     tail.inner.inner.lock().event_timeout = Some(0.05);
     let tail = bus.emit(tail);
     block_on(tail.wait_completed());
@@ -1729,12 +1731,12 @@ fn test_event_timeout_null_falls_back_to_bus_default() {
         },
     );
 
-    bus.on("timeout", "slow", |_event| async move {
+    bus.on_raw("timeout", "slow", |_event| async move {
         thread::sleep(Duration::from_millis(50));
         Ok(json!("slow"))
     });
 
-    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<TimeoutEvent>::new(EmptyPayload {});
     event.inner.inner.lock().event_timeout = None;
     let event = bus.emit(event);
     block_on(event.wait_completed());
@@ -1764,12 +1766,12 @@ fn test_bus_default_null_disables_timeouts_when_event_timeout_is_null() {
         },
     );
 
-    bus.on("timeout", "slow", |_event| async move {
+    bus.on_raw("timeout", "slow", |_event| async move {
         thread::sleep(Duration::from_millis(20));
         Ok(json!("ok"))
     });
 
-    let event = TypedEvent::<TimeoutEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<TimeoutEvent>::new(EmptyPayload {});
     event.inner.inner.lock().event_timeout = None;
     let event = bus.emit(event);
     block_on(event.wait_completed());
@@ -1811,7 +1813,7 @@ fn test_multi_level_timeout_cascade_with_mixed_cancellations() {
 
     for (name, delay_ms) in [("queued_child_fast", 5_u64), ("queued_child_slow", 50_u64)] {
         let runs = queued_child_runs.clone();
-        bus.on("TimeoutCascadeQueuedChild", name, move |_event| {
+        bus.on_raw("TimeoutCascadeQueuedChild", name, move |_event| {
             let runs = runs.clone();
             async move {
                 *runs.lock().expect("queued child runs") += 1;
@@ -1821,7 +1823,7 @@ fn test_multi_level_timeout_cascade_with_mixed_cancellations() {
         });
     }
 
-    bus.on(
+    bus.on_raw(
         "TimeoutCascadeAwaitedChild",
         "awaited_child_fast",
         |_event| async move {
@@ -1832,7 +1834,7 @@ fn test_multi_level_timeout_cascade_with_mixed_cancellations() {
     let bus_for_awaited = bus.clone();
     let immediate_ref_for_handler = immediate_grandchild_ref.clone();
     let queued_gc_ref_for_handler = queued_grandchild_ref.clone();
-    bus.on(
+    bus.on_raw(
         "TimeoutCascadeAwaitedChild",
         "awaited_child_slow",
         move |_event| {
@@ -1860,7 +1862,7 @@ fn test_multi_level_timeout_cascade_with_mixed_cancellations() {
         ("immediate_grandchild_fast", 10_u64),
     ] {
         let runs = immediate_grandchild_runs.clone();
-        bus.on("TimeoutCascadeImmediateGrandchild", name, move |_event| {
+        bus.on_raw("TimeoutCascadeImmediateGrandchild", name, move |_event| {
             let runs = runs.clone();
             async move {
                 *runs.lock().expect("immediate grandchild runs") += 1;
@@ -1875,7 +1877,7 @@ fn test_multi_level_timeout_cascade_with_mixed_cancellations() {
         ("queued_grandchild_fast", 10_u64),
     ] {
         let runs = queued_grandchild_runs.clone();
-        bus.on("TimeoutCascadeQueuedGrandchild", name, move |_event| {
+        bus.on_raw("TimeoutCascadeQueuedGrandchild", name, move |_event| {
             let runs = runs.clone();
             async move {
                 *runs.lock().expect("queued grandchild runs") += 1;
@@ -1888,7 +1890,7 @@ fn test_multi_level_timeout_cascade_with_mixed_cancellations() {
     let bus_for_top = bus.clone();
     let queued_child_ref_for_top = queued_child_ref.clone();
     let awaited_child_ref_for_top = awaited_child_ref.clone();
-    bus.on("TimeoutCascadeTop", "top_handler", move |_event| {
+    bus.on_raw("TimeoutCascadeTop", "top_handler", move |_event| {
         let bus = bus_for_top.clone();
         let queued_child_ref = queued_child_ref_for_top.clone();
         let awaited_child_ref = awaited_child_ref_for_top.clone();
@@ -2048,14 +2050,14 @@ fn test_unawaited_descendant_preserves_lineage_and_is_not_cancelled_by_ancestor_
     let inner_ref = Arc::new(Mutex::new(None));
     let deep_ref = Arc::new(Mutex::new(None));
 
-    bus.on("ErrorChainDeep", "deep_handler", |_event| async move {
+    bus.on_raw("ErrorChainDeep", "deep_handler", |_event| async move {
         thread::sleep(Duration::from_millis(200));
         Ok(json!("deep_done"))
     });
 
     let bus_for_inner = bus.clone();
     let deep_ref_for_inner = deep_ref.clone();
-    bus.on("ErrorChainInner", "inner_handler", move |_event| {
+    bus.on_raw("ErrorChainInner", "inner_handler", move |_event| {
         let bus = bus_for_inner.clone();
         let deep_ref = deep_ref_for_inner.clone();
         async move {
@@ -2069,7 +2071,7 @@ fn test_unawaited_descendant_preserves_lineage_and_is_not_cancelled_by_ancestor_
 
     let bus_for_outer = bus.clone();
     let inner_ref_for_outer = inner_ref.clone();
-    bus.on("ErrorChainOuter", "outer_handler", move |_event| {
+    bus.on_raw("ErrorChainOuter", "outer_handler", move |_event| {
         let bus = bus_for_outer.clone();
         let inner_ref = inner_ref_for_outer.clone();
         async move {
@@ -2158,7 +2160,7 @@ fn test_three_level_timeout_cascade_with_per_level_timeouts_and_cascading_cancel
     let sibling_ref = Arc::new(Mutex::new(None));
 
     let log = execution_log.clone();
-    bus.on("Cascade3LGrandchild", "gc_handler_a", move |_event| {
+    bus.on_raw("Cascade3LGrandchild", "gc_handler_a", move |_event| {
         let log = log.clone();
         async move {
             log.lock()
@@ -2172,7 +2174,7 @@ fn test_three_level_timeout_cascade_with_per_level_timeouts_and_cascading_cancel
         }
     });
     let log = execution_log.clone();
-    bus.on("Cascade3LGrandchild", "gc_handler_b", move |_event| {
+    bus.on_raw("Cascade3LGrandchild", "gc_handler_b", move |_event| {
         let log = log.clone();
         async move {
             log.lock()
@@ -2183,7 +2185,7 @@ fn test_three_level_timeout_cascade_with_per_level_timeouts_and_cascading_cancel
     });
     for handler_name in ["gc_handler_c", "gc_handler_e"] {
         let log = execution_log.clone();
-        bus.on("Cascade3LGrandchild", handler_name, move |_event| {
+        bus.on_raw("Cascade3LGrandchild", handler_name, move |_event| {
             let log = log.clone();
             async move {
                 log.lock()
@@ -2198,7 +2200,7 @@ fn test_three_level_timeout_cascade_with_per_level_timeouts_and_cascading_cancel
         });
     }
     let log = execution_log.clone();
-    bus.on("Cascade3LGrandchild", "gc_handler_d", move |_event| {
+    bus.on_raw("Cascade3LGrandchild", "gc_handler_d", move |_event| {
         let log = log.clone();
         async move {
             log.lock()
@@ -2213,7 +2215,7 @@ fn test_three_level_timeout_cascade_with_per_level_timeouts_and_cascading_cancel
     });
 
     let log = execution_log.clone();
-    bus.on("Cascade3LQueuedGC", "queued_gc_handler", move |_event| {
+    bus.on_raw("Cascade3LQueuedGC", "queued_gc_handler", move |_event| {
         let log = log.clone();
         async move {
             log.lock()
@@ -2227,7 +2229,7 @@ fn test_three_level_timeout_cascade_with_per_level_timeouts_and_cascading_cancel
     let log = execution_log.clone();
     let grandchild_ref_for_child = grandchild_ref.clone();
     let queued_gc_ref_for_child = queued_grandchild_ref.clone();
-    bus.on("Cascade3LChild", "child_handler", move |_event| {
+    bus.on_raw("Cascade3LChild", "child_handler", move |_event| {
         let bus = bus_for_child.clone();
         let log = log.clone();
         let grandchild_ref = grandchild_ref_for_child.clone();
@@ -2255,7 +2257,7 @@ fn test_three_level_timeout_cascade_with_per_level_timeouts_and_cascading_cancel
     });
 
     let log = execution_log.clone();
-    bus.on("Cascade3LSibling", "sibling_handler", move |_event| {
+    bus.on_raw("Cascade3LSibling", "sibling_handler", move |_event| {
         let log = log.clone();
         async move {
             log.lock()
@@ -2266,7 +2268,7 @@ fn test_three_level_timeout_cascade_with_per_level_timeouts_and_cascading_cancel
     });
 
     let log = execution_log.clone();
-    bus.on("Cascade3LTop", "top_handler_fast", move |_event| {
+    bus.on_raw("Cascade3LTop", "top_handler_fast", move |_event| {
         let log = log.clone();
         async move {
             log.lock()
@@ -2284,7 +2286,7 @@ fn test_three_level_timeout_cascade_with_per_level_timeouts_and_cascading_cancel
     let log = execution_log.clone();
     let child_ref_for_top = child_ref.clone();
     let sibling_ref_for_top = sibling_ref.clone();
-    bus.on("Cascade3LTop", "top_handler_main", move |_event| {
+    bus.on_raw("Cascade3LTop", "top_handler_main", move |_event| {
         let bus = bus_for_top.clone();
         let log = log.clone();
         let child_ref = child_ref_for_top.clone();
@@ -2483,10 +2485,10 @@ fn test_handler_timeout_resolution_matches_ts_precedence() {
         },
     );
 
-    bus.on("timeout_defaults", "default_handler", |_event| async move {
+    bus.on_raw("timeout_defaults", "default_handler", |_event| async move {
         Ok(json!("default"))
     });
-    bus.on_with_options(
+    bus.on_raw_with_options(
         "timeout_defaults",
         "overridden_handler",
         EventHandlerOptions {
@@ -2496,7 +2498,7 @@ fn test_handler_timeout_resolution_matches_ts_precedence() {
         |_event| async move { Ok(json!("override")) },
     );
 
-    let event = TypedEvent::<TimeoutDefaultsEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<TimeoutDefaultsEvent>::new(EmptyPayload {});
     let event = bus.emit(event);
     block_on(event.wait_completed());
     let results = event.inner.inner.lock().event_results.clone();
@@ -2511,7 +2513,7 @@ fn test_handler_timeout_resolution_matches_ts_precedence() {
     assert_eq!(default_result.timeout, Some(0.05));
     assert_eq!(overridden_result.timeout, Some(0.12));
 
-    let tighter_event_timeout = TypedEvent::<TimeoutDefaultsEvent>::new(EmptyPayload {});
+    let tighter_event_timeout = BaseEventHandle::<TimeoutDefaultsEvent>::new(EmptyPayload {});
     {
         let mut inner = tighter_event_timeout.inner.inner.lock();
         inner.event_timeout = Some(0.08);
@@ -2542,7 +2544,7 @@ fn test_event_handler_detect_file_paths_toggle() {
         },
     );
 
-    let entry = bus.on("timeout_defaults", "handler", |_event| async move {
+    let entry = bus.on_raw("timeout_defaults", "handler", |_event| async move {
         Ok(json!("ok"))
     });
     assert_eq!(entry.handler_file_path, None);

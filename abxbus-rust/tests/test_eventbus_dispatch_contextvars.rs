@@ -7,7 +7,7 @@ use std::{
 
 use abxbus_rust::{
     event_bus::{EventBus, EventBusOptions},
-    typed::{EventSpec, TypedEvent},
+    typed::{BaseEventHandle, EventSpec},
     types::EventHandlerConcurrencyMode,
 };
 use futures::executor::block_on;
@@ -19,30 +19,30 @@ struct EmptyPayload {}
 
 struct SimpleEvent;
 impl EventSpec for SimpleEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "SimpleEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "SimpleEvent";
 }
 
 struct ChildEvent;
 impl EventSpec for ChildEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "ChildEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "ChildEvent";
 }
 
 struct Level2Event;
 impl EventSpec for Level2Event {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "Level2Event";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "Level2Event";
 }
 
 struct Level3Event;
 impl EventSpec for Level3Event {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "Level3Event";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "Level3Event";
 }
 
 fn context(entries: &[(&str, &str)]) -> HashMap<String, Value> {
@@ -65,7 +65,7 @@ fn test_contextvar_propagates_to_handler() {
     let captured_values = Arc::new(Mutex::new(HashMap::<String, String>::new()));
 
     let captured_for_handler = captured_values.clone();
-    bus.on_typed::<SimpleEvent, _, _>("handler", move |_event| {
+    bus.on::<SimpleEvent, _, _>("handler", move |_event| {
         let captured = captured_for_handler.clone();
         async move {
             captured
@@ -82,7 +82,7 @@ fn test_contextvar_propagates_to_handler() {
 
     let event = EventBus::with_context(
         context(&[("request_id", "req-12345"), ("user_id", "user-abc")]),
-        || bus.emit::<SimpleEvent>(TypedEvent::new(EmptyPayload {})),
+        || bus.emit(BaseEventHandle::<SimpleEvent>::new(EmptyPayload {})),
     );
     block_on(event.wait_completed());
 
@@ -108,7 +108,7 @@ fn test_contextvar_propagates_through_nested_handlers() {
 
     let bus_for_parent = bus.clone();
     let parent_capture = captured_parent.clone();
-    bus.on_typed::<SimpleEvent, _, _>("parent_handler", move |_event| {
+    bus.on::<SimpleEvent, _, _>("parent_handler", move |_event| {
         let bus = bus_for_parent.clone();
         let captured = parent_capture.clone();
         async move {
@@ -120,14 +120,14 @@ fn test_contextvar_propagates_through_nested_handlers() {
                 .lock()
                 .expect("parent capture lock")
                 .insert("trace_id".to_string(), context_str("trace_id"));
-            let child = bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            let child = bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
             child.wait_completed().await;
             Ok("parent_done".to_string())
         }
     });
 
     let child_capture = captured_child.clone();
-    bus.on_typed::<ChildEvent, _, _>("child_handler", move |_event| {
+    bus.on::<ChildEvent, _, _>("child_handler", move |_event| {
         let captured = child_capture.clone();
         async move {
             captured
@@ -144,7 +144,7 @@ fn test_contextvar_propagates_through_nested_handlers() {
 
     let event = EventBus::with_context(
         context(&[("request_id", "req-nested-123"), ("trace_id", "trace-xyz")]),
-        || bus.emit::<SimpleEvent>(TypedEvent::new(EmptyPayload {})),
+        || bus.emit(BaseEventHandle::<SimpleEvent>::new(EmptyPayload {})),
     );
     block_on(event.wait_completed());
 
@@ -174,7 +174,7 @@ fn test_context_isolation_between_dispatches() {
     let captured_values = Arc::new(Mutex::new(Vec::<String>::new()));
 
     let captured_for_handler = captured_values.clone();
-    bus.on_typed::<SimpleEvent, _, _>("handler", move |_event| {
+    bus.on::<SimpleEvent, _, _>("handler", move |_event| {
         let captured = captured_for_handler.clone();
         async move {
             thread::sleep(Duration::from_millis(5));
@@ -187,10 +187,10 @@ fn test_context_isolation_between_dispatches() {
     });
 
     let event_a = EventBus::with_context(context(&[("request_id", "req-A")]), || {
-        bus.emit::<SimpleEvent>(TypedEvent::new(EmptyPayload {}))
+        bus.emit(BaseEventHandle::<SimpleEvent>::new(EmptyPayload {}))
     });
     let event_b = EventBus::with_context(context(&[("request_id", "req-B")]), || {
-        bus.emit::<SimpleEvent>(TypedEvent::new(EmptyPayload {}))
+        bus.emit(BaseEventHandle::<SimpleEvent>::new(EmptyPayload {}))
     });
 
     block_on(async {
@@ -219,7 +219,7 @@ fn test_context_propagates_to_parallel_handler_concurrency() {
 
     for handler_name in ["h1", "h2"] {
         let captured = captured_values.clone();
-        bus.on_typed::<SimpleEvent, _, _>(handler_name, move |_event| {
+        bus.on::<SimpleEvent, _, _>(handler_name, move |_event| {
             let captured = captured.clone();
             async move {
                 captured
@@ -232,7 +232,7 @@ fn test_context_propagates_to_parallel_handler_concurrency() {
     }
 
     let event = EventBus::with_context(context(&[("request_id", "req-parallel")]), || {
-        bus.emit::<SimpleEvent>(TypedEvent::new(EmptyPayload {}))
+        bus.emit(BaseEventHandle::<SimpleEvent>::new(EmptyPayload {}))
     });
     block_on(event.wait_completed());
 
@@ -252,7 +252,7 @@ fn test_context_propagates_through_event_forwarding() {
     let captured_bus_b = Arc::new(Mutex::new(HashMap::<String, String>::new()));
 
     let captured_a = captured_bus_a.clone();
-    bus_a.on_typed::<SimpleEvent, _, _>("bus_a_handler", move |_event| {
+    bus_a.on::<SimpleEvent, _, _>("bus_a_handler", move |_event| {
         let captured = captured_a.clone();
         async move {
             captured
@@ -264,7 +264,7 @@ fn test_context_propagates_through_event_forwarding() {
     });
 
     let bus_b_for_forward = bus_b.clone();
-    bus_a.on("*", "forward_to_bus_b", move |event| {
+    bus_a.on_raw("*", "forward_to_bus_b", move |event| {
         let bus_b = bus_b_for_forward.clone();
         async move {
             bus_b.emit_base(event);
@@ -273,7 +273,7 @@ fn test_context_propagates_through_event_forwarding() {
     });
 
     let captured_b = captured_bus_b.clone();
-    bus_b.on_typed::<SimpleEvent, _, _>("bus_b_handler", move |_event| {
+    bus_b.on::<SimpleEvent, _, _>("bus_b_handler", move |_event| {
         let captured = captured_b.clone();
         async move {
             captured
@@ -285,7 +285,7 @@ fn test_context_propagates_through_event_forwarding() {
     });
 
     let event = EventBus::with_context(context(&[("request_id", "req-forwarded")]), || {
-        bus_a.emit::<SimpleEvent>(TypedEvent::new(EmptyPayload {}))
+        bus_a.emit(BaseEventHandle::<SimpleEvent>::new(EmptyPayload {}))
     });
     block_on(async {
         event.wait_completed().await;
@@ -322,7 +322,7 @@ fn test_forwarded_dispatch_context_does_not_leak_back_to_source_bus_handlers() {
 
     let bus_b_for_first = bus_b.clone();
     let captured_first = captured.clone();
-    bus_a.on_typed::<SimpleEvent, _, _>("source_first", move |event| {
+    bus_a.on::<SimpleEvent, _, _>("source_first", move |event| {
         let bus_b = bus_b_for_first.clone();
         let captured = captured_first.clone();
         async move {
@@ -337,7 +337,7 @@ fn test_forwarded_dispatch_context_does_not_leak_back_to_source_bus_handlers() {
     });
 
     let captured_second = captured.clone();
-    bus_a.on_typed::<SimpleEvent, _, _>("source_second", move |_event| {
+    bus_a.on::<SimpleEvent, _, _>("source_second", move |_event| {
         let captured = captured_second.clone();
         async move {
             captured
@@ -349,7 +349,7 @@ fn test_forwarded_dispatch_context_does_not_leak_back_to_source_bus_handlers() {
     });
 
     let captured_forwarded = captured.clone();
-    bus_b.on_typed::<SimpleEvent, _, _>("forwarded_handler", move |_event| {
+    bus_b.on::<SimpleEvent, _, _>("forwarded_handler", move |_event| {
         let captured = captured_forwarded.clone();
         async move {
             captured
@@ -361,7 +361,7 @@ fn test_forwarded_dispatch_context_does_not_leak_back_to_source_bus_handlers() {
     });
 
     let event = EventBus::with_context(context(&[("request_id", "source-context")]), || {
-        bus_a.emit::<SimpleEvent>(TypedEvent::new(EmptyPayload {}))
+        bus_a.emit(BaseEventHandle::<SimpleEvent>::new(EmptyPayload {}))
     });
     block_on(async {
         event.wait_completed().await;
@@ -394,24 +394,24 @@ fn test_handler_can_modify_context_without_affecting_parent() {
 
     let bus_for_parent = bus.clone();
     let parent_value = parent_value_after_child.clone();
-    bus.on_typed::<SimpleEvent, _, _>("parent_handler", move |_event| {
+    bus.on::<SimpleEvent, _, _>("parent_handler", move |_event| {
         let bus = bus_for_parent.clone();
         let parent_value = parent_value.clone();
         async move {
             EventBus::context_set("request_id", json!("parent-value"));
-            let child = bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            let child = bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
             child.wait_completed().await;
             *parent_value.lock().expect("parent value lock") = context_str("request_id");
             Ok("parent_done".to_string())
         }
     });
 
-    bus.on_typed::<ChildEvent, _, _>("child_handler", move |_event| async move {
+    bus.on::<ChildEvent, _, _>("child_handler", move |_event| async move {
         EventBus::context_set("request_id", json!("child-modified"));
         Ok("child_done".to_string())
     });
 
-    let event = bus.emit::<SimpleEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<SimpleEvent>::new(EmptyPayload {}));
     block_on(event.wait_completed());
 
     assert_eq!(
@@ -434,20 +434,20 @@ fn test_event_parent_id_tracking_still_works() {
 
     let bus_for_parent = bus.clone();
     let parent_id_capture = parent_event_id.clone();
-    bus.on_typed::<SimpleEvent, _, _>("parent_handler", move |event| {
+    bus.on::<SimpleEvent, _, _>("parent_handler", move |event| {
         let bus = bus_for_parent.clone();
         let parent_id_capture = parent_id_capture.clone();
         async move {
             *parent_id_capture.lock().expect("parent id lock") =
                 Some(event.inner.inner.lock().event_id.clone());
-            let child = bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            let child = bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
             child.wait_completed().await;
             Ok("parent_done".to_string())
         }
     });
 
     let child_parent_capture = child_event_parent_id.clone();
-    bus.on_typed::<ChildEvent, _, _>("child_handler", move |event| {
+    bus.on::<ChildEvent, _, _>("child_handler", move |event| {
         let child_parent_capture = child_parent_capture.clone();
         async move {
             *child_parent_capture.lock().expect("child parent id lock") =
@@ -457,7 +457,7 @@ fn test_event_parent_id_tracking_still_works() {
     });
 
     let event = EventBus::with_context(context(&[("request_id", "req-parent-tracking")]), || {
-        bus.emit::<SimpleEvent>(TypedEvent::new(EmptyPayload {}))
+        bus.emit(BaseEventHandle::<SimpleEvent>::new(EmptyPayload {}))
     });
     block_on(event.wait_completed());
 
@@ -484,7 +484,7 @@ fn test_dispatch_context_and_parent_id_both_work() {
 
     let bus_for_parent = bus.clone();
     let parent_results = results.clone();
-    bus.on_typed::<SimpleEvent, _, _>("parent_handler", move |event| {
+    bus.on::<SimpleEvent, _, _>("parent_handler", move |event| {
         let bus = bus_for_parent.clone();
         let results = parent_results.clone();
         async move {
@@ -496,14 +496,14 @@ fn test_dispatch_context_and_parent_id_both_work() {
                 "parent_event_id".to_string(),
                 event.inner.inner.lock().event_id.clone(),
             );
-            let child = bus.emit_child::<ChildEvent>(TypedEvent::new(EmptyPayload {}));
+            let child = bus.emit_child(BaseEventHandle::<ChildEvent>::new(EmptyPayload {}));
             child.wait_completed().await;
             Ok("parent_done".to_string())
         }
     });
 
     let child_results = results.clone();
-    bus.on_typed::<ChildEvent, _, _>("child_handler", move |event| {
+    bus.on::<ChildEvent, _, _>("child_handler", move |event| {
         let results = child_results.clone();
         async move {
             results
@@ -526,7 +526,7 @@ fn test_dispatch_context_and_parent_id_both_work() {
     });
 
     let event = EventBus::with_context(context(&[("request_id", "req-combined-test")]), || {
-        bus.emit::<SimpleEvent>(TypedEvent::new(EmptyPayload {}))
+        bus.emit(BaseEventHandle::<SimpleEvent>::new(EmptyPayload {}))
     });
     block_on(event.wait_completed());
 
@@ -555,7 +555,7 @@ fn test_deeply_nested_context_and_parent_tracking() {
 
     let bus_for_level1 = bus.clone();
     let level1_results = results.clone();
-    bus.on_typed::<SimpleEvent, _, _>("level1_handler", move |event| {
+    bus.on::<SimpleEvent, _, _>("level1_handler", move |event| {
         let bus = bus_for_level1.clone();
         let results = level1_results.clone();
         async move {
@@ -566,7 +566,7 @@ fn test_deeply_nested_context_and_parent_tracking() {
                 ("event_id".to_string(), event_id),
                 ("parent_id".to_string(), "<none>".to_string()),
             ]));
-            let child = bus.emit_child::<Level2Event>(TypedEvent::new(EmptyPayload {}));
+            let child = bus.emit_child(BaseEventHandle::<Level2Event>::new(EmptyPayload {}));
             child.wait_completed().await;
             Ok("level1_done".to_string())
         }
@@ -574,7 +574,7 @@ fn test_deeply_nested_context_and_parent_tracking() {
 
     let bus_for_level2 = bus.clone();
     let level2_results = results.clone();
-    bus.on_typed::<Level2Event, _, _>("level2_handler", move |event| {
+    bus.on::<Level2Event, _, _>("level2_handler", move |event| {
         let bus = bus_for_level2.clone();
         let results = level2_results.clone();
         async move {
@@ -591,14 +591,14 @@ fn test_deeply_nested_context_and_parent_tracking() {
                 ("event_id".to_string(), event_id),
                 ("parent_id".to_string(), parent_id),
             ]));
-            let child = bus.emit_child::<Level3Event>(TypedEvent::new(EmptyPayload {}));
+            let child = bus.emit_child(BaseEventHandle::<Level3Event>::new(EmptyPayload {}));
             child.wait_completed().await;
             Ok("level2_done".to_string())
         }
     });
 
     let level3_results = results.clone();
-    bus.on_typed::<Level3Event, _, _>("level3_handler", move |event| {
+    bus.on::<Level3Event, _, _>("level3_handler", move |event| {
         let results = level3_results.clone();
         async move {
             let inner = event.inner.inner.lock();
@@ -616,7 +616,7 @@ fn test_deeply_nested_context_and_parent_tracking() {
     });
 
     let event = EventBus::with_context(context(&[("request_id", "req-deep-nesting")]), || {
-        bus.emit::<SimpleEvent>(TypedEvent::new(EmptyPayload {}))
+        bus.emit(BaseEventHandle::<SimpleEvent>::new(EmptyPayload {}))
     });
     block_on(event.wait_completed());
 

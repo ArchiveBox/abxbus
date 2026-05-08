@@ -155,12 +155,19 @@ console.log(event.event_path)
 
 ```rust
 use abxbus_rust::{
-    base_event::BaseEvent,
+    event,
     event_bus::{EventBus, EventBusOptions},
     types::{EventConcurrencyMode, EventHandlerConcurrencyMode},
 };
 use futures::executor::block_on;
-use serde_json::{json, Map};
+use serde_json::json;
+
+event! {
+    struct UserCreatedEvent {
+        user_id: String,
+        event_result_type: serde_json::Value,
+    }
+}
 
 let auth = EventBus::new_with_options(
     Some("AuthBus".to_string()),
@@ -189,25 +196,31 @@ let billing = EventBus::new_with_options(
     },
 );
 
-auth.on_sync("UserCreatedEvent", "on_user_created", |event| {
-    Ok(json!(format!("auth-ok:{}", event.inner.lock().payload["user_id"])))
+auth.on::<UserCreatedEvent, _, _>("on_user_created", |event| async move {
+    Ok(json!(format!("auth-ok:{}", event.event_payload().user_id)))
 });
-billing.on_sync("UserCreatedEvent", "on_user_created", |event| {
-    Ok(json!(format!("billing-ok:{}", event.inner.lock().payload["user_id"])))
+billing.on::<UserCreatedEvent, _, _>("on_user_created", |event| async move {
+    Ok(json!(format!("billing-ok:{}", event.event_payload().user_id)))
 });
 
 let relay_for_handler = relay.clone();
-auth.on_sync("*", "forward_to_relay", move |event| {
-    Ok(relay_for_handler.emit_base(event).to_json_value())
+auth.on::<UserCreatedEvent, _, _>("forward_to_relay", move |event| {
+    let relay_for_handler = relay_for_handler.clone();
+    async move {
+        Ok(relay_for_handler.emit(event).to_json_value())
+    }
 });
 let billing_for_handler = billing.clone();
-relay.on_sync("*", "forward_to_billing", move |event| {
-    Ok(billing_for_handler.emit_base(event).to_json_value())
+relay.on::<UserCreatedEvent, _, _>("forward_to_billing", move |event| {
+    let billing_for_handler = billing_for_handler.clone();
+    async move {
+        Ok(billing_for_handler.emit(event).to_json_value())
+    }
 });
 
-let mut payload = Map::new();
-payload.insert("user_id".to_string(), json!("u-a8d1"));
-let event = auth.emit_base(BaseEvent::new("UserCreatedEvent", payload));
+let event = auth.emit(UserCreatedEvent {
+    user_id: "u-a8d1".to_string(),
+});
 let result = block_on(event.event_result(Default::default()))?;
 block_on(event.wait_completed());
 println!("{result}");
@@ -326,17 +339,31 @@ right.on('*', left.emit)
 <Tab title="Rust">
 
 ```rust
+use abxbus_rust::{event, event_bus::EventBus};
+
+event! {
+    struct PingEvent {
+        event_result_type: serde_json::Value,
+    }
+}
+
 let left = EventBus::new(Some("LeftBus".to_string()));
 let right = EventBus::new(Some("RightBus".to_string()));
 
 let right_for_handler = right.clone();
-left.on_sync("*", "forward_to_right", move |event| {
-    Ok(right_for_handler.emit_base(event).to_json_value())
+left.on::<PingEvent, _, _>("forward_to_right", move |event| {
+    let right_for_handler = right_for_handler.clone();
+    async move {
+        Ok(right_for_handler.emit(event).to_json_value())
+    }
 });
 
 let left_for_handler = left.clone();
-right.on_sync("*", "forward_to_left", move |event| {
-    Ok(left_for_handler.emit_base(event).to_json_value())
+right.on::<PingEvent, _, _>("forward_to_left", move |event| {
+    let left_for_handler = left_for_handler.clone();
+    async move {
+        Ok(left_for_handler.emit(event).to_json_value())
+    }
 });
 ```
 
@@ -429,24 +456,42 @@ console.log(event.event_path)
 <Tab title="Rust">
 
 ```rust
+use abxbus_rust::{event, event_bus::EventBus};
+use futures::executor::block_on;
+
+event! {
+    struct PingEvent {
+        event_result_type: serde_json::Value,
+    }
+}
+
 let bus_a = EventBus::new(Some("BusA".to_string()));
 let bus_b = EventBus::new(Some("BusB".to_string()));
 let bus_c = EventBus::new(Some("BusC".to_string()));
 
 let bus_b_for_handler = bus_b.clone();
-bus_a.on_sync("*", "forward_to_b", move |event| {
-    Ok(bus_b_for_handler.emit_base(event).to_json_value())
+bus_a.on::<PingEvent, _, _>("forward_to_b", move |event| {
+    let bus_b_for_handler = bus_b_for_handler.clone();
+    async move {
+        Ok(bus_b_for_handler.emit(event).to_json_value())
+    }
 });
 let bus_c_for_handler = bus_c.clone();
-bus_b.on_sync("*", "forward_to_c", move |event| {
-    Ok(bus_c_for_handler.emit_base(event).to_json_value())
+bus_b.on::<PingEvent, _, _>("forward_to_c", move |event| {
+    let bus_c_for_handler = bus_c_for_handler.clone();
+    async move {
+        Ok(bus_c_for_handler.emit(event).to_json_value())
+    }
 });
 let bus_a_for_handler = bus_a.clone();
-bus_c.on_sync("*", "forward_to_a", move |event| {
-    Ok(bus_a_for_handler.emit_base(event).to_json_value())
+bus_c.on::<PingEvent, _, _>("forward_to_a", move |event| {
+    let bus_a_for_handler = bus_a_for_handler.clone();
+    async move {
+        Ok(bus_a_for_handler.emit(event).to_json_value())
+    }
 });
 
-let event = bus_a.emit_base(BaseEvent::new("PingEvent", Map::new()));
+let event = bus_a.emit(PingEvent {});
 block_on(event.wait_completed());
 
 println!("{:?}", event.inner.lock().event_path);

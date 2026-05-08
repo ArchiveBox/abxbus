@@ -48,8 +48,20 @@ bus.Off("MyEvent", entry)
 <Tab title="Rust">
 
 ```rust
-let entry = bus.on_sync("MyEvent", "handler", |_event| Ok(serde_json::Value::Null));
-bus.off("MyEvent", Some(&entry.id));
+use abxbus_rust::{event, event_bus::EventBus};
+use abxbus_rust::typed::EventSpec;
+
+event! {
+    struct MyEvent {
+        event_result_type: serde_json::Value,
+    }
+}
+
+let bus = EventBus::new(Some("HandlerBus".to_string()));
+let entry = bus.on::<MyEvent, _, _>("handler", |_event| async move {
+    Ok(serde_json::Value::Null)
+});
+bus.off(MyEvent::event_type, Some(&entry.id));
 ```
 
 </Tab>

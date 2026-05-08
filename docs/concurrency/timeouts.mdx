@@ -182,7 +182,7 @@ let event = BaseEvent::<WorkEvent>::new(WorkPayload::default());
     inner.event_slow_timeout = Some(4.0);
     inner.event_handler_slow_timeout = Some(1.0);
 }
-let event = bus.emit::<WorkEvent>(event);
+let event = bus.emit(event);
 ```
 
 </Tab>

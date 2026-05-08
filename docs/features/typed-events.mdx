@@ -72,17 +72,17 @@ event! {
 
 let bus = EventBus::new(Some("OrdersBus".to_string()));
 bus.on::<OrderCreatedEvent, _, _>("handle_order", |event| async move {
-    let payload = event.payload();
+    let payload = event.event_payload();
     Ok(OrderResult {
         ok: payload.total_amount > 0.0,
     })
 });
 
-let event = bus.emit::<OrderCreatedEvent>(BaseEvent::new(OrderCreatedEvent {
+let event = bus.emit(OrderCreatedEvent {
     order_id: "order-123".to_string(),
     customer_id: "customer-456".to_string(),
     total_amount: 42.50,
-}));
+});
 
 let typed_result = block_on(event.event_result(Default::default()))?
     .expect("handler result");

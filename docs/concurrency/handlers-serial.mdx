@@ -153,7 +153,7 @@ let bus = EventBus::new_with_options(
 bus.on::<HandlerEvent, _, _>("h1", |_event| async move { Ok(()) });
 bus.on::<HandlerEvent, _, _>("h2", |_event| async move { Ok(()) });
 
-let event = bus.emit::<HandlerEvent>(BaseEvent::new(HandlerEvent {}));
+let event = bus.emit(HandlerEvent {});
 block_on(event.wait_completed());
 ```
 

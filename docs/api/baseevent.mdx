@@ -161,7 +161,7 @@ use abxbus_rust::{
 };
 use futures::executor::block_on;
 
-let pending = bus.emit::<MyEvent>(BaseEvent::new(MyPayload::default()));
+let pending = bus.emit(BaseEvent::<MyEvent>::new(MyPayload::default()));
 block_on(pending.wait_completed());
 block_on(pending.event_completed());
 let value = block_on(pending.event_result(EventResultsOptions::default()))?;

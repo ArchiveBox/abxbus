@@ -48,7 +48,7 @@ fn test_typed_result_schema_validates_and_parses_handler_result() {
         "required": ["value", "count"]
     });
 
-    bus.on("TypedResultEvent", "handler", |_event| async move {
+    bus.on_raw("TypedResultEvent", "handler", |_event| async move {
         Ok(json!({"value": "hello", "count": 42}))
     });
 
@@ -69,7 +69,7 @@ fn test_result_type_stored_in_event_result() {
     let bus = EventBus::new(Some("storage_test_bus".to_string()));
     let schema = json!({"type": "string"});
 
-    bus.on("StringEvent", "handler", |_event| async move {
+    bus.on_raw("StringEvent", "handler", |_event| async move {
         Ok(json!("123"))
     });
 
@@ -109,11 +109,11 @@ fn test_simple_typed_result_model_roundtrip_and_status() {
         "additionalProperties": false,
     });
 
-    bus.on("SimpleTypedEvent", "handler", |_event| async move {
+    bus.on_raw("SimpleBaseEventHandle", "handler", |_event| async move {
         Ok(json!({"value": "hello", "count": 42}))
     });
 
-    let event = bus.emit_base(schema_event("SimpleTypedEvent", Some(schema)));
+    let event = bus.emit_base(schema_event("SimpleBaseEventHandle", Some(schema)));
     wait(&event);
 
     assert_eq!(
@@ -140,37 +140,37 @@ fn test_simple_typed_result_model_roundtrip_and_status() {
 
 struct BuiltinStringEvent;
 impl abxbus_rust::typed::EventSpec for BuiltinStringEvent {
-    type Payload = Map<String, Value>;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "BuiltinStringEvent";
+    type payload = Map<String, Value>;
+    type event_result_type = String;
+    const event_type: &'static str = "BuiltinStringEvent";
 }
 
 struct BuiltinIntEvent;
 impl abxbus_rust::typed::EventSpec for BuiltinIntEvent {
-    type Payload = Map<String, Value>;
-    type Result = i64;
-    const EVENT_TYPE: &'static str = "BuiltinIntEvent";
+    type payload = Map<String, Value>;
+    type event_result_type = i64;
+    const event_type: &'static str = "BuiltinIntEvent";
 }
 
 struct BuiltinFloatEvent;
 impl abxbus_rust::typed::EventSpec for BuiltinFloatEvent {
-    type Payload = Map<String, Value>;
-    type Result = f64;
-    const EVENT_TYPE: &'static str = "BuiltinFloatEvent";
+    type payload = Map<String, Value>;
+    type event_result_type = f64;
+    const event_type: &'static str = "BuiltinFloatEvent";
 }
 
 struct PlainSchemaEvent;
 impl abxbus_rust::typed::EventSpec for PlainSchemaEvent {
-    type Payload = Map<String, Value>;
-    type Result = Value;
-    const EVENT_TYPE: &'static str = "PlainSchemaEvent";
+    type payload = Map<String, Value>;
+    type event_result_type = Value;
+    const event_type: &'static str = "PlainSchemaEvent";
 }
 
 struct NoneSchemaEvent;
 impl abxbus_rust::typed::EventSpec for NoneSchemaEvent {
-    type Payload = Map<String, Value>;
-    type Result = ();
-    const EVENT_TYPE: &'static str = "NoneSchemaEvent";
+    type payload = Map<String, Value>;
+    type event_result_type = ();
+    const event_type: &'static str = "NoneSchemaEvent";
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -182,10 +182,10 @@ struct ModuleLevelResult {
 
 struct RuntimeSchemaEvent;
 impl abxbus_rust::typed::EventSpec for RuntimeSchemaEvent {
-    type Payload = Map<String, Value>;
-    type Result = ModuleLevelResult;
-    const EVENT_TYPE: &'static str = "RuntimeSchemaEvent";
-    const EVENT_RESULT_TYPE: Option<&'static str> = Some(
+    type payload = Map<String, Value>;
+    type event_result_type = ModuleLevelResult;
+    const event_type: &'static str = "RuntimeSchemaEvent";
+    const event_result_type_schema: Option<&'static str> = Some(
         r#"{
             "type": "object",
             "properties": {
@@ -201,19 +201,19 @@ impl abxbus_rust::typed::EventSpec for RuntimeSchemaEvent {
 
 struct DictIntSchemaEvent;
 impl abxbus_rust::typed::EventSpec for DictIntSchemaEvent {
-    type Payload = Map<String, Value>;
-    type Result = Map<String, Value>;
-    const EVENT_TYPE: &'static str = "DictIntSchemaEvent";
-    const EVENT_RESULT_TYPE: Option<&'static str> =
+    type payload = Map<String, Value>;
+    type event_result_type = Map<String, Value>;
+    const event_type: &'static str = "DictIntSchemaEvent";
+    const event_result_type_schema: Option<&'static str> =
         Some(r#"{"type": "object", "additionalProperties": {"type": "integer"}}"#);
 }
 
 struct DictModuleSchemaEvent;
 impl abxbus_rust::typed::EventSpec for DictModuleSchemaEvent {
-    type Payload = Map<String, Value>;
-    type Result = Map<String, Value>;
-    const EVENT_TYPE: &'static str = "DictModuleSchemaEvent";
-    const EVENT_RESULT_TYPE: Option<&'static str> = Some(
+    type payload = Map<String, Value>;
+    type event_result_type = Map<String, Value>;
+    const event_type: &'static str = "DictModuleSchemaEvent";
+    const event_result_type_schema: Option<&'static str> = Some(
         r#"{
             "type": "object",
             "additionalProperties": {
@@ -232,10 +232,10 @@ impl abxbus_rust::typed::EventSpec for DictModuleSchemaEvent {
 
 struct DictLocalSchemaEvent;
 impl abxbus_rust::typed::EventSpec for DictLocalSchemaEvent {
-    type Payload = Map<String, Value>;
-    type Result = Map<String, Value>;
-    const EVENT_TYPE: &'static str = "DictLocalSchemaEvent";
-    const EVENT_RESULT_TYPE: Option<&'static str> = Some(
+    type payload = Map<String, Value>;
+    type event_result_type = Map<String, Value>;
+    const event_type: &'static str = "DictLocalSchemaEvent";
+    const event_result_type_schema: Option<&'static str> = Some(
         r#"{
             "type": "object",
             "additionalProperties": {
@@ -254,18 +254,18 @@ impl abxbus_rust::typed::EventSpec for DictLocalSchemaEvent {
 
 struct SpecificUserEvent;
 impl abxbus_rust::typed::EventSpec for SpecificUserEvent {
-    type Payload = Map<String, Value>;
-    type Result = ModuleLevelResult;
-    const EVENT_TYPE: &'static str = "SpecificUserEvent";
-    const EVENT_RESULT_TYPE: Option<&'static str> =
-        <RuntimeSchemaEvent as abxbus_rust::typed::EventSpec>::EVENT_RESULT_TYPE;
+    type payload = Map<String, Value>;
+    type event_result_type = ModuleLevelResult;
+    const event_type: &'static str = "SpecificUserEvent";
+    const event_result_type_schema: Option<&'static str> =
+        <RuntimeSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_schema;
 }
 
 #[test]
 fn test_builtin_types_auto_extraction() {
-    let string_event = abxbus_rust::typed::TypedEvent::<BuiltinStringEvent>::new(Map::new());
-    let int_event = abxbus_rust::typed::TypedEvent::<BuiltinIntEvent>::new(Map::new());
-    let float_event = abxbus_rust::typed::TypedEvent::<BuiltinFloatEvent>::new(Map::new());
+    let string_event = abxbus_rust::typed::BaseEventHandle::<BuiltinStringEvent>::new(Map::new());
+    let int_event = abxbus_rust::typed::BaseEventHandle::<BuiltinIntEvent>::new(Map::new());
+    let float_event = abxbus_rust::typed::BaseEventHandle::<BuiltinFloatEvent>::new(Map::new());
 
     assert_eq!(
         string_event.inner.inner.lock().event_result_type,
@@ -283,14 +283,14 @@ fn test_builtin_types_auto_extraction() {
 
 #[test]
 fn test_no_generic_parameter() {
-    let plain_event = abxbus_rust::typed::TypedEvent::<PlainSchemaEvent>::new(Map::new());
+    let plain_event = abxbus_rust::typed::BaseEventHandle::<PlainSchemaEvent>::new(Map::new());
 
     assert_eq!(plain_event.inner.inner.lock().event_result_type, None);
 }
 
 #[test]
 fn test_none_generic_parameter() {
-    let none_event = abxbus_rust::typed::TypedEvent::<NoneSchemaEvent>::new(Map::new());
+    let none_event = abxbus_rust::typed::BaseEventHandle::<NoneSchemaEvent>::new(Map::new());
 
     assert_eq!(none_event.inner.inner.lock().event_result_type, None);
 }
@@ -299,7 +299,7 @@ fn test_none_generic_parameter() {
 fn test_eventspec_result_schema_runtime_enforcement() {
     let bus = EventBus::new(Some("runtime_test_bus".to_string()));
 
-    bus.on(
+    bus.on_raw(
         "RuntimeSchemaEvent",
         "correct_handler",
         |_event| async move {
@@ -311,9 +311,8 @@ fn test_eventspec_result_schema_runtime_enforcement() {
         },
     );
 
-    let event = bus.emit(abxbus_rust::typed::TypedEvent::<RuntimeSchemaEvent>::new(
-        Map::new(),
-    ));
+    let event =
+        bus.emit(abxbus_rust::typed::BaseEventHandle::<RuntimeSchemaEvent>::new(Map::new()));
     wait(&event.inner);
     let result = first_result(&event.inner);
     assert_eq!(result.status, EventResultStatus::Completed);
@@ -324,15 +323,14 @@ fn test_eventspec_result_schema_runtime_enforcement() {
     assert!(typed.success);
 
     bus.off("RuntimeSchemaEvent", None);
-    bus.on(
+    bus.on_raw(
         "RuntimeSchemaEvent",
         "incorrect_handler",
         |_event| async move { Ok(json!({"wrong": "format"})) },
     );
 
-    let invalid_event = bus.emit(abxbus_rust::typed::TypedEvent::<RuntimeSchemaEvent>::new(
-        Map::new(),
-    ));
+    let invalid_event =
+        bus.emit(abxbus_rust::typed::BaseEventHandle::<RuntimeSchemaEvent>::new(Map::new()));
     wait(&invalid_event.inner);
     let invalid_result = first_result(&invalid_event.inner);
     assert_eq!(invalid_result.status, EventResultStatus::Error);
@@ -443,10 +441,10 @@ fn test_extract_basemodel_generic_arg_no_generic() {
 fn test_built_in_result_schemas_validate_handler_results() {
     let bus = EventBus::new(Some("BuiltinResultBus".to_string()));
 
-    bus.on("StringResultEvent", "string_handler", |_event| async move {
+    bus.on_raw("StringResultEvent", "string_handler", |_event| async move {
         Ok(json!("42"))
     });
-    bus.on("NumberResultEvent", "number_handler", |_event| async move {
+    bus.on_raw("NumberResultEvent", "number_handler", |_event| async move {
         Ok(json!(123))
     });
 
@@ -487,7 +485,7 @@ fn test_event_result_type_supports_constructor_shorthands_and_enforces_them() {
         ("ConstructorArrayResultEvent", json!([1, "two", false])),
         ("ConstructorObjectResultEvent", json!({"id": 1, "ok": true})),
     ] {
-        bus.on(event_type, "handler", move |_event| {
+        bus.on_raw(event_type, "handler", move |_event| {
             let result = result.clone();
             async move { Ok(result) }
         });
@@ -509,7 +507,7 @@ fn test_event_result_type_supports_constructor_shorthands_and_enforces_them() {
         );
     }
 
-    bus.on(
+    bus.on_raw(
         "ConstructorNumberResultEventInvalid",
         "invalid_handler",
         |_event| async move { Ok(json!("not-a-number")) },
@@ -537,7 +535,7 @@ fn test_event_result_type_supports_constructor_shorthands_and_enforces_them() {
 fn test_invalid_handler_result_marks_error_when_schema_is_defined() {
     let bus = EventBus::new(Some("ResultValidationErrorBus".to_string()));
 
-    bus.on("NumberResultEvent", "handler", |_event| async move {
+    bus.on_raw("NumberResultEvent", "handler", |_event| async move {
         Ok(json!("not-a-number"))
     });
 
@@ -565,7 +563,7 @@ fn test_invalid_handler_result_marks_error_when_schema_is_defined() {
 fn test_no_schema_leaves_raw_handler_result_untouched() {
     let bus = EventBus::new(Some("NoSchemaResultBus".to_string()));
 
-    bus.on("NoSchemaEvent", "handler", |_event| async move {
+    bus.on_raw("NoSchemaEvent", "handler", |_event| async move {
         Ok(json!({"raw": true}))
     });
 
@@ -593,7 +591,7 @@ fn test_complex_result_schema_validates_nested_data() {
         "required": ["items", "metadata"]
     });
 
-    bus.on("ComplexResultEvent", "handler", |_event| async move {
+    bus.on_raw("ComplexResultEvent", "handler", |_event| async move {
         Ok(json!({"items": ["a", "b"], "metadata": {"a": 1, "b": 2}}))
     });
 
@@ -628,7 +626,7 @@ fn test_from_json_converts_event_result_type_into_schema() {
 
     assert!(restored.inner.lock().event_result_type.is_some());
 
-    bus.on("TypedResultEvent", "handler", |_event| async move {
+    bus.on_raw("TypedResultEvent", "handler", |_event| async move {
         Ok(json!({"value": "from-json", "count": 7}))
     });
 
@@ -676,7 +674,7 @@ fn test_from_json_reconstructs_primitive_json_schema() {
 
     assert!(restored.inner.lock().event_result_type.is_some());
 
-    bus.on("PrimitiveResultEvent", "handler", |_event| async move {
+    bus.on_raw("PrimitiveResultEvent", "handler", |_event| async move {
         Ok(json!(true))
     });
 
@@ -696,7 +694,7 @@ fn test_from_json_reconstructs_primitive_json_schema() {
 fn test_fromjson_reconstructs_integer_and_null_schemas_for_runtime_validation() {
     let bus = EventBus::new(Some("SchemaPrimitiveRuntimeBus".to_string()));
 
-    bus.on("RawIntegerEvent", "int_handler", |_event| async move {
+    bus.on_raw("RawIntegerEvent", "int_handler", |_event| async move {
         Ok(json!(123))
     });
     let int_event = bus.emit_base(schema_event(
@@ -709,7 +707,7 @@ fn test_fromjson_reconstructs_integer_and_null_schemas_for_runtime_validation() 
         EventResultStatus::Completed
     );
 
-    bus.on(
+    bus.on_raw(
         "RawIntegerEventBad",
         "int_bad_handler",
         |_event| async move { Ok(json!(1.5)) },
@@ -724,7 +722,7 @@ fn test_fromjson_reconstructs_integer_and_null_schemas_for_runtime_validation() 
         EventResultStatus::Error
     );
 
-    bus.on("RawNullEvent", "null_handler", |_event| async move {
+    bus.on_raw("RawNullEvent", "null_handler", |_event| async move {
         Ok(Value::Null)
     });
     let null_event = bus.emit_base(schema_event("RawNullEvent", Some(json!({"type": "null"}))));
@@ -756,7 +754,7 @@ fn test_json_schema_primitive_deserialization() {
 
 #[test]
 fn test_custom_pydantic_models_auto_extraction() {
-    let event = abxbus_rust::typed::TypedEvent::<RuntimeSchemaEvent>::new(Map::new());
+    let event = abxbus_rust::typed::BaseEventHandle::<RuntimeSchemaEvent>::new(Map::new());
     assert_eq!(
         event.inner.inner.lock().event_result_type,
         Some(
@@ -797,7 +795,7 @@ fn test_json_schema_list_of_models_deserialization() {
     });
     assert_schema_roundtrips(schema.clone());
 
-    bus.on("ListOfModelsValidEvent", "handler", |_event| async move {
+    bus.on_raw("ListOfModelsValidEvent", "handler", |_event| async move {
         Ok(json!([{"name": "alice", "age": 33}]))
     });
     let valid_event = bus.emit_base(schema_event("ListOfModelsValidEvent", Some(schema.clone())));
@@ -809,7 +807,7 @@ fn test_json_schema_list_of_models_deserialization() {
         Some(json!([{"name": "alice", "age": 33}]))
     );
 
-    bus.on("ListOfModelsInvalidEvent", "handler", |_event| async move {
+    bus.on_raw("ListOfModelsInvalidEvent", "handler", |_event| async move {
         Ok(json!([{"name": "alice", "age": "bad"}]))
     });
     let invalid_event = bus.emit_base(schema_event("ListOfModelsInvalidEvent", Some(schema)));
@@ -849,7 +847,7 @@ fn test_json_schema_nested_object_collection_deserialization() {
     });
     assert_schema_roundtrips(schema.clone());
 
-    bus.on("NestedObjectValidEvent", "handler", |_event| async move {
+    bus.on_raw("NestedObjectValidEvent", "handler", |_event| async move {
         Ok(json!({"batch_a": [{"task_id": "6b2e9266-87c4-7d4a-81e5-a6026165e14b", "status": "ok"}]}))
     });
     let valid_event = bus.emit_base(schema_event("NestedObjectValidEvent", Some(schema.clone())));
@@ -859,7 +857,7 @@ fn test_json_schema_nested_object_collection_deserialization() {
         EventResultStatus::Completed
     );
 
-    bus.on("NestedObjectInvalidEvent", "handler", |_event| async move {
+    bus.on_raw("NestedObjectInvalidEvent", "handler", |_event| async move {
         Ok(json!({"batch_a": [{"task_id": "6b2e9266-87c4-7d4a-81e5-a6026165e14b", "status": 404}]}))
     });
     let invalid_event = bus.emit_base(schema_event("NestedObjectInvalidEvent", Some(schema)));
@@ -876,7 +874,7 @@ fn test_type_adapter_validation() {
     let bus = EventBus::new(Some("TypeAdapterValidationBus".to_string()));
     let schema = json!({"type": "object", "additionalProperties": {"type": "integer"}});
 
-    bus.on(
+    bus.on_raw(
         "TypeAdapterValidEvent",
         "valid_handler",
         |_event| async move { Ok(json!({"abc": 123, "def": 456})) },
@@ -888,7 +886,7 @@ fn test_type_adapter_validation() {
         EventResultStatus::Completed
     );
 
-    bus.on(
+    bus.on_raw(
         "TypeAdapterInvalidEvent",
         "invalid_handler",
         |_event| async move { Ok(json!({"abc": "badvalue"})) },
@@ -935,7 +933,7 @@ fn test_json_schema_typed_dict_rehydrates_to_pydantic_model() {
         "additionalProperties": false
     });
 
-    bus.on("TypedDictValidEvent", "handler", |_event| async move {
+    bus.on_raw("TypedDictValidEvent", "handler", |_event| async move {
         Ok(json!({"user_id": "e692b6cb-ae63-773b-8557-3218f7ce5ced", "active": true, "score": 9}))
     });
     let event = bus.emit_base(schema_event("TypedDictValidEvent", Some(schema)));
@@ -959,7 +957,7 @@ fn test_json_schema_optional_typed_dict_is_lax_on_missing_fields() {
         ("OptionalSchemaEmptyEvent", json!({})),
         ("OptionalSchemaPartialEvent", json!({"nickname": "squash"})),
     ] {
-        bus.on(event_type, "handler", move |_event| {
+        bus.on_raw(event_type, "handler", move |_event| {
             let result = result.clone();
             async move { Ok(result) }
         });
@@ -983,7 +981,7 @@ fn test_json_schema_dataclass_rehydrates_to_pydantic_model() {
         "additionalProperties": false
     });
 
-    bus.on("DataclassValidEvent", "handler", |_event| async move {
+    bus.on_raw("DataclassValidEvent", "handler", |_event| async move {
         Ok(json!({"task_id": "16272e4a-6936-7e87-872b-0eadeb911f9d", "priority": 2}))
     });
     let event = bus.emit_base(schema_event("DataclassValidEvent", Some(schema)));
@@ -1008,7 +1006,7 @@ fn test_json_schema_list_of_dataclass_rehydrates_to_list_of_models() {
         }
     });
 
-    bus.on("DataclassListValidEvent", "handler", |_event| async move {
+    bus.on_raw("DataclassListValidEvent", "handler", |_event| async move {
         Ok(json!([{"task_id": "78cfaa39-d697-7ef5-8e62-19b94b2cb48e", "priority": 5}]))
     });
     let event = bus.emit_base(schema_event("DataclassListValidEvent", Some(schema)));
@@ -1029,7 +1027,7 @@ fn test_json_schema_nested_object_and_array_runtime_enforcement() {
         "required": ["items", "meta"]
     });
 
-    bus.on("NestedSchemaValidEvent", "valid_handler", |_event| async move {
+    bus.on_raw("NestedSchemaValidEvent", "valid_handler", |_event| async move {
         Ok(json!({"items": [1, 2, 3], "meta": {"ok": true, "cached": false}}))
     });
     let valid_event = bus.emit_base(schema_event(
@@ -1044,7 +1042,7 @@ fn test_json_schema_nested_object_and_array_runtime_enforcement() {
         Some(json!({"items": [1, 2, 3], "meta": {"ok": true, "cached": false}}))
     );
 
-    bus.on(
+    bus.on_raw(
         "NestedSchemaInvalidEvent",
         "invalid_handler",
         |_event| async move { Ok(json!({"items": ["not-an-int"], "meta": {"ok": "yes"}})) },
@@ -1083,7 +1081,7 @@ fn test_module_level_runtime_enforcement() {
         "additionalProperties": false
     });
 
-    bus.on(
+    bus.on_raw(
         "RuntimeValidEvent",
         "correct_handler",
         |_event| async move {
@@ -1104,7 +1102,7 @@ fn test_module_level_runtime_enforcement() {
         EventResultStatus::Completed
     );
 
-    bus.on(
+    bus.on_raw(
         "RuntimeInvalidEvent",
         "incorrect_handler",
         |_event| async move { Ok(json!({"wrong": "format"})) },
@@ -1150,7 +1148,7 @@ fn test_roundtrip_preserves_complex_result_schema_types() {
         Some(complex_schema)
     );
 
-    bus.on("ComplexRoundtripEvent", "handler", |_event| async move {
+    bus.on_raw("ComplexRoundtripEvent", "handler", |_event| async move {
         Ok(json!({
             "title": "ok",
             "count": 3,

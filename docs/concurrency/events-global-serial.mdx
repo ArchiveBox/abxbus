@@ -192,8 +192,8 @@ bus_a.on::<SerialEvent, _, _>("handler", |_event| async move { Ok(()) });
 bus_b.on::<SerialEvent, _, _>("handler", |_event| async move { Ok(()) });
 
 for _ in 0..3 {
-    bus_a.emit::<SerialEvent>(BaseEvent::new(SerialEvent {}));
-    bus_b.emit::<SerialEvent>(BaseEvent::new(SerialEvent {}));
+    bus_a.emit(SerialEvent {});
+    bus_b.emit(SerialEvent {});
 }
 
 block_on(bus_a.wait_until_idle(None));

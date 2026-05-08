@@ -67,7 +67,7 @@ await bus.emit(SomeEvent({ some_data: 132 })).done();
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event, BaseEvent, event_bus::EventBus};
+use abxbus_rust::{event, event_bus::EventBus};
 use futures::executor::block_on;
 
 event! {
@@ -79,10 +79,10 @@ event! {
 
 let bus = EventBus::new(Some("MyBus".to_string()));
 bus.on::<SomeEvent, _, _>("on_some_event", |event| async move {
-    Ok(format!("did something with {}", event.payload().some_data))
+    Ok(format!("did something with {}", event.event_payload().some_data))
 });
 
-let event = bus.emit::<SomeEvent>(BaseEvent::new(SomeEvent { some_data: 132 }));
+let event = bus.emit(SomeEvent { some_data: 132 });
 block_on(event.wait_completed());
 ```
 

@@ -7,7 +7,7 @@ use std::{
 
 use abxbus_rust::{
     event_bus::{EventBus, EventBusOptions, FindOptions},
-    typed::{EventSpec, TypedEvent},
+    typed::{BaseEventHandle, EventSpec},
     types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
@@ -34,80 +34,80 @@ struct TagPayload {
 
 struct QueueJumpRootEvent;
 impl EventSpec for QueueJumpRootEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "QueueJumpRootEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "QueueJumpRootEvent";
 }
 
 struct QueueJumpChildEvent;
 impl EventSpec for QueueJumpChildEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "QueueJumpChildEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "QueueJumpChildEvent";
 }
 
 struct QueueJumpSiblingEvent;
 impl EventSpec for QueueJumpSiblingEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "QueueJumpSiblingEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "QueueJumpSiblingEvent";
 }
 
 struct ConcurrencyIntersectionEvent;
 impl EventSpec for ConcurrencyIntersectionEvent {
-    type Payload = TokenPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "ConcurrencyIntersectionEvent";
+    type payload = TokenPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "ConcurrencyIntersectionEvent";
 }
 
 struct TimeoutEnforcementEvent;
 impl EventSpec for TimeoutEnforcementEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "TimeoutEnforcementEvent";
-    const EVENT_TIMEOUT: Option<f64> = Some(0.02);
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "TimeoutEnforcementEvent";
+    const event_timeout: Option<f64> = Some(0.02);
 }
 
 struct TimeoutFollowupEvent;
 impl EventSpec for TimeoutFollowupEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "TimeoutFollowupEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "TimeoutFollowupEvent";
 }
 
 struct ZeroHistoryEvent;
 impl EventSpec for ZeroHistoryEvent {
-    type Payload = ValuePayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "ZeroHistoryEvent";
+    type payload = ValuePayload;
+    type event_result_type = String;
+    const event_type: &'static str = "ZeroHistoryEvent";
 }
 
 struct ContextParentEvent;
 impl EventSpec for ContextParentEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "ContextParentEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "ContextParentEvent";
 }
 
 struct ContextChildEvent;
 impl EventSpec for ContextChildEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "ContextChildEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "ContextChildEvent";
 }
 
 struct PendingVisibilityEvent;
 impl EventSpec for PendingVisibilityEvent {
-    type Payload = TagPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "PendingVisibilityEvent";
+    type payload = TagPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "PendingVisibilityEvent";
 }
 
 struct BackpressureEvent;
 impl EventSpec for BackpressureEvent {
-    type Payload = ValuePayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "BackpressureEvent";
+    type payload = ValuePayload;
+    type event_result_type = String;
+    const event_type: &'static str = "BackpressureEvent";
 }
 
 fn push(order: &Arc<Mutex<Vec<String>>>, entry: &str) {
@@ -133,12 +133,13 @@ fn test_queue_jump_preserves_parent_child_lineage_and_find_visibility() {
 
     let bus_for_root = bus.clone();
     let order_for_root = execution_order.clone();
-    bus.on("QueueJumpRootEvent", "on_root", move |_event| {
+    bus.on_raw("QueueJumpRootEvent", "on_root", move |_event| {
         let bus = bus_for_root.clone();
         let order = order_for_root.clone();
         async move {
             push(&order, "root:start");
-            let child = bus.emit_child::<QueueJumpChildEvent>(TypedEvent::new(EmptyPayload {}));
+            let child =
+                bus.emit_child(BaseEventHandle::<QueueJumpChildEvent>::new(EmptyPayload {}));
             child.wait_completed().await;
             push(&order, "root:end");
             Ok(json!("root-ok"))
@@ -147,7 +148,7 @@ fn test_queue_jump_preserves_parent_child_lineage_and_find_visibility() {
 
     let order_for_child = execution_order.clone();
     let child_id_for_child = child_event_id.clone();
-    bus.on("QueueJumpChildEvent", "on_child", move |event| {
+    bus.on_raw("QueueJumpChildEvent", "on_child", move |event| {
         let order = order_for_child.clone();
         let child_event_id = child_id_for_child.clone();
         async move {
@@ -160,7 +161,7 @@ fn test_queue_jump_preserves_parent_child_lineage_and_find_visibility() {
     });
 
     let order_for_sibling = execution_order.clone();
-    bus.on("QueueJumpSiblingEvent", "on_sibling", move |_event| {
+    bus.on_raw("QueueJumpSiblingEvent", "on_sibling", move |_event| {
         let order = order_for_sibling.clone();
         async move {
             push(&order, "sibling");
@@ -168,8 +169,10 @@ fn test_queue_jump_preserves_parent_child_lineage_and_find_visibility() {
         }
     });
 
-    let root = bus.emit::<QueueJumpRootEvent>(TypedEvent::new(EmptyPayload {}));
-    let sibling = bus.emit::<QueueJumpSiblingEvent>(TypedEvent::new(EmptyPayload {}));
+    let root = bus.emit(BaseEventHandle::<QueueJumpRootEvent>::new(EmptyPayload {}));
+    let sibling = bus.emit(BaseEventHandle::<QueueJumpSiblingEvent>::new(
+        EmptyPayload {},
+    ));
     block_on(root.wait_completed());
     block_on(sibling.wait_completed());
     block_on(bus.wait_until_idle(Some(2.0)));
@@ -227,7 +230,7 @@ fn test_concurrency_intersection_parallel_events_with_serial_handlers_stays_seri
         let max_by_event = max_by_event.clone();
         let global_current = global_current.clone();
         let global_max = global_max.clone();
-        bus.on("ConcurrencyIntersectionEvent", handler_name, move |event| {
+        bus.on_raw("ConcurrencyIntersectionEvent", handler_name, move |event| {
             let current_by_event = current_by_event.clone();
             let max_by_event = max_by_event.clone();
             let global_current = global_current.clone();
@@ -263,7 +266,9 @@ fn test_concurrency_intersection_parallel_events_with_serial_handlers_stays_seri
 
     let events: Vec<_> = (0..8)
         .map(|token| {
-            bus.emit::<ConcurrencyIntersectionEvent>(TypedEvent::new(TokenPayload { token }))
+            bus.emit(BaseEventHandle::<ConcurrencyIntersectionEvent>::new(
+                TokenPayload { token },
+            ))
         })
         .collect();
     for event in &events {
@@ -300,7 +305,7 @@ fn test_timeout_enforcement_preserves_follow_up_processing_and_queue_state() {
         },
     );
 
-    bus.on(
+    bus.on_raw(
         "TimeoutEnforcementEvent",
         "slow_handler_a",
         |_event| async move {
@@ -308,7 +313,7 @@ fn test_timeout_enforcement_preserves_follow_up_processing_and_queue_state() {
             Ok(json!("slow-a"))
         },
     );
-    bus.on(
+    bus.on_raw(
         "TimeoutEnforcementEvent",
         "slow_handler_b",
         |_event| async move {
@@ -316,13 +321,15 @@ fn test_timeout_enforcement_preserves_follow_up_processing_and_queue_state() {
             Ok(json!("slow-b"))
         },
     );
-    bus.on(
+    bus.on_raw(
         "TimeoutFollowupEvent",
         "followup_handler",
         |_event| async move { Ok(json!("followup-ok")) },
     );
 
-    let timed_out = bus.emit::<TimeoutEnforcementEvent>(TypedEvent::new(EmptyPayload {}));
+    let timed_out = bus.emit(BaseEventHandle::<TimeoutEnforcementEvent>::new(
+        EmptyPayload {},
+    ));
     block_on(timed_out.wait_completed());
     assert_eq!(
         timed_out.inner.inner.lock().event_status,
@@ -336,7 +343,9 @@ fn test_timeout_enforcement_preserves_follow_up_processing_and_queue_state() {
         .values()
         .all(|result| result.status == abxbus_rust::event_result::EventResultStatus::Error));
 
-    let followup = bus.emit::<TimeoutFollowupEvent>(TypedEvent::new(EmptyPayload {}));
+    let followup = bus.emit(BaseEventHandle::<TimeoutFollowupEvent>::new(
+        EmptyPayload {},
+    ));
     block_on(followup.wait_completed());
     assert!(followup
         .inner
@@ -365,7 +374,7 @@ fn test_timeout_enforcement_preserves_follow_up_processing_and_queue_state() {
 #[test]
 fn test_zero_history_backpressure_with_find_future_still_resolves_new_events() {
     let bus = EventBus::new_with_history(Some("ParityZeroHistoryBus".to_string()), Some(0), false);
-    bus.on("ZeroHistoryEvent", "handler", |event| async move {
+    bus.on_raw("ZeroHistoryEvent", "handler", |event| async move {
         let value = event
             .inner
             .lock()
@@ -377,7 +386,7 @@ fn test_zero_history_backpressure_with_find_future_still_resolves_new_events() {
         Ok(json!(format!("ok:{value}")))
     });
 
-    let first = bus.emit::<ZeroHistoryEvent>(TypedEvent::new(ValuePayload {
+    let first = bus.emit(BaseEventHandle::<ZeroHistoryEvent>::new(ValuePayload {
         value: "first".to_string(),
     }));
     let first_id = first.inner.inner.lock().event_id.clone();
@@ -391,7 +400,7 @@ fn test_zero_history_backpressure_with_find_future_still_resolves_new_events() {
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(20));
         let future_event =
-            bus_for_dispatch.emit::<ZeroHistoryEvent>(TypedEvent::new(ValuePayload {
+            bus_for_dispatch.emit(BaseEventHandle::<ZeroHistoryEvent>::new(ValuePayload {
                 value: "future".to_string(),
             }));
         *captured_for_dispatch
@@ -439,7 +448,7 @@ fn test_context_propagates_through_forwarding_and_child_dispatch_with_lineage_in
     let child_parent_id = Arc::new(Mutex::new(None::<String>));
 
     let bus_b_forward = bus_b.clone();
-    bus_a.on("*", "forward_to_b", move |event| {
+    bus_a.on_raw("*", "forward_to_b", move |event| {
         let bus_b = bus_b_forward.clone();
         async move {
             bus_b.emit_base(event);
@@ -449,20 +458,21 @@ fn test_context_propagates_through_forwarding_and_child_dispatch_with_lineage_in
 
     let bus_b_for_parent = bus_b.clone();
     let parent_event_id_for_parent = parent_event_id.clone();
-    bus_b.on("ContextParentEvent", "on_parent", move |event| {
+    bus_b.on_raw("ContextParentEvent", "on_parent", move |event| {
         let bus_b = bus_b_for_parent.clone();
         let parent_event_id = parent_event_id_for_parent.clone();
         async move {
             *parent_event_id.lock().expect("parent id lock") =
                 Some(event.inner.lock().event_id.clone());
-            let child = bus_b.emit_child::<ContextChildEvent>(TypedEvent::new(EmptyPayload {}));
+            let child =
+                bus_b.emit_child(BaseEventHandle::<ContextChildEvent>::new(EmptyPayload {}));
             child.wait_completed().await;
             Ok(json!("parent-ok"))
         }
     });
 
     let child_parent_id_for_child = child_parent_id.clone();
-    bus_b.on("ContextChildEvent", "on_child", move |event| {
+    bus_b.on_raw("ContextChildEvent", "on_child", move |event| {
         let child_parent_id = child_parent_id_for_child.clone();
         async move {
             *child_parent_id.lock().expect("child parent id lock") =
@@ -471,7 +481,7 @@ fn test_context_propagates_through_forwarding_and_child_dispatch_with_lineage_in
         }
     });
 
-    let parent = bus_a.emit::<ContextParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let parent = bus_a.emit(BaseEventHandle::<ContextParentEvent>::new(EmptyPayload {}));
     block_on(parent.wait_completed());
     block_on(bus_b.wait_until_idle(Some(2.0)));
 
@@ -526,7 +536,7 @@ fn test_pending_queue_find_visibility_transitions_to_completed_after_release() {
     );
     let (started_tx, started_rx) = std::sync::mpsc::channel();
 
-    bus.on("PendingVisibilityEvent", "handler", move |event| {
+    bus.on_raw("PendingVisibilityEvent", "handler", move |event| {
         let started_tx = started_tx.clone();
         async move {
             let tag = event
@@ -545,13 +555,13 @@ fn test_pending_queue_find_visibility_transitions_to_completed_after_release() {
         }
     });
 
-    let blocking = bus.emit::<PendingVisibilityEvent>(TypedEvent::new(TagPayload {
+    let blocking = bus.emit(BaseEventHandle::<PendingVisibilityEvent>::new(TagPayload {
         tag: "blocking".to_string(),
     }));
     started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("blocking handler should start");
-    let queued = bus.emit::<PendingVisibilityEvent>(TypedEvent::new(TagPayload {
+    let queued = bus.emit(BaseEventHandle::<PendingVisibilityEvent>::new(TagPayload {
         tag: "queued".to_string(),
     }));
     thread::sleep(Duration::from_millis(10));
@@ -598,7 +608,7 @@ fn test_pending_queue_find_visibility_transitions_to_completed_after_release() {
 #[test]
 fn test_history_backpressure_rejects_overflow_and_preserves_findable_history() {
     let bus = EventBus::new_with_history(Some("ParityBackpressureBus".to_string()), Some(1), false);
-    bus.on("BackpressureEvent", "handler", |event| async move {
+    bus.on_raw("BackpressureEvent", "handler", |event| async move {
         let value = event
             .inner
             .lock()
@@ -610,7 +620,7 @@ fn test_history_backpressure_rejects_overflow_and_preserves_findable_history() {
         Ok(json!(format!("ok:{value}")))
     });
 
-    let first = bus.emit::<BackpressureEvent>(TypedEvent::new(ValuePayload {
+    let first = bus.emit(BaseEventHandle::<BackpressureEvent>::new(ValuePayload {
         value: "first".to_string(),
     }));
     let first_id = first.inner.inner.lock().event_id.clone();
@@ -630,7 +640,7 @@ fn test_history_backpressure_rejects_overflow_and_preserves_findable_history() {
     assert_eq!(found_first.inner.lock().event_id, first_id);
 
     let overflow = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        bus.emit::<BackpressureEvent>(TypedEvent::new(ValuePayload {
+        bus.emit(BaseEventHandle::<BackpressureEvent>::new(ValuePayload {
             value: "second".to_string(),
         }));
     }));

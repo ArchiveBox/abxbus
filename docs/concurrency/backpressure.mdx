@@ -164,7 +164,7 @@ Events do not "move from queue to history." They are added to history at `emit()
 5. Runloop dequeues the event and executes handlers.
 6. Event remains in `EventHistory` unless trimmed/removed by policy.
 
-### Rust timeline (`emit_base`)
+### Rust timeline (`emit`)
 
 1. Validate pressure policy against the runtime history store.
 2. Add event to history and append its id to history order.
@@ -203,7 +203,7 @@ console.log('pending_event_queue=', bus.pending_event_queue.length, 'event_histo
 <Tab title="Rust">
 
 ```rust
-let event = bus.emit::<MyEvent>(BaseEvent::new(MyPayload::default()));
+let event = bus.emit(BaseEvent::<MyEvent>::new(MyPayload::default()));
 let snapshot = bus.to_json_value();
 let pending_count = snapshot["pending_event_queue"].as_array().map(Vec::len).unwrap_or(0);
 let history_count = snapshot["event_history"].as_object().map(|items| items.len()).unwrap_or(0);

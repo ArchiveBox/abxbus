@@ -173,7 +173,7 @@ let bus = EventBus::new_with_options(
 bus.on::<HandlerEvent, _, _>("tracked_a", |_event| async move { Ok(()) });
 bus.on::<HandlerEvent, _, _>("tracked_b", |_event| async move { Ok(()) });
 
-let event = bus.emit::<HandlerEvent>(BaseEvent::new(HandlerEvent {}));
+let event = bus.emit(HandlerEvent {});
 block_on(event.wait_completed());
 ```
 

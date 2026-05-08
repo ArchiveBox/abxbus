@@ -169,21 +169,15 @@ func main() {
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event_bus::EventBus, BaseEvent};
+use abxbus_rust::{event, event_bus::EventBus};
 use futures::executor::block_on;
-use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
-#[derive(Clone, Serialize, Deserialize)]
-struct JobPayload {
-    order: i64,
-}
-
-struct JobEvent;
-impl EventSpec for JobEvent {
-    type Payload = JobPayload;
-    type Result = ();
-    const EVENT_TYPE: &'static str = "JobEvent";
+event! {
+    struct JobEvent {
+        order: i64,
+        event_result_type: (),
+    }
 }
 
 let bus = EventBus::new(Some("FifoBus".to_string()));
@@ -193,14 +187,14 @@ let completed_order = Arc::new(Mutex::new(Vec::new()));
 let started = started_order.clone();
 let completed = completed_order.clone();
 bus.on::<JobEvent, _, _>("on_job", move |event| async move {
-    let order = event.payload().order;
+    let order = event.event_payload().order;
     started.lock().unwrap().push(order);
     completed.lock().unwrap().push(order);
     Ok(())
 });
 
 for order in 0..3 {
-    bus.emit::<JobEvent>(BaseEvent::new(JobPayload { order }));
+    bus.emit(JobEvent { order });
 }
 block_on(bus.wait_until_idle(None));
 
@@ -342,26 +336,20 @@ fmt.Println(bus.LogTree())
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event_bus::EventBus, BaseEvent};
+use abxbus_rust::{event, event_bus::EventBus};
 use futures::executor::block_on;
-use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
-#[derive(Clone, Serialize, Deserialize)]
-struct EmptyPayload;
-
-struct SlowEvent;
-impl EventSpec for SlowEvent {
-    type Payload = EmptyPayload;
-    type Result = ();
-    const EVENT_TYPE: &'static str = "SlowEvent";
+event! {
+    struct SlowEvent {
+        event_result_type: (),
+    }
 }
 
-struct FastEvent;
-impl EventSpec for FastEvent {
-    type Payload = EmptyPayload;
-    type Result = ();
-    const EVENT_TYPE: &'static str = "FastEvent";
+event! {
+    struct FastEvent {
+        event_result_type: (),
+    }
 }
 
 let bus = EventBus::new(Some("FifoBus".to_string()));
@@ -381,8 +369,8 @@ bus.on::<FastEvent, _, _>("on_fast", move |_event| async move {
     Ok(())
 });
 
-let slow = bus.emit::<SlowEvent>(BaseEvent::new(EmptyPayload));
-let fast = bus.emit::<FastEvent>(BaseEvent::new(EmptyPayload));
+let slow = bus.emit(SlowEvent {});
+let fast = bus.emit(FastEvent {});
 block_on(bus.wait_until_idle(None));
 
 assert!(slow.inner.inner.lock().event_completed_at <= fast.inner.inner.lock().event_started_at);

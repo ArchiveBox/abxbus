@@ -11,7 +11,7 @@ use abxbus_rust::{
     base_event::{now_iso, BaseEvent, EventResultsOptions},
     event_bus::{EventBus, EventBusOptions},
     event_result::EventResultStatus,
-    typed::{EventSpec, TypedEvent},
+    typed::{BaseEventHandle, EventSpec},
     types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
@@ -23,103 +23,103 @@ struct EmptyPayload {}
 
 struct BaseEventDoneRaisesFirstErrorEvent;
 impl EventSpec for BaseEventDoneRaisesFirstErrorEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "BaseEventDoneRaisesFirstErrorEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "BaseEventDoneRaisesFirstErrorEvent";
 }
 
 struct BaseEventEventResultUpdateEvent;
 impl EventSpec for BaseEventEventResultUpdateEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "BaseEventEventResultUpdateEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "BaseEventEventResultUpdateEvent";
 }
 
 struct BaseEventEventResultUpdateStatusOnlyEvent;
 impl EventSpec for BaseEventEventResultUpdateStatusOnlyEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "BaseEventEventResultUpdateStatusOnlyEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "BaseEventEventResultUpdateStatusOnlyEvent";
 }
 
 struct BaseEventAllowedEventConfigEvent;
 impl EventSpec for BaseEventAllowedEventConfigEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "BaseEventAllowedEventConfigEvent";
-    const EVENT_TIMEOUT: Option<f64> = Some(123.0);
-    const EVENT_SLOW_TIMEOUT: Option<f64> = Some(9.0);
-    const EVENT_HANDLER_TIMEOUT: Option<f64> = Some(45.0);
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "BaseEventAllowedEventConfigEvent";
+    const event_timeout: Option<f64> = Some(123.0);
+    const event_slow_timeout: Option<f64> = Some(9.0);
+    const event_handler_timeout: Option<f64> = Some(45.0);
 }
 
 struct BaseEventImmediateParentEvent;
 impl EventSpec for BaseEventImmediateParentEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "BaseEventImmediateParentEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "BaseEventImmediateParentEvent";
 }
 
 struct BaseEventImmediateChildEvent;
 impl EventSpec for BaseEventImmediateChildEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "BaseEventImmediateChildEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "BaseEventImmediateChildEvent";
 }
 
 struct BaseEventImmediateSiblingEvent;
 impl EventSpec for BaseEventImmediateSiblingEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "BaseEventImmediateSiblingEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "BaseEventImmediateSiblingEvent";
 }
 
 struct BaseEventParallelImmediateParentEvent;
 impl EventSpec for BaseEventParallelImmediateParentEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "BaseEventParallelImmediateParentEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "BaseEventParallelImmediateParentEvent";
 }
 
 struct BaseEventParallelImmediateChildEvent1;
 impl EventSpec for BaseEventParallelImmediateChildEvent1 {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "BaseEventParallelImmediateChildEvent1";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "BaseEventParallelImmediateChildEvent1";
 }
 
 struct BaseEventParallelImmediateChildEvent2;
 impl EventSpec for BaseEventParallelImmediateChildEvent2 {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "BaseEventParallelImmediateChildEvent2";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "BaseEventParallelImmediateChildEvent2";
 }
 
 struct BaseEventParallelImmediateChildEvent3;
 impl EventSpec for BaseEventParallelImmediateChildEvent3 {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "BaseEventParallelImmediateChildEvent3";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "BaseEventParallelImmediateChildEvent3";
 }
 
 struct BaseEventQueuedParentEvent;
 impl EventSpec for BaseEventQueuedParentEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "BaseEventQueuedParentEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "BaseEventQueuedParentEvent";
 }
 
 struct BaseEventQueuedChildEvent;
 impl EventSpec for BaseEventQueuedChildEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "BaseEventQueuedChildEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "BaseEventQueuedChildEvent";
 }
 
 struct BaseEventQueuedSiblingEvent;
 impl EventSpec for BaseEventQueuedSiblingEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "BaseEventQueuedSiblingEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "BaseEventQueuedSiblingEvent";
 }
 
 fn mk_event(event_type: &str) -> Arc<BaseEvent> {
@@ -174,7 +174,7 @@ fn test_event_result_re_raises_first_processing_exception_after_completion() {
         },
     );
 
-    bus.on(
+    bus.on_raw(
         "BaseEventDoneRaisesFirstErrorEvent",
         "first_failure",
         |_event| async {
@@ -182,7 +182,7 @@ fn test_event_result_re_raises_first_processing_exception_after_completion() {
             Err("first failure".to_string())
         },
     );
-    bus.on(
+    bus.on_raw(
         "BaseEventDoneRaisesFirstErrorEvent",
         "second_failure",
         |_event| async {
@@ -191,7 +191,9 @@ fn test_event_result_re_raises_first_processing_exception_after_completion() {
         },
     );
 
-    let event = bus.emit::<BaseEventDoneRaisesFirstErrorEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<BaseEventDoneRaisesFirstErrorEvent>::new(
+        EmptyPayload {},
+    ));
     let error = block_on(event.inner.event_result(EventResultsOptions::default()))
         .expect_err("handler error should be surfaced");
 
@@ -211,8 +213,8 @@ fn test_event_result_re_raises_first_processing_exception_after_completion() {
 #[test]
 fn test_event_result_update_creates_and_updates_typed_handler_results() {
     let bus = EventBus::new(Some("BaseEventEventResultUpdateBus".to_string()));
-    let event = TypedEvent::<BaseEventEventResultUpdateEvent>::new(EmptyPayload {});
-    let handler_entry = bus.on(
+    let event = BaseEventHandle::<BaseEventEventResultUpdateEvent>::new(EmptyPayload {});
+    let handler_entry = bus.on_raw(
         "BaseEventEventResultUpdateEvent",
         "handler",
         |_event| async { Ok(json!("ok")) },
@@ -256,8 +258,8 @@ fn test_event_result_update_creates_and_updates_typed_handler_results() {
 #[test]
 fn test_event_result_update_status_only_preserves_existing_error_and_result() {
     let bus = EventBus::new(Some("BaseEventEventResultUpdateStatusOnlyBus".to_string()));
-    let event = TypedEvent::<BaseEventEventResultUpdateStatusOnlyEvent>::new(EmptyPayload {});
-    let handler_entry = bus.on(
+    let event = BaseEventHandle::<BaseEventEventResultUpdateStatusOnlyEvent>::new(EmptyPayload {});
+    let handler_entry = bus.on_raw(
         "BaseEventEventResultUpdateStatusOnlyEvent",
         "handler",
         |_event| async { Ok(json!("ok")) },
@@ -303,14 +305,17 @@ fn test_await_event_queue_jumps_inside_handler() {
 
     let bus_for_parent = bus.clone();
     let order_for_parent = order.clone();
-    bus.on("BaseEventImmediateParentEvent", "parent", move |_event| {
+    bus.on_raw("BaseEventImmediateParentEvent", "parent", move |_event| {
         let bus = bus_for_parent.clone();
         let order = order_for_parent.clone();
         async move {
             push(&order, "parent_start");
-            bus.emit::<BaseEventImmediateSiblingEvent>(TypedEvent::new(EmptyPayload {}));
-            let child =
-                bus.emit_child::<BaseEventImmediateChildEvent>(TypedEvent::new(EmptyPayload {}));
+            bus.emit(BaseEventHandle::<BaseEventImmediateSiblingEvent>::new(
+                EmptyPayload {},
+            ));
+            let child = bus.emit_child(BaseEventHandle::<BaseEventImmediateChildEvent>::new(
+                EmptyPayload {},
+            ));
             child.wait_completed().await;
             push(&order, "parent_end");
             Ok(json!("parent"))
@@ -318,7 +323,7 @@ fn test_await_event_queue_jumps_inside_handler() {
     });
 
     let order_for_child = order.clone();
-    bus.on("BaseEventImmediateChildEvent", "child", move |_event| {
+    bus.on_raw("BaseEventImmediateChildEvent", "child", move |_event| {
         let order = order_for_child.clone();
         async move {
             push(&order, "child");
@@ -327,7 +332,7 @@ fn test_await_event_queue_jumps_inside_handler() {
     });
 
     let order_for_sibling = order.clone();
-    bus.on("BaseEventImmediateSiblingEvent", "sibling", move |_event| {
+    bus.on_raw("BaseEventImmediateSiblingEvent", "sibling", move |_event| {
         let order = order_for_sibling.clone();
         async move {
             push(&order, "sibling");
@@ -335,7 +340,9 @@ fn test_await_event_queue_jumps_inside_handler() {
         }
     });
 
-    let parent = bus.emit::<BaseEventImmediateParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let parent = bus.emit(BaseEventHandle::<BaseEventImmediateParentEvent>::new(
+        EmptyPayload {},
+    ));
     block_on(parent.wait_completed());
     block_on(bus.wait_until_idle(Some(2.0)));
 
@@ -384,7 +391,7 @@ fn test_parallel_event_concurrency_plus_immediate_execution_races_child_events_i
 
     let bus_for_parent = bus.clone();
     let order_for_parent = order.clone();
-    bus.on(
+    bus.on_raw(
         "BaseEventParallelImmediateParentEvent",
         "parent",
         move |_event| {
@@ -392,14 +399,14 @@ fn test_parallel_event_concurrency_plus_immediate_execution_races_child_events_i
             let order = order_for_parent.clone();
             async move {
                 push(&order, "parent_start");
-                let child1 = bus.emit_child::<BaseEventParallelImmediateChildEvent1>(
-                    TypedEvent::new(EmptyPayload {}),
+                let child1 = bus.emit_child(
+                    BaseEventHandle::<BaseEventParallelImmediateChildEvent1>::new(EmptyPayload {}),
                 );
-                let child2 = bus.emit_child::<BaseEventParallelImmediateChildEvent2>(
-                    TypedEvent::new(EmptyPayload {}),
+                let child2 = bus.emit_child(
+                    BaseEventHandle::<BaseEventParallelImmediateChildEvent2>::new(EmptyPayload {}),
                 );
-                let child3 = bus.emit_child::<BaseEventParallelImmediateChildEvent3>(
-                    TypedEvent::new(EmptyPayload {}),
+                let child3 = bus.emit_child(
+                    BaseEventHandle::<BaseEventParallelImmediateChildEvent3>::new(EmptyPayload {}),
                 );
                 child1.wait_completed().await;
                 child2.wait_completed().await;
@@ -421,7 +428,7 @@ fn test_parallel_event_concurrency_plus_immediate_execution_races_child_events_i
         let max_in_flight = max_in_flight.clone();
         let all_started_tx = all_started_tx.clone();
         let track_child = track_child.clone();
-        bus.on(event_type, label, move |_event| {
+        bus.on_raw(event_type, label, move |_event| {
             track_child(
                 label,
                 order.clone(),
@@ -434,7 +441,7 @@ fn test_parallel_event_concurrency_plus_immediate_execution_races_child_events_i
     }
 
     let parent =
-        bus.emit::<BaseEventParallelImmediateParentEvent>(TypedEvent::new(EmptyPayload {}));
+        bus.emit(BaseEventHandle::<BaseEventParallelImmediateParentEvent>::new(EmptyPayload {}));
     all_started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("all child handlers should start before release");
@@ -471,14 +478,17 @@ fn test_event_completed_waits_in_queue_order_inside_handler() {
 
     let bus_for_parent = bus.clone();
     let order_for_parent = order.clone();
-    bus.on("BaseEventQueuedParentEvent", "parent", move |_event| {
+    bus.on_raw("BaseEventQueuedParentEvent", "parent", move |_event| {
         let bus = bus_for_parent.clone();
         let order = order_for_parent.clone();
         async move {
             push(&order, "parent_start");
-            bus.emit::<BaseEventQueuedSiblingEvent>(TypedEvent::new(EmptyPayload {}));
-            let child =
-                bus.emit_child::<BaseEventQueuedChildEvent>(TypedEvent::new(EmptyPayload {}));
+            bus.emit(BaseEventHandle::<BaseEventQueuedSiblingEvent>::new(
+                EmptyPayload {},
+            ));
+            let child = bus.emit_child(BaseEventHandle::<BaseEventQueuedChildEvent>::new(
+                EmptyPayload {},
+            ));
             child.event_completed().await;
             push(&order, "parent_end");
             Ok(json!("parent"))
@@ -486,7 +496,7 @@ fn test_event_completed_waits_in_queue_order_inside_handler() {
     });
 
     let order_for_child = order.clone();
-    bus.on("BaseEventQueuedChildEvent", "child", move |_event| {
+    bus.on_raw("BaseEventQueuedChildEvent", "child", move |_event| {
         let order = order_for_child.clone();
         async move {
             push(&order, "child_start");
@@ -497,7 +507,7 @@ fn test_event_completed_waits_in_queue_order_inside_handler() {
     });
 
     let order_for_sibling = order.clone();
-    bus.on("BaseEventQueuedSiblingEvent", "sibling", move |_event| {
+    bus.on_raw("BaseEventQueuedSiblingEvent", "sibling", move |_event| {
         let order = order_for_sibling.clone();
         async move {
             push(&order, "sibling_start");
@@ -507,7 +517,9 @@ fn test_event_completed_waits_in_queue_order_inside_handler() {
         }
     });
 
-    let parent = bus.emit::<BaseEventQueuedParentEvent>(TypedEvent::new(EmptyPayload {}));
+    let parent = bus.emit(BaseEventHandle::<BaseEventQueuedParentEvent>::new(
+        EmptyPayload {},
+    ));
     block_on(parent.wait_completed());
     block_on(bus.wait_until_idle(Some(2.0)));
 
@@ -687,7 +699,7 @@ fn test_model_prefixed_field_rejected_in_payload() {
 
 #[test]
 fn test_builtin_event_prefixed_override_is_allowed() {
-    let event = TypedEvent::<BaseEventAllowedEventConfigEvent>::new(EmptyPayload {});
+    let event = BaseEventHandle::<BaseEventAllowedEventConfigEvent>::new(EmptyPayload {});
     let event = event.inner.inner.lock();
 
     assert_eq!(event.event_timeout, Some(123.0));

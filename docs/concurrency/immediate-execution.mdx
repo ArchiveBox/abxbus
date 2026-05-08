@@ -67,32 +67,26 @@ bus.on(ChildEvent, async () => 'child response')
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event_bus::EventBus, BaseEvent};
-use serde::{Deserialize, Serialize};
+use abxbus_rust::{event, event_bus::EventBus};
 use serde_json::json;
 
-#[derive(Clone, Serialize, Deserialize)]
-struct EmptyPayload;
-
-struct ParentEvent;
-impl EventSpec for ParentEvent {
-    type Payload = EmptyPayload;
-    type Result = serde_json::Value;
-    const EVENT_TYPE: &'static str = "ParentEvent";
+event! {
+    struct ParentEvent {
+        event_result_type: serde_json::Value,
+    }
 }
 
-struct ChildEvent;
-impl EventSpec for ChildEvent {
-    type Payload = EmptyPayload;
-    type Result = serde_json::Value;
-    const EVENT_TYPE: &'static str = "ChildEvent";
+event! {
+    struct ChildEvent {
+        event_result_type: serde_json::Value,
+    }
 }
 
 let bus = EventBus::new(Some("RpcBus".to_string()));
 
 bus.on::<ParentEvent, _, _>("on_parent", |event| async move {
     let current_bus = event.event_bus().expect("handler bus");
-    let child = current_bus.emit_child::<ChildEvent>(BaseEvent::new(EmptyPayload));
+    let child = current_bus.emit_child(ChildEvent {});
     child.wait_completed().await; // queue-jump while still inside this handler
     let value = child.event_result(Default::default()).await?;
     Ok(json!(format!("parent got: {value}")))

@@ -8,7 +8,7 @@ use abxbus_rust::{
     base_event::{now_iso, BaseEvent},
     event_bus::EventBus,
     event_result::EventResultStatus,
-    typed::{EventSpec, TypedEvent},
+    typed::{BaseEventHandle, EventSpec},
     types::EventStatus,
 };
 use futures::executor::block_on;
@@ -22,16 +22,16 @@ struct RuntimePayload {
 
 struct RuntimeSampleEvent;
 impl EventSpec for RuntimeSampleEvent {
-    type Payload = RuntimePayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "RuntimeSampleEvent";
+    type payload = RuntimePayload;
+    type event_result_type = String;
+    const event_type: &'static str = "RuntimeSampleEvent";
 }
 
 struct RuntimeSeededEvent;
 impl EventSpec for RuntimeSeededEvent {
-    type Payload = RuntimePayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "RuntimeSeededEvent";
+    type payload = RuntimePayload;
+    type event_result_type = String;
+    const event_type: &'static str = "RuntimeSeededEvent";
 }
 
 fn sample_event(data: &str) -> Arc<BaseEvent> {
@@ -68,12 +68,12 @@ fn test_event_started_at_with_json_deserialization() {
 #[test]
 fn test_event_started_at_after_processing() {
     let bus = EventBus::new(Some("RuntimeStateProcessingBus".to_string()));
-    bus.on("RuntimeSampleEvent", "handler", |_event| async {
+    bus.on_raw("RuntimeSampleEvent", "handler", |_event| async {
         thread::sleep(Duration::from_millis(10));
         Ok(json!("done"))
     });
 
-    let event = bus.emit::<RuntimeSampleEvent>(TypedEvent::new(RuntimePayload {
+    let event = bus.emit(BaseEventHandle::<RuntimeSampleEvent>::new(RuntimePayload {
         data: "processing_test".to_string(),
     }));
     block_on(event.wait_completed());
@@ -87,7 +87,7 @@ fn test_event_started_at_after_processing() {
 
 #[test]
 fn test_event_without_handlers_completes_and_serializes_runtime_state() {
-    let event = TypedEvent::<RuntimeSampleEvent>::new(RuntimePayload {
+    let event = BaseEventHandle::<RuntimeSampleEvent>::new(RuntimePayload {
         data: "no_handlers".to_string(),
     });
     let bus = EventBus::new(Some("RuntimeStateNoHandlersBus".to_string()));
@@ -135,10 +135,10 @@ fn test_event_with_manually_set_completed_at_reconciles_through_dispatch() {
         assert!(processed.event_completed_at.is_some());
     }
 
-    let seeded_event = TypedEvent::<RuntimeSeededEvent>::new(RuntimePayload {
+    let seeded_event = BaseEventHandle::<RuntimeSeededEvent>::new(RuntimePayload {
         data: "manual_seeded_result".to_string(),
     });
-    let handler_entry = bus.on("RuntimeSeededEvent", "handler", |_event| async {
+    let handler_entry = bus.on_raw("RuntimeSeededEvent", "handler", |_event| async {
         Ok(json!("done"))
     });
     let seeded_result = seeded_event.inner.event_result_update(
@@ -198,7 +198,7 @@ fn test_event_copy_preserves_private_attrs() {
 #[test]
 fn test_event_started_at_is_serialized_and_stateful() {
     let bus = EventBus::new(Some("RuntimeStateStartedAtBus".to_string()));
-    let event = TypedEvent::<RuntimeSampleEvent>::new(RuntimePayload {
+    let event = BaseEventHandle::<RuntimeSampleEvent>::new(RuntimePayload {
         data: "serialize_started_at".to_string(),
     });
     let pending_payload = event.inner.to_json_value();
@@ -208,7 +208,7 @@ fn test_event_started_at_is_serialized_and_stateful() {
         .contains_key("event_started_at"));
     assert_eq!(pending_payload["event_started_at"], Value::Null);
 
-    let handler_entry = bus.on("RuntimeSampleEvent", "handler", |_event| async {
+    let handler_entry = bus.on_raw("RuntimeSampleEvent", "handler", |_event| async {
         Ok(json!("ok"))
     });
     event.inner.event_result_update(
@@ -245,11 +245,11 @@ fn test_event_started_at_is_serialized_and_stateful() {
 #[test]
 fn test_event_result_update_started_marks_event_started_and_clears_completion() {
     let bus = EventBus::new(Some("RuntimeStateResultUpdateStartedBus".to_string()));
-    let event = TypedEvent::<RuntimeSampleEvent>::new(RuntimePayload {
+    let event = BaseEventHandle::<RuntimeSampleEvent>::new(RuntimePayload {
         data: "result_update_started".to_string(),
     });
     event.inner.inner.lock().event_completed_at = Some(now_iso());
-    let handler_entry = bus.on("RuntimeSampleEvent", "handler", |_event| async {
+    let handler_entry = bus.on_raw("RuntimeSampleEvent", "handler", |_event| async {
         Ok(json!("ok"))
     });
 
@@ -272,7 +272,7 @@ fn test_event_result_update_started_marks_event_started_and_clears_completion() 
 #[test]
 fn test_event_status_is_serialized_and_stateful() {
     let bus = EventBus::new(Some("RuntimeStateStatusBus".to_string()));
-    let event = TypedEvent::<RuntimeSampleEvent>::new(RuntimePayload {
+    let event = BaseEventHandle::<RuntimeSampleEvent>::new(RuntimePayload {
         data: "serialize_status".to_string(),
     });
     assert_eq!(event.inner.to_json_value()["event_status"], "pending");
@@ -280,7 +280,7 @@ fn test_event_status_is_serialized_and_stateful() {
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
     let release_rx = Arc::new(Mutex::new(release_rx));
-    bus.on("RuntimeSampleEvent", "slow_handler", move |_event| {
+    bus.on_raw("RuntimeSampleEvent", "slow_handler", move |_event| {
         let entered_tx = entered_tx.clone();
         let release_rx = release_rx.clone();
         async move {

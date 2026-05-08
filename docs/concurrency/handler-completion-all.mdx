@@ -186,7 +186,7 @@ let bus = EventBus::new_with_options(
 bus.on::<CompletionEvent, _, _>("fast_handler", |_event| async move { Ok(json!("fast")) });
 bus.on::<CompletionEvent, _, _>("slow_handler", |_event| async move { Ok(json!("slow")) });
 
-let event = bus.emit::<CompletionEvent>(BaseEvent::new(CompletionEvent {}));
+let event = bus.emit(CompletionEvent {});
 let results = block_on(event.event_results_list(EventResultsOptions {
     raise_if_any: false,
     raise_if_none: false,

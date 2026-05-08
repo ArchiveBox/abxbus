@@ -6,7 +6,7 @@ use std::{
 
 use abxbus_rust::{
     event_bus::EventBus,
-    typed::{EventSpec, TypedEvent},
+    typed::{BaseEventHandle, EventSpec},
 };
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
@@ -25,9 +25,9 @@ struct EmptyResult {}
 
 struct PingEvent;
 impl EventSpec for PingEvent {
-    type Payload = PingPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "PingEvent";
+    type payload = PingPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "PingEvent";
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -37,23 +37,23 @@ struct OrderPayload {
 
 struct OrderEvent;
 impl EventSpec for OrderEvent {
-    type Payload = OrderPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "OrderEvent";
+    type payload = OrderPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "OrderEvent";
 }
 
 struct ProxyDispatchRootEvent;
 impl EventSpec for ProxyDispatchRootEvent {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "ProxyDispatchRootEvent";
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "ProxyDispatchRootEvent";
 }
 
 struct ProxyDispatchChildEvent;
 impl EventSpec for ProxyDispatchChildEvent {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "ProxyDispatchChildEvent";
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "ProxyDispatchChildEvent";
 }
 
 #[test]
@@ -67,7 +67,7 @@ fn test_events_forward_between_buses_without_duplication() {
     let seen_c = Arc::new(Mutex::new(Vec::new()));
 
     let seen_a_handler = seen_a.clone();
-    bus_a.on("PingEvent", "seen_a", move |event| {
+    bus_a.on_raw("PingEvent", "seen_a", move |event| {
         let seen = seen_a_handler.clone();
         async move {
             seen.lock()
@@ -77,7 +77,7 @@ fn test_events_forward_between_buses_without_duplication() {
         }
     });
     let seen_b_handler = seen_b.clone();
-    bus_b.on("PingEvent", "seen_b", move |event| {
+    bus_b.on_raw("PingEvent", "seen_b", move |event| {
         let seen = seen_b_handler.clone();
         async move {
             seen.lock()
@@ -87,7 +87,7 @@ fn test_events_forward_between_buses_without_duplication() {
         }
     });
     let seen_c_handler = seen_c.clone();
-    bus_c.on("PingEvent", "seen_c", move |event| {
+    bus_c.on_raw("PingEvent", "seen_c", move |event| {
         let seen = seen_c_handler.clone();
         async move {
             seen.lock()
@@ -98,7 +98,7 @@ fn test_events_forward_between_buses_without_duplication() {
     });
 
     let bus_b_for_forward = bus_b.clone();
-    bus_a.on("*", "forward_to_b", move |event| {
+    bus_a.on_raw("*", "forward_to_b", move |event| {
         let bus_b = bus_b_for_forward.clone();
         async move {
             bus_b.emit_base(event);
@@ -106,7 +106,7 @@ fn test_events_forward_between_buses_without_duplication() {
         }
     });
     let bus_c_for_forward = bus_c.clone();
-    bus_b.on("*", "forward_to_c", move |event| {
+    bus_b.on_raw("*", "forward_to_c", move |event| {
         let bus_c = bus_c_for_forward.clone();
         async move {
             bus_c.emit_base(event);
@@ -114,7 +114,7 @@ fn test_events_forward_between_buses_without_duplication() {
         }
     });
 
-    let event = bus_a.emit::<PingEvent>(TypedEvent::new(PingPayload { value: 1 }));
+    let event = bus_a.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 1 }));
     block_on(event.wait_completed());
     block_on(bus_a.wait_until_idle(None));
     block_on(bus_b.wait_until_idle(None));
@@ -162,7 +162,7 @@ fn test_tresultsee_level_hierarchy_bubbling() {
             "subchild_seen",
         ),
     ] {
-        bus.on("PingEvent", handler_name, move |event| {
+        bus.on_raw("PingEvent", handler_name, move |event| {
             let seen = seen.clone();
             async move {
                 seen.lock()
@@ -174,7 +174,7 @@ fn test_tresultsee_level_hierarchy_bubbling() {
     }
 
     let parent_for_forward = parent_bus.clone();
-    child_bus.on("*", "forward_to_parent", move |event| {
+    child_bus.on_raw("*", "forward_to_parent", move |event| {
         let parent_bus = parent_for_forward.clone();
         async move {
             parent_bus.emit_base(event);
@@ -182,7 +182,7 @@ fn test_tresultsee_level_hierarchy_bubbling() {
         }
     });
     let child_for_forward = child_bus.clone();
-    subchild_bus.on("*", "forward_to_child", move |event| {
+    subchild_bus.on_raw("*", "forward_to_child", move |event| {
         let child_bus = child_for_forward.clone();
         async move {
             child_bus.emit_base(event);
@@ -190,7 +190,7 @@ fn test_tresultsee_level_hierarchy_bubbling() {
         }
     });
 
-    let bottom = subchild_bus.emit::<PingEvent>(TypedEvent::new(PingPayload { value: 1 }));
+    let bottom = subchild_bus.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 1 }));
     block_on(bottom.wait_completed());
     block_on(subchild_bus.wait_until_idle(None));
     block_on(child_bus.wait_until_idle(None));
@@ -218,7 +218,7 @@ fn test_tresultsee_level_hierarchy_bubbling() {
     events_at_child.lock().expect("child lock").clear();
     events_at_subchild.lock().expect("subchild lock").clear();
 
-    let middle = child_bus.emit::<PingEvent>(TypedEvent::new(PingPayload { value: 2 }));
+    let middle = child_bus.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 2 }));
     block_on(middle.wait_completed());
     block_on(child_bus.wait_until_idle(None));
     block_on(parent_bus.wait_until_idle(None));
@@ -252,7 +252,7 @@ fn test_forwarding_disambiguates_buses_that_share_the_same_name() {
     let seen_b = Arc::new(Mutex::new(Vec::new()));
 
     let seen_a_handler = seen_a.clone();
-    bus_a.on("PingEvent", "seen_a", move |event| {
+    bus_a.on_raw("PingEvent", "seen_a", move |event| {
         let seen = seen_a_handler.clone();
         async move {
             seen.lock()
@@ -262,7 +262,7 @@ fn test_forwarding_disambiguates_buses_that_share_the_same_name() {
         }
     });
     let seen_b_handler = seen_b.clone();
-    bus_b.on("PingEvent", "seen_b", move |event| {
+    bus_b.on_raw("PingEvent", "seen_b", move |event| {
         let seen = seen_b_handler.clone();
         async move {
             seen.lock()
@@ -273,7 +273,7 @@ fn test_forwarding_disambiguates_buses_that_share_the_same_name() {
     });
 
     let bus_b_for_forward = bus_b.clone();
-    bus_a.on("*", "forward_to_shared_name_peer", move |event| {
+    bus_a.on_raw("*", "forward_to_shared_name_peer", move |event| {
         let bus_b = bus_b_for_forward.clone();
         async move {
             bus_b.emit_base(event);
@@ -281,7 +281,7 @@ fn test_forwarding_disambiguates_buses_that_share_the_same_name() {
         }
     });
 
-    let event = bus_a.emit::<PingEvent>(TypedEvent::new(PingPayload { value: 99 }));
+    let event = bus_a.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 99 }));
     block_on(event.wait_completed());
     block_on(bus_a.wait_until_idle(None));
     block_on(bus_b.wait_until_idle(None));
@@ -319,7 +319,7 @@ fn test_circular_subscription_prevention() {
         (peer2.clone(), events_at_peer2.clone(), "seen_peer2"),
         (peer3.clone(), events_at_peer3.clone(), "seen_peer3"),
     ] {
-        bus.on("PingEvent", handler_name, move |event| {
+        bus.on_raw("PingEvent", handler_name, move |event| {
             let seen = seen.clone();
             async move {
                 seen.lock()
@@ -331,7 +331,7 @@ fn test_circular_subscription_prevention() {
     }
 
     let peer2_for_forward = peer2.clone();
-    peer1.on("*", "forward_to_peer2", move |event| {
+    peer1.on_raw("*", "forward_to_peer2", move |event| {
         let peer2 = peer2_for_forward.clone();
         async move {
             peer2.emit_base(event);
@@ -339,7 +339,7 @@ fn test_circular_subscription_prevention() {
         }
     });
     let peer3_for_forward = peer3.clone();
-    peer2.on("*", "forward_to_peer3", move |event| {
+    peer2.on_raw("*", "forward_to_peer3", move |event| {
         let peer3 = peer3_for_forward.clone();
         async move {
             peer3.emit_base(event);
@@ -347,7 +347,7 @@ fn test_circular_subscription_prevention() {
         }
     });
     let peer1_for_forward = peer1.clone();
-    peer3.on("*", "forward_to_peer1", move |event| {
+    peer3.on_raw("*", "forward_to_peer1", move |event| {
         let peer1 = peer1_for_forward.clone();
         async move {
             peer1.emit_base(event);
@@ -355,7 +355,7 @@ fn test_circular_subscription_prevention() {
         }
     });
 
-    let event = peer1.emit::<PingEvent>(TypedEvent::new(PingPayload { value: 42 }));
+    let event = peer1.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 42 }));
     block_on(event.wait_completed());
     block_on(peer1.wait_until_idle(None));
     block_on(peer2.wait_until_idle(None));
@@ -383,7 +383,7 @@ fn test_circular_subscription_prevention() {
     events_at_peer2.lock().expect("peer2 lock").clear();
     events_at_peer3.lock().expect("peer3 lock").clear();
 
-    let event2 = peer2.emit::<PingEvent>(TypedEvent::new(PingPayload { value: 99 }));
+    let event2 = peer2.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 99 }));
     block_on(event2.wait_completed());
     block_on(peer1.wait_until_idle(None));
     block_on(peer2.wait_until_idle(None));
@@ -436,7 +436,7 @@ fn test_forwarding_loop_prevention() {
         (bus_b.clone(), seen_b.clone(), "seen_b"),
         (bus_c.clone(), seen_c.clone(), "seen_c"),
     ] {
-        bus.on("PingEvent", handler_name, move |_event| {
+        bus.on_raw("PingEvent", handler_name, move |_event| {
             let seen = seen.clone();
             async move {
                 *seen.lock().expect("seen lock") += 1;
@@ -446,7 +446,7 @@ fn test_forwarding_loop_prevention() {
     }
 
     let bus_b_for_forward = bus_b.clone();
-    bus_a.on("*", "forward_to_b", move |event| {
+    bus_a.on_raw("*", "forward_to_b", move |event| {
         let bus_b = bus_b_for_forward.clone();
         async move {
             bus_b.emit_base(event);
@@ -454,7 +454,7 @@ fn test_forwarding_loop_prevention() {
         }
     });
     let bus_c_for_forward = bus_c.clone();
-    bus_b.on("*", "forward_to_c", move |event| {
+    bus_b.on_raw("*", "forward_to_c", move |event| {
         let bus_c = bus_c_for_forward.clone();
         async move {
             bus_c.emit_base(event);
@@ -462,7 +462,7 @@ fn test_forwarding_loop_prevention() {
         }
     });
     let bus_a_for_forward = bus_a.clone();
-    bus_c.on("*", "forward_to_a", move |event| {
+    bus_c.on_raw("*", "forward_to_a", move |event| {
         let bus_a = bus_a_for_forward.clone();
         async move {
             bus_a.emit_base(event);
@@ -470,7 +470,7 @@ fn test_forwarding_loop_prevention() {
         }
     });
 
-    let event = bus_a.emit::<PingEvent>(TypedEvent::new(PingPayload { value: 7 }));
+    let event = bus_a.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 7 }));
     block_on(event.wait_completed());
     block_on(bus_a.wait_until_idle(None));
     block_on(bus_b.wait_until_idle(None));
@@ -495,7 +495,7 @@ fn test_await_forwarded_event_waits_for_target_bus_handlers() {
     let completion_log = Arc::new(Mutex::new(Vec::new()));
 
     let log_a = completion_log.clone();
-    bus_a.on("PingEvent", "handler_a", move |_event| {
+    bus_a.on_raw("PingEvent", "handler_a", move |_event| {
         let log = log_a.clone();
         async move {
             thread::sleep(Duration::from_millis(10));
@@ -505,7 +505,7 @@ fn test_await_forwarded_event_waits_for_target_bus_handlers() {
     });
 
     let log_b = completion_log.clone();
-    bus_b.on("PingEvent", "handler_b", move |_event| {
+    bus_b.on_raw("PingEvent", "handler_b", move |_event| {
         let log = log_b.clone();
         async move {
             thread::sleep(Duration::from_millis(30));
@@ -515,7 +515,7 @@ fn test_await_forwarded_event_waits_for_target_bus_handlers() {
     });
 
     let bus_b_for_forward = bus_b.clone();
-    bus_a.on("*", "forward_to_b", move |event| {
+    bus_a.on_raw("*", "forward_to_b", move |event| {
         let bus_b = bus_b_for_forward.clone();
         async move {
             bus_b.emit_base(event);
@@ -523,7 +523,7 @@ fn test_await_forwarded_event_waits_for_target_bus_handlers() {
         }
     });
 
-    let event = bus_a.emit::<PingEvent>(TypedEvent::new(PingPayload { value: 2 }));
+    let event = bus_a.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 2 }));
     block_on(event.wait_completed());
 
     let mut log = completion_log.lock().expect("log lock").clone();
@@ -547,7 +547,7 @@ fn test_await_forwarded_event_waits_when_forwarding_handler_is_async_delayed() {
     let bus_b_done = Arc::new(Mutex::new(false));
 
     let bus_a_done_handler = bus_a_done.clone();
-    bus_a.on("PingEvent", "handler_a", move |_event| {
+    bus_a.on_raw("PingEvent", "handler_a", move |_event| {
         let done = bus_a_done_handler.clone();
         async move {
             thread::sleep(Duration::from_millis(20));
@@ -557,7 +557,7 @@ fn test_await_forwarded_event_waits_when_forwarding_handler_is_async_delayed() {
     });
 
     let bus_b_done_handler = bus_b_done.clone();
-    bus_b.on("PingEvent", "handler_b", move |_event| {
+    bus_b.on_raw("PingEvent", "handler_b", move |_event| {
         let done = bus_b_done_handler.clone();
         async move {
             thread::sleep(Duration::from_millis(10));
@@ -567,7 +567,7 @@ fn test_await_forwarded_event_waits_when_forwarding_handler_is_async_delayed() {
     });
 
     let bus_b_for_forward = bus_b.clone();
-    bus_a.on("*", "delayed_forward_to_b", move |event| {
+    bus_a.on_raw("*", "delayed_forward_to_b", move |event| {
         let bus_b = bus_b_for_forward.clone();
         async move {
             thread::sleep(Duration::from_millis(30));
@@ -576,7 +576,7 @@ fn test_await_forwarded_event_waits_when_forwarding_handler_is_async_delayed() {
         }
     });
 
-    let event = bus_a.emit::<PingEvent>(TypedEvent::new(PingPayload { value: 3 }));
+    let event = bus_a.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 3 }));
     block_on(event.wait_completed());
 
     assert!(*bus_a_done.lock().expect("bus_a_done lock"));
@@ -610,15 +610,15 @@ fn test_forwarding_same_event_does_not_set_self_parent_id() {
     let origin = EventBus::new(Some("SelfParentOrigin".to_string()));
     let target = EventBus::new(Some("SelfParentTarget".to_string()));
 
-    origin.on("PingEvent", "origin_handler", |_event| async move {
+    origin.on_raw("PingEvent", "origin_handler", |_event| async move {
         Ok(json!("origin-ok"))
     });
-    target.on("PingEvent", "target_handler", |_event| async move {
+    target.on_raw("PingEvent", "target_handler", |_event| async move {
         Ok(json!("target-ok"))
     });
 
     let target_for_forward = target.clone();
-    origin.on("*", "forward_to_target", move |event| {
+    origin.on_raw("*", "forward_to_target", move |event| {
         let target = target_for_forward.clone();
         async move {
             target.emit_base(event);
@@ -626,7 +626,7 @@ fn test_forwarding_same_event_does_not_set_self_parent_id() {
         }
     });
 
-    let event = origin.emit::<PingEvent>(TypedEvent::new(PingPayload { value: 9 }));
+    let event = origin.emit(BaseEventHandle::<PingEvent>::new(PingPayload { value: 9 }));
     block_on(event.wait_completed());
     block_on(origin.wait_until_idle(None));
     block_on(target.wait_until_idle(None));
@@ -645,20 +645,24 @@ fn test_proxy_dispatch_auto_links_child_events_like_emit() {
     let bus = EventBus::new(Some("ProxyDispatchAutoLinkBus".to_string()));
     let bus_for_root = bus.clone();
 
-    bus.on("ProxyDispatchRootEvent", "root_handler", move |_event| {
+    bus.on_raw("ProxyDispatchRootEvent", "root_handler", move |_event| {
         let bus = bus_for_root.clone();
         async move {
-            bus.emit_child::<ProxyDispatchChildEvent>(TypedEvent::new(EmptyPayload {}));
+            bus.emit_child(BaseEventHandle::<ProxyDispatchChildEvent>::new(
+                EmptyPayload {},
+            ));
             Ok(json!("root"))
         }
     });
-    bus.on(
+    bus.on_raw(
         "ProxyDispatchChildEvent",
         "child_handler",
         |_event| async move { Ok(json!("child")) },
     );
 
-    let root = bus.emit::<ProxyDispatchRootEvent>(TypedEvent::new(EmptyPayload {}));
+    let root = bus.emit(BaseEventHandle::<ProxyDispatchRootEvent>::new(
+        EmptyPayload {},
+    ));
     block_on(root.wait_completed());
     block_on(bus.wait_until_idle(None));
 
@@ -687,7 +691,7 @@ fn test_proxy_dispatch_of_same_event_does_not_self_parent_or_self_link_child() {
     let bus = EventBus::new(Some("ProxyDispatchSameEventBus".to_string()));
     let bus_for_root = bus.clone();
 
-    bus.on("ProxyDispatchRootEvent", "root_handler", move |event| {
+    bus.on_raw("ProxyDispatchRootEvent", "root_handler", move |event| {
         let bus = bus_for_root.clone();
         async move {
             bus.emit_base(event);
@@ -695,7 +699,9 @@ fn test_proxy_dispatch_of_same_event_does_not_self_parent_or_self_link_child() {
         }
     });
 
-    let root = bus.emit::<ProxyDispatchRootEvent>(TypedEvent::new(EmptyPayload {}));
+    let root = bus.emit(BaseEventHandle::<ProxyDispatchRootEvent>::new(
+        EmptyPayload {},
+    ));
     block_on(root.wait_completed());
     block_on(bus.wait_until_idle(None));
 
@@ -717,7 +723,7 @@ fn test_events_are_processed_in_fifo_order() {
     let processed_orders = Arc::new(Mutex::new(Vec::new()));
 
     let processed_orders_handler = processed_orders.clone();
-    bus.on("OrderEvent", "order_handler", move |event| {
+    bus.on_raw("OrderEvent", "order_handler", move |event| {
         let processed_orders = processed_orders_handler.clone();
         async move {
             let order = event
@@ -738,7 +744,7 @@ fn test_events_are_processed_in_fifo_order() {
     });
 
     for order in 0..10 {
-        bus.emit::<OrderEvent>(TypedEvent::new(OrderPayload { order }));
+        bus.emit(BaseEventHandle::<OrderEvent>::new(OrderPayload { order }));
     }
 
     block_on(bus.wait_until_idle(None));

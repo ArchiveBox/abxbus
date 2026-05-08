@@ -166,21 +166,27 @@ bus.On("UserEvent", "custom", handler, &abxbus.EventHandler{
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::event_handler::EventHandlerOptions;
-use serde_json::{json, Value};
+use abxbus_rust::{event, event_bus::EventBus, event_handler::EventHandlerOptions};
+use serde_json::json;
 
-let entry = bus.on("UserEvent", "handler", |event| async move {
-    Ok(json!(event.inner.lock().payload.get("user_id").cloned()))
+event! {
+    struct UserEvent {
+        user_id: String,
+        event_result_type: serde_json::Value,
+    }
+}
+
+let bus = EventBus::new(Some("ApiBus".to_string()));
+let entry = bus.on::<UserEvent, _, _>("handler", |event| async move {
+    Ok(json!(event.event_payload().user_id))
 });
-bus.on_sync("*", "wildcard_handler", |_event| Ok(Value::Null));
-bus.on_with_options(
-    "UserEvent",
+bus.on_with_options::<UserEvent, _, _>(
     "custom",
     EventHandlerOptions {
         handler_timeout: Some(5.0),
         ..EventHandlerOptions::default()
     },
-    |_event| async move { Ok(Value::Null) },
+    |_event| async move { Ok(serde_json::Value::Null) },
 );
 ```
 
@@ -223,9 +229,13 @@ bus.Off("*", nil)
 <Tab title="Rust">
 
 ```rust
-let handler = bus.on_sync("UserEvent", "handler", |_event| Ok(serde_json::Value::Null));
-bus.off("UserEvent", Some(&handler.id));
-bus.off("*", None);
+use abxbus_rust::typed::EventSpec;
+
+let handler = bus.on::<UserEvent, _, _>("handler", |_event| async move {
+    Ok(serde_json::Value::Null)
+});
+bus.off(UserEvent::event_type, Some(&handler.id));
+bus.off(UserEvent::event_type, None);
 ```
 
 </Tab>
@@ -266,17 +276,19 @@ if err != nil {
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::base_event::{BaseEvent, EventResultsOptions};
+use abxbus_rust::{event, event_bus::EventBus};
 use futures::executor::block_on;
-use serde_json::{json, Map};
 
-let mut payload = Map::new();
-payload.insert("data".to_string(), json!("x"));
-let event = bus.emit_base(BaseEvent::new(
-    "MyEvent",
-    payload,
-));
-let result = block_on(event.event_result(EventResultsOptions::default()))?;
+event! {
+    struct MyEvent {
+        data: String,
+        event_result_type: serde_json::Value,
+    }
+}
+
+let bus = EventBus::new(Some("EmitBus".to_string()));
+let event = bus.emit(MyEvent { data: "x".to_string() });
+let result = block_on(event.event_result(Default::default()))?;
 ```
 
 </Tab>

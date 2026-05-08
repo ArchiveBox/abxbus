@@ -2,7 +2,7 @@ use abxbus_rust::{
     base_event::BaseEvent,
     event_bus::{EventBus, EventBusOptions},
     event_result::EventResultStatus,
-    typed::{EventSpec, TypedEvent},
+    typed::{BaseEventHandle, EventSpec},
     types::{EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
@@ -25,46 +25,46 @@ struct EmptyResult {}
 
 struct TestEvent;
 impl EventSpec for TestEvent {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "TestEvent";
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "TestEvent";
 }
 
 struct Event1;
 impl EventSpec for Event1 {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "Event1";
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "Event1";
 }
 
 struct Event2;
 impl EventSpec for Event2 {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "Event2";
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "Event2";
 }
 
 struct OrphanEvent;
 impl EventSpec for OrphanEvent {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "OrphanEvent";
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "OrphanEvent";
 }
 
 struct ForwardEvent;
 impl EventSpec for ForwardEvent {
-    type Payload = EmptyPayload;
-    type Result = EmptyResult;
-    const EVENT_TYPE: &'static str = "ForwardEvent";
+    type payload = EmptyPayload;
+    type event_result_type = EmptyResult;
+    const event_type: &'static str = "ForwardEvent";
 }
 
 struct TimeoutTaxonomyEvent;
 impl EventSpec for TimeoutTaxonomyEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "TimeoutTaxonomyEvent";
-    const EVENT_TIMEOUT: Option<f64> = Some(0.2);
-    const EVENT_HANDLER_TIMEOUT: Option<f64> = Some(0.01);
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "TimeoutTaxonomyEvent";
+    const event_timeout: Option<f64> = Some(0.2);
+    const event_handler_timeout: Option<f64> = Some(0.01);
 }
 
 fn schema_event(event_type: &str, schema: Value) -> Arc<BaseEvent> {
@@ -79,10 +79,10 @@ fn test_handler_error_is_captured_and_does_not_prevent_other_handlers_from_runni
     let results = Arc::new(Mutex::new(Vec::new()));
     let results_for_handler = results.clone();
 
-    bus.on("TestEvent", "failing_handler", |_event| async move {
+    bus.on_raw("TestEvent", "failing_handler", |_event| async move {
         Err("Expected to fail - testing error handling".to_string())
     });
-    bus.on("TestEvent", "working_handler", move |_event| {
+    bus.on_raw("TestEvent", "working_handler", move |_event| {
         let results = results_for_handler.clone();
         async move {
             results.lock().expect("results lock").push("success");
@@ -90,7 +90,7 @@ fn test_handler_error_is_captured_and_does_not_prevent_other_handlers_from_runni
         }
     });
 
-    let event = bus.emit::<TestEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<TestEvent>::new(EmptyPayload {}));
     block_on(event.wait_completed());
 
     let event_results = event.inner.inner.lock().event_results.clone();
@@ -124,19 +124,19 @@ fn test_handler_error_is_captured_and_does_not_prevent_other_handlers_from_runni
 fn test_event_event_errors_collects_handler_errors() {
     let bus = EventBus::new(Some("ErrorCollectionBus".to_string()));
 
-    bus.on("TestEvent", "handler_a", |_event| async move {
+    bus.on_raw("TestEvent", "handler_a", |_event| async move {
         Err("error_a".to_string())
     });
-    bus.on("TestEvent", "handler_b", |_event| async move {
+    bus.on_raw("TestEvent", "handler_b", |_event| async move {
         Err("error_b".to_string())
     });
-    bus.on(
+    bus.on_raw(
         "TestEvent",
         "handler_c",
         |_event| async move { Ok(json!("ok")) },
     );
 
-    let event = bus.emit::<TestEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<TestEvent>::new(EmptyPayload {}));
     block_on(event.wait_completed());
 
     let mut errors = event.inner.event_errors();
@@ -151,11 +151,11 @@ fn test_event_event_errors_collects_handler_errors() {
 fn test_handler_error_does_not_prevent_event_completion() {
     let bus = EventBus::new(Some("ErrorCompletionBus".to_string()));
 
-    bus.on("TestEvent", "failing_handler", |_event| async move {
+    bus.on_raw("TestEvent", "failing_handler", |_event| async move {
         Err("handler failed".to_string())
     });
 
-    let event = bus.emit::<TestEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<TestEvent>::new(EmptyPayload {}));
     block_on(event.wait_completed());
 
     assert_eq!(
@@ -171,15 +171,15 @@ fn test_handler_error_does_not_prevent_event_completion() {
 fn test_error_in_one_event_does_not_affect_subsequent_queued_events() {
     let bus = EventBus::new(Some("ErrorQueueBus".to_string()));
 
-    bus.on("Event1", "event1_handler", |_event| async move {
+    bus.on_raw("Event1", "event1_handler", |_event| async move {
         Err("event1 handler failed".to_string())
     });
-    bus.on("Event2", "event2_handler", |_event| async move {
+    bus.on_raw("Event2", "event2_handler", |_event| async move {
         Ok(json!("event2 ok"))
     });
 
-    let event_1 = bus.emit::<Event1>(TypedEvent::new(EmptyPayload {}));
-    let event_2 = bus.emit::<Event2>(TypedEvent::new(EmptyPayload {}));
+    let event_1 = bus.emit(BaseEventHandle::<Event1>::new(EmptyPayload {}));
+    let event_2 = bus.emit(BaseEventHandle::<Event2>::new(EmptyPayload {}));
     block_on(bus.wait_until_idle(None));
 
     assert_eq!(
@@ -210,12 +210,12 @@ fn test_error_in_one_event_does_not_affect_subsequent_queued_events() {
 fn test_async_handler_rejection_is_captured_as_error() {
     let bus = EventBus::new(Some("AsyncErrorBus".to_string()));
 
-    bus.on("TestEvent", "async_failing_handler", |_event| async move {
+    bus.on_raw("TestEvent", "async_failing_handler", |_event| async move {
         thread::sleep(Duration::from_millis(1));
         Err("async rejection".to_string())
     });
 
-    let event = bus.emit::<TestEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<TestEvent>::new(EmptyPayload {}));
     block_on(event.wait_completed());
 
     assert_eq!(
@@ -245,7 +245,7 @@ fn test_error_in_forwarded_event_handler_does_not_block_source_bus() {
     let bus_b = EventBus::new(Some("ErrorForwardB".to_string()));
 
     let bus_b_for_forward = bus_b.clone();
-    bus_a.on("*", "emit", move |event| {
+    bus_a.on_raw("*", "emit", move |event| {
         let bus_b = bus_b_for_forward.clone();
         async move {
             bus_b.emit_base(event);
@@ -253,14 +253,14 @@ fn test_error_in_forwarded_event_handler_does_not_block_source_bus() {
         }
     });
 
-    bus_b.on("ForwardEvent", "bus_b_handler", |_event| async move {
+    bus_b.on_raw("ForwardEvent", "bus_b_handler", |_event| async move {
         Err("bus_b handler failed".to_string())
     });
-    bus_a.on("ForwardEvent", "bus_a_handler", |_event| async move {
+    bus_a.on_raw("ForwardEvent", "bus_a_handler", |_event| async move {
         Ok(json!("bus_a ok"))
     });
 
-    let event = bus_a.emit::<ForwardEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus_a.emit(BaseEventHandle::<ForwardEvent>::new(EmptyPayload {}));
     block_on(event.wait_completed());
 
     assert_eq!(
@@ -294,7 +294,7 @@ fn test_error_in_forwarded_event_handler_does_not_block_source_bus() {
 fn test_event_with_no_handlers_completes_without_errors() {
     let bus = EventBus::new(Some("NoHandlerBus".to_string()));
 
-    let event = bus.emit::<OrphanEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<OrphanEvent>::new(EmptyPayload {}));
     block_on(event.wait_completed());
 
     assert_eq!(
@@ -310,11 +310,11 @@ fn test_event_with_no_handlers_completes_without_errors() {
 fn test_error_handler_result_fields_are_populated_correctly() {
     let bus = EventBus::new(Some("ErrorFieldsBus".to_string()));
 
-    bus.on("TestEvent", "my_handler", |_event| async move {
+    bus.on_raw("TestEvent", "my_handler", |_event| async move {
         Err("RangeError: out of range".to_string())
     });
 
-    let event = bus.emit::<TestEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<TestEvent>::new(EmptyPayload {}));
     block_on(event.wait_completed());
 
     let result = event
@@ -346,7 +346,7 @@ fn test_error_handler_result_fields_are_populated_correctly() {
 fn test_result_schema_mismatch_uses_event_handler_result_schema_error() {
     let bus = EventBus::new(Some("TaxonomySchemaBus".to_string()));
 
-    bus.on("IntTaxonomyEvent", "wrong_type", |_event| async move {
+    bus.on_raw("IntTaxonomyEvent", "wrong_type", |_event| async move {
         Ok(json!("not-an-int"))
     });
 
@@ -383,7 +383,7 @@ fn test_result_schema_mismatch_uses_event_handler_result_schema_error() {
 fn test_handler_timeout_uses_event_handler_timeout_error() {
     let bus = EventBus::new(Some("TaxonomyTimeoutBus".to_string()));
 
-    bus.on(
+    bus.on_raw(
         "TimeoutTaxonomyEvent",
         "slow_handler",
         |_event| async move {
@@ -392,7 +392,9 @@ fn test_handler_timeout_uses_event_handler_timeout_error() {
         },
     );
 
-    let event = bus.emit::<TimeoutTaxonomyEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<TimeoutTaxonomyEvent>::new(
+        EmptyPayload {},
+    ));
     block_on(event.wait_completed());
 
     let result = event
@@ -431,10 +433,10 @@ fn test_first_mode_pending_non_winner_uses_cancelled_error_class() {
         },
     );
 
-    bus.on("TaxonomyEvent", "winner", |_event| async move {
+    bus.on_raw("TaxonomyEvent", "winner", |_event| async move {
         Ok(json!("winner"))
     });
-    bus.on("TaxonomyEvent", "never_runs", |_event| async move {
+    bus.on_raw("TaxonomyEvent", "never_runs", |_event| async move {
         thread::sleep(Duration::from_millis(100));
         Ok(json!("loser"))
     });
@@ -476,7 +478,7 @@ fn test_parallel_first_started_loser_uses_aborted_error_class() {
     let slow_started = Arc::new(AtomicBool::new(false));
 
     let slow_started_for_slow = slow_started.clone();
-    bus.on("TaxonomyEvent", "slow_loser", move |_event| {
+    bus.on_raw("TaxonomyEvent", "slow_loser", move |_event| {
         let slow_started = slow_started_for_slow.clone();
         async move {
             slow_started.store(true, Ordering::SeqCst);
@@ -486,7 +488,7 @@ fn test_parallel_first_started_loser_uses_aborted_error_class() {
     });
 
     let slow_started_for_fast = slow_started.clone();
-    bus.on("TaxonomyEvent", "fast_winner", move |_event| {
+    bus.on_raw("TaxonomyEvent", "fast_winner", move |_event| {
         let slow_started = slow_started_for_fast.clone();
         async move {
             while !slow_started.load(Ordering::SeqCst) {

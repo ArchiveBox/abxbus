@@ -66,28 +66,22 @@ const result = event.event_result
 
 ```rust
 use abxbus_rust::{
+    event,
     event_bus::FindOptions,
-    BaseEvent,
 };
 use futures::executor::block_on;
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 
-#[derive(Clone, Serialize, Deserialize)]
-struct ScreenshotPayload {
-    url: String,
-}
-
-struct ScreenshotEvent;
-impl EventSpec for ScreenshotEvent {
-    type Payload = ScreenshotPayload;
-    type Result = serde_json::Value;
-    const EVENT_TYPE: &'static str = "ScreenshotEvent";
+event! {
+    struct ScreenshotEvent {
+        url: String,
+        event_result_type: serde_json::Value,
+    }
 }
 
 let existing = block_on(bus.find_with_options(
-    ScreenshotEvent::EVENT_TYPE,
+    ScreenshotEvent::event_type,
     FindOptions {
         past_window: Some(10.0),
         future: None,
@@ -97,7 +91,7 @@ let existing = block_on(bus.find_with_options(
 ));
 
 let event = existing.unwrap_or_else(|| {
-    bus.emit::<ScreenshotEvent>(BaseEvent::new(ScreenshotPayload { url: url.to_string() })).inner
+    bus.emit(ScreenshotEvent { url: url.to_string() }).inner
 });
 block_on(event.wait_completed());
 let result = block_on(event.event_result(Default::default()))?;
@@ -172,7 +166,7 @@ const result = event.event_result
 
 ```rust
 let in_flight = block_on(bus.find_with_options(
-    ScreenshotEvent::EVENT_TYPE,
+    ScreenshotEvent::event_type,
     FindOptions {
         past: false,
         future: Some(2.0),
@@ -182,7 +176,7 @@ let in_flight = block_on(bus.find_with_options(
 ));
 
 let event = in_flight.unwrap_or_else(|| {
-    bus.emit::<ScreenshotEvent>(BaseEvent::new(ScreenshotPayload { url: url.to_string() })).inner
+    bus.emit(ScreenshotEvent { url: url.to_string() }).inner
 });
 block_on(event.wait_completed());
 let result = block_on(event.event_result(Default::default()))?;
@@ -256,7 +250,7 @@ const result = event.event_result
 ```rust
 let by_url = HashMap::from([("url".to_string(), json!(url))]);
 let event = block_on(bus.find_with_options(
-    ScreenshotEvent::EVENT_TYPE,
+    ScreenshotEvent::event_type,
     FindOptions {
         past_window: Some(10.0),
         future: None,
@@ -266,7 +260,7 @@ let event = block_on(bus.find_with_options(
 ))
 .or_else(|| {
     block_on(bus.find_with_options(
-        ScreenshotEvent::EVENT_TYPE,
+        ScreenshotEvent::event_type,
         FindOptions {
             past: false,
             future: Some(2.0),
@@ -276,7 +270,7 @@ let event = block_on(bus.find_with_options(
     ))
 })
 .unwrap_or_else(|| {
-    bus.emit::<ScreenshotEvent>(BaseEvent::new(ScreenshotPayload { url: url.to_string() })).inner
+    bus.emit(ScreenshotEvent { url: url.to_string() }).inner
 });
 
 block_on(event.wait_completed());
@@ -354,7 +348,7 @@ const emitDebouncedScreenshot = async (url: string) => {
 fn emit_debounced_screenshot(bus: &EventBus, url: &str) -> Result<Option<serde_json::Value>, String> {
     let by_url = HashMap::from([("url".to_string(), json!(url))]);
     let event = block_on(bus.find_with_options(
-        ScreenshotEvent::EVENT_TYPE,
+        ScreenshotEvent::event_type,
         FindOptions {
             past_window: Some(15.0),
             future: None,
@@ -364,7 +358,7 @@ fn emit_debounced_screenshot(bus: &EventBus, url: &str) -> Result<Option<serde_j
     ))
     .or_else(|| {
         block_on(bus.find_with_options(
-            ScreenshotEvent::EVENT_TYPE,
+            ScreenshotEvent::event_type,
             FindOptions {
                 past: false,
                 future: Some(3.0),
@@ -374,7 +368,7 @@ fn emit_debounced_screenshot(bus: &EventBus, url: &str) -> Result<Option<serde_j
         ))
     })
     .unwrap_or_else(|| {
-        bus.emit::<ScreenshotEvent>(BaseEvent::new(ScreenshotPayload { url: url.to_string() })).inner
+        bus.emit(ScreenshotEvent { url: url.to_string() }).inner
     });
 
     block_on(event.wait_completed());

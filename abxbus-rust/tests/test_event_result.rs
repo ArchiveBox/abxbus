@@ -14,7 +14,7 @@ use abxbus_rust::{
     event_handler::{EventHandler, EventHandlerOptions, HandlerFuture},
     event_result::{EventResult, EventResultStatus},
     id::compute_handler_id,
-    typed::{EventSpec, TypedEvent},
+    typed::{BaseEventHandle, EventSpec},
 };
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
@@ -62,44 +62,44 @@ struct ScreenshotEventResult {
 
 struct ScreenshotEvent;
 impl EventSpec for ScreenshotEvent {
-    type Payload = EmptyPayload;
-    type Result = ScreenshotEventResult;
-    const EVENT_TYPE: &'static str = "ScreenshotEvent";
+    type payload = EmptyPayload;
+    type event_result_type = ScreenshotEventResult;
+    const event_type: &'static str = "ScreenshotEvent";
 }
 
 struct AccessorEvent;
 impl EventSpec for AccessorEvent {
-    type Payload = EmptyPayload;
-    type Result = Value;
-    const EVENT_TYPE: &'static str = "AccessorEvent";
+    type payload = EmptyPayload;
+    type event_result_type = Value;
+    const event_type: &'static str = "AccessorEvent";
 }
 
 struct StringResultEvent;
 impl EventSpec for StringResultEvent {
-    type Payload = EmptyPayload;
-    type Result = String;
-    const EVENT_TYPE: &'static str = "StringResultEvent";
+    type payload = EmptyPayload;
+    type event_result_type = String;
+    const event_type: &'static str = "StringResultEvent";
 }
 
 struct IntEvent;
 impl EventSpec for IntEvent {
-    type Payload = EmptyPayload;
-    type Result = i64;
-    const EVENT_TYPE: &'static str = "IntEvent";
+    type payload = EmptyPayload;
+    type event_result_type = i64;
+    const event_type: &'static str = "IntEvent";
 }
 
 struct NormalEvent;
 impl EventSpec for NormalEvent {
-    type Payload = EmptyPayload;
-    type Result = Value;
-    const EVENT_TYPE: &'static str = "NormalEvent";
+    type payload = EmptyPayload;
+    type event_result_type = Value;
+    const event_type: &'static str = "NormalEvent";
 }
 
-struct ForwardingTypedEvent;
-impl EventSpec for ForwardingTypedEvent {
-    type Payload = EmptyPayload;
-    type Result = i64;
-    const EVENT_TYPE: &'static str = "ForwardingTypedEvent";
+struct ForwardingBaseEventHandle;
+impl EventSpec for ForwardingBaseEventHandle {
+    type payload = EmptyPayload;
+    type event_result_type = i64;
+    const event_type: &'static str = "ForwardingBaseEventHandle";
 }
 
 fn schema_event(event_type: &str, schema: Option<Value>) -> Arc<BaseEvent> {
@@ -123,7 +123,7 @@ fn first_result(event: &Arc<BaseEvent>) -> EventResult {
 fn test_pydantic_model_result_casting() {
     let bus = EventBus::new(Some("pydantic_test_bus".to_string()));
 
-    bus.on(
+    bus.on_raw(
         "ScreenshotEvent",
         "screenshot_handler",
         |_event| async move {
@@ -134,7 +134,7 @@ fn test_pydantic_model_result_casting() {
         },
     );
 
-    let event = bus.emit::<ScreenshotEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<ScreenshotEvent>::new(EmptyPayload {}));
     let result = block_on(event.event_result(EventResultsOptions::default()))
         .expect("typed event_result")
         .expect("handler result");
@@ -153,22 +153,22 @@ fn test_pydantic_model_result_casting() {
 fn test_builtin_type_casting() {
     let bus = EventBus::new(Some("builtin_test_bus".to_string()));
 
-    bus.on("StringResultEvent", "string_handler", |_event| async move {
+    bus.on_raw("StringResultEvent", "string_handler", |_event| async move {
         Ok(json!("42"))
     });
-    bus.on(
+    bus.on_raw(
         "IntEvent",
         "int_handler",
         |_event| async move { Ok(json!(123)) },
     );
 
-    let string_event = bus.emit::<StringResultEvent>(TypedEvent::new(EmptyPayload {}));
+    let string_event = bus.emit(BaseEventHandle::<StringResultEvent>::new(EmptyPayload {}));
     let string_result = block_on(string_event.event_result(EventResultsOptions::default()))
         .expect("string result")
         .expect("string handler result");
     assert_eq!(string_result, "42");
 
-    let int_event = bus.emit::<IntEvent>(TypedEvent::new(EmptyPayload {}));
+    let int_event = bus.emit(BaseEventHandle::<IntEvent>::new(EmptyPayload {}));
     let int_result = block_on(int_event.event_result(EventResultsOptions::default()))
         .expect("int result")
         .expect("int handler result");
@@ -180,11 +180,11 @@ fn test_builtin_type_casting() {
 fn test_casting_failure_handling() {
     let bus = EventBus::new(Some("failure_test_bus".to_string()));
 
-    bus.on("IntEvent", "bad_handler", |_event| async move {
+    bus.on_raw("IntEvent", "bad_handler", |_event| async move {
         Ok(json!("not_a_number"))
     });
 
-    let event = bus.emit::<IntEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<IntEvent>::new(EmptyPayload {}));
     let typed_result = block_on(event.event_result(EventResultsOptions {
         raise_if_any: false,
         raise_if_none: false,
@@ -216,11 +216,11 @@ fn test_casting_failure_handling() {
 fn test_no_casting_when_no_result_type() {
     let bus = EventBus::new(Some("normal_test_bus".to_string()));
 
-    bus.on("NormalEvent", "normal_handler", |_event| async move {
+    bus.on_raw("NormalEvent", "normal_handler", |_event| async move {
         Ok(json!({"raw": "data"}))
     });
 
-    let event = bus.emit::<NormalEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<NormalEvent>::new(EmptyPayload {}));
     let result = block_on(event.event_result(EventResultsOptions::default()))
         .expect("raw result")
         .expect("handler result");
@@ -234,15 +234,17 @@ fn test_no_casting_when_no_result_type() {
 fn test_typed_accessors_normalize_forwarded_event_results_to_none() {
     let bus = EventBus::new(Some("forwarded_result_normalization_bus".to_string()));
 
-    bus.on(
-        "ForwardingTypedEvent",
+    bus.on_raw(
+        "ForwardingBaseEventHandle",
         "forward_handler",
         |_event| async move {
             Ok(BaseEvent::new("ForwardedEventFromHandler", serde_json::Map::new()).to_json_value())
         },
     );
 
-    let event = bus.emit::<ForwardingTypedEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<ForwardingBaseEventHandle>::new(
+        EmptyPayload {},
+    ));
 
     let result = block_on(event.event_result(EventResultsOptions {
         raise_if_any: false,
@@ -335,11 +337,11 @@ fn test_event_result_serializes_handler_metadata_and_derived_fields() {
 #[test]
 fn test_event_results_capture_handler_return_values() {
     let bus = EventBus::new(Some("ResultCaptureBus".to_string()));
-    bus.on("StringResultEvent", "handler", |_event| async move {
+    bus.on_raw("StringResultEvent", "handler", |_event| async move {
         Ok(json!("ok"))
     });
 
-    let event = bus.emit::<StringResultEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<StringResultEvent>::new(EmptyPayload {}));
     block_on(event.wait_completed());
 
     let results = event.inner.inner.lock().event_results.clone();
@@ -362,7 +364,7 @@ fn test_event_result_type_validates_handler_results() {
         "required": ["value", "count"]
     });
 
-    bus.on("ObjectResultEvent", "handler", |_event| async move {
+    bus.on_raw("ObjectResultEvent", "handler", |_event| async move {
         Ok(json!({"value": "hello", "count": 2}))
     });
 
@@ -387,7 +389,7 @@ fn test_event_result_type_allows_undefined_handler_return_values() {
         "required": ["value", "count"]
     });
 
-    bus.on("ObjectResultEvent", "handler", |_event| async move {
+    bus.on_raw("ObjectResultEvent", "handler", |_event| async move {
         Ok(Value::Null)
     });
 
@@ -412,7 +414,7 @@ fn test_invalid_result_marks_handler_error() {
         "required": ["value", "count"]
     });
 
-    bus.on("ObjectResultEvent", "handler", |_event| async move {
+    bus.on_raw("ObjectResultEvent", "handler", |_event| async move {
         Ok(json!({"value": "bad", "count": "nope"}))
     });
 
@@ -434,7 +436,7 @@ fn test_invalid_result_marks_handler_error() {
 fn test_event_with_no_result_schema_stores_raw_values() {
     let bus = EventBus::new(Some("NoSchemaBus".to_string()));
 
-    bus.on("NoResultSchemaEvent", "handler", |_event| async move {
+    bus.on_raw("NoResultSchemaEvent", "handler", |_event| async move {
         Ok(json!({"raw": true}))
     });
 
@@ -450,11 +452,11 @@ fn test_event_with_no_result_schema_stores_raw_values() {
 #[test]
 fn test_event_result_json_omits_result_type_and_derives_from_parent_event() {
     let bus = EventBus::new(Some("ResultTypeDeriveBus".to_string()));
-    bus.on("StringResultEvent", "handler", |_event| async move {
+    bus.on_raw("StringResultEvent", "handler", |_event| async move {
         Ok(json!("ok"))
     });
 
-    let event = bus.emit::<StringResultEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<StringResultEvent>::new(EmptyPayload {}));
     block_on(event.wait_completed());
 
     let result = event
@@ -659,7 +661,7 @@ fn test_handler_result_stays_pending_while_waiting_for_handler_lock_entry() {
     let release_rx = Arc::new(Mutex::new(release_rx));
 
     let release_for_first = release_rx.clone();
-    bus.on("RunHandlerLockWaitEvent", "first_handler", move |_event| {
+    bus.on_raw("RunHandlerLockWaitEvent", "first_handler", move |_event| {
         let started_tx = started_tx.clone();
         let release_rx = release_for_first.clone();
         async move {
@@ -672,7 +674,7 @@ fn test_handler_result_stays_pending_while_waiting_for_handler_lock_entry() {
             Ok(json!("first"))
         }
     });
-    bus.on(
+    bus.on_raw(
         "RunHandlerLockWaitEvent",
         "second_handler",
         |_event| async move {
@@ -747,7 +749,7 @@ fn test_slow_handler_warning_is_based_on_handler_runtime_after_lock_wait() {
     let release_rx = Arc::new(Mutex::new(release_rx));
 
     let release_for_first = release_rx.clone();
-    bus.on(
+    bus.on_raw(
         "RunHandlerSlowAfterLockWaitEvent",
         "first_handler",
         move |_event| {
@@ -765,7 +767,7 @@ fn test_slow_handler_warning_is_based_on_handler_runtime_after_lock_wait() {
             }
         },
     );
-    bus.on_with_options(
+    bus.on_raw_with_options(
         "RunHandlerSlowAfterLockWaitEvent",
         "second_handler",
         EventHandlerOptions {
@@ -855,17 +857,17 @@ fn test_eventresultslist_returns_filtered_values_by_default_and_can_return_raw_v
 {
     let bus = EventBus::new(Some("EventResultsListBus".to_string()));
 
-    bus.on("AccessorEvent", "first_handler", |_event| async move {
+    bus.on_raw("AccessorEvent", "first_handler", |_event| async move {
         Ok(json!("first"))
     });
-    bus.on("AccessorEvent", "null_handler", |_event| async move {
+    bus.on_raw("AccessorEvent", "null_handler", |_event| async move {
         Ok(Value::Null)
     });
-    bus.on("AccessorEvent", "second_handler", |_event| async move {
+    bus.on_raw("AccessorEvent", "second_handler", |_event| async move {
         Ok(json!("second"))
     });
 
-    let event = bus.emit::<AccessorEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<AccessorEvent>::new(EmptyPayload {}));
 
     let default_values = block_on(event.inner.event_results_list(EventResultsOptions {
         raise_if_any: false,
@@ -915,7 +917,7 @@ fn test_event_result_returns_first_filtered_value_in_handler_registration_order(
     let registered_at = "2026-01-01T00:00:00.000Z".to_string();
 
     let null_order = completed_order.clone();
-    bus.on_sync_with_options(
+    bus.on_raw_sync_with_options(
         "AccessorEvent",
         "null_handler",
         EventHandlerOptions {
@@ -930,7 +932,7 @@ fn test_event_result_returns_first_filtered_value_in_handler_registration_order(
         },
     );
     let winner_order = completed_order.clone();
-    bus.on_sync_with_options(
+    bus.on_raw_sync_with_options(
         "AccessorEvent",
         "winner_handler",
         EventHandlerOptions {
@@ -945,7 +947,7 @@ fn test_event_result_returns_first_filtered_value_in_handler_registration_order(
         },
     );
     let late_order = completed_order.clone();
-    bus.on_sync_with_options(
+    bus.on_raw_sync_with_options(
         "AccessorEvent",
         "late_handler",
         EventHandlerOptions {
@@ -959,7 +961,7 @@ fn test_event_result_returns_first_filtered_value_in_handler_registration_order(
         },
     );
 
-    let event = bus.emit::<AccessorEvent>(TypedEvent::new(EmptyPayload {}));
+    let event = bus.emit(BaseEventHandle::<AccessorEvent>::new(EmptyPayload {}));
     let first_value = block_on(event.inner.event_result(EventResultsOptions {
         raise_if_any: false,
         raise_if_none: true,
@@ -1089,14 +1091,14 @@ fn test_base_event_from_json_preserves_event_results_object_registration_order()
 #[test]
 fn test_eventresultslist_supports_include_raise_if_any_raise_if_none_arguments() {
     let error_bus = EventBus::new(Some("EventResultsListErrorsBus".to_string()));
-    error_bus.on("AccessorEvent", "failing_handler", |_event| async move {
+    error_bus.on_raw("AccessorEvent", "failing_handler", |_event| async move {
         Err("boom".to_string())
     });
-    error_bus.on("AccessorEvent", "working_handler", |_event| async move {
+    error_bus.on_raw("AccessorEvent", "working_handler", |_event| async move {
         Ok(json!("ok"))
     });
 
-    let error_event = error_bus.emit::<AccessorEvent>(TypedEvent::new(EmptyPayload {}));
+    let error_event = error_bus.emit(BaseEventHandle::<AccessorEvent>::new(EmptyPayload {}));
 
     let raised = block_on(
         error_event
@@ -1116,10 +1118,10 @@ fn test_eventresultslist_supports_include_raise_if_any_raise_if_none_arguments()
     error_bus.stop();
 
     let none_bus = EventBus::new(Some("EventResultsListNoneBus".to_string()));
-    none_bus.on("AccessorEvent", "null_handler", |_event| async move {
+    none_bus.on_raw("AccessorEvent", "null_handler", |_event| async move {
         Ok(Value::Null)
     });
-    let none_event = none_bus.emit::<AccessorEvent>(TypedEvent::new(EmptyPayload {}));
+    let none_event = none_bus.emit(BaseEventHandle::<AccessorEvent>::new(EmptyPayload {}));
 
     let empty_error = block_on(none_event.inner.event_results_list(EventResultsOptions {
         raise_if_any: false,
@@ -1144,10 +1146,10 @@ fn test_eventresultslist_supports_timeout_include_raise_if_any_raise_if_none_arg
     test_eventresultslist_supports_include_raise_if_any_raise_if_none_arguments();
 
     let include_bus = EventBus::new(Some("EventResultsListIncludeBus".to_string()));
-    include_bus.on("IncludeEvent", "keep_handler", |_event| async move {
+    include_bus.on_raw("IncludeEvent", "keep_handler", |_event| async move {
         Ok(json!("keep"))
     });
-    include_bus.on("IncludeEvent", "drop_handler", |_event| async move {
+    include_bus.on_raw("IncludeEvent", "drop_handler", |_event| async move {
         Ok(json!("drop"))
     });
     let include_event =
@@ -1165,7 +1167,7 @@ fn test_eventresultslist_supports_timeout_include_raise_if_any_raise_if_none_arg
     include_bus.stop();
 
     let timeout_bus = EventBus::new(Some("EventResultsListTimeoutBus".to_string()));
-    timeout_bus.on("TimeoutEvent", "slow_handler", |_event| async move {
+    timeout_bus.on_raw("TimeoutEvent", "slow_handler", |_event| async move {
         thread::sleep(Duration::from_millis(50));
         Ok(json!("late"))
     });

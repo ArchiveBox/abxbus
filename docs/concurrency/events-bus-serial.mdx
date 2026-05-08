@@ -216,8 +216,8 @@ bus_a.on::<WorkEvent, _, _>("handler_a", |_event| async move { Ok(()) });
 bus_b.on::<WorkEvent, _, _>("handler_b", |_event| async move { Ok(()) });
 
 for _ in 0..4 {
-    bus_a.emit::<WorkEvent>(BaseEvent::new(WorkEvent {}));
-    bus_b.emit::<WorkEvent>(BaseEvent::new(WorkEvent {}));
+    bus_a.emit(WorkEvent {});
+    bus_b.emit(WorkEvent {});
 }
 
 block_on(bus_a.wait_until_idle(None));
