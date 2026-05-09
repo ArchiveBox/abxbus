@@ -126,6 +126,14 @@ jobs:
           cache: pnpm
           cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
+      - name: Set up Rust for core-backed TypeScript tests
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo for core-backed TypeScript tests
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: abxbus-core -> target
+
       - name: Install bridge service binaries
         if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')
         uses: awalsh128/cache-apt-pkgs-action@latest
@@ -169,6 +177,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Build Rust core Tachyon binary
+        run: cargo build --manifest-path ../abxbus-core/Cargo.toml --bin abxbus-core-tachyon
+
       - name: Build @tachyon-ipc/core native binding
         if: matrix.task.kind == 'test' && matrix.task.name == 'bridges'
         env:
@@ -195,7 +206,7 @@ jobs:
         if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'EventBus_locking')
         run: |
           cd ..
-          uv sync --dev --all-extras --no-extra tachyon
+          uv sync --dev --all-extras
 
       - name: Verify bridge optional Node deps
         if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')

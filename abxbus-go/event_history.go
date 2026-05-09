@@ -14,6 +14,8 @@ type EventHistory struct {
 	events         map[string]*BaseEvent
 	order          []string
 	mu             sync.RWMutex
+	onAdd          func(eventID string)
+	onRemove       func(eventID string)
 }
 
 type EventHistoryFindOptions struct {
@@ -32,12 +34,24 @@ func NewEventHistory(max_history_size *int, max_history_drop bool) *EventHistory
 
 func (h *EventHistory) AddEvent(event *BaseEvent) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	added := false
 	if _, exists := h.events[event.EventID]; !exists {
 		h.order = append(h.order, event.EventID)
+		added = true
 	}
 	h.events[event.EventID] = event
-	h.trimLocked(nil)
+	removedIDs := h.trimLocked(nil)
+	onAdd := h.onAdd
+	onRemove := h.onRemove
+	h.mu.Unlock()
+	if added && onAdd != nil {
+		onAdd(event.EventID)
+	}
+	if onRemove != nil {
+		for _, eventID := range removedIDs {
+			onRemove(eventID)
+		}
+	}
 }
 
 func (h *EventHistory) GetEvent(event_id string) *BaseEvent {
@@ -73,9 +87,16 @@ func (h *EventHistory) Values() []*BaseEvent {
 
 func (h *EventHistory) Clear() {
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	removedIDs := append([]string{}, h.order...)
+	onRemove := h.onRemove
 	h.events = map[string]*BaseEvent{}
 	h.order = []string{}
+	h.mu.Unlock()
+	if onRemove != nil {
+		for _, eventID := range removedIDs {
+			onRemove(eventID)
+		}
+	}
 }
 
 func (h *EventHistory) Find(event_pattern string, where func(event *BaseEvent) bool, options *EventHistoryFindOptions) *BaseEvent {
@@ -166,8 +187,9 @@ func EventIsChildOfStatic(h *EventHistory, event *BaseEvent, ancestor *BaseEvent
 
 func (h *EventHistory) RemoveEvent(event_id string) bool {
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	onRemove := h.onRemove
 	if _, ok := h.events[event_id]; !ok {
+		h.mu.Unlock()
 		return false
 	}
 	delete(h.events, event_id)
@@ -177,28 +199,39 @@ func (h *EventHistory) RemoveEvent(event_id string) bool {
 			break
 		}
 	}
+	h.mu.Unlock()
+	if onRemove != nil {
+		onRemove(event_id)
+	}
 	return true
 }
 
 func (h *EventHistory) TrimEventHistory(is_event_complete func(event *BaseEvent) bool) int {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.trimLocked(is_event_complete)
+	removedIDs := h.trimLocked(is_event_complete)
+	onRemove := h.onRemove
+	h.mu.Unlock()
+	if onRemove != nil {
+		for _, eventID := range removedIDs {
+			onRemove(eventID)
+		}
+	}
+	return len(removedIDs)
 }
 
-func (h *EventHistory) trimLocked(is_event_complete func(event *BaseEvent) bool) int {
+func (h *EventHistory) trimLocked(is_event_complete func(event *BaseEvent) bool) []string {
 	if h.MaxHistorySize == nil {
-		return 0
+		return nil
 	}
 	max := *h.MaxHistorySize
 	overage := len(h.events) - max
 	if overage <= 0 {
-		return 0
+		return nil
 	}
 	if is_event_complete == nil {
 		is_event_complete = func(event *BaseEvent) bool { return event.EventStatus == "completed" }
 	}
-	removed := 0
+	removedIDs := []string{}
 	for overage > 0 {
 		removed_any := false
 		for i := 0; i < len(h.order) && overage > 0; i++ {
@@ -211,7 +244,7 @@ func (h *EventHistory) trimLocked(is_event_complete func(event *BaseEvent) bool)
 			h.order = append(h.order[:i], h.order[i+1:]...)
 			i--
 			overage--
-			removed++
+			removedIDs = append(removedIDs, eid)
 			removed_any = true
 		}
 		if removed_any {
@@ -219,5 +252,5 @@ func (h *EventHistory) trimLocked(is_event_complete func(event *BaseEvent) bool)
 		}
 		break
 	}
-	return removed
+	return removedIDs
 }

@@ -1,12 +1,12 @@
 const MONOTONIC_DATETIME_REGEX = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/
 const MONOTONIC_DATETIME_LENGTH = 30 // YYYY-MM-DDTHH:MM:SS.fffffffffZ
-const NS_PER_MS = 1_000_000n
-const NS_PER_SECOND = 1_000_000_000n
+const NS_PER_MS_NUMBER = 1_000_000
 
 const has_performance_now = typeof performance !== 'undefined' && typeof performance.now === 'function'
 const monotonic_clock_anchor_ms = has_performance_now ? performance.now() : 0
-const monotonic_epoch_anchor_ns = BigInt(Date.now()) * NS_PER_MS
-let last_monotonic_datetime_ns = monotonic_epoch_anchor_ns
+const monotonic_epoch_anchor_ms = Date.now()
+let last_monotonic_epoch_ms = monotonic_epoch_anchor_ms
+let last_monotonic_extra_ns = 0
 
 function assertYearRange(date: Date, context: string): void {
   const year = date.getUTCFullYear()
@@ -15,15 +15,16 @@ function assertYearRange(date: Date, context: string): void {
   }
 }
 
-function formatEpochNs(epoch_ns: bigint): string {
-  const epoch_ms = Number(epoch_ns / NS_PER_MS)
+function formatEpochMsNs(epoch_ms: number, extra_ns: number): string {
   const date = new Date(epoch_ms)
   if (Number.isNaN(date.getTime())) {
-    throw new Error(`Failed to format datetime from epoch ns: ${epoch_ns.toString()}`)
+    throw new Error(`Failed to format datetime from epoch ms: ${epoch_ms}`)
   }
   assertYearRange(date, 'monotonicDatetime()')
   const base = date.toISOString().slice(0, 19)
-  const fraction = (epoch_ns % NS_PER_SECOND).toString().padStart(9, '0')
+  const ms_within_second = ((epoch_ms % 1000) + 1000) % 1000
+  const fraction_ns = ms_within_second * NS_PER_MS_NUMBER + extra_ns
+  const fraction = fraction_ns.toString().padStart(9, '0')
   const normalized = `${base}.${fraction}Z`
   if (normalized.length !== MONOTONIC_DATETIME_LENGTH) {
     throw new Error(`Expected canonical datetime length ${MONOTONIC_DATETIME_LENGTH}, got ${normalized.length}: ${normalized}`)
@@ -54,12 +55,19 @@ export function monotonicDatetime(isostring?: string): string {
     return normalized
   }
 
-  const elapsed_ms = has_performance_now ? performance.now() - monotonic_clock_anchor_ms : 0
-  const elapsed_ns = BigInt(Math.max(0, Math.floor(elapsed_ms * 1_000_000)))
-  let epoch_ns = monotonic_epoch_anchor_ns + elapsed_ns
-  if (epoch_ns <= last_monotonic_datetime_ns) {
-    epoch_ns = last_monotonic_datetime_ns + 1n
+  const elapsed_ms = has_performance_now ? Math.max(0, performance.now() - monotonic_clock_anchor_ms) : 0
+  const elapsed_ms_whole = Math.floor(elapsed_ms)
+  let epoch_ms = monotonic_epoch_anchor_ms + elapsed_ms_whole
+  let extra_ns = Math.floor((elapsed_ms - elapsed_ms_whole) * NS_PER_MS_NUMBER)
+  if (epoch_ms < last_monotonic_epoch_ms || (epoch_ms === last_monotonic_epoch_ms && extra_ns <= last_monotonic_extra_ns)) {
+    epoch_ms = last_monotonic_epoch_ms
+    extra_ns = last_monotonic_extra_ns + 1
+    if (extra_ns >= NS_PER_MS_NUMBER) {
+      epoch_ms += 1
+      extra_ns = 0
+    }
   }
-  last_monotonic_datetime_ns = epoch_ns
-  return formatEpochNs(epoch_ns)
+  last_monotonic_epoch_ms = epoch_ms
+  last_monotonic_extra_ns = extra_ns
+  return formatEpochMsNs(epoch_ms, extra_ns)
 }

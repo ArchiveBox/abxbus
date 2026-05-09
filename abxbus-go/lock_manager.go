@@ -1,7 +1,6 @@
 package abxbus
 
 import (
-	"bytes"
 	"context"
 	"runtime"
 	"strconv"
@@ -56,6 +55,40 @@ func (l *AsyncLock) Release() {
 
 var shared_global_event_lock = NewAsyncLock(1)
 
+type activeDispatchEntry struct {
+	bus    *EventBus
+	result *EventResult
+	ctx    context.Context
+}
+
+type activeDispatchContextKey struct{}
+
+func contextWithActiveDispatchEntry(ctx context.Context, bus *EventBus, result *EventResult) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, activeDispatchContextKey{}, activeDispatchEntry{
+		bus:    bus,
+		result: result,
+		ctx:    ctx,
+	})
+}
+
+func activeDispatchEntryFromContext(ctx context.Context) (activeDispatchEntry, bool) {
+	if ctx == nil {
+		return activeDispatchEntry{}, false
+	}
+	entry, ok := ctx.Value(activeDispatchContextKey{}).(activeDispatchEntry)
+	entry.ctx = ctx
+	return entry, ok && entry.result != nil
+}
+
+var activeDispatchRegistry = struct {
+	sync.Mutex
+	total       int
+	byGoroutine map[uint64][]activeDispatchEntry
+}{byGoroutine: map[uint64][]activeDispatchEntry{}}
+
 type LockManager struct {
 	bus *EventBus
 
@@ -68,23 +101,14 @@ type LockManager struct {
 	active_mu               sync.Mutex
 	active_handler_result   []*EventResult
 	active_dispatch_context []context.Context
-	active_handler_context  []context.Context
-	active_handler_by_g     map[uint64][]*EventResult
-	active_dispatch_by_g    map[uint64][]context.Context
-	active_context_by_g     map[uint64][]context.Context
+	active_dispatch_goid    []uint64
 
 	idle_mu      sync.Mutex
 	idle_waiters []chan struct{}
 }
 
 func NewLockManager(bus *EventBus) *LockManager {
-	return &LockManager{
-		bus:                  bus,
-		bus_event_lock:       NewAsyncLock(1),
-		active_handler_by_g:  map[uint64][]*EventResult{},
-		active_dispatch_by_g: map[uint64][]context.Context{},
-		active_context_by_g:  map[uint64][]context.Context{},
-	}
+	return &LockManager{bus: bus, bus_event_lock: NewAsyncLock(1)}
 }
 
 func (l *LockManager) getLockForEvent(event *BaseEvent) *AsyncLock {
@@ -149,74 +173,97 @@ func (l *LockManager) waitUntilRunloopResumed(ctx context.Context) error {
 	}
 }
 
-func (l *LockManager) runWithHandlerDispatchContext(result *EventResult, handlerCtx context.Context, fn func() error) error {
-	gid := currentGoroutineID()
+func (l *LockManager) runWithHandlerDispatchContext(result *EventResult, dispatchCtx context.Context, fn func() error) error {
+	goid := currentGoroutineID()
+	activeCtx := dispatchCtx
+	if activeCtx == nil && result != nil && result.Event != nil && result.Event.dispatchCtx != nil {
+		activeCtx = result.Event.dispatchCtx
+	}
+	activeCtx = contextWithActiveDispatchEntry(activeCtx, l.bus, result)
+	var previousEventCtx context.Context
+	if result != nil && result.Event != nil {
+		result.Event.mu.Lock()
+		previousEventCtx = result.Event.dispatchCtx
+		result.Event.dispatchCtx = activeCtx
+		result.Event.mu.Unlock()
+	}
 	l.active_mu.Lock()
 	l.active_handler_result = append(l.active_handler_result, result)
-	if l.active_handler_by_g == nil {
-		l.active_handler_by_g = map[uint64][]*EventResult{}
-	}
-	if l.active_dispatch_by_g == nil {
-		l.active_dispatch_by_g = map[uint64][]context.Context{}
-	}
-	if l.active_context_by_g == nil {
-		l.active_context_by_g = map[uint64][]context.Context{}
-	}
-	l.active_handler_by_g[gid] = append(l.active_handler_by_g[gid], result)
-	if result != nil && result.Event != nil && result.Event.dispatchCtx != nil {
-		l.active_dispatch_context = append(l.active_dispatch_context, result.Event.dispatchCtx)
-		l.active_dispatch_by_g[gid] = append(l.active_dispatch_by_g[gid], result.Event.dispatchCtx)
-	} else {
-		l.active_dispatch_context = append(l.active_dispatch_context, nil)
-		l.active_dispatch_by_g[gid] = append(l.active_dispatch_by_g[gid], nil)
-	}
-	l.active_handler_context = append(l.active_handler_context, handlerCtx)
-	l.active_context_by_g[gid] = append(l.active_context_by_g[gid], handlerCtx)
+	l.active_dispatch_goid = append(l.active_dispatch_goid, goid)
+	l.active_dispatch_context = append(l.active_dispatch_context, activeCtx)
 	l.active_mu.Unlock()
+	if goid != 0 {
+		activeDispatchRegistry.Lock()
+		activeDispatchRegistry.total++
+		activeDispatchRegistry.byGoroutine[goid] = append(activeDispatchRegistry.byGoroutine[goid], activeDispatchEntry{
+			bus:    l.bus,
+			result: result,
+			ctx:    activeCtx,
+		})
+		activeDispatchRegistry.Unlock()
+	}
 	defer func() {
+		if result != nil && result.Event != nil {
+			result.Event.mu.Lock()
+			if result.Event.dispatchCtx == activeCtx {
+				result.Event.dispatchCtx = previousEventCtx
+			}
+			result.Event.mu.Unlock()
+		}
 		l.active_mu.Lock()
-		defer l.active_mu.Unlock()
 		for i := len(l.active_handler_result) - 1; i >= 0; i-- {
 			if l.active_handler_result[i] == result {
 				l.active_handler_result = append(l.active_handler_result[:i], l.active_handler_result[i+1:]...)
 				l.active_dispatch_context = append(l.active_dispatch_context[:i], l.active_dispatch_context[i+1:]...)
-				l.active_handler_context = append(l.active_handler_context[:i], l.active_handler_context[i+1:]...)
+				l.active_dispatch_goid = append(l.active_dispatch_goid[:i], l.active_dispatch_goid[i+1:]...)
 				break
 			}
 		}
-		if stack := l.active_handler_by_g[gid]; len(stack) > 0 {
-			l.active_handler_by_g[gid] = stack[:len(stack)-1]
-			if len(l.active_handler_by_g[gid]) == 0 {
-				delete(l.active_handler_by_g, gid)
+		l.active_mu.Unlock()
+		if goid != 0 {
+			activeDispatchRegistry.Lock()
+			entries := activeDispatchRegistry.byGoroutine[goid]
+			for i := len(entries) - 1; i >= 0; i-- {
+				if entries[i].bus == l.bus && entries[i].result == result {
+					entries = append(entries[:i], entries[i+1:]...)
+					break
+				}
 			}
-		}
-		if stack := l.active_dispatch_by_g[gid]; len(stack) > 0 {
-			l.active_dispatch_by_g[gid] = stack[:len(stack)-1]
-			if len(l.active_dispatch_by_g[gid]) == 0 {
-				delete(l.active_dispatch_by_g, gid)
+			if len(entries) == 0 {
+				delete(activeDispatchRegistry.byGoroutine, goid)
+			} else {
+				activeDispatchRegistry.byGoroutine[goid] = entries
 			}
-		}
-		if stack := l.active_context_by_g[gid]; len(stack) > 0 {
-			l.active_context_by_g[gid] = stack[:len(stack)-1]
-			if len(l.active_context_by_g[gid]) == 0 {
-				delete(l.active_context_by_g, gid)
+			if activeDispatchRegistry.total > 0 {
+				activeDispatchRegistry.total--
 			}
+			activeDispatchRegistry.Unlock()
 		}
 	}()
 	return fn()
 }
 
-func (l *LockManager) getActiveHandlerResult() *EventResult {
-	l.active_mu.Lock()
-	defer l.active_mu.Unlock()
-	gid := currentGoroutineID()
-	if stack := l.active_handler_by_g[gid]; len(stack) > 0 {
-		return stack[len(stack)-1]
-	}
-	return nil
+func hasActiveDispatchEntries() bool {
+	activeDispatchRegistry.Lock()
+	active := activeDispatchRegistry.total > 0
+	activeDispatchRegistry.Unlock()
+	return active
 }
 
-func (l *LockManager) getAnyActiveHandlerResult() *EventResult {
+func activeDispatchEntryForGoroutine(goid uint64) (activeDispatchEntry, bool) {
+	if goid == 0 {
+		return activeDispatchEntry{}, false
+	}
+	activeDispatchRegistry.Lock()
+	defer activeDispatchRegistry.Unlock()
+	entries := activeDispatchRegistry.byGoroutine[goid]
+	if len(entries) == 0 {
+		return activeDispatchEntry{}, false
+	}
+	return entries[len(entries)-1], true
+}
+
+func (l *LockManager) getActiveHandlerResult() *EventResult {
 	l.active_mu.Lock()
 	defer l.active_mu.Unlock()
 	if len(l.active_handler_result) == 0 {
@@ -225,10 +272,28 @@ func (l *LockManager) getAnyActiveHandlerResult() *EventResult {
 	return l.active_handler_result[len(l.active_handler_result)-1]
 }
 
+func (l *LockManager) getAnyActiveHandlerResult() *EventResult {
+	return l.getActiveHandlerResult()
+}
+
 func (l *LockManager) hasAnyActiveHandlerResult() bool {
 	l.active_mu.Lock()
 	defer l.active_mu.Unlock()
 	return len(l.active_handler_result) > 0
+}
+
+func (l *LockManager) getActiveHandlerResultForGoroutine(goid uint64) *EventResult {
+	if goid == 0 {
+		return nil
+	}
+	l.active_mu.Lock()
+	defer l.active_mu.Unlock()
+	for i := len(l.active_handler_result) - 1; i >= 0; i-- {
+		if i < len(l.active_dispatch_goid) && l.active_dispatch_goid[i] == goid {
+			return l.active_handler_result[i]
+		}
+	}
+	return nil
 }
 
 func (l *LockManager) waitForIdle(timeout *float64) bool {
@@ -300,10 +365,7 @@ func (l *LockManager) clear() {
 	l.active_mu.Lock()
 	l.active_handler_result = nil
 	l.active_dispatch_context = nil
-	l.active_handler_context = nil
-	l.active_handler_by_g = map[uint64][]*EventResult{}
-	l.active_dispatch_by_g = map[uint64][]context.Context{}
-	l.active_context_by_g = map[uint64][]context.Context{}
+	l.active_dispatch_goid = nil
 	l.bus_event_lock = NewAsyncLock(1)
 	l.active_mu.Unlock()
 
@@ -323,31 +385,52 @@ func (l *LockManager) removeIdleWaiter(waiter chan struct{}) {
 
 func (l *LockManager) getActiveDispatchContext() context.Context {
 	l.active_mu.Lock()
+	hasActive := len(l.active_dispatch_context) > 0
+	l.active_mu.Unlock()
+	if !hasActive {
+		return nil
+	}
+	return l.getActiveDispatchContextForGoroutine(currentGoroutineID())
+}
+
+func (l *LockManager) hasActiveDispatchContext() bool {
+	l.active_mu.Lock()
 	defer l.active_mu.Unlock()
-	gid := currentGoroutineID()
-	if stack := l.active_dispatch_by_g[gid]; len(stack) > 0 {
-		return stack[len(stack)-1]
+	return len(l.active_dispatch_context) > 0
+}
+
+func (l *LockManager) getActiveDispatchContextForGoroutine(goid uint64) context.Context {
+	if goid == 0 {
+		return nil
+	}
+	l.active_mu.Lock()
+	defer l.active_mu.Unlock()
+	for i := len(l.active_dispatch_context) - 1; i >= 0; i-- {
+		if i < len(l.active_dispatch_goid) && l.active_dispatch_goid[i] == goid {
+			return l.active_dispatch_context[i]
+		}
 	}
 	return nil
 }
 
 func (l *LockManager) getActiveHandlerContext() context.Context {
-	l.active_mu.Lock()
-	defer l.active_mu.Unlock()
-	gid := currentGoroutineID()
-	if stack := l.active_context_by_g[gid]; len(stack) > 0 {
-		return stack[len(stack)-1]
-	}
-	return nil
+	return l.getActiveDispatchContext()
 }
 
 func currentGoroutineID() uint64 {
 	var buf [64]byte
 	n := runtime.Stack(buf[:], false)
-	fields := bytes.Fields(buf[:n])
-	if len(fields) < 2 {
+	const prefix = "goroutine "
+	if n <= len(prefix) || string(buf[:len(prefix)]) != prefix {
 		return 0
 	}
-	id, _ := strconv.ParseUint(string(fields[1]), 10, 64)
+	end := len(prefix)
+	for end < n && buf[end] >= '0' && buf[end] <= '9' {
+		end++
+	}
+	id, err := strconv.ParseUint(string(buf[len(prefix):end]), 10, 64)
+	if err != nil {
+		return 0
+	}
 	return id
 }

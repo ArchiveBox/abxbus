@@ -5,7 +5,8 @@ import asyncio
 import json
 import logging
 import sys
-from typing import Any
+import time
+from typing import Any, cast
 
 try:
     from .performance_scenarios import PERF_SCENARIO_IDS, PerfInput, run_all_perf_scenarios, run_perf_scenario_by_id
@@ -15,10 +16,28 @@ except ImportError:  # pragma: no cover - direct script execution path
 TABLE_MATRIX = [
     ('50k-events', '1 bus x 50k events x 1 handler'),
     ('500-buses-x-100-events', '500 buses x 100 events x 1 handler'),
-    ('1-event-x-50k-parallel-handlers', '1 bus x 1 event x 50k parallel handlers'),
+    ('1-event-x-50k-parallel-handlers', '1 bus x 1 event x 5k parallel handlers'),
     ('50k-one-off-handlers', '1 bus x 50k events x 50k one-off handlers'),
     ('worst-case-forwarding-timeouts', 'Worst case (N buses x N events x N handlers)'),
 ]
+
+SCENARIO_SUBPROCESS_TIMEOUT_SECONDS = 10 * 60
+
+
+def _failed_scenario_result(scenario_id: str, error: str, elapsed_ms: float = 0.0) -> dict[str, Any]:
+    return {
+        'scenario_id': scenario_id,
+        'scenario': scenario_id,
+        'ok': False,
+        'error': error,
+        'total_events': 0,
+        'total_ms': elapsed_ms,
+        'ms_per_event': 0.0,
+        'ms_per_event_unit': 'event',
+        'throughput': 0,
+        'peak_rss_kb_per_event': None,
+        'peak_rss_kb_per_event_label': None,
+    }
 
 
 def _format_cell(result: dict[str, Any]) -> str:
@@ -78,6 +97,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 async def _run_scenario_in_subprocess(scenario_id: str) -> dict[str, Any]:
+    started_at = time.perf_counter()
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
         '-m',
@@ -88,15 +108,39 @@ async def _run_scenario_in_subprocess(scenario_id: str) -> dict[str, Any]:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await proc.communicate()
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=SCENARIO_SUBPROCESS_TIMEOUT_SECONDS)
+    except TimeoutError:
+        proc.kill()
+        stdout, stderr = await proc.communicate()
+        elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+        stderr_text = stderr.decode(errors='replace').strip()
+        suffix = f': {stderr_text}' if stderr_text else ''
+        return _failed_scenario_result(
+            scenario_id,
+            f'timed out after {SCENARIO_SUBPROCESS_TIMEOUT_SECONDS}s{suffix}',
+            elapsed_ms,
+        )
+
+    elapsed_ms = (time.perf_counter() - started_at) * 1000.0
     if proc.returncode != 0:
-        raise RuntimeError(
-            f'Perf child process failed for scenario={scenario_id!r} exit={proc.returncode} stderr={stderr.decode().strip()}'
+        return _failed_scenario_result(
+            scenario_id,
+            f'child process exited {proc.returncode}: {stderr.decode(errors="replace").strip()}',
+            elapsed_ms,
         )
     payload = stdout.decode().strip()
     if not payload:
-        raise RuntimeError(f'Perf child process produced no output for scenario={scenario_id!r}')
-    return json.loads(payload)
+        return _failed_scenario_result(scenario_id, 'child process produced no output', elapsed_ms)
+    try:
+        result = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        return _failed_scenario_result(scenario_id, f'failed to parse child JSON: {exc}', elapsed_ms)
+    if not isinstance(result, dict):
+        return _failed_scenario_result(scenario_id, 'child process produced non-object JSON', elapsed_ms)
+    typed_result = cast(dict[str, Any], result)
+    typed_result['scenario_id'] = scenario_id
+    return typed_result
 
 
 async def _main_async() -> int:

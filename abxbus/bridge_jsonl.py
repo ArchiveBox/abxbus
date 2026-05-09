@@ -8,6 +8,7 @@ This bridge is intentionally simple:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -16,14 +17,14 @@ from typing import Any
 from uuid_extensions import uuid7str
 
 from abxbus.base_event import BaseEvent
-from abxbus.event_bus import EventBus, EventPatternType, in_handler_context
+from abxbus.event_bus import EventPatternType, in_handler_context
 
 
 class JSONLEventBridge:
     def __init__(self, path: str, *, poll_interval: float = 0.25, name: str | None = None):
         self.path = Path(path)
         self.poll_interval = poll_interval
-        self._inbound_bus = EventBus(name=name or f'JSONLEventBridge_{uuid7str()[-8:]}', max_history_size=0)
+        self.name = name or f'JSONLEventBridge_{uuid7str()[-8:]}'
 
         self._running = False
         self._start_task: asyncio.Task[None] | None = None
@@ -31,10 +32,11 @@ class JSONLEventBridge:
         self._listener_task: asyncio.Task[None] | None = None
         self._byte_offset = 0
         self._pending_line = ''
+        self._handlers: list[tuple[EventPatternType, Callable[[BaseEvent[Any]], Any]]] = []
 
     def on(self, event_pattern: EventPatternType, handler: Callable[[BaseEvent[Any]], Any]) -> None:
         self._ensure_started()
-        self._inbound_bus.on(event_pattern, handler)
+        self._handlers.append((event_pattern, handler))
 
     async def emit(self, event: BaseEvent[Any]) -> BaseEvent[Any] | None:
         self._ensure_started()
@@ -85,7 +87,6 @@ class JSONLEventBridge:
             self._listener_task.cancel()
             await asyncio.gather(self._listener_task, return_exceptions=True)
             self._listener_task = None
-        await self._inbound_bus.destroy(clear=clear)
 
     def _ensure_started(self) -> None:
         if self._running:
@@ -134,7 +135,20 @@ class JSONLEventBridge:
 
     async def _dispatch_inbound_payload(self, payload: Any) -> None:
         event = BaseEvent[Any].model_validate(payload).event_reset()
-        self._inbound_bus.emit(event)
+        for event_pattern, handler in list(self._handlers):
+            if not self._matches(event_pattern, event):
+                continue
+            result = handler(event)
+            if inspect.isawaitable(result):
+                await result
+
+    @staticmethod
+    def _matches(event_pattern: EventPatternType, event: BaseEvent[Any]) -> bool:
+        if event_pattern == '*':
+            return True
+        if isinstance(event_pattern, str):
+            return event_pattern == event.event_type
+        return event.event_type == event_pattern.__name__
 
     def _read_appended_text(self, offset: int) -> tuple[str, int]:
         try:

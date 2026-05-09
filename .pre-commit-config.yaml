@@ -82,6 +82,7 @@ repos:
       - id: check-case-conflict
       - id: check-illegal-windows-names
       - id: check-shebang-scripts-are-executable
+        exclude: ^abxbus-core/vendor/
       - id: mixed-line-ending
       - id: fix-byte-order-marker
       - id: end-of-file-fixer

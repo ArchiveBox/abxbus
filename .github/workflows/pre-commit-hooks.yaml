@@ -21,7 +21,22 @@ jobs:
         with:
           enable-cache: true
           activate-environment: true
-      - run: uv sync --all-extras --all-groups --no-extra tachyon
+
+      - name: Install native build tools
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: cmake gcc-14 g++-14
+          version: native-build-tools-v1
+          execute_install_scripts: true
+
+      - name: Configure native build tools
+        run: |
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+          cmake --version
+          gcc-14 --version
+
+      - run: uv sync --all-extras --all-groups
       - run: uv pip install fastapi
 
       - uses: pnpm/action-setup@v4
@@ -32,20 +47,6 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: abxbus-ts/pnpm-lock.yaml
-
-      - name: Install native TypeScript build tools
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: cmake gcc-14 g++-14
-          version: native-typescript-build-tools-v1
-          execute_install_scripts: true
-
-      - name: Configure native TypeScript build tools
-        run: |
-          echo "CC=gcc-14" >> "$GITHUB_ENV"
-          echo "CXX=g++-14" >> "$GITHUB_ENV"
-          cmake --version
-          gcc-14 --version
 
       - run: pnpm --dir abxbus-ts install --frozen-lockfile
 

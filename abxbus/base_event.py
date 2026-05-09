@@ -1,10 +1,13 @@
+# pyright: reportUnknownMemberType=false, reportAttributeAccessIssue=false, reportGeneralTypeIssues=false, reportUnknownArgumentType=false, reportArgumentType=false
+
 import asyncio
 import contextvars
 import inspect
 import logging
 import os
+import weakref
 from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from datetime import UTC, datetime
 from enum import StrEnum
 from functools import partial
@@ -27,6 +30,7 @@ from pydantic import (
 from typing_extensions import TypeVar  # needed to get TypeVar(default=...) above python 3.11
 from uuid_extensions import uuid7str
 
+from abxbus.async_context import get_active_abort_context
 from abxbus.event_handler import (
     ContravariantEventHandlerCallable,
     EventHandler,
@@ -51,7 +55,6 @@ from abxbus.jsonschema import (
 
 if TYPE_CHECKING:
     from abxbus.event_bus import EventBus
-    from abxbus.lock_manager import ReentrantLock
 
 
 logger = logging.getLogger('abxbus')
@@ -82,7 +85,7 @@ def validate_event_name(s: str) -> str:
 
 def validate_python_id_str(s: str) -> str:
     value = str(s)
-    if value.replace('.', '').isdigit():
+    if value and all(char.isalnum() or char in {'-', '_', '.'} for char in value):
         return value
     try:
         return str(UUID(value))
@@ -291,6 +294,13 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         if isinstance(payload.get('handler'), dict):
             raise ValueError('EventResult JSON no longer accepts nested handler payloads; use flat handler_* fields')
 
+        payload.pop('result_set', None)
+        payload.pop('result_is_undefined', None)
+        payload.pop('result_is_event_reference', None)
+        raw_timeout = payload.pop('timeout', None)
+        if raw_timeout is not None:
+            payload['timeout'] = raw_timeout
+
         if 'handler' not in payload:
             raw_handler_id = payload.pop('handler_id', None)
             raw_handler_name = payload.pop('handler_name', None)
@@ -462,6 +472,9 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         """
 
         async def wait_for_handler_to_complete_and_return_result() -> T_EventResultType | 'BaseEvent[Any]' | None:
+            abort_context = get_active_abort_context()
+            if abort_context is not None:
+                abort_context.raise_if_aborted()
             assert self.handler_completed_signal is not None, 'EventResult cannot be awaited outside of an async context'
             try:
                 await asyncio.wait_for(self.handler_completed_signal.wait(), timeout=self.timeout)
@@ -513,7 +526,11 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             assert isinstance(kwargs['error'], (BaseException, str)), (
                 f'Invalid error type: {type(kwargs["error"]).__name__} {kwargs["error"]}'
             )
-            self.error = kwargs['error'] if isinstance(kwargs['error'], BaseException) else Exception(kwargs['error'])
+            error = kwargs['error'] if isinstance(kwargs['error'], BaseException) else Exception(kwargs['error'])
+            if isinstance(error, TimeoutError) and not isinstance(error, EventHandlerTimeoutError):
+                message = str(error) or f'Event handler {self.handler.label}(#{self.event_id[-4:]}) timed out'
+                error = EventHandlerTimeoutError(message)
+            self.error = error
             self.status = 'error'
 
         if 'status' in kwargs:
@@ -534,10 +551,8 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         eventbus: 'EventBus',
         handler_slow_timeout: float | None,
     ) -> Callable[[], Coroutine[Any, Any, None]] | None:
-        should_warn_for_slow_handler = (
-            handler_slow_timeout is not None
-            and handler_slow_timeout > 0
-            and (self.timeout is None or self.timeout <= 0 or self.timeout > handler_slow_timeout)
+        should_warn_for_slow_handler = handler_slow_timeout is not None and (
+            self.timeout is None or self.timeout > handler_slow_timeout
         )
         if not should_warn_for_slow_handler:
             return None
@@ -574,10 +589,9 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
     ) -> T_EventResultType | 'BaseEvent[Any]' | None:
         handler_task: asyncio.Task[Any] | None = None
         handler_return_value: T_EventResultType | BaseEvent[Any] | None = None
-        timed_out = False
         try:
             if dispatch_context is None:
-                handler_task = asyncio.create_task(handler(event))
+                handler_return_value = await handler(event)
             else:
                 merged_context = dispatch_context.copy()
                 for variable, value in contextvars.copy_context().items():
@@ -586,31 +600,10 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                     handler(event),
                     context=merged_context,
                 )
-            if self.timeout is None:
                 handler_return_value = await handler_task
-            else:
-                try:
-                    handler_return_value = await asyncio.wait_for(asyncio.shield(handler_task), timeout=self.timeout)
-                except TimeoutError as exc:
-                    timed_out = True
-                    timeout_error = self._on_handler_timeout(event)
-                    raise timeout_error from exc
             return handler_return_value
         finally:
-            current_task = asyncio.current_task()
-            if handler_task is not None and (timed_out or (current_task is not None and current_task.cancelling())):
-                if not handler_task.done():
-                    handler_task.cancel()
-
-                    def consume_late_task_exception(task: asyncio.Task[Any]) -> None:
-                        try:
-                            task.exception()
-                        except (asyncio.CancelledError, Exception):
-                            pass
-
-                    handler_task.add_done_callback(consume_late_task_exception)
-            else:
-                await cancel_and_await(handler_task, timeout=0.1)
+            await cancel_and_await(handler_task, timeout=0.1)
 
     @asynccontextmanager
     async def _run_with_timeout(self, event: 'BaseEvent[T_EventResultType]') -> AsyncGenerator[None]:
@@ -686,23 +679,23 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         if handler is None:
             raise RuntimeError(f'EventResult {self.id} has no callable attached to handler {self.handler.id}')
 
-        self.timeout = timeout if timeout is None or timeout > 0 else None
+        self.timeout = timeout
         self.result_type = event.event_result_type
 
         dispatch_context = event._get_dispatch_context()  # pyright: ignore[reportPrivateUsage]
         slow_handler_monitor: Callable[[], Coroutine[Any, Any, None]] | None = None
         try:
-            async with eventbus.locks._run_with_handler_lock(eventbus, event, self):  # pyright: ignore[reportPrivateUsage]
-                if self.status in ('error', 'completed'):
-                    return self.result
-                self.update(status='started')
-                event._mark_started(self.started_at)  # pyright: ignore[reportPrivateUsage]
-                await eventbus.on_event_result_change(event, self, EventStatus.STARTED)
-                if notify_event_started:
-                    await eventbus.on_event_change(event, EventStatus.STARTED)
+            if self.status in ('error', 'completed'):
+                return self.result
+            self.update(status='started')
+            event._mark_started(self.started_at)  # pyright: ignore[reportPrivateUsage]
+            await eventbus.on_event_result_change(event, self, EventStatus.STARTED)
+            if notify_event_started:
+                await eventbus.on_event_change(event, EventStatus.STARTED)
 
-                with eventbus._run_with_handler_dispatch_context(event, self.handler_id):  # pyright: ignore[reportPrivateUsage]
-                    slow_handler_monitor = self._create_slow_handler_warning_timer(event, eventbus, handler_slow_timeout)
+            with eventbus._run_with_handler_dispatch_context(event, self.handler_id):  # pyright: ignore[reportPrivateUsage]
+                slow_handler_monitor = self._create_slow_handler_warning_timer(event, eventbus, handler_slow_timeout)
+                async with self._run_with_timeout(event):
                     async with _run_with_slow_monitor(
                         slow_handler_monitor,
                         task_name=f'{eventbus}.slow_handler_monitor({event}, {self.handler.label})',
@@ -712,16 +705,13 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                             handler,
                             dispatch_context,
                         )
-                    self.update(result=handler_return_value)
-                return self.result
+                self.update(result=handler_return_value)
+            return self.result
 
-        except asyncio.CancelledError as exc:
-            if 'first result resolved' in str(exc):
-                handler_interrupted_error = EventHandlerAbortedError('Aborted: first result resolved')
-            else:
-                handler_interrupted_error = EventHandlerAbortedError(
-                    f'Event handler {self.handler.label}({event}) was interrupted because of a parent timeout'
-                )
+        except asyncio.CancelledError:
+            handler_interrupted_error = EventHandlerAbortedError(
+                f'Event handler {self.handler.label}({event}) was interrupted because of a parent timeout'
+            )
             self.update(error=handler_interrupted_error)
             raise
 
@@ -746,10 +736,6 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         from abxbus.logging import log_event_result_tree
 
         log_event_result_tree(self, indent, is_last, event_children_by_parent)
-
-
-class EventResultsDict(dict[PythonIdStr, EventResult[Any]]):
-    """Internal event_results mapping keyed by handler id."""
 
 
 class BaseEvent(BaseModel, Generic[T_EventResultType]):
@@ -841,6 +827,10 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         default=None,
         description='Handler id that emitted this event when dispatched from inside a handler',
     )
+    event_emitted_by_result_id: str | None = Field(
+        default=None,
+        description='EventResult id that emitted this event when dispatched from inside a handler',
+    )
     event_pending_bus_count: int = Field(
         default=0,
         description='Number of buses that currently have this event pending/in-flight',
@@ -864,15 +854,16 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         description='Timestamp when event was completed by all handlers and child events',
     )
 
-    event_results: EventResultsDict = Field(
-        default_factory=EventResultsDict, exclude=True
+    event_results: dict[PythonIdStr, EventResult[T_EventResultType]] = Field(
+        default_factory=dict, exclude=True
     )  # Results indexed by str(id(handler_func))
 
     # Completion signal
     _event_completed_signal: asyncio.Event | None = PrivateAttr(default=None)
     _event_is_complete_flag: bool = PrivateAttr(default=False)
-    _lock_for_event_handler: 'ReentrantLock | None' = PrivateAttr(default=None)
-
+    _lock_for_event_handler: Any | None = PrivateAttr(default=None)
+    _core_known: bool = PrivateAttr(default=False)
+    _core_event_bus_ref: weakref.ReferenceType[Any] | None = PrivateAttr(default=None)
     # Dispatch-time context for ContextVar propagation to handlers
     # Captured when emit() is called, used when executing handlers via ctx.run()
     _event_dispatch_context: contextvars.Context | None = PrivateAttr(default=None)
@@ -946,7 +937,6 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         # Cache the signal - in async context it will always be created
         completed_signal = self.event_completed_signal
         assert completed_signal is not None, 'event_completed_signal should exist in async context'
-        claimed_processed_bus_ids: set[int] = set()
         try:
             while not completed_signal.is_set() and iterations < max_iterations:
                 iterations += 1
@@ -959,32 +949,10 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                     processed_on_bus = False
 
                     if self._remove_self_from_queue(bus):
-                        # Fast path: event is still in the queue, claim and process it now.
-                        # now() is intentionally active, so this bypasses the normal serial
-                        # event lock instead of waiting behind unrelated queued/running work.
-                        bus.processing_event_ids.add(self.event_id)
-                        try:
-                            if self.event_status != EventStatus.COMPLETED:
-                                await bus._process_event(self)  # pyright: ignore[reportPrivateUsage]
-                        finally:
-                            await bus._finalize_local_event_processing(self)  # pyright: ignore[reportPrivateUsage]
-                            bus.mark_pending_queue_task_done()
+                        bus_any = cast(Any, bus)
+                        await bus_any.step(event=self)
+                        bus_any.mark_pending_queue_task_done()
                         processed_on_bus = True
-                    else:
-                        # Slow path: another task already claimed queue.get() and set
-                        # processing state, but may be blocked on an event-level lock held
-                        # by the awaiting parent handler. Process once here to make progress.
-                        bus_key = id(bus)
-                        event_lock = bus.locks.get_lock_for_event(bus, self)
-                        if (
-                            event_lock is not None
-                            and bus.is_event_processing(self.event_id)
-                            and bus_key not in claimed_processed_bus_ids
-                        ):
-                            await bus.step(event=self)
-                            claimed_processed_bus_ids.add(bus_key)
-                            processed_on_bus = True
-
                     if processed_on_bus:
                         processed_any = True
                         if completed_signal.is_set():
@@ -1009,11 +977,53 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         Processes this specific event on all buses where it appears (handling
         the forwarding case), but doesn't process other events (avoiding overshoot).
         """
+        try:
+            bus = self.bus
+        except Exception:
+            bus = None
+        process_event_immediately = getattr(bus, 'process_event_immediately', None)
+        if callable(process_event_immediately):
+            await process_event_immediately(self)
+            return
         await self._process_self_on_all_buses()
 
     def __await__(self) -> Generator[Self, Any, Any]:
         """Immediate await path (queue-jump when inside a handler), returns self."""
         return self.now().__await__()
+
+    def _core_event_bus_for_event(self) -> Any | None:
+        direct_ref = self._core_event_bus_ref
+        direct_bus = direct_ref() if direct_ref is not None else None
+        if direct_bus is not None:
+            direct_events = getattr(direct_bus, '_events', None)
+            if isinstance(direct_events, dict) and direct_events.get(self.event_id) is self:
+                return direct_bus
+            event_history = getattr(direct_bus, 'event_history', None)
+            if isinstance(event_history, dict) and event_history.get(self.event_id) is self:
+                return direct_bus
+        label_match: Any | None = None
+        for bus in self._iter_eventbuses_for_registry():
+            process_event_immediately = getattr(bus, 'process_event_immediately', None)
+            drive_all = getattr(bus, '_drive_all_buses_until_event_completed', None)
+            if not callable(process_event_immediately) or not callable(drive_all):
+                continue
+            event_history = getattr(bus, 'event_history', None)
+            if isinstance(event_history, dict) and event_history.get(self.event_id) is self:
+                return bus
+            label = getattr(bus, 'label', None)
+            if isinstance(label, str) and label in self.event_path:
+                label_match = bus
+        return label_match
+
+    @classmethod
+    def model_validate(cls, obj: Any, **kwargs: Any) -> Self:
+        """Hydrate unparameterized runtime-event JSON without weakening BaseEvent's default result type."""
+        if cls is BaseEvent and isinstance(obj, dict):
+            payload = _normalize_any_dict(obj)
+            if payload.get('event_results'):
+                any_event_cls = cast(type['BaseEvent[Any]'], BaseEvent[Any])  # pyright: ignore[reportUnnecessaryCast]
+                return cast(Self, any_event_cls.model_validate(obj, **kwargs))
+        return super().model_validate(obj, **kwargs)
 
     def _first_processing_error(self) -> BaseException | None:
         error_results = [
@@ -1068,18 +1078,36 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         include = include or self._event_result_is_truthy
         return any(self._include_event_result(include, event_result) for event_result in self.event_results.values())
 
+    def _has_included_result_and_first_mode_terminal_results(self, include: EventResultFilter) -> bool:
+        if not self._has_included_event_result(include):
+            return False
+        expected_result_count = len(self.event_results)
+        if expected_result_count <= 1:
+            return True
+        terminal_results = [
+            event_result for event_result in self.event_results.values() if event_result.status in ('completed', 'error')
+        ]
+        return len(terminal_results) >= expected_result_count
+
     async def _wait_for_first_included_result_or_completion(
         self,
         *,
         timeout: float | None,
         include: EventResultFilter | None = None,
+        wait_for_first_mode_cancellations: bool = False,
     ) -> None:
         include = include or self._event_result_is_truthy
 
         async def wait_loop() -> None:
             assert self.event_completed_signal is not None
-            while not self._event_is_complete_flag and not self.event_completed_signal.is_set():
-                if self._has_included_event_result(include):
+            while True:
+                if wait_for_first_mode_cancellations and self._has_included_result_and_first_mode_terminal_results(include):
+                    return
+                if not wait_for_first_mode_cancellations and self._has_included_event_result(include):
+                    return
+                if (self._event_is_complete_flag or self.event_completed_signal.is_set()) and all(
+                    result.status not in ('pending', 'started') for result in self.event_results.values()
+                ):
                     return
                 await asyncio.sleep(0)
 
@@ -1088,6 +1116,62 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         else:
             await asyncio.wait_for(wait_loop(), timeout=timeout)
 
+    def _uses_first_handler_completion(self) -> bool:
+        if self.event_handler_completion == EventHandlerCompletionMode.FIRST:
+            return True
+        core_bus = self._core_event_bus_for_event()
+        return (
+            self.event_handler_completion is None
+            and core_bus is not None
+            and getattr(core_bus, 'event_handler_completion', None) == EventHandlerCompletionMode.FIRST
+        )
+
+    @staticmethod
+    def _is_first_result_resolved_error(error: BaseException | None) -> bool:
+        return isinstance(error, asyncio.CancelledError) and 'first result resolved' in str(error).lower()
+
+    async def _run_now_processing(self) -> None:
+        abort_context = get_active_abort_context()
+        if abort_context is not None:
+            abort_context.raise_if_aborted()
+        self._mark_blocks_parent_completion_if_awaited_from_emitting_handler()
+        if self.event_status == EventStatus.COMPLETED or self._event_is_complete_flag:
+            return
+        core_bus = self._core_event_bus_for_event()
+        if core_bus is not None:
+            from abxbus.event_bus import in_handler_context
+
+            if in_handler_context():
+                await core_bus.process_event_immediately(self)
+                return
+
+            process_now_locally = getattr(core_bus, '_process_event_now_locally_if_possible', None)
+            if callable(process_now_locally) and await process_now_locally(self):
+                return
+
+            core_bus._explicit_await_event_ids.add(self.event_id)  # pyright: ignore[reportPrivateUsage]
+            try:
+                release_deferred = getattr(core_bus, '_release_deferred_explicit_await_messages', None)
+                if callable(release_deferred):
+                    release_deferred()
+                prepare_background_drain = getattr(core_bus, '_prepare_background_drain_for_explicit_await', None)
+                if callable(prepare_background_drain):
+                    prepare_background_drain(self)
+                should_await_via_driver = getattr(core_bus, '_should_await_via_background_driver', None)
+                await_via_driver = getattr(core_bus, '_await_event_via_background_driver', None)
+                if callable(should_await_via_driver) and callable(await_via_driver) and should_await_via_driver(self):
+                    await await_via_driver(self)
+                    return
+                await core_bus._drive_all_buses_until_event_completed(self.event_id, event_obj=self)  # pyright: ignore[reportPrivateUsage]
+            finally:
+                core_bus._explicit_await_event_ids.discard(self.event_id)  # pyright: ignore[reportPrivateUsage]
+                release_deferred = getattr(core_bus, '_release_deferred_explicit_await_messages', None)
+                if callable(release_deferred):
+                    release_deferred()
+            return
+
+        await self._process_self_on_all_buses()
+
     async def now(self, timeout: float | None = None, *, first_result: bool = False) -> Self:
         """Actively run this event now, optionally returning once the first valid result exists."""
         if timeout is not None and timeout < 0:
@@ -1095,12 +1179,21 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         if self._is_unattached_pending_event():
             raise RuntimeError('event has no bus attached')
         if self.event_status != EventStatus.COMPLETED and not self._event_is_complete_flag:
-            self._mark_blocks_parent_completion_if_awaited_from_emitting_handler()
-            processing_task = asyncio.create_task(self._process_self_on_all_buses())
-            if first_result:
+            core_bus = self._core_event_bus_for_event()
+            if core_bus is not None and not first_result and not self._uses_first_handler_completion():
+                from abxbus.event_bus import in_handler_context
+
+                wait_with_active_drain = getattr(core_bus, '_wait_for_event_with_active_background_drain', None)
+                if callable(wait_with_active_drain) and not in_handler_context():
+                    if await wait_with_active_drain(self, timeout):
+                        return self
+            processing_task = asyncio.create_task(self._run_now_processing())
+            if first_result or self._uses_first_handler_completion():
                 try:
                     await self._wait_for_first_included_result_or_completion(
-                        timeout=timeout, include=self._event_result_is_truthy
+                        timeout=timeout,
+                        include=self._event_result_is_truthy,
+                        wait_for_first_mode_cancellations=self._uses_first_handler_completion(),
                     )
                 finally:
                     if not processing_task.done():
@@ -1119,16 +1212,6 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                         processing_task.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
         return self
 
-    @classmethod
-    def model_validate(cls, obj: Any, **kwargs: Any) -> Self:
-        """Hydrate unparameterized runtime-event JSON without weakening BaseEvent's default result type."""
-        if cls is BaseEvent and isinstance(obj, dict):
-            payload = _normalize_any_dict(obj)
-            if payload.get('event_results'):
-                any_event_cls = cast(type['BaseEvent[Any]'], BaseEvent[Any])  # pyright: ignore[reportUnnecessaryCast]
-                return cast(Self, any_event_cls.model_validate(obj, **kwargs))
-        return super().model_validate(obj, **kwargs)
-
     async def wait(self, timeout: float | None = None, *, first_result: bool = False) -> Self:
         """Queue-order await path (never queue-jumps), returns self."""
         if timeout is not None and timeout < 0:
@@ -1144,7 +1227,46 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             )
             return self
         assert self.event_completed_signal is not None
-        if timeout is None or timeout <= 0:
+        core_bus = self._core_event_bus_for_event()
+        if core_bus is not None:
+            from abxbus.event_bus import in_handler_context
+
+            if in_handler_context():
+                ensure_passive_driver = getattr(core_bus, '_ensure_passive_wait_driver', None)
+                if callable(ensure_passive_driver):
+                    ensure_passive_driver()
+                passive_wait_scope = getattr(core_bus, '_passive_handler_wait_scope', None)
+                scope = passive_wait_scope() if callable(passive_wait_scope) else nullcontext()
+                with scope:
+                    drive_all = getattr(core_bus, '_drive_all_buses_until_event_completed', None)
+                    if callable(drive_all):
+                        coro = drive_all(
+                            self.event_id,
+                            drain_pending=False,
+                            event_obj=self,
+                            allow_queue_jump=False,
+                        )
+                        if timeout is None or timeout <= 0:
+                            await coro
+                        else:
+                            await asyncio.wait_for(asyncio.shield(coro), timeout=timeout)
+                        return self
+                    if timeout is None or timeout <= 0:
+                        await self.event_completed_signal.wait()
+                    else:
+                        await asyncio.wait_for(self.event_completed_signal.wait(), timeout=timeout)
+                return self
+            coro = core_bus._drive_all_buses_until_event_completed(  # pyright: ignore[reportPrivateUsage]
+                self.event_id,
+                drain_pending=True,
+                event_obj=self,
+                allow_queue_jump=False,
+            )
+            if timeout is None or timeout <= 0:
+                await coro
+            else:
+                await asyncio.wait_for(asyncio.shield(coro), timeout=timeout)
+        elif timeout is None or timeout <= 0:
             await self.event_completed_signal.wait()
         else:
             await asyncio.wait_for(
@@ -1186,7 +1308,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         if 'event_results' in params:
             raw_event_results = params['event_results']
             if isinstance(raw_event_results, dict):
-                hydrated_event_results = EventResultsDict()
+                hydrated_event_results = {}
                 for raw_handler_id, raw_item in _normalize_any_dict(raw_event_results).items():
                     if not isinstance(raw_item, dict):
                         continue
@@ -1222,6 +1344,8 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     @model_serializer(mode='wrap', when_used='json')
     def _serialize_base_event_json(self, serializer: Callable[[Self], dict[str, Any]]) -> dict[str, Any]:
         payload = serializer(self)
+        if payload.get('event_emitted_by_result_id') is None:
+            payload.pop('event_emitted_by_result_id', None)
         if self.event_results:
             payload['event_results'] = {
                 handler_id: result.model_dump(mode='json') for handler_id, result in self.event_results.items()
@@ -1245,6 +1369,8 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             try:
                 asyncio.get_running_loop()
                 self._event_completed_signal = asyncio.Event()
+                if self.event_status == EventStatus.COMPLETED or self._event_is_complete_flag:
+                    self._event_completed_signal.set()
             except RuntimeError:
                 pass  # Keep it None if no event loop
         return self._event_completed_signal
@@ -1305,7 +1431,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             event_result.started_at = None
             event_result.completed_at = None
             event_result.status = 'pending'
-            event_result.timeout = timeout if timeout is not None and timeout > 0 else None
+            event_result.timeout = timeout if timeout is not None else self.event_timeout
             event_result.result_type = self.event_result_type
             pending_results[handler_id] = event_result
         return pending_results
@@ -1343,15 +1469,10 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             return
 
         pending_handler_map: dict[PythonIdStr, EventHandler | ContravariantEventHandlerCallable[Any]] = dict(applicable_handlers)
-        resolved_event_timeout = (
-            timeout if timeout is not None else (self.event_timeout if self.event_timeout is not None else eventbus.event_timeout)
-        )
-        if resolved_event_timeout is not None and resolved_event_timeout <= 0:
-            resolved_event_timeout = None
         pending_results = self._create_pending_handler_results(
             pending_handler_map,
             eventbus=eventbus,
-            timeout=resolved_event_timeout,
+            timeout=timeout if timeout is not None else self.event_timeout,
         )
         eventbus._resolve_find_waiters(self)  # pyright: ignore[reportPrivateUsage]
         if eventbus.middlewares:
@@ -1392,7 +1513,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
                     if winner_handler_id is not None:
                         for pending_task in pending_tasks:
-                            pending_task.cancel('first result resolved')
+                            pending_task.cancel()
                         if pending_tasks:
                             await asyncio.gather(*pending_tasks, return_exceptions=True)
 
@@ -1477,10 +1598,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             and not self.event_results
         )
 
-    def _collect_handler_errors(
-        self,
-        include_cancelled: bool,
-    ) -> list[Exception]:
+    def _collect_handler_errors(self, include_cancelled: bool) -> list[Exception]:
         """Collect handler errors as Exception instances for aggregation."""
         collected_errors: list[Exception] = []
         for event_result in self.event_results.values():
@@ -1523,7 +1641,17 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             order='registration',
         )
 
-        if raise_if_any and error_results:
+        if (
+            raise_if_any
+            and error_results
+            and not (
+                self._uses_first_handler_completion()
+                and valid_results
+                and self.event_status != EventStatus.COMPLETED
+                and not self._event_is_complete_flag
+                and all(self._is_first_result_resolved_error(error_result.error) for error_result in error_results)
+            )
+        ):
             if len(error_results) == 1:
                 single_result = error_results[0]
                 single_error = single_result.error if single_result.error is not None else single_result.result
@@ -1562,7 +1690,17 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
         valid_results, error_results = self._sorted_included_event_results(include, order='registration')
 
-        if raise_if_any and error_results:
+        if (
+            raise_if_any
+            and error_results
+            and not (
+                self._uses_first_handler_completion()
+                and valid_results
+                and self.event_status != EventStatus.COMPLETED
+                and not self._event_is_complete_flag
+                and all(self._is_first_result_resolved_error(error_result.error) for error_result in error_results)
+            )
+        ):
             if len(error_results) == 1:
                 single_result = error_results[0]
                 single_error = single_result.error if single_result.error is not None else single_result.result
@@ -1597,9 +1735,10 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     ) -> 'EventResult[T_EventResultType]':
         """Create or update an EventResult for a handler"""
 
+        from abxbus.core_bus import RustCoreEventBus
         from abxbus.event_bus import EventBus
 
-        assert eventbus is None or isinstance(eventbus, EventBus)
+        assert eventbus is None or isinstance(eventbus, RustCoreEventBus)
         if (
             eventbus is None
             and not isinstance(handler, EventHandler)
@@ -1673,7 +1812,11 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         # so forwarded events are normalized to None.
         if isinstance(value, BaseEvent):
             return None
-        return value
+        if isinstance(value, dict):
+            value_dict = cast(dict[str, Any], value)
+            if isinstance(value_dict.get('event_id'), str) and isinstance(value_dict.get('event_type'), str):
+                return None
+        return cast(T_EventResultType | None, value)
 
     def _include_event_result(self, include: EventResultFilter, event_result: 'EventResult[Any]') -> bool:
         result = self._coerce_typed_result_value(event_result.result)
@@ -1749,6 +1892,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         self.event_results.clear()
         self._lock_for_event_handler = None
         self._event_dispatch_context = None
+        self._core_known = False
         try:
             asyncio.get_running_loop()
             self._event_completed_signal = asyncio.Event()
@@ -1756,17 +1900,17 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             self._event_completed_signal = None
         return self
 
+    def _get_handler_lock(self) -> Any | None:
+        return self._lock_for_event_handler
+
+    def _set_handler_lock(self, lock: Any | None) -> None:
+        self._lock_for_event_handler = lock
+
     def event_reset(self) -> Self:
         """Return a fresh copy of this event with pending runtime state."""
         fresh_event = self.__class__.model_validate(self.model_dump(mode='python'))
         fresh_event.event_id = uuid7str()
         return fresh_event._mark_pending()
-
-    def _get_handler_lock(self) -> 'ReentrantLock | None':
-        return self._lock_for_event_handler
-
-    def _set_handler_lock(self, lock: 'ReentrantLock | None') -> None:
-        self._lock_for_event_handler = lock
 
     def _get_dispatch_context(self) -> contextvars.Context | None:
         return self._event_dispatch_context
@@ -1829,7 +1973,6 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                 continue
             for result in child_event.event_results.values():
                 if result.status == 'pending':
-                    # print('CANCELLING CHILD HANDLER', result, 'due to', error)
                     result.update(error=error)
             child_event._cancel_pending_child_processing(error)
 
@@ -1882,10 +2025,11 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
     def emit(self, event: T_EmittedEvent) -> T_EmittedEvent:
         """Emit a child event, preserving lineage and blocking parent completion only if awaited."""
-        from abxbus.event_bus import current_handler_context_is_stale, get_current_event, get_current_handler_id
+        from abxbus.event_bus import get_current_event, get_current_handler_id
 
-        if current_handler_context_is_stale():
-            return event
+        abort_context = get_active_abort_context()
+        if abort_context is not None:
+            abort_context.raise_if_aborted()
 
         if event.event_parent_id is None and event.event_id != self.event_id:
             event.event_parent_id = self.event_id
@@ -1898,17 +2042,24 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             and current_event.event_id == self.event_id
             and event.event_id != self.event_id
         ):
-            current_result = current_event.event_results.get(current_handler_id)
-            if current_result is not None and current_result.status in ('pending', 'started'):
-                if event.event_emitted_by_handler_id is None:
-                    event.event_emitted_by_handler_id = current_handler_id
-                current_result.event_children.append(event)
+            if current_handler_id not in current_event.event_results:
+                handler_entry = getattr(getattr(self, 'bus', None), '_handlers', {}).get(current_handler_id)
+                if handler_entry is not None:
+                    current_event.event_result_update(handler_entry, eventbus=getattr(self, 'bus', None), status='started')
+            if current_handler_id not in current_event.event_results:
+                return self.bus.emit(event)
+            if event.event_emitted_by_handler_id is None:
+                event.event_emitted_by_handler_id = current_handler_id
+            current_result = current_event.event_results[current_handler_id]
+            if event.event_emitted_by_result_id is None:
+                event.event_emitted_by_result_id = current_result.id
+            current_result.event_children.append(event)
 
         return self.bus.emit(event)
 
 
 def attr_name_allowed_on_event(key: str) -> bool:
-    allowed_unprefixed_attrs = {'now', 'wait', 'bus', 'emit'}
+    allowed_unprefixed_attrs = {'bus', 'emit', 'wait', 'now'}
     return key in pydantic_builtin_attrs or key in event_builtin_attrs or key.startswith('_') or key in allowed_unprefixed_attrs
 
 

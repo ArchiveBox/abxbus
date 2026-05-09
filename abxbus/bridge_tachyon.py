@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
 import json
 import os
 import socket as _socket
@@ -35,7 +36,7 @@ from anyio import Path as AnyPath
 from uuid_extensions import uuid7str
 
 from abxbus.base_event import BaseEvent
-from abxbus.event_bus import EventBus, EventPatternType, in_handler_context
+from abxbus.event_bus import EventPatternType, in_handler_context
 
 _DEFAULT_TACHYON_CAPACITY = 1 << 20
 _TACHYON_SOCKET_WAIT_TIMEOUT = 5.0
@@ -56,7 +57,7 @@ class TachyonEventBridge:
             raise ValueError(f'TachyonEventBridge capacity must be a positive power of two, got: {capacity}')
         self.path = path
         self.capacity = int(capacity)
-        self._inbound_bus = EventBus(name=name or f'TachyonEventBridge_{uuid7str()[-8:]}', max_history_size=0)
+        self.name = name or f'TachyonEventBridge_{uuid7str()[-8:]}'
 
         self._send_bus: Any | None = None
         self._send_lock = asyncio.Lock()
@@ -68,10 +69,11 @@ class TachyonEventBridge:
         # exit, retry path), but the socket on disk is still ours to unlink in close().
         self._acted_as_listener = False
         self._running = False
+        self._handlers: list[tuple[EventPatternType, Callable[[BaseEvent[Any]], Any]]] = []
 
     def on(self, event_pattern: EventPatternType, handler: Callable[[BaseEvent[Any]], Any]) -> None:
         self._ensure_listener_started()
-        self._inbound_bus.on(event_pattern, handler)
+        self._handlers.append((event_pattern, handler))
 
     async def emit(self, event: BaseEvent[Any]) -> BaseEvent[Any] | None:
         await self._ensure_sender_connected()
@@ -167,7 +169,6 @@ class TachyonEventBridge:
                     await socket_path.unlink()
                 except OSError:
                     pass
-        await self._inbound_bus.destroy(clear=clear)
 
     def _ensure_listener_started(self) -> None:
         # If a previous attempt's thread already exited (init error, listen() failure,
@@ -258,7 +259,23 @@ class TachyonEventBridge:
         loop = self._listener_loop
         if loop is None or loop.is_closed():
             return
-        loop.call_soon_threadsafe(self._inbound_bus.emit, event)
+        asyncio.run_coroutine_threadsafe(self._dispatch_event(event), loop)
+
+    async def _dispatch_event(self, event: BaseEvent[Any]) -> None:
+        for event_pattern, handler in list(self._handlers):
+            if not self._matches(event_pattern, event):
+                continue
+            result = handler(event)
+            if inspect.isawaitable(result):
+                await result
+
+    @staticmethod
+    def _matches(event_pattern: EventPatternType, event: BaseEvent[Any]) -> bool:
+        if event_pattern == '*':
+            return True
+        if isinstance(event_pattern, str):
+            return event_pattern == event.event_type
+        return event.event_type == event_pattern.__name__
 
     @staticmethod
     def _is_listener_alive(path: str) -> bool:

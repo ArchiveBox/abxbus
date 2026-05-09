@@ -1,11 +1,12 @@
 import { z } from 'zod'
 import type { BaseEvent } from './BaseEvent.js'
+import type { EventFactory } from './BaseEvent.js'
 
 export type EventStatus = 'pending' | 'started' | 'completed'
 
 export type EventClass<T extends BaseEvent = BaseEvent> = { event_type?: string } & (new (...args: any[]) => T)
 
-export type EventPattern<T extends BaseEvent = BaseEvent> = string | EventClass<T>
+export type EventPattern<T extends BaseEvent = BaseEvent> = string | EventClass<T> | EventFactory<any, unknown>
 
 export type EventWithResultSchema<TResult> = BaseEvent & { __event_result_type__?: TResult }
 

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast, overload, runt
 from uuid import NAMESPACE_DNS, UUID, uuid5
 from weakref import ref as weakref
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 from typing_extensions import TypeVar
 
 from abxbus.helpers import monotonic_datetime
@@ -271,6 +271,14 @@ class EventHandler(BaseModel):
     event_pattern: str = '*'
     eventbus_name: str = 'EventBus'
     eventbus_id: str = '00000000-0000-0000-0000-000000000000'
+    _mutation_callback: Callable[['EventHandler'], None] | None = PrivateAttr(default=None)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        super().__setattr__(name, value)
+        if name in {'handler_timeout', 'handler_slow_timeout'}:
+            callback = self._mutation_callback
+            if callback is not None:
+                callback(self)
 
     @field_validator('handler_name', mode='before')
     @classmethod

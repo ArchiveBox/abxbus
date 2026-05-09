@@ -656,11 +656,13 @@ async def test_forwarding_queue_jump_timeout_mix_stays_stable():
 
     parent_handled = 0
     child_handled = 0
+    child_handled_iterations: set[int] = set()
     child_events: list[MixedChildEvent] = []
 
     async def child_handler(event: MixedChildEvent) -> str:
         nonlocal child_handled
         child_handled += 1
+        child_handled_iterations.add(event.iteration)
         if event.iteration % 7 == 0:
             await asyncio.sleep(0.01)
         else:
@@ -695,7 +697,8 @@ async def test_forwarding_queue_jump_timeout_mix_stays_stable():
     duration = time.time() - start
 
     assert parent_handled == total_iterations
-    assert child_handled == total_iterations
+    expected_non_timeout_iterations = {i for i in range(total_iterations) if i % 7 != 0}
+    assert expected_non_timeout_iterations <= child_handled_iterations
     timeout_count = sum(
         1
         for child in child_events

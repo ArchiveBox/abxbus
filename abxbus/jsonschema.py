@@ -1,3 +1,4 @@
+import copy
 import inspect
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, TypeAlias, cast
@@ -39,6 +40,8 @@ IDENTIFIER_NORMALIZATION: dict[str, str] = {schema_type: identifier for schema_t
 
 JSON_SCHEMA_DRAFT = 'https://json-schema.org/draft/2020-12/schema'
 _TYPE_ADAPTER_CACHE: dict[Any, TypeAdapter[Any]] = {}
+_JSON_SCHEMA_CACHE: dict[Any, dict[str, Any] | None] = {}
+_CACHE_MISS = object()
 
 FieldDefinition: TypeAlias = Any | tuple[Any, Any]
 
@@ -54,6 +57,24 @@ def _get_cached_type_adapter(result_type: Any) -> TypeAdapter[Any]:
     adapter = TypeAdapter(result_type)
     _TYPE_ADAPTER_CACHE[result_type] = adapter
     return adapter
+
+
+def _get_cached_json_schema(result_type: Any) -> dict[str, Any] | None | object:
+    """Return a cached JSON Schema for hashable result types, or _CACHE_MISS."""
+    try:
+        if result_type in _JSON_SCHEMA_CACHE:
+            cached = _JSON_SCHEMA_CACHE[result_type]
+            return None if cached is None else copy.deepcopy(cached)
+    except TypeError:
+        return _CACHE_MISS
+    return _CACHE_MISS
+
+
+def _set_cached_json_schema(result_type: Any, schema: dict[str, Any] | None) -> None:
+    try:
+        _JSON_SCHEMA_CACHE[result_type] = None if schema is None else copy.deepcopy(schema)
+    except TypeError:
+        pass
 
 
 def _as_string_key_dict(value: object) -> dict[str, Any] | None:
@@ -335,20 +356,27 @@ def pydantic_model_to_json_schema(result_type: Any) -> dict[str, Any] | None:
     if isinstance(result_type, str):
         return None
 
+    cached_schema = _get_cached_json_schema(result_type)
+    if cached_schema is not _CACHE_MISS:
+        return cast(dict[str, Any] | None, cached_schema)
+
     try:
         if inspect.isclass(result_type) and issubclass(result_type, BaseModel):
             schema = result_type.model_json_schema()
             schema.setdefault('$schema', JSON_SCHEMA_DRAFT)
+            _set_cached_json_schema(result_type, schema)
             return schema
     except TypeError:
         pass
 
     try:
-        schema = TypeAdapter(result_type).json_schema()
+        schema = _get_cached_type_adapter(result_type).json_schema()
         normalized_schema = normalize_result_dict(schema)
         normalized_schema.setdefault('$schema', JSON_SCHEMA_DRAFT)
+        _set_cached_json_schema(result_type, normalized_schema)
         return normalized_schema
     except Exception:
+        _set_cached_json_schema(result_type, None)
         return None
 
 

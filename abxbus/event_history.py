@@ -22,7 +22,7 @@ class EventHistory(dict[UUIDStr, BaseEventT], Generic[BaseEventT]):
 
     def __init__(self, max_history_size: int | None = 100, max_history_drop: bool = False):
         super().__init__()
-        self.max_history_size = max_history_size
+        self.max_history_size = None if max_history_size is None else max(0, max_history_size)
         self.max_history_drop = max_history_drop
         self._warned_about_dropping_uncompleted_events = False
 
@@ -299,29 +299,16 @@ class EventHistory(dict[UUIDStr, BaseEventT], Generic[BaseEventT]):
         if self.max_history_size is None:
             return 0
 
-        if self.max_history_size == 0:
-            completed_event_ids = [event_id for event_id, event in self.items() if event.event_status == 'completed']
-            removed_count = 0
-            for event_id in completed_event_ids:
-                event = self.get(event_id)
-                if event is None:
-                    continue
-                del self[event_id]
-                if on_remove:
-                    on_remove(event)
-                removed_count += 1
-            return removed_count
-
         if not self.max_history_drop or len(self) <= self.max_history_size:
             return 0
 
         remaining_overage = len(self) - self.max_history_size
         removed_count = 0
 
-        def remove_event(event_id: str, event: BaseEventT) -> None:
+        def remove_event(event_id: str, event: BaseEventT, *, notify: bool = True) -> None:
             nonlocal removed_count
             del self[event_id]
-            if on_remove:
+            if notify and on_remove:
                 on_remove(event)
             removed_count += 1
 
@@ -339,7 +326,7 @@ class EventHistory(dict[UUIDStr, BaseEventT], Generic[BaseEventT]):
                 break
             if event.event_status != 'completed':
                 dropped_uncompleted += 1
-            remove_event(event_id, event)
+            remove_event(event_id, event, notify=False)
             remaining_overage -= 1
 
         if dropped_uncompleted > 0 and not self._warned_about_dropping_uncompleted_events:

@@ -493,6 +493,7 @@ fn test_multi_bus_queues_are_independent_when_awaiting_child() {
             push(&order, "Child_dispatched_to_Bus1");
             let _ = child.now().await;
             push(&order, "Child_await_returned");
+            wait_for_entry(&order, "Bus2_Event3_start");
             push(&order, "Bus1_Event1_end");
             Ok(json!("event1_done"))
         }
@@ -552,7 +553,6 @@ fn test_multi_bus_queues_are_independent_when_awaiting_child() {
         ..Default::default()
     });
 
-    wait_for_entry(&execution_order, "Bus2_Event3_start");
     let _ = block_on(event1.now());
 
     let order = execution_order.lock().expect("order lock").clone();

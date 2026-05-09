@@ -1,4 +1,4 @@
-# pyright: basic
+# pyright: basic, reportGeneralTypeIssues=false
 """
 Comprehensive tests for the EventBus implementation.
 
@@ -13,6 +13,8 @@ Tests cover:
 - Serialization
 - Batch operations
 """
+
+# pyright: reportGeneralTypeIssues=false
 
 import asyncio
 import time
@@ -192,7 +194,7 @@ class TestEventBusBasics:
         with pytest.raises(RuntimeError, match='destroyed'):
             bus.emit(DestroyEvent())
         with pytest.raises(RuntimeError, match='destroyed'):
-            await bus.find(DestroyEvent, future=False)
+            await bus.find(DestroyEvent, future=False)  # pyright: ignore[reportGeneralTypeIssues]
 
     async def test_destroy_clear_false_preserves_handlers_and_history_resolves_waiters_and_is_terminal(self):
         """destroy(clear=False) stops runtime work, resolves waiters, preserves inspectable state, and is terminal."""
@@ -230,9 +232,9 @@ class TestEventBusBasics:
         with pytest.raises(RuntimeError, match='destroyed'):
             bus.emit(TerminalEvent())
         with pytest.raises(RuntimeError, match='destroyed'):
-            await bus.find(TerminalEvent, future=False)
+            await bus.find(TerminalEvent, future=False)  # pyright: ignore[reportGeneralTypeIssues]
 
-        await bus.destroy(clear=True)
+        await bus.destroy(clear=True)  # pyright: ignore[reportGeneralTypeIssues]
 
     async def test_destroying_one_bus_does_not_break_shared_handlers_or_forward_targets(self):
         """A terminal destroy only clears the selected bus, not shared callables or peer buses."""

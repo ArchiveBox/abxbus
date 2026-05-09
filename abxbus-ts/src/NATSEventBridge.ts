@@ -13,6 +13,7 @@ export class NATSEventBridge {
   private readonly inbound_bus: EventBus
   private running: boolean
   private nc: any | null
+  private sub: any | null
   private sub_task: Promise<void> | null
 
   constructor(server: string, subject: string, name?: string) {
@@ -21,9 +22,10 @@ export class NATSEventBridge {
     this.server = server
     this.subject = subject
     this.name = name ?? `NATSEventBridge_${randomSuffix()}`
-    this.inbound_bus = new EventBus(this.name, { max_history_size: 0 })
+    this.inbound_bus = new EventBus(this.name, { max_history_size: 100, max_history_drop: true })
     this.running = false
     this.nc = null
+    this.sub = null
     this.sub_task = null
 
     this.dispatch = this.dispatch.bind(this)
@@ -64,6 +66,7 @@ export class NATSEventBridge {
     const connect = mod.connect
     this.nc = await connect({ servers: this.server })
     const sub = this.nc.subscribe(this.subject)
+    this.sub = sub
 
     this.running = true
     this.sub_task = (async () => {
@@ -80,8 +83,15 @@ export class NATSEventBridge {
 
   async close(): Promise<void> {
     this.running = false
+    if (this.sub) {
+      try {
+        this.sub.unsubscribe()
+      } catch {
+        // ignore
+      }
+      this.sub = null
+    }
     if (this.nc) {
-      await this.nc.drain()
       await this.nc.close()
       this.nc = null
     }

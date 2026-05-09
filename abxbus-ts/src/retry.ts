@@ -1,4 +1,4 @@
-import { createAsyncLocalStorage, type AsyncLocalStorageLike } from './async_context.js'
+import { createAsyncLocalStorage, getActiveAbortContext, type AbortContext, type AsyncLocalStorageLike } from './async_context.js'
 import { isNodeRuntime } from './optional_deps.js'
 
 type SemaphoreScope = 'multiprocess' | 'global' | 'class' | 'instance'
@@ -297,14 +297,19 @@ export function retry(options: RetryOptions = {}) {
 
       // ── Retry loop (runs inside the semaphore and re-entrancy context) ──
       const runRetryLoop = async (): Promise<any> => {
+        const abort_context = getActiveAbortContext()
         for (let attempt = 1; attempt <= effective_max_attempts; attempt++) {
+          throwIfAborted(abort_context)
           try {
             if (timeout != null && timeout > 0) {
-              return await _runWithTimeout(() => Promise.resolve(target.apply(this, args)), timeout * 1000, attempt)
+              return await _runWithTimeout(() => Promise.resolve(target.apply(this, args)), timeout * 1000, attempt, abort_context)
             } else {
-              return await Promise.resolve(target.apply(this, args))
+              return await runAbortable(Promise.resolve(target.apply(this, args)), abort_context)
             }
           } catch (error) {
+            if (abort_context?.isAborted()) {
+              throw abort_context.error() ?? error
+            }
             // Check if this error type should trigger a retry
             if (retry_on_errors && retry_on_errors.length > 0) {
               const is_retryable = retry_on_errors.some((matcher) =>
@@ -323,7 +328,7 @@ export function retry(options: RetryOptions = {}) {
             // Wait before next attempt with exponential backoff
             const delay_seconds = effective_retry_after * Math.pow(retry_backoff_factor, attempt - 1)
             if (delay_seconds > 0) {
-              await sleep(delay_seconds * 1000)
+              await runAbortable(sleep(delay_seconds * 1000), abort_context)
             }
           }
         }
@@ -538,39 +543,62 @@ async function acquireMultiprocessSemaphore(
 }
 
 /** Run fn() with a timeout. Rejects with RetryTimeoutError if the timeout fires first. */
-async function _runWithTimeout<T>(fn: () => Promise<T>, timeout_ms: number, attempt: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    let settled = false
+async function _runWithTimeout<T>(
+  fn: () => Promise<T>,
+  timeout_ms: number,
+  attempt: number,
+  abort_context: AbortContext | null
+): Promise<T> {
+  return runAbortable(
+    new Promise<T>((resolve, reject) => {
+      let settled = false
 
-    const timer = setTimeout(() => {
-      if (!settled) {
-        settled = true
-        reject(
-          new RetryTimeoutError(`Timed out after ${timeout_ms / 1000}s (attempt ${attempt})`, {
-            timeout_seconds: timeout_ms / 1000,
-            attempt,
-          })
-        )
-      }
-    }, timeout_ms)
-
-    fn().then(
-      (value) => {
+      const timer = setTimeout(() => {
         if (!settled) {
           settled = true
-          clearTimeout(timer)
-          resolve(value)
+          reject(
+            new RetryTimeoutError(`Timed out after ${timeout_ms / 1000}s (attempt ${attempt})`, {
+              timeout_seconds: timeout_ms / 1000,
+              attempt,
+            })
+          )
         }
-      },
-      (error) => {
-        if (!settled) {
-          settled = true
-          clearTimeout(timer)
-          reject(error)
+      }, timeout_ms)
+
+      fn().then(
+        (value) => {
+          if (!settled) {
+            settled = true
+            clearTimeout(timer)
+            resolve(value)
+          }
+        },
+        (error) => {
+          if (!settled) {
+            settled = true
+            clearTimeout(timer)
+            reject(error)
+          }
         }
-      }
-    )
-  })
+      )
+    }),
+    abort_context
+  )
+}
+
+function throwIfAborted(abort_context: AbortContext | null): void {
+  if (abort_context?.isAborted()) {
+    throw abort_context.error() ?? new Error('handler invocation cancelled')
+  }
+}
+
+async function runAbortable<T>(task: Promise<T>, abort_context: AbortContext | null): Promise<T> {
+  if (!abort_context) {
+    return await task
+  }
+  throwIfAborted(abort_context)
+  void task.catch(() => undefined)
+  return await Promise.race([task, abort_context.promise])
 }
 
 function sleep(ms: number): Promise<void> {

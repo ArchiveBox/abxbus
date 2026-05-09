@@ -13,7 +13,9 @@ classifiers = [
 dependencies = [
     "aiofiles>=25.1.0",
     "anyio>=4.13.0",
+    "msgpack>=1.1.2",
     "pydantic>=2.13.4",
+    "tachyon-ipc>=0.5.1",
     "typing-extensions>=4.15.0",
     "uuid7>=0.1.0",
 ]
@@ -26,12 +28,6 @@ nats = [
 ]
 redis = [
     "redis>=7.4.0",
-]
-# Tachyon's native core requires GCC 14+ / Clang 17+ to compile, so it's exposed
-# as its own extra and intentionally excluded from `bridges` to keep that
-# aggregate installable on stock CI/runtimes. Install with `abxbus[tachyon]`.
-tachyon = [
-    "tachyon-ipc>=0.5.0",
 ]
 bridges = [
     "asyncpg>=0.31.0",

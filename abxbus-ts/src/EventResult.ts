@@ -9,13 +9,30 @@ import { withResolvers, type HandlerLock } from './LockManager.js'
 import type { Deferred } from './LockManager.js'
 import type { EventHandlerCallable, EventResultType } from './types.js'
 import { isZodSchema } from './types.js'
-import { _runWithAsyncContext } from './async_context.js'
+import { _runWithAsyncContext, runWithAbortContext, type AbortContext } from './async_context.js'
 import { RetryTimeoutError } from './retry.js'
-import { _runWithAbortMonitor, _runWithSlowMonitor, _runWithTimeout } from './timing.js'
+import {
+  _runWithAbortMonitor,
+  _runWithSlowMonitor,
+  _runWithTimeout,
+  cancelWarningTimer,
+  scheduleWarningTimer,
+  type WarningTimerHandle,
+} from './timing.js'
 import { monotonicDatetime } from './helpers.js'
 
 // More precise than event.event_status, includes separate 'error' state for handlers that throw errors during execution
 export type EventResultStatus = 'pending' | 'started' | 'completed' | 'error'
+
+const isPromiseLike = (value: unknown): value is PromiseLike<unknown> =>
+  value !== null && value !== undefined && typeof (value as { then?: unknown }).then === 'function'
+
+const awaitWithAbortSignal = async <T>(task: PromiseLike<T>, abort_signal: Promise<never>): Promise<T> => {
+  const promise = Promise.resolve(task)
+  const raced = Promise.race([promise, abort_signal])
+  void promise.catch(() => undefined)
+  return await raced
+}
 
 export const EventResultJSONSchema = z
   .object({
@@ -23,16 +40,21 @@ export const EventResultJSONSchema = z
     status: z.enum(['pending', 'started', 'completed', 'error']),
     event_id: z.string(),
     handler_id: z.string(),
+    handler_seq: z.number().optional(),
     handler_name: z.string(),
     handler_file_path: z.string().nullable().optional(),
-    handler_timeout: z.number().nonnegative().nullable().optional(),
-    handler_slow_timeout: z.number().nonnegative().nullable().optional(),
+    handler_timeout: z.number().nullable().optional(),
+    handler_slow_timeout: z.number().nullable().optional(),
+    timeout: z.number().nullable().optional(),
     handler_registered_at: z.string().datetime().optional(),
     handler_event_pattern: z.union([z.string(), z.literal('*')]).optional(),
     eventbus_name: z.string(),
     eventbus_id: z.string().uuid(),
     started_at: z.string().datetime().nullable().optional(),
     completed_at: z.string().datetime().nullable().optional(),
+    result_set: z.boolean().optional(),
+    result_is_undefined: z.boolean().optional(),
+    result_is_event_reference: z.boolean().optional(),
     result: z.unknown().optional(),
     error: z.unknown().optional(),
     event_children: z.array(z.string()),
@@ -50,12 +72,15 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
   started_at: string | null
   completed_at: string | null
   result?: EventResultType<TEvent> // parsed return value from the event handler
+  result_is_event_reference: boolean
+  timeout: number | null
   error?: unknown // error object thrown by the event handler, or null if the handler completed successfully
   event_children: BaseEvent[] // list of emitted child events
 
   // Abort signal: created when handler starts, rejected by _signalAbort() to
   // interrupt runHandler's await via Promise.race.
   _abort: Deferred<never> | null
+  _abort_error: Error | null
   // Handler lock: tracks ownership of the handler concurrency lock
   // during handler execution. Set by runHandler(), used by
   // _processEventImmediately for yield-and-reacquire during queue-jumps.
@@ -63,17 +88,20 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
   // Runloop pause releases keyed by bus for queue-jump; released when handler exits.
   _queue_jump_pause_releases: Map<EventBus, () => void> | null
 
-  constructor(params: { event: TEvent; handler: EventHandler }) {
-    this.id = uuidv7()
+  constructor(params: { event: TEvent; handler: EventHandler; id?: string }) {
+    this.id = params.id ?? uuidv7()
     this.status = 'pending'
     this.event = params.event
     this.handler = params.handler
     this.started_at = null
     this.completed_at = null
     this.result = undefined
+    this.result_is_event_reference = false
+    this.timeout = this.resolveEffectiveTimeout()
     this.error = undefined
     this.event_children = []
     this._abort = null
+    this._abort_error = null
     this._lock = null
     this._queue_jump_pause_releases = null
   }
@@ -88,7 +116,13 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
 
   get bus(): EventBus {
     const original_event = this.event._event_original ?? this.event
-    const dispatch_bus = original_event.event_bus ?? this.event.event_bus!
+    const dispatch_bus = original_event.event_bus ?? this.event.event_bus
+    if (!dispatch_bus) {
+      return undefined as unknown as EventBus
+    }
+    if (dispatch_bus.id === this.handler.eventbus_id || dispatch_bus.bus_id === this.handler.eventbus_id) {
+      return dispatch_bus
+    }
     return dispatch_bus.all_instances.findBusById(this.handler.eventbus_id) ?? dispatch_bus
   }
 
@@ -121,12 +155,15 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
     if (!root_bus) {
       return undefined
     }
+    if (root_bus.id === this.eventbus_id || root_bus.bus_id === this.eventbus_id) {
+      return root_bus
+    }
     return root_bus.all_instances.findBusById(this.eventbus_id) ?? root_bus
   }
 
   private async _notifyStatusHook(status: 'started' | 'completed'): Promise<void> {
     const hook_bus = this.getHookBus()
-    if (!hook_bus) {
+    if (!hook_bus || !hook_bus.hasEventResultHooks()) {
       return
     }
     const event_for_hook = hook_bus._getEventProxyScopedToThisBus(this.event._event_original ?? this.event, this)
@@ -158,6 +195,9 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
     if (!original_child.event_emitted_by_handler_id) {
       original_child.event_emitted_by_handler_id = this.handler_id
     }
+    if (!original_child.event_emitted_by_result_id) {
+      original_child.event_emitted_by_result_id = this.id
+    }
     if (!this.event_children.some((child) => child.event_id === original_child.event_id)) {
       this.event_children.push(original_child)
     }
@@ -171,60 +211,102 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
     return this.result
   }
 
-  // Resolve handler timeout in seconds using event-local values plus the executing bus defaults.
-  get handler_timeout(): number | null {
-    const original = this.event._event_original ?? this.event
-    const raw_event_timeout = original.event_timeout ?? this.bus.event_timeout
-    const resolved_event_timeout =
-      raw_event_timeout !== null && raw_event_timeout !== undefined && raw_event_timeout > 0 ? raw_event_timeout : null
-
-    let resolved_handler_timeout: number | null
-    if (this.handler.handler_timeout !== undefined && this.handler.handler_timeout !== null) {
-      resolved_handler_timeout = this.handler.handler_timeout
-    } else if (original.event_handler_timeout !== undefined && original.event_handler_timeout !== null) {
-      resolved_handler_timeout = original.event_handler_timeout
-    } else {
-      resolved_handler_timeout = resolved_event_timeout
+  private positiveTimeout(value: number | null | undefined): number | null | undefined {
+    if (value === undefined || value === null) {
+      return undefined
     }
-
-    if (resolved_handler_timeout !== null && resolved_handler_timeout <= 0) {
-      resolved_handler_timeout = null
-    }
-
-    if (resolved_handler_timeout === null && resolved_event_timeout === null) {
+    if (value <= 0) {
       return null
     }
-    if (resolved_handler_timeout === null) {
-      return resolved_event_timeout
-    }
-    if (resolved_event_timeout === null) {
-      return resolved_handler_timeout
-    }
-    return Math.min(resolved_handler_timeout, resolved_event_timeout)
+    return value
   }
 
-  // Resolve slow handler warning threshold in seconds using event-local values plus the executing bus defaults.
+  private resolveHandlerExecutionTimeout(): number | null {
+    const original = this.event._event_original ?? this.event
+    const bus = this.bus
+
+    const handler_timeout = this.positiveTimeout(this.handler.handler_timeout)
+    if (handler_timeout !== undefined) return handler_timeout
+    const event_handler_timeout = this.positiveTimeout(original.event_handler_timeout)
+    if (event_handler_timeout !== undefined) return event_handler_timeout
+    const bus_handler_timeout = bus ? this.positiveTimeout(bus.event_handler_timeout) : undefined
+    return bus_handler_timeout ?? null
+  }
+
+  // Public processing timeout in seconds. Handler-specific timeout wins, then
+  // event timeout; explicit 0/null disables inheritance at that level.
+  get handler_timeout(): number | null {
+    const handler_timeout = this.resolveHandlerExecutionTimeout()
+    const event_timeout = this.resolveEventTimeout()
+    if (handler_timeout === null) {
+      return event_timeout
+    }
+    if (event_timeout === null) {
+      return handler_timeout
+    }
+    return Math.min(handler_timeout, event_timeout)
+  }
+
+  private resolveEventTimeout(): number | null {
+    const original = this.event._event_original ?? this.event
+    const bus = this.bus
+    const event_timeout = this.positiveTimeout(original.event_timeout)
+    if (event_timeout !== undefined) return event_timeout
+    const bus_event_timeout = bus ? this.positiveTimeout(bus.event_timeout) : undefined
+    return bus_event_timeout ?? null
+  }
+
+  resolveEffectiveTimeout(handler_timeout_override?: number | null): number | null {
+    const handler_timeout = handler_timeout_override ?? this.resolveHandlerExecutionTimeout()
+    const event_timeout = this.resolveEventTimeout()
+    if (handler_timeout === null) {
+      return event_timeout
+    }
+    if (event_timeout === null) {
+      return handler_timeout
+    }
+    return Math.min(handler_timeout, event_timeout)
+  }
+
+  // Resolve slow handler warning threshold in seconds using precedence: handler -> event -> bus defaults.
   get handler_slow_timeout(): number | null {
     const original = this.event._event_original ?? this.event
 
-    if (this.handler.handler_slow_timeout !== undefined && this.handler.handler_slow_timeout !== null) {
-      return this.handler.handler_slow_timeout
+    if (this.handler.handler_slow_timeout !== undefined) {
+      return this.handler.handler_slow_timeout !== null && this.handler.handler_slow_timeout > 0 ? this.handler.handler_slow_timeout : null
     }
-    return original.event_handler_slow_timeout ?? this.bus.event_handler_slow_timeout ?? null
+    if (original.event_handler_slow_timeout !== undefined) {
+      return original.event_handler_slow_timeout !== null && original.event_handler_slow_timeout > 0
+        ? original.event_handler_slow_timeout
+        : null
+    }
+    const event_slow_timeout = (original as { event_slow_timeout?: number | null }).event_slow_timeout
+    if (event_slow_timeout !== undefined) {
+      return event_slow_timeout !== null && event_slow_timeout > 0 ? event_slow_timeout : null
+    }
+    if (this.bus?.event_handler_slow_timeout !== undefined) {
+      return this.bus.event_handler_slow_timeout !== null && this.bus.event_handler_slow_timeout > 0
+        ? this.bus.event_handler_slow_timeout
+        : null
+    }
+    const bus_event_slow_timeout = this.bus?.event_slow_timeout
+    return bus_event_slow_timeout !== undefined && bus_event_slow_timeout !== null && bus_event_slow_timeout > 0
+      ? bus_event_slow_timeout
+      : null
   }
 
   // Create a slow-handler warning timer that logs if the handler runs too long.
-  _createSlowHandlerWarningTimer(effective_timeout: number | null): ReturnType<typeof setTimeout> | null {
+  _createSlowHandlerWarningTimer(effective_timeout: number | null): WarningTimerHandle | null {
     const handler_warn_timeout = this.handler_slow_timeout
-    const warn_ms = handler_warn_timeout === null || handler_warn_timeout <= 0 ? null : handler_warn_timeout * 1000
-    const should_warn = warn_ms !== null && (effective_timeout === null || effective_timeout <= 0 || effective_timeout * 1000 > warn_ms)
+    const warn_ms = handler_warn_timeout === null ? null : handler_warn_timeout * 1000
+    const should_warn = warn_ms !== null && (effective_timeout === null || effective_timeout * 1000 > warn_ms)
     if (!should_warn || warn_ms === null) {
       return null
     }
     const event = this.event._event_original ?? this.event
     const bus_name = this.handler.eventbus_name
     const started_at_ms = performance.now()
-    return setTimeout(() => {
+    return scheduleWarningTimer(warn_ms, () => {
       if (this.status !== 'started') {
         return
       }
@@ -233,7 +315,7 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
       console.warn(
         `[abxbus] Slow event handler: ${bus_name}.on(${event.toString()}, ${this.handler.toString()}) still running after ${elapsed_seconds}s`
       )
-    }, warn_ms)
+    })
   }
 
   _ensureQueueJumpPause(bus: EventBus): void {
@@ -306,12 +388,12 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
     return this
   }
 
-  private _createHandlerTimeoutError(event: BaseEvent): EventHandlerTimeoutError {
+  private _createHandlerTimeoutError(event: BaseEvent, timeout_seconds: number): EventHandlerTimeoutError {
     return new EventHandlerTimeoutError(
-      `${this.bus.toString()}.on(${event.toString()}, ${this.handler.toString()}) timed out after ${this.handler_timeout}s`,
+      `${this.bus.toString()}.on(${event.toString()}, ${this.handler.toString()}) timed out after ${timeout_seconds}s`,
       {
         event_result: this,
-        timeout_seconds: this.handler_timeout,
+        timeout_seconds,
       }
     )
   }
@@ -329,12 +411,15 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
     }
   }
 
-  private _onHandlerExit(slow_handler_warning_timer: ReturnType<typeof setTimeout> | null): void {
+  private _onHandlerExit(slow_handler_warning_timer: WarningTimerHandle | null): void {
     this._abort = null
+    if (this.status === 'completed') {
+      this._abort_error = null
+    }
     this._lock = null
     this._releaseQueueJumpPauses()
     if (slow_handler_warning_timer) {
-      clearTimeout(slow_handler_warning_timer)
+      cancelWarningTimer(slow_handler_warning_timer)
     }
   }
 
@@ -351,7 +436,7 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
       this._lock.exitHandlerRun()
     }
 
-    let slow_handler_warning_timer: ReturnType<typeof setTimeout> | null = null
+    let slow_handler_warning_timer: WarningTimerHandle | null = null
     // if the result is already in an error or completed state, exit early
     if (this.status === 'error' || this.status === 'completed') {
       return
@@ -363,18 +448,44 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
         try {
           const should_notify_started = this.status === 'pending'
           const abort_signal = this._markStarted(false)
+          const abort_context: AbortContext = {
+            promise: abort_signal,
+            isAborted: () => this._abort_error !== null,
+            error: () => this._abort_error,
+          }
           if (should_notify_started) {
             await this._notifyStatusHook('started')
           }
-          slow_handler_warning_timer = this._createSlowHandlerWarningTimer(this.handler_timeout)
-          const handler_result = await _runWithTimeout(
-            this.handler_timeout,
-            () => this._createHandlerTimeoutError(event),
-            () =>
-              _runWithSlowMonitor(slow_handler_warning_timer, () =>
-                _runWithAbortMonitor(() => this.handler._handler_async(handler_event), abort_signal)
+          const handler_timeout = this.resolveHandlerExecutionTimeout()
+          this.timeout = this.resolveEffectiveTimeout()
+          let handler_result: unknown
+          if (handler_timeout === null) {
+            const direct_result = runWithAbortContext(abort_context, () => this.handler.handler(handler_event))
+            if (isPromiseLike(direct_result)) {
+              slow_handler_warning_timer = this._createSlowHandlerWarningTimer(this.timeout)
+              handler_result = await _runWithSlowMonitor(slow_handler_warning_timer, () =>
+                awaitWithAbortSignal(direct_result, abort_signal)
               )
-          )
+            } else {
+              handler_result = direct_result
+            }
+          } else {
+            slow_handler_warning_timer = this._createSlowHandlerWarningTimer(this.timeout)
+            handler_result = await runWithAbortContext(abort_context, () =>
+              _runWithTimeout(
+                handler_timeout,
+                () => {
+                  const error = this._createHandlerTimeoutError(event, handler_timeout)
+                  this._signalAbort(error)
+                  return error
+                },
+                () =>
+                  _runWithSlowMonitor(slow_handler_warning_timer, () =>
+                    _runWithAbortMonitor(() => this.handler.handler(handler_event), abort_signal)
+                  )
+              )
+            )
+          }
           this._markCompleted(handler_result as EventResultType<TEvent> | BaseEvent | undefined, false)
         } catch (error) {
           this._handleHandlerError(event, error)
@@ -391,7 +502,9 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
   // Reject the abort promise, causing runHandler's Promise.race to
   // throw immediately — even if the handler has no timeout.
   _signalAbort(error: Error): void {
+    this._abort_error = error
     if (this._abort) {
+      this._abort.promise.catch(() => {})
       this._abort.reject(error)
       this._abort = null
     }
@@ -401,6 +514,10 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
   _markStarted(notify_hook: boolean = true): Promise<never> {
     if (!this._abort) {
       this._abort = withResolvers<never>()
+      if (this._abort_error !== null) {
+        this._abort.promise.catch(() => {})
+        this._abort.reject(this._abort_error)
+      }
     }
     if (this.status === 'pending') {
       this.update({ status: 'started' })
@@ -443,8 +560,8 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
       eventbus_id: this.eventbus_id,
       started_at: this.started_at,
       completed_at: this.completed_at,
-      result: this.result,
-      error: this.error,
+      result: this.result instanceof BaseEvent ? (this.result._event_original ?? this.result).event_id : this.result,
+      error: this.error ?? null,
       event_children: this.event_children.map((child) => child.event_id),
     }
   }
@@ -467,12 +584,22 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
     const result = new EventResult<TEvent>({ event, handler: handler_stub })
     result.id = record.id
     result.status = record.status
+    result.timeout = result.resolveEffectiveTimeout(record.timeout ?? null)
     result.started_at = record.started_at === null || record.started_at === undefined ? null : monotonicDatetime(record.started_at)
     result.completed_at = record.completed_at === null || record.completed_at === undefined ? null : monotonicDatetime(record.completed_at)
-    if ('result' in record) {
+    if (record.result_is_undefined === true) {
+      result.result = undefined
+    } else if (record.result_is_event_reference === true && typeof record.result === 'string') {
+      result.result_is_event_reference = true
+      if (record.result === event.event_id) {
+        result.result = event as EventResultType<TEvent>
+      } else {
+        result.result = (event.event_bus?.findEventById(record.result) ?? undefined) as EventResultType<TEvent> | undefined
+      }
+    } else if ('result' in record || record.result_set === true) {
       result.result = record.result as EventResultType<TEvent>
     }
-    if ('error' in record) {
+    if ('error' in record && record.error !== null) {
       result.error = record.error
     }
     result.event_children = []

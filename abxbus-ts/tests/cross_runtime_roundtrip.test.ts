@@ -857,7 +857,7 @@ test('ts_to_go_roundtrip preserves event fields and result type semantics', asyn
   await assertTsSchemaEnforcementAfterRuntimeReload(go_roundtripped, 'TsGoTsWrongShape', 'TsGoTsRightShape')
 })
 
-test('ts -> python -> ts bus roundtrip rehydrates and resumes pending queue', async () => {
+test('ts -> python -> ts bus roundtrip rehydrates and resumes pending queue', async (t) => {
   const python_runner = resolvePython()
   assert.ok(python_runner, 'python is required for ts<->python roundtrip tests')
   assertPythonCanImportAbxBus(python_runner)
@@ -872,6 +872,11 @@ test('ts -> python -> ts bus roundtrip rehydrates and resumes pending queue', as
     event_handler_detect_file_paths: false,
     event_handler_concurrency: 'serial',
     event_handler_completion: 'all',
+  })
+  let restored: EventBus | null = null
+  t.after(async () => {
+    await restored?.destroy()
+    await source_bus.destroy()
   })
 
   const handler_one = source_bus.on(ResumeEvent, (event) => `h1:${(event as unknown as { label: string }).label}`)
@@ -890,7 +895,7 @@ test('ts -> python -> ts bus roundtrip rehydrates and resumes pending queue', as
 
   const source_dump = source_bus.toJSON()
   const py_roundtripped = runPythonBusRoundtrip(python_runner, source_dump)
-  const restored = EventBus.fromJSON(py_roundtripped)
+  restored = EventBus.fromJSON(py_roundtripped)
   const restored_dump = restored.toJSON()
 
   assert.deepEqual(Object.keys(restored_dump.handlers), Object.keys(source_dump.handlers))
@@ -948,12 +953,9 @@ test('ts -> python -> ts bus roundtrip rehydrates and resumes pending queue', as
   assert.equal(done_three?.event_results.get(handler_one.id)?.result, 'h1:e3')
   assert.equal(done_three?.event_results.get(handler_two.id)?.result, 'h2:e3')
   assert.deepEqual(run_order, ['h2:e1', 'h1:e2', 'h2:e2', 'h1:e3', 'h2:e3'])
-
-  source_bus.destroy()
-  restored.destroy()
 })
 
-test('ts -> rust -> ts bus roundtrip rehydrates and resumes pending queue', async () => {
+test('ts -> rust -> ts bus roundtrip rehydrates and resumes pending queue', async (t) => {
   const ResumeEvent = BaseEvent.extend('TsRustBusResumeEvent', {
     label: z.string(),
     event_result_type: z.string(),
@@ -964,6 +966,11 @@ test('ts -> rust -> ts bus roundtrip rehydrates and resumes pending queue', asyn
     event_handler_detect_file_paths: false,
     event_handler_concurrency: 'serial',
     event_handler_completion: 'all',
+  })
+  let restored: EventBus | null = null
+  t.after(async () => {
+    await restored?.destroy()
+    await source_bus.destroy()
   })
 
   const handler_one = source_bus.on(ResumeEvent, (event) => `h1:${(event as unknown as { label: string }).label}`)
@@ -982,7 +989,7 @@ test('ts -> rust -> ts bus roundtrip rehydrates and resumes pending queue', asyn
 
   const source_dump = source_bus.toJSON()
   const rust_roundtripped = runRustRoundtrip('bus', source_dump)
-  const restored = EventBus.fromJSON(rust_roundtripped)
+  restored = EventBus.fromJSON(rust_roundtripped)
   const restored_dump = restored.toJSON()
 
   assert.deepEqual(Object.keys(restored_dump.handlers), Object.keys(source_dump.handlers))
@@ -1040,12 +1047,9 @@ test('ts -> rust -> ts bus roundtrip rehydrates and resumes pending queue', asyn
   assert.equal(done_three?.event_results.get(handler_one.id)?.result, 'h1:e3')
   assert.equal(done_three?.event_results.get(handler_two.id)?.result, 'h2:e3')
   assert.deepEqual(run_order, ['h2:e1', 'h1:e2', 'h2:e2', 'h1:e3', 'h2:e3'])
-
-  source_bus.destroy()
-  restored.destroy()
 })
 
-test('ts -> go -> ts bus roundtrip rehydrates and resumes pending queue', async () => {
+test('ts -> go -> ts bus roundtrip rehydrates and resumes pending queue', async (t) => {
   const ResumeEvent = BaseEvent.extend('TsGoBusResumeEvent', {
     label: z.string(),
     event_result_type: z.string(),
@@ -1056,6 +1060,11 @@ test('ts -> go -> ts bus roundtrip rehydrates and resumes pending queue', async 
     event_handler_detect_file_paths: false,
     event_handler_concurrency: 'serial',
     event_handler_completion: 'all',
+  })
+  let restored: EventBus | null = null
+  t.after(async () => {
+    await restored?.destroy()
+    await source_bus.destroy()
   })
 
   const handler_one = source_bus.on(ResumeEvent, (event) => `h1:${(event as unknown as { label: string }).label}`)
@@ -1074,7 +1083,7 @@ test('ts -> go -> ts bus roundtrip rehydrates and resumes pending queue', async 
 
   const source_dump = source_bus.toJSON()
   const go_roundtripped = runGoRoundtrip('bus', source_dump)
-  const restored = EventBus.fromJSON(go_roundtripped)
+  restored = EventBus.fromJSON(go_roundtripped)
   const restored_dump = restored.toJSON()
 
   assert.deepEqual(Object.keys(restored_dump.handlers), Object.keys(source_dump.handlers))
@@ -1132,9 +1141,6 @@ test('ts -> go -> ts bus roundtrip rehydrates and resumes pending queue', async 
   assert.equal(done_three?.event_results.get(handler_one.id)?.result, 'h1:e3')
   assert.equal(done_three?.event_results.get(handler_two.id)?.result, 'h2:e3')
   assert.deepEqual(run_order, ['h2:e1', 'h1:e2', 'h2:e2', 'h1:e3', 'h2:e3'])
-
-  source_bus.destroy()
-  restored.destroy()
 })
 
 // Folded from bridges.test.ts to keep test layout class-based.

@@ -1497,7 +1497,7 @@ async def _assert_pipeline_types(bus: EventBus, event: TypeContractEvent) -> Non
     all_values = await completed_event.event_results_list()
     assert_type(all_values, list[TypeContractResult | None])
     for handler_result in completed_event.event_results.values():
-        assert_type(handler_result, EventResult[Any])
+        assert_type(handler_result, EventResult[TypeContractResult])
 
 
 def test_typing_contracts_module_loads() -> None:
