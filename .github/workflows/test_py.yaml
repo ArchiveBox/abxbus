@@ -157,7 +157,7 @@ jobs:
       - run: uv sync --dev --all-extras --no-extra tachyon
 
       - name: Install Tachyon (compiled with gcc-14) for the bridges roundtrip test
-        if: matrix.task.kind == 'test' && matrix.task.name == 'test_bridges'
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
         env:
           CC: gcc-14
           CXX: g++-14
@@ -174,7 +174,7 @@ jobs:
         run: |
           uv run python - <<'PY'
           import importlib
-          modules = ['asyncpg', 'redis', 'nats']
+          modules = ['asyncpg', 'redis', 'nats', 'tachyon']
           for module in modules:
               importlib.import_module(module)
           print('optional bridge deps import OK')

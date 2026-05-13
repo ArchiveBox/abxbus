@@ -1584,7 +1584,7 @@ impl EventBus {
     }
 
     pub fn queue_jump_if_waited_from_handler(event: Arc<BaseEvent>) {
-        Self::queue_jump_if_waited_blocking(event, true);
+        Self::queue_jump_if_waited_blocking(event, false);
     }
 
     fn queue_jump_if_waited_blocking(event: Arc<BaseEvent>, dedicated_thread: bool) {
@@ -2603,8 +2603,10 @@ impl EventBus {
             .collect();
         ordered_handler_ids.sort();
         let mut inner = event.inner.lock();
+        let mut known_order_ids: HashSet<String> =
+            inner.event_result_order.iter().cloned().collect();
         for (_, handler_id) in ordered_handler_ids {
-            if !inner.event_result_order.contains(&handler_id) {
+            if known_order_ids.insert(handler_id.clone()) {
                 inner.event_result_order.push(handler_id);
             }
         }
@@ -3028,7 +3030,11 @@ impl EventBus {
         let event_id_for_call = event.inner.lock().event_id.clone();
         let handler_id_for_call = handler.id.clone();
         let runloop_pause = self.locks.request_runloop_pause();
-        let call_result = if inline_call && call_timeout.is_none() {
+        let mut call_started = true;
+        let call_result = if call_timeout.is_some_and(|timeout| timeout <= 0.0) {
+            call_started = false;
+            Err("timeout".to_string())
+        } else if inline_call && call_timeout.is_none() {
             let _context_guard = context_snapshot.map(dcontext::attach);
             let response = call(event_clone).await;
             Self::clear_handler_context_stale(&event_id_for_call, &handler_id_for_call);
@@ -3058,7 +3064,7 @@ impl EventBus {
                 rx.recv().map_err(|_| "handler channel closed".to_string())
             }
         };
-        if matches!(call_result, Err(ref error) if error == "timeout") {
+        if call_started && matches!(call_result, Err(ref error) if error == "timeout") {
             Self::mark_handler_context_stale(&event_id_for_call, &handler_id_for_call);
         }
         drop(runloop_pause);
