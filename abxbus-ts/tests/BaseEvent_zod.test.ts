@@ -95,3 +95,20 @@ test('BaseEvent.extend preserves non-Zod shortcut defaults through generated eve
   assert.equal(event.event_timeout, 25)
   assert.equal((event.toJSON() as Record<string, unknown>).event_timeout, 25)
 })
+
+test('BaseEvent.extend validates non-Zod shortcut defaults for builtin metadata fields', () => {
+  assert.throws(
+    () =>
+      BaseEvent.extend('BaseEventInvalidShortcutTimeoutEvent', {
+        event_timeout: -1,
+      }),
+    z.ZodError
+  )
+  assert.throws(
+    () =>
+      BaseEvent.extend('BaseEventInvalidShortcutVersionEvent', {
+        event_version: 123,
+      }),
+    z.ZodError
+  )
+})

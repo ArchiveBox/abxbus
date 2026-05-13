@@ -126,6 +126,19 @@ func normalizeEventHandlerCallable(handler any) (EventHandlerCallable, error) {
 			typed(event)
 			return nil, nil
 		}, nil
+	case func(context.Context, *BaseEvent) (any, error):
+		return func(event *BaseEvent, ctx context.Context) (any, error) {
+			return typed(ctx, event)
+		}, nil
+	case func(context.Context, *BaseEvent) error:
+		return func(event *BaseEvent, ctx context.Context) (any, error) {
+			return nil, typed(ctx, event)
+		}, nil
+	case func(context.Context, *BaseEvent):
+		return func(event *BaseEvent, ctx context.Context) (any, error) {
+			typed(ctx, event)
+			return nil, nil
+		}, nil
 	default:
 		value := reflect.ValueOf(handler)
 		if !value.IsValid() || value.Kind() != reflect.Func || value.IsNil() {
@@ -135,11 +148,17 @@ func normalizeEventHandlerCallable(handler any) (EventHandlerCallable, error) {
 		if handlerType.NumIn() != 1 && handlerType.NumIn() != 2 {
 			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
 		}
-		if handlerType.In(0) != baseEventPointerType {
-			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
+		eventIndex := -1
+		contextIndex := -1
+		for index := 0; index < handlerType.NumIn(); index++ {
+			switch handlerType.In(index) {
+			case baseEventPointerType:
+				eventIndex = index
+			case contextInterfaceType:
+				contextIndex = index
+			}
 		}
-		withContext := handlerType.NumIn() == 2
-		if withContext && handlerType.In(1) != contextInterfaceType {
+		if eventIndex == -1 || (handlerType.NumIn() == 2 && contextIndex == -1) {
 			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
 		}
 		if handlerType.NumOut() > 2 {
@@ -152,9 +171,10 @@ func normalizeEventHandlerCallable(handler any) (EventHandlerCallable, error) {
 			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
 		}
 		return func(event *BaseEvent, ctx context.Context) (any, error) {
-			args := []reflect.Value{reflect.ValueOf(event)}
-			if withContext {
-				args = append(args, reflect.ValueOf(ctx))
+			args := make([]reflect.Value, handlerType.NumIn())
+			args[eventIndex] = reflect.ValueOf(event)
+			if contextIndex >= 0 {
+				args[contextIndex] = reflect.ValueOf(ctx)
 			}
 			results := value.Call(args)
 			switch len(results) {

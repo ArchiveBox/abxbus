@@ -246,12 +246,24 @@ function missingBaseFields(event_type: string, user_shape: z.ZodRawShape): z.Zod
   return Object.fromEntries(Object.entries(baseEventDefaultShape(event_type)).filter(([key]) => !(key in user_shape))) as z.ZodRawShape
 }
 
-function schemaDefaultsForShortcut(raw_shape: Record<string, unknown>): z.ZodRawShape {
+type ZodSchemaWithPrefault = z.ZodTypeAny & {
+  prefault: (value: unknown) => z.ZodTypeAny
+}
+
+function shortcutDefaultSchema(base_field_schema: z.ZodTypeAny | undefined, value: unknown): z.ZodTypeAny {
+  if (!base_field_schema) {
+    return z.unknown().optional().default(value)
+  }
+  return (base_field_schema as ZodSchemaWithPrefault).prefault(base_field_schema.parse(value))
+}
+
+function schemaDefaultsForShortcut(event_type: string, raw_shape: Record<string, unknown>): z.ZodRawShape {
   const defaults: Record<string, z.ZodTypeAny> = {}
+  const base_shape = baseEventDefaultShape(event_type)
   for (const [key, value] of Object.entries(raw_shape)) {
     if (key === 'event_result_type') continue
     if (!isZodSchema(value)) {
-      defaults[key] = z.unknown().optional().default(value)
+      defaults[key] = shortcutDefaultSchema(base_shape[key] as z.ZodTypeAny | undefined, value)
     }
   }
   return defaults
@@ -301,7 +313,7 @@ function buildFullEventSchema(
   assertNoUnknownEventPrefixedFields(raw_shape, `BaseEvent.extend(${event_type})`)
   assertNoModelPrefixedFields(raw_shape, `BaseEvent.extend(${event_type})`)
   const shortcut_shape = {
-    ...schemaDefaultsForShortcut(raw_shape),
+    ...schemaDefaultsForShortcut(event_type, raw_shape),
     ...zodFieldsForShortcut(raw_shape),
   }
   const full_schema = z.object(shortcut_shape).safeExtend(missingBaseFields(event_type, shortcut_shape)).loose()
