@@ -171,14 +171,13 @@ bus.on(WorkEvent, move |event: WorkEvent| async move {
 package main
 
 import (
-	"context"
 	"fmt"
 	"time"
 
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 )
 
-func bareHandler(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+func bareHandler(event *abxbus.BaseEvent) (any, error) {
 	return fmt.Sprintf("bare:%s", event.Payload["task_id"]), nil
 }
 
@@ -186,12 +185,12 @@ type HandlerSet struct {
 	Prefix string
 }
 
-func StaticStyleHandler(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+func StaticStyleHandler(event *abxbus.BaseEvent) (any, error) {
 	time.Sleep(10 * time.Millisecond)
 	return fmt.Sprintf("static:%s", event.Payload["task_id"]), nil
 }
 
-func (h *HandlerSet) InstanceHandler(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+func (h *HandlerSet) InstanceHandler(event *abxbus.BaseEvent) (any, error) {
 	return fmt.Sprintf("%s-instance:%s", h.Prefix, event.Payload["task_id"]), nil
 }
 

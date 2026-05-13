@@ -17,7 +17,7 @@ description: Forward events through a local SQLite table with polling.
 
 ```rust
 // Not implemented in abxbus-rust yet.
-// Use the core EventBus/BaseEvent JSON APIs and external transport/wrappers for now.
+// Use typed event JSON serialization with an external transport for now.
 ```
 
 </Tab>
@@ -62,6 +62,14 @@ const bridge = new SQLiteEventBridge('/tmp/abxbus_events.sqlite3', 'abxbus_event
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+// Not implemented in abxbus-rust yet.
+// Use typed events plus EventBus JSON serialization with an external transport for now.
+```
+
+</Tab>
 </Tabs>
 
 ## Setup with a bus
@@ -100,6 +108,14 @@ bridge.on('*', bus.emit)
 ```go
 // SQLiteEventBridge is not implemented in abxbus-go yet.
 // Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+// Not implemented in abxbus-rust yet.
+// Use typed events plus EventBus JSON serialization with an external transport for now.
 ```
 
 </Tab>

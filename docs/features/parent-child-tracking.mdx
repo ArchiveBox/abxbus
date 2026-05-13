@@ -22,7 +22,7 @@ This tracking works across nested chains (parent -> child -> grandchild) and is 
 
 ## Which emit style should I use?
 
-Most handler code should use `await event.emit(ChildEvent(...)).now()` in Python or TypeScript. That is the "owned child work" style: the child is linked to the parent, runs immediately from the caller's point of view, and the parent cannot complete until the child completes.
+Most handler code should use `await event.emit(ChildEvent(...)).now()` in Python/TypeScript, `child.Now()` in Go, or `child.now().await` in Rust. That is the "owned child work" style: the child is linked to the parent, runs immediately from the caller's point of view, and the parent cannot complete until the child completes.
 
 Use the other styles only when you explicitly want linked background work or a fully detached top-level event.
 
@@ -285,7 +285,6 @@ println!("{}", bus.log_tree());
 package main
 
 import (
-	"context"
 	"fmt"
 
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
@@ -294,7 +293,7 @@ import (
 func main() {
 	bus := abxbus.NewEventBus("TreeBus", nil)
 
-	bus.On("CheckoutEvent", "on_checkout", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("CheckoutEvent", "on_checkout", func(event *abxbus.BaseEvent) (any, error) {
 		orderID := event.Payload["order_id"].(string)
 
 		reserve := event.Emit(abxbus.NewBaseEvent("ReserveInventoryEvent", map[string]any{"order_id": orderID}))
@@ -327,11 +326,11 @@ func main() {
 		return fmt.Sprintf("%v|%v|%v", reserveID, chargeID, receiptID), nil
 	}, nil)
 
-	bus.On("ReserveInventoryEvent", "on_reserve", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("ReserveInventoryEvent", "on_reserve", func(event *abxbus.BaseEvent) (any, error) {
 		return fmt.Sprintf("reserve:%s", event.Payload["order_id"]), nil
 	}, nil)
 
-	bus.On("ChargeCardEvent", "on_charge", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("ChargeCardEvent", "on_charge", func(event *abxbus.BaseEvent) (any, error) {
 		orderID := event.Payload["order_id"].(string)
 		fraud := event.Emit(abxbus.NewBaseEvent("FraudCheckEvent", map[string]any{"order_id": orderID}))
 		if _, err := fraud.Now(); err != nil {
@@ -344,10 +343,10 @@ func main() {
 		return fmt.Sprintf("charge:%s:%v", orderID, fraudStatus), nil
 	}, nil)
 
-	bus.On("FraudCheckEvent", "on_fraud", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("FraudCheckEvent", "on_fraud", func(event *abxbus.BaseEvent) (any, error) {
 		return fmt.Sprintf("fraud-ok:%s", event.Payload["order_id"]), nil
 	}, nil)
-	bus.On("SendReceiptEvent", "on_receipt", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("SendReceiptEvent", "on_receipt", func(event *abxbus.BaseEvent) (any, error) {
 		return fmt.Sprintf("receipt:%s", event.Payload["order_id"]), nil
 	}, nil)
 

@@ -49,7 +49,7 @@ fn test_on_stores_eventhandler_entry_and_index() {
         ..Default::default()
     });
     let _ = block_on(dispatched.now());
-    let results = dispatched.inner.inner.lock().event_results.clone();
+    let results = dispatched.event_results.read();
     assert!(results.contains_key(&entry.id));
     assert_eq!(results[&entry.id].handler.id, entry.id);
     bus.destroy();
@@ -64,14 +64,14 @@ fn test_on_returns_handler_and_off_removes_handler() {
         ..Default::default()
     });
     let _ = block_on(event_1.now());
-    assert_eq!(event_1.inner.inner.lock().event_results.len(), 1);
+    assert_eq!(event_1.event_results.read().len(), 1);
 
     bus.off("work", Some(&handler.id));
     let event_2 = bus.emit(WorkEvent {
         ..Default::default()
     });
     let _ = block_on(event_2.now());
-    assert_eq!(event_2.inner.inner.lock().event_results.len(), 0);
+    assert_eq!(event_2.event_results.read().len(), 0);
 
     bus.destroy();
 }
@@ -131,7 +131,7 @@ fn test_off_removes_handler_id_or_all_and_prunes_empty_index() {
         ..Default::default()
     });
     let _ = block_on(dispatched.now());
-    assert_eq!(dispatched.inner.inner.lock().event_results.len(), 0);
+    assert_eq!(dispatched.event_results.read().len(), 0);
     bus.destroy();
 }
 
@@ -193,7 +193,7 @@ fn test_on_accepts_handlers_and_dispatch_captures_return_values() {
         ..Default::default()
     });
     let _ = block_on(dispatched.now());
-    let result = dispatched.inner.inner.lock().event_results[&entry.id].clone();
+    let result = dispatched._inner_event().inner.lock().event_results[&entry.id].clone();
 
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("normalized")));
@@ -226,7 +226,7 @@ fn test_on_normalizes_sync_handler_to_async_callable() {
         ..Default::default()
     });
     let _ = block_on(dispatched.now());
-    let result = dispatched.inner.inner.lock().event_results[&entry.id].clone();
+    let result = dispatched._inner_event().inner.lock().event_results[&entry.id].clone();
 
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("normalized")));
@@ -260,7 +260,7 @@ fn test_on_keeps_async_handlers_normalized_through_handler_async() {
         ..Default::default()
     });
     let _ = block_on(dispatched.now());
-    let result = dispatched.inner.inner.lock().event_results[&entry.id].clone();
+    let result = dispatched._inner_event().inner.lock().event_results[&entry.id].clone();
 
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("async_normalized")));
@@ -283,7 +283,7 @@ fn test_handler_async_preserves_typed_arg_return_contracts_for_sync_handlers() {
     });
     let _ = block_on(event.now());
 
-    let result = event.inner.inner.lock().event_results[&entry.id].clone();
+    let result = event._inner_event().inner.lock().event_results[&entry.id].clone();
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("sync")));
     assert_eq!(
@@ -310,7 +310,7 @@ fn test_handler_async_preserves_typed_arg_return_contracts_for_async_handlers() 
     });
     let _ = block_on(event.now());
 
-    let result = event.inner.inner.lock().event_results[&entry.id].clone();
+    let result = event._inner_event().inner.lock().event_results[&entry.id].clone();
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("sync")));
     assert_eq!(
@@ -357,10 +357,10 @@ fn test_off_removing_all_for_one_event_key_preserves_other_event_keys() {
         let _ = other.now().await;
     });
 
-    assert_eq!(work.inner.inner.lock().event_results.len(), 0);
-    assert_eq!(other.inner.inner.lock().event_results.len(), 1);
+    assert_eq!(work.event_results.read().len(), 0);
+    assert_eq!(other.event_results.read().len(), 1);
     assert_eq!(
-        other.inner.inner.lock().event_results[&other_entry.id].result,
+        other._inner_event().inner.lock().event_results[&other_entry.id].result,
         Some(json!("other"))
     );
     bus.destroy();

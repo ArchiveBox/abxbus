@@ -85,9 +85,8 @@ event! {
 let bus = EventBus::new(Some("RpcBus".to_string()));
 
 bus.on(ParentEvent, |event: ParentEvent| async move {
-    let current_bus = event.event_bus().expect("handler bus");
-    let child = current_bus.emit_child(ChildEvent { ..Default::default() });
-    child.now().await; // queue-jump while still inside this handler
+    let child = event.emit(ChildEvent { ..Default::default() });
+    child.now().await?; // queue-jump while still inside this handler
     let value = child.event_result().await?;
     Ok(json!(format!("parent got: {value}")))
 });
@@ -103,7 +102,7 @@ bus.on(ChildEvent, |_event: ChildEvent| async move {
 ```go
 bus := abxbus.NewEventBus("RpcBus", nil)
 
-bus.On("ParentEvent", "on_parent", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+bus.On("ParentEvent", "on_parent", func(event *abxbus.BaseEvent) (any, error) {
 	child := event.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
 	if _, err := child.Now(); err != nil {
 		return nil, err
@@ -115,109 +114,9 @@ bus.On("ParentEvent", "on_parent", func(event *abxbus.BaseEvent, ctx context.Con
 	return fmt.Sprintf("parent got: %v", value), nil
 }, nil)
 
-bus.On("ChildEvent", "on_child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+bus.On("ChildEvent", "on_child", func(event *abxbus.BaseEvent) (any, error) {
 	return "child response", nil
 }, nil)
-```
-
-</Tab>
-<Tab title="Rust">
-
-```rust
-use abxbus_rust::{
-    base_event::BaseEvent,
-    event_bus::{EventBus, EventBusOptions},
-    types::EventConcurrencyMode,
-};
-use futures::future::join_all;
-use serde_json::json;
-
-let bus = EventBus::new_with_options(
-    Some("ParallelRpcBus".to_string()),
-    EventBusOptions {
-        event_concurrency: EventConcurrencyMode::Parallel,
-        ..EventBusOptions::default()
-    },
-);
-
-bus.on_raw("ParentEvent", "on_parent", move |event| async move {
-    let children = vec![
-        event.emit(BaseEvent::new("SomeChildEvent1", Default::default())),
-        event.emit(BaseEvent::new("SomeChildEvent2", Default::default())),
-        event.emit(BaseEvent::new("SomeChildEvent3", Default::default())),
-    ];
-
-    for result in join_all(children.iter().map(|child| child.now())).await {
-        match result {
-            Ok(child) => println!("child completed: {}", child.inner.lock().event_type),
-            Err(err) => println!("child failed: {err}"),
-        }
-    }
-
-    Ok(json!(null))
-});
-```
-
-</Tab>
-<Tab title="Rust">
-
-```rust
-use abxbus_rust::{
-    base_event::BaseEvent,
-    event_bus::{EventBus, EventBusOptions},
-    types::{EventConcurrencyMode, EventHandlerConcurrencyMode},
-};
-use futures::executor::block_on;
-use serde_json::json;
-use std::sync::{Arc, Mutex};
-
-let bus = EventBus::new_with_options(
-    Some("OrderBus".to_string()),
-    EventBusOptions {
-        event_concurrency: EventConcurrencyMode::BusSerial,
-        event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
-        ..EventBusOptions::default()
-    },
-);
-let order = Arc::new(Mutex::new(Vec::<String>::new()));
-
-let order_for_parent = order.clone();
-let bus_for_parent = bus.clone();
-bus.on_raw("ParentEvent", "on_parent", move |event| {
-    let order = order_for_parent.clone();
-    let bus = bus_for_parent.clone();
-    async move {
-        order.lock().unwrap().push("parent_start".to_string());
-        // Detached top-level work: no parent link is recorded for the sibling.
-        bus.emit_base(BaseEvent::new("SiblingEvent", Default::default()));
-        let child = event.emit(BaseEvent::new("ChildEvent", Default::default()));
-        child.now().await?;
-        order.lock().unwrap().push("parent_end".to_string());
-        Ok(json!(null))
-    }
-});
-
-let order_for_child = order.clone();
-bus.on_raw("ChildEvent", "on_child", move |_event| {
-    let order = order_for_child.clone();
-    async move {
-        order.lock().unwrap().push("child".to_string());
-        Ok(json!(null))
-    }
-});
-
-let order_for_sibling = order.clone();
-bus.on_raw("SiblingEvent", "on_sibling", move |_event| {
-    let order = order_for_sibling.clone();
-    async move {
-        order.lock().unwrap().push("sibling".to_string());
-        Ok(json!(null))
-    }
-});
-
-let parent = bus.emit_base(BaseEvent::new("ParentEvent", Default::default()));
-block_on(parent.now()).unwrap();
-assert!(block_on(bus.wait_until_idle(None)));
 ```
 
 </Tab>
@@ -303,7 +202,7 @@ bus := abxbus.NewEventBus("ParallelRpcBus", &abxbus.EventBusOptions{
 	EventConcurrency: abxbus.EventConcurrencyParallel,
 })
 
-bus.On("ParentEvent", "on_parent", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+bus.On("ParentEvent", "on_parent", func(event *abxbus.BaseEvent) (any, error) {
 	children := []*abxbus.BaseEvent{
 		event.Emit(abxbus.NewBaseEvent("SomeChildEvent1", nil)),
 		event.Emit(abxbus.NewBaseEvent("SomeChildEvent2", nil)),
@@ -325,13 +224,14 @@ bus.On("ParentEvent", "on_parent", func(event *abxbus.BaseEvent, ctx context.Con
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{
-    base_event::BaseEvent,
-    event_bus::{EventBus, EventBusOptions},
-    types::EventConcurrencyMode,
-};
+use abxbus_rust::{event, event_bus::{EventBus, EventBusOptions}, types::EventConcurrencyMode};
 use futures::future::join_all;
 use serde_json::json;
+
+event! { struct ParentEvent { event_result_type: serde_json::Value } }
+event! { struct SomeChildEvent1 { event_result_type: serde_json::Value } }
+event! { struct SomeChildEvent2 { event_result_type: serde_json::Value } }
+event! { struct SomeChildEvent3 { event_result_type: serde_json::Value } }
 
 let bus = EventBus::new_with_options(
     Some("ParallelRpcBus".to_string()),
@@ -341,17 +241,17 @@ let bus = EventBus::new_with_options(
     },
 );
 
-bus.on_raw("ParentEvent", "on_parent", move |event| {
+bus.on(ParentEvent, move |event: ParentEvent| {
     async move {
         let children = vec![
-            event.emit(BaseEvent::new("SomeChildEvent1", Default::default())),
-            event.emit(BaseEvent::new("SomeChildEvent2", Default::default())),
-            event.emit(BaseEvent::new("SomeChildEvent3", Default::default())),
+            event.emit(SomeChildEvent1 { ..Default::default() }),
+            event.emit(SomeChildEvent2 { ..Default::default() }),
+            event.emit(SomeChildEvent3 { ..Default::default() }),
         ];
 
         for result in join_all(children.iter().map(|child| child.now())).await {
             match result {
-                Ok(child) => println!("child completed: {}", child.inner.lock().event_type),
+                Ok(child) => println!("child completed: {}", child.event_type),
                 Err(err) => println!("child failed: {err}"),
             }
         }
@@ -463,7 +363,7 @@ bus := abxbus.NewEventBus("OrderBus", &abxbus.EventBusOptions{
 })
 order := []string{}
 
-bus.On("ParentEvent", "on_parent", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+bus.On("ParentEvent", "on_parent", func(event *abxbus.BaseEvent) (any, error) {
 	order = append(order, "parent_start")
 	// Detached top-level work: no parent link is recorded for the sibling.
 	bus.Emit(abxbus.NewBaseEvent("SiblingEvent", nil))
@@ -475,12 +375,12 @@ bus.On("ParentEvent", "on_parent", func(event *abxbus.BaseEvent, ctx context.Con
 	return nil, nil
 }, nil)
 
-bus.On("ChildEvent", "on_child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+bus.On("ChildEvent", "on_child", func(event *abxbus.BaseEvent) (any, error) {
 	order = append(order, "child")
 	return nil, nil
 }, nil)
 
-bus.On("SiblingEvent", "on_sibling", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+bus.On("SiblingEvent", "on_sibling", func(event *abxbus.BaseEvent) (any, error) {
 	order = append(order, "sibling")
 	return nil, nil
 }, nil)
@@ -492,6 +392,74 @@ if _, err := parent.Now(); err != nil {
 if ok := bus.WaitUntilIdle(nil); !ok {
 	panic("bus did not become idle")
 }
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::{
+    event,
+    event_bus::{EventBus, EventBusOptions},
+    types::{EventConcurrencyMode, EventHandlerConcurrencyMode},
+};
+use futures::executor::block_on;
+use std::sync::{Arc, Mutex};
+
+event! { struct ParentEvent { event_result_type: () } }
+event! { struct ChildEvent { event_result_type: () } }
+event! { struct SiblingEvent { event_result_type: () } }
+
+let bus = EventBus::new_with_options(
+    Some("OrderBus".to_string()),
+    EventBusOptions {
+        event_concurrency: EventConcurrencyMode::BusSerial,
+        event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+        ..EventBusOptions::default()
+    },
+);
+let order = Arc::new(Mutex::new(Vec::<String>::new()));
+
+let order_for_parent = order.clone();
+let bus_for_parent = bus.clone();
+bus.on(ParentEvent, move |event: ParentEvent| {
+    let order = order_for_parent.clone();
+    let bus = bus_for_parent.clone();
+    async move {
+        order.lock().unwrap().push("parent_start".to_string());
+        // Detached top-level work: no parent link is recorded for the sibling.
+        bus.emit(SiblingEvent { ..Default::default() });
+        let child = event.emit(ChildEvent { ..Default::default() });
+        child.now().await?;
+        order.lock().unwrap().push("parent_end".to_string());
+        Ok(())
+    }
+});
+
+let order_for_child = order.clone();
+bus.on(ChildEvent, move |_event: ChildEvent| {
+    let order = order_for_child.clone();
+    async move {
+        order.lock().unwrap().push("child".to_string());
+        Ok(())
+    }
+});
+
+let order_for_sibling = order.clone();
+bus.on(SiblingEvent, move |_event: SiblingEvent| {
+    let order = order_for_sibling.clone();
+    async move {
+        order.lock().unwrap().push("sibling".to_string());
+        Ok(())
+    }
+});
+
+block_on(bus.emit(ParentEvent { ..Default::default() }).now())?;
+assert!(block_on(bus.wait_until_idle(None)));
+
+let order = order.lock().unwrap();
+assert!(order.iter().position(|item| item == "child").unwrap() < order.iter().position(|item| item == "parent_end").unwrap());
+assert!(order.iter().position(|item| item == "parent_end").unwrap() < order.iter().position(|item| item == "sibling").unwrap());
 ```
 
 </Tab>

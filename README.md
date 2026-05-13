@@ -1116,8 +1116,7 @@ handler_result = event.event_results['handler_id']
 value = await handler_result  # Returns result or raises an exception if handler hits an error
 ```
 
-- `run_handler(event, handler, *, eventbus, timeout, enter_handler_context, exit_handler_context, format_exception_for_log)`  
-  Low-level helper that runs the handler, updates timing/status fields, captures errors, and notifies its completion signal. `EventBus._run_handler()` (private/internal) delegates to this; you generally should not call either directly unless you are extending internals.
+- Handler execution is managed by the bus. User code normally reads `status`, `result`, `error`, and timing fields through `event.event_results`, or uses the higher-level event result helpers.
 
 </details>
 

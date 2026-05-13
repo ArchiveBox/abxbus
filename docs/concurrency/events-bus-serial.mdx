@@ -115,7 +115,6 @@ if (JSON.stringify(startsB) !== JSON.stringify([0, 1, 2, 3])) throw new Error('b
 package main
 
 import (
-	"context"
 	"reflect"
 	"sync"
 	"time"
@@ -137,8 +136,8 @@ func main() {
 	inFlightGlobal := 0
 	maxInFlightGlobal := 0
 
-	handler := func(starts *[]int) func(*abxbus.BaseEvent, context.Context) (any, error) {
-		return func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	handler := func(starts *[]int) func(*abxbus.BaseEvent) (any, error) {
+		return func(event *abxbus.BaseEvent) (any, error) {
 			mu.Lock()
 			inFlightGlobal++
 			if inFlightGlobal > maxInFlightGlobal {

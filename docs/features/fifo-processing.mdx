@@ -120,7 +120,6 @@ console.log(
 package main
 
 import (
-	"context"
 	"fmt"
 	"reflect"
 	"time"
@@ -133,7 +132,7 @@ func main() {
 	startedOrder := []int{}
 	completedOrder := []int{}
 
-	bus.On("JobEvent", "on_job", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("JobEvent", "on_job", func(event *abxbus.BaseEvent) (any, error) {
 		order := event.Payload["order"].(int)
 		delayMS := event.Payload["delay_ms"].(int)
 		startedOrder = append(startedOrder, order)
@@ -307,14 +306,14 @@ console.log(treeLines)
 bus := abxbus.NewEventBus("FifoBus", nil)
 trace := []string{}
 
-bus.On("SlowEvent", "on_slow", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+bus.On("SlowEvent", "on_slow", func(event *abxbus.BaseEvent) (any, error) {
 	trace = append(trace, fmt.Sprintf("start:%s:%s", event.EventType, event.Payload["name"]))
 	time.Sleep(40 * time.Millisecond)
 	trace = append(trace, fmt.Sprintf("end:%s:%s", event.EventType, event.Payload["name"]))
 	return nil, nil
 }, nil)
 
-bus.On("FastEvent", "on_fast", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+bus.On("FastEvent", "on_fast", func(event *abxbus.BaseEvent) (any, error) {
 	trace = append(trace, fmt.Sprintf("start:%s:%s", event.EventType, event.Payload["name"]))
 	time.Sleep(1 * time.Millisecond)
 	trace = append(trace, fmt.Sprintf("end:%s:%s", event.EventType, event.Payload["name"]))
@@ -373,7 +372,7 @@ let slow = bus.emit(SlowEvent { ..Default::default() });
 let fast = bus.emit(FastEvent { ..Default::default() });
 block_on(bus.wait_until_idle(None));
 
-assert!(slow.inner.inner.lock().event_completed_at <= fast.inner.inner.lock().event_started_at);
+assert!(slow.event_completed_at.read() <= fast.event_started_at.read());
 println!("{}", bus.log_tree());
 ```
 

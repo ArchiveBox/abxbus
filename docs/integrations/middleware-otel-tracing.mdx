@@ -54,13 +54,16 @@ bus := abxbus.NewEventBus("AppBus", &abxbus.EventBusOptions{
 
 ```rust
 // Not implemented in abxbus-rust yet.
-// Use the core EventBus/BaseEvent JSON APIs and external transport/wrappers for now.
+// Use typed event JSON serialization with an external transport for now.
 ```
 
 </Tab>
 </Tabs>
 
 ## Setup with Sentry
+
+<Tabs>
+<Tab title="Python">
 
 ```python
 import sentry_sdk
@@ -91,6 +94,17 @@ Install requirements:
 ```bash
 pip install sentry-sdk opentelemetry-api opentelemetry-sdk
 ```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+// Not implemented in abxbus-rust yet.
+// Wire tracing around typed handlers directly until Rust middleware parity lands.
+```
+
+</Tab>
+</Tabs>
 
 ## Behavior
 

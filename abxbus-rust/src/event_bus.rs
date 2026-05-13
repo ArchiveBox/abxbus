@@ -443,6 +443,15 @@ impl EventBus {
             .find(|bus| bus.runtime.events.lock().contains_key(event_id))
     }
 
+    pub fn event_for_event_id(event_id: &str) -> Option<Arc<BaseEvent>> {
+        if event_id.is_empty() {
+            return None;
+        }
+        Self::live_instances()
+            .into_iter()
+            .find_map(|bus| bus.runtime.events.lock().get(event_id).cloned())
+    }
+
     pub fn new(name: Option<String>) -> Arc<Self> {
         Self::new_with_options(name, EventBusOptions::default())
     }

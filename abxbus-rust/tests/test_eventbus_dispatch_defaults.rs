@@ -71,13 +71,13 @@ fn test_event_concurrency_remains_unset_on_dispatch_and_resolves_during_processi
     let implicit = bus.emit(implicit);
     let explicit_none = bus.emit(explicit_none);
 
-    assert_eq!(implicit.inner.inner.lock().event_concurrency, None);
-    assert_eq!(explicit_none.inner.inner.lock().event_concurrency, None);
+    assert_eq!(implicit.event_concurrency, None);
+    assert_eq!(explicit_none.event_concurrency, None);
 
     let _ = block_on(implicit.now());
     let _ = block_on(explicit_none.now());
-    assert_eq!(implicit.inner.inner.lock().event_results.len(), 1);
-    assert_eq!(explicit_none.inner.inner.lock().event_results.len(), 1);
+    assert_eq!(implicit.event_results.read().len(), 1);
+    assert_eq!(explicit_none.event_results.read().len(), 1);
     bus.destroy();
 }
 
@@ -101,11 +101,11 @@ fn test_event_concurrency_class_override_beats_bus_default() {
     let event = bus.emit(event);
 
     assert_eq!(
-        event.inner.inner.lock().event_concurrency,
+        event.event_concurrency,
         Some(EventConcurrencyMode::GlobalSerial)
     );
     let _ = block_on(event.now());
-    assert_eq!(event.inner.inner.lock().event_results.len(), 1);
+    assert_eq!(event.event_results.read().len(), 1);
     bus.destroy();
 }
 
@@ -135,21 +135,21 @@ fn test_handler_defaults_remain_unset_on_dispatch_and_resolve_during_processing(
     let implicit = bus.emit(implicit);
     let explicit_none = bus.emit(explicit_none);
 
-    assert_eq!(implicit.inner.inner.lock().event_handler_concurrency, None);
-    assert_eq!(implicit.inner.inner.lock().event_handler_completion, None);
+    assert_eq!(implicit.event_handler_concurrency, None);
+    assert_eq!(implicit.event_handler_completion, None);
     assert_eq!(
-        explicit_none.inner.inner.lock().event_handler_concurrency,
+        explicit_none.event_handler_concurrency,
         None
     );
     assert_eq!(
-        explicit_none.inner.inner.lock().event_handler_completion,
+        explicit_none.event_handler_completion,
         None
     );
 
     let _ = block_on(implicit.now());
     let _ = block_on(explicit_none.now());
-    assert_eq!(implicit.inner.inner.lock().event_results.len(), 1);
-    assert_eq!(explicit_none.inner.inner.lock().event_results.len(), 1);
+    assert_eq!(implicit.event_results.read().len(), 1);
+    assert_eq!(explicit_none.event_results.read().len(), 1);
     bus.destroy();
 }
 
@@ -174,15 +174,15 @@ fn test_handler_class_override_beats_bus_defaults() {
     let event = bus.emit(event);
 
     assert_eq!(
-        event.inner.inner.lock().event_handler_concurrency,
+        event.event_handler_concurrency,
         Some(EventHandlerConcurrencyMode::Serial)
     );
     assert_eq!(
-        event.inner.inner.lock().event_handler_completion,
+        event.event_handler_completion,
         Some(EventHandlerCompletionMode::All)
     );
     let _ = block_on(event.now());
-    assert_eq!(event.inner.inner.lock().event_results.len(), 1);
+    assert_eq!(event.event_results.read().len(), 1);
     bus.destroy();
 }
 
@@ -194,7 +194,7 @@ fn test_event_instance_override_beats_event_class_defaults() {
         ..Default::default()
     });
     assert_eq!(
-        class_default.inner.inner.lock().event_concurrency,
+        class_default.event_concurrency,
         Some(EventConcurrencyMode::GlobalSerial)
     );
 
@@ -204,7 +204,7 @@ fn test_event_instance_override_beats_event_class_defaults() {
         ..Default::default()
     });
     assert_eq!(
-        event.inner.inner.lock().event_concurrency,
+        event.event_concurrency,
         Some(EventConcurrencyMode::Parallel)
     );
     bus.destroy();
@@ -218,11 +218,11 @@ fn test_handler_instance_override_beats_event_class_defaults() {
         ..Default::default()
     });
     assert_eq!(
-        class_default.inner.inner.lock().event_handler_concurrency,
+        class_default.event_handler_concurrency,
         Some(EventHandlerConcurrencyMode::Serial)
     );
     assert_eq!(
-        class_default.inner.inner.lock().event_handler_completion,
+        class_default.event_handler_completion,
         Some(EventHandlerCompletionMode::All)
     );
 
@@ -233,11 +233,11 @@ fn test_handler_instance_override_beats_event_class_defaults() {
         ..Default::default()
     });
     assert_eq!(
-        event.inner.inner.lock().event_handler_concurrency,
+        event.event_handler_concurrency,
         Some(EventHandlerConcurrencyMode::Parallel)
     );
     assert_eq!(
-        event.inner.inner.lock().event_handler_completion,
+        event.event_handler_completion,
         Some(EventHandlerCompletionMode::First)
     );
     bus.destroy();
@@ -250,7 +250,8 @@ fn test_typed_event_config_defaults_populate_base_event_fields() {
         value: 1,
         ..Default::default()
     });
-    let inner = event.inner.inner.lock();
+    let base = event._inner_event();
+    let inner = base.inner.lock();
     assert_eq!(inner.event_version, "2.0.0");
     assert_eq!(inner.event_timeout, Some(12.0));
     assert_eq!(inner.event_slow_timeout, Some(30.0));

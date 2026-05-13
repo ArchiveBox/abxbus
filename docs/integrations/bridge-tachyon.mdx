@@ -17,7 +17,7 @@ description: Same-machine SPSC IPC bridge over a shared-memory ring buffer.
 
 ```rust
 // Not implemented in abxbus-rust yet.
-// Use the core EventBus/BaseEvent JSON APIs and external transport/wrappers for now.
+// Use typed event JSON serialization with an external transport for now.
 ```
 
 </Tab>
@@ -58,6 +58,14 @@ This bridge is Node.js-only. Blocking `listen`/`recv`/`connect` calls run inside
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+// Not implemented in abxbus-rust yet.
+// Use typed events plus EventBus JSON serialization with an external transport for now.
+```
+
+</Tab>
 </Tabs>
 
 ## Constructor params
@@ -90,6 +98,14 @@ const bridge = new TachyonEventBridge('/tmp/abxbus.sock', 1 << 20, 'TachyonBridg
 ```go
 // TachyonEventBridge is not implemented in abxbus-go yet.
 // Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+// Not implemented in abxbus-rust yet.
+// Use typed events plus EventBus JSON serialization with an external transport for now.
 ```
 
 </Tab>
@@ -141,6 +157,14 @@ bus.on('*', outbound.emit)
 ```go
 // TachyonEventBridge is not implemented in abxbus-go yet.
 // Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+// Not implemented in abxbus-rust yet.
+// Use typed events plus EventBus JSON serialization with an external transport for now.
 ```
 
 </Tab>

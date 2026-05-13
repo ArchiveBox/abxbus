@@ -100,7 +100,6 @@ if (maxInFlight < 2) throw new Error('expected overlapping events')
 package main
 
 import (
-	"context"
 	"sync"
 	"time"
 
@@ -118,7 +117,7 @@ func main() {
 	maxInFlight := 0
 	release := make(chan struct{})
 
-	bus.On("ParallelEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("ParallelEvent", "handler", func(event *abxbus.BaseEvent) (any, error) {
 		mu.Lock()
 		inFlight++
 		if inFlight > maxInFlight {

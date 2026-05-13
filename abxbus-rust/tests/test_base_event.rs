@@ -13,7 +13,6 @@ use abxbus_rust::{
     base_event::{now_iso, BaseEvent, EventResultOptions, EventWaitOptions},
     event_bus::{EventBus, EventBusOptions},
     event_result::EventResultStatus,
-    typed::IntoBaseEventHandle,
     types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
@@ -328,20 +327,19 @@ fn test_event_result_re_raises_first_processing_exception_after_completion() {
     let event = bus.emit(BaseEventNowRaisesFirstErrorEvent {
         ..Default::default()
     });
-    block_on(event.inner.now()).expect("complete error event");
+    block_on(event.now()).expect("complete error event");
     let error = block_on(
         event
-            .inner
             .event_result_with_options(EventResultOptions::default()),
     )
     .expect_err("handler error should be surfaced");
 
     assert!(error.contains("first failure"));
     assert_eq!(
-        event.inner.inner.lock().event_status,
+        event.event_status.read(),
         EventStatus::Completed
     );
-    let results = event.inner.inner.lock().event_results.clone();
+    let results = event.event_results.read();
     assert_eq!(results.len(), 2);
     assert!(results
         .values()
@@ -526,7 +524,7 @@ fn test_typed_event_emit_inside_handler_no_args() {
                     ..Default::default()
                 });
                 *child_ref.lock().expect("child ref lock") =
-                    Some(child.inner.inner.lock().event_id.clone());
+                    Some(child.event_id.clone());
                 let _ = child.now().await;
                 push(&order, "parent_end");
                 Ok("parent".to_string())
@@ -574,9 +572,7 @@ fn test_typed_event_emit_inside_handler_no_args() {
         .clone()
         .expect("child id");
     let parent_children = parent
-        .inner
-        .inner
-        .lock()
+        ._inner_event().inner.lock()
         .event_results
         .values()
         .flat_map(|result| result.event_children.clone())
@@ -684,7 +680,7 @@ fn test_base_event_now_outside_handler_no_args() {
         .expect_err("event_result should raise outside handler errors");
     assert_eq!(error, "outside failure");
     assert_eq!(
-        event.inner.inner.lock().event_status,
+        event.event_status.read(),
         EventStatus::Completed
     );
     bus.destroy();
@@ -703,13 +699,13 @@ fn test_base_event_now_outside_handler_with_args() {
     let event = bus.emit(BaseEventNowRaisesFirstErrorEvent {
         ..Default::default()
     });
-    block_on(event.inner.now_with_options(EventWaitOptions {
+    block_on(event.now_with_options(EventWaitOptions {
         timeout: Some(1.0),
         ..EventWaitOptions::default()
     }))
     .expect("raise_if_any=false should only wait for completion");
     assert_eq!(
-        event.inner.inner.lock().event_status,
+        event.event_status.read(),
         EventStatus::Completed
     );
     bus.destroy();
@@ -780,7 +776,7 @@ fn test_now_outside_handler_queue_jumps_queued_execution() {
     assert!(now_thread
         .join()
         .expect("now thread")
-        .map(|event| Arc::ptr_eq(&event.inner, &target.inner))
+        .map(|event| event.event_id == target.event_id)
         .unwrap_or(false));
     block_on(bus.wait_until_idle(Some(2.0)));
     assert_eq!(
@@ -864,7 +860,7 @@ fn test_now_outside_handler_allows_normal_parallel_processing() {
     assert!(done_thread
         .join()
         .expect("done thread")
-        .map(|event| Arc::ptr_eq(&event.inner, &target.inner))
+        .map(|event| event.event_id == target.event_id)
         .unwrap_or(false));
     block_on(bus.wait_until_idle(Some(2.0)));
     assert_eq!(
@@ -1471,7 +1467,7 @@ fn test_now_timeout_limits_caller_wait_and_background_processing_continues() {
     let event = bus.emit(NowTimeoutCallerWaitEvent {
         ..Default::default()
     });
-    let error = match block_on(event.inner.now_with_options(EventWaitOptions {
+    let error = match block_on(event.now_with_options(EventWaitOptions {
         timeout: Some(0.01),
         first_result: false,
     })) {
@@ -1481,30 +1477,29 @@ fn test_now_timeout_limits_caller_wait_and_background_processing_continues() {
     assert!(error.contains("Timed out waiting"));
     wait_until_bool(&started);
     assert_ne!(
-        event.inner.inner.lock().event_status,
+        event.event_status.read(),
         EventStatus::Completed
     );
     assert!(!handler_done.load(Ordering::SeqCst));
 
     release.store(true, Ordering::SeqCst);
-    assert!(block_on(event.inner.wait_with_options(EventWaitOptions {
+    assert!(block_on(event.wait_with_options(EventWaitOptions {
         timeout: Some(1.0),
         first_result: false,
     }))
-    .map(|completed| Arc::ptr_eq(&completed, &event.inner))
+    .map(|completed| completed.event_id == event.event_id)
     .unwrap_or(false));
     assert_eq!(
-        event.inner.inner.lock().event_status,
+        event.event_status.read(),
         EventStatus::Completed
     );
     assert_eq!(
         block_on(
             event
-                .inner
                 .event_result_with_options(EventResultOptions::default())
         )
         .expect("event result"),
-        Some(json!("done"))
+        Some("done".to_string())
     );
     assert!(handler_done.load(Ordering::SeqCst));
     bus.destroy();
@@ -1852,7 +1847,7 @@ fn test_wait_is_passive_inside_handlers_and_times_out_for_serial_events() {
                 .await
                 .expect("found queued serial event");
             let found_id = found.inner.lock().event_id.clone();
-            let found_source_id = found_source.inner.inner.lock().event_id.clone();
+            let found_source_id = found_source.event_id.clone();
             assert_eq!(found_id, found_source_id);
 
             let emitted_error = match emitted
@@ -1883,7 +1878,7 @@ fn test_wait_is_passive_inside_handlers_and_times_out_for_serial_events() {
             let snapshot = order.lock().expect("order lock").clone();
             assert!(!snapshot.iter().any(|item| item == "emitted_start"));
             assert!(!snapshot.iter().any(|item| item == "found_start"));
-            assert!(!emitted.inner.inner.lock().event_blocks_parent_completion);
+            assert!(!emitted.event_blocks_parent_completion);
             assert!(!found.inner.lock().event_blocks_parent_completion);
             push(&order, "parent_end");
             Ok(json!("parent"))
@@ -1929,7 +1924,7 @@ fn test_wait_is_passive_inside_handlers_and_times_out_for_serial_events() {
 fn test_wait_serial_wait_inside_handler_times_out_and_warns_about_slow_handler() {
     let _guard = test_guard();
     let stderr = run_base_event_deadlock_warning_child(
-        "__abxbus_event_completed_serial_wait_deadlock_warning_child",
+        "_inner_event_completed_serial_wait_deadlock_warning_child",
     );
     let slow_warning_index = stderr
         .to_lowercase()
@@ -1945,7 +1940,7 @@ fn test_wait_serial_wait_inside_handler_times_out_and_warns_about_slow_handler()
 }
 
 #[test]
-fn __abxbus_event_completed_serial_wait_deadlock_warning_child() {
+fn _inner_event_completed_serial_wait_deadlock_warning_child() {
     if !base_event_deadlock_warning_child_enabled() {
         return;
     }
@@ -1983,7 +1978,7 @@ fn __abxbus_event_completed_serial_wait_deadlock_warning_child() {
                     .await
                     .expect("expected to find queued serial child event");
                 let found_id = found.inner.lock().event_id.clone();
-                let child_id = child.inner.inner.lock().event_id.clone();
+                let child_id = child.event_id.clone();
                 assert_eq!(found_id, child_id);
                 let error = match found
                     .wait_with_options(EventWaitOptions {
@@ -2134,7 +2129,7 @@ fn test_wait_waits_for_normal_parallel_processing_inside_handlers() {
                 .await
                 .expect("found queued parallel event");
             let found_id = found.inner.lock().event_id.clone();
-            let found_source_id = found_source.inner.inner.lock().event_id.clone();
+            let found_source_id = found_source.event_id.clone();
             assert_eq!(found_id, found_source_id);
 
             emitted
@@ -2153,7 +2148,7 @@ fn test_wait_waits_for_normal_parallel_processing_inside_handlers() {
                 .await
                 .expect("found parallel event should complete");
             push(&order, "found_completed");
-            assert!(!emitted.inner.inner.lock().event_blocks_parent_completion);
+            assert!(!emitted.event_blocks_parent_completion);
             assert!(!found.inner.lock().event_blocks_parent_completion);
             push(&order, "parent_end");
             Ok(json!("parent"))
@@ -2279,7 +2274,7 @@ fn test_wait_returns_event_accepts_timeout_and_rejects_unattached_pending_event(
     let pending = EventCompletedTimeoutEvent {
         ..Default::default()
     }
-    .into_base_event_handle();
+    ;
     let error = match block_on(pending.wait_with_options(EventWaitOptions {
         timeout: Some(0.01),
         first_result: false,
@@ -2292,14 +2287,14 @@ fn test_wait_returns_event_accepts_timeout_and_rejects_unattached_pending_event(
     let completed = EventCompletedTimeoutEvent {
         ..Default::default()
     }
-    .into_base_event_handle();
-    completed.inner.inner.lock().event_status = EventStatus::Completed;
+    ;
+    completed.event_status.set(EventStatus::Completed);
     let returned = block_on(completed.wait_with_options(EventWaitOptions {
         timeout: Some(0.01),
         first_result: false,
     }))
     .expect("completed event should not require bus");
-    assert!(Arc::ptr_eq(&returned.inner, &completed.inner));
+    assert_eq!(returned.event_id, completed.event_id);
 
     let bus = EventBus::new_with_options(
         Some("EventCompletedTimeoutBus".to_string()),
@@ -2338,7 +2333,7 @@ fn test_wait_returns_event_accepts_timeout_and_rejects_unattached_pending_event(
         first_result: false,
     }))
     .expect("event should complete after release");
-    assert!(Arc::ptr_eq(&returned.inner, &event.inner));
+    assert!(returned.event_id == event.event_id);
     bus.destroy();
 }
 
@@ -2530,7 +2525,8 @@ fn test_builtin_event_prefixed_override_is_allowed() {
     assert_eq!(event.event_slow_timeout, None);
     assert_eq!(event.event_handler_timeout, None);
     let event = bus.emit(event);
-    let inner = event.inner.inner.lock();
+    let base = event._inner_event();
+    let inner = base.inner.lock();
     assert_eq!(inner.event_timeout, Some(123.0));
     assert_eq!(inner.event_slow_timeout, Some(9.0));
     assert_eq!(inner.event_handler_timeout, Some(45.0));
@@ -3457,7 +3453,8 @@ mod folded_test_base_event_runtime_state {
         });
         let _ = block_on(event.now());
 
-        let event = event.inner.inner.lock();
+        let base = event._inner_event();
+        let event = base.inner.lock();
         assert!(event.event_started_at.is_some());
         assert!(event.event_completed_at.is_some());
         assert_eq!(event.event_status, EventStatus::Completed);
@@ -3478,7 +3475,8 @@ mod folded_test_base_event_runtime_state {
         let processed_event = bus.emit(event);
         let _ = block_on(processed_event.now());
 
-        let processed = processed_event.inner.inner.lock();
+        let base = processed_event._inner_event();
+        let processed = base.inner.lock();
         assert_eq!(processed.event_status, EventStatus::Completed);
         assert_eq!(processed.event_pending_bus_count, 0);
         assert!(processed.event_results.is_empty());

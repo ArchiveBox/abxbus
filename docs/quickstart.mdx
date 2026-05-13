@@ -122,7 +122,12 @@ let event = bus.emit(CreateUserEvent {
     email: "someuser@example.com".to_string(),
     ..Default::default()
 });
-block_on(event.now());
+block_on(async {
+    let completed = event.now().await?;
+    let result = completed.event_result().await?;
+    println!("{result:?}");
+    Ok::<(), String>(())
+})?;
 ```
 
 </Tab>
@@ -130,7 +135,7 @@ block_on(event.now());
 
 ```go
 bus := abxbus.NewEventBus("MyAuthEventBus", nil)
-bus.On("CreateUserEvent", "on_create_user", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+bus.On("CreateUserEvent", "on_create_user", func(event *abxbus.BaseEvent) (any, error) {
 	return map[string]any{"user_id": "some-user-uuid"}, nil
 }, nil)
 

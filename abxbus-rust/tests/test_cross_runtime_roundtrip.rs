@@ -461,7 +461,7 @@ fn assert_bus_roundtrip_rehydrates_and_resumes_pending_queue(payload: Value) {
     let event_ids: BTreeSet<_> = event_history.keys().cloned().collect();
     assert!(event_ids.contains("018f8e40-1234-7000-8000-00000000e001"));
     assert!(event_ids.contains("018f8e40-1234-7000-8000-00000000e002"));
-    assert!(event_ids.contains(&trigger.inner.inner.lock().event_id));
+    assert!(event_ids.contains(&trigger._inner_event().inner.lock().event_id));
 
     let done_one = &event_history["018f8e40-1234-7000-8000-00000000e001"];
     let done_two = &event_history["018f8e40-1234-7000-8000-00000000e002"];

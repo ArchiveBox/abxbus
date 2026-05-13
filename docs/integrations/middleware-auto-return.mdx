@@ -11,6 +11,9 @@ None.
 
 ## Setup with EventBus
 
+<Tabs>
+<Tab title="Python">
+
 ```python
 from abxbus import EventBus
 from abxbus.middlewares import AutoReturnEventMiddleware
@@ -20,6 +23,17 @@ bus = EventBus(
     middlewares=[AutoReturnEventMiddleware()],
 )
 ```
+</Tab>
+<Tab title="Rust">
+
+```rust
+// Not implemented in abxbus-rust yet.
+// Use explicit typed handler wrappers around bus.on(...) for this behavior for now.
+```
+
+</Tab>
+</Tabs>
+
 
 ## Behavior
 

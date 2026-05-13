@@ -160,7 +160,7 @@ fn test_queue_jump_preserves_parent_child_lineage_and_find_visibility() {
     );
 
     let found_child =
-        block_on(bus.find("QueueJumpChildEvent", true, None, Some(root.inner.clone())))
+        block_on(bus.find("QueueJumpChildEvent", true, None, Some(root._inner_event())))
             .expect("child should be findable");
     let expected_child_id = child_event_id
         .lock()
@@ -170,12 +170,10 @@ fn test_queue_jump_preserves_parent_child_lineage_and_find_visibility() {
     assert_eq!(found_child.inner.lock().event_id, expected_child_id);
     assert_eq!(
         found_child.inner.lock().event_parent_id.as_deref(),
-        Some(root.inner.inner.lock().event_id.as_str())
+        Some(root.event_id.as_str())
     );
     let root_result = root
-        .inner
-        .inner
-        .lock()
+        ._inner_event().inner.lock()
         .event_results
         .values()
         .find(|result| result.handler.handler_name == "on_root")
@@ -256,13 +254,11 @@ fn test_concurrency_intersection_parallel_events_with_serial_handlers_stays_seri
 
     let max_by_event = max_by_event.lock().expect("max_by_event lock").clone();
     for event in events {
-        let event_id = event.inner.inner.lock().event_id.clone();
+        let event_id = event.event_id.clone();
         assert_eq!(max_by_event.get(&event_id), Some(&1));
         assert!(
             event
-                .inner
-                .inner
-                .lock()
+                ._inner_event().inner.lock()
                 .event_results
                 .values()
                 .all(|result| result.status
@@ -310,13 +306,11 @@ fn test_timeout_enforcement_does_not_break_followup_processing_or_queue_state() 
     });
     let _ = block_on(timed_out.now());
     assert_eq!(
-        timed_out.inner.inner.lock().event_status,
+        timed_out.event_status.read(),
         EventStatus::Completed
     );
     assert!(timed_out
-        .inner
-        .inner
-        .lock()
+        ._inner_event().inner.lock()
         .event_results
         .values()
         .all(|result| result.status == abxbus_rust::event_result::EventResultStatus::Error));
@@ -326,17 +320,13 @@ fn test_timeout_enforcement_does_not_break_followup_processing_or_queue_state() 
     });
     let _ = block_on(followup.now());
     assert!(followup
-        .inner
-        .inner
-        .lock()
+        ._inner_event().inner.lock()
         .event_results
         .values()
         .all(|result| result.status == abxbus_rust::event_result::EventResultStatus::Completed));
     assert_eq!(
         followup
-            .inner
-            .inner
-            .lock()
+            ._inner_event().inner.lock()
             .event_results
             .values()
             .next()
@@ -368,7 +358,7 @@ fn test_zero_history_backpressure_with_find_future_still_resolves_new_events() {
         value: "first".to_string(),
         ..Default::default()
     });
-    let first_id = first.inner.inner.lock().event_id.clone();
+    let first_id = first.event_id.clone();
     let _ = block_on(first.now());
     assert!(!bus.event_history_ids().contains(&first_id));
     assert!(block_on(bus.find("ZeroHistoryEvent", true, None, None)).is_none());
@@ -482,26 +472,22 @@ fn test_context_propagates_through_forwarding_and_child_dispatch_with_lineage_in
         Some(parent_event_id.as_str())
     );
     assert!(parent
-        .inner
-        .inner
-        .lock()
+        ._inner_event().inner.lock()
         .event_path
         .first()
         .is_some_and(|path| path.starts_with("ParityContextForwardA#")));
     assert!(parent
-        .inner
-        .inner
-        .lock()
+        ._inner_event().inner.lock()
         .event_path
         .iter()
         .any(|path| path.starts_with("ParityContextForwardB#")));
 
     let found_child =
-        block_on(bus_b.find("ContextChildEvent", true, None, Some(parent.inner.clone())))
+        block_on(bus_b.find("ContextChildEvent", true, None, Some(parent._inner_event())))
             .expect("child should be findable");
     assert_eq!(
         found_child.inner.lock().event_parent_id.as_deref(),
-        Some(parent.inner.inner.lock().event_id.as_str())
+        Some(parent.event_id.as_str())
     );
     bus_a.destroy();
     bus_b.destroy();
@@ -565,7 +551,7 @@ fn test_pending_queue_find_visibility_transitions_to_completed_after_release() {
     ))
     .expect("pending queued event should be visible");
     let pending_id = pending.inner.lock().event_id.clone();
-    let queued_id = queued.inner.inner.lock().event_id.clone();
+    let queued_id = queued.event_id.clone();
     assert_eq!(pending_id, queued_id);
 
     let _ = block_on(blocking.now());
@@ -585,7 +571,7 @@ fn test_pending_queue_find_visibility_transitions_to_completed_after_release() {
     ))
     .expect("completed queued event should be visible");
     let completed_id = completed.inner.lock().event_id.clone();
-    let queued_id = queued.inner.inner.lock().event_id.clone();
+    let queued_id = queued.event_id.clone();
     assert_eq!(completed_id, queued_id);
     assert!(bus.is_idle_and_queue_empty());
     bus.destroy();
@@ -610,7 +596,7 @@ fn test_history_backpressure_rejects_overflow_and_preserves_findable_history() {
         value: "first".to_string(),
         ..Default::default()
     });
-    let first_id = first.inner.inner.lock().event_id.clone();
+    let first_id = first.event_id.clone();
     let _ = block_on(first.now());
     assert_eq!(bus.event_history_size(), 1);
     assert!(bus.event_history_ids().contains(&first_id));

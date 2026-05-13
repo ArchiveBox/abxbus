@@ -51,7 +51,7 @@ fn drop_in_flight(in_flight: &Arc<Mutex<i64>>) {
 
 fn emit_with_first_completion(
     bus: &Arc<EventBus>,
-) -> abxbus_rust::typed::BaseEventHandle<CompletionEvent> {
+) -> CompletionEvent {
     let event = CompletionEvent {
         event_handler_completion: Some(EventHandlerCompletionMode::First),
         ..Default::default()
@@ -91,7 +91,7 @@ fn test_event_handler_completion_bus_default_first_serial() {
     let event = bus.emit(CompletionEvent {
         ..Default::default()
     });
-    assert_eq!(event.inner.inner.lock().event_handler_completion, None);
+    assert_eq!(event.event_handler_completion, None);
     let _ = block_on(event.now());
 
     assert!(!*second_handler_called.lock().expect("called lock"));
@@ -100,7 +100,7 @@ fn test_event_handler_completion_bus_default_first_serial() {
             .expect("first result"),
         Some(json!("first"))
     );
-    let results = event.inner.inner.lock().event_results.clone();
+    let results = event.event_results.read();
     let first_result = results
         .values()
         .find(|result| result.handler.handler_name == "first_handler")
@@ -149,13 +149,13 @@ fn test_event_handler_completion_explicit_override_beats_bus_default() {
     };
     let event = bus.emit(event);
     assert_eq!(
-        event.inner.inner.lock().event_handler_completion,
+        event.event_handler_completion,
         Some(EventHandlerCompletionMode::All)
     );
     let _ = block_on(event.now());
 
     assert!(*second_handler_called.lock().expect("called lock"));
-    let results = event.inner.inner.lock().event_results.clone();
+    let results = event.event_results.read();
     assert!(results
         .values()
         .all(|result| result.status == EventResultStatus::Completed));
@@ -213,7 +213,7 @@ fn test_event_parallel_first_races_and_cancels_non_winners() {
         Some(json!("winner"))
     );
 
-    let results = event.inner.inner.lock().event_results.clone();
+    let results = event.event_results.read();
     let winner_result = results
         .values()
         .find(|result| result.handler.handler_name == "fast_winner")
@@ -268,16 +268,14 @@ fn test_event_handler_completion_first_cancels_parallel_losers() {
         ..Default::default()
     });
     assert_eq!(
-        event.inner.inner.lock().event_handler_completion,
+        event.event_handler_completion,
         Some(EventHandlerCompletionMode::First)
     );
     let _ = block_on(event.now());
     block_on(bus.wait_until_idle(Some(2.0)));
     for _ in 0..100 {
         if event
-            .inner
-            .inner
-            .lock()
+            ._inner_event().inner.lock()
             .event_results
             .values()
             .any(|result| {
@@ -290,9 +288,7 @@ fn test_event_handler_completion_first_cancels_parallel_losers() {
         thread::sleep(Duration::from_millis(5));
     }
     let first_value = event
-        .inner
-        .inner
-        .lock()
+        ._inner_event().inner.lock()
         .event_results
         .values()
         .find(|result| {
@@ -302,14 +298,12 @@ fn test_event_handler_completion_first_cancels_parallel_losers() {
 
     assert_eq!(first_value, Some(json!("fast")));
     assert_eq!(
-        event.inner.inner.lock().event_handler_completion,
+        event.event_handler_completion,
         Some(EventHandlerCompletionMode::First)
     );
     assert!(!*slow_handler_completed.lock().expect("slow completed lock"));
     assert!(event
-        .inner
-        .inner
-        .lock()
+        ._inner_event().inner.lock()
         .event_results
         .values()
         .any(|result| result.status == EventResultStatus::Error
@@ -444,7 +438,7 @@ fn test_event_first_skips_none_result_and_uses_next_winner() {
 
     assert_eq!(result, Some(json!("winner")));
     assert!(!*third_handler_called.lock().expect("called lock"));
-    let results = event.inner.inner.lock().event_results.clone();
+    let results = event.event_results.read();
     let none_result = results
         .values()
         .find(|result| result.handler.handler_name == "none_handler")
@@ -494,7 +488,7 @@ fn test_event_first_skips_baseevent_result_and_uses_next_winner() {
 
     assert_eq!(result, Some(json!("winner")));
     assert!(!*third_handler_called.lock().expect("called lock"));
-    let results = event.inner.inner.lock().event_results.clone();
+    let results = event.event_results.read();
     let baseevent_result = results
         .values()
         .find(|result| result.handler.handler_name == "baseevent_handler")
@@ -532,7 +526,7 @@ fn test_event_handler_concurrency_bus_default_remains_unset_on_dispatch() {
     let event = bus.emit(ConcurrencyEvent {
         ..Default::default()
     });
-    assert_eq!(event.inner.inner.lock().event_handler_concurrency, None);
+    assert_eq!(event.event_handler_concurrency, None);
     let _ = block_on(event.now());
     bus.destroy();
 }

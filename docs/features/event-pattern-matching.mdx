@@ -149,7 +149,6 @@ let wildcard_match = block_on(bus.find("*", false, Some(5.0), None));
 package main
 
 import (
-	"context"
 	"fmt"
 
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
@@ -166,19 +165,19 @@ func main() {
 		bus,
 		"UserActionEvent",
 		"on",
-		func(payload UserActionPayload, ctx context.Context) (string, error) {
+		func(payload UserActionPayload) (string, error) {
 			return fmt.Sprintf("action:%s", payload.Action), nil
 		},
 		nil,
 	)
 
-	bus.On("UserActionEvent", "on_by_name", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("UserActionEvent", "on_by_name", func(event *abxbus.BaseEvent) (any, error) {
 		fmt.Println("by-name", event.EventType, event.Payload["action"])
 		// by-name UserActionEvent click
 		return nil, nil
 	}, nil)
 
-	bus.On("*", "on_any", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("*", "on_any", func(event *abxbus.BaseEvent) (any, error) {
 		fmt.Println("wildcard", event.EventType)
 		// wildcard UserActionEvent
 		return nil, nil

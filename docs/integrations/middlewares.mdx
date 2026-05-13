@@ -1,6 +1,6 @@
 ---
 title: Overview
-description: Middleware integrations for EventBus lifecycle hooks in Python and TypeScript.
+description: Middleware integrations for EventBus lifecycle hooks across runtimes.
 ---
 
 Middlewares can observe event lifecycle transitions, react to handler registration changes, and add cross-cutting behavior around event execution.
@@ -61,7 +61,7 @@ Go currently ships the middleware interface plus `OtelTracingMiddleware`. The lo
 
 ```rust
 // Not implemented in abxbus-rust yet.
-// Use the core EventBus/BaseEvent JSON APIs and external transport/wrappers for now.
+// Use typed event JSON serialization with an external transport for now.
 ```
 
 </Tab>

@@ -93,7 +93,6 @@ if (maxInFlight < 2) throw new Error('expected overlapping handlers')
 package main
 
 import (
-	"context"
 	"sync"
 
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
@@ -110,7 +109,7 @@ func main() {
 	started := make(chan struct{}, 2)
 	release := make(chan struct{})
 
-	tracked := func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	tracked := func(event *abxbus.BaseEvent) (any, error) {
 		mu.Lock()
 		inFlight++
 		if inFlight > maxInFlight {

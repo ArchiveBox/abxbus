@@ -97,7 +97,7 @@ abxbus.OnTyped[DoMathPayload, int](
 	bus,
 	"DoMathEvent",
 	"add",
-	func(payload DoMathPayload, ctx context.Context) (int, error) {
+	func(payload DoMathPayload) (int, error) {
 		return payload.A + payload.B, nil
 	},
 	nil,
@@ -275,9 +275,8 @@ const byHandler = event.event_results
 
 ```rust
 let by_name: std::collections::HashMap<_, _> = event
-    .inner
-    .lock()
     .event_results
+    .read()
     .values()
     .map(|result| (result.handler.handler_name.clone(), result.result.clone()))
     .collect();

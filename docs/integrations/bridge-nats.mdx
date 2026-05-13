@@ -17,7 +17,7 @@ description: Forward events over NATS subjects.
 
 ```rust
 // Not implemented in abxbus-rust yet.
-// Use the core EventBus/BaseEvent JSON APIs and external transport/wrappers for now.
+// Use typed event JSON serialization with an external transport for now.
 ```
 
 </Tab>
@@ -57,6 +57,14 @@ This bridge is Node.js-only.
 ```go
 // NATSEventBridge is not implemented in abxbus-go yet.
 // Use JSONLEventBridge for the currently supported Go bridge.
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+// Not implemented in abxbus-rust yet.
+// Use typed events plus EventBus JSON serialization with an external transport for now.
 ```
 
 </Tab>
@@ -103,6 +111,14 @@ const bridge = new NATSEventBridge(
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+// Not implemented in abxbus-rust yet.
+// Use typed events plus EventBus JSON serialization with an external transport for now.
+```
+
+</Tab>
 </Tabs>
 
 ## Setup with a bus
@@ -141,6 +157,14 @@ bridge.on('*', bus.emit)
 ```go
 // NATSEventBridge is not implemented in abxbus-go yet.
 // Use JSONLEventBridge for Go process-to-process bridge tests and deployments.
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+// Not implemented in abxbus-rust yet.
+// Use typed events plus EventBus JSON serialization with an external transport for now.
 ```
 
 </Tab>

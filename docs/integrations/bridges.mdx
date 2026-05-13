@@ -48,10 +48,10 @@ bridge.on('*', bus.emit)
 bus := abxbus.NewEventBus("AppBus", nil)
 bridge := abxbus.NewJSONLEventBridge("/tmp/abxbus_events.jsonl", 0.25, "JsonlBridge")
 
-bus.On("*", "jsonl_emit", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+bus.On("*", "jsonl_emit", func(event *abxbus.BaseEvent) (any, error) {
 	return bridge.Emit(event)
 }, nil)
-bridge.On("*", "bus_emit", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+bridge.On("*", "bus_emit", func(event *abxbus.BaseEvent) (any, error) {
 	return bus.Emit(event), nil
 }, nil)
 ```
@@ -63,7 +63,7 @@ Go currently implements `JSONLEventBridge`. The HTTP, socket, Redis, NATS, Postg
 
 ```rust
 // Not implemented in abxbus-rust yet.
-// Use the core EventBus/BaseEvent JSON APIs and external transport/wrappers for now.
+// Use typed event JSON serialization with an external transport for now.
 ```
 
 </Tab>
