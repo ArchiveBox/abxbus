@@ -85,7 +85,6 @@ if (JSON.stringify(log) !== JSON.stringify(['h1_start', 'h1_end', 'h2_start', 'h
 package main
 
 import (
-	"context"
 	"reflect"
 	"time"
 
@@ -98,14 +97,14 @@ func main() {
 	})
 	log := []string{}
 
-	bus.On("HandlerEvent", "h1", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("HandlerEvent", "h1", func(event *abxbus.BaseEvent) (any, error) {
 		log = append(log, "h1_start")
 		time.Sleep(10 * time.Millisecond)
 		log = append(log, "h1_end")
 		return nil, nil
 	}, nil)
 
-	bus.On("HandlerEvent", "h2", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("HandlerEvent", "h2", func(event *abxbus.BaseEvent) (any, error) {
 		log = append(log, "h2_start")
 		time.Sleep(10 * time.Millisecond)
 		log = append(log, "h2_end")

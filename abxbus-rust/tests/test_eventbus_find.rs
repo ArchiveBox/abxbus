@@ -141,7 +141,7 @@ fn test_direct_child_returns_true() {
             let child = bus.emit_child(ChildEvent {
                 ..Default::default()
             });
-            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            *child_ref.lock().expect("child ref lock") = Some(child._inner_event());
             let _ = child.now().await;
             Ok(json!("parent"))
         }
@@ -160,7 +160,7 @@ fn test_direct_child_returns_true() {
         .clone()
         .expect("child event");
 
-    assert!(bus.event_is_child_of(&child, &parent.inner));
+    assert!(bus.event_is_child_of(&child, &parent._inner_event()));
     bus.destroy();
 }
 
@@ -189,7 +189,7 @@ fn test_grandchild_returns_true() {
             let grandchild = bus.emit_child(GrandchildEvent {
                 ..Default::default()
             });
-            *grandchild_ref.lock().expect("grandchild ref lock") = Some(grandchild.inner.clone());
+            *grandchild_ref.lock().expect("grandchild ref lock") = Some(grandchild._inner_event());
             let _ = grandchild.now().await;
             Ok(json!("child"))
         }
@@ -208,7 +208,7 @@ fn test_grandchild_returns_true() {
         .clone()
         .expect("grandchild event");
 
-    assert!(bus.event_is_child_of(&grandchild, &parent.inner));
+    assert!(bus.event_is_child_of(&grandchild, &parent._inner_event()));
     bus.destroy();
 }
 
@@ -224,7 +224,7 @@ fn test_unrelated_events_returns_false() {
     });
     block_on(bus.wait_until_idle(None));
 
-    assert!(!bus.event_is_child_of(&unrelated.inner, &parent.inner));
+    assert!(!bus.event_is_child_of(&unrelated._inner_event(), &parent._inner_event()));
     bus.destroy();
 }
 
@@ -237,7 +237,7 @@ fn test_same_event_returns_false() {
     });
     let _ = block_on(event.now());
 
-    assert!(!bus.event_is_child_of(&event.inner, &event.inner));
+    assert!(!bus.event_is_child_of(&event._inner_event(), &event._inner_event()));
     bus.destroy();
 }
 
@@ -272,7 +272,7 @@ fn test_reversed_relationship_returns_false() {
             let child = bus.emit_child(ChildEvent {
                 ..Default::default()
             });
-            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            *child_ref.lock().expect("child ref lock") = Some(child._inner_event());
             let _ = child.now().await;
             Ok(json!("parent"))
         }
@@ -291,7 +291,7 @@ fn test_reversed_relationship_returns_false() {
         .clone()
         .expect("child event");
 
-    assert!(!bus.event_is_child_of(&parent.inner, &child));
+    assert!(!bus.event_is_child_of(&parent._inner_event(), &child));
     bus.destroy();
 }
 
@@ -309,7 +309,7 @@ fn test_direct_parent_returns_true() {
             let child = bus.emit_child(ChildEvent {
                 ..Default::default()
             });
-            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            *child_ref.lock().expect("child ref lock") = Some(child._inner_event());
             let _ = child.now().await;
             Ok(json!("parent"))
         }
@@ -328,7 +328,7 @@ fn test_direct_parent_returns_true() {
         .clone()
         .expect("child event");
 
-    assert!(bus.event_is_parent_of(&parent.inner, &child));
+    assert!(bus.event_is_parent_of(&parent._inner_event(), &child));
     bus.destroy();
 }
 
@@ -357,7 +357,7 @@ fn test_grandparent_returns_true() {
             let grandchild = bus.emit_child(GrandchildEvent {
                 ..Default::default()
             });
-            *grandchild_ref.lock().expect("grandchild ref lock") = Some(grandchild.inner.clone());
+            *grandchild_ref.lock().expect("grandchild ref lock") = Some(grandchild._inner_event());
             let _ = grandchild.now().await;
             Ok(json!("child"))
         }
@@ -376,7 +376,7 @@ fn test_grandparent_returns_true() {
         .clone()
         .expect("grandchild event");
 
-    assert!(bus.event_is_parent_of(&parent.inner, &grandchild));
+    assert!(bus.event_is_parent_of(&parent._inner_event(), &grandchild));
     bus.destroy();
 }
 
@@ -414,7 +414,7 @@ fn test_find_past_returns_most_recent_dispatched_event() {
 
     let found = block_on(bus.find("work", true, None, None)).expect("most recent event");
     let found_id = found.inner.lock().event_id.clone();
-    let second_id = second.inner.inner.lock().event_id.clone();
+    let second_id = second.event_id.clone();
     assert_eq!(found_id, second_id);
     bus.destroy();
 }
@@ -455,7 +455,7 @@ fn test_find_past_history_lookup_is_bus_scoped() {
         .lock()
         .event_id
         .clone();
-    let emitted_id = event_on_b.inner.inner.lock().event_id.clone();
+    let emitted_id = event_on_b.event_id.clone();
     assert_eq!(found_id, emitted_id);
     bus_a.destroy();
     bus_b.destroy();
@@ -484,7 +484,7 @@ fn test_find_past_respects_time_window() {
         ..Default::default()
     });
     let _ = block_on(old_event.now());
-    old_event.inner.inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
+    old_event._inner_event().inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
 
     let stale = block_on(bus.find_with_options(
         "work",
@@ -511,7 +511,7 @@ fn test_find_past_respects_time_window() {
     ))
     .expect("fresh event should be within window");
     let found_id = fresh.inner.lock().event_id.clone();
-    let fresh_event_id = fresh_event.inner.inner.lock().event_id.clone();
+    let fresh_event_id = fresh_event.event_id.clone();
     assert_eq!(found_id, fresh_event_id);
     bus.destroy();
 }
@@ -525,7 +525,7 @@ fn test_find_past_returns_null_when_all_events_are_too_old() {
         ..Default::default()
     });
     let _ = block_on(old_event.now());
-    old_event.inner.inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
+    old_event._inner_event().inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
 
     let found = block_on(bus.find_with_options(
         "work",
@@ -615,7 +615,7 @@ fn test_max_history_size_zero_disables_past_history_search_but_future_find_still
         .recv_timeout(Duration::from_secs(1))
         .expect("future find should resolve")
         .expect("found future event");
-    assert_eq!(future_id, dispatched.inner.inner.lock().event_id);
+    assert_eq!(future_id, dispatched._inner_event().inner.lock().event_id);
 
     let _ = block_on(dispatched.now());
     assert_eq!(bus.event_history_size(), 0);
@@ -637,7 +637,7 @@ fn test_find_defaults_to_past_true_future_false_when_both_are_undefined() {
     });
     let found = block_on(bus.find("work", true, None, None)).expect("past event");
     let found_id = found.inner.lock().event_id.clone();
-    let dispatched_id = dispatched.inner.inner.lock().event_id.clone();
+    let dispatched_id = dispatched.event_id.clone();
     assert_eq!(found_id, dispatched_id);
     bus.destroy();
 }
@@ -715,7 +715,7 @@ fn test_find_waiter_cleanup() {
         .recv_timeout(Duration::from_secs(1))
         .expect("find should finish")
         .expect("find should match");
-    assert_eq!(found_id, event.inner.inner.lock().event_id);
+    assert_eq!(found_id, event._inner_event().inner.lock().event_id);
     assert_eq!(bus.find_waiter_count_for_test(), initial_waiters);
     let _ = block_on(event.now());
     bus.destroy();
@@ -750,7 +750,7 @@ fn test_find_past_future_returns_past_event_immediately() {
     let found = block_on(bus.find("work", true, Some(0.5), None)).expect("past event");
 
     let found_id = found.inner.lock().event_id.clone();
-    let dispatched_id = dispatched.inner.inner.lock().event_id.clone();
+    let dispatched_id = dispatched.event_id.clone();
     assert_eq!(found_id, dispatched_id);
     assert!(start.elapsed() < Duration::from_millis(100));
     bus.destroy();
@@ -784,7 +784,7 @@ fn test_find_past_future_windows_are_independent() {
         ..Default::default()
     });
     let _ = block_on(old_event.now());
-    old_event.inner.inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
+    old_event._inner_event().inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
 
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(30));
@@ -804,7 +804,7 @@ fn test_find_past_future_windows_are_independent() {
     ))
     .expect("future event should resolve when past window excludes old event");
     let found_id = found.inner.lock().event_id.clone();
-    let old_id = old_event.inner.inner.lock().event_id.clone();
+    let old_id = old_event.event_id.clone();
     assert_ne!(found_id, old_id);
     bus.destroy();
 }
@@ -821,7 +821,7 @@ fn test_find_past_true_future_float_returns_old_event_immediately() {
     let found = block_on(bus.find("work", true, Some(0.5), None)).expect("past event");
 
     let found_id = found.inner.lock().event_id.clone();
-    let dispatched_id = dispatched.inner.inner.lock().event_id.clone();
+    let dispatched_id = dispatched.event_id.clone();
     assert_eq!(found_id, dispatched_id);
     assert!(start.elapsed() < Duration::from_millis(100));
     bus.destroy();
@@ -854,7 +854,7 @@ fn test_find_past_true_future_true_searches_all_and_waits_forever() {
     .expect("past event");
 
     let found_id = found.inner.lock().event_id.clone();
-    let dispatched_id = dispatched.inner.inner.lock().event_id.clone();
+    let dispatched_id = dispatched.event_id.clone();
     assert_eq!(found_id, dispatched_id);
     assert!(start.elapsed() < Duration::from_millis(100));
     bus.destroy();
@@ -869,7 +869,7 @@ fn test_find_past_float_future_waits_for_new_event() {
         ..Default::default()
     });
     let _ = block_on(old_event.now());
-    old_event.inner.inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
+    old_event._inner_event().inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
 
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(30));
@@ -889,7 +889,7 @@ fn test_find_past_float_future_waits_for_new_event() {
     ))
     .expect("future event");
     let found_id = found.inner.lock().event_id.clone();
-    let old_id = old_event.inner.inner.lock().event_id.clone();
+    let old_id = old_event.event_id.clone();
     assert_ne!(found_id, old_id);
     bus.destroy();
 }
@@ -917,7 +917,7 @@ fn test_find_supports_metadata_filters_like_event_status() {
 
     assert!(found.is_some());
     let found_id = found.unwrap().inner.lock().event_id.clone();
-    let event_id = event.inner.inner.lock().event_id.clone();
+    let event_id = event.event_id.clone();
     assert_eq!(found_id, event_id);
     bus.destroy();
 }
@@ -939,7 +939,7 @@ fn test_find_supports_metadata_equality_filters_like_event_id_and_event_timeout(
     let _ = block_on(event_a.now());
     let _ = block_on(event_b.now());
 
-    let event_a_id = event_a.inner.inner.lock().event_id.clone();
+    let event_a_id = event_a.event_id.clone();
     let found_a = block_on(bus.find_with_options(
         "work",
         FindOptions {
@@ -998,7 +998,7 @@ fn test_find_respects_where_filter() {
     .expect("where-filtered event");
 
     let found_id = found.inner.lock().event_id.clone();
-    let target_id = target.inner.inner.lock().event_id.clone();
+    let target_id = target.event_id.clone();
     assert_eq!(found_id, target_id);
     bus.destroy();
 }
@@ -1032,7 +1032,7 @@ fn test_find_supports_non_event_data_field_equality_filters() {
     .expect("expected payload match");
 
     let found_id = found.inner.lock().event_id.clone();
-    let target_id = target.inner.inner.lock().event_id.clone();
+    let target_id = target.event_id.clone();
     assert_eq!(found_id, target_id);
     bus.destroy();
 }
@@ -1221,8 +1221,8 @@ fn test_find_wildcard() {
 
     let found = block_on(bus.find("*", true, None, None)).expect("wildcard match");
     let found_id = found.inner.lock().event_id.clone();
-    let second_id = second.inner.inner.lock().event_id.clone();
-    let first_id = first.inner.inner.lock().event_id.clone();
+    let second_id = second.event_id.clone();
+    let first_id = first.event_id.clone();
     assert_eq!(found_id, second_id);
     assert_ne!(found_id, first_id);
     bus.destroy();
@@ -1256,7 +1256,7 @@ fn test_find_wildcard_with_where_filter_matches_across_event_types_in_history() 
     .expect("expected wildcard where match");
 
     let found_id = found.inner.lock().event_id.clone();
-    let target_id = target.inner.inner.lock().event_id.clone();
+    let target_id = target.event_id.clone();
     assert_eq!(found_id, target_id);
     bus.destroy();
 }
@@ -1270,7 +1270,7 @@ fn test_find_with_past_float_and_where_filter() {
         ..Default::default()
     });
     let _ = block_on(old.now());
-    old.inner.inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
+    old._inner_event().inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
     let fresh = bus.emit(FilterEvent {
         value: "target".to_string(),
         category: "fresh".to_string(),
@@ -1289,7 +1289,7 @@ fn test_find_with_past_float_and_where_filter() {
     ))
     .expect("fresh filtered event");
     let found_id = found.inner.lock().event_id.clone();
-    let fresh_id = fresh.inner.inner.lock().event_id.clone();
+    let fresh_id = fresh.event_id.clone();
     assert_eq!(found_id, fresh_id);
     bus.destroy();
 }
@@ -1409,18 +1409,9 @@ fn test_multiple_concurrent_future_finds() {
         resolved.insert(label, event_id);
     }
 
-    assert_eq!(
-        resolved.get("normal"),
-        Some(&normal.inner.inner.lock().event_id.clone())
-    );
-    assert_eq!(
-        resolved.get("system"),
-        Some(&system.inner.inner.lock().event_id.clone())
-    );
-    assert_eq!(
-        resolved.get("special"),
-        Some(&special.inner.inner.lock().event_id.clone())
-    );
+    assert_eq!(resolved.get("normal"), Some(&normal.event_id.clone()));
+    assert_eq!(resolved.get("system"), Some(&system.event_id.clone()));
+    assert_eq!(resolved.get("special"), Some(&special.event_id.clone()));
     bus.destroy();
 }
 
@@ -1452,7 +1443,7 @@ fn test_find_returns_coroutine_that_can_be_awaited_later() {
         .recv_timeout(Duration::from_secs(1))
         .expect("find waiter should resolve")
         .expect("found event");
-    assert_eq!(found_id, dispatched.inner.inner.lock().event_id);
+    assert_eq!(found_id, dispatched._inner_event().inner.lock().event_id);
     bus.destroy();
 }
 
@@ -1470,8 +1461,7 @@ fn test_find_child_of_returns_child_event() {
             let child = bus.emit_child(ChildEvent {
                 ..Default::default()
             });
-            *child_id.lock().expect("child id lock") =
-                Some(child.inner.inner.lock().event_id.clone());
+            *child_id.lock().expect("child id lock") = Some(child.event_id.clone());
             Ok(json!("parent"))
         }
     });
@@ -1485,12 +1475,12 @@ fn test_find_child_of_returns_child_event() {
     let emitted_child_id = wait_for_string(&child_id);
 
     let child =
-        block_on(bus.find("child", true, None, Some(parent.inner.clone()))).expect("child event");
+        block_on(bus.find("child", true, None, Some(parent._inner_event()))).expect("child event");
     let found_child_id = child.inner.lock().event_id.clone();
     assert_eq!(found_child_id, emitted_child_id);
     assert_eq!(
         child.inner.lock().event_parent_id.as_deref(),
-        Some(parent.inner.inner.lock().event_id.as_str())
+        Some(parent.event_id.as_str())
     );
     bus.destroy();
 }
@@ -1507,11 +1497,11 @@ fn test_find_child_of_returns_null_for_non_child() {
     });
     block_on(bus.wait_until_idle(Some(2.0)));
 
-    let found = block_on(bus.find("unrelated", true, None, Some(parent.inner.clone())));
+    let found = block_on(bus.find("unrelated", true, None, Some(parent._inner_event())));
     assert!(found.is_none());
     assert_ne!(
-        unrelated.inner.inner.lock().event_parent_id.as_deref(),
-        Some(parent.inner.inner.lock().event_id.as_str())
+        unrelated.event_parent_id.as_deref(),
+        Some(parent.event_id.as_str())
     );
     bus.destroy();
 }
@@ -1531,8 +1521,7 @@ fn test_find_child_of_returns_grandchild_event() {
             let child = bus.emit_child(ChildEvent {
                 ..Default::default()
             });
-            *child_id.lock().expect("child id lock") =
-                Some(child.inner.inner.lock().event_id.clone());
+            *child_id.lock().expect("child id lock") = Some(child.event_id.clone());
             let _ = child.now().await;
             Ok(json!("parent"))
         }
@@ -1556,7 +1545,7 @@ fn test_find_child_of_returns_grandchild_event() {
     });
     let _ = block_on(parent.now());
 
-    let grandchild = block_on(bus.find("grandchild", true, None, Some(parent.inner.clone())))
+    let grandchild = block_on(bus.find("grandchild", true, None, Some(parent._inner_event())))
         .expect("grandchild event");
     assert_eq!(
         grandchild.inner.lock().event_parent_id,
@@ -1588,8 +1577,7 @@ fn test_child_of_works_across_forwarded_buses() {
             let child = auth_bus.emit_child(ChildEvent {
                 ..Default::default()
             });
-            *child_id.lock().expect("child id lock") =
-                Some(child.inner.inner.lock().event_id.clone());
+            *child_id.lock().expect("child id lock") = Some(child.event_id.clone());
             let _ = child.now().await;
             Ok(json!("auth"))
         }
@@ -1618,7 +1606,7 @@ fn test_child_of_works_across_forwarded_buses() {
             past: true,
             past_window: Some(5.0),
             future: Some(5.0),
-            child_of: Some(parent.inner.clone()),
+            child_of: Some(parent._inner_event()),
             ..FindOptions::default()
         },
     ))
@@ -1658,14 +1646,14 @@ fn test_find_with_child_of_and_past_float() {
         FindOptions {
             past: true,
             past_window: Some(1.0),
-            child_of: Some(parent.inner.clone()),
+            child_of: Some(parent._inner_event()),
             ..FindOptions::default()
         },
     ))
     .expect("child should be within past window");
     assert_eq!(
         found.inner.lock().event_parent_id.as_deref(),
-        Some(parent.inner.inner.lock().event_id.as_str())
+        Some(parent.event_id.as_str())
     );
 
     found.inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
@@ -1674,7 +1662,7 @@ fn test_find_with_child_of_and_past_float() {
         FindOptions {
             past: true,
             past_window: Some(0.01),
-            child_of: Some(parent.inner.clone()),
+            child_of: Some(parent._inner_event()),
             ..FindOptions::default()
         },
     ));
@@ -1722,9 +1710,9 @@ fn test_find_child_of_filters_to_correct_parent_among_siblings() {
     let _ = block_on(nav_2.now());
 
     let tab_1 =
-        block_on(bus.find("tab_created", true, None, Some(nav_1.inner.clone()))).expect("tab 1");
+        block_on(bus.find("tab_created", true, None, Some(nav_1._inner_event()))).expect("tab 1");
     let tab_2 =
-        block_on(bus.find("tab_created", true, None, Some(nav_2.inner.clone()))).expect("tab 2");
+        block_on(bus.find("tab_created", true, None, Some(nav_2._inner_event()))).expect("tab 2");
 
     assert_eq!(
         tab_1.inner.lock().payload.get("tab_id"),
@@ -1760,12 +1748,12 @@ fn test_find_future_with_child_of_waits_for_matching_child() {
     let parent = bus.emit(ParentEvent {
         ..Default::default()
     });
-    let child = block_on(bus.find("child", false, Some(0.5), Some(parent.inner.clone())))
+    let child = block_on(bus.find("child", false, Some(0.5), Some(parent._inner_event())))
         .expect("future child");
 
     assert_eq!(
         child.inner.lock().event_parent_id.as_deref(),
-        Some(parent.inner.inner.lock().event_id.as_str())
+        Some(parent.event_id.as_str())
     );
     let _ = block_on(parent.now());
     bus.destroy();
@@ -1786,8 +1774,7 @@ fn test_find_catches_child_event_that_fired_during_parent_handler() {
                 tab_id: "06bee4cf-9f51-7e5d-82d3-65f35169329c".to_string(),
                 ..Default::default()
             });
-            *tab_event_id.lock().expect("tab id lock") =
-                Some(tab.inner.inner.lock().event_id.clone());
+            *tab_event_id.lock().expect("tab id lock") = Some(tab.event_id.clone());
             let _ = tab.now().await;
             Ok(json!("nav"))
         }
@@ -1804,7 +1791,7 @@ fn test_find_catches_child_event_that_fired_during_parent_handler() {
     let emitted_tab_id = wait_for_string(&tab_event_id);
 
     let found_tab =
-        block_on(bus.find("tab_created", true, None, Some(nav.inner.clone()))).expect("found tab");
+        block_on(bus.find("tab_created", true, None, Some(nav._inner_event()))).expect("found tab");
     let found_tab_id = found_tab.inner.lock().event_id.clone();
     assert_eq!(found_tab_id, emitted_tab_id);
     bus.destroy();
@@ -1826,7 +1813,7 @@ fn test_find_past_can_match_incomplete_events() {
 
     let found = block_on(bus.find("work", true, None, None)).expect("in-progress event");
     let found_id = found.inner.lock().event_id.clone();
-    let dispatched_id = dispatched.inner.inner.lock().event_id.clone();
+    let dispatched_id = dispatched.event_id.clone();
     assert_eq!(found_id, dispatched_id);
     let found_status = found.inner.lock().event_status;
     assert_ne!(found_status, abxbus_rust::types::EventStatus::Completed);
@@ -1885,7 +1872,7 @@ fn test_most_recent_wins_across_completed_and_inflight() {
     ))
     .expect("most recent in-flight event");
     let found_id = found.inner.lock().event_id.clone();
-    let second_id = second.inner.inner.lock().event_id.clone();
+    let second_id = second.event_id.clone();
     assert_eq!(found_id, second_id);
     assert_ne!(
         found.inner.lock().event_status,
@@ -1945,8 +1932,7 @@ fn test_find_with_all_parameters_combined() {
                 category: "screenshot".to_string(),
                 ..Default::default()
             });
-            *child_id.lock().expect("child id lock") =
-                Some(child.inner.inner.lock().event_id.clone());
+            *child_id.lock().expect("child id lock") = Some(child.event_id.clone());
             let _ = child.now().await;
             Ok(json!("parent"))
         }
@@ -1971,7 +1957,7 @@ fn test_find_with_all_parameters_combined() {
             past: true,
             past_window: Some(5.0),
             future: None,
-            child_of: Some(parent.inner.clone()),
+            child_of: Some(parent._inner_event()),
             where_filter: Some(HashMap::from([(
                 "value".to_string(),
                 json!("target-child"),
@@ -2019,7 +2005,7 @@ fn test_past_float_filters_by_time_window() {
         ..Default::default()
     });
     let _ = block_on(old_event.now());
-    old_event.inner.inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
+    old_event._inner_event().inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
     let new_event = bus.emit(WorkEvent {
         ..Default::default()
     });
@@ -2035,7 +2021,7 @@ fn test_past_float_filters_by_time_window() {
     ))
     .expect("recent event");
     let recent_id = recent.inner.lock().event_id.clone();
-    let new_event_id = new_event.inner.inner.lock().event_id.clone();
+    let new_event_id = new_event.event_id.clone();
     assert_eq!(recent_id, new_event_id);
 
     let newest_from_longer_window = block_on(bus.find_with_options(
@@ -2048,11 +2034,11 @@ fn test_past_float_filters_by_time_window() {
     ))
     .expect("newest event");
     let newest_id = newest_from_longer_window.inner.lock().event_id.clone();
-    let new_event_id = new_event.inner.inner.lock().event_id.clone();
+    let new_event_id = new_event.event_id.clone();
     assert_eq!(newest_id, new_event_id);
     assert_ne!(
         newest_from_longer_window.inner.lock().event_id,
-        old_event.inner.inner.lock().event_id
+        old_event._inner_event().inner.lock().event_id
     );
     bus.destroy();
 }
@@ -2090,7 +2076,7 @@ fn test_respects_where_filter() {
     .expect("where match");
 
     let found_id = found.inner.lock().event_id.clone();
-    let second_id = second.inner.inner.lock().event_id.clone();
+    let second_id = second.event_id.clone();
     assert_eq!(found_id, second_id);
     bus.destroy();
 }
@@ -2111,7 +2097,7 @@ fn test_past_includes_in_progress_events() {
 
     let found = block_on(bus.find("parent", true, None, None)).expect("in-progress event");
     let found_id = found.inner.lock().event_id.clone();
-    let in_flight_id = in_flight.inner.inner.lock().event_id.clone();
+    let in_flight_id = in_flight.event_id.clone();
     assert_eq!(found_id, in_flight_id);
     assert!(matches!(
         found.inner.lock().event_status,
@@ -2121,7 +2107,7 @@ fn test_past_includes_in_progress_events() {
     let _ = block_on(in_flight.now());
     let completed = block_on(bus.find("parent", true, None, None)).expect("completed event");
     let completed_id = completed.inner.lock().event_id.clone();
-    let in_flight_id = in_flight.inner.inner.lock().event_id.clone();
+    let in_flight_id = in_flight.event_id.clone();
     assert_eq!(completed_id, in_flight_id);
     bus.destroy();
 }
@@ -2157,7 +2143,7 @@ fn test_find_with_past_true_and_future_timeout() {
     let dispatched = bus.emit(ParentEvent {
         ..Default::default()
     });
-    let dispatched_id = dispatched.inner.inner.lock().event_id.clone();
+    let dispatched_id = dispatched.event_id.clone();
 
     let start = Instant::now();
     let found = block_on(bus.find("parent", true, Some(5.0), None)).expect("past event");
@@ -2176,7 +2162,7 @@ fn test_find_with_past_float_and_future_timeout() {
     let dispatched = bus.emit(ParentEvent {
         ..Default::default()
     });
-    let dispatched_id = dispatched.inner.inner.lock().event_id.clone();
+    let dispatched_id = dispatched.event_id.clone();
 
     let found = block_on(bus.find_with_options(
         "parent",
@@ -2206,8 +2192,7 @@ fn test_find_with_child_of_and_future_timeout() {
             let child = bus.emit_child(ChildEvent {
                 ..Default::default()
             });
-            *child_id.lock().expect("child id lock") =
-                Some(child.inner.inner.lock().event_id.clone());
+            *child_id.lock().expect("child id lock") = Some(child.event_id.clone());
             Ok(json!("parent"))
         }
     });
@@ -2220,7 +2205,7 @@ fn test_find_with_child_of_and_future_timeout() {
     });
     let expected_child_id = wait_for_string(&child_id);
 
-    let found = block_on(bus.find("child", true, Some(5.0), Some(parent.inner.clone())))
+    let found = block_on(bus.find("child", true, Some(5.0), Some(parent._inner_event())))
         .expect("child event");
     assert_eq!(found.inner.lock().event_id, expected_child_id);
     bus.destroy();
@@ -2236,7 +2221,7 @@ fn test_past_true_future_true_searches_all_and_waits_forever() {
     let dispatched = bus.emit(ParentEvent {
         ..Default::default()
     });
-    let dispatched_id = dispatched.inner.inner.lock().event_id.clone();
+    let dispatched_id = dispatched.event_id.clone();
     thread::sleep(Duration::from_millis(100));
 
     let start = Instant::now();
@@ -2279,9 +2264,9 @@ fn test_filter_past_returns_all_matches_newest_first() {
     assert_eq!(
         event_ids(&matches),
         vec![
-            third.inner.inner.lock().event_id.clone(),
-            second.inner.inner.lock().event_id.clone(),
-            first.inner.inner.lock().event_id.clone(),
+            third.event_id.clone(),
+            second.event_id.clone(),
+            first.event_id.clone(),
         ]
     );
     bus.destroy();
@@ -2312,10 +2297,7 @@ fn test_filter_respects_limit() {
     let matches = block_on(bus.filter("work", true, None, None, Some(2)));
     assert_eq!(
         event_ids(&matches),
-        vec![
-            third.inner.inner.lock().event_id.clone(),
-            second.inner.inner.lock().event_id.clone(),
-        ]
+        vec![third.event_id.clone(), second.event_id.clone(),]
     );
     bus.destroy();
 }
@@ -2351,10 +2333,7 @@ fn test_filter_respects_where_predicate() {
     ));
     assert_eq!(
         event_ids(&matches),
-        vec![
-            second.inner.inner.lock().event_id.clone(),
-            first.inner.inner.lock().event_id.clone(),
-        ]
+        vec![second.event_id.clone(), first.event_id.clone(),]
     );
     bus.destroy();
 }
@@ -2381,10 +2360,7 @@ fn test_filter_supports_field_equality_filters() {
             ..FilterOptions::default()
         },
     ));
-    assert_eq!(
-        event_ids(&matches),
-        vec![target.inner.inner.lock().event_id.clone()]
-    );
+    assert_eq!(event_ids(&matches), vec![target.event_id.clone()]);
     bus.destroy();
 }
 
@@ -2404,10 +2380,7 @@ fn test_filter_wildcard_matches_all_event_types_newest_first() {
     let matches = block_on(bus.filter("*", true, None, None, None));
     assert_eq!(
         event_ids(&matches),
-        vec![
-            second.inner.inner.lock().event_id.clone(),
-            first.inner.inner.lock().event_id.clone(),
-        ]
+        vec![second.event_id.clone(), first.event_id.clone(),]
     );
     bus.destroy();
 }
@@ -2419,7 +2392,7 @@ fn test_filter_child_of_returns_matching_descendants() {
     let parent = bus.emit(ParentEvent {
         ..Default::default()
     });
-    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let parent_id = parent.event_id.clone();
 
     let mut child = ChildEvent {
         ..Default::default()
@@ -2431,11 +2404,8 @@ fn test_filter_child_of_returns_matching_descendants() {
         ..Default::default()
     });
 
-    let matches = block_on(bus.filter("child", true, None, Some(parent.inner.clone()), None));
-    assert_eq!(
-        event_ids(&matches),
-        vec![child.inner.inner.lock().event_id.clone()]
-    );
+    let matches = block_on(bus.filter("child", true, None, Some(parent._inner_event()), None));
+    assert_eq!(event_ids(&matches), vec![child.event_id.clone()]);
     bus.destroy();
 }
 
@@ -2446,7 +2416,7 @@ fn test_filter_past_time_window_filters_by_age() {
     let old = bus.emit(WorkEvent {
         ..Default::default()
     });
-    old.inner.inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
+    old._inner_event().inner.lock().event_created_at = "2020-01-01T00:00:00.000Z".to_string();
     let fresh = bus.emit(WorkEvent {
         ..Default::default()
     });
@@ -2458,10 +2428,7 @@ fn test_filter_past_time_window_filters_by_age() {
             ..FilterOptions::default()
         },
     ));
-    assert_eq!(
-        event_ids(&matches),
-        vec![fresh.inner.inner.lock().event_id.clone()]
-    );
+    assert_eq!(event_ids(&matches), vec![fresh.event_id.clone()]);
     bus.destroy();
 }
 
@@ -2495,7 +2462,7 @@ fn test_filter_future_appends_match_after_past_results() {
 
     let matches = block_on(bus.filter("work", true, Some(0.5), None, None));
     assert_eq!(matches.len(), 2);
-    let past_id = past.inner.inner.lock().event_id.clone();
+    let past_id = past.event_id.clone();
     let matched_past_id = matches[0].inner.lock().event_id.clone();
     let matched_future_id = matches[1].inner.lock().event_id.clone();
     assert_eq!(matched_past_id, past_id);
@@ -2514,10 +2481,7 @@ fn test_filter_limit_short_circuits_future_wait() {
     let start = Instant::now();
     let matches = block_on(bus.filter("work", true, Some(2.0), None, Some(1)));
     assert!(start.elapsed() < Duration::from_millis(200));
-    assert_eq!(
-        event_ids(&matches),
-        vec![past.inner.inner.lock().event_id.clone()]
-    );
+    assert_eq!(event_ids(&matches), vec![past.event_id.clone()]);
     bus.destroy();
 }
 
@@ -2561,7 +2525,7 @@ fn test_find_returns_first_filter_result() {
     let found = block_on(bus.find("work", true, None, None)).expect("latest event");
     let filtered = block_on(bus.filter("work", true, None, None, Some(1)));
     assert_eq!(filtered.len(), 1);
-    let latest_id = latest.inner.inner.lock().event_id.clone();
+    let latest_id = latest.event_id.clone();
     let found_id = found.inner.lock().event_id.clone();
     let filtered_id = filtered[0].inner.lock().event_id.clone();
     assert_eq!(found_id, latest_id);

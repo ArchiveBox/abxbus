@@ -151,7 +151,7 @@ fn test_events_forward_between_buses_without_duplication() {
     block_on(bus_b.wait_until_idle(None));
     block_on(bus_c.wait_until_idle(None));
 
-    let event_id = event.inner.inner.lock().event_id.clone();
+    let event_id = event.event_id.clone();
     assert_eq!(
         seen_a.lock().expect("seen_a lock").as_slice(),
         std::slice::from_ref(&event_id)
@@ -165,10 +165,10 @@ fn test_events_forward_between_buses_without_duplication() {
         std::slice::from_ref(&event_id)
     );
     assert_eq!(
-        event.inner.inner.lock().event_path,
+        event._inner_event().inner.lock().event_path,
         vec![bus_a.label(), bus_b.label(), bus_c.label()]
     );
-    assert_eq!(event.inner.inner.lock().event_pending_bus_count, 0);
+    assert_eq!(event._inner_event().inner.lock().event_pending_bus_count, 0);
     bus_a.destroy();
     bus_b.destroy();
     bus_c.destroy();
@@ -230,7 +230,7 @@ fn test_tree_level_hierarchy_bubbling() {
     block_on(child_bus.wait_until_idle(None));
     block_on(parent_bus.wait_until_idle(None));
 
-    let bottom_id = bottom.inner.inner.lock().event_id.clone();
+    let bottom_id = bottom.event_id.clone();
     assert_eq!(
         events_at_subchild.lock().expect("subchild lock").as_slice(),
         std::slice::from_ref(&bottom_id)
@@ -244,7 +244,7 @@ fn test_tree_level_hierarchy_bubbling() {
         std::slice::from_ref(&bottom_id)
     );
     assert_eq!(
-        bottom.inner.inner.lock().event_path,
+        bottom._inner_event().inner.lock().event_path,
         vec![subchild_bus.label(), child_bus.label(), parent_bus.label()]
     );
 
@@ -260,7 +260,7 @@ fn test_tree_level_hierarchy_bubbling() {
     block_on(child_bus.wait_until_idle(None));
     block_on(parent_bus.wait_until_idle(None));
 
-    let middle_id = middle.inner.inner.lock().event_id.clone();
+    let middle_id = middle.event_id.clone();
     assert!(events_at_subchild.lock().expect("subchild lock").is_empty());
     assert_eq!(
         events_at_child.lock().expect("child lock").as_slice(),
@@ -271,7 +271,7 @@ fn test_tree_level_hierarchy_bubbling() {
         std::slice::from_ref(&middle_id)
     );
     assert_eq!(
-        middle.inner.inner.lock().event_path,
+        middle._inner_event().inner.lock().event_path,
         vec![child_bus.label(), parent_bus.label()]
     );
 
@@ -326,7 +326,7 @@ fn test_forwarding_disambiguates_buses_that_share_the_same_name() {
     block_on(bus_a.wait_until_idle(None));
     block_on(bus_b.wait_until_idle(None));
 
-    let event_id = event.inner.inner.lock().event_id.clone();
+    let event_id = event.event_id.clone();
     assert_eq!(
         seen_a.lock().expect("seen_a lock").as_slice(),
         std::slice::from_ref(&event_id)
@@ -337,7 +337,7 @@ fn test_forwarding_disambiguates_buses_that_share_the_same_name() {
     );
     assert_ne!(bus_a.label(), bus_b.label());
     assert_eq!(
-        event.inner.inner.lock().event_path,
+        event._inner_event().inner.lock().event_path,
         vec![bus_a.label(), bus_b.label()]
     );
     bus_a.destroy();
@@ -409,9 +409,9 @@ fn test_await_event_now_waits_for_handlers_on_forwarded_buses() {
     let mut log = completion_log.lock().expect("log lock").clone();
     log.sort();
     assert_eq!(log, vec!["A", "B", "C"]);
-    assert_eq!(event.inner.inner.lock().event_pending_bus_count, 0);
+    assert_eq!(event._inner_event().inner.lock().event_pending_bus_count, 0);
     assert_eq!(
-        event.inner.inner.lock().event_path,
+        event._inner_event().inner.lock().event_path,
         vec![bus_a.label(), bus_b.label(), bus_c.label()]
     );
     bus_a.destroy();
@@ -479,7 +479,7 @@ fn test_circular_forwarding_from_first_peer_does_not_loop() {
     block_on(peer2.wait_until_idle(None));
     block_on(peer3.wait_until_idle(None));
 
-    let event_id = event.inner.inner.lock().event_id.clone();
+    let event_id = event.event_id.clone();
     assert_eq!(
         events_at_peer1.lock().expect("peer1 lock").as_slice(),
         std::slice::from_ref(&event_id)
@@ -493,7 +493,7 @@ fn test_circular_forwarding_from_first_peer_does_not_loop() {
         std::slice::from_ref(&event_id)
     );
     assert_eq!(
-        event.inner.inner.lock().event_path,
+        event._inner_event().inner.lock().event_path,
         vec![peer1.label(), peer2.label(), peer3.label()]
     );
 
@@ -574,7 +574,7 @@ fn test_circular_forwarding_from_middle_peer_does_not_loop() {
     block_on(bus_b.wait_until_idle(None));
     block_on(bus_c.wait_until_idle(None));
 
-    let event_id = event.inner.inner.lock().event_id.clone();
+    let event_id = event.event_id.clone();
     assert_eq!(
         seen_a.lock().expect("seen_a lock").as_slice(),
         std::slice::from_ref(&event_id)
@@ -588,13 +588,10 @@ fn test_circular_forwarding_from_middle_peer_does_not_loop() {
         std::slice::from_ref(&event_id)
     );
     assert_eq!(
-        event.inner.inner.lock().event_path,
+        event._inner_event().inner.lock().event_path,
         vec![bus_b.label(), bus_c.label(), bus_a.label()]
     );
-    assert_eq!(
-        event.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
+    assert_eq!(event.event_status.read(), EventStatus::Completed);
     bus_a.destroy();
     bus_b.destroy();
     bus_c.destroy();
@@ -646,9 +643,9 @@ fn test_await_event_now_waits_when_forwarding_handler_is_async_delayed() {
 
     assert!(*bus_a_done.lock().expect("bus_a_done lock"));
     assert!(*bus_b_done.lock().expect("bus_b_done lock"));
-    assert_eq!(event.inner.inner.lock().event_pending_bus_count, 0);
+    assert_eq!(event._inner_event().inner.lock().event_pending_bus_count, 0);
     assert_eq!(
-        event.inner.inner.lock().event_path,
+        event._inner_event().inner.lock().event_path,
         vec![bus_a.label(), bus_b.label()]
     );
     bus_a.destroy();
@@ -684,9 +681,9 @@ fn test_forwarding_same_event_does_not_set_self_parent_id() {
     block_on(origin.wait_until_idle(None));
     block_on(target.wait_until_idle(None));
 
-    assert_eq!(event.inner.inner.lock().event_parent_id, None);
+    assert_eq!(event.event_parent_id.clone(), None);
     assert_eq!(
-        event.inner.inner.lock().event_path,
+        event._inner_event().inner.lock().event_path,
         vec![origin.label(), target.label()]
     );
     origin.destroy();
@@ -785,8 +782,8 @@ fn test_forwarded_event_uses_processing_bus_defaults() {
                     mode: "inherited".to_string(),
                     ..Default::default()
                 });
-                *inherited_ref.lock().expect("inherited ref") = Some(inherited.inner.clone());
-                bus_b.emit_base(inherited.inner.clone());
+                *inherited_ref.lock().expect("inherited ref") = Some(inherited._inner_event());
+                bus_b.emit(inherited.clone());
                 let _ = inherited.now().await;
                 Ok(json!(null))
             }
@@ -896,7 +893,7 @@ fn test_forwarded_event_preserves_explicit_handler_concurrency_override() {
                 override_event.event_handler_concurrency =
                     Some(EventHandlerConcurrencyMode::Serial);
                 let override_event = bus_a.emit_child(override_event);
-                bus_b.emit_base(override_event.inner.clone());
+                bus_b.emit(override_event.clone());
                 let _ = override_event.now().await;
                 Ok(json!(null))
             }
@@ -1014,9 +1011,9 @@ fn test_proxy_dispatch_auto_links_child_events_like_emit() {
     let _ = block_on(root.now());
     block_on(bus.wait_until_idle(None));
 
-    let root_id = root.inner.inner.lock().event_id.clone();
+    let root_id = root.event_id.clone();
     let child_ids: Vec<String> = root
-        .inner
+        ._inner_event()
         .inner
         .lock()
         .event_results
@@ -1053,7 +1050,8 @@ fn test_proxy_dispatch_of_same_event_does_not_self_parent_or_self_link_child() {
     let _ = block_on(root.now());
     block_on(bus.wait_until_idle(None));
 
-    let inner = root.inner.inner.lock();
+    let base = root._inner_event();
+    let inner = base.inner.lock();
     let child_ids: Vec<String> = inner
         .event_results
         .values()

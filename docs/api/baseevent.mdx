@@ -147,7 +147,9 @@ const value = await completed.eventResult()
 <Tab title="Go">
 
 ```go
-pending := bus.Emit(abxbus.NewBaseEvent("MyEvent", nil))
+type MyEvent struct{}
+
+pending := bus.Emit(abxbus.MustNewTypedEvent[MyEvent]("MyEvent", MyEvent{}))
 completed, err := pending.Now()
 if err != nil {
 	return err
@@ -164,9 +166,6 @@ _ = completedInQueueOrder
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{
-    base_event::{EventResultOptions, EventWaitOptions},
-};
 use futures::executor::block_on;
 
 let pending = bus.emit(MyEvent {
@@ -281,7 +280,7 @@ let items = block_on(event.event_results_list_with_options(EventResultOptions {
     raise_if_none: false,
     ..EventResultOptions::default()
 }))?;
-let by_handler = event.inner.lock().event_results.clone();
+let by_handler = event.event_results.read();
 ```
 
 </Tab>
@@ -457,7 +456,7 @@ println!("{}", serde_json::to_string_pretty(&payload)?);
 //   "...": "..."
 // }
 
-let restored = BaseEvent::from_json_value(payload);
+let restored: CreateUserEvent = serde_json::from_value(payload)?;
 ```
 
 </Tab>
@@ -518,10 +517,19 @@ BaseEvent.extend('InvalidEvent', {
 
 ```go
 timeout := 30.0
-event := abxbus.NewBaseEvent("AllowedEvent", map[string]any{
-	"payload": "ok",
+
+type AllowedEvent struct {
+	Payload      string   `json:"payload"`
+	EventTimeout *float64 `json:"event_timeout,omitempty"`
+}
+
+event, err := abxbus.Event(AllowedEvent{
+	Payload: "ok",
+	EventTimeout: &timeout, // allowed built-in event_* override
 })
-event.EventTimeout = &timeout // allowed built-in event_* override
+if err != nil {
+	return err
+}
 
 // Go payloads are passed as maps or typed structs, so unknown event_* / model_* keys
 // should not be placed in the flattened payload. Use explicit BaseEvent fields instead.
@@ -531,7 +539,7 @@ event.EventTimeout = &timeout // allowed built-in event_* override
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event, BaseEventHandle};
+use abxbus_rust::event;
 
 event! {
     struct AllowedEvent {

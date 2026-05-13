@@ -44,7 +44,7 @@ let event = bus.emit(UserLoginEvent {
 
 block_on(async {
     event.now().await?;
-    println!("{}", event.inner.to_json_value());
+    println!("{}", event.to_json_value());
     Ok::<(), String>(())
 });
 ```
@@ -72,3 +72,5 @@ use abxbus_rust::event_bus::DestroyOptions;
 bus.destroy();
 bus.destroy_with_options(DestroyOptions { clear: false, ..Default::default() });
 ```
+
+`clear: false` still destroys the bus; it only preserves handlers/history for inspection.

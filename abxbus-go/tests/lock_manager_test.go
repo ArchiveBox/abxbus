@@ -19,7 +19,7 @@ func lockManagerUpdateMax(maxActive *atomic.Int32, value int32) {
 }
 
 func registerActiveLockManagerHandler(bus *abxbus.EventBus, eventType string, handlerName string, active *atomic.Int32, maxActive *atomic.Int32) {
-	bus.On(eventType, handlerName, func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On(eventType, handlerName, func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		nowActive := active.Add(1)
 		lockManagerUpdateMax(maxActive, nowActive)
 		time.Sleep(20 * time.Millisecond)
@@ -120,7 +120,7 @@ func TestWaitUntilIdleBehavesCorrectly(t *testing.T) {
 	bus := abxbus.NewEventBus("IdleBus", nil)
 	defer bus.Destroy()
 	var calls atomic.Int32
-	bus.On("Evt", "h", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("Evt", "h", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		calls.Add(1)
 		return "ok", nil
 	}, nil)

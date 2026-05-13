@@ -422,6 +422,36 @@ impl EventBus {
             .and_then(|eventbus_id| Self::live_instance_by_id(&eventbus_id))
     }
 
+    pub fn event_bus_for_event_id(event_id: &str) -> Option<Arc<EventBus>> {
+        if event_id.is_empty() {
+            return None;
+        }
+        if let Some(current_bus_id) = CURRENT_EVENT_ID.with(|current_event_id| {
+            CURRENT_BUS_ID.with(|current_bus_id| {
+                (current_event_id.borrow().as_deref() == Some(event_id))
+                    .then(|| current_bus_id.borrow().clone())
+                    .flatten()
+            })
+        }) {
+            if let Some(bus) = Self::live_instance_by_id(&current_bus_id) {
+                return Some(bus);
+            }
+        }
+
+        Self::live_instances()
+            .into_iter()
+            .find(|bus| bus.runtime.events.lock().contains_key(event_id))
+    }
+
+    pub fn event_for_event_id(event_id: &str) -> Option<Arc<BaseEvent>> {
+        if event_id.is_empty() {
+            return None;
+        }
+        Self::live_instances()
+            .into_iter()
+            .find_map(|bus| bus.runtime.events.lock().get(event_id).cloned())
+    }
+
     pub fn new(name: Option<String>) -> Arc<Self> {
         Self::new_with_options(name, EventBusOptions::default())
     }
@@ -622,7 +652,7 @@ impl EventBus {
                             .inner
                             .lock()
                             .event_concurrency
-                            .unwrap_or(EventConcurrencyMode::BusSerial);
+                            .unwrap_or(bus.event_concurrency);
                         match mode {
                             EventConcurrencyMode::Parallel => {
                                 thread::spawn(move || {
@@ -1557,6 +1587,9 @@ impl EventBus {
             .lock()
             .event_concurrency
             .unwrap_or(self.event_concurrency);
+        if emitted_from_active_handler && event_concurrency != EventConcurrencyMode::Parallel {
+            self.pause_current_handler_queue_jumps();
+        }
         if event_concurrency == EventConcurrencyMode::Parallel {
             self.start_parallel_event_task_from_queue(event.clone());
         }
@@ -1565,6 +1598,28 @@ impl EventBus {
             self.runtime.queue_notify.notify(1);
         }
         event
+    }
+
+    fn pause_current_handler_queue_jumps(&self) {
+        let context = CURRENT_EVENT_ID.with(|event_id| {
+            CURRENT_HANDLER_ID
+                .with(|handler_id| Some((event_id.borrow().clone()?, handler_id.borrow().clone()?)))
+        });
+        let Some((current_event_id, current_handler_id)) = context else {
+            return;
+        };
+        for bus in Self::live_instances() {
+            let Some(parent_event) = bus.runtime.events.lock().get(&current_event_id).cloned()
+            else {
+                continue;
+            };
+            let mut parent_inner = parent_event.inner.lock();
+            let Some(result) = parent_inner.event_results.get_mut(&current_handler_id) else {
+                continue;
+            };
+            result.ensure_queue_jump_pause(self.locks.clone());
+            break;
+        }
     }
 
     pub fn queue_jump_if_waited(event: Arc<BaseEvent>) {
@@ -3121,8 +3176,10 @@ impl EventBus {
             .cloned()
             .expect("missing result row");
         if current.status != EventResultStatus::Started {
+            current.release_queue_jump_pauses();
             return false;
         }
+        current.release_queue_jump_pauses();
 
         match call_result {
             Ok(Ok(value)) => match event.validate_result_value(value) {

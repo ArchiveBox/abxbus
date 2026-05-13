@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use futures::future::{select, Either, FutureExt};
 use futures_timer::Delay;
+use parking_lot::Mutex;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Value};
 
@@ -9,6 +10,7 @@ use crate::{
     base_event::{now_iso, BaseEvent},
     event_handler::EventHandler,
     id::uuid_v7_string,
+    lock_manager::{LockManager, OwnedRunloopPauseGuard},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +34,7 @@ pub struct EventResult {
     pub error: Option<String>,
     pub completed_at: Option<String>,
     pub event_children: Vec<String>,
+    queue_jump_pause_releases: Arc<Mutex<Vec<OwnedRunloopPauseGuard>>>,
 }
 
 impl Serialize for EventResult {
@@ -118,6 +121,7 @@ impl<'de> Deserialize<'de> for EventResult {
                 error: nested.error,
                 completed_at: nested.completed_at,
                 event_children: nested.event_children,
+                queue_jump_pause_releases: Arc::new(Mutex::new(Vec::new())),
             });
         }
 
@@ -139,7 +143,27 @@ impl EventResult {
             error: None,
             completed_at: None,
             event_children: vec![],
+            queue_jump_pause_releases: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    pub fn ensure_queue_jump_pause(&self, locks: Arc<LockManager>) {
+        let mut releases = self.queue_jump_pause_releases.lock();
+        if releases
+            .iter()
+            .any(|release| release.is_for_manager(&locks))
+        {
+            return;
+        }
+        releases.push(locks.request_owned_runloop_pause());
+    }
+
+    pub fn release_queue_jump_pauses(&self) {
+        let mut releases = self.queue_jump_pause_releases.lock();
+        for release in releases.iter_mut() {
+            release.release();
+        }
+        releases.clear();
     }
 
     pub fn construct_pending_handler_result(
@@ -219,6 +243,7 @@ impl EventResult {
                     self.status = EventResultStatus::Error;
                     self.error = Some(error.clone());
                     self.completed_at = Some(now_iso());
+                    self.release_queue_jump_pauses();
                     return Err(error);
                 }
             }
@@ -227,6 +252,7 @@ impl EventResult {
         };
 
         self.completed_at = Some(now_iso());
+        self.release_queue_jump_pauses();
         match call_result {
             Ok(value) => match event.validate_result_value(value) {
                 Ok(value) => {
@@ -475,6 +501,7 @@ impl EventResult {
                 .and_then(Value::as_str)
                 .map(ToString::to_string),
             event_children,
+            queue_jump_pause_releases: Arc::new(Mutex::new(Vec::new())),
         })
     }
 }

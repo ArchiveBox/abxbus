@@ -57,9 +57,8 @@ for _, entry := range event.EventResults {
 
 ```rust
 let entry = event
-    .inner
-    .lock()
     .event_results
+    .read()
     .values()
     .next()
     .cloned()
@@ -70,51 +69,16 @@ let value = entry.result.clone();
 </Tab>
 </Tabs>
 
-## Scope stack ordering
+## Lifecycle
 
-`EventResult` execution is intentionally layered as nested scopes/wrappers.
+Every handler entry follows the same public lifecycle in each runtime:
 
-These are flow references for execution order, not public API method documentation.
+1. `pending`: the event has accepted the handler result slot, but the handler has not started.
+2. `started`: the handler callable is running.
+3. `completed`: the handler returned a valid value or `None` / `null` / `nil`.
+4. `error`: the handler raised, returned an invalid value, timed out, or was cancelled/aborted by completion policy.
 
-<Tabs>
-<Tab title="Python">
-
-- `eventbus.locks._run_with_handler_lock(...)`
-- `eventbus._run_with_handler_dispatch_context(...)`
-- `event_result._run_with_timeout(...)`
-- `_run_with_slow_monitor(...)`
-- `event_result._call_handler(...)`
-
-</Tab>
-<Tab title="TypeScript">
-
-- `_runWithHandlerLock(...)` (acquired before `runHandler(...)`)
-- `_runWithHandlerDispatchContext(...)`
-- `_runWithAsyncContext(...)`
-- `_runWithTimeout(...)`
-- `_runWithSlowMonitor(...)`
-- `_runWithAbortMonitor(...)` around handler invocation
-
-</Tab>
-<Tab title="Go">
-
-- event-lock acquisition in `EventBus.processEvent(...)` via `LockManager.getLockForEvent(...)` and `AsyncLock.Acquire(...)`
-- `mergeHandlerContext(...)` for dispatch context values
-- `runWithTimeout(...)`
-- slow-handler timer setup in `EventBus.processEvent(...)`
-- `EventHandler.Handle(...)`
-
-</Tab>
-<Tab title="Rust">
-
-- event-lock acquisition in `EventBus::process_event(...)` via the global or bus serial lock
-- `run_handler_with_context(...)` for dispatch context values
-- `run_handler(...)`
-- handler timeout resolution with event timeout capping
-- slow-handler checks after callable completion
-
-</Tab>
-</Tabs>
+Use `event.event_results` for the per-handler mapping and `event_result()` / `eventResult()` / `EventResult()` / `event_result().await` when you only need the first typed raw result value.
 
 ## Serialization
 

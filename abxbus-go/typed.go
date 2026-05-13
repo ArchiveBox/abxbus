@@ -205,15 +205,26 @@ func MustNewTypedEventWithResult[TPayload any, TResult any](eventType string, pa
 	return event
 }
 
-func OnTyped[TPayload any, TResult any](
+type TypedEventHandler[TPayload any, TResult any] interface {
+	~func(TPayload) (TResult, error) |
+		~func(TPayload, context.Context) (TResult, error) |
+		~func(TPayload) TResult |
+		~func(TPayload, context.Context) TResult |
+		~func(TPayload) error |
+		~func(TPayload, context.Context) error |
+		~func(TPayload) |
+		~func(TPayload, context.Context)
+}
+
+func OnTyped[TPayload any, TResult any, THandler TypedEventHandler[TPayload, TResult]](
 	bus *EventBus,
 	eventPattern string,
 	handlerName string,
-	handler func(context.Context, TPayload) (TResult, error),
+	handler THandler,
 	options *EventHandler,
 ) *EventHandler {
 	payloadSchema := JSONSchemaFor[TPayload]()
-	return bus.On(eventPattern, handlerName, func(ctx context.Context, event *BaseEvent) (any, error) {
+	return bus.On(eventPattern, handlerName, func(event *BaseEvent, ctx context.Context) (any, error) {
 		if err := jsonschema.Validate(payloadSchema, event.Payload); err != nil {
 			var zero TResult
 			return zero, fmt.Errorf("EventHandlerPayloadSchemaError: Event payload did not match declared handler payload type: %w", err)
@@ -223,8 +234,99 @@ func OnTyped[TPayload any, TResult any](
 			var zero TResult
 			return zero, err
 		}
-		return handler(ctx, payload)
+		switch typed := any(handler).(type) {
+		case func(TPayload) (TResult, error):
+			return typed(payload)
+		case func(TPayload, context.Context) (TResult, error):
+			return typed(payload, ctx)
+		case func(TPayload) TResult:
+			return typed(payload), nil
+		case func(TPayload, context.Context) TResult:
+			return typed(payload, ctx), nil
+		case func(TPayload) error:
+			var zero TResult
+			return zero, typed(payload)
+		case func(TPayload, context.Context) error:
+			var zero TResult
+			return zero, typed(payload, ctx)
+		case func(TPayload):
+			typed(payload)
+			var zero TResult
+			return zero, nil
+		case func(TPayload, context.Context):
+			typed(payload, ctx)
+			var zero TResult
+			return zero, nil
+		default:
+			value := reflect.ValueOf(handler)
+			var zero TResult
+			if !value.IsValid() || value.Kind() != reflect.Func || value.IsNil() {
+				return zero, fmt.Errorf("unsupported typed handler signature: %T", handler)
+			}
+			handlerType := value.Type()
+			if handlerType.NumIn() != 1 && handlerType.NumIn() != 2 {
+				return zero, fmt.Errorf("unsupported typed handler signature: %T", handler)
+			}
+			payloadValue, ok := reflectValueForTypedPayload(payload, handlerType.In(0))
+			if !ok {
+				return zero, fmt.Errorf("unsupported typed handler signature: %T", handler)
+			}
+			withContext := handlerType.NumIn() == 2
+			if withContext && handlerType.In(1) != contextInterfaceType {
+				return zero, fmt.Errorf("unsupported typed handler signature: %T", handler)
+			}
+			if handlerType.NumOut() > 2 {
+				return zero, fmt.Errorf("unsupported typed handler signature: %T", handler)
+			}
+			args := []reflect.Value{payloadValue}
+			if withContext {
+				args = append(args, reflect.ValueOf(ctx))
+			}
+			results := value.Call(args)
+			switch len(results) {
+			case 0:
+				return zero, nil
+			case 1:
+				if results[0].Type().Implements(errorInterfaceType) {
+					if reflectValueIsNil(results[0]) {
+						return zero, nil
+					}
+					return zero, results[0].Interface().(error)
+				}
+				typedResult, ok := results[0].Interface().(TResult)
+				if !ok {
+					return zero, fmt.Errorf("unsupported typed handler signature: %T", handler)
+				}
+				return typedResult, nil
+			default:
+				if !results[1].Type().Implements(errorInterfaceType) {
+					return zero, fmt.Errorf("unsupported typed handler signature: %T", handler)
+				}
+				var err error
+				if !reflectValueIsNil(results[1]) {
+					err = results[1].Interface().(error)
+				}
+				typedResult, ok := results[0].Interface().(TResult)
+				if !ok {
+					return zero, fmt.Errorf("unsupported typed handler signature: %T", handler)
+				}
+				return typedResult, err
+			}
+		}
 	}, options)
+}
+
+func reflectValueForTypedPayload(payload any, targetType reflect.Type) (reflect.Value, bool) {
+	payloadValue := reflect.ValueOf(payload)
+	if payloadValue.IsValid() {
+		return payloadValue, payloadValue.Type().AssignableTo(targetType)
+	}
+	switch targetType.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflect.Zero(targetType), true
+	default:
+		return reflect.Value{}, false
+	}
 }
 
 func EventPayloadAs[T any](event *BaseEvent) (T, error) {

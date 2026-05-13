@@ -21,7 +21,7 @@ use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct EmptyResult {}
 
 event! {
@@ -63,7 +63,7 @@ fn panic_message(result: std::thread::Result<()>) -> String {
 
 event! {
     struct UserActionEvent {
-        event_result_type: EmptyResult,
+        event_result_type: Value,
         event_type: "UserActionEvent",
     }
 }
@@ -407,8 +407,7 @@ fn test_auto_start_and_destroy() {
     let event = bus.emit(UserActionEvent {
         ..Default::default()
     });
-    block_on(event.inner.now_with_options(EventWaitOptions::default()))
-        .expect("now should complete");
+    block_on(event.now_with_options(EventWaitOptions::default())).expect("now should complete");
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
     assert!(bus.is_running_for_test());
 
@@ -428,8 +427,7 @@ fn test_wait_until_idle_recovers_when_idle_flag_was_cleared() {
     let event = bus.emit(UserActionEvent {
         ..Default::default()
     });
-    block_on(event.inner.now_with_options(EventWaitOptions::default()))
-        .expect("now should complete");
+    block_on(event.now_with_options(EventWaitOptions::default())).expect("now should complete");
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
 
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
@@ -474,7 +472,7 @@ fn test_destroy_clear_false_preserves_handlers_and_history_resolves_waiters_and_
     let first = bus.emit(UserActionEvent {
         ..Default::default()
     });
-    block_on(first.inner.now()).expect("first event should complete");
+    block_on(first.now()).expect("first event should complete");
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(bus.event_history_size(), 1);
 
@@ -587,7 +585,7 @@ fn test_destroy_default_clear_is_terminal_and_frees_bus_state() {
     let event = bus.emit(UserActionEvent {
         ..Default::default()
     });
-    block_on(event.inner.now()).expect("event should complete before destroy");
+    block_on(event.now()).expect("event should complete before destroy");
     assert_eq!(bus.event_history_size(), 1);
     assert!(!bus.runtime_payload_for_test().is_empty());
 
@@ -666,7 +664,7 @@ fn test_destroying_one_bus_does_not_break_shared_handlers_or_forward_targets() {
     let forwarded = source.emit(UserActionEvent {
         ..Default::default()
     });
-    block_on(forwarded.inner.now()).expect("forwarded event should complete");
+    block_on(forwarded.now()).expect("forwarded event should complete");
     assert_eq!(seen.load(Ordering::SeqCst), 2);
 
     source.destroy();
@@ -674,7 +672,7 @@ fn test_destroying_one_bus_does_not_break_shared_handlers_or_forward_targets() {
     let independent_event = target.emit(UserActionEvent {
         ..Default::default()
     });
-    block_on(independent_event.inner.now()).expect("target bus should still run");
+    block_on(independent_event.now()).expect("target bus should still run");
     assert_eq!(target.event_history_size(), 2);
     assert_eq!(seen.load(Ordering::SeqCst), 3);
 
@@ -1186,7 +1184,7 @@ fn test_wait_for_result() {
             "wait_done".to_string()
         ]
     );
-    assert!(event.inner.inner.lock().event_completed_at.is_some());
+    assert!(event.event_completed_at.read().is_some());
     bus.destroy();
 }
 
@@ -1215,7 +1213,7 @@ fn test_error_handling() {
         ..Default::default()
     });
     let _ = block_on(event.now());
-    let event_results = event.inner.inner.lock().event_results.clone();
+    let event_results = event.event_results.read();
 
     let failing_result = event_results
         .values()
@@ -1261,12 +1259,8 @@ fn test_event_result_raises_exception_group_when_multiple_handlers_fail() {
     });
     let _ = block_on(event.now());
 
-    let error = block_on(
-        event
-            .inner
-            .event_result_with_options(EventResultOptions::default()),
-    )
-    .expect_err("multiple handler errors should be raised");
+    let error = block_on(event.event_result_with_options(EventResultOptions::default()))
+        .expect_err("multiple handler errors should be raised");
     assert!(error.contains("2 handler error(s)"), "{error}");
     assert!(error.contains("ValueError: first failure"), "{error}");
     assert!(error.contains("RuntimeError: second failure"), "{error}");
@@ -1286,12 +1280,8 @@ fn test_event_result_single_handler_error_raises_original_exception() {
     });
     let _ = block_on(event.now());
 
-    let error = block_on(
-        event
-            .inner
-            .event_result_with_options(EventResultOptions::default()),
-    )
-    .expect_err("single handler error should be raised");
+    let error = block_on(event.event_result_with_options(EventResultOptions::default()))
+        .expect_err("single handler error should be raised");
     assert_eq!(error, "ValueError: single failure");
     bus.destroy();
 }
@@ -1308,19 +1298,14 @@ fn test_event_result_raise_if_any_options() {
         ..Default::default()
     });
 
-    block_on(event.inner.now_with_options(EventWaitOptions::default()))
-        .expect("now should complete");
-    let error = match block_on(
-        event
-            .inner
-            .event_result_with_options(EventResultOptions::default()),
-    ) {
+    block_on(event.now_with_options(EventWaitOptions::default())).expect("now should complete");
+    let error = match block_on(event.event_result_with_options(EventResultOptions::default())) {
         Ok(_) => panic!("event_result should raise handler errors by default"),
         Err(error) => error,
     };
     assert_eq!(error, "ValueError: handler failure");
 
-    block_on(event.inner.event_result_with_options(EventResultOptions {
+    block_on(event.event_result_with_options(EventResultOptions {
         raise_if_any: false,
         raise_if_none: false,
         include: None,
@@ -1582,7 +1567,7 @@ fn test_emit_alias_dispatches_event() {
     let event = bus.emit(UserActionEvent {
         ..Default::default()
     });
-    let event_id = event.inner.inner.lock().event_id.clone();
+    let event_id = event.event_id.clone();
     let _ = block_on(event.now());
 
     assert_eq!(
@@ -1592,11 +1577,8 @@ fn test_emit_alias_dispatches_event() {
             .as_slice(),
         std::slice::from_ref(&event_id)
     );
-    assert_eq!(
-        event.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
-    assert!(event.inner.inner.lock().event_path.contains(&bus.label()));
+    assert_eq!(event.event_status.read(), EventStatus::Completed);
+    assert!(event.event_path.read().contains(&bus.label()));
     bus.destroy();
 }
 
@@ -1682,7 +1664,7 @@ fn test_event_subclass_type() {
     };
 
     let result = bus.emit(event);
-    assert_eq!(result.inner.inner.lock().event_type, "CreateAgentTaskEvent");
+    assert_eq!(result.event_type, "CreateAgentTaskEvent");
     let _ = block_on(result.now());
     bus.destroy();
 }
@@ -1703,11 +1685,8 @@ fn test_event_type_and_version_identity_fields() {
         ..Default::default()
     };
     let emitted = bus.emit(task);
-    assert_eq!(
-        emitted.inner.inner.lock().event_type,
-        "CreateAgentTaskEvent"
-    );
-    assert_eq!(emitted.inner.inner.lock().event_version, "0.0.1");
+    assert_eq!(emitted.event_type, "CreateAgentTaskEvent");
+    assert_eq!(emitted.event_version, "0.0.1");
     let _ = block_on(emitted.now());
     bus.destroy();
 }
@@ -1723,7 +1702,7 @@ fn test_event_version_defaults_and_overrides() {
         data: "x".to_string(),
         ..Default::default()
     });
-    assert_eq!(class_default.inner.inner.lock().event_version, "1.2.3");
+    assert_eq!(class_default.event_version, "1.2.3");
 
     let mut runtime_override = VersionedEvent {
         data: "x".to_string(),
@@ -1731,16 +1710,16 @@ fn test_event_version_defaults_and_overrides() {
     };
     runtime_override.event_version = "9.9.9".to_string();
     let runtime_override = bus.emit(runtime_override);
-    assert_eq!(runtime_override.inner.inner.lock().event_version, "9.9.9");
+    assert_eq!(runtime_override.event_version, "9.9.9");
 
     let dispatched = bus.emit(VersionedEvent {
         data: "queued".to_string(),
         ..Default::default()
     });
-    assert_eq!(dispatched.inner.inner.lock().event_version, "1.2.3");
+    assert_eq!(dispatched.event_version, "1.2.3");
     let _ = block_on(dispatched.now());
 
-    let restored = BaseEvent::from_json_value(dispatched.inner.to_json_value());
+    let restored = BaseEvent::from_json_value(dispatched.to_json_value());
     assert_eq!(restored.inner.lock().event_version, "1.2.3");
     assert_eq!(restored.inner.lock().event_type, "VersionedEvent");
     assert_eq!(restored.inner.lock().payload["data"], json!("queued"));
@@ -1845,7 +1824,7 @@ fn test_explicit_event_type_override() {
         ..Default::default()
     };
     let event = bus.emit(event);
-    assert_eq!(event.inner.inner.lock().event_type, "CustomEventType");
+    assert_eq!(event.event_type, "CustomEventType");
     let _ = block_on(event.now());
 
     assert_eq!(
@@ -1900,7 +1879,7 @@ fn test_multiple_handlers_parallel() {
     );
     assert_eq!(starts.lock().expect("starts lock").len(), 2);
     assert_eq!(ends.lock().expect("ends lock").len(), 2);
-    let event_results = event.inner.inner.lock().event_results.clone();
+    let event_results = event.event_results.read();
     assert!(event_results.values().any(|result| {
         result.handler.handler_name == "slow_handler_1"
             && result.result == Some(json!("slow_handler_1"))
@@ -2244,12 +2223,9 @@ fn test_dispatch_returns_event_results() {
         ..Default::default()
     });
     let _ = block_on(event.now());
-    let all_results = block_on(
-        event
-            .inner
-            .event_results_list_with_options(EventResultOptions::default()),
-    )
-    .expect("event results list");
+    let all_results =
+        block_on(event.event_results_list_with_options(EventResultOptions::default()))
+            .expect("event results list");
 
     assert_eq!(all_results, vec![json!({"result": "test_result"})]);
 
@@ -3168,9 +3144,10 @@ fn test_base_event_to_json_from_json_roundtrips_runtime_fields_and_event_results
     });
     let _ = block_on(event.now());
 
-    let serialized = event.inner.to_json_value();
+    let serialized = event.to_json_value();
+    let base = event._inner_event();
     assert_eq!(
-        serde_json::to_value(&*event.inner).expect("base event serde"),
+        serde_json::to_value(&*base).expect("base event serde"),
         serialized
     );
     assert_eq!(
@@ -3187,7 +3164,7 @@ fn test_base_event_to_json_from_json_roundtrips_runtime_fields_and_event_results
     let json_results = serialized["event_results"].as_object().expect("object");
     assert_eq!(json_results.len(), 1);
     let handler_id = event
-        .inner
+        ._inner_event()
         .inner
         .lock()
         .event_results
@@ -3314,7 +3291,7 @@ fn test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() {
         json!([handler.id.clone()])
     );
 
-    let event_id = event.inner.inner.lock().event_id.clone();
+    let event_id = event.event_id.clone();
     let event_history = payload["event_history"].as_object().expect("history");
     assert_eq!(event_history.keys().cloned().collect::<BTreeSet<_>>(), {
         let mut keys = BTreeSet::new();
@@ -3404,8 +3381,8 @@ fn test_eventbus_model_dump_promotes_pending_events_into_event_history() {
         ..Default::default()
     });
 
-    let first_id = first.inner.inner.lock().event_id.clone();
-    let second_id = second.inner.inner.lock().event_id.clone();
+    let first_id = first.event_id.clone();
+    let second_id = second.event_id.clone();
     let payload = bus.to_json_value();
     let event_history = payload["event_history"].as_object().expect("history");
     assert!(event_history.contains_key(&first_id));
@@ -3690,10 +3667,7 @@ fn test_base_event_lifecycle_methods_are_callable_and_preserve_lifecycle_behavio
         ..Default::default()
     });
     let _ = block_on(dispatched.now());
-    assert_eq!(
-        dispatched.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
+    assert_eq!(dispatched.event_status.read(), EventStatus::Completed);
     bus.destroy();
 }
 
@@ -3720,7 +3694,7 @@ fn test_emit_and_handler_result() {
     });
     let _ = block_on(event.now());
 
-    let results = event.inner.inner.lock().event_results.clone();
+    let results = event.event_results.read();
     assert_eq!(results.len(), 1);
     let first = results.values().next().expect("missing first result");
     assert_eq!(first.result, Some(json!("ok")));
@@ -3748,7 +3722,7 @@ fn test_parallel_handler_concurrency() {
     };
     let emitted = bus.emit(event);
     let _ = block_on(emitted.now());
-    assert_eq!(emitted.inner.inner.lock().event_results.len(), 2);
+    assert_eq!(emitted.event_results.read().len(), 2);
     bus.destroy();
 }
 
@@ -3804,10 +3778,7 @@ mod folded_test_event_history_store {
 // Folded from test_eventbus_edge_cases.rs to keep test layout class-based.
 mod folded_test_eventbus_edge_cases {
     use abxbus_rust::event;
-    use abxbus_rust::{
-        event_bus::EventBus, event_result::EventResultStatus, typed::BaseEventHandle,
-        types::EventStatus,
-    };
+    use abxbus_rust::{event_bus::EventBus, event_result::EventResultStatus, types::EventStatus};
     use futures::executor::block_on;
     use serde::{Deserialize, Serialize};
     use serde_json::json;
@@ -3901,22 +3872,18 @@ mod folded_test_eventbus_edge_cases {
             ..Default::default()
         });
         let _ = block_on(completed.now());
-        assert_eq!(
-            completed.inner.inner.lock().event_status,
-            EventStatus::Completed
-        );
-        assert_eq!(completed.inner.inner.lock().event_results.len(), 1);
+        assert_eq!(completed.event_status.read(), EventStatus::Completed);
+        assert_eq!(completed.event_results.read().len(), 1);
 
-        let fresh =
-            BaseEventHandle::<ResetCoverageEvent>::from_base_event(completed.inner.event_reset());
+        let fresh = completed.event_reset();
         assert_ne!(
-            fresh.inner.inner.lock().event_id,
-            completed.inner.inner.lock().event_id
+            fresh._inner_event().inner.lock().event_id,
+            completed._inner_event().inner.lock().event_id
         );
-        assert_eq!(fresh.inner.inner.lock().event_status, EventStatus::Pending);
-        assert!(fresh.inner.inner.lock().event_started_at.is_none());
-        assert!(fresh.inner.inner.lock().event_completed_at.is_none());
-        assert_eq!(fresh.inner.inner.lock().event_results.len(), 0);
+        assert_eq!(fresh.event_status.read(), EventStatus::Pending);
+        assert!(fresh.event_started_at.read().is_none());
+        assert!(fresh.event_completed_at.read().is_none());
+        assert_eq!(fresh.event_results.read().len(), 0);
 
         let forwarded = bus_b.emit(fresh);
         let _ = block_on(forwarded.now());
@@ -3929,7 +3896,7 @@ mod folded_test_eventbus_edge_cases {
             seen_b.lock().expect("seen_b lock").as_slice(),
             &["hello".to_string()]
         );
-        let event_path = forwarded.inner.inner.lock().event_path.clone();
+        let event_path = forwarded.event_path.read();
         assert!(event_path
             .iter()
             .any(|path| path.starts_with("ResetCoverageBusA#")));
@@ -3973,18 +3940,12 @@ mod folded_test_eventbus_edge_cases {
         let elapsed = start.elapsed();
         assert!(!idle);
         assert!(elapsed < Duration::from_millis(500));
-        assert_ne!(
-            pending.inner.inner.lock().event_status,
-            EventStatus::Completed
-        );
+        assert_ne!(pending.event_status.read(), EventStatus::Completed);
 
         release_tx.send(()).expect("release handler");
         let _ = block_on(pending.now());
         assert!(block_on(bus.wait_until_idle(Some(1.0))));
-        assert_eq!(
-            pending.inner.inner.lock().event_status,
-            EventStatus::Completed
-        );
+        assert_eq!(pending.event_status.read(), EventStatus::Completed);
         bus.destroy();
     }
 
@@ -4033,10 +3994,7 @@ mod folded_test_eventbus_edge_cases {
             ..Default::default()
         });
         let _ = block_on(event.now());
-        assert_eq!(
-            event.inner.inner.lock().event_status,
-            EventStatus::Completed
-        );
+        assert_eq!(event.event_status.read(), EventStatus::Completed);
         replacement.destroy();
     }
 
@@ -4049,7 +4007,8 @@ mod folded_test_eventbus_edge_cases {
 
         let _ = block_on(event.now());
 
-        let inner = event.inner.inner.lock();
+        let base = event._inner_event();
+        let inner = base.inner.lock();
         assert_eq!(inner.event_results.len(), 0);
         assert_eq!(inner.event_pending_bus_count, 0);
         assert!(inner.event_started_at.is_some());
@@ -4068,7 +4027,7 @@ mod folded_test_eventbus_edge_cases {
 
         let _ = block_on(event.now());
 
-        let results = event.inner.inner.lock().event_results.clone();
+        let results = event.event_results.read();
         assert_eq!(results.len(), 1);
         let only = results.values().next().expect("missing result");
         assert_eq!(only.result, Some(json!("all")));
@@ -4089,7 +4048,7 @@ mod folded_test_eventbus_edge_cases {
 
         let _ = block_on(event.now());
 
-        let results = event.inner.inner.lock().event_results.clone();
+        let results = event.event_results.read();
         assert_eq!(results.len(), 1);
         let only = results.values().next().expect("missing result");
         assert_eq!(only.status, EventResultStatus::Error);

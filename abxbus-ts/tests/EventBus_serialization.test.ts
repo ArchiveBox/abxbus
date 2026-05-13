@@ -29,7 +29,7 @@ test('EventBus toJSON/fromJSON roundtrip uses id-keyed structures', async () => 
   })
 
   const release_pause = bus.locks._requestRunloopPause()
-  const pending_event = bus.emit(SerializableEvent({ event_timeout: 11 }))
+  const pending_event = bus.emit(SerializableEvent({ event_timeout: 11, event_concurrency: 'bus-serial' } as any))
   await Promise.resolve()
 
   const json = bus.toJSON()

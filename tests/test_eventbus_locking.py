@@ -88,6 +88,63 @@ async def test_event_concurrency_global_serial_allows_only_one_inflight_across_b
 
 
 @pytest.mark.asyncio
+async def test_global_serial_awaited_child_jumps_ahead_of_queued_events_across_buses() -> None:
+    class ParentEvent(BaseEvent[str]):
+        pass
+
+    class ChildEvent(BaseEvent[str]):
+        pass
+
+    class QueuedEvent(BaseEvent[str]):
+        pass
+
+    bus_a = EventBus(name='GlobalSerialParent', event_concurrency='global-serial')
+    bus_b = EventBus(name='GlobalSerialChild', event_concurrency='global-serial')
+    order: list[str] = []
+
+    async def child_handler(_: ChildEvent) -> str:
+        order.append('child_start')
+        await asyncio.sleep(0.005)
+        order.append('child_end')
+        return 'child'
+
+    async def queued_handler(_: QueuedEvent) -> str:
+        order.append('queued_start')
+        await asyncio.sleep(0.001)
+        order.append('queued_end')
+        return 'queued'
+
+    async def parent_handler(event: ParentEvent) -> str:
+        order.append('parent_start')
+        bus_b.emit(QueuedEvent())
+        child = event.emit(ChildEvent())
+        bus_b.emit(child)
+        order.append('child_dispatched')
+        await child.now()
+        order.append('child_awaited')
+        order.append('parent_end')
+        return 'parent'
+
+    bus_b.on(ChildEvent, child_handler)
+    bus_b.on(QueuedEvent, queued_handler)
+    bus_a.on(ParentEvent, parent_handler)
+
+    try:
+        parent = bus_a.emit(ParentEvent())
+        await parent.now()
+        await bus_b.wait_until_idle(timeout=2.0)
+
+        child_start_idx = order.index('child_start')
+        child_end_idx = order.index('child_end')
+        queued_start_idx = order.index('queued_start')
+        assert child_start_idx < queued_start_idx
+        assert child_end_idx < queued_start_idx
+    finally:
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
+
+
+@pytest.mark.asyncio
 async def test_event_concurrency_bus_serial_serializes_per_bus_but_overlaps_across_buses() -> None:
     bus_a = EventBus(name='BusSerialA', event_concurrency='bus-serial')
     bus_b = EventBus(name='BusSerialB', event_concurrency='bus-serial')

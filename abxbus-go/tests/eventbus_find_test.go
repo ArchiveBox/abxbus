@@ -294,7 +294,7 @@ func TestFindCanSeeInProgressEventInHistory(t *testing.T) {
 	bus := abxbus.NewEventBus("FindInProgressBus", nil)
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
-	bus.On("SlowFindEvent", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("SlowFindEvent", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		started <- struct{}{}
 		<-release
 		return "ok", nil
@@ -329,7 +329,7 @@ func TestFindFutureIgnoresAlreadyDispatchedInFlightEventsWhenPastFalse(t *testin
 	t.Cleanup(bus.Destroy)
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
-	bus.On("FutureInflightEvent", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("FutureInflightEvent", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		started <- struct{}{}
 		select {
 		case <-release:
@@ -365,7 +365,7 @@ func TestFindFutureResolvesOnDispatchBeforeHandlersComplete(t *testing.T) {
 	t.Cleanup(bus.Destroy)
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
-	bus.On("DispatchVisibleEvent", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("DispatchVisibleEvent", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		started <- struct{}{}
 		select {
 		case <-release:
@@ -464,7 +464,7 @@ func TestMultipleConcurrentFutureFindWaitersResolveCorrectEvents(t *testing.T) {
 func TestMaxHistorySizeZeroDisablesPastSearchButFutureFindStillResolves(t *testing.T) {
 	zeroHistorySize := 0
 	bus := abxbus.NewEventBus("FindZeroHistoryBus", &abxbus.EventBusOptions{MaxHistorySize: &zeroHistorySize})
-	bus.On("ZeroHistoryEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ZeroHistoryEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok:" + event.Payload["value"].(string), nil
 	}, nil)
 

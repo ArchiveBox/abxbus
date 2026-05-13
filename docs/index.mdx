@@ -83,7 +83,7 @@ bus.on(SomeEvent, |event: SomeEvent| async move {
 });
 
 let event = bus.emit(SomeEvent { some_data: 132, ..Default::default() });
-block_on(event.now());
+block_on(event.now())?;
 ```
 
 </Tab>
@@ -93,7 +93,6 @@ block_on(event.now());
 package main
 
 import (
-	"context"
 	"fmt"
 
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
@@ -101,7 +100,7 @@ import (
 
 func main() {
 	bus := abxbus.NewEventBus("MyBus", nil)
-	bus.On("SomeEvent", "on_some_event", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("SomeEvent", "on_some_event", func(event *abxbus.BaseEvent) (any, error) {
 		fmt.Println(event.Payload["some_data"])
 		return nil, nil
 	}, nil)

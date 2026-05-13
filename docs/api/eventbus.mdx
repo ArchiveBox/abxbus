@@ -500,103 +500,14 @@ bus.event_is_parent_of(&parent_event, &child_event);
 
 ### Execution pipeline
 
-All runtimes use the same layered model, expressed with runtime-native wrappers.
+All runtimes expose the same public processing contract:
 
-- Event scope lock
-- Event-level timeout and slow monitor
-- Per-handler lock
-- Handler-level timeout and slow monitor
-- Handler execution context scope
-- Error normalization and completion callbacks
-
-<Tabs>
-<Tab title="Python">
-
-```python
-# EventBus.step(...)
-async with self.locks._run_with_event_lock(self, event):
-    await self._process_event(event, timeout=timeout)
-
-# EventBus.process_event(...)
-async with asyncio.timeout(resolved_event_timeout):
-    async with with_slow_monitor(self._create_slow_event_warning_timer(event)):
-        await event._run_handlers(
-            eventbus=self,
-            handlers=self.get_handlers_for_event(event),
-            timeout=resolved_event_timeout,
-        )
-
-# EventResult.run_handler(...)
-async with eventbus.locks._run_with_handler_lock(eventbus, event, event_result):
-    with eventbus._run_with_handler_dispatch_context(event, event_result.handler_id):
-        async with event_result._run_with_timeout(event):
-            async with with_slow_monitor(handler_slow_monitor):
-                await event_result._call_handler(event, handler, dispatch_context)
-```
-
-</Tab>
-<Tab title="TypeScript">
-
-```ts
-// EventBus.processEvent(...)
-await this.locks._runWithEventLock(
-  event,
-  () =>
-    this._runHandlersWithTimeout(event, pending_entries, resolved_event_timeout, () =>
-      _runWithSlowMonitor(event._createSlowEventWarningTimer(), () => scoped_event._runHandlers(pending_entries))
-    ),
-  options
-)
-
-// BaseEvent._runHandlers(...)
-await this.event_bus.locks._runWithHandlerLock(original, this.event_bus.event_handler_concurrency, async (handler_lock) => {
-  await entry.runHandler(handler_lock)
-})
-
-// EventResult.runHandler(...)
-await this.event_bus.locks._runWithHandlerDispatchContext(this, async () => {
-  await _runWithAsyncContext(event._getDispatchContext() ?? null, async () => {
-    const handler_result = await _runWithTimeout(
-      this.handler_timeout,
-      () => this._createHandlerTimeoutError(event),
-      () =>
-        _runWithSlowMonitor(slow_handler_warning_timer, () =>
-          _runWithAbortMonitor(() => this.handler.handler(handler_event), abort_signal)
-        )
-    )
-    this._finalizeHandlerResult(event, handler_result)
-  })
-})
-```
-
-</Tab>
-<Tab title="Go">
-
-```go
-// EventBus.processEvent(...)
-err := runWithTimeout(ctx, resolvedEventTimeout, timeoutError, func(ctx context.Context) error {
-	return event.runHandlers(ctx, bus, handlers, pendingEntries, signalFirstHandlerStarted)
-})
-
-// BaseEvent.runHandlers(...)
-for i, handler := range handlers {
-	if err := runSingleHandler(ctx, bus, event, handler, results[i], signalFirstHandlerStarted); err != nil {
-		return err
-	}
-}
-
-// runSingleHandler(...)
-result.markStarted()
-err := runWithTimeout(ctx, resolvedHandlerTimeout, handlerTimeoutError, func(ctx context.Context) error {
-	return bus.locks.runWithHandlerDispatchContext(result, func() error {
-		returnValue, err = handler.Handle(ctx, event)
-		return err
-	})
-})
-```
-
-</Tab>
-</Tabs>
+- `emit(...)` accepts the event, records it in bus history, and queues it for processing.
+- `find(...)` can observe accepted events before handlers finish.
+- Event-level timeout and slow-warning settings apply to the whole event.
+- Handler-level timeout and slow-warning settings apply to each handler.
+- `event_concurrency`, `event_handler_concurrency`, and `event_handler_completion` choose queueing and completion behavior.
+- Handler return values and errors are stored in `event_results`; use the result helpers to retrieve typed raw values.
 
 ### Serialization and teardown
 
@@ -638,8 +549,8 @@ bus.emit(ResumeTickEvent())
 await bus.wait_until_idle()
 
 # 5) Teardown when done
-await bus.destroy(timeout=1.0)       # wait up to 1sec, then clear by default
-await bus.destroy(clear=False)       # preserve handlers/history if you need to resume
+await bus.destroy()                  # destroy immediately and clear by default
+await bus.destroy(clear=False)       # preserve handlers/history if you need to inspect
 ```
 
 </Tab>
@@ -677,14 +588,16 @@ bus.emit(ResumeTickEvent({}))
 await bus.waitUntilIdle()
 
 // 5) Teardown when done
-await bus.destroy({ timeout: 1, clear: true })
+await bus.destroy({ clear: true })
 ```
 
 </Tab>
 <Tab title="Go">
 
 ```go
-resumeTick := abxbus.NewBaseEvent("ResumeTickEvent", nil)
+type ResumeTickEvent struct{}
+
+resumeTick := abxbus.MustNewTypedEvent[ResumeTickEvent]("ResumeTickEvent", ResumeTickEvent{})
 
 // 1) Serialize full bus state
 payload, err := bus.ToJSON()
@@ -711,11 +624,56 @@ bus.On("UserUpdatedEvent", "onUserUpdated", onUserUpdated, bus.Handlers["018h...
 
 // 4) Resume processing
 bus.Emit(resumeTick)
-timeout := 1.0
-bus.WaitUntilIdle(&timeout)
+bus.WaitUntilIdle(nil)
 
 // 5) Teardown when done
-bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Timeout: 1.0, Clear: true})
+bus.Destroy()
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::{event, event_bus::EventBus};
+use futures::executor::block_on;
+use serde_json::json;
+
+event! { struct ResumeTickEvent { event_result_type: serde_json::Value } }
+event! { struct UserCreatedEvent { event_result_type: serde_json::Value } }
+event! { struct UserDeletedEvent { event_result_type: serde_json::Value } }
+event! { struct UserUpdatedEvent { event_result_type: serde_json::Value } }
+
+let resume_tick = ResumeTickEvent { ..Default::default() };
+
+// 1) Serialize full bus state
+let payload = bus.to_json_value();
+println!("{}", serde_json::to_string_pretty(&payload).unwrap());
+// {
+//   "id": "018f...",
+//   "name": "SerializableBus",
+//   "handlers": {
+//     "018f...": {"id": "018f...", "handler_name": "on_user_created", "event_pattern": "UserCreatedEvent"}
+//   },
+//   "event_history": {
+//     "0190...": {"event_id": "0190...", "event_type": "UserCreatedEvent", "...": "..."}
+//   },
+//   "pending_event_queue": ["0190..."]
+// }
+
+// 2) Rehydrate state
+let bus = EventBus::from_json_value(payload);
+
+// 3) Re-link runtime callables by handler id/name
+bus.on(UserCreatedEvent, |_event: UserCreatedEvent| async move { Ok(json!("created")) });
+bus.on(UserDeletedEvent, |_event: UserDeletedEvent| async move { Ok(json!("deleted")) });
+bus.on(UserUpdatedEvent, |_event: UserUpdatedEvent| async move { Ok(json!("updated")) });
+
+// 4) Resume processing
+bus.emit(resume_tick);
+assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+// 5) Teardown when done
+bus.destroy();
 ```
 
 </Tab>
@@ -730,7 +688,6 @@ Destroy stops runtime work and optionally clears bus-owned state.
 
 ```python
 await bus.destroy()
-await bus.destroy(timeout=1.0)
 await bus.destroy(clear=False)
 ```
 
@@ -739,8 +696,7 @@ await bus.destroy(clear=False)
 
 ```ts
 await bus.destroy()
-await bus.destroy(1)
-await bus.destroy({ timeout: 1, clear: false })
+await bus.destroy({ clear: false })
 ```
 
 </Tab>
@@ -748,7 +704,6 @@ await bus.destroy({ timeout: 1, clear: false })
 
 ```go
 bus.Destroy()
-bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Timeout: 1.0})
 bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Clear: false})
 ```
 
@@ -759,7 +714,6 @@ bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Clear: false})
 use abxbus_rust::event_bus::DestroyOptions;
 
 bus.destroy();
-bus.destroy_with_options(DestroyOptions { timeout: Some(1.0), ..Default::default() });
 bus.destroy_with_options(DestroyOptions { clear: false, ..Default::default() });
 ```
 
@@ -768,7 +722,7 @@ bus.destroy_with_options(DestroyOptions { clear: false, ..Default::default() });
 
 - `clear` defaults to `true` in every runtime.
 - With `clear=true`, destroy is terminal and clears handlers, history, queues, in-flight tracking, waiters, locks, and dispatch/context state so the bus can be released.
-- With `clear=false`, destroy stops current runtime work and resolves waiters but preserves handlers/history so the same bus can be used again.
+- With `clear=false`, destroy is still terminal and the bus cannot be used again; it only preserves handlers/history for inspection.
 - Destroying one bus only clears that bus's local state; shared event objects, handler functions, and other buses are not destroyed.
 
 ## Timeout and precedence

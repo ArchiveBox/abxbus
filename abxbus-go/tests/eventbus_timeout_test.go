@@ -13,7 +13,7 @@ func TestTimeoutPrecedenceEventOverBus(t *testing.T) {
 	busTimeout := 5.0
 	eventTimeout := 0.01
 	bus := abxbus.NewEventBus("TimeoutBus", &abxbus.EventBusOptions{EventTimeout: &busTimeout})
-	bus.On("Evt", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("Evt", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}, nil)
@@ -37,7 +37,7 @@ func TestTimeoutPrecedenceEventOverBus(t *testing.T) {
 func TestZeroTimeoutAllowsSlowHandler(t *testing.T) {
 	busTimeout := 0.01
 	bus := abxbus.NewEventBus("NoTimeoutBus", &abxbus.EventBusOptions{EventTimeout: &busTimeout})
-	bus.On("Evt", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("Evt", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(20 * time.Millisecond)
 		return "ok", nil
 	}, nil)
@@ -61,7 +61,7 @@ func TestProcessingTimeTimeoutDefaultsResolveAtExecutionTime(t *testing.T) {
 	})
 	t.Cleanup(bus.Destroy)
 
-	bus.On("TimeoutEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
 
@@ -106,7 +106,7 @@ func TestEventTimeoutNilUsesBusDefaultTimeoutAtExecution(t *testing.T) {
 	bus := abxbus.NewEventBus("TimeoutNilUsesBusDefault", &abxbus.EventBusOptions{EventTimeout: &busTimeout})
 	t.Cleanup(bus.Destroy)
 
-	bus.On("TimeoutDefaultsEvent", "slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutDefaultsEvent", "slow", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		select {
 		case <-time.After(20 * time.Millisecond):
 			return "slow", nil
@@ -139,7 +139,7 @@ func TestHandlerTimeoutResolutionMatchesPrecedence(t *testing.T) {
 		EventHandlerCompletion:      abxbus.EventHandlerCompletionAll,
 		EventHandlerDetectFilePaths: &detectPaths,
 	})
-	bus.On("TimeoutDefaultsEvent", "default_handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutDefaultsEvent", "default_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		sleepFor := 80 * time.Millisecond
 		if e.Payload["scenario"] == "event-cap" {
 			sleepFor = 150 * time.Millisecond
@@ -151,7 +151,7 @@ func TestHandlerTimeoutResolutionMatchesPrecedence(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}, nil)
-	bus.On("TimeoutDefaultsEvent", "overridden_handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutDefaultsEvent", "overridden_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		sleepFor := 80 * time.Millisecond
 		if e.Payload["scenario"] == "event-cap" {
 			sleepFor = 150 * time.Millisecond
@@ -215,13 +215,13 @@ func TestHandlerTimeoutIgnoresLateHandlerResultAndLateEmits(t *testing.T) {
 	lateAttempt := make(chan struct{}, 1)
 	lateHandlerRan := false
 
-	bus.On("TimeoutIgnoresLateHandlerEvent", "slow_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutIgnoresLateHandlerEvent", "slow_handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(40 * time.Millisecond)
 		lateAttempt <- struct{}{}
 		event.Emit(abxbus.NewBaseEvent("LateAfterTimeoutEvent", nil))
 		return "late success", nil
 	}, &abxbus.EventHandler{HandlerTimeout: &handlerTimeout})
-	bus.On("LateAfterTimeoutEvent", "late_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("LateAfterTimeoutEvent", "late_handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		lateHandlerRan = true
 		return "late child", nil
 	}, nil)
@@ -269,13 +269,13 @@ func TestEventTimeoutIgnoresLateHandlerResultAndLateEmits(t *testing.T) {
 	lateAttempt := make(chan struct{}, 1)
 	lateHandlerRan := false
 
-	bus.On("TimeoutIgnoresLateEvent", "slow_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutIgnoresLateEvent", "slow_handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(40 * time.Millisecond)
 		lateAttempt <- struct{}{}
 		event.Emit(abxbus.NewBaseEvent("LateAfterEventTimeoutEvent", nil))
 		return "late success", nil
 	}, nil)
-	bus.On("LateAfterEventTimeoutEvent", "late_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("LateAfterEventTimeoutEvent", "late_handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		lateHandlerRan = true
 		return "late child", nil
 	}, nil)
@@ -317,7 +317,7 @@ func TestEventTimeoutIgnoresLateHandlerResultAndLateEmits(t *testing.T) {
 func TestEventHandlerDetectFilePathsToggle(t *testing.T) {
 	detectPaths := false
 	bus := abxbus.NewEventBus("NoDetectPathsBus", &abxbus.EventBusOptions{EventHandlerDetectFilePaths: &detectPaths})
-	entry := bus.On("TimeoutDefaultsEvent", "handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	entry := bus.On("TimeoutDefaultsEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
 	if entry.HandlerFilePath != nil {
@@ -346,7 +346,7 @@ func TestHandlerSlowWarningUsesEventHandlerSlowTimeout(t *testing.T) {
 	}
 	defer func() { abxbus.SlowWarningLogger = originalLogger }()
 
-	bus.On("TimeoutDefaultsEvent", "slow_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutDefaultsEvent", "slow_handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(30 * time.Millisecond)
 		mu.Lock()
 		messages = append(messages, "slow warning child handler finishing")
@@ -395,7 +395,7 @@ func TestEventSlowWarningUsesEventSlowTimeout(t *testing.T) {
 	}
 	defer func() { abxbus.SlowWarningLogger = originalLogger }()
 
-	bus.On("TimeoutDefaultsEvent", "slow_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutDefaultsEvent", "slow_handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(30 * time.Millisecond)
 		mu.Lock()
 		messages = append(messages, "slow warning child handler finishing")
@@ -441,7 +441,7 @@ func TestSlowHandlerAndSlowEventWarningsCanBothFire(t *testing.T) {
 	}
 	defer func() { abxbus.SlowWarningLogger = originalLogger }()
 
-	bus.On("TimeoutDefaultsEvent", "slow_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutDefaultsEvent", "slow_handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(30 * time.Millisecond)
 		return "ok", nil
 	}, nil)
@@ -485,7 +485,7 @@ func TestZeroSlowWarningThresholdsDisableEventAndHandlerSlowWarnings(t *testing.
 	}
 	defer func() { abxbus.SlowWarningLogger = originalLogger }()
 
-	bus.On("TimeoutDefaultsEvent", "slow_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutDefaultsEvent", "slow_handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(30 * time.Millisecond)
 		mu.Lock()
 		messages = append(messages, "slow warning child handler finishing")
@@ -515,10 +515,10 @@ func TestForwardedEventTimeoutAbortsTargetBusHandler(t *testing.T) {
 	t.Cleanup(busA.Destroy)
 	t.Cleanup(busB.Destroy)
 
-	busA.On("TimeoutForwardEvent", "forward", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	busA.On("TimeoutForwardEvent", "forward", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return busB.Emit(event), nil
 	}, nil)
-	busB.On("TimeoutForwardEvent", "slow_target", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	busB.On("TimeoutForwardEvent", "slow_target", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		select {
 		case <-time.After(50 * time.Millisecond):
 			return "slow", nil
@@ -563,7 +563,7 @@ func TestQueueJumpAwaitedChildTimeoutAbortsAcrossBuses(t *testing.T) {
 	t.Cleanup(busB.Destroy)
 
 	var childRef *abxbus.BaseEvent
-	busB.On("TimeoutChildEvent", "slow_child", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	busB.On("TimeoutChildEvent", "slow_child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		select {
 		case <-time.After(50 * time.Millisecond):
 			return "slow", nil
@@ -571,7 +571,7 @@ func TestQueueJumpAwaitedChildTimeoutAbortsAcrossBuses(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}, nil)
-	busA.On("TimeoutParentEvent", "parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	busA.On("TimeoutParentEvent", "parent", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		childTimeout := 0.01
 		child := event.Emit(abxbus.NewBaseEvent("TimeoutChildEvent", nil))
 		child.EventTimeout = &childTimeout
@@ -621,7 +621,7 @@ func TestForwardedTimeoutPathDoesNotStallFollowupEvents(t *testing.T) {
 	busBTailRuns := 0
 	var childRef *abxbus.BaseEvent
 
-	busA.On("TimeoutRecoveryParentEvent", "parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	busA.On("TimeoutRecoveryParentEvent", "parent", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		childTimeout := 0.01
 		childEvent := abxbus.NewBaseEvent("TimeoutRecoveryChildEvent", nil)
 		childEvent.EventTimeout = &childTimeout
@@ -632,14 +632,14 @@ func TestForwardedTimeoutPathDoesNotStallFollowupEvents(t *testing.T) {
 		}
 		return "parent_done", nil
 	}, nil)
-	busA.On("TimeoutRecoveryTailEvent", "tail_a", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	busA.On("TimeoutRecoveryTailEvent", "tail_a", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		busATailRuns++
 		return "tail_a", nil
 	}, nil)
-	busA.On("*", "forward_to_b", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	busA.On("*", "forward_to_b", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return busB.Emit(event), nil
 	}, nil)
-	busB.On("TimeoutRecoveryChildEvent", "slow_child", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	busB.On("TimeoutRecoveryChildEvent", "slow_child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		select {
 		case <-time.After(50 * time.Millisecond):
 			return "child_done", nil
@@ -647,7 +647,7 @@ func TestForwardedTimeoutPathDoesNotStallFollowupEvents(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}, nil)
-	busB.On("TimeoutRecoveryTailEvent", "tail_b", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	busB.On("TimeoutRecoveryTailEvent", "tail_b", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		busBTailRuns++
 		return "tail_b", nil
 	}, nil)
@@ -704,17 +704,17 @@ func TestParentTimeoutDoesNotCancelUnawaitedChildHandlerResultsUnderSerialHandle
 	t.Cleanup(bus.Destroy)
 
 	childRuns := 0
-	bus.On("TimeoutCancelChildEvent", "child_first", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutCancelChildEvent", "child_first", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		childRuns++
 		time.Sleep(30 * time.Millisecond)
 		return "first", nil
 	}, nil)
-	bus.On("TimeoutCancelChildEvent", "child_second", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutCancelChildEvent", "child_second", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		childRuns++
 		time.Sleep(10 * time.Millisecond)
 		return "second", nil
 	}, nil)
-	bus.On("TimeoutCancelParentEvent", "parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutCancelParentEvent", "parent", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		childTimeout := 0.2
 		child := abxbus.NewBaseEvent("TimeoutCancelChildEvent", nil)
 		child.EventTimeout = &childTimeout
@@ -771,21 +771,21 @@ func TestMultiLevelTimeoutCascadeWithMixedCancellations(t *testing.T) {
 	immediateGrandchildRuns := 0
 	queuedGrandchildRuns := 0
 
-	bus.On("TimeoutCascadeQueuedChild", "queued_child_fast", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutCascadeQueuedChild", "queued_child_fast", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		queuedChildRuns++
 		time.Sleep(5 * time.Millisecond)
 		return "queued_fast", nil
 	}, nil)
-	bus.On("TimeoutCascadeQueuedChild", "queued_child_slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutCascadeQueuedChild", "queued_child_slow", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		queuedChildRuns++
 		time.Sleep(50 * time.Millisecond)
 		return "queued_slow", nil
 	}, nil)
-	bus.On("TimeoutCascadeAwaitedChild", "awaited_child_fast", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutCascadeAwaitedChild", "awaited_child_fast", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(5 * time.Millisecond)
 		return "awaited_fast", nil
 	}, nil)
-	bus.On("TimeoutCascadeAwaitedChild", "awaited_child_slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutCascadeAwaitedChild", "awaited_child_slow", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		queuedTimeout := 0.2
 		queuedGrandchild = abxbus.NewBaseEvent("TimeoutCascadeQueuedGrandchild", nil)
 		queuedGrandchild.EventTimeout = &queuedTimeout
@@ -805,7 +805,7 @@ func TestMultiLevelTimeoutCascadeWithMixedCancellations(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}, nil)
-	bus.On("TimeoutCascadeImmediateGrandchild", "immediate_grandchild_slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutCascadeImmediateGrandchild", "immediate_grandchild_slow", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		immediateGrandchildRuns++
 		select {
 		case <-time.After(50 * time.Millisecond):
@@ -814,22 +814,22 @@ func TestMultiLevelTimeoutCascadeWithMixedCancellations(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}, nil)
-	bus.On("TimeoutCascadeImmediateGrandchild", "immediate_grandchild_fast", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutCascadeImmediateGrandchild", "immediate_grandchild_fast", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		immediateGrandchildRuns++
 		time.Sleep(10 * time.Millisecond)
 		return "immediate_grandchild_fast", nil
 	}, nil)
-	bus.On("TimeoutCascadeQueuedGrandchild", "queued_grandchild_slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutCascadeQueuedGrandchild", "queued_grandchild_slow", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		queuedGrandchildRuns++
 		time.Sleep(50 * time.Millisecond)
 		return "queued_grandchild_slow", nil
 	}, nil)
-	bus.On("TimeoutCascadeQueuedGrandchild", "queued_grandchild_fast", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutCascadeQueuedGrandchild", "queued_grandchild_fast", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		queuedGrandchildRuns++
 		time.Sleep(10 * time.Millisecond)
 		return "queued_grandchild_fast", nil
 	}, nil)
-	bus.On("TimeoutCascadeTop", "top", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutCascadeTop", "top", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		queuedTimeout := 0.2
 		queuedChild = abxbus.NewBaseEvent("TimeoutCascadeQueuedChild", nil)
 		queuedChild.EventTimeout = &queuedTimeout
@@ -908,11 +908,11 @@ func TestUnawaitedDescendantPreservesLineageAndIsNotCancelledByAncestorTimeout(t
 
 	var innerRef *abxbus.BaseEvent
 	var deepRef *abxbus.BaseEvent
-	bus.On("ErrorChainDeep", "deep", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ErrorChainDeep", "deep", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(200 * time.Millisecond)
 		return "deep_done", nil
 	}, nil)
-	bus.On("ErrorChainInner", "inner", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ErrorChainInner", "inner", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		deepTimeout := 0.5
 		deepRef = abxbus.NewBaseEvent("ErrorChainDeep", nil)
 		deepRef.EventTimeout = &deepTimeout
@@ -924,7 +924,7 @@ func TestUnawaitedDescendantPreservesLineageAndIsNotCancelledByAncestorTimeout(t
 			return nil, ctx.Err()
 		}
 	}, nil)
-	bus.On("ErrorChainOuter", "outer", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ErrorChainOuter", "outer", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		innerTimeout := 0.04
 		innerRef = abxbus.NewBaseEvent("ErrorChainInner", nil)
 		innerRef.EventTimeout = &innerTimeout
@@ -989,12 +989,12 @@ func TestParentTimeoutDoesNotCancelUnawaitedChildrenThatHaveNoTimeoutOfTheirOwn(
 
 	var childRef *abxbus.BaseEvent
 	childHandlerRan := false
-	bus.On("TimeoutBoundaryChild", "child_slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutBoundaryChild", "child_slow", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		childHandlerRan = true
 		time.Sleep(80 * time.Millisecond)
 		return "child_done", nil
 	}, nil)
-	bus.On("TimeoutBoundaryParent", "parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutBoundaryParent", "parent", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		childRef = abxbus.NewBaseEvent("TimeoutBoundaryChild", nil)
 		childRef.EventTimeout = nil
 		childRef = event.Emit(childRef)
@@ -1103,7 +1103,7 @@ func TestSlowEventAndHandlerWarnings(t *testing.T) {
 	}
 	defer func() { abxbus.SlowWarningLogger = original }()
 
-	bus.On("Evt", "slow_handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("Evt", "slow_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(30 * time.Millisecond)
 		return "ok", nil
 	}, nil)
@@ -1145,7 +1145,7 @@ func TestEventTimeoutMarksAbortedAndCancelledHandlers(t *testing.T) {
 		EventHandlerSlowTimeout: &no_timeout,
 		EventSlowTimeout:        &no_timeout,
 	})
-	bus.On("Evt", "slow_first", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("Evt", "slow_first", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		select {
 		case <-time.After(250 * time.Millisecond):
 			return "late", nil
@@ -1153,7 +1153,7 @@ func TestEventTimeoutMarksAbortedAndCancelledHandlers(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}, nil)
-	bus.On("Evt", "pending_second", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("Evt", "pending_second", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "never", nil
 	}, nil)
 
@@ -1193,7 +1193,7 @@ func TestHandlerTimeoutUsesTimedOutErrorMessage(t *testing.T) {
 	bus_timeout := 5.0
 	bus := abxbus.NewEventBus("HandlerTimeoutMessageBus", &abxbus.EventBusOptions{EventTimeout: &bus_timeout})
 	overrides := &abxbus.EventHandler{HandlerTimeout: &handler_timeout}
-	bus.On("Evt", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("Evt", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		select {
 		case <-time.After(200 * time.Millisecond):
 			return "late", nil

@@ -84,9 +84,6 @@ block_on(bus.find_with_options(
             ("event_status".to_string(), json!("completed")),
             ("request_id".to_string(), json!("abc")),
         ])),
-        where_predicate: Some(Arc::new(|event| {
-            event.inner.lock().payload.contains_key("request_id")
-        })),
         ..FindOptions::default()
     },
 ));
@@ -275,18 +272,9 @@ let match_event = block_on(bus.find_with_options(
     FindOptions {
         future: Some(5.0),
         where_filter: Some(HashMap::from([(
-            "event_status".to_string(),
-            json!("completed"),
+            "request_id".to_string(),
+            json!(my_id),
         )])),
-        where_predicate: Some(Arc::new(|event| {
-            event
-                .inner
-                .lock()
-                .payload
-                .get("request_id")
-                .and_then(serde_json::Value::as_str)
-                == Some(my_id)
-        })),
         ..FindOptions::default()
     },
 ));
@@ -337,6 +325,30 @@ anyCompleted, err := bus.Find(
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+let any_completed = block_on(bus.find_with_options(
+    "*",
+    FindOptions {
+        future: Some(5.0),
+        where_filter: Some(HashMap::from([(
+            "event_status".to_string(),
+            json!("completed"),
+        )])),
+        where_predicate: Some(Arc::new(|event| {
+            event
+                .to_json_value()
+                .get("event_type")
+                .and_then(|value| value.as_str())
+                .is_some_and(|event_type| event_type.ends_with("ResultEvent"))
+        })),
+        ..FindOptions::default()
+    },
+));
+```
+
+</Tab>
 </Tabs>
 
 ### 6) Find descendants of a specific parent event
@@ -371,6 +383,41 @@ child, err := bus.Find("TabCreatedEvent", nil, &abxbus.FindOptions{
 	ChildOf: parentEvent,
 	Past: 5.0,
 })
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+event! {
+    struct NavigateToUrlEvent {
+        url: String,
+        event_result_type: (),
+    }
+}
+
+event! {
+    struct TabCreatedEvent {
+        event_result_type: (),
+    }
+}
+
+let parent_event = bus.emit(NavigateToUrlEvent {
+    url: "https://example.com".to_string(),
+    ..Default::default()
+});
+block_on(parent_event.now())?;
+
+let parent_ref = block_on(bus.find("NavigateToUrlEvent", true, None, None))
+    .expect("parent event should be in history");
+let child = block_on(bus.find_with_options(
+    "TabCreatedEvent",
+    FindOptions {
+        past_window: Some(5.0),
+        child_of: Some(parent_ref),
+        ..FindOptions::default()
+    },
+));
 ```
 
 </Tab>
@@ -424,12 +471,47 @@ if _, err := event.Now(); err != nil {
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+event! {
+    struct ScreenshotEvent {
+        event_result_type: Vec<u8>,
+    }
+}
+
+let event = match block_on(bus.find_with_options(
+    "ScreenshotEvent",
+    FindOptions {
+        past_window: Some(10.0),
+        future: None,
+        ..FindOptions::default()
+    },
+)) {
+    Some(raw) => serde_json::from_value::<ScreenshotEvent>(raw.to_json_value())?,
+    None => match block_on(bus.find_with_options(
+        "ScreenshotEvent",
+        FindOptions {
+            past: false,
+            future: Some(5.0),
+            ..FindOptions::default()
+        },
+    )) {
+        Some(raw) => serde_json::from_value::<ScreenshotEvent>(raw.to_json_value())?,
+        None => bus.emit(ScreenshotEvent { ..Default::default() }),
+    },
+};
+
+block_on(event.now())?;
+```
+
+</Tab>
 </Tabs>
 
 ## Important behavior
 
 - `find()` resolves when an event is emitted, not when handlers finish.
-- To wait for handler completion, call `await event.now()` in Python or TypeScript.
+- To wait for handler completion, call `await event.now()` in Python/TypeScript, `event.Now()` in Go, or `event.now().await` in Rust.
 - If no match is found (or `future` times out), `find()` returns `None` / `null`.
 - If both `past` and `future` are `false`, it returns immediately with no match.
 
@@ -463,6 +545,23 @@ recent, err := bus.Filter("ResponseEvent", nil, &abxbus.FilterOptions{
 	Future: false,
 	Limit:  &limit,
 })
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::event_bus::FilterOptions;
+
+let recent = block_on(bus.filter_with_options(
+    "ResponseEvent",
+    FilterOptions {
+        past_window: Some(10.0),
+        future: None,
+        limit: Some(5),
+        ..FilterOptions::default()
+    },
+));
 ```
 
 </Tab>

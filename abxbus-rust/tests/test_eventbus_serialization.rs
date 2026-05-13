@@ -85,7 +85,7 @@ fn assert_eventbus_json_roundtrip_uses_id_keyed_structures(bus_name: &str, bus_i
         json!([handler.id.clone()])
     );
 
-    let event_id = event.inner.inner.lock().event_id.clone();
+    let event_id = event.event_id.clone();
     assert!(payload["event_history"]
         .as_object()
         .expect("history")
@@ -157,7 +157,7 @@ fn test_eventbus_from_json_defaults_missing_handler_maps() {
         ..Default::default()
     });
     let _ = block_on(event.now());
-    assert_eq!(event.inner.inner.lock().event_results.len(), 1);
+    assert_eq!(event.event_results.read().len(), 1);
     restored.destroy();
     bus.destroy();
 }
@@ -295,7 +295,7 @@ fn test_baseevent_model_validate_roundtrips_runtime_json_shape() {
     });
     let _ = block_on(event.now());
 
-    let payload = event.inner.to_json_value();
+    let payload = event.to_json_value();
     let restored_payload = BaseEvent::from_json_value(payload.clone()).to_json_value();
     assert_eq!(restored_payload, payload);
     bus.destroy();
@@ -369,8 +369,8 @@ fn assert_eventbus_promotes_pending_events_into_event_history() {
         ..Default::default()
     });
 
-    let first_id = first.inner.inner.lock().event_id.clone();
-    let pending_id = pending.inner.inner.lock().event_id.clone();
+    let first_id = first.event_id.clone();
+    let pending_id = pending.event_id.clone();
     let payload = bus.to_json_value();
     let event_history = payload["event_history"].as_object().expect("history");
     assert!(event_history.contains_key(&first_id));
@@ -398,8 +398,8 @@ fn test_eventbus_from_json_preserves_event_history_object_order() {
     });
     let _ = block_on(first.now());
     let _ = block_on(second.now());
-    let first_id = first.inner.inner.lock().event_id.clone();
-    let second_id = second.inner.inner.lock().event_id.clone();
+    let first_id = first.event_id.clone();
+    let second_id = second.event_id.clone();
 
     let payload = bus.to_json_value();
     assert_eq!(

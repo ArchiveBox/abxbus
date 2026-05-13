@@ -123,20 +123,20 @@ fn test_event_handler_completion_bus_default_first_serial() {
     }
 
     let emitted = bus.emit(ValueEvent::default());
-    assert_eq!(emitted.inner.inner.lock().event_handler_completion, None);
+    assert_eq!(emitted.event_handler_completion, None);
     block_on(emitted.now()).expect("event should run");
-    assert_eq!(emitted.inner.inner.lock().event_handler_completion, None);
+    assert_eq!(emitted.event_handler_completion, None);
     assert!(!*second_handler_called.lock().unwrap());
 
     let result = block_on(emitted.event_result_with_options(event_result_options(false, false)))
         .expect("event result");
     assert_eq!(result, Some(json!("first")));
     assert_eq!(
-        event_result_by_handler_name(&emitted.inner, "first_handler").status,
+        event_result_by_handler_name(&emitted._inner_event(), "first_handler").status,
         EventResultStatus::Completed
     );
     assert_eq!(
-        event_result_by_handler_name(&emitted.inner, "second_handler").status,
+        event_result_by_handler_name(&emitted._inner_event(), "second_handler").status,
         EventResultStatus::Error
     );
     destroy_and_settle(&bus);
@@ -175,7 +175,7 @@ fn test_event_handler_completion_explicit_override_beats_bus_default() {
     };
     let emitted = bus.emit(event);
     assert_eq!(
-        emitted.inner.inner.lock().event_handler_completion,
+        emitted.event_handler_completion,
         Some(EventHandlerCompletionMode::All)
     );
     block_on(emitted.now()).expect("event should run");
@@ -230,17 +230,17 @@ fn test_event_parallel_first_races_and_cancels_non_winners() {
     assert!(started.elapsed() < Duration::from_millis(200));
     assert!(*slow_started.lock().unwrap());
     assert!(wait_for_error_results(
-        &emitted.inner,
+        &emitted._inner_event(),
         2,
         Duration::from_millis(200)
     ));
 
-    let winner = event_result_by_handler_name(&emitted.inner, "fast_winner");
+    let winner = event_result_by_handler_name(&emitted._inner_event(), "fast_winner");
     assert_eq!(winner.status, EventResultStatus::Completed);
     assert_eq!(winner.error, None);
     assert_eq!(winner.result, Some(json!("winner")));
     assert!(
-        event_results_except_handler_name(&emitted.inner, "fast_winner")
+        event_results_except_handler_name(&emitted._inner_event(), "fast_winner")
             .iter()
             .all(|result| result.status == EventResultStatus::Error)
     );
@@ -293,11 +293,11 @@ fn test_event_handler_completion_explicit_first_cancels_parallel_losers() {
         .expect("event result");
     assert_eq!(result, Some(json!("fast")));
     assert_eq!(
-        emitted.inner.inner.lock().event_handler_completion,
+        emitted.event_handler_completion,
         Some(EventHandlerCompletionMode::First)
     );
     assert!(wait_for_error_results(
-        &emitted.inner,
+        &emitted._inner_event(),
         1,
         Duration::from_millis(200)
     ));
@@ -475,11 +475,11 @@ fn test_event_handler_completion_first_skips_none_result_and_uses_next_winner() 
     assert_eq!(result, Some(json!("winner")));
     assert!(!*third_handler_called.lock().unwrap());
     assert_eq!(
-        event_result_by_handler_name(&emitted.inner, "none_handler").result,
+        event_result_by_handler_name(&emitted._inner_event(), "none_handler").result,
         Some(Value::Null)
     );
     assert_eq!(
-        event_result_by_handler_name(&emitted.inner, "winner_handler").result,
+        event_result_by_handler_name(&emitted._inner_event(), "winner_handler").result,
         Some(json!("winner"))
     );
     destroy_and_settle(&bus);
@@ -528,7 +528,7 @@ fn test_event_handler_completion_first_skips_baseevent_result_and_uses_next_winn
     assert_eq!(result, Some(json!("winner")));
     assert!(!*third_handler_called.lock().unwrap());
     assert!(is_base_event_json_for_test(
-        event_result_by_handler_name(&emitted.inner, "baseevent_handler")
+        event_result_by_handler_name(&emitted._inner_event(), "baseevent_handler")
             .result
             .as_ref()
             .expect("baseevent result")
@@ -580,7 +580,7 @@ fn test_now_runs_all_handlers_and_event_result_returns_first_valid_result() {
         block_on(emitted.event_result_with_options(EventResultOptions::default())).expect("result");
     assert_eq!(result, Some(json!("winner")));
     assert_eq!(
-        emitted.inner.inner.lock().event_handler_completion,
+        emitted.event_handler_completion,
         Some(EventHandlerCompletionMode::All)
     );
     assert!(*late_handler_called.lock().unwrap());
@@ -1049,7 +1049,7 @@ fn test_event_result_raise_if_any_includes_first_mode_control_errors() {
     }))
     .expect("first result");
     assert!(wait_for_error_results(
-        &emitted.inner,
+        &emitted._inner_event(),
         1,
         Duration::from_millis(200)
     ));

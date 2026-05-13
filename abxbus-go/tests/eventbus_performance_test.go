@@ -44,7 +44,7 @@ func TestPerformance50kEvents(t *testing.T) {
 	var processed int64
 	var checksum int64
 	var expectedChecksum int64
-	bus.On("PerfSimpleEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("PerfSimpleEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		atomic.AddInt64(&processed, 1)
 		value, _ := event.Payload["value"].(int)
 		batchID, _ := event.Payload["batch_id"].(int)
@@ -96,7 +96,7 @@ func TestPerformanceEphemeralBuses(t *testing.T) {
 			MaxHistorySize: &historySize,
 			MaxHistoryDrop: true,
 		})
-		bus.On("PerfEphemeralEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		bus.On("PerfEphemeralEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			atomic.AddInt64(&processed, 1)
 			return nil, nil
 		}, nil)
@@ -134,7 +134,7 @@ func TestPerformanceSingleEventManyParallelHandlers(t *testing.T) {
 	var handled int64
 	for index := 0; index < totalHandlers; index++ {
 		handlerID := fmt.Sprintf("perf-fixed-handler-%05d", index)
-		bus.On("PerfFixedHandlersEvent", handlerID, func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		bus.On("PerfFixedHandlersEvent", handlerID, func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			atomic.AddInt64(&handled, 1)
 			return nil, nil
 		}, &abxbus.EventHandler{ID: handlerID})
@@ -168,7 +168,7 @@ func TestPerformanceOnOffChurn(t *testing.T) {
 	started := time.Now()
 	for index := 0; index < totalEvents; index++ {
 		handlerID := fmt.Sprintf("perf-one-off-handler-%05d", index)
-		handler := bus.On("PerfOneOffEvent", handlerID, func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		handler := bus.On("PerfOneOffEvent", handlerID, func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			atomic.AddInt64(&handled, 1)
 			return nil, nil
 		}, &abxbus.EventHandler{ID: handlerID})
@@ -207,13 +207,13 @@ func TestPerformanceWorstCaseForwardingQueueJumpTimeouts(t *testing.T) {
 	var parents int64
 	var children int64
 	var timedOut int64
-	parentBus.On("WCParent", "forward", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	parentBus.On("WCParent", "forward", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		atomic.AddInt64(&parents, 1)
 		child := childBus.Emit(abxbus.NewBaseEvent("WCChild", map[string]any{"parent": event.EventID, "iteration": event.Payload["iteration"]}))
 		_, _ = child.Now()
 		return nil, nil
 	}, nil)
-	childBus.On("WCChild", "child", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	childBus.On("WCChild", "child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		atomic.AddInt64(&children, 1)
 		iteration, _ := event.Payload["iteration"].(int)
 		if iteration%10 != 0 {
@@ -272,7 +272,7 @@ func TestPerformanceCleanupDestroyKeepsStateBounded(t *testing.T) {
 			MaxHistorySize: &historySize,
 			MaxHistoryDrop: true,
 		})
-		bus.On("CleanupEqEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		bus.On("CleanupEqEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			return nil, nil
 		}, nil)
 
@@ -346,7 +346,7 @@ func runFanoutBenchmark(t *testing.T, mode abxbus.EventHandlerConcurrencyMode) (
 	var handled int64
 	for index := 0; index < handlersPerEvent; index++ {
 		handlerID := fmt.Sprintf("fanout-handler-%d", index)
-		bus.On("PerfFanoutEvent", handlerID, func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		bus.On("PerfFanoutEvent", handlerID, func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			time.Sleep(sleepDuration)
 			atomic.AddInt64(&handled, 1)
 			return nil, nil

@@ -360,7 +360,7 @@ func assertGoHandlerResultAccepted(t *testing.T, eventPayload map[string]any, re
 	isolateSchemaAssertionEvent(event)
 	bus := abxbus.NewEventBus("GoRoundtripSchemaAccepted", nil)
 	defer bus.Destroy()
-	bus.On(event.EventType, "valid", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On(event.EventType, "valid", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return result, nil
 	}, nil)
 	executed, err := bus.Emit(event).Now(&abxbus.EventWaitOptions{FirstResult: true})
@@ -379,7 +379,7 @@ func assertGoHandlerResultRejected(t *testing.T, eventPayload map[string]any, re
 	isolateSchemaAssertionEvent(event)
 	bus := abxbus.NewEventBus("GoRoundtripSchemaRejected", nil)
 	defer bus.Destroy()
-	bus.On(event.EventType, "invalid", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On(event.EventType, "invalid", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return result, nil
 	}, nil)
 	executed, err := bus.Emit(event).Now(&abxbus.EventWaitOptions{FirstResult: true})
@@ -557,7 +557,7 @@ func TestJSONLEventBridgeForwardsEventsThroughFile(t *testing.T) {
 	defer reader.Close()
 
 	received := make(chan *abxbus.BaseEvent, 1)
-	reader.On("JSONLTestEvent", "capture", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	reader.On("JSONLTestEvent", "capture", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		received <- event
 		return "ok", nil
 	}, nil)
@@ -593,7 +593,7 @@ func TestJSONLEventBridgeIgnoresMalformedLinesAndKeepsPolling(t *testing.T) {
 	defer reader.Close()
 
 	received := make(chan *abxbus.BaseEvent, 1)
-	reader.On("ValidEvent", "capture", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	reader.On("ValidEvent", "capture", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		received <- event
 		return nil, nil
 	}, nil)
@@ -690,7 +690,7 @@ func measureJSONLBridgeWarmLatencyMS(t *testing.T, jsonlPath string) float64 {
 	measuredCount := 0
 	warmupOnce := sync.Once{}
 	measuredOnce := sync.Once{}
-	receiver.On("IPCPingEvent", "latency_capture", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	receiver.On("IPCPingEvent", "latency_capture", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		label, _ := event.Payload["label"].(string)
 		countsMu.Lock()
 		defer countsMu.Unlock()

@@ -8,7 +8,6 @@ use std::{
 use abxbus_rust::{
     base_event::BaseEvent,
     event_bus::{EventBus, EventBusOptions},
-    typed::BaseEventHandle,
     types::{EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
@@ -77,7 +76,7 @@ fn test_basic_parent_tracking_child_events_get_event_parent_id() {
     });
     block_on(bus.wait_until_idle(None));
 
-    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let parent_id = parent.event_id.clone();
     let payload = bus.runtime_payload_for_test();
     let child = payload
         .values()
@@ -88,8 +87,8 @@ fn test_basic_parent_tracking_child_events_get_event_parent_id() {
         child.inner.lock().event_parent_id.as_deref(),
         Some(parent_id.as_str())
     );
-    assert!(bus.event_is_child_of(&child, &parent.inner));
-    assert!(bus.event_is_parent_of(&parent.inner, &child));
+    assert!(bus.event_is_child_of(&child, &parent._inner_event()));
+    assert!(bus.event_is_parent_of(&parent._inner_event(), &child));
     bus.destroy();
 }
 
@@ -139,7 +138,7 @@ fn test_multi_level_parent_tracking_preserves_lineage() {
         .find(|event| event.inner.lock().event_type == "GrandchildEvent")
         .cloned()
         .expect("grandchild event");
-    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let parent_id = parent.event_id.clone();
     let child_id = child.inner.lock().event_id.clone();
     assert_eq!(
         child.inner.lock().event_parent_id.as_deref(),
@@ -149,7 +148,7 @@ fn test_multi_level_parent_tracking_preserves_lineage() {
         grandchild.inner.lock().event_parent_id.as_deref(),
         Some(child_id.as_str())
     );
-    assert!(bus.event_is_child_of(&grandchild, &parent.inner));
+    assert!(bus.event_is_child_of(&grandchild, &parent._inner_event()));
     bus.destroy();
 }
 
@@ -178,7 +177,7 @@ fn test_multiple_children_from_same_parent_keep_same_event_parent_id() {
     });
     block_on(bus.wait_until_idle(None));
 
-    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let parent_id = parent.event_id.clone();
     let payload = bus.runtime_payload_for_test();
     let children: Vec<_> = payload
         .values()
@@ -236,7 +235,7 @@ fn test_parallel_parent_handlers_preserve_parent_tracking() {
     });
     block_on(bus.wait_until_idle(None));
 
-    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let parent_id = parent.event_id.clone();
     let payload = bus.runtime_payload_for_test();
     let children: Vec<_> = payload
         .values()
@@ -268,7 +267,7 @@ fn test_sync_handler_parent_tracking() {
         child_events_for_sync
             .lock()
             .expect("child events lock")
-            .push(child.inner.clone());
+            .push(child._inner_event());
         Ok(json!("sync_handled"))
     });
 
@@ -281,7 +280,7 @@ fn test_sync_handler_parent_tracking() {
         child_events_for_failing
             .lock()
             .expect("child events lock")
-            .push(child.inner.clone());
+            .push(child._inner_event());
         Err("expected parent-tracking error path".to_string())
     });
 
@@ -294,7 +293,7 @@ fn test_sync_handler_parent_tracking() {
         child_events_for_success
             .lock()
             .expect("child events lock")
-            .push(child.inner.clone());
+            .push(child._inner_event());
         Ok(json!("success"))
     });
 
@@ -308,7 +307,7 @@ fn test_sync_handler_parent_tracking() {
     let _ = block_on(parent.now());
     block_on(bus.wait_until_idle(None));
 
-    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let parent_id = parent.event_id.clone();
     let child_events = child_events.lock().expect("child events lock").clone();
     assert_eq!(child_events.len(), 3);
     for child in child_events {
@@ -317,7 +316,7 @@ fn test_sync_handler_parent_tracking() {
             Some(parent_id.as_str())
         );
     }
-    let parent_errors = parent.inner.event_errors();
+    let parent_errors = parent.event_errors();
     assert_eq!(parent_errors.len(), 1);
     assert!(parent_errors[0].contains("expected parent-tracking error path"));
     bus.destroy();
@@ -353,7 +352,8 @@ fn test_event_children_tracks_multiple_children_from_a_single_handler() {
     block_on(bus.wait_until_idle(None));
 
     let event_children = {
-        let parent_inner = parent.inner.inner.lock();
+        let parent_base = parent._inner_event();
+        let parent_inner = parent_base.inner.lock();
         parent_inner
             .event_results
             .get(&parent_handler.id)
@@ -370,7 +370,7 @@ fn test_event_children_tracks_multiple_children_from_a_single_handler() {
         .cloned()
         .collect();
     assert_eq!(children.len(), 3);
-    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let parent_id = parent.event_id.clone();
     for child in &children {
         let child_inner = child.inner.lock();
         assert_eq!(
@@ -386,7 +386,7 @@ fn test_event_children_tracks_multiple_children_from_a_single_handler() {
     {
         assert!(event_children.contains(&child_id));
     }
-    let parent_event_children = event_children_for(&bus, &parent.inner);
+    let parent_event_children = event_children_for(&bus, &parent._inner_event());
     assert_eq!(parent_event_children.len(), 3);
     assert!(parent_event_children
         .iter()
@@ -444,7 +444,7 @@ fn test_event_children_tracks_direct_and_nested_descendants() {
     let grandchild_id = grandchild.inner.lock().event_id.clone();
 
     let parent_children = parent
-        .inner
+        ._inner_event()
         .inner
         .lock()
         .event_results
@@ -453,7 +453,7 @@ fn test_event_children_tracks_direct_and_nested_descendants() {
         .event_children
         .clone();
     assert_eq!(parent_children, vec![child_id.clone()]);
-    let parent_event_children = event_children_for(&bus, &parent.inner);
+    let parent_event_children = event_children_for(&bus, &parent._inner_event());
     assert_eq!(parent_event_children.len(), 1);
     assert_eq!(
         parent_event_children[0].inner.lock().event_id.as_str(),
@@ -518,7 +518,8 @@ fn test_multiple_parent_handlers_contribute_to_one_event_children_list() {
     });
     block_on(bus.wait_until_idle(None));
 
-    let parent_inner = parent.inner.inner.lock();
+    let parent_base = parent._inner_event();
+    let parent_inner = parent_base.inner.lock();
     let handler_1_children = parent_inner
         .event_results
         .get(&handler_1.id)
@@ -535,7 +536,7 @@ fn test_multiple_parent_handlers_contribute_to_one_event_children_list() {
     assert_eq!(handler_2_children.len(), 2);
     assert_eq!(handler_1_children.len() + handler_2_children.len(), 3);
     drop(parent_inner);
-    let parent_event_children = event_children_for(&bus, &parent.inner);
+    let parent_event_children = event_children_for(&bus, &parent._inner_event());
     assert_eq!(parent_event_children.len(), 3);
     assert!(parent_event_children
         .iter()
@@ -595,9 +596,11 @@ fn test_cross_eventbus_dispatch_preserves_parent_tracking() {
             let child = bus_1.emit_child(ChildEvent {
                 ..Default::default()
             });
-            bus_2.emit(BaseEventHandle::<ChildEvent>::from_base_event(
-                child.inner.clone(),
-            ));
+            bus_2.emit(
+                <ChildEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(
+                    child._inner_event(),
+                ),
+            );
             Ok(json!("bus1"))
         }
     });
@@ -613,7 +616,7 @@ fn test_cross_eventbus_dispatch_preserves_parent_tracking() {
         bus_2.wait_until_idle(None).await;
     });
 
-    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let parent_id = parent.event_id.clone();
     let received_child = bus_2
         .runtime_payload_for_test()
         .values()
@@ -644,7 +647,7 @@ fn test_cross_bus_bus_emit_inside_handler_does_not_link_parent_when_exactly_one_
             let child = bus_2.emit(ChildEvent {
                 ..Default::default()
             });
-            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            *child_ref.lock().expect("child ref lock") = Some(child._inner_event());
             Ok(json!("parent"))
         }
     });
@@ -668,7 +671,8 @@ fn test_cross_bus_bus_emit_inside_handler_does_not_link_parent_when_exactly_one_
     assert_eq!(child.inner.lock().event_parent_id, None);
     assert_eq!(child.inner.lock().event_emitted_by_handler_id, None);
     assert!(!child.inner.lock().event_blocks_parent_completion);
-    let parent_inner = parent.inner.inner.lock();
+    let parent_base = parent._inner_event();
+    let parent_inner = parent_base.inner.lock();
     let result = parent_inner
         .event_results
         .values()
@@ -748,10 +752,10 @@ fn test_bus_emit_outside_handler_does_not_guess_a_parent_when_multiple_handlers_
         bus_3.wait_until_idle(None).await;
     });
 
-    assert_eq!(unrelated_child.inner.inner.lock().event_parent_id, None);
+    assert_eq!(unrelated_child.event_parent_id.clone(), None);
     assert_eq!(
         unrelated_child
-            .inner
+            ._inner_event()
             .inner
             .lock()
             .event_emitted_by_handler_id,
@@ -795,7 +799,7 @@ fn test_erroring_parent_handlers_still_preserve_child_event_parent_id() {
     });
     block_on(bus.wait_until_idle(None));
 
-    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let parent_id = parent.event_id.clone();
     let payload = bus.runtime_payload_for_test();
     let children: Vec<_> = payload
         .values()
@@ -810,7 +814,7 @@ fn test_erroring_parent_handlers_still_preserve_child_event_parent_id() {
         );
     }
     let parent_errors = parent
-        .inner
+        ._inner_event()
         .inner
         .lock()
         .event_results
@@ -833,14 +837,15 @@ fn test_event_children_is_empty_when_handlers_do_not_emit_children() {
     });
     let _ = block_on(parent.now());
 
-    let parent_inner = parent.inner.inner.lock();
+    let parent_base = parent._inner_event();
+    let parent_inner = parent_base.inner.lock();
     let result = parent_inner
         .event_results
         .get(&handler.id)
         .expect("parent result");
     assert!(result.event_children.is_empty());
     drop(parent_inner);
-    assert!(event_children_for(&bus, &parent.inner).is_empty());
+    assert!(event_children_for(&bus, &parent._inner_event()).is_empty());
     bus.destroy();
 }
 
@@ -864,12 +869,12 @@ fn test_parent_completion_waits_for_awaited_children() {
             let child_b = bus.emit_child(ChildEvent {
                 ..Default::default()
             });
-            assert!(!child_a.inner.inner.lock().event_blocks_parent_completion);
-            assert!(!child_b.inner.inner.lock().event_blocks_parent_completion);
+            assert!(!child_a.event_blocks_parent_completion);
+            assert!(!child_b.event_blocks_parent_completion);
             {
                 let mut refs = child_refs.lock().expect("child refs lock");
-                refs.push(child_a.inner.clone());
-                refs.push(child_b.inner.clone());
+                refs.push(child_a._inner_event());
+                refs.push(child_b._inner_event());
             }
             let _ = child_a.now().await;
             let _ = child_b.now().await;
@@ -897,13 +902,10 @@ fn test_parent_completion_waits_for_awaited_children() {
         .recv_timeout(Duration::from_secs(1))
         .expect("child should start");
     thread::sleep(Duration::from_millis(30));
-    assert_ne!(
-        parent.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
+    assert_ne!(parent.event_status.read(), EventStatus::Completed);
 
     let parent_children_before_release: usize = parent
-        .inner
+        ._inner_event()
         .inner
         .lock()
         .event_results
@@ -916,10 +918,7 @@ fn test_parent_completion_waits_for_awaited_children() {
     release_children_tx.send(()).expect("release child b send");
     let _ = block_on(parent.now());
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
-    assert_eq!(
-        parent.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
+    assert_eq!(parent.event_status.read(), EventStatus::Completed);
     let child_refs = child_refs.lock().expect("child refs lock").clone();
     assert_eq!(child_refs.len(), 2);
     for child in child_refs {
@@ -946,8 +945,8 @@ fn test_event_emit_without_await_sets_parentage_without_blocking_parent_completi
             let child = bus.emit_child(ChildEvent {
                 ..Default::default()
             });
-            assert!(!child.inner.inner.lock().event_blocks_parent_completion);
-            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            assert!(!child.event_blocks_parent_completion);
+            *child_ref.lock().expect("child ref lock") = Some(child._inner_event());
             Ok(json!("parent"))
         }
     });
@@ -969,10 +968,7 @@ fn test_event_emit_without_await_sets_parentage_without_blocking_parent_completi
         ..Default::default()
     });
     let _ = block_on(parent.now());
-    assert_eq!(
-        parent.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
+    assert_eq!(parent.event_status.read(), EventStatus::Completed);
 
     child_started_rx
         .recv_timeout(Duration::from_secs(1))
@@ -982,14 +978,14 @@ fn test_event_emit_without_await_sets_parentage_without_blocking_parent_completi
         .expect("child ref lock")
         .clone()
         .expect("child ref");
-    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let parent_id = parent.event_id.clone();
     assert_eq!(
         child.inner.lock().event_parent_id.as_deref(),
         Some(parent_id.as_str())
     );
     assert!(child.inner.lock().event_emitted_by_handler_id.is_some());
     assert!(!child.inner.lock().event_blocks_parent_completion);
-    let parent_event_children = event_children_for(&bus, &parent.inner);
+    let parent_event_children = event_children_for(&bus, &parent._inner_event());
     assert_eq!(parent_event_children.len(), 1);
     let parent_child_id = parent_event_children[0].inner.lock().event_id.clone();
     let child_id = child.inner.lock().event_id.clone();
@@ -1019,10 +1015,10 @@ fn test_awaited_event_emit_child_blocks_parent_completion_and_queue_jumps() {
             let child = bus.emit_child(ChildEvent {
                 ..Default::default()
             });
-            assert!(!child.inner.inner.lock().event_blocks_parent_completion);
-            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            assert!(!child.event_blocks_parent_completion);
+            *child_ref.lock().expect("child ref lock") = Some(child._inner_event());
             let _ = child.now().await;
-            assert!(child.inner.inner.lock().event_blocks_parent_completion);
+            assert!(child.event_blocks_parent_completion);
             Ok(json!("parent"))
         }
     });
@@ -1047,10 +1043,7 @@ fn test_awaited_event_emit_child_blocks_parent_completion_and_queue_jumps() {
         .recv_timeout(Duration::from_secs(1))
         .expect("child should queue-jump and start");
     thread::sleep(Duration::from_millis(30));
-    assert_ne!(
-        parent.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
+    assert_ne!(parent.event_status.read(), EventStatus::Completed);
 
     let child = child_ref
         .lock()
@@ -1058,17 +1051,14 @@ fn test_awaited_event_emit_child_blocks_parent_completion_and_queue_jumps() {
         .clone()
         .expect("child ref");
     assert!(child.inner.lock().event_blocks_parent_completion);
-    let parent_event_children = event_children_for(&bus, &parent.inner);
+    let parent_event_children = event_children_for(&bus, &parent._inner_event());
     assert_eq!(parent_event_children.len(), 1);
     let parent_child_id = parent_event_children[0].inner.lock().event_id.clone();
     let child_id = child.inner.lock().event_id.clone();
     assert_eq!(parent_child_id, child_id);
     release_child_tx.send(()).expect("release child send");
     let _ = block_on(parent.now());
-    assert_eq!(
-        parent.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
+    assert_eq!(parent.event_status.read(), EventStatus::Completed);
     assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
     bus.destroy();
 }
@@ -1106,7 +1096,8 @@ fn test_bus_emit_inside_handler_dispatches_root_event_by_default() {
     assert_eq!(child.inner.lock().event_emitted_by_handler_id, None);
     assert!(!child.inner.lock().event_blocks_parent_completion);
 
-    let parent_inner = parent.inner.inner.lock();
+    let parent_base = parent._inner_event();
+    let parent_inner = parent_base.inner.lock();
     let result = parent_inner
         .event_results
         .values()
@@ -1114,7 +1105,7 @@ fn test_bus_emit_inside_handler_dispatches_root_event_by_default() {
         .expect("parent result");
     assert!(result.event_children.is_empty());
     drop(parent_inner);
-    assert!(event_children_for(&bus, &parent.inner).is_empty());
+    assert!(event_children_for(&bus, &parent._inner_event()).is_empty());
     bus.destroy();
 }
 
@@ -1135,7 +1126,7 @@ fn test_bus_emit_inside_handler_does_not_link_parent_when_not_using_event_emit()
             let child = bus.emit(ChildEvent {
                 ..Default::default()
             });
-            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            *child_ref.lock().expect("child ref lock") = Some(child._inner_event());
             Ok(json!("parent"))
         }
     });
@@ -1160,10 +1151,7 @@ fn test_bus_emit_inside_handler_does_not_link_parent_when_not_using_event_emit()
         .recv_timeout(Duration::from_secs(1))
         .expect("child should start");
     let _ = block_on(parent.now());
-    assert_eq!(
-        parent.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
+    assert_eq!(parent.event_status.read(), EventStatus::Completed);
 
     let child = child_ref
         .lock()
@@ -1176,7 +1164,7 @@ fn test_bus_emit_inside_handler_does_not_link_parent_when_not_using_event_emit()
     assert_ne!(child.inner.lock().event_status, EventStatus::Completed);
 
     let parent_children: usize = parent
-        .inner
+        ._inner_event()
         .inner
         .lock()
         .event_results
@@ -1184,7 +1172,7 @@ fn test_bus_emit_inside_handler_does_not_link_parent_when_not_using_event_emit()
         .map(|result| result.event_children.len())
         .sum();
     assert_eq!(parent_children, 0);
-    assert!(event_children_for(&bus, &parent.inner).is_empty());
+    assert!(event_children_for(&bus, &parent._inner_event()).is_empty());
 
     release_child_tx.send(()).expect("release child send");
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
@@ -1213,7 +1201,7 @@ fn test_outside_now_of_bus_emit_child_keeps_it_independent_of_active_handler() {
             let child = bus.emit(ChildEvent {
                 ..Default::default()
             });
-            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            *child_ref.lock().expect("child ref lock") = Some(child._inner_event());
             let _ = parent_holding_tx.send(());
             release_parent_rx
                 .lock()
@@ -1259,10 +1247,7 @@ fn test_outside_now_of_bus_emit_child_keeps_it_independent_of_active_handler() {
 
     release_parent_tx.send(()).expect("release parent send");
     let _ = block_on(parent.now());
-    assert_eq!(
-        parent.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
+    assert_eq!(parent.event_status.read(), EventStatus::Completed);
     assert_ne!(child.inner.lock().event_status, EventStatus::Completed);
 
     release_child_tx.send(()).expect("release child send");
@@ -1293,7 +1278,7 @@ fn test_outside_wait_of_bus_emit_child_keeps_it_independent_of_active_handler() 
             let child = bus.emit(ChildEvent {
                 ..Default::default()
             });
-            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            *child_ref.lock().expect("child ref lock") = Some(child._inner_event());
             let _ = parent_holding_tx.send(());
             release_parent_rx
                 .lock()
@@ -1339,10 +1324,7 @@ fn test_outside_wait_of_bus_emit_child_keeps_it_independent_of_active_handler() 
 
     release_parent_tx.send(()).expect("release parent send");
     let _ = block_on(parent.now());
-    assert_eq!(
-        parent.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
+    assert_eq!(parent.event_status.read(), EventStatus::Completed);
     assert_ne!(child.inner.lock().event_status, EventStatus::Completed);
 
     release_child_tx.send(()).expect("release child send");
@@ -1366,12 +1348,12 @@ fn test_awaited_bus_emit_child_remains_independent_and_does_not_block_parent_com
             let child = bus.emit(ChildEvent {
                 ..Default::default()
             });
-            assert_eq!(child.inner.inner.lock().event_parent_id, None);
-            assert_eq!(child.inner.inner.lock().event_emitted_by_handler_id, None);
-            assert!(!child.inner.inner.lock().event_blocks_parent_completion);
+            assert_eq!(child.event_parent_id.clone(), None);
+            assert_eq!(child.event_emitted_by_handler_id.clone(), None);
+            assert!(!child.event_blocks_parent_completion);
             let _ = child.now().await;
-            assert!(!child.inner.inner.lock().event_blocks_parent_completion);
-            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            assert!(!child.event_blocks_parent_completion);
+            *child_ref.lock().expect("child ref lock") = Some(child._inner_event());
             Ok(json!("parent"))
         }
     });
@@ -1390,7 +1372,8 @@ fn test_awaited_bus_emit_child_remains_independent_and_does_not_block_parent_com
         .expect("child ref");
     assert_eq!(child.inner.lock().event_parent_id, None);
     assert!(!child.inner.lock().event_blocks_parent_completion);
-    let parent_inner = parent.inner.inner.lock();
+    let parent_base = parent._inner_event();
+    let parent_inner = parent_base.inner.lock();
     let result = parent_inner
         .event_results
         .values()
@@ -1398,7 +1381,7 @@ fn test_awaited_bus_emit_child_remains_independent_and_does_not_block_parent_com
         .expect("parent result");
     assert!(result.event_children.is_empty());
     drop(parent_inner);
-    assert!(event_children_for(&bus, &parent.inner).is_empty());
+    assert!(event_children_for(&bus, &parent._inner_event()).is_empty());
     bus.destroy();
 }
 
@@ -1425,14 +1408,15 @@ fn test_forwarded_events_are_not_counted_as_parent_event_children() {
         let _ = parent.now().await;
     });
 
-    let parent_inner = parent.inner.inner.lock();
+    let parent_base = parent._inner_event();
+    let parent_inner = parent_base.inner.lock();
     assert!(parent_inner
         .event_results
         .values()
         .all(|result| result.event_children.is_empty()));
     assert_eq!(parent_inner.event_parent_id, None);
     drop(parent_inner);
-    assert!(event_children_for(&bus_1, &parent.inner).is_empty());
+    assert!(event_children_for(&bus_1, &parent._inner_event()).is_empty());
     bus_1.destroy();
     bus_2.destroy();
 }

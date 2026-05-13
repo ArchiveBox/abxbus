@@ -178,10 +178,10 @@ func TestEventResultAllErrorOptionsContract(t *testing.T) {
 	})
 	defer bus.Destroy()
 
-	bus.On("AllErrorResultOptionsEvent", "first", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("AllErrorResultOptionsEvent", "first", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, errors.New("first failure")
 	}, nil)
-	bus.On("AllErrorResultOptionsEvent", "second", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("AllErrorResultOptionsEvent", "second", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, errors.New("second failure")
 	}, nil)
 
@@ -230,7 +230,7 @@ func TestEventResultAllErrorOptionsContract(t *testing.T) {
 
 func TestEventResultDefaultOptionsContract(t *testing.T) {
 	errorBus := abxbus.NewEventBus("EventResultDefaultErrorOptionsBus", nil)
-	errorBus.On("DefaultErrorOptionsEvent", "boom", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	errorBus.On("DefaultErrorOptionsEvent", "boom", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, errors.New("default boom")
 	}, nil)
 
@@ -283,13 +283,13 @@ func TestEventResultErrorShapesUseSingleExceptionOrGroup(t *testing.T) {
 	bus := abxbus.NewEventBus("EventResultErrorShapeBus", &abxbus.EventBusOptions{
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
 	})
-	bus.On("SingleErrorEvent", "single", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("SingleErrorEvent", "single", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, errors.New("single shape failure")
 	}, nil)
-	bus.On("MultiErrorEvent", "first", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("MultiErrorEvent", "first", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, errors.New("first shape failure")
 	}, nil)
-	bus.On("MultiErrorEvent", "second", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("MultiErrorEvent", "second", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, errors.New("second shape failure")
 	}, nil)
 
@@ -346,9 +346,9 @@ func TestEventResultErrorShapesUseSingleExceptionOrGroup(t *testing.T) {
 
 func TestEventResultOptions(t *testing.T) {
 	bus := abxbus.NewEventBus("ResultsListBus", nil)
-	bus.On("ListEvent", "ok", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) { return "ok", nil }, nil)
-	bus.On("ListEvent", "nil", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) { return nil, nil }, nil)
-	bus.On("ListEvent", "err", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) { return nil, errors.New("boom") }, nil)
+	bus.On("ListEvent", "ok", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) { return "ok", nil }, nil)
+	bus.On("ListEvent", "nil", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) { return nil, nil }, nil)
+	bus.On("ListEvent", "err", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) { return nil, errors.New("boom") }, nil)
 
 	e := bus.Emit(abxbus.NewBaseEvent("ListEvent", nil))
 	if _, err := e.Now(); err != nil {
@@ -389,7 +389,7 @@ func TestEventResultOptions(t *testing.T) {
 	slowBus := abxbus.NewEventBus("ResultsListTimeoutBus", nil)
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
-	slowBus.On("SlowListEvent", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	slowBus.On("SlowListEvent", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		started <- struct{}{}
 		<-release
 		return "late", nil
@@ -417,17 +417,17 @@ func TestEventResultAndResultsListUseRegistrationOrderForCurrentResultSubset(t *
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
 	})
 	completedOrder := make(chan string, 3)
-	bus.On("OrderResultEvent", "null", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("OrderResultEvent", "null", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(30 * time.Millisecond)
 		completedOrder <- "null"
 		return nil, nil
 	}, &abxbus.EventHandler{ID: "m-null"})
-	bus.On("OrderResultEvent", "winner", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("OrderResultEvent", "winner", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(20 * time.Millisecond)
 		completedOrder <- "winner"
 		return "winner", nil
 	}, &abxbus.EventHandler{ID: "z-winner"})
-	bus.On("OrderResultEvent", "late", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("OrderResultEvent", "late", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		completedOrder <- "late"
 		return "late", nil
 	}, &abxbus.EventHandler{ID: "a-late"})
@@ -563,7 +563,7 @@ func TestEventResultSerializesHandlerMetadataAndDerivedFields(t *testing.T) {
 	bus := abxbus.NewEventBus("ResultMetadataBus", nil)
 	timeout := 1.5
 	slowTimeout := 0.25
-	handler := bus.On("MetadataEvent", "metadata_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	handler := bus.On("MetadataEvent", "metadata_handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, &abxbus.EventHandler{
 		HandlerTimeout:     &timeout,
@@ -614,7 +614,7 @@ func assertSchemaResult(t *testing.T, name string, schema map[string]any, value 
 	t.Helper()
 	bus := abxbus.NewEventBus(name+"Bus", nil)
 	eventType := name + "Event"
-	bus.On(eventType, "handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On(eventType, "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return value, nil
 	}, nil)
 	event := bus.Emit(schemaEvent(eventType, schema))
@@ -651,7 +651,7 @@ func TestTypedResultSchemaValidatesHandlerResult(t *testing.T) {
 		},
 		"required": []any{"value", "count"},
 	}
-	bus.On("TypedResultEvent", "handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("TypedResultEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return map[string]any{"value": "hello", "count": 42}, nil
 	}, nil)
 
@@ -667,10 +667,10 @@ func TestTypedResultSchemaValidatesHandlerResult(t *testing.T) {
 
 func TestBuiltinResultSchemaValidatesHandlerResults(t *testing.T) {
 	bus := abxbus.NewEventBus("BuiltinResultSchemaBus", nil)
-	bus.On("BuiltinStringResultEvent", "string_handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("BuiltinStringResultEvent", "string_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "42", nil
 	}, nil)
-	bus.On("BuiltinIntResultEvent", "int_handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("BuiltinIntResultEvent", "int_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return 123, nil
 	}, nil)
 
@@ -703,7 +703,7 @@ func TestInvalidHandlerResultMarksErrorWhenSchemaIsDefined(t *testing.T) {
 		"required":             []any{"value"},
 		"additionalProperties": false,
 	}
-	bus.On("InvalidTypedResultEvent", "handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("InvalidTypedResultEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return map[string]any{"value": 123, "extra": true}, nil
 	}, nil)
 
@@ -723,7 +723,7 @@ func TestInvalidHandlerResultMarksErrorWhenSchemaIsDefined(t *testing.T) {
 func TestNoSchemaLeavesRawHandlerResultUntouched(t *testing.T) {
 	bus := abxbus.NewEventBus("NoSchemaResultBus", nil)
 	raw := map[string]any{"value": 123}
-	bus.On("NoSchemaEvent", "handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("NoSchemaEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return raw, nil
 	}, nil)
 
@@ -760,7 +760,7 @@ func TestComplexResultSchemaValidatesNestedData(t *testing.T) {
 		},
 		"required": []any{"items"},
 	}
-	bus.On("ComplexTypedResultEvent", "handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("ComplexTypedResultEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return map[string]any{"items": []any{map[string]any{"id": 1, "labels": []any{"a", "b"}}}}, nil
 	}, nil)
 
@@ -929,7 +929,7 @@ func TestSchemaReferencesAndAnyOfAreEnforced(t *testing.T) {
 		},
 		"$ref": "#/$defs/Payload",
 	}
-	bus.On("SchemaRefEvent", "handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("SchemaRefEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return map[string]any{"value": 7}, nil
 	}, nil)
 
@@ -961,6 +961,12 @@ type getConfigEvent struct {
 type DerivedNameEvent struct {
 	Url string
 }
+
+type namedBaseNoContextHandler func(*abxbus.BaseEvent) error
+type namedBaseWithContextHandler func(*abxbus.BaseEvent, context.Context) (any, error)
+type namedTypedNoContextHandler func(addPayload) addResult
+type namedTypedWithContextHandler func(addPayload, context.Context) (addResult, error)
+type namedTypedAnyHandler func(any) (addResult, error)
 
 func TestEmitAcceptsTypedStructAndDerivesPayloadAndConfig(t *testing.T) {
 	bus := abxbus.NewEventBus("StructEmitBus", nil)
@@ -1003,7 +1009,7 @@ func TestEmitAcceptsTypedStructAndDerivesPayloadAndConfig(t *testing.T) {
 
 func TestTypedEventPayloadAndResultHelpers(t *testing.T) {
 	bus := abxbus.NewEventBus("TypedBus", nil)
-	abxbus.OnTyped[addPayload, addResult](bus, "AddEvent", "add", func(ctx context.Context, payload addPayload) (addResult, error) {
+	abxbus.OnTyped[addPayload, addResult](bus, "AddEvent", "add", func(payload addPayload) (addResult, error) {
 		return addResult{Sum: payload.A + payload.B}, nil
 	}, nil)
 
@@ -1029,6 +1035,158 @@ func TestTypedEventPayloadAndResultHelpers(t *testing.T) {
 	}
 }
 
+func TestOnTypedSupportsOptionalContextHandlerSignatures(t *testing.T) {
+	bus := abxbus.NewEventBus("TypedOptionalContextBus", nil)
+	abxbus.OnTyped[addPayload, addResult](bus, "TypedNoContextEvent", "typed", func(payload addPayload) addResult {
+		return addResult{Sum: payload.A + payload.B}
+	}, nil)
+
+	gotCtx := false
+	abxbus.OnTyped[addPayload, addResult](bus, "TypedWithContextEvent", "typed", func(payload addPayload, ctx context.Context) (addResult, error) {
+		gotCtx = ctx != nil
+		return addResult{Sum: payload.A + payload.B}, nil
+	}, nil)
+
+	noCtxEvent := bus.Emit(abxbus.MustNewTypedEventWithResult[addPayload, addResult]("TypedNoContextEvent", addPayload{A: 2, B: 3}))
+	if _, err := noCtxEvent.Now(); err != nil {
+		t.Fatal(err)
+	}
+	noCtxResult, err := noCtxEvent.EventResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	noCtxTypedResult, err := abxbus.EventResultAs[addResult](noCtxResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noCtxTypedResult.Sum != 5 {
+		t.Fatalf("expected typed no-context result sum=5, got %#v", noCtxTypedResult)
+	}
+
+	ctxEvent := bus.Emit(abxbus.MustNewTypedEventWithResult[addPayload, addResult]("TypedWithContextEvent", addPayload{A: 4, B: 6}))
+	if _, err := ctxEvent.Now(); err != nil {
+		t.Fatal(err)
+	}
+	ctxResult, err := ctxEvent.EventResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctxTypedResult, err := abxbus.EventResultAs[addResult](ctxResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctxTypedResult.Sum != 10 || !gotCtx {
+		t.Fatalf("expected typed context result sum=10 and ctx=true, got result=%#v ctx=%v", ctxTypedResult, gotCtx)
+	}
+}
+
+func TestEventBusOnSupportsNamedHandlerFunctionTypes(t *testing.T) {
+	bus := abxbus.NewEventBus("NamedHandlerFunctionTypesBus", nil)
+	gotNoContext := false
+	gotContext := false
+
+	bus.On("NamedNoContextHandlerEvent", "named_no_context", namedBaseNoContextHandler(func(event *abxbus.BaseEvent) error {
+		gotNoContext = event.EventType == "NamedNoContextHandlerEvent"
+		return nil
+	}), nil)
+	bus.On("NamedWithContextHandlerEvent", "named_with_context", namedBaseWithContextHandler(func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		gotContext = event.EventType == "NamedWithContextHandlerEvent" && ctx != nil
+		return "named-ok", nil
+	}), nil)
+
+	noContextEvent := bus.Emit(abxbus.NewBaseEvent("NamedNoContextHandlerEvent", nil))
+	if _, err := noContextEvent.Now(); err != nil {
+		t.Fatal(err)
+	}
+	if !gotNoContext {
+		t.Fatal("expected named no-context handler to run")
+	}
+
+	contextEvent := bus.Emit(abxbus.NewBaseEvent("NamedWithContextHandlerEvent", nil))
+	if _, err := contextEvent.Now(); err != nil {
+		t.Fatal(err)
+	}
+	contextResult, err := contextEvent.EventResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contextResult != "named-ok" || !gotContext {
+		t.Fatalf("expected named context handler result and ctx=true, got result=%#v ctx=%v", contextResult, gotContext)
+	}
+}
+
+func TestOnTypedSupportsNamedHandlerFunctionTypes(t *testing.T) {
+	bus := abxbus.NewEventBus("TypedNamedHandlerFunctionTypesBus", nil)
+	gotCtx := false
+
+	abxbus.OnTyped[addPayload, addResult](bus, "TypedNamedNoContextEvent", "typed", namedTypedNoContextHandler(func(payload addPayload) addResult {
+		return addResult{Sum: payload.A + payload.B}
+	}), nil)
+	abxbus.OnTyped[addPayload, addResult](bus, "TypedNamedWithContextEvent", "typed", namedTypedWithContextHandler(func(payload addPayload, ctx context.Context) (addResult, error) {
+		gotCtx = ctx != nil
+		return addResult{Sum: payload.A + payload.B}, nil
+	}), nil)
+
+	noContextEvent := bus.Emit(abxbus.MustNewTypedEventWithResult[addPayload, addResult]("TypedNamedNoContextEvent", addPayload{A: 3, B: 4}))
+	if _, err := noContextEvent.Now(); err != nil {
+		t.Fatal(err)
+	}
+	noContextResult, err := noContextEvent.EventResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	noContextTypedResult, err := abxbus.EventResultAs[addResult](noContextResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noContextTypedResult.Sum != 7 {
+		t.Fatalf("expected named typed no-context result sum=7, got %#v", noContextTypedResult)
+	}
+
+	contextEvent := bus.Emit(abxbus.MustNewTypedEventWithResult[addPayload, addResult]("TypedNamedWithContextEvent", addPayload{A: 5, B: 8}))
+	if _, err := contextEvent.Now(); err != nil {
+		t.Fatal(err)
+	}
+	contextResult, err := contextEvent.EventResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	contextTypedResult, err := abxbus.EventResultAs[addResult](contextResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contextTypedResult.Sum != 13 || !gotCtx {
+		t.Fatalf("expected named typed context result sum=13 and ctx=true, got result=%#v ctx=%v", contextTypedResult, gotCtx)
+	}
+}
+
+func TestOnTypedNamedAnyHandlerAcceptsNilPayload(t *testing.T) {
+	bus := abxbus.NewEventBus("TypedNamedAnyNilPayloadBus", nil)
+	called := false
+
+	abxbus.OnTyped[any, addResult](bus, "TypedNamedAnyNilPayloadEvent", "typed", namedTypedAnyHandler(func(payload any) (addResult, error) {
+		called = true
+		if payload != nil {
+			t.Fatalf("expected nil payload, got %#v", payload)
+		}
+		return addResult{Sum: 1}, nil
+	}), nil)
+
+	event := abxbus.NewBaseEvent("TypedNamedAnyNilPayloadEvent", nil)
+	event.Payload = nil
+	result, err := bus.Emit(event).EventResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	typedResult, err := abxbus.EventResultAs[addResult](result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if typedResult.Sum != 1 || !called {
+		t.Fatalf("expected named typed any handler to receive nil payload and return sum=1, got result=%#v called=%v", typedResult, called)
+	}
+}
+
 func TestEventPayloadAsRejectsNilEvent(t *testing.T) {
 	if _, err := abxbus.EventPayloadAs[addPayload](nil); err == nil || !strings.Contains(err.Error(), "event is nil") {
 		t.Fatalf("expected nil event error, got %v", err)
@@ -1037,7 +1195,7 @@ func TestEventPayloadAsRejectsNilEvent(t *testing.T) {
 
 func TestTypedEventWithResultSchemaValidatesHandlerReturnAtRuntime(t *testing.T) {
 	bus := abxbus.NewEventBus("TypedSchemaBus", nil)
-	bus.On("TypedSchemaEvent", "bad", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TypedSchemaEvent", "bad", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return map[string]any{"sum": "not-an-int"}, nil
 	}, nil)
 
@@ -1050,7 +1208,7 @@ func TestTypedEventWithResultSchemaValidatesHandlerReturnAtRuntime(t *testing.T)
 func TestOnTypedValidatesPayloadBeforeCallingHandler(t *testing.T) {
 	bus := abxbus.NewEventBus("TypedPayloadSchemaBus", nil)
 	called := false
-	abxbus.OnTyped[addPayload, addResult](bus, "TypedPayloadSchemaEvent", "typed", func(ctx context.Context, payload addPayload) (addResult, error) {
+	abxbus.OnTyped[addPayload, addResult](bus, "TypedPayloadSchemaEvent", "typed", func(payload addPayload, ctx context.Context) (addResult, error) {
 		called = true
 		return addResult{Sum: payload.A + payload.B}, nil
 	}, nil)
@@ -1070,7 +1228,7 @@ func TestOnTypedValidatesPayloadBeforeCallingHandler(t *testing.T) {
 func TestOnTypedRejectsWrongPayloadFieldType(t *testing.T) {
 	bus := abxbus.NewEventBus("TypedPayloadTypeBus", nil)
 	called := false
-	abxbus.OnTyped[addPayload, addResult](bus, "TypedPayloadTypeEvent", "typed", func(ctx context.Context, payload addPayload) (addResult, error) {
+	abxbus.OnTyped[addPayload, addResult](bus, "TypedPayloadTypeEvent", "typed", func(payload addPayload, ctx context.Context) (addResult, error) {
 		called = true
 		return addResult{Sum: payload.A + payload.B}, nil
 	}, nil)

@@ -932,6 +932,59 @@ async def test_awaited_parallel_queue_jump_child_does_not_pause_later_parallel_c
     await bus.destroy()
 
 
+async def test_serial_queue_jump_child_does_not_pause_existing_parallel_event():
+    class ParentEvent(BaseEvent[None]):
+        pass
+
+    class ParallelEvent(BaseEvent[None]):
+        pass
+
+    class ChildEvent(BaseEvent[None]):
+        pass
+
+    bus = EventBus(
+        name='ParallelEventNotPausedBySerialQueueJumpBus',
+        event_concurrency='bus-serial',
+        event_handler_concurrency='serial',
+    )
+    log: list[str] = []
+    parallel_done = asyncio.Event()
+
+    async def on_parent(event: ParentEvent) -> None:
+        log.append('parent_start')
+        event.emit(ParallelEvent(event_concurrency=EventConcurrencyMode.PARALLEL))
+        child = event.emit(ChildEvent())
+        await child.now()
+        log.append('parent_after_child')
+
+    async def on_parallel(_: ParallelEvent) -> None:
+        log.append('parallel_start')
+        await asyncio.sleep(0.005)
+        log.append('parallel_end')
+        parallel_done.set()
+
+    async def on_child(_: ChildEvent) -> None:
+        log.append('child_start')
+        try:
+            await asyncio.wait_for(parallel_done.wait(), timeout=0.5)
+            log.append('child_saw_parallel_done')
+        except TimeoutError:
+            log.append('child_missed_parallel_done')
+        log.append('child_end')
+
+    bus.on(ParentEvent, on_parent)
+    bus.on(ParallelEvent, on_parallel)
+    bus.on(ChildEvent, on_child)
+
+    await bus.emit(ParentEvent(event_timeout=0)).now()
+    await bus.wait_until_idle()
+
+    assert log.index('parallel_start') < log.index('child_end'), log
+    assert log.index('parallel_end') < log.index('child_end'), log
+    assert 'child_saw_parallel_done' in log, log
+    await bus.destroy()
+
+
 async def test_wait_waits_in_queue_order_inside_handler():
     class ParentEvent(BaseEvent[None]):
         pass

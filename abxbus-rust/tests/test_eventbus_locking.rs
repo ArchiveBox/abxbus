@@ -10,7 +10,6 @@ use std::{
 use abxbus_rust::{
     event_bus::{EventBus, EventBusOptions},
     event_result::EventResultStatus,
-    typed::BaseEventHandle,
     types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
@@ -123,14 +122,14 @@ fn test_queue_jump() {
     assert_eq!(order, vec![0, 2, 1]);
 
     let sibling_started = sibling
-        .inner
+        ._inner_event()
         .inner
         .lock()
         .event_started_at
         .clone()
         .unwrap_or_default();
     let jumped_started = jumped
-        .inner
+        ._inner_event()
         .inner
         .lock()
         .event_started_at
@@ -222,14 +221,14 @@ fn test_bus_serial_processes_in_order() {
     });
 
     let event1_started = event1
-        .inner
+        ._inner_event()
         .inner
         .lock()
         .event_started_at
         .clone()
         .unwrap_or_default();
     let event2_started = event2
-        .inner
+        ._inner_event()
         .inner
         .lock()
         .event_started_at
@@ -474,9 +473,11 @@ fn test_global_serial_awaited_child_jumps_ahead_of_queued_events_across_buses() 
             let child = bus_a.emit_child(WorkEvent {
                 ..Default::default()
             });
-            bus_b.emit(BaseEventHandle::<WorkEvent>::from_base_event(
-                child.inner.clone(),
-            ));
+            bus_b.emit(
+                <WorkEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(
+                    child._inner_event(),
+                ),
+            );
             order
                 .lock()
                 .expect("order lock")
@@ -553,7 +554,7 @@ fn test_wait_waits_in_queue_order_inside_handler_without_queue_jump() {
             let child = bus.emit_child(WorkEvent {
                 ..Default::default()
             });
-            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            *child_ref.lock().expect("child ref lock") = Some(child._inner_event());
             let _ = child.wait().await;
             order
                 .lock()
@@ -983,7 +984,7 @@ fn test_queue_jump_awaited_child_preempts_queued_sibling_on_same_bus() {
             let child = bus.emit_child(WorkEvent {
                 ..Default::default()
             });
-            *captured_child.lock().expect("captured child lock") = Some(child.inner.clone());
+            *captured_child.lock().expect("captured child lock") = Some(child._inner_event());
             let _ = child.now().await;
             order
                 .lock()
@@ -1051,7 +1052,7 @@ fn test_queue_jump_awaited_child_preempts_queued_sibling_on_same_bus() {
         .expect("captured child lock")
         .clone()
         .expect("captured child");
-    let parent_id = parent.inner.inner.lock().event_id.clone();
+    let parent_id = parent.event_id.clone();
     let child_inner = child.inner.lock();
     assert_eq!(
         child_inner.event_parent_id.as_deref(),
@@ -1468,12 +1469,12 @@ fn test_awaited_bus_emit_inside_handler_queue_jumps_but_stays_untracked_root_eve
             let child = bus.emit(WorkEvent {
                 ..Default::default()
             });
-            assert_eq!(child.inner.inner.lock().event_parent_id, None);
-            assert_eq!(child.inner.inner.lock().event_emitted_by_handler_id, None);
-            assert!(!child.inner.inner.lock().event_blocks_parent_completion);
-            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            assert_eq!(child.event_parent_id.clone(), None);
+            assert_eq!(child.event_emitted_by_handler_id.clone(), None);
+            assert!(!child.event_blocks_parent_completion);
+            *child_ref.lock().expect("child ref lock") = Some(child._inner_event());
             let _ = child.now().await;
-            assert!(!child.inner.inner.lock().event_blocks_parent_completion);
+            assert!(!child.event_blocks_parent_completion);
             Ok(json!(null))
         }
     });
@@ -1528,7 +1529,7 @@ fn test_awaited_bus_emit_inside_handler_preempts_queued_sibling_without_parentag
             let child = bus.emit(WorkEvent {
                 ..Default::default()
             });
-            *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
+            *child_ref.lock().expect("child ref lock") = Some(child._inner_event());
             let _ = child.now().await;
             order
                 .lock()
@@ -1635,7 +1636,9 @@ fn test_awaiting_in_flight_event_does_not_double_run_handlers() {
         .recv_timeout(Duration::from_secs(1))
         .expect("handler should start");
 
-    let child_for_wait = BaseEventHandle::<WorkEvent>::from_base_event(child.inner.clone());
+    let child_for_wait = <WorkEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(
+        child._inner_event(),
+    );
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     thread::spawn(move || {
         let _ = block_on(child_for_wait.now());
@@ -1664,7 +1667,8 @@ fn test_edge_case_event_with_no_handlers_completes_immediately() {
         assert!(bus.wait_until_idle(Some(2.0)).await);
     });
 
-    let inner = event.inner.inner.lock();
+    let base = event._inner_event();
+    let inner = base.inner.lock();
     assert_eq!(inner.event_status, EventStatus::Completed);
     assert_eq!(inner.event_pending_bus_count, 0);
     assert_eq!(inner.event_results.len(), 0);

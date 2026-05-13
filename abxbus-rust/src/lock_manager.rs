@@ -485,3 +485,43 @@ impl Drop for RunloopPauseGuard<'_> {
         self.release();
     }
 }
+
+pub struct OwnedRunloopPauseGuard {
+    manager: Arc<LockManager>,
+    released: bool,
+}
+
+impl OwnedRunloopPauseGuard {
+    pub fn is_for_manager(&self, manager: &Arc<LockManager>) -> bool {
+        Arc::ptr_eq(&self.manager, manager)
+    }
+
+    pub fn release(&mut self) {
+        if self.released {
+            return;
+        }
+        self.released = true;
+        let mut pause_depth = self.manager.pause_depth.lock().expect("pause depth");
+        *pause_depth = pause_depth.saturating_sub(1);
+        if *pause_depth == 0 {
+            self.manager.pause_cvar.notify_all();
+        }
+    }
+}
+
+impl Drop for OwnedRunloopPauseGuard {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+impl LockManager {
+    pub fn request_owned_runloop_pause(self: &Arc<Self>) -> OwnedRunloopPauseGuard {
+        let mut pause_depth = self.pause_depth.lock().expect("pause depth");
+        *pause_depth += 1;
+        OwnedRunloopPauseGuard {
+            manager: self.clone(),
+            released: false,
+        }
+    }
+}

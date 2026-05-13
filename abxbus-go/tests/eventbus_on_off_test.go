@@ -13,15 +13,15 @@ func TestOnOffByEntryByIDAndRemoveAll(t *testing.T) {
 	var eventCalls atomic.Int32
 	var wildcardCalls atomic.Int32
 
-	h1 := bus.On("Evt", "h1", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	h1 := bus.On("Evt", "h1", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		eventCalls.Add(1)
 		return "h1", nil
 	}, nil)
-	h2 := bus.On("Evt", "h2", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	h2 := bus.On("Evt", "h2", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		eventCalls.Add(1)
 		return "h2", nil
 	}, nil)
-	bus.On("*", "all", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("*", "all", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		wildcardCalls.Add(1)
 		return "all", nil
 	}, nil)

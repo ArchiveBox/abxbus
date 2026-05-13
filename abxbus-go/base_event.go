@@ -296,7 +296,7 @@ func (e *BaseEvent) UnmarshalJSON(data []byte) error {
 		e.done_ch = make(chan struct{})
 	}
 	if e.EventStatus == "completed" {
-		e.done_once.Do(func() { close(e.done_ch) })
+		e.signalCompleted()
 	}
 	return nil
 }
@@ -473,7 +473,16 @@ func (e *BaseEvent) markCompleted() {
 	e.EventStatus = "completed"
 	now := monotonicDatetime()
 	e.EventCompletedAt = &now
-	e.done_once.Do(func() { close(e.done_ch) })
+}
+
+func (e *BaseEvent) signalCompleted() {
+	e.mu.Lock()
+	if e.done_ch == nil {
+		e.done_ch = make(chan struct{})
+	}
+	doneCh := e.done_ch
+	e.mu.Unlock()
+	e.done_once.Do(func() { close(doneCh) })
 }
 
 func (e *BaseEvent) status() string {
@@ -529,7 +538,11 @@ func (e *BaseEvent) waitWithContext(ctx context.Context, options ...*EventWaitOp
 		}
 		return e, nil
 	}
-	if e.status() == "completed" {
+	e.mu.Lock()
+	completedWithoutBus := e.EventStatus == "completed" && e.Bus == nil
+	e.mu.Unlock()
+	if completedWithoutBus {
+		e.signalCompleted()
 		return e, nil
 	}
 	select {
@@ -562,7 +575,7 @@ func (e *BaseEvent) nowWithContext(ctx context.Context, options ...*EventWaitOpt
 		ctx = ctx2
 	}
 	if e.status() == "completed" {
-		return e, nil
+		return e.waitWithContext(ctx)
 	}
 	e.mu.Lock()
 	bus := e.Bus

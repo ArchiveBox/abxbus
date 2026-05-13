@@ -272,111 +272,14 @@ Resolved in this order:
 1. `event_slow_timeout`
 2. bus `event_slow_timeout`
 
-## Execution scope ordering
+## Execution behavior
 
-Timeout and slow-monitor behavior is implemented as stacked runtime scopes. The ordering matters:
+Timeout and slow-warning behavior is part of the public event lifecycle:
 
-<Tabs>
-<Tab title="Python">
-
-```python
-# EventBus.step(...)
-async with self.locks._run_with_event_lock(self, event):
-    await self._process_event(event, timeout=timeout)
-
-# EventBus.process_event(...)
-async with asyncio.timeout(resolved_event_timeout):
-    async with with_slow_monitor(self._create_slow_event_warning_timer(event)):
-        await event._run_handlers(eventbus=self, handlers=applicable_handlers, timeout=resolved_event_timeout)
-
-# EventResult.run_handler(...)
-async with eventbus.locks._run_with_handler_lock(eventbus, event, event_result):
-    with eventbus._run_with_handler_dispatch_context(event, event_result.handler_id):
-        async with event_result._run_with_timeout(event):
-            async with with_slow_monitor(handler_slow_monitor):
-                await event_result._call_handler(...)
-```
-
-</Tab>
-<Tab title="TypeScript">
-
-```ts
-// EventBus.processEvent(...)
-await this.locks._runWithEventLock(event, () =>
-  this._runHandlersWithTimeout(event, pending_entries, resolved_event_timeout, () =>
-    _runWithSlowMonitor(event._createSlowEventWarningTimer(), () =>
-      scoped_event._runHandlers(pending_entries)
-    )
-  )
-)
-
-// BaseEvent._runHandlers(...) + EventResult.runHandler(...)
-await this.event_bus.locks._runWithHandlerLock(original, this.event_bus.event_handler_concurrency, async (handler_lock) => {
-  await entry.runHandler(handler_lock)
-})
-
-await this.event_bus.locks._runWithHandlerDispatchContext(this, async () => {
-  await _runWithAsyncContext(event._getDispatchContext() ?? null, async () => {
-    await _runWithTimeout(this.handler_timeout, () => this._createHandlerTimeoutError(event), () =>
-      _runWithSlowMonitor(slow_handler_warning_timer, () =>
-        _runWithAbortMonitor(() => this.handler.handler(handler_event), abort_signal)
-      )
-    )
-  })
-})
-```
-
-</Tab>
-<Tab title="Go">
-
-```go
-// EventBus.processEvent(...)
-eventLock := bus.locks.getLockForEvent(event)
-eventLock.Acquire(ctx)
-defer eventLock.Release()
-
-event.markStarted()
-err := runWithTimeout(ctx, resolvedEventTimeout, eventTimeoutError, func(ctx context.Context) error {
-	return event.runHandlers(ctx, bus, handlers, pendingResults, signalFirstHandlerStarted)
-})
-
-// BaseEvent.runHandlers(...) + EventBus.runHandler(...)
-handlerLock := bus.locks.getLockForEventHandler(event, result)
-handlerLock.Acquire(ctx)
-defer handlerLock.Release()
-
-err = runWithTimeout(ctx, resolvedHandlerTimeout, handlerTimeoutError, func(ctx context.Context) error {
-	return bus.locks.runWithHandlerDispatchContext(result, func() error {
-		returnValue, err := handler.Handle(ctx, event)
-		return err
-	})
-})
-```
-
-</Tab>
-<Tab title="Rust">
-
-```rust
-// EventBus::process_event(...)
-match resolved_event_concurrency {
-    EventConcurrencyMode::GlobalSerial => {
-        let _guard = EventBus::global_serial_lock().lock();
-        self.process_event_inner(event).await;
-    }
-    EventConcurrencyMode::BusSerial => {
-        let _guard = self.event_bus_serial_lock().lock();
-        self.process_event_inner(event).await;
-    }
-    EventConcurrencyMode::Parallel => self.process_event_inner(event).await,
-}
-
-// EventBus::run_handler(...)
-let effective_timeout = min_handler_and_event_timeout(...);
-let timed_out = run_handler_with_context(event, handler, effective_timeout).await;
-```
-
-</Tab>
-</Tabs>
+- Event-level timeouts bound the whole event.
+- Handler-level timeouts bound each handler and are capped by the remaining event-level budget when both are set.
+- Slow-warning settings only log warnings; they do not cancel work.
+- Hard timeouts mark unfinished handler results as cancelled, aborted, or timed out and prevent late handler results or late child emits from being accepted.
 
 Event-level timeout finalization keeps cancellation semantics explicit:
 - pending handlers -> cancelled

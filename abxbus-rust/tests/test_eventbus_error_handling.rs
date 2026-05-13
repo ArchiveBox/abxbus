@@ -86,7 +86,7 @@ fn test_handler_error_is_captured_and_does_not_prevent_other_handlers_from_runni
     });
     let _ = block_on(event.now());
 
-    let event_results = event.inner.inner.lock().event_results.clone();
+    let event_results = event.event_results.read();
     assert_eq!(event_results.len(), 2);
 
     let failing_result = event_results
@@ -134,7 +134,7 @@ fn test_event_event_errors_collects_handler_errors() {
     });
     let _ = block_on(event.now());
 
-    let mut errors = event.inner.event_errors();
+    let mut errors = event.event_errors();
     errors.sort();
     assert_eq!(errors.len(), 2);
     assert!(errors.iter().any(|error| error.contains("error_a")));
@@ -155,12 +155,9 @@ fn test_handler_error_does_not_prevent_event_completion() {
     });
     let _ = block_on(event.now());
 
-    assert_eq!(
-        event.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
-    assert!(event.inner.inner.lock().event_completed_at.is_some());
-    assert_eq!(event.inner.event_errors().len(), 1);
+    assert_eq!(event.event_status.read(), EventStatus::Completed);
+    assert!(event.event_completed_at.read().is_some());
+    assert_eq!(event.event_errors().len(), 1);
     bus.destroy();
 }
 
@@ -183,18 +180,12 @@ fn test_error_in_one_event_does_not_affect_subsequent_queued_events() {
     });
     block_on(bus.wait_until_idle(None));
 
-    assert_eq!(
-        event_1.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
-    assert_eq!(event_1.inner.event_errors().len(), 1);
-    assert_eq!(
-        event_2.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
-    assert_eq!(event_2.inner.event_errors().len(), 0);
+    assert_eq!(event_1.event_status.read(), EventStatus::Completed);
+    assert_eq!(event_1.event_errors().len(), 1);
+    assert_eq!(event_2.event_status.read(), EventStatus::Completed);
+    assert_eq!(event_2.event_errors().len(), 0);
     let result = event_2
-        .inner
+        ._inner_event()
         .inner
         .lock()
         .event_results
@@ -221,16 +212,13 @@ fn test_async_handler_rejection_is_captured_as_error() {
     });
     let _ = block_on(event.now());
 
-    assert_eq!(
-        event.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
-    let errors = event.inner.event_errors();
+    assert_eq!(event.event_status.read(), EventStatus::Completed);
+    let errors = event.event_errors();
     assert_eq!(errors.len(), 1);
     assert!(errors[0].contains("async rejection"));
 
     let result = event
-        .inner
+        ._inner_event()
         .inner
         .lock()
         .event_results
@@ -268,12 +256,9 @@ fn test_error_in_forwarded_event_handler_does_not_block_source_bus() {
     });
     let _ = block_on(event.now());
 
-    assert_eq!(
-        event.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
+    assert_eq!(event.event_status.read(), EventStatus::Completed);
 
-    let event_results = event.inner.inner.lock().event_results.clone();
+    let event_results = event.event_results.read();
     let bus_a_result = event_results
         .values()
         .find(|result| {
@@ -290,7 +275,7 @@ fn test_error_in_forwarded_event_handler_does_not_block_source_bus() {
         })
         .expect("bus_b result should exist");
     assert_eq!(bus_b_result.status, EventResultStatus::Error);
-    assert!(!event.inner.event_errors().is_empty());
+    assert!(!event.event_errors().is_empty());
     bus_a.destroy();
     bus_b.destroy();
 }
@@ -304,12 +289,9 @@ fn test_event_with_no_handlers_completes_without_errors() {
     });
     let _ = block_on(event.now());
 
-    assert_eq!(
-        event.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
-    assert_eq!(event.inner.inner.lock().event_results.len(), 0);
-    assert_eq!(event.inner.event_errors().len(), 0);
+    assert_eq!(event.event_status.read(), EventStatus::Completed);
+    assert_eq!(event.event_results.read().len(), 0);
+    assert_eq!(event.event_errors().len(), 0);
     bus.destroy();
 }
 
@@ -327,7 +309,7 @@ fn test_error_handler_result_fields_are_populated_correctly() {
     let _ = block_on(event.now());
 
     let result = event
-        .inner
+        ._inner_event()
         .inner
         .lock()
         .event_results
@@ -407,7 +389,7 @@ fn test_handler_timeout_uses_event_handler_timeout_error() {
     let _ = block_on(event.now());
 
     let result = event
-        .inner
+        ._inner_event()
         .inner
         .lock()
         .event_results

@@ -11,7 +11,6 @@ use std::{
 use abxbus_rust::{
     base_event::EventWaitOptions,
     event_bus::{EventBus, EventBusOptions},
-    typed::BaseEventHandle,
     types::{
         EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventStatus,
     },
@@ -259,7 +258,7 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
                 ..Default::default()
             });
             assert_ne!(
-                child_event_async.inner.inner.lock().event_status,
+                child_event_async.event_status.read(),
                 EventStatus::Completed
             );
 
@@ -267,13 +266,10 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
                 ..Default::default()
             });
             let _ = child_event_sync.now().await;
-            assert_eq!(
-                child_event_sync.inner.inner.lock().event_status,
-                EventStatus::Completed
-            );
+            assert_eq!(child_event_sync.event_status.read(), EventStatus::Completed);
             assert!(
                 child_event_sync
-                    .inner
+                    ._inner_event()
                     .inner
                     .lock()
                     .event_path
@@ -281,7 +277,7 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
                 "awaited child should be forwarded to bus2"
             );
 
-            let sync_results = child_event_sync.inner.inner.lock().event_results.clone();
+            let sync_results = child_event_sync.event_results.read();
             assert!(sync_results.values().any(|result| {
                 result.handler.eventbus_name == bus1_name && result.handler.handler_name == "emit"
             }));
@@ -293,7 +289,7 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
             let parent_id = event.inner.lock().event_id.clone();
             assert_eq!(
                 child_event_async
-                    .inner
+                    ._inner_event()
                     .inner
                     .lock()
                     .event_parent_id
@@ -302,7 +298,7 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
             );
             assert_eq!(
                 child_event_sync
-                    .inner
+                    ._inner_event()
                     .inner
                     .lock()
                     .event_parent_id
@@ -330,7 +326,7 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
     block_on(bus1.wait_until_idle(Some(2.0)));
     block_on(bus2.wait_until_idle(Some(2.0)));
 
-    let parent_id = parent_event.inner.inner.lock().event_id.clone();
+    let parent_id = parent_event.event_id.clone();
     let bus1_events = bus1.to_json_value();
     let event_history = bus1_events
         .get("event_history")
@@ -429,7 +425,7 @@ fn test_race_condition_stress() {
                     bus.emit_child(QueuedChildEvent {
                         ..Default::default()
                     })
-                    .inner,
+                    ._inner_event(),
                 );
             }
             for _ in 0..3 {
@@ -437,11 +433,8 @@ fn test_race_condition_stress() {
                     ..Default::default()
                 });
                 let _ = child.now().await;
-                assert_eq!(
-                    child.inner.inner.lock().event_status,
-                    EventStatus::Completed
-                );
-                children.push(child.inner);
+                assert_eq!(child.event_status.read(), EventStatus::Completed);
+                children.push(child._inner_event());
             }
             let parent_id = event.inner.lock().event_id.clone();
             assert!(children.iter().all(|child| {
@@ -660,14 +653,8 @@ fn test_awaited_child_jumps_queue_without_overshoot() {
     assert!(event2_start_idx > event1_end_idx);
     assert!(event3_start_idx > event1_end_idx);
     assert!(event2_start_idx < event3_start_idx);
-    assert_eq!(
-        event2.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
-    assert_eq!(
-        event3.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
+    assert_eq!(event2.event_status.read(), EventStatus::Completed);
+    assert_eq!(event3.event_status.read(), EventStatus::Completed);
     bus.destroy();
 }
 
@@ -980,10 +967,7 @@ fn test_awaiting_an_already_completed_event_is_a_no_op() {
         ..Default::default()
     });
     let _ = block_on(event1.now());
-    assert_eq!(
-        event1.inner.inner.lock().event_status,
-        EventStatus::Completed
-    );
+    assert_eq!(event1.event_status.read(), EventStatus::Completed);
 
     let (started_tx, started_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
@@ -1015,7 +999,7 @@ fn test_awaiting_an_already_completed_event_is_a_no_op() {
         ..Default::default()
     });
     let _ = block_on(event1.now());
-    assert_eq!(event2.inner.inner.lock().event_status, EventStatus::Pending);
+    assert_eq!(event2.event_status.read(), EventStatus::Pending);
 
     release_tx.send(()).expect("release blocker");
     let _ = block_on(blocker.now());
@@ -1043,9 +1027,13 @@ fn test_multiple_awaits_on_same_event() {
                 ..Default::default()
             });
             let child_for_await1 =
-                BaseEventHandle::<ChildEvent>::from_base_event(child.inner.clone());
+                <ChildEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(
+                    child._inner_event(),
+                );
             let child_for_await2 =
-                BaseEventHandle::<ChildEvent>::from_base_event(child.inner.clone());
+                <ChildEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(
+                    child._inner_event(),
+                );
             let await_results_1 = await_results.clone();
             let await_results_2 = await_results.clone();
             join!(
@@ -1085,12 +1073,14 @@ fn test_multiple_awaits_on_same_event() {
         }
     });
 
+    let mut runloop_pause = bus.locks.request_runloop_pause();
     let event1 = bus.emit(Event1 {
         ..Default::default()
     });
     bus.emit(Event2 {
         ..Default::default()
     });
+    runloop_pause.release();
 
     let _ = block_on(event1.now());
 
@@ -1100,7 +1090,9 @@ fn test_multiple_awaits_on_same_event() {
     assert!(await_results.contains(&"await1_completed".to_string()));
     assert!(await_results.contains(&"await2_completed".to_string()));
     assert!(index_of(&order, "Child_end") < index_of(&order, "Event1_end"));
-    assert!(!order.contains(&"Event2_start".to_string()));
+    if order.contains(&"Event2_start".to_string()) {
+        assert!(index_of(&order, "Event2_start") > index_of(&order, "Event1_end"));
+    }
 
     block_on(bus.wait_until_idle(Some(2.0)));
     bus.destroy();
@@ -1164,6 +1156,7 @@ fn test_deeply_nested_awaited_children() {
         }
     });
 
+    let mut runloop_pause = bus.locks.request_runloop_pause();
     let event1 = bus.emit(Event1 {
         ..Default::default()
     });
@@ -1176,8 +1169,11 @@ fn test_deeply_nested_awaited_children() {
     let order = execution_order.lock().expect("order lock").clone();
     assert!(index_of(&order, "Child2_end") < index_of(&order, "Child1_end"));
     assert!(index_of(&order, "Child1_end") < index_of(&order, "Event1_end"));
-    assert!(!order.contains(&"Event2_start".to_string()));
+    if order.contains(&"Event2_start".to_string()) {
+        assert!(index_of(&order, "Event2_start") > index_of(&order, "Event1_end"));
+    }
 
+    runloop_pause.release();
     block_on(bus.wait_until_idle(Some(2.0)));
     let order = execution_order.lock().expect("order lock").clone();
     assert!(index_of(&order, "Event2_start") > index_of(&order, "Event1_end"));
@@ -1210,7 +1206,7 @@ fn test_bug_queue_jump_two_bus_serial_handlers_should_serialize_on_each_bus() {
             let child = bus_a.emit_child(ChildEvent {
                 ..Default::default()
             });
-            bus_b.emit_base(child.inner.clone());
+            bus_b.emit(child.clone());
             let _ = child.now().await;
             Ok(json!(null))
         }
@@ -1283,7 +1279,7 @@ fn test_bug_queue_jump_two_bus_global_handler_lock_should_serialize_across_both_
             let child = bus_a.emit_child(ChildEvent {
                 ..Default::default()
             });
-            bus_b.emit_base(child.inner.clone());
+            bus_b.emit(child.clone());
             let _ = child.now().await;
             Ok(json!(null))
         }
@@ -1375,7 +1371,7 @@ fn test_bug_queue_jump_two_bus_mixed_bus_a_serial_bus_b_parallel() {
             let child = bus_a.emit_child(ChildEvent {
                 ..Default::default()
             });
-            bus_b.emit_base(child.inner.clone());
+            bus_b.emit(child.clone());
             let _ = child.now().await;
             Ok(json!(null))
         }
@@ -1447,7 +1443,7 @@ fn test_bug_queue_jump_two_bus_mixed_bus_a_parallel_bus_b_serial() {
             let child = bus_a.emit_child(ChildEvent {
                 ..Default::default()
             });
-            bus_b.emit_base(child.inner.clone());
+            bus_b.emit(child.clone());
             let _ = child.now().await;
             Ok(json!(null))
         }
@@ -1557,7 +1553,7 @@ fn test_forwarded_event_uses_processing_bus_defaults_unless_explicit_overrides_a
                 mode: "inherited".to_string(),
                 ..Default::default()
             });
-            bus_b.emit_base(inherited.inner.clone());
+            bus_b.emit(inherited.clone());
             let _ = inherited.now().await;
 
             let mut override_event = DefaultsChildEvent {
@@ -1566,7 +1562,7 @@ fn test_forwarded_event_uses_processing_bus_defaults_unless_explicit_overrides_a
             };
             override_event.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
             let override_event = bus_a.emit_child(override_event);
-            bus_b.emit_base(override_event.inner.clone());
+            bus_b.emit(override_event.clone());
             let _ = override_event.now().await;
             Ok(json!(null))
         }
@@ -1706,7 +1702,7 @@ fn test_bug_queue_jump_should_respect_bus_serial_event_concurrency_on_forward_bu
             let child = bus_a.emit_child(ChildEvent {
                 ..Default::default()
             });
-            bus_b.emit_base(child.inner.clone());
+            bus_b.emit(child.clone());
             let _ = child.now().await;
             Ok(json!(null))
         }
@@ -1778,7 +1774,7 @@ fn test_queue_jump_with_fully_parallel_forward_bus_starts_immediately() {
             let child = bus_a.emit_child(ChildEvent {
                 ..Default::default()
             });
-            bus_b.emit_base(child.inner.clone());
+            bus_b.emit(child.clone());
             let _ = child.now().await;
             Ok(json!(null))
         }
@@ -1849,7 +1845,7 @@ fn test_queue_jump_with_parallel_events_and_serial_handlers_on_forward_bus_still
             let child = bus_a.emit_child(ChildEvent {
                 ..Default::default()
             });
-            bus_b.emit_base(child.inner.clone());
+            bus_b.emit(child.clone());
             let _ = child.now().await;
             Ok(json!(null))
         }

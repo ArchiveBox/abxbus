@@ -812,7 +812,11 @@ export class EventBus {
 
     original_event.event_pending_bus_count += 1
     this.pending_event_queue.push(original_event)
-    this._startRunloop()
+    if (this.locks.getLockForEvent(original_event) === null) {
+      this._startParallelEventTaskFromQueue(original_event)
+    } else {
+      this._startRunloop()
+    }
 
     return this._getEventProxyScopedToThisBus(original_event) as T
   }
@@ -962,6 +966,22 @@ export class EventBus {
     this.runloop_running = true
     this.scheduleMicrotask(() => {
       void this._runloop()
+    })
+  }
+
+  private _startParallelEventTaskFromQueue(event: BaseEvent): void {
+    if (this.in_flight_event_ids.has(event.event_id)) {
+      return
+    }
+    const queue_index = this.pending_event_queue.indexOf(event)
+    if (queue_index >= 0) {
+      this.pending_event_queue.splice(queue_index, 1)
+    } else if (event.event_status === 'completed') {
+      return
+    }
+    this.in_flight_event_ids.add(event.event_id)
+    this.scheduleMicrotask(() => {
+      void this._processEvent(event)
     })
   }
 

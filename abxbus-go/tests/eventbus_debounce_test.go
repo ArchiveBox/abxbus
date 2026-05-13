@@ -20,7 +20,7 @@ func debounceEmitFallback(bus *abxbus.EventBus, eventType string, payload map[st
 
 func TestSimpleDebounceWithChildOfReusesRecentEvent(t *testing.T) {
 	bus := abxbus.NewEventBus("DebounceBus", nil)
-	bus.On("ScreenshotEvent", "complete_screenshot", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("ScreenshotEvent", "complete_screenshot", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "screenshot_done", nil
 	}, nil)
 
@@ -56,7 +56,7 @@ func TestSimpleDebounceWithChildOfReusesRecentEvent(t *testing.T) {
 
 func TestReturnsExistingFreshEvent(t *testing.T) {
 	bus := abxbus.NewEventBus("DebounceFreshBus", nil)
-	bus.On("ScreenshotEvent", "complete", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("ScreenshotEvent", "complete", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "done", nil
 	}, nil)
 
@@ -139,7 +139,7 @@ func TestAdvancedDebouncePrefersHistoryThenWaitsFutureThenDispatches(t *testing.
 
 func TestDispatchesNewWhenNoMatch(t *testing.T) {
 	bus := abxbus.NewEventBus("DebounceNoMatchBus", nil)
-	bus.On("ScreenshotEvent", "complete", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("ScreenshotEvent", "complete", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "done", nil
 	}, nil)
 
@@ -163,7 +163,7 @@ func TestDispatchesNewWhenNoMatch(t *testing.T) {
 
 func TestDispatchesNewWhenStale(t *testing.T) {
 	bus := abxbus.NewEventBus("DebounceStaleBus", nil)
-	bus.On("ScreenshotEvent", "complete", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("ScreenshotEvent", "complete", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "done", nil
 	}, nil)
 
@@ -227,7 +227,7 @@ func TestFindPastFloatReturnsImmediatelyWithoutWaiting(t *testing.T) {
 
 func TestOrChainWithoutWaitingFindsExisting(t *testing.T) {
 	bus := abxbus.NewEventBus("DebounceOrChainExistingBus", nil)
-	bus.On("ScreenshotEvent", "complete", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("ScreenshotEvent", "complete", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "done", nil
 	}, nil)
 
@@ -257,7 +257,7 @@ func TestOrChainWithoutWaitingFindsExisting(t *testing.T) {
 
 func TestOrChainWithoutWaitingDispatchesWhenNoMatch(t *testing.T) {
 	bus := abxbus.NewEventBus("DebounceOrChainNoMatchBus", nil)
-	bus.On("ScreenshotEvent", "complete", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("ScreenshotEvent", "complete", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "done", nil
 	}, nil)
 
@@ -282,7 +282,7 @@ func TestOrChainWithoutWaitingDispatchesWhenNoMatch(t *testing.T) {
 
 func TestOrChainMultipleSequentialLookups(t *testing.T) {
 	bus := abxbus.NewEventBus("DebounceSequentialBus", nil)
-	bus.On("ScreenshotEvent", "complete", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("ScreenshotEvent", "complete", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "done", nil
 	}, nil)
 
