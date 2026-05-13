@@ -244,9 +244,13 @@ completed.EventResultsList()
 </Tab>
 </Tabs>
 
+- Default options are `raise_if_any=true` and `raise_if_none=false` in every runtime.
 - `raise_if_any`: raise if any handler ended with an error.
 - `raise_if_none`: raise only when no handlers returned a valid value after filtering; it does not raise just because one handler returned `None`/`null`/`undefined`.
+- If every handler errors, only `raise_if_any=false` plus `raise_if_none=false` suppresses the error and returns no value/empty list; every other option combination raises.
+- A single handler error is raised as that error; multiple handler errors are raised as an aggregate/exception-group shape.
 - Default filtering includes only completed, successful, non-empty scalar/object/list values and excludes forwarded `BaseEvent` returns.
+- Go accepts no args for defaults (`event.EventResult()` / `event.EventResultsList()`) and a single `nil` options value is equivalent to defaults.
 
 ## Per-handler inspection
 

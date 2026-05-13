@@ -287,7 +287,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"time"
 
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 )
@@ -351,9 +350,6 @@ func main() {
 	bus.On("SendReceiptEvent", "on_receipt", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		return fmt.Sprintf("receipt:%s", event.Payload["order_id"]), nil
 	}, nil)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 
 	root := bus.Emit(abxbus.NewBaseEvent("CheckoutEvent", map[string]any{"order_id": "ord-123"}))
 	result, err := root.EventResult()

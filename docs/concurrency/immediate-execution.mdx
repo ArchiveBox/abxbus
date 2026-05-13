@@ -374,6 +374,8 @@ if ok := bus.WaitUntilIdle(nil); !ok {
 - In TypeScript, `await child_event.wait()` keeps normal queue order (non-queue-jump wait).
 - In Go, use `childEvent.Now()` for the immediate path.
 - In Go, use `childEvent.Wait()` to keep normal queue order.
+- In Rust, use `child_event.now().await` for the immediate path.
+- In Rust, use `child_event.wait().await` to keep normal queue order.
 
 ## Related pages
 

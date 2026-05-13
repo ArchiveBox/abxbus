@@ -108,6 +108,7 @@ Constructor:
 new EventBus(name?: string, options?: {
   id?: string
   max_history_size?: number | null
+  max_history_drop?: boolean
   event_concurrency?: 'global-serial' | 'bus-serial' | 'parallel' | null
   event_timeout?: number | null
   event_slow_timeout?: number | null
@@ -125,13 +126,15 @@ new EventBus(name?: string, options?: {
 | `id`                              | `string`                                                | `uuidv7()`     | Override bus UUID (mostly for serialization/tests).                                                                                                                  |
 | `max_history_size`                | `number \| null`                                        | `100`          | Max events kept in `event_history`; `null` = unbounded; `0` = keep only in-flight events and drop completed events immediately.                                      |
 | `max_history_drop`                | `boolean`                                               | `false`        | If `true`, when history is full drop oldest history entries (including uncompleted if needed). If `false`, reject new emits when history reaches `max_history_size`. |
-| `event_concurrency`               | `'global-serial' \| 'bus-serial' \| 'parallel' \| null` | `'bus-serial'` | Event-level scheduling policy.                                                                                                                                       |
-| `event_handler_concurrency`       | `'serial' \| 'parallel' \| null`                        | `'serial'`     | Per-event handler scheduling policy.                                                                                                                                 |
-| `event_handler_completion`        | `'all' \| 'first'`                                      | `'all'`        | Event completion mode if event does not override it.                                                                                                                 |
-| `event_timeout`                   | `number \| null`                                        | `60`           | Default per-handler timeout budget in seconds (unless overridden); `0` disables.                                                                                     |
-| `event_handler_slow_timeout`      | `number \| null`                                        | `30`           | Slow handler warning threshold in seconds; `0` disables.                                                                                                             |
-| `event_slow_timeout`              | `number \| null`                                        | `300`          | Slow event warning threshold in seconds; `0` disables.                                                                                                               |
+| `event_concurrency`               | `'global-serial' \| 'bus-serial' \| 'parallel' \| null` | `'bus-serial'` | Event-level scheduling policy, resolved at processing time when the event does not override it.                                                                       |
+| `event_handler_concurrency`       | `'serial' \| 'parallel' \| null`                        | `'serial'`     | Per-event handler scheduling policy, resolved at processing time when the event does not override it.                                                                |
+| `event_handler_completion`        | `'all' \| 'first'`                                      | `'all'`        | Event completion mode, resolved at processing time when the event does not override it.                                                                              |
+| `event_timeout`                   | `number \| null`                                        | `60`           | Default per-handler timeout budget in seconds, resolved at processing time when the event does not override it; `0` disables.                                       |
+| `event_handler_slow_timeout`      | `number \| null`                                        | `30`           | Slow handler warning threshold in seconds, resolved at processing time when the event does not override it; `0` disables.                                           |
+| `event_slow_timeout`              | `number \| null`                                        | `300`          | Slow event warning threshold in seconds, resolved at processing time when the event does not override it; `0` disables.                                             |
 | `event_handler_detect_file_paths` | `boolean`                                               | `true`         | Capture source file:line for handlers (slower, better logs).                                                                                                         |
+
+Unset event option fields stay unset on the event object. The bus that actually processes the event resolves its defaults at execution time, so forwarded events can inherit the target bus defaults.
 
 #### Runtime state properties
 
@@ -300,7 +303,7 @@ Important semantics:
 - Past/future matches resolve as soon as event is emitted. If you need the completed event, await `event.now()` or pass `{event_status: 'completed'}` to filter only for completed events.
 - If both `past` and `future` are omitted, defaults are `past: true, future: false`.
 - If both `past` and `future` are `false`, it returns `null` immediately.
-- Detailed behavior matrix is covered in `abxbus-ts/tests/eventbus_find.test.ts`.
+- Detailed behavior matrix is covered in `abxbus-ts/tests/EventBus_find.test.ts`.
 
 #### `waitUntilIdle(timeout?)`
 
@@ -357,11 +360,15 @@ logTree(): string
 #### `destroy()`
 
 ```ts
-destroy(): void
+destroy(timeout?: number | null, clear?: boolean): Promise<void>
+destroy(options?: { timeout?: number | null; clear?: boolean }): Promise<void>
 ```
 
-- `destroy()` clears handlers/history/locks and removes this bus from global weak registry.
-- `destroy()`/GC behavior is exercised in `abxbus-ts/tests/eventbus.test.ts` and `abxbus-ts/tests/eventbus_performance.test.ts`.
+- `clear` defaults to `true`.
+- `await bus.destroy()` clears handlers/history/pending events/in-flight state/find waiters/locks and removes this bus from global tracking.
+- `await bus.destroy({ timeout: 1 })` waits up to 1 second for pending and in-flight work before destroying.
+- `await bus.destroy({ clear: false })` stops runtime work and resolves waiters but keeps handlers/history so the bus can be used again.
+- Destroy/GC behavior is exercised in `abxbus-ts/tests/EventBus.test.ts` and `abxbus-ts/tests/EventBus_performance.test.ts`.
 
 </details>
 
@@ -379,7 +386,7 @@ const MyEvent = BaseEvent.extend('MyEvent', {
   // ...
   // any other payload fields you want to include can go here
 
-  // fields that start with event_* are reserved for metadata used by the library
+  // known event_* fields are event metadata/options; unknown event_* fields are rejected
   event_result_type: z.string().optional(),
   event_timeout: 60,
   // ...
@@ -395,12 +402,12 @@ API behavior and lifecycle examples:
 - `abxbus-ts/examples/simple.ts`
 - `abxbus-ts/examples/immediate_event_processing.ts`
 - `abxbus-ts/examples/forwarding_between_busses.ts`
-- `abxbus-ts/tests/eventbus.test.ts`
-- `abxbus-ts/tests/eventbus_find.test.ts`
-- `abxbus-ts/tests/event_handler_first.test.ts`
-- `abxbus-ts/tests/base_event_event_bus_proxy.test.ts`
-- `abxbus-ts/tests/eventbus_timeout.test.ts`
-- `abxbus-ts/tests/event_result.test.ts`
+- `abxbus-ts/tests/EventBus.test.ts`
+- `abxbus-ts/tests/EventBus_find.test.ts`
+- `abxbus-ts/tests/EventHandler_first.test.ts`
+- `abxbus-ts/tests/BaseEvent.test.ts`
+- `abxbus-ts/tests/EventBus_timeout.test.ts`
+- `abxbus-ts/tests/EventResult.test.ts`
 
 #### Event configuration fields
 
@@ -410,10 +417,13 @@ Special configuration fields you can set on each event to control processing:
 - `event_version?: string` (default: `'0.0.1'`; useful for your own schema/data migrations)
 - `event_timeout?: number | null`
 - `event_handler_timeout?: number | null`
+- `event_slow_timeout?: number | null`
 - `event_handler_slow_timeout?: number | null`
 - `event_concurrency?: 'global-serial' | 'bus-serial' | 'parallel' | null`
 - `event_handler_concurrency?: 'serial' | 'parallel' | null`
 - `event_handler_completion?: 'all' | 'first'`
+
+When these fields are `null`/unset, they are resolved from the current processing bus at execution time and are not eagerly written onto the event.
 
 #### Runtime state fields
 
@@ -448,7 +458,7 @@ now(options?: { first_result?: boolean; timeout?: number | null }): Promise<this
 - `{ first_result: true }` resolves when the first valid result is available; other handlers keep running.
 - `{ timeout }` limits this wait call only. Use `event_timeout: 0` / `event_handler_timeout: 0` to disable execution timeouts.
 - Rejects if event is not attached to a bus (`event has no bus attached`).
-- Queue-jump behavior is demonstrated in `abxbus-ts/examples/immediate_event_processing.ts` and `abxbus-ts/tests/base_event_event_bus_proxy.test.ts`.
+- Queue-jump behavior is demonstrated in `abxbus-ts/examples/immediate_event_processing.ts` and `abxbus-ts/tests/BaseEvent.test.ts`.
 
 #### `wait()`
 
@@ -469,7 +479,23 @@ event.now({ first_result: true }).eventResult(): Promise<EventResultType<this> |
 - Resolves as soon as the first valid result is available.
 - Does not change `event_handler_completion`; all handlers keep running unless the event definition explicitly sets `event_handler_completion: 'first'`.
 - Result filtering and error policy are controlled by `eventResult(...)`, not `now()` / `wait()`.
-- Cancellation and winner-selection behavior is covered in `abxbus-ts/tests/event_handler_first.test.ts`.
+- Cancellation and winner-selection behavior is covered in `abxbus-ts/tests/EventHandler_first.test.ts`.
+
+#### `eventResult(options?)`
+
+```ts
+eventResult(
+  options?: {
+    include?: (result: EventResultType<this> | undefined, event_result: EventResult<this>) => boolean
+    raise_if_any?: boolean
+    raise_if_none?: boolean
+  }
+): Promise<EventResultType<this> | undefined>
+```
+
+- Returns the first matching handler result in handler registration order.
+- If the event is still pending and has no settled results, it first waits through `now({ first_result: true })`.
+- Uses the same filtering and error policy options as `eventResultsList(...)`.
 
 #### `eventResultsList(options?)`
 
@@ -487,6 +513,8 @@ eventResultsList(
 - Default filter includes completed non-`null`/non-`undefined` non-error, non-forwarded (`BaseEvent`) values.
 - `raise_if_any` defaults to `true` and throws when any handler result has an error.
 - `raise_if_none` defaults to `false` and throws when no results match `include`.
+- If every handler errors, only `{ raise_if_any: false, raise_if_none: false }` suppresses the error; every other option combination rejects.
+- A single handler error rejects as that error; multiple handler errors reject as `AggregateError`.
 - Examples:
   - `await event.eventResultsList({ raise_if_any: false, raise_if_none: false })`
   - `await event.eventResultsList({ include: (result) => typeof result === 'object', raise_if_any: false })`
@@ -534,7 +562,7 @@ EventFactory.fromJSON?.(data: unknown): TypedEvent
 - JSON format is cross-language compatible with Python implementation.
 - `event_result_type` is serialized as JSON Schema when possible and rehydrated on `fromJSON`.
 - In TypeScript-only usage, `event_result_type` can be any Zod schema shape or base type like `number | string | boolean | etc.`. For cross-language roundtrips, object-like schemas (including Python `TypedDict`/`dataclass`-style shapes) are reconstructed on Python as Pydantic models, JSON object keys are always strings, and some fine-grained string-shape constraints may be normalized between Zod and Pydantic.
-- Round-trip coverage is in `abxbus-ts/tests/event_result_typed_results.test.ts` and `abxbus-ts/tests/eventbus.test.ts`.
+- Round-trip coverage is in `abxbus-ts/tests/EventResult.test.ts` and `abxbus-ts/tests/EventBus.test.ts`.
 
 </details>
 

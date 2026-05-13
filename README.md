@@ -596,7 +596,7 @@ await event_b.now()  # Still sees 'req-B'
 EventBus includes [automatic memory management](https://abxbus.archivebox.io/api/eventbus#shared-configuration-semantics) to prevent unbounded growth in long-running applications:
 
 ```python
-# Create a bus with memory limits (default: 50 events)
+# Create a bus with memory limits (default: 100 events)
 bus = EventBus(max_history_size=100)  # Keep max 100 events in history
 
 # Or disable memory limits for unlimited history
@@ -746,13 +746,14 @@ The main event bus class that manages event processing and handler execution.
 ```python
 EventBus(
     name: str | None = None,
+    event_concurrency: Literal['global-serial', 'bus-serial', 'parallel'] = 'bus-serial',
     event_handler_concurrency: Literal['serial', 'parallel'] = 'serial',
     event_handler_completion: Literal['all', 'first'] = 'all',
     event_timeout: float | None = 60.0,
     event_slow_timeout: float | None = 300.0,
     event_handler_slow_timeout: float | None = 30.0,
     event_handler_detect_file_paths: bool = True,
-    max_history_size: int | None = 50,
+    max_history_size: int | None = 100,
     max_history_drop: bool = False,
     middlewares: Sequence[EventBusMiddleware | type[EventBusMiddleware]] | None = None,
 )
@@ -761,13 +762,14 @@ EventBus(
 **Parameters:**
 
 - `name`: Optional unique name for the bus (auto-generated if not provided)
+- `event_concurrency`: Default event scheduling mode: `'global-serial'`, `'bus-serial'` (default), or `'parallel'` (resolved at processing time when `event.event_concurrency` is unset)
 - `event_handler_concurrency`: Default handler execution mode for events on this bus: `'serial'` (default) or `'parallel'` (resolved at processing time when `event.event_handler_concurrency` is unset)
-- `event_handler_completion`: Handler completion mode for each event: `'all'` (default, wait for all handlers) or `'first'` (complete once first successful non-`None` result is available)
+- `event_handler_completion`: Handler completion mode for each event: `'all'` (default, wait for all handlers) or `'first'` (complete once first successful non-`None` result is available), resolved at processing time when `event.event_handler_completion` is unset
 - `event_timeout`: Default per-event timeout in seconds resolved at processing time when `event.event_timeout` is `None`
-- `event_slow_timeout`: Default slow-event warning threshold in seconds
-- `event_handler_slow_timeout`: Default slow-handler warning threshold in seconds
+- `event_slow_timeout`: Default slow-event warning threshold in seconds resolved at processing time when `event.event_slow_timeout` is `None`
+- `event_handler_slow_timeout`: Default slow-handler warning threshold in seconds resolved at processing time when `event.event_handler_slow_timeout` is `None`
 - `event_handler_detect_file_paths`: Whether to auto-detect handler source file paths at registration time (slightly slower when enabled)
-- `max_history_size`: Maximum number of events to keep in history (default: 50, `None` = unlimited, `0` = keep only in-flight events and drop completed events immediately)
+- `max_history_size`: Maximum number of events to keep in history (default: 100, `None` = unlimited, `0` = keep only in-flight events and drop completed events immediately)
 - `max_history_drop`: If `True`, drop oldest history entries when full (even uncompleted events). If `False` (default), reject new emits once history reaches `max_history_size` (except when `max_history_size=0`, which never rejects on history size)
 - `middlewares`: Optional list of `EventBusMiddleware` subclasses or instances that hook into handler execution for analytics, logging, retries, etc. (see [Middlewares](#middlewares) for more info)
 
@@ -775,6 +777,7 @@ Timeout precedence matches TS:
 
 - Effective handler timeout = `min(resolved_handler_timeout, event_timeout)` where `resolved_handler_timeout` resolves in order: `handler.handler_timeout` -> `event.event_handler_timeout` -> `bus.event_timeout`.
 - Slow handler warning threshold resolves in order: `handler.handler_slow_timeout` -> `event.event_handler_slow_timeout` -> `bus.event_handler_slow_timeout`.
+- Bus defaults are applied at execution time by the bus currently processing the event. Unset event fields stay unset on the event object so forwarded events can inherit the target bus defaults.
 
 #### `EventBus` Properties
 
@@ -891,14 +894,14 @@ await bus.wait_until_idle()             # wait indefinitely until EventBus has f
 await bus.wait_until_idle(timeout=5.0)  # wait up to 5 seconds
 ```
 
-##### `destroy(timeout: float | None=None, clear: bool=False)`
+##### `destroy(timeout: float | None=None, clear: bool=True)`
 
-Destroy the event bus, optionally waiting for pending events and clearing memory.
+Destroy the event bus, optionally waiting for pending events first.
 
 ```python
-await bus.destroy(timeout=1.0)  # Graceful destroy, wait up to 1sec for pending and active events to finish processing
-await bus.destroy()             # Immediate destroy, aborts all pending and actively processing events
-await bus.destroy(clear=True)   # Destroy and clear all event history and handlers to free memory
+await bus.destroy(timeout=1.0)       # wait up to 1sec, then destroy and clear by default
+await bus.destroy()                  # destroy immediately and clear handlers/history/runtime state
+await bus.destroy(clear=False)       # stop runtime work but keep handlers/history so the bus can resume
 ```
 
 ---
@@ -925,7 +928,9 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     event_version: str           # Defaults to '0.0.1' (override per class/instance for event payload versioning)
     event_timeout: float | None = None # Event timeout in seconds (bus default resolved at processing time if None)
     event_handler_timeout: float | None = None # Optional per-event handler timeout cap in seconds
+    event_slow_timeout: float | None = None # Optional per-event slow-event warning threshold
     event_handler_slow_timeout: float | None = None # Optional per-event slow-handler warning threshold
+    event_concurrency: Literal['global-serial', 'bus-serial', 'parallel'] | None = None  # optional per-event scheduling override (None -> bus default at processing time)
     event_handler_concurrency: Literal['serial', 'parallel'] | None = None  # optional per-event handler scheduling override (None -> bus default at processing time)
     event_handler_completion: Literal['all', 'first'] | None = None  # optional per-event completion override (None -> bus default at processing time)
 
@@ -1013,6 +1018,7 @@ Utility method helper to execute all the handlers and return the first handler's
 - `include`: Filter function `(result, event_result) -> bool` to include only specific results (default: only non-None, non-exception results)
 - `raise_if_any`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
 - `raise_if_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: False`)
+- If every handler errors, only `raise_if_any=False` plus `raise_if_none=False` suppresses the error and returns `None`; every other option combination raises.
 
 ```python
 # by default it returns the first successful non-None result value
@@ -1034,6 +1040,7 @@ Utility method helper to get all raw result values in a list.
 - `include`: Filter function `(result, event_result) -> bool` to include only specific results (default: only non-None, non-exception results)
 - `raise_if_any`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
 - `raise_if_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: False`)
+- If every handler errors, only `raise_if_any=False` plus `raise_if_none=False` suppresses the error and returns `[]`; every other option combination raises.
 
 ```python
 # by default it returns all successful non-None result values

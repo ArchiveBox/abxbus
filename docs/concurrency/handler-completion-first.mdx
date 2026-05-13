@@ -89,7 +89,9 @@ bus.on(CompletionEvent, async () => {
 const event = bus.emit(CompletionEvent({}))
 await event.now()
 
-if ((await event.eventResult()) !== 'winner') throw new Error('expected first winner result')
+if ((await event.eventResult({ raise_if_any: false, raise_if_none: false })) !== 'winner') {
+  throw new Error('expected first winner result')
+}
 if (!slowStarted) throw new Error('expected slow handler to start')
 if (slowCompleted) throw new Error('slow handler should not complete before event resolves')
 ```
@@ -206,4 +208,4 @@ assert_eq!(value, Some(json!("winner")));
 ## Notes
 
 - This mode is useful for fallback chains and race-to-first-response patterns.
-- Use `await event.now(first_result=True)` / `await event.now({ first_result: true })` when you want to resolve as soon as a valid result is available while still allowing all handlers to continue. To stop running after the first valid handler result, set `event_handler_completion: 'first'` on the event definition.
+- Use `await event.now(first_result=True)` / `await event.now({ first_result: true })` / `event.Now(&abxbus.EventWaitOptions{FirstResult: true})` / `event.now_with_options(EventWaitOptions { first_result: true, ..Default::default() })` when you want to resolve as soon as a valid result is available while still allowing all handlers to continue. To stop running after the first valid handler result, set `event_handler_completion: 'first'` on the event definition.
