@@ -48,10 +48,10 @@ type FooPayload struct {
 
 type FooResult string
 
-event, err := abxbus.NewBaseEventWithResult[FooPayload, FooResult]("FooCreateEvent", FooPayload{
+event, err := abxbus.NewEvent[FooPayload]("FooCreateEvent", FooPayload{
 	Name: "Ada",
 	Age:  37,
-})
+}, abxbus.ResultType[FooResult]())
 ```
 
 </Tab>
@@ -149,7 +149,7 @@ const value = await completed.eventResult()
 ```go
 type MyEvent struct{}
 
-pending := bus.Emit(abxbus.MustNewTypedEvent[MyEvent]("MyEvent", MyEvent{}))
+pending := bus.Emit(abxbus.MustNewEvent("MyEvent", MyEvent{}))
 completed, err := pending.Now()
 if err != nil {
 	return err

@@ -298,7 +298,18 @@ func (b *EventBus) notifyBusHandlersChange(handler *EventHandler, registered boo
 	}
 }
 
-func (b *EventBus) On(event_pattern string, handler_name string, handler any, options *EventHandler) *EventHandler {
+func (b *EventBus) On(event_name string, handler_name string, handler any, options *EventHandler) *EventHandler {
+	if event_name == "" || event_name == "*" {
+		panic(`EventBus.On registers typed handlers for one concrete event name; use EventBus.OnEventName for wildcard or raw event-name handlers`)
+	}
+	normalizedHandler, err := normalizeTypedEventHandlerCallable(handler)
+	if err != nil {
+		panic(err)
+	}
+	return b.registerHandler(event_name, handler_name, normalizedHandler, options)
+}
+
+func (b *EventBus) OnEventName(event_pattern string, handler_name string, handler any, options *EventHandler) *EventHandler {
 	if err := b.rejectIfDestroyed("On"); err != nil {
 		panic(err)
 	}
@@ -309,6 +320,10 @@ func (b *EventBus) On(event_pattern string, handler_name string, handler any, op
 	if err != nil {
 		panic(err)
 	}
+	return b.registerHandler(event_pattern, handler_name, normalizedHandler, options)
+}
+
+func (b *EventBus) registerHandler(event_pattern string, handler_name string, normalizedHandler EventHandlerCallable, options *EventHandler) *EventHandler {
 	h := NewEventHandler(b.Name, b.ID, event_pattern, handler_name, normalizedHandler)
 	explicitID := false
 	if options != nil {
@@ -404,6 +419,14 @@ func (b *EventBus) Off(event_pattern string, handler any) {
 
 func (b *EventBus) Emit(input any) *BaseEvent {
 	return b.EmitWithContext(nil, input)
+}
+
+func (b *EventBus) EmitEventName(event_name string, payload map[string]any) *BaseEvent {
+	return b.Emit(NewBaseEvent(event_name, payload))
+}
+
+func (b *EventBus) EmitEventNameWithContext(ctx context.Context, event_name string, payload map[string]any) *BaseEvent {
+	return b.EmitWithContext(ctx, NewBaseEvent(event_name, payload))
 }
 
 func (b *EventBus) EmitWithContext(ctx context.Context, input any) *BaseEvent {
@@ -1704,7 +1727,23 @@ func (b *EventBus) eventMatchesEquals(event *BaseEvent, equals map[string]any) b
 	return eventMatchesEquals(event, equals)
 }
 
-func (b *EventBus) Find(event_pattern string, where func(event *BaseEvent) bool, options *FindOptions) (*BaseEvent, error) {
+func (b *EventBus) Find(input any, where any, options *FindOptions) (*BaseEvent, error) {
+	event, err := baseEventFromAny(input)
+	if err != nil {
+		return nil, err
+	}
+	matches, err := normalizeTypedFindPredicate(where)
+	if err != nil {
+		return nil, err
+	}
+	return b.findEventName(event.EventType, matches, options)
+}
+
+func (b *EventBus) FindEventName(event_pattern string, where func(event *BaseEvent) bool, options *FindOptions) (*BaseEvent, error) {
+	return b.findEventName(event_pattern, where, options)
+}
+
+func (b *EventBus) findEventName(event_pattern string, where func(event *BaseEvent) bool, options *FindOptions) (*BaseEvent, error) {
 	if err := b.rejectIfDestroyed("Find"); err != nil {
 		return nil, err
 	}
@@ -1780,7 +1819,23 @@ func (b *EventBus) Find(event_pattern string, where func(event *BaseEvent) bool,
 	}
 }
 
-func (b *EventBus) Filter(event_pattern string, where func(event *BaseEvent) bool, options *FilterOptions) ([]*BaseEvent, error) {
+func (b *EventBus) Filter(input any, where any, options *FilterOptions) ([]*BaseEvent, error) {
+	event, err := baseEventFromAny(input)
+	if err != nil {
+		return nil, err
+	}
+	matches, err := normalizeTypedFindPredicate(where)
+	if err != nil {
+		return nil, err
+	}
+	return b.filterEventName(event.EventType, matches, options)
+}
+
+func (b *EventBus) FilterEventName(event_pattern string, where func(event *BaseEvent) bool, options *FilterOptions) ([]*BaseEvent, error) {
+	return b.filterEventName(event_pattern, where, options)
+}
+
+func (b *EventBus) filterEventName(event_pattern string, where func(event *BaseEvent) bool, options *FilterOptions) ([]*BaseEvent, error) {
 	if err := b.rejectIfDestroyed("Filter"); err != nil {
 		return nil, err
 	}

@@ -213,7 +213,7 @@ bus.on(WorkEvent, slowHandler, {
 <Tab title="Go">
 
 ```go
-entry := bus.On("WorkEvent", "slow_handler", slowHandler, nil)
+entry := bus.OnEventName("WorkEvent", "slow_handler", slowHandler, nil)
 handlerTimeout := 1.5
 handlerSlowTimeout := 0.5
 entry.HandlerTimeout = &handlerTimeout

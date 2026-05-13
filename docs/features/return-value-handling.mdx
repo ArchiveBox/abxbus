@@ -93,8 +93,7 @@ type DoMathPayload struct {
 }
 
 bus := abxbus.NewEventBus("AppBus", nil)
-abxbus.OnTyped[DoMathPayload, int](
-	bus,
+bus.On(
 	"DoMathEvent",
 	"add",
 	func(payload DoMathPayload) (int, error) {
@@ -103,9 +102,10 @@ abxbus.OnTyped[DoMathPayload, int](
 	nil,
 )
 
-event, err := abxbus.NewBaseEventWithResult[DoMathPayload, int](
+event, err := abxbus.NewEvent[DoMathPayload](
 	"DoMathEvent",
 	DoMathPayload{A: 2, B: 3},
+	abxbus.ResultType[int](),
 )
 if err != nil {
 	panic(err)
@@ -177,7 +177,7 @@ let values = block_on(event.event_results_list_with_options(EventResultOptions {
 <Tab title="Go">
 
 ```go
-event := bus.Emit(abxbus.NewBaseEvent("GetConfigEvent", nil))
+event := bus.EmitEventName("GetConfigEvent", nil)
 values, err := event.EventResultsList(
 	&abxbus.EventResultOptions{RaiseIfAny: false, RaiseIfNone: false},
 )

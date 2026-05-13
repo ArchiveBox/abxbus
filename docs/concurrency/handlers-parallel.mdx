@@ -126,10 +126,10 @@ func main() {
 		return nil, nil
 	}
 
-	bus.On("HandlerEvent", "tracked_a", tracked, nil)
-	bus.On("HandlerEvent", "tracked_b", tracked, nil)
+	bus.OnEventName("HandlerEvent", "tracked_a", tracked, nil)
+	bus.OnEventName("HandlerEvent", "tracked_b", tracked, nil)
 
-	event := bus.Emit(abxbus.NewBaseEvent("HandlerEvent", nil))
+	event := bus.EmitEventName("HandlerEvent", nil)
 	<-started
 	<-started
 	close(release)

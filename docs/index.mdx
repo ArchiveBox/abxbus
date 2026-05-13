@@ -100,12 +100,12 @@ import (
 
 func main() {
 	bus := abxbus.NewEventBus("MyBus", nil)
-	bus.On("SomeEvent", "on_some_event", func(event *abxbus.BaseEvent) (any, error) {
+	bus.OnEventName("SomeEvent", "on_some_event", func(event *abxbus.BaseEvent) (any, error) {
 		fmt.Println(event.Payload["some_data"])
 		return nil, nil
 	}, nil)
 
-	event := bus.Emit(abxbus.NewBaseEvent("SomeEvent", map[string]any{"some_data": 132}))
+	event := bus.EmitEventName("SomeEvent", map[string]any{"some_data": 132})
 	_, _ = event.Now()
 }
 ```

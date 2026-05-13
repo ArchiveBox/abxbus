@@ -14,7 +14,7 @@ Both accept the same pattern forms:
 - string event type name
 - `'*'` wildcard (match everything)
 
-Go and Rust use string event type names for low-level registration/lookup, plus typed helpers (`OnTyped[...]` in Go, `EventSpec`/`BaseEvent` in Rust) when you want static payload/result typing.
+Go and Rust use string event type names for low-level registration/lookup, plus typed payload/event APIs (`bus.On(...)` in Go, `EventSpec`/`BaseEvent` in Rust) when you want payload/result validation.
 
 ## Supported pattern forms
 
@@ -161,8 +161,7 @@ type UserActionPayload struct {
 func main() {
 	bus := abxbus.NewEventBus("AppBus", nil)
 
-	abxbus.OnTyped[UserActionPayload, string](
-		bus,
+	bus.On(
 		"UserActionEvent",
 		"on",
 		func(payload UserActionPayload) (string, error) {
@@ -171,21 +170,22 @@ func main() {
 		nil,
 	)
 
-	bus.On("UserActionEvent", "on_by_name", func(event *abxbus.BaseEvent) (any, error) {
+	bus.OnEventName("UserActionEvent", "on_by_name", func(event *abxbus.BaseEvent) (any, error) {
 		fmt.Println("by-name", event.EventType, event.Payload["action"])
 		// by-name UserActionEvent click
 		return nil, nil
 	}, nil)
 
-	bus.On("*", "on_any", func(event *abxbus.BaseEvent) (any, error) {
+	bus.OnEventName("*", "on_any", func(event *abxbus.BaseEvent) (any, error) {
 		fmt.Println("wildcard", event.EventType)
 		// wildcard UserActionEvent
 		return nil, nil
 	}, nil)
 
-	event, err := abxbus.NewBaseEventWithResult[UserActionPayload, string](
+	event, err := abxbus.NewEvent[UserActionPayload](
 		"UserActionEvent",
 		UserActionPayload{Action: "click"},
+		abxbus.ResultType[string](),
 	)
 	if err != nil {
 		panic(err)
@@ -195,11 +195,11 @@ func main() {
 		panic(err)
 	}
 
-	namedMatch, err := bus.Find("UserActionEvent", nil, nil)
+	namedMatch, err := bus.FindEventName("UserActionEvent", nil, nil)
 	if err != nil {
 		panic(err)
 	}
-	wildcardMatch, err := bus.Find("*", nil, &abxbus.FindOptions{Future: 5.0})
+	wildcardMatch, err := bus.FindEventName("*", nil, &abxbus.FindOptions{Future: 5.0})
 	if err != nil {
 		panic(err)
 	}
@@ -223,6 +223,6 @@ String keys and `'*'` are intentionally looser:
 - Python: treat as `BaseEvent[Any]`
 - TypeScript: typed as base `BaseEvent`/unknown-oriented handler return checks
 - Rust: typed handlers use `bus.on(MyEvent, ...)`; raw string/wildcard registration is reserved for low-level forwarding internals.
-- Go: typed handlers use `OnTyped[...]`; string/wildcard handlers receive `*BaseEvent`
+- Go: typed handlers use `bus.On(...)`; string/wildcard handlers use `bus.OnEventName(...)` and receive `*BaseEvent`
 
 Use string/wildcard patterns when you need dynamic behavior. Use classes whenever you want strict payload/result type hints through handlers and lookups.

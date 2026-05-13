@@ -10,10 +10,10 @@ import (
 
 func TestEventResultPropagatesHandlerError(t *testing.T) {
 	bus := abxbus.NewEventBus("ErrBus", nil)
-	bus.On("ErrEvent", "boom", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("ErrEvent", "boom", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, errors.New("boom")
 	}, nil)
-	e := bus.Emit(abxbus.NewBaseEvent("ErrEvent", nil))
+	e := bus.EmitEventName("ErrEvent", nil)
 	if _, err := e.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -25,11 +25,11 @@ func TestEventResultPropagatesHandlerError(t *testing.T) {
 
 func TestNowRaiseIfAnyOptions(t *testing.T) {
 	bus := abxbus.NewEventBus("NowRaiseIfAnyBus", nil)
-	bus.On("NowErrorEvent", "boom", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("NowErrorEvent", "boom", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, errors.New("boom")
 	}, nil)
 
-	event := bus.Emit(abxbus.NewBaseEvent("NowErrorEvent", nil))
+	event := bus.EmitEventName("NowErrorEvent", nil)
 	if _, err := event.Now(); err != nil {
 		t.Fatalf("Now should wait for completion without surfacing handler errors, got %v", err)
 	}
@@ -43,13 +43,13 @@ func TestNowRaiseIfAnyOptions(t *testing.T) {
 
 func TestEventCompletesWhenOneHandlerErrorsAndAnotherSucceeds(t *testing.T) {
 	bus := abxbus.NewEventBus("ErrMixedBus", &abxbus.EventBusOptions{EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel})
-	bus.On("MixedEvent", "ok", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("MixedEvent", "ok", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
-	bus.On("MixedEvent", "boom", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("MixedEvent", "boom", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, errors.New("boom")
 	}, nil)
-	e := bus.Emit(abxbus.NewBaseEvent("MixedEvent", nil))
+	e := bus.EmitEventName("MixedEvent", nil)
 	if _, err := e.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -93,16 +93,16 @@ func TestSerialHandlerErrorDoesNotPreventLaterHandlers(t *testing.T) {
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
 	})
 	calls := []string{}
-	bus.On("MixedEvent", "failing", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("MixedEvent", "failing", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		calls = append(calls, "failing")
 		return nil, errors.New("expected failure")
 	}, nil)
-	bus.On("MixedEvent", "working", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("MixedEvent", "working", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		calls = append(calls, "working")
 		return "worked", nil
 	}, nil)
 
-	event := bus.Emit(abxbus.NewBaseEvent("MixedEvent", nil))
+	event := bus.EmitEventName("MixedEvent", nil)
 	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}

@@ -135,13 +135,13 @@ block_on(async {
 
 ```go
 bus := abxbus.NewEventBus("MyAuthEventBus", nil)
-bus.On("CreateUserEvent", "on_create_user", func(event *abxbus.BaseEvent) (any, error) {
+bus.OnEventName("CreateUserEvent", "on_create_user", func(event *abxbus.BaseEvent) (any, error) {
 	return map[string]any{"user_id": "some-user-uuid"}, nil
 }, nil)
 
-event := bus.Emit(abxbus.NewBaseEvent("CreateUserEvent", map[string]any{
+event := bus.EmitEventName("CreateUserEvent", map[string]any{
 	"email": "someuser@example.com",
-}))
+})
 result, err := event.EventResult()
 if err != nil {
 	panic(err)

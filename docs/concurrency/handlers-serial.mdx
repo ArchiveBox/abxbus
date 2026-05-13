@@ -97,21 +97,21 @@ func main() {
 	})
 	log := []string{}
 
-	bus.On("HandlerEvent", "h1", func(event *abxbus.BaseEvent) (any, error) {
+	bus.OnEventName("HandlerEvent", "h1", func(event *abxbus.BaseEvent) (any, error) {
 		log = append(log, "h1_start")
 		time.Sleep(10 * time.Millisecond)
 		log = append(log, "h1_end")
 		return nil, nil
 	}, nil)
 
-	bus.On("HandlerEvent", "h2", func(event *abxbus.BaseEvent) (any, error) {
+	bus.OnEventName("HandlerEvent", "h2", func(event *abxbus.BaseEvent) (any, error) {
 		log = append(log, "h2_start")
 		time.Sleep(10 * time.Millisecond)
 		log = append(log, "h2_end")
 		return nil, nil
 	}, nil)
 
-	event := bus.Emit(abxbus.NewBaseEvent("HandlerEvent", nil))
+	event := bus.EmitEventName("HandlerEvent", nil)
 	if _, err := event.Now(); err != nil {
 		panic(err)
 	}

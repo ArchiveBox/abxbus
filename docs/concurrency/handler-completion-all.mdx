@@ -112,7 +112,7 @@ func main() {
 	var mu sync.Mutex
 	seen := map[string]bool{}
 
-	bus.On("CompletionEvent", "fast_handler", func(event *abxbus.BaseEvent) (any, error) {
+	bus.OnEventName("CompletionEvent", "fast_handler", func(event *abxbus.BaseEvent) (any, error) {
 		time.Sleep(10 * time.Millisecond)
 		mu.Lock()
 		seen["fast"] = true
@@ -120,7 +120,7 @@ func main() {
 		return "fast", nil
 	}, nil)
 
-	bus.On("CompletionEvent", "slow_handler", func(event *abxbus.BaseEvent) (any, error) {
+	bus.OnEventName("CompletionEvent", "slow_handler", func(event *abxbus.BaseEvent) (any, error) {
 		time.Sleep(50 * time.Millisecond)
 		mu.Lock()
 		seen["slow"] = true
@@ -128,7 +128,7 @@ func main() {
 		return "slow", nil
 	}, nil)
 
-	event := bus.Emit(abxbus.NewBaseEvent("CompletionEvent", nil))
+	event := bus.EmitEventName("CompletionEvent", nil)
 	if _, err := event.Now(); err != nil {
 		panic(err)
 	}

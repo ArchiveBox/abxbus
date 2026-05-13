@@ -38,12 +38,12 @@ func TestGlobalSerialAcrossBuses(t *testing.T) {
 		}
 	}
 
-	b1.On("Evt", "h1", h("b1"), nil)
-	b2.On("Evt", "h2", h("b2"), nil)
+	b1.OnEventName("Evt", "h1", h("b1"), nil)
+	b2.OnEventName("Evt", "h2", h("b2"), nil)
 
 	for i := 1; i <= 3; i++ {
-		b1.Emit(abxbus.NewBaseEvent("Evt", map[string]any{"n": i}))
-		b2.Emit(abxbus.NewBaseEvent("Evt", map[string]any{"n": i}))
+		b1.EmitEventName("Evt", map[string]any{"n": i})
+		b2.EmitEventName("Evt", map[string]any{"n": i})
 	}
 
 	timeout := 2.0
@@ -96,22 +96,22 @@ func TestGlobalSerialAwaitedChildJumpsAheadOfQueuedEventsAcrossBuses(t *testing.
 		order = append(order, value)
 	}
 
-	busB.On("ChildEvent", "child", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	busB.OnEventName("ChildEvent", "child", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		record("child_start")
 		time.Sleep(5 * time.Millisecond)
 		record("child_end")
 		return "child", nil
 	}, nil)
-	busB.On("QueuedEvent", "queued", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	busB.OnEventName("QueuedEvent", "queued", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		record("queued_start")
 		time.Sleep(time.Millisecond)
 		record("queued_end")
 		return "queued", nil
 	}, nil)
-	busA.On("ParentEvent", "parent", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	busA.OnEventName("ParentEvent", "parent", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		record("parent_start")
-		busB.Emit(abxbus.NewBaseEvent("QueuedEvent", nil))
-		child := e.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
+		busB.EmitEventName("QueuedEvent", nil)
+		child := e.EmitEventName("ChildEvent", nil)
 		busB.Emit(child)
 		record("child_dispatched")
 		if _, err := child.Now(); err != nil {
@@ -122,7 +122,7 @@ func TestGlobalSerialAwaitedChildJumpsAheadOfQueuedEventsAcrossBuses(t *testing.
 		return "parent", nil
 	}, nil)
 
-	parent := busA.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
+	parent := busA.EmitEventName("ParentEvent", nil)
 	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -181,12 +181,12 @@ func TestEventConcurrencyBusSerialSerializesPerBusButOverlapsAcrossBuses(t *test
 			return label, nil
 		}
 	}
-	busA.On("Evt", "a", handler("a", startedA, releaseA), nil)
-	busB.On("Evt", "b", handler("b", startedB, releaseB), nil)
+	busA.OnEventName("Evt", "a", handler("a", startedA, releaseA), nil)
+	busB.OnEventName("Evt", "b", handler("b", startedB, releaseB), nil)
 
-	firstA := busA.Emit(abxbus.NewBaseEvent("Evt", map[string]any{"n": 1}))
-	secondA := busA.Emit(abxbus.NewBaseEvent("Evt", map[string]any{"n": 2}))
-	firstB := busB.Emit(abxbus.NewBaseEvent("Evt", map[string]any{"n": 1}))
+	firstA := busA.EmitEventName("Evt", map[string]any{"n": 1})
+	secondA := busA.EmitEventName("Evt", map[string]any{"n": 2})
+	firstB := busB.EmitEventName("Evt", map[string]any{"n": 1})
 
 	select {
 	case <-startedA:
@@ -236,7 +236,7 @@ func TestEventConcurrencyParallelAllowsSameBusEventsToOverlap(t *testing.T) {
 	var mu sync.Mutex
 	inFlight := 0
 	maxInFlight := 0
-	bus.On("Evt", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("Evt", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		mu.Lock()
 		inFlight++
 		if inFlight > maxInFlight {
@@ -251,8 +251,8 @@ func TestEventConcurrencyParallelAllowsSameBusEventsToOverlap(t *testing.T) {
 		return e.Payload["n"], nil
 	}, nil)
 
-	first := bus.Emit(abxbus.NewBaseEvent("Evt", map[string]any{"n": 1}))
-	second := bus.Emit(abxbus.NewBaseEvent("Evt", map[string]any{"n": 2}))
+	first := bus.EmitEventName("Evt", map[string]any{"n": 1})
+	second := bus.EmitEventName("Evt", map[string]any{"n": 2})
 	for i := 0; i < 2; i++ {
 		select {
 		case <-started:
@@ -290,7 +290,7 @@ func TestEventConcurrencyOverrideParallelBeatsBusSerialDefault(t *testing.T) {
 	var mu sync.Mutex
 	inFlight := 0
 	maxInFlight := 0
-	bus.On("Evt", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("Evt", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		mu.Lock()
 		inFlight++
 		if inFlight > maxInFlight {
@@ -349,7 +349,7 @@ func TestEventConcurrencyOverrideBusSerialBeatsBusParallelDefault(t *testing.T) 
 	var mu sync.Mutex
 	inFlight := 0
 	maxInFlight := 0
-	bus.On("Evt", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("Evt", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		mu.Lock()
 		inFlight++
 		if inFlight > maxInFlight {
@@ -418,7 +418,7 @@ func TestHandlerConcurrencyParallelStartsBoth(t *testing.T) {
 	started := make(chan struct{}, 2)
 
 	for i := 0; i < 2; i++ {
-		bus.On("Evt", "h", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		bus.OnEventName("Evt", "h", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			mu.Lock()
 			count++
 			mu.Unlock()
@@ -428,7 +428,7 @@ func TestHandlerConcurrencyParallelStartsBoth(t *testing.T) {
 		}, nil)
 	}
 
-	e := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
+	e := bus.EmitEventName("Evt", nil)
 	deadline := time.After(2 * time.Second)
 	for i := 0; i < 2; i++ {
 		select {
@@ -478,8 +478,8 @@ func TestEventHandlerConcurrencyPerEventOverrideControlsExecutionMode(t *testing
 		mu.Unlock()
 		return mode, nil
 	}
-	bus.On("Evt", "first", handler, nil)
-	bus.On("Evt", "second", handler, nil)
+	bus.OnEventName("Evt", "first", handler, nil)
+	bus.OnEventName("Evt", "second", handler, nil)
 
 	parallelEvent := abxbus.NewBaseEvent("Evt", map[string]any{"mode": "parallel"})
 	parallelEvent.EventHandlerConcurrency = abxbus.EventHandlerConcurrencyParallel

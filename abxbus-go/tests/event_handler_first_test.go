@@ -18,15 +18,15 @@ func TestEventHandlerCompletionBusDefaultFirstSerial(t *testing.T) {
 	})
 	secondHandlerCalled := false
 
-	bus.On("CompletionDefaultFirstEvent", "first_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionDefaultFirstEvent", "first_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "first", nil
 	}, nil)
-	bus.On("CompletionDefaultFirstEvent", "second_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionDefaultFirstEvent", "second_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		secondHandlerCalled = true
 		return "second", nil
 	}, nil)
 
-	event := bus.Emit(abxbus.NewBaseEvent("CompletionDefaultFirstEvent", nil))
+	event := bus.EmitEventName("CompletionDefaultFirstEvent", nil)
 	if event.EventHandlerCompletion != "" {
 		t.Fatalf("event_handler_completion should be unset on the event, got %s", event.EventHandlerCompletion)
 	}
@@ -58,10 +58,10 @@ func TestEventHandlerCompletionExplicitOverrideBeatsBusDefault(t *testing.T) {
 	})
 	secondHandlerCalled := false
 
-	bus.On("CompletionOverrideEvent", "first_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionOverrideEvent", "first_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "first", nil
 	}, nil)
-	bus.On("CompletionOverrideEvent", "second_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionOverrideEvent", "second_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		secondHandlerCalled = true
 		return "second", nil
 	}, nil)
@@ -87,7 +87,7 @@ func TestEventParallelFirstRacesAndCancelsNonWinners(t *testing.T) {
 	})
 	var slowStarted atomic.Bool
 
-	bus.On("CompletionParallelFirstEvent", "slow_handler_started", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionParallelFirstEvent", "slow_handler_started", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		slowStarted.Store(true)
 		select {
 		case <-time.After(500 * time.Millisecond):
@@ -96,11 +96,11 @@ func TestEventParallelFirstRacesAndCancelsNonWinners(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}, nil)
-	bus.On("CompletionParallelFirstEvent", "fast_winner", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionParallelFirstEvent", "fast_winner", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(10 * time.Millisecond)
 		return "winner", nil
 	}, nil)
-	bus.On("CompletionParallelFirstEvent", "slow_handler_pending_or_started", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionParallelFirstEvent", "slow_handler_pending_or_started", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		select {
 		case <-time.After(500 * time.Millisecond):
 			return "slow-other", nil
@@ -154,11 +154,11 @@ func TestEventHandlerCompletionExplicitFirstCancelsParallelLosers(t *testing.T) 
 	})
 	var slowHandlerCompleted atomic.Bool
 
-	bus.On("CompletionFirstShortcutEvent", "fast_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionFirstShortcutEvent", "fast_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(10 * time.Millisecond)
 		return "fast", nil
 	}, nil)
-	bus.On("CompletionFirstShortcutEvent", "slow_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionFirstShortcutEvent", "slow_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		select {
 		case <-time.After(500 * time.Millisecond):
 			slowHandlerCompleted.Store(true)
@@ -200,10 +200,10 @@ func TestEventHandlerCompletionFirstPreservesFalsyResults(t *testing.T) {
 	})
 	secondHandlerCalled := false
 
-	bus.On("IntCompletionEvent", "zero_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("IntCompletionEvent", "zero_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return 0, nil
 	}, nil)
-	bus.On("IntCompletionEvent", "second_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("IntCompletionEvent", "second_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		secondHandlerCalled = true
 		return 99, nil
 	}, nil)
@@ -229,10 +229,10 @@ func TestEventHandlerCompletionFirstPreservesFalseAndEmptyStringResults(t *testi
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
 	})
 	boolSecondHandlerCalled := false
-	boolBus.On("BoolCompletionEvent", "bool_first_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	boolBus.OnEventName("BoolCompletionEvent", "bool_first_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return false, nil
 	}, nil)
-	boolBus.On("BoolCompletionEvent", "bool_second_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	boolBus.OnEventName("BoolCompletionEvent", "bool_second_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		boolSecondHandlerCalled = true
 		return true, nil
 	}, nil)
@@ -256,10 +256,10 @@ func TestEventHandlerCompletionFirstPreservesFalseAndEmptyStringResults(t *testi
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
 	})
 	strSecondHandlerCalled := false
-	strBus.On("StrCompletionEvent", "str_first_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	strBus.OnEventName("StrCompletionEvent", "str_first_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "", nil
 	}, nil)
-	strBus.On("StrCompletionEvent", "str_second_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	strBus.OnEventName("StrCompletionEvent", "str_second_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		strSecondHandlerCalled = true
 		return "second", nil
 	}, nil)
@@ -285,13 +285,13 @@ func TestEventHandlerCompletionFirstSkipsNoneResultAndUsesNextWinner(t *testing.
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
 	})
 	thirdHandlerCalled := false
-	bus.On("CompletionNoneSkipEvent", "none_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionNoneSkipEvent", "none_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, nil
 	}, nil)
-	bus.On("CompletionNoneSkipEvent", "winner_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionNoneSkipEvent", "winner_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "winner", nil
 	}, nil)
-	bus.On("CompletionNoneSkipEvent", "third_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionNoneSkipEvent", "third_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		thirdHandlerCalled = true
 		return "third", nil
 	}, nil)
@@ -325,13 +325,13 @@ func TestEventHandlerCompletionFirstSkipsBaseEventResultAndUsesNextWinner(t *tes
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
 	})
 	thirdHandlerCalled := false
-	bus.On("CompletionBaseEventSkipEvent", "baseevent_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionBaseEventSkipEvent", "baseevent_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return abxbus.NewBaseEvent("ChildCompletionEvent", nil), nil
 	}, nil)
-	bus.On("CompletionBaseEventSkipEvent", "winner_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionBaseEventSkipEvent", "winner_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "winner", nil
 	}, nil)
-	bus.On("CompletionBaseEventSkipEvent", "third_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionBaseEventSkipEvent", "third_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		thirdHandlerCalled = true
 		return "third", nil
 	}, nil)
@@ -360,16 +360,16 @@ func TestNowRunsAllHandlersAndEventResultReturnsFirstValidResult(t *testing.T) {
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionFirst,
 	})
 	lateCalled := false
-	bus.On("CompletionNowAllEvent", "baseevent_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionNowAllEvent", "baseevent_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return abxbus.NewBaseEvent("NowAllChildEvent", nil), nil
 	}, nil)
-	bus.On("CompletionNowAllEvent", "none_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionNowAllEvent", "none_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, nil
 	}, nil)
-	bus.On("CompletionNowAllEvent", "winner_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionNowAllEvent", "winner_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "winner", nil
 	}, nil)
-	bus.On("CompletionNowAllEvent", "late_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionNowAllEvent", "late_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		lateCalled = true
 		return "late", nil
 	}, nil)
@@ -394,7 +394,7 @@ func TestNowRunsAllHandlersAndEventResultReturnsFirstValidResult(t *testing.T) {
 
 func TestEventNowDefaultErrorPolicy(t *testing.T) {
 	noHandlerBus := abxbus.NewEventBus("CompletionNowNoHandlerBus", nil)
-	noHandlerEvent, err := noHandlerBus.Emit(abxbus.NewBaseEvent("CompletionNowErrorPolicyEvent", nil)).Now()
+	noHandlerEvent, err := noHandlerBus.EmitEventName("CompletionNowErrorPolicyEvent", nil).Now()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,10 +403,10 @@ func TestEventNowDefaultErrorPolicy(t *testing.T) {
 	}
 
 	noneBus := abxbus.NewEventBus("CompletionNowNoneBus", nil)
-	noneBus.On("CompletionNowErrorPolicyEvent", "none_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	noneBus.OnEventName("CompletionNowErrorPolicyEvent", "none_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, nil
 	}, nil)
-	noneEvent, err := noneBus.Emit(abxbus.NewBaseEvent("CompletionNowErrorPolicyEvent", nil)).Now()
+	noneEvent, err := noneBus.EmitEventName("CompletionNowErrorPolicyEvent", nil).Now()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,13 +415,13 @@ func TestEventNowDefaultErrorPolicy(t *testing.T) {
 	}
 
 	allErrorBus := abxbus.NewEventBus("CompletionNowAllErrorBus", nil)
-	allErrorBus.On("CompletionNowErrorPolicyEvent", "fail_one", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	allErrorBus.OnEventName("CompletionNowErrorPolicyEvent", "fail_one", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, assertErr("now boom 1")
 	}, nil)
-	allErrorBus.On("CompletionNowErrorPolicyEvent", "fail_two", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	allErrorBus.OnEventName("CompletionNowErrorPolicyEvent", "fail_two", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, assertErr("now boom 2")
 	}, nil)
-	allErrorEvent, err := allErrorBus.Emit(abxbus.NewBaseEvent("CompletionNowErrorPolicyEvent", nil)).Now()
+	allErrorEvent, err := allErrorBus.EmitEventName("CompletionNowErrorPolicyEvent", nil).Now()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,13 +430,13 @@ func TestEventNowDefaultErrorPolicy(t *testing.T) {
 	}
 
 	mixedValidBus := abxbus.NewEventBus("CompletionNowMixedValidBus", nil)
-	mixedValidBus.On("CompletionNowErrorPolicyEvent", "fail_one", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	mixedValidBus.OnEventName("CompletionNowErrorPolicyEvent", "fail_one", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, assertErr("now boom 1")
 	}, nil)
-	mixedValidBus.On("CompletionNowErrorPolicyEvent", "winner", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	mixedValidBus.OnEventName("CompletionNowErrorPolicyEvent", "winner", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "winner", nil
 	}, nil)
-	mixedValidEvent, err := mixedValidBus.Emit(abxbus.NewBaseEvent("CompletionNowErrorPolicyEvent", nil)).Now()
+	mixedValidEvent, err := mixedValidBus.EmitEventName("CompletionNowErrorPolicyEvent", nil).Now()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,13 +445,13 @@ func TestEventNowDefaultErrorPolicy(t *testing.T) {
 	}
 
 	mixedNoneBus := abxbus.NewEventBus("CompletionNowMixedNoneBus", nil)
-	mixedNoneBus.On("CompletionNowErrorPolicyEvent", "fail_one", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	mixedNoneBus.OnEventName("CompletionNowErrorPolicyEvent", "fail_one", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, assertErr("now boom 1")
 	}, nil)
-	mixedNoneBus.On("CompletionNowErrorPolicyEvent", "none_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	mixedNoneBus.OnEventName("CompletionNowErrorPolicyEvent", "none_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, nil
 	}, nil)
-	mixedNoneEvent, err := mixedNoneBus.Emit(abxbus.NewBaseEvent("CompletionNowErrorPolicyEvent", nil)).Now()
+	mixedNoneEvent, err := mixedNoneBus.EmitEventName("CompletionNowErrorPolicyEvent", nil).Now()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -464,17 +464,17 @@ func TestEventResultOptionsMatchEventResultsShape(t *testing.T) {
 	bus := abxbus.NewEventBus("CompletionNowOptionsBus", &abxbus.EventBusOptions{
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
 	})
-	bus.On("CompletionNowOptionsEvent", "fail_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionNowOptionsEvent", "fail_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, assertErr("now option boom")
 	}, nil)
-	bus.On("CompletionNowOptionsEvent", "first_valid", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionNowOptionsEvent", "first_valid", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "first", nil
 	}, nil)
-	bus.On("CompletionNowOptionsEvent", "second_valid", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionNowOptionsEvent", "second_valid", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "second", nil
 	}, nil)
 
-	event, err := bus.Emit(abxbus.NewBaseEvent("CompletionNowOptionsEvent", nil)).Now()
+	event, err := bus.EmitEventName("CompletionNowOptionsEvent", nil).Now()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +482,7 @@ func TestEventResultOptionsMatchEventResultsShape(t *testing.T) {
 		t.Fatalf("RaiseIfAny=true should surface handler errors, got %v", err)
 	}
 
-	filteredEvent, err := bus.Emit(abxbus.NewBaseEvent("CompletionNowOptionsEvent", nil)).Now()
+	filteredEvent, err := bus.EmitEventName("CompletionNowOptionsEvent", nil).Now()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -504,16 +504,16 @@ func TestEventResultReturnsFirstValidResultByRegistrationOrderAfterNow(t *testin
 	bus := abxbus.NewEventBus("CompletionNowRegistrationOrderBus", &abxbus.EventBusOptions{
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
 	})
-	bus.On("CompletionNowRegistrationOrderEvent", "slow_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionNowRegistrationOrderEvent", "slow_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(50 * time.Millisecond)
 		return "slow", nil
 	}, nil)
-	bus.On("CompletionNowRegistrationOrderEvent", "fast_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionNowRegistrationOrderEvent", "fast_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(time.Millisecond)
 		return "fast", nil
 	}, nil)
 
-	event, err := bus.Emit(abxbus.NewBaseEvent("CompletionNowRegistrationOrderEvent", nil)).Now()
+	event, err := bus.EmitEventName("CompletionNowRegistrationOrderEvent", nil).Now()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -527,10 +527,10 @@ func TestEventHandlerCompletionFirstReturnsNoneWhenAllHandlersFail(t *testing.T)
 	bus := abxbus.NewEventBus("CompletionAllFailBus", &abxbus.EventBusOptions{
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
 	})
-	bus.On("CompletionAllFailEvent", "fail_fast", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionAllFailEvent", "fail_fast", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, assertErr("boom1")
 	}, nil)
-	bus.On("CompletionAllFailEvent", "fail_slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionAllFailEvent", "fail_slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(10 * time.Millisecond)
 		return nil, assertErr("boom2")
 	}, nil)
@@ -551,10 +551,10 @@ func TestEventHandlerCompletionFirstResultOptionsMatchEventResultOptions(t *test
 	bus := abxbus.NewEventBus("CompletionFirstOptionsBus", &abxbus.EventBusOptions{
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
 	})
-	bus.On("CompletionFirstOptionsEvent", "fail_fast", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionFirstOptionsEvent", "fail_fast", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, assertErr("first option boom")
 	}, nil)
-	bus.On("CompletionFirstOptionsEvent", "slow_winner", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionFirstOptionsEvent", "slow_winner", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(10 * time.Millisecond)
 		return "winner", nil
 	}, nil)
@@ -581,7 +581,7 @@ func TestEventHandlerCompletionFirstResultOptionsMatchEventResultOptions(t *test
 	}
 
 	noneBus := abxbus.NewEventBus("CompletionFirstRaiseNoneBus", nil)
-	noneBus.On("CompletionFirstRaiseNoneEvent", "none_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	noneBus.OnEventName("CompletionFirstRaiseNoneEvent", "none_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, nil
 	}, nil)
 	noneEvent := abxbus.NewBaseEvent("CompletionFirstRaiseNoneEvent", nil)
@@ -601,7 +601,7 @@ func TestNowFirstResultTimeoutLimitsProcessingWait(t *testing.T) {
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
 		EventTimeout:            &noTimeout,
 	})
-	bus.On("CompletionFirstTimeoutEvent", "slow_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionFirstTimeoutEvent", "slow_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(500 * time.Millisecond)
 		return "slow", nil
 	}, nil)
@@ -621,10 +621,10 @@ func TestEventResultIncludeCallbackReceivesResultAndEventResult(t *testing.T) {
 	})
 	seenHandlerNames := []string{}
 	seenResults := []any{}
-	bus.On("CompletionFirstIncludeEvent", "none_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionFirstIncludeEvent", "none_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, nil
 	}, nil)
-	bus.On("CompletionFirstIncludeEvent", "second_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionFirstIncludeEvent", "second_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "second", nil
 	}, nil)
 
@@ -661,14 +661,14 @@ func TestEventResultsIncludeCallbackReceivesResultAndEventResult(t *testing.T) {
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
 	})
 	seenPairs := []string{}
-	bus.On("CompletionResultsListIncludeEvent", "keep_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionResultsListIncludeEvent", "keep_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "keep", nil
 	}, nil)
-	bus.On("CompletionResultsListIncludeEvent", "drop_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionResultsListIncludeEvent", "drop_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "drop", nil
 	}, nil)
 
-	event, err := bus.Emit(abxbus.NewBaseEvent("CompletionResultsListIncludeEvent", nil)).Now()
+	event, err := bus.EmitEventName("CompletionResultsListIncludeEvent", nil).Now()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -695,16 +695,16 @@ func TestEventResultReturnsFirstCurrentResultWithFirstResultWait(t *testing.T) {
 	bus := abxbus.NewEventBus("CompletionFirstCurrentResultBus", &abxbus.EventBusOptions{
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
 	})
-	bus.On("CompletionFirstCurrentResultEvent", "slow_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionFirstCurrentResultEvent", "slow_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(50 * time.Millisecond)
 		return "slow", nil
 	}, nil)
-	bus.On("CompletionFirstCurrentResultEvent", "fast_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionFirstCurrentResultEvent", "fast_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(time.Millisecond)
 		return "fast", nil
 	}, nil)
 
-	event := bus.Emit(abxbus.NewBaseEvent("CompletionFirstCurrentResultEvent", nil))
+	event := bus.EmitEventName("CompletionFirstCurrentResultEvent", nil)
 	if _, err := event.Now(&abxbus.EventWaitOptions{FirstResult: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -719,11 +719,11 @@ func TestEventResultRaiseIfAnyIncludesFirstModeControlErrors(t *testing.T) {
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
 	})
-	bus.On("CompletionFirstControlErrorEvent", "fast_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionFirstControlErrorEvent", "fast_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(10 * time.Millisecond)
 		return "fast", nil
 	}, nil)
-	bus.On("CompletionFirstControlErrorEvent", "slow_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("CompletionFirstControlErrorEvent", "slow_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		select {
 		case <-time.After(500 * time.Millisecond):
 			return "slow", nil

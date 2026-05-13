@@ -117,19 +117,19 @@ func main() {
 	slowStarted := make(chan struct{}, 1)
 	slowCompleted := make(chan struct{}, 1)
 
-	bus.On("CompletionEvent", "slow_handler", func(event *abxbus.BaseEvent) (any, error) {
+	bus.OnEventName("CompletionEvent", "slow_handler", func(event *abxbus.BaseEvent) (any, error) {
 		slowStarted <- struct{}{}
 		time.Sleep(500 * time.Millisecond)
 		slowCompleted <- struct{}{}
 		return "slow", nil
 	}, nil)
 
-	bus.On("CompletionEvent", "fast_handler", func(event *abxbus.BaseEvent) (any, error) {
+	bus.OnEventName("CompletionEvent", "fast_handler", func(event *abxbus.BaseEvent) (any, error) {
 		time.Sleep(10 * time.Millisecond)
 		return "winner", nil
 	}, nil)
 
-	event := bus.Emit(abxbus.NewBaseEvent("CompletionEvent", nil))
+	event := bus.EmitEventName("CompletionEvent", nil)
 	_, err := event.Now(&abxbus.EventWaitOptions{FirstResult: true})
 	if err != nil {
 		panic(err)

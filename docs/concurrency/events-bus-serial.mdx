@@ -155,12 +155,12 @@ func main() {
 		}
 	}
 
-	busA.On("WorkEvent", "handler_a", handler(&startsA), nil)
-	busB.On("WorkEvent", "handler_b", handler(&startsB), nil)
+	busA.OnEventName("WorkEvent", "handler_a", handler(&startsA), nil)
+	busB.OnEventName("WorkEvent", "handler_b", handler(&startsB), nil)
 
 	for i := 0; i < 4; i++ {
-		busA.Emit(abxbus.NewBaseEvent("WorkEvent", map[string]any{"order": i, "source": "a"}))
-		busB.Emit(abxbus.NewBaseEvent("WorkEvent", map[string]any{"order": i, "source": "b"}))
+		busA.EmitEventName("WorkEvent", map[string]any{"order": i, "source": "a"})
+		busB.EmitEventName("WorkEvent", map[string]any{"order": i, "source": "b"})
 	}
 
 	busA.WaitUntilIdle(nil)

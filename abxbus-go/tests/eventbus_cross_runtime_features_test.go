@@ -38,16 +38,16 @@ func TestQueueJumpPreservesParentChildLineageAndFindVisibility(t *testing.T) {
 		executionOrder = append(executionOrder, value)
 	}
 
-	bus.On("QueueJumpRootEvent", "on_root", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("QueueJumpRootEvent", "on_root", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		appendOrder("root:start")
-		child := event.Emit(abxbus.NewBaseEvent("QueueJumpChildEvent", nil))
+		child := event.EmitEventName("QueueJumpChildEvent", nil)
 		if _, err := child.Now(); err != nil {
 			return nil, err
 		}
 		appendOrder("root:end")
 		return "root-ok", nil
 	}, nil)
-	bus.On("QueueJumpChildEvent", "on_child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("QueueJumpChildEvent", "on_child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		mu.Lock()
 		childEventID = event.EventID
 		mu.Unlock()
@@ -59,13 +59,13 @@ func TestQueueJumpPreservesParentChildLineageAndFindVisibility(t *testing.T) {
 		}
 		return "child-ok", nil
 	}, nil)
-	bus.On("QueueJumpSiblingEvent", "on_sibling", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("QueueJumpSiblingEvent", "on_sibling", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		appendOrder("sibling")
 		return "sibling-ok", nil
 	}, nil)
 
-	root := bus.Emit(abxbus.NewBaseEvent("QueueJumpRootEvent", nil))
-	sibling := bus.Emit(abxbus.NewBaseEvent("QueueJumpSiblingEvent", nil))
+	root := bus.EmitEventName("QueueJumpRootEvent", nil)
+	sibling := bus.EmitEventName("QueueJumpSiblingEvent", nil)
 	if _, err := root.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestQueueJumpPreservesParentChildLineageAndFindVisibility(t *testing.T) {
 		t.Fatal("child handler did not capture child event id")
 	}
 
-	foundChild, err := bus.Find("QueueJumpChildEvent", nil, &abxbus.FindOptions{Past: true, Future: false, ChildOf: root})
+	foundChild, err := bus.FindEventName("QueueJumpChildEvent", nil, &abxbus.FindOptions{Past: true, Future: false, ChildOf: root})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,12 +164,12 @@ func TestConcurrencyIntersectionParallelEventsWithSerialHandlers(t *testing.T) {
 		mu.Unlock()
 		return "ok", nil
 	}
-	bus.On("ConcurrencyIntersectionEvent", "tracked_handler_a", trackedHandler, nil)
-	bus.On("ConcurrencyIntersectionEvent", "tracked_handler_b", trackedHandler, nil)
+	bus.OnEventName("ConcurrencyIntersectionEvent", "tracked_handler_a", trackedHandler, nil)
+	bus.OnEventName("ConcurrencyIntersectionEvent", "tracked_handler_b", trackedHandler, nil)
 
 	events := make([]*abxbus.BaseEvent, 0, 8)
 	for idx := 0; idx < 8; idx++ {
-		events = append(events, bus.Emit(abxbus.NewBaseEvent("ConcurrencyIntersectionEvent", map[string]any{"token": idx})))
+		events = append(events, bus.EmitEventName("ConcurrencyIntersectionEvent", map[string]any{"token": idx}))
 	}
 	for _, event := range events {
 		if _, err := event.Wait(); err != nil {
@@ -202,15 +202,15 @@ func TestTimeoutEnforcementDoesNotBreakFollowupProcessingOrQueueState(t *testing
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
 	})
 	t.Cleanup(bus.Destroy)
-	bus.On("TimeoutEnforcementEvent", "slow_handler_a", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("TimeoutEnforcementEvent", "slow_handler_a", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}, nil)
-	bus.On("TimeoutEnforcementEvent", "slow_handler_b", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("TimeoutEnforcementEvent", "slow_handler_b", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}, nil)
-	bus.On("TimeoutFollowupEvent", "followup_handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("TimeoutFollowupEvent", "followup_handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "followup-ok", nil
 	}, nil)
 
@@ -231,7 +231,7 @@ func TestTimeoutEnforcementDoesNotBreakFollowupProcessingOrQueueState(t *testing
 		}
 	}
 
-	followup := bus.Emit(abxbus.NewBaseEvent("TimeoutFollowupEvent", nil))
+	followup := bus.EmitEventName("TimeoutFollowupEvent", nil)
 	if _, err := followup.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -262,18 +262,18 @@ func TestZeroHistoryBackpressureWithFindFutureStillResolvesNewEvents(t *testing.
 		MaxHistoryDrop: false,
 	})
 	t.Cleanup(bus.Destroy)
-	bus.On("ZeroHistoryEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("ZeroHistoryEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok:" + event.Payload["value"].(string), nil
 	}, nil)
 
-	first := bus.Emit(abxbus.NewBaseEvent("ZeroHistoryEvent", map[string]any{"value": "first"}))
+	first := bus.EmitEventName("ZeroHistoryEvent", map[string]any{"value": "first"})
 	if _, err := first.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if bus.EventHistory.Has(first.EventID) {
 		t.Fatal("max_history_size=0 should drop completed events from history")
 	}
-	past, err := bus.Find("ZeroHistoryEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
+	past, err := bus.FindEventName("ZeroHistoryEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,10 +284,10 @@ func TestZeroHistoryBackpressureWithFindFutureStillResolvesNewEvents(t *testing.
 	capturedFutureID := make(chan string, 1)
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		futureEvent := bus.Emit(abxbus.NewBaseEvent("ZeroHistoryEvent", map[string]any{"value": "future"}))
+		futureEvent := bus.EmitEventName("ZeroHistoryEvent", map[string]any{"value": "future"})
 		capturedFutureID <- futureEvent.EventID
 	}()
-	futureMatch, err := bus.Find("ZeroHistoryEvent", func(event *abxbus.BaseEvent) bool {
+	futureMatch, err := bus.FindEventName("ZeroHistoryEvent", func(event *abxbus.BaseEvent) bool {
 		return event.Payload["value"] == "future"
 	}, &abxbus.FindOptions{Past: false, Future: 1.0})
 	if err != nil {
@@ -319,19 +319,19 @@ func TestContextPropagatesThroughForwardingAndChildDispatchWithLineageIntact(t *
 	parentEventID := ""
 	childParentID := ""
 
-	busA.On("*", "forward_to_b", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	busA.OnEventName("*", "forward_to_b", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return busB.Emit(event), nil
 	}, nil)
-	busB.On("ContextParentEvent", "on_parent", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	busB.OnEventName("ContextParentEvent", "on_parent", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		capturedParentRequestID, _ = ctx.Value(key).(string)
 		parentEventID = event.EventID
-		child := event.Emit(abxbus.NewBaseEvent("ContextChildEvent", nil))
+		child := event.EmitEventName("ContextChildEvent", nil)
 		if _, err := child.Now(); err != nil {
 			return nil, err
 		}
 		return "parent-ok", nil
 	}, nil)
-	busB.On("ContextChildEvent", "on_child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	busB.OnEventName("ContextChildEvent", "on_child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		capturedChildRequestID, _ = ctx.Value(key).(string)
 		if event.EventParentID != nil {
 			childParentID = *event.EventParentID
@@ -341,7 +341,7 @@ func TestContextPropagatesThroughForwardingAndChildDispatchWithLineageIntact(t *
 
 	requestID := "fc81f432-98cd-7a06-824c-dafed74761bb"
 	ctx := context.WithValue(context.Background(), key, requestID)
-	parent := busA.EmitWithContext(ctx, abxbus.NewBaseEvent("ContextParentEvent", nil))
+	parent := busA.EmitEventNameWithContext(ctx, "ContextParentEvent", nil)
 	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +371,7 @@ func TestContextPropagatesThroughForwardingAndChildDispatchWithLineageIntact(t *
 		t.Fatalf("parent event path did not include target bus: %#v", parent.EventPath)
 	}
 
-	foundChild, err := busB.Find("ContextChildEvent", nil, &abxbus.FindOptions{Past: true, Future: false, ChildOf: parent})
+	foundChild, err := busB.FindEventName("ContextChildEvent", nil, &abxbus.FindOptions{Past: true, Future: false, ChildOf: parent})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,7 +391,7 @@ func TestPendingQueueFindVisibilityTransitionsToCompletedAfterRelease(t *testing
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
-	bus.On("PendingVisibilityEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("PendingVisibilityEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		if event.Payload["tag"] == "blocking" {
 			once.Do(func() { close(started) })
 			select {
@@ -403,12 +403,12 @@ func TestPendingQueueFindVisibilityTransitionsToCompletedAfterRelease(t *testing
 		return "ok:" + event.Payload["tag"].(string), nil
 	}, nil)
 
-	blocking := bus.Emit(abxbus.NewBaseEvent("PendingVisibilityEvent", map[string]any{"tag": "blocking"}))
+	blocking := bus.EmitEventName("PendingVisibilityEvent", map[string]any{"tag": "blocking"})
 	testWaitForSignal(t, started, 2*time.Second, "blocking event start")
 
-	queued := bus.Emit(abxbus.NewBaseEvent("PendingVisibilityEvent", map[string]any{"tag": "queued"}))
+	queued := bus.EmitEventName("PendingVisibilityEvent", map[string]any{"tag": "queued"})
 	time.Sleep(10 * time.Millisecond)
-	foundQueued, err := bus.Find("PendingVisibilityEvent", func(event *abxbus.BaseEvent) bool {
+	foundQueued, err := bus.FindEventName("PendingVisibilityEvent", func(event *abxbus.BaseEvent) bool {
 		return event.Payload["tag"] == "queued"
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
@@ -439,19 +439,19 @@ func TestHistoryBackpressureRejectsOverflowAndPreservesFindableHistory(t *testin
 		MaxHistoryDrop: false,
 	})
 	t.Cleanup(bus.Destroy)
-	bus.On("BackpressureEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("BackpressureEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok:" + event.Payload["value"].(string), nil
 	}, nil)
 
-	first := bus.Emit(abxbus.NewBaseEvent("BackpressureEvent", map[string]any{"value": "first"}))
-	second := bus.Emit(abxbus.NewBaseEvent("BackpressureEvent", map[string]any{"value": "second"}))
+	first := bus.EmitEventName("BackpressureEvent", map[string]any{"value": "first"})
+	second := bus.EmitEventName("BackpressureEvent", map[string]any{"value": "second"})
 	if _, err := first.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := second.Now(); err != nil {
 		t.Fatal(err)
 	}
-	foundFirst, err := bus.Find("BackpressureEvent", nil, &abxbus.FindOptions{
+	foundFirst, err := bus.FindEventName("BackpressureEvent", nil, &abxbus.FindOptions{
 		Past:   true,
 		Future: false,
 		Equals: map[string]any{"value": "first"},
@@ -471,7 +471,7 @@ func TestHistoryBackpressureRejectsOverflowAndPreservesFindableHistory(t *testin
 			t.Fatalf("history size should remain capped after rejected overflow, got %d", bus.EventHistory.Size())
 		}
 	}()
-	bus.Emit(abxbus.NewBaseEvent("BackpressureEvent", map[string]any{"value": "overflow"}))
+	bus.EmitEventName("BackpressureEvent", map[string]any{"value": "overflow"})
 }
 
 func TestEventBusCrossRuntimeJSONFeaturesUseCanonicalShapes(t *testing.T) {
@@ -479,7 +479,7 @@ func TestEventBusCrossRuntimeJSONFeaturesUseCanonicalShapes(t *testing.T) {
 	bus := abxbus.NewEventBus("CrossRuntimeFeatureBus", &abxbus.EventBusOptions{
 		EventHandlerDetectFilePaths: &detectPaths,
 	})
-	handler := bus.On("CrossRuntimeFeatureEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	handler := bus.OnEventName("CrossRuntimeFeatureEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return map[string]any{"ok": true}, nil
 	}, nil)
 	event := abxbus.NewBaseEvent("CrossRuntimeFeatureEvent", map[string]any{"label": "go"})

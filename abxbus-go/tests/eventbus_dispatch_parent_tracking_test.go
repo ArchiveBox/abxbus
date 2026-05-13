@@ -17,8 +17,8 @@ func TestQueueJumpProcessesChildInsideParentHandler(t *testing.T) {
 	var capturedChild *abxbus.BaseEvent
 	childProcessedBeforeParentReturn := false
 
-	bus.On("Parent", "on_parent", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		capturedChild = e.Emit(abxbus.NewBaseEvent("Child", nil))
+	bus.OnEventName("Parent", "on_parent", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		capturedChild = e.EmitEventName("Child", nil)
 		if _, err := capturedChild.Now(); err != nil {
 			return nil, err
 		}
@@ -27,11 +27,11 @@ func TestQueueJumpProcessesChildInsideParentHandler(t *testing.T) {
 		}
 		return "parent", nil
 	}, nil)
-	bus.On("Child", "on_child", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("Child", "on_child", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "child", nil
 	}, nil)
 
-	parent := bus.Emit(abxbus.NewBaseEvent("Parent", nil))
+	parent := bus.EmitEventName("Parent", nil)
 	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -82,17 +82,17 @@ func TestEventEmitWithoutAwaitTracksChildButDoesNotBlockParentCompletion(t *test
 	releaseChild := make(chan struct{})
 	var capturedChild *abxbus.BaseEvent
 
-	bus.On("Parent", "on_parent", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		capturedChild = e.Emit(abxbus.NewBaseEvent("Child", map[string]any{"mode": "unawaited"}))
+	bus.OnEventName("Parent", "on_parent", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		capturedChild = e.EmitEventName("Child", map[string]any{"mode": "unawaited"})
 		return "parent", nil
 	}, nil)
-	bus.On("Child", "on_child", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("Child", "on_child", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		childStarted <- struct{}{}
 		<-releaseChild
 		return "child", nil
 	}, nil)
 
-	parent := bus.Emit(abxbus.NewBaseEvent("Parent", nil))
+	parent := bus.EmitEventName("Parent", nil)
 	if _, err := parent.Now(); err != nil {
 		close(releaseChild)
 		t.Fatal(err)
@@ -143,17 +143,17 @@ func TestBusEmitInsideHandlerIsUntrackedBackgroundEvent(t *testing.T) {
 	releaseBg := make(chan struct{})
 	var background *abxbus.BaseEvent
 
-	bus.On("Parent", "on_parent", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		background = bus.Emit(abxbus.NewBaseEvent("Background", map[string]any{"mode": "untracked"}))
+	bus.OnEventName("Parent", "on_parent", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		background = bus.EmitEventName("Background", map[string]any{"mode": "untracked"})
 		return "parent", nil
 	}, nil)
-	bus.On("Background", "on_background", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("Background", "on_background", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		bgStarted <- struct{}{}
 		<-releaseBg
 		return "background", nil
 	}, nil)
 
-	parent := bus.Emit(abxbus.NewBaseEvent("Parent", nil))
+	parent := bus.EmitEventName("Parent", nil)
 	if _, err := parent.Now(); err != nil {
 		close(releaseBg)
 		t.Fatal(err)
@@ -201,19 +201,19 @@ func TestAwaitedBusEmitInsideHandlerQueueJumpsButStaysUntrackedRootEvent(t *test
 	var background *abxbus.BaseEvent
 	backgroundCompletedBeforeParentReturn := false
 
-	bus.On("Parent", "on_parent", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		background = bus.Emit(abxbus.NewBaseEvent("Background", map[string]any{"mode": "awaited"}))
+	bus.OnEventName("Parent", "on_parent", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		background = bus.EmitEventName("Background", map[string]any{"mode": "awaited"})
 		if _, err := background.Now(); err != nil {
 			return nil, err
 		}
 		backgroundCompletedBeforeParentReturn = background.EventStatus == "completed"
 		return "parent", nil
 	}, nil)
-	bus.On("Background", "on_background", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("Background", "on_background", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "background", nil
 	}, nil)
 
-	parent := bus.Emit(abxbus.NewBaseEvent("Parent", nil))
+	parent := bus.EmitEventName("Parent", nil)
 	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -246,21 +246,21 @@ func TestErroringParentHandlersStillTrackChildrenAndContinue(t *testing.T) {
 	})
 	childEvents := []*abxbus.BaseEvent{}
 
-	bus.On("Parent", "failing", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		child := e.Emit(abxbus.NewBaseEvent("Child", map[string]any{"source": "failing"}))
+	bus.OnEventName("Parent", "failing", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		child := e.EmitEventName("Child", map[string]any{"source": "failing"})
 		childEvents = append(childEvents, child)
 		return nil, errors.New("expected parent handler failure")
 	}, nil)
-	bus.On("Parent", "success", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		child := e.Emit(abxbus.NewBaseEvent("Child", map[string]any{"source": "success"}))
+	bus.OnEventName("Parent", "success", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		child := e.EmitEventName("Child", map[string]any{"source": "success"})
 		childEvents = append(childEvents, child)
 		return "success", nil
 	}, nil)
-	bus.On("Child", "child", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("Child", "child", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "child", nil
 	}, nil)
 
-	parent := bus.Emit(abxbus.NewBaseEvent("Parent", nil))
+	parent := bus.EmitEventName("Parent", nil)
 	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -285,19 +285,19 @@ func TestEventChildrenTrackDirectAndNestedDescendants(t *testing.T) {
 	var child *abxbus.BaseEvent
 	var grandchild *abxbus.BaseEvent
 
-	bus.On("Parent", "parent", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		child = e.Emit(abxbus.NewBaseEvent("Child", map[string]any{"level": 1}))
+	bus.OnEventName("Parent", "parent", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		child = e.EmitEventName("Child", map[string]any{"level": 1})
 		return "parent", nil
 	}, nil)
-	bus.On("Child", "child", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		grandchild = e.Emit(abxbus.NewBaseEvent("Grandchild", map[string]any{"level": 2}))
+	bus.OnEventName("Child", "child", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		grandchild = e.EmitEventName("Grandchild", map[string]any{"level": 2})
 		return "child", nil
 	}, nil)
-	bus.On("Grandchild", "grandchild", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("Grandchild", "grandchild", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "grandchild", nil
 	}, nil)
 
-	parent := bus.Emit(abxbus.NewBaseEvent("Parent", nil))
+	parent := bus.EmitEventName("Parent", nil)
 	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}

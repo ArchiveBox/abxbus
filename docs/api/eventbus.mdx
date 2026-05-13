@@ -154,10 +154,10 @@ bus.on('*', wildcardHandler)
 <Tab title="Go">
 
 ```go
-bus.On("UserEvent", "handler", handler, nil)
-bus.On("*", "wildcard_handler", wildcardHandler, nil)
+bus.OnEventName("UserEvent", "handler", handler, nil)
+bus.OnEventName("*", "wildcard_handler", wildcardHandler, nil)
 timeout := 5.0
-bus.On("UserEvent", "custom", handler, &abxbus.EventHandler{
+bus.OnEventName("UserEvent", "custom", handler, &abxbus.EventHandler{
 	HandlerTimeout: &timeout,
 })
 ```
@@ -220,7 +220,7 @@ bus.off('*')
 <Tab title="Go">
 
 ```go
-handler := bus.On("UserEvent", "handler", onUserEvent, nil)
+handler := bus.OnEventName("UserEvent", "handler", onUserEvent, nil)
 bus.Off("UserEvent", handler)
 bus.Off("UserEvent", handler.ID)
 bus.Off("*", nil)
@@ -266,7 +266,7 @@ const result = await event.now({ first_result: true }).eventResult()
 <Tab title="Go">
 
 ```go
-event := bus.Emit(abxbus.NewBaseEvent("MyEvent", map[string]any{"data": "x"}))
+event := bus.EmitEventName("MyEvent", map[string]any{"data": "x"})
 result, err := event.EventResult()
 if err != nil {
 	return err
@@ -321,12 +321,12 @@ const child = await bus.find(ChildEvent, { child_of: parentEvent, future: 5 })
 <Tab title="Go">
 
 ```go
-event, err := bus.Find("ResponseEvent", nil, nil)
-future, err := bus.Find("ResponseEvent", nil, &abxbus.FindOptions{
+event, err := bus.FindEventName("ResponseEvent", nil, nil)
+future, err := bus.FindEventName("ResponseEvent", nil, &abxbus.FindOptions{
 	Past: false,
 	Future: 5.0,
 })
-child, err := bus.Find("ChildEvent", nil, &abxbus.FindOptions{
+child, err := bus.FindEventName("ChildEvent", nil, &abxbus.FindOptions{
 	ChildOf: parentEvent,
 	Future: 5.0,
 })
@@ -379,13 +379,13 @@ const recent = await bus.filter(ResponseEvent, { past: 10, future: false, limit:
 
 ```go
 limit := 5
-recent, err := bus.Filter("ResponseEvent", nil, &abxbus.FilterOptions{
+recent, err := bus.FilterEventName("ResponseEvent", nil, &abxbus.FilterOptions{
 	Past:   10.0,
 	Future: false,
 	Limit:  &limit,
 })
 
-recentWithPredicate, err := bus.Filter(
+recentWithPredicate, err := bus.FilterEventName(
 	"ResponseEvent",
 	func(event *abxbus.BaseEvent) bool {
 		return event.Payload["ok"] == true
@@ -597,7 +597,7 @@ await bus.destroy({ clear: true })
 ```go
 type ResumeTickEvent struct{}
 
-resumeTick := abxbus.MustNewTypedEvent[ResumeTickEvent]("ResumeTickEvent", ResumeTickEvent{})
+resumeTick := abxbus.MustNewEvent("ResumeTickEvent", ResumeTickEvent{})
 
 // 1) Serialize full bus state
 payload, err := bus.ToJSON()
@@ -618,9 +618,9 @@ fmt.Println(string(payload))
 bus, err = abxbus.EventBusFromJSON(payload)
 
 // 3) Re-link runtime callables by handler id
-bus.On("UserCreatedEvent", "onUserCreated", onUserCreated, bus.Handlers["018f..."])
-bus.On("UserDeletedEvent", "onUserDeleted", onUserDeleted, bus.Handlers["018g..."])
-bus.On("UserUpdatedEvent", "onUserUpdated", onUserUpdated, bus.Handlers["018h..."])
+bus.OnEventName("UserCreatedEvent", "onUserCreated", onUserCreated, bus.Handlers["018f..."])
+bus.OnEventName("UserDeletedEvent", "onUserDeleted", onUserDeleted, bus.Handlers["018g..."])
+bus.OnEventName("UserUpdatedEvent", "onUserUpdated", onUserUpdated, bus.Handlers["018h..."])
 
 // 4) Resume processing
 bus.Emit(resumeTick)

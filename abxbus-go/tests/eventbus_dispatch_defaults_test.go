@@ -34,11 +34,11 @@ func TestEventConcurrencyRemainsUnsetOnDispatchAndResolvesDuringProcessing(t *te
 		EventConcurrency: abxbus.EventConcurrencyParallel,
 	})
 	defer bus.Destroy()
-	bus.On("PropagationEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("PropagationEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
 
-	implicit := bus.Emit(abxbus.NewBaseEvent("PropagationEvent", nil))
+	implicit := bus.EmitEventName("PropagationEvent", nil)
 	explicitNone := abxbus.NewBaseEvent("PropagationEvent", nil)
 	explicitNone.EventConcurrency = ""
 	explicitNone = bus.Emit(explicitNone)
@@ -65,7 +65,7 @@ func TestEventConcurrencyClassOverrideBeatsBusDefault(t *testing.T) {
 		EventConcurrency: abxbus.EventConcurrencyParallel,
 	})
 	defer bus.Destroy()
-	bus.On("ConcurrencyOverrideEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("ConcurrencyOverrideEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
 
@@ -108,11 +108,11 @@ func TestHandlerDefaultsRemainUnsetOnDispatchAndResolveDuringProcessing(t *testi
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionFirst,
 	})
 	defer bus.Destroy()
-	bus.On("PropagationEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("PropagationEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
 
-	implicit := bus.Emit(abxbus.NewBaseEvent("PropagationEvent", nil))
+	implicit := bus.EmitEventName("PropagationEvent", nil)
 	explicitNone := abxbus.NewBaseEvent("PropagationEvent", nil)
 	explicitNone.EventHandlerConcurrency = ""
 	explicitNone.EventHandlerCompletion = ""
@@ -142,7 +142,7 @@ func TestHandlerClassOverrideBeatsBusDefault(t *testing.T) {
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionFirst,
 	})
 	defer bus.Destroy()
-	bus.On("HandlerOverrideEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("HandlerOverrideEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
 

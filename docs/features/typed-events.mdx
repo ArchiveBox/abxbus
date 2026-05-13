@@ -103,8 +103,7 @@ type OrderResult struct {
 }
 
 bus := abxbus.NewEventBus("OrdersBus", nil)
-abxbus.OnTyped[OrderCreatedPayload, OrderResult](
-	bus,
+bus.On(
 	"OrderCreatedEvent",
 	"handle_order",
 	func(payload OrderCreatedPayload) (OrderResult, error) {
@@ -113,11 +112,11 @@ abxbus.OnTyped[OrderCreatedPayload, OrderResult](
 	nil,
 )
 
-event, err := abxbus.NewBaseEventWithResult[OrderCreatedPayload, OrderResult]("OrderCreatedEvent", OrderCreatedPayload{
+event, err := abxbus.NewEvent[OrderCreatedPayload]("OrderCreatedEvent", OrderCreatedPayload{
 	OrderID:     "order-123",
 	CustomerID:  "customer-456",
 	TotalAmount: 42.50,
-})
+}, abxbus.ResultType[OrderResult]())
 if err != nil {
 	panic(err)
 }
