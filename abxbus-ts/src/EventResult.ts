@@ -25,8 +25,8 @@ export const EventResultJSONSchema = z
     handler_id: z.string(),
     handler_name: z.string(),
     handler_file_path: z.string().nullable().optional(),
-    handler_timeout: z.number().nullable().optional(),
-    handler_slow_timeout: z.number().nullable().optional(),
+    handler_timeout: z.number().nonnegative().nullable().optional(),
+    handler_slow_timeout: z.number().nonnegative().nullable().optional(),
     handler_registered_at: z.string().datetime().optional(),
     handler_event_pattern: z.union([z.string(), z.literal('*')]).optional(),
     eventbus_name: z.string(),
@@ -171,18 +171,24 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
     return this.result
   }
 
-  // Resolve handler timeout in seconds using precedence: handler -> event -> bus defaults.
+  // Resolve handler timeout in seconds using event-local values plus the executing bus defaults.
   get handler_timeout(): number | null {
     const original = this.event._event_original ?? this.event
-    const resolved_event_timeout = original.event_timeout ?? this.bus.event_timeout
+    const raw_event_timeout = original.event_timeout ?? this.bus.event_timeout
+    const resolved_event_timeout =
+      raw_event_timeout !== null && raw_event_timeout !== undefined && raw_event_timeout > 0 ? raw_event_timeout : null
 
     let resolved_handler_timeout: number | null
-    if (this.handler.handler_timeout !== undefined) {
+    if (this.handler.handler_timeout !== undefined && this.handler.handler_timeout !== null) {
       resolved_handler_timeout = this.handler.handler_timeout
-    } else if (original.event_handler_timeout !== undefined) {
+    } else if (original.event_handler_timeout !== undefined && original.event_handler_timeout !== null) {
       resolved_handler_timeout = original.event_handler_timeout
     } else {
-      resolved_handler_timeout = this.bus.event_timeout
+      resolved_handler_timeout = resolved_event_timeout
+    }
+
+    if (resolved_handler_timeout !== null && resolved_handler_timeout <= 0) {
+      resolved_handler_timeout = null
     }
 
     if (resolved_handler_timeout === null && resolved_event_timeout === null) {
@@ -197,31 +203,21 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
     return Math.min(resolved_handler_timeout, resolved_event_timeout)
   }
 
-  // Resolve slow handler warning threshold in seconds using precedence: handler -> event -> bus defaults.
+  // Resolve slow handler warning threshold in seconds using event-local values plus the executing bus defaults.
   get handler_slow_timeout(): number | null {
     const original = this.event._event_original ?? this.event
 
-    if (this.handler.handler_slow_timeout !== undefined) {
+    if (this.handler.handler_slow_timeout !== undefined && this.handler.handler_slow_timeout !== null) {
       return this.handler.handler_slow_timeout
     }
-    if (original.event_handler_slow_timeout !== undefined) {
-      return original.event_handler_slow_timeout
-    }
-    const event_slow_timeout = (original as { event_slow_timeout?: number | null }).event_slow_timeout
-    if (event_slow_timeout !== undefined) {
-      return event_slow_timeout
-    }
-    if (this.bus?.event_handler_slow_timeout !== undefined) {
-      return this.bus.event_handler_slow_timeout
-    }
-    return this.bus?.event_slow_timeout ?? null
+    return original.event_handler_slow_timeout ?? this.bus.event_handler_slow_timeout ?? null
   }
 
   // Create a slow-handler warning timer that logs if the handler runs too long.
   _createSlowHandlerWarningTimer(effective_timeout: number | null): ReturnType<typeof setTimeout> | null {
     const handler_warn_timeout = this.handler_slow_timeout
-    const warn_ms = handler_warn_timeout === null ? null : handler_warn_timeout * 1000
-    const should_warn = warn_ms !== null && (effective_timeout === null || effective_timeout * 1000 > warn_ms)
+    const warn_ms = handler_warn_timeout === null || handler_warn_timeout <= 0 ? null : handler_warn_timeout * 1000
+    const should_warn = warn_ms !== null && (effective_timeout === null || effective_timeout <= 0 || effective_timeout * 1000 > warn_ms)
     if (!should_warn || warn_ms === null) {
       return null
     }

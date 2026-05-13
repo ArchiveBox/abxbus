@@ -148,7 +148,7 @@ async def handler_concurrency_demo() -> None:
             bus.on(HandlerEvent, make_handler('fast', 20))
 
             event = bus.emit(HandlerEvent(label=mode))
-            await event
+            await event.now()
             await bus.wait_until_idle()
             log(f'max handler overlap: {max_in_flight} (expect 1 for serial, >= 2 for parallel)')
             print(f'\n=== {bus.name}.log_tree() ===')
@@ -280,7 +280,7 @@ async def handler_timeout_demo() -> None:
         fast_entry.handler_timeout = 0.1
 
         event = bus.emit(TimeoutEvent(ms=60, event_handler_timeout=0.5))
-        await event
+        await event.now()
 
         slow_result = event.event_results.get(slow_entry.id)
         handler_timed_out = slow_result is not None and isinstance(slow_result.error, TimeoutError)

@@ -150,6 +150,20 @@ func NewEventBus(name string, options *EventBusOptions) *EventBus {
 	event_timeout := options.EventTimeout
 	if event_timeout == nil {
 		event_timeout = ptr(60.0)
+	} else if *event_timeout < 0 {
+		panic("event_timeout must be >= 0 or nil")
+	}
+	event_slow_timeout := options.EventSlowTimeout
+	if event_slow_timeout == nil {
+		event_slow_timeout = ptr(300.0)
+	} else if *event_slow_timeout < 0 {
+		panic("event_slow_timeout must be >= 0 or nil")
+	}
+	event_handler_slow_timeout := options.EventHandlerSlowTimeout
+	if event_handler_slow_timeout == nil {
+		event_handler_slow_timeout = ptr(30.0)
+	} else if *event_handler_slow_timeout < 0 {
+		panic("event_handler_slow_timeout must be >= 0 or nil")
 	}
 	detect_handler_file_paths := true
 	if options.EventHandlerDetectFilePaths != nil {
@@ -161,8 +175,8 @@ func NewEventBus(name string, options *EventBusOptions) *EventBus {
 		EventConcurrency:            options.EventConcurrency,
 		EventHandlerConcurrency:     options.EventHandlerConcurrency,
 		EventHandlerCompletion:      options.EventHandlerCompletion,
-		EventHandlerSlowTimeout:     options.EventHandlerSlowTimeout,
-		EventSlowTimeout:            options.EventSlowTimeout,
+		EventHandlerSlowTimeout:     event_handler_slow_timeout,
+		EventSlowTimeout:            event_slow_timeout,
 		EventHandlerDetectFilePaths: detect_handler_file_paths,
 		handlers:                    map[string]*EventHandler{},
 		handlersByKey:               map[string][]string{},
@@ -245,6 +259,12 @@ func (b *EventBus) On(event_pattern string, handler_name string, handler EventHa
 		if options.HandlerRegisteredAt != "" {
 			h.HandlerRegisteredAt = options.HandlerRegisteredAt
 		}
+		if options.HandlerTimeout != nil && *options.HandlerTimeout < 0 {
+			panic("handler_timeout must be >= 0 or nil")
+		}
+		if options.HandlerSlowTimeout != nil && *options.HandlerSlowTimeout < 0 {
+			panic("handler_slow_timeout must be >= 0 or nil")
+		}
 		h.HandlerTimeout = options.HandlerTimeout
 		h.HandlerSlowTimeout = options.HandlerSlowTimeout
 		h.HandlerFilePath = options.HandlerFilePath
@@ -317,6 +337,10 @@ func (b *EventBus) Off(event_pattern string, handler any) {
 }
 
 func (b *EventBus) Emit(input any) *BaseEvent {
+	return b.EmitWithContext(nil, input)
+}
+
+func (b *EventBus) EmitWithContext(ctx context.Context, input any) *BaseEvent {
 	event, err := baseEventFromAny(input)
 	if err != nil {
 		panic(err)
@@ -325,6 +349,9 @@ func (b *EventBus) Emit(input any) *BaseEvent {
 	original_event.mu.Lock()
 	if event.Bus == nil {
 		original_event.Bus = b
+	}
+	if original_event.dispatchCtx == nil {
+		original_event.dispatchCtx = ctx
 	}
 	if original_event.dispatchCtx == nil {
 		original_event.dispatchCtx = b.locks.getActiveDispatchContext()
@@ -352,14 +379,52 @@ func (b *EventBus) Emit(input any) *BaseEvent {
 	b.notifyEventChange(original_event, "pending")
 	activeHandler := b.locks.getActiveHandlerResult()
 	if activeHandler == nil {
+		activeHandler = b.locks.getAnyActiveHandlerResult()
+	}
+	if activeHandler == nil {
 		b.startRunloop()
 	} else if b.locks.getLockForEvent(original_event) == nil {
-		b.startRunloop()
+		b.startParallelEventTaskFromQueue(original_event)
+	} else {
+		go func(result *EventResult) {
+			_ = result.waitWithContext(context.Background())
+			b.startRunloop()
+		}(activeHandler)
 	}
 	return original_event
 }
 
 func (b *EventBus) Dispatch(event *BaseEvent) *BaseEvent { return b.Emit(event) }
+
+func (b *EventBus) startParallelEventTaskFromQueue(event *BaseEvent) {
+	b.mu.Lock()
+	if b.inFlightEventIDs[event.EventID] {
+		b.mu.Unlock()
+		return
+	}
+	removed := false
+	for i, queued := range b.pendingEventQueue {
+		if queued.EventID == event.EventID {
+			b.pendingEventQueue = append(b.pendingEventQueue[:i], b.pendingEventQueue[i+1:]...)
+			removed = true
+			break
+		}
+	}
+	if !removed && event.status() == "completed" {
+		b.mu.Unlock()
+		return
+	}
+	b.inFlightEventIDs[event.EventID] = true
+	b.mu.Unlock()
+
+	firstHandlerStarted := make(chan struct{})
+	go func() {
+		if err := b.processEvent(context.Background(), event, false, nil, firstHandlerStarted); err != nil && !errors.Is(err, context.Canceled) {
+			// no-op log hook
+		}
+	}()
+	<-firstHandlerStarted
+}
 
 func (b *EventBus) getHandlersForEvent(event *BaseEvent) []*EventHandler {
 	b.mu.Lock()
@@ -376,7 +441,7 @@ func (b *EventBus) getHandlersForEvent(event *BaseEvent) []*EventHandler {
 }
 
 func runWithTimeout(ctx context.Context, timeout_seconds *float64, on_timeout func() error, fn func(context.Context) error) error {
-	if timeout_seconds == nil {
+	if timeout_seconds == nil || *timeout_seconds <= 0 {
 		return fn(ctx)
 	}
 	ctx2, cancel := context.WithCancel(ctx)
@@ -410,6 +475,17 @@ type handlerContext struct {
 }
 
 type handlerCancelReasonContextKey struct{}
+type handlerExecutionContextKey struct{}
+
+func activeHandlerResultFromContext(ctx context.Context) *EventResult {
+	if ctx == nil {
+		return nil
+	}
+	if result, ok := ctx.Value(handlerExecutionContextKey{}).(*EventResult); ok {
+		return result
+	}
+	return nil
+}
 
 func (c handlerContext) Deadline() (time.Time, bool) { return c.base.Deadline() }
 func (c handlerContext) Done() <-chan struct{}       { return c.base.Done() }
@@ -436,7 +512,20 @@ func (b *EventBus) eventHasLocalActiveResults(event *BaseEvent) bool {
 			continue
 		}
 		status, _, _, _ := result.snapshot()
-		if status == EventResultStarted || status == EventResultCompleted || status == EventResultError {
+		if status == EventResultPending || status == EventResultStarted {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *EventBus) eventHasLocalSettledResults(event *BaseEvent) bool {
+	for _, result := range event.eventResultsSnapshot() {
+		if result == nil || result.EventBusID != b.ID {
+			continue
+		}
+		status, _, _, _ := result.snapshot()
+		if status == EventResultCompleted || status == EventResultError {
 			return true
 		}
 	}
@@ -472,6 +561,31 @@ func completeEventAcrossBuses(event *BaseEvent) {
 		}
 		bus.notifyEventChange(event, "completed")
 		bus.EventHistory.TrimEventHistory(nil)
+	}
+}
+
+func completeIdleEventAcrossBuses(event *BaseEvent) bool {
+	if event.status() == "completed" {
+		return true
+	}
+	event.mu.Lock()
+	pendingBusCount := event.EventPendingBusCount
+	event.mu.Unlock()
+	if pendingBusCount > 0 {
+		return false
+	}
+	if eventHasRunningResults(event) || eventQueuedOrInFlightAcrossBuses(event) {
+		return false
+	}
+	completeEventAcrossBuses(event)
+	return true
+}
+
+func startRunloopsForEvent(event *BaseEvent) {
+	for _, bus := range eventBusInstancesSnapshot() {
+		if bus.EventHistory.GetEvent(event.EventID) == event {
+			bus.startRunloop()
+		}
 	}
 }
 
@@ -521,17 +635,6 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 		}
 		defer signalFirstHandlerStarted()
 	}
-	event.mu.Lock()
-	if event.dispatchCtx == nil && ctx != nil {
-		event.dispatchCtx = ctx
-	}
-	previousBus := event.Bus
-	event.Bus = b
-	shouldRestoreBus := previousBus != nil && previousBus != b
-	event.mu.Unlock()
-	if shouldRestoreBus {
-		defer func() { event.mu.Lock(); event.Bus = previousBus; event.mu.Unlock() }()
-	}
 	defer func() {
 		b.mu.Lock()
 		delete(b.inFlightEventIDs, event.EventID)
@@ -544,7 +647,23 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 	}
 	if b.eventHasLocalActiveResults(event) {
 		signalFirstHandlerStarted()
-		return event.EventCompleted(ctx)
+		_, err := event.waitWithContext(ctx)
+		return err
+	}
+	if b.eventHasLocalSettledResults(event) {
+		signalFirstHandlerStarted()
+		return nil
+	}
+	event.mu.Lock()
+	if event.dispatchCtx == nil && ctx != nil {
+		event.dispatchCtx = ctx
+	}
+	previousBus := event.Bus
+	event.Bus = b
+	shouldRestoreBus := previousBus != nil && previousBus != b
+	event.mu.Unlock()
+	if shouldRestoreBus {
+		defer func() { event.mu.Lock(); event.Bus = previousBus; event.mu.Unlock() }()
 	}
 	var event_lock *AsyncLock
 	if !bypass_event_locks {
@@ -564,7 +683,12 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 		}
 		if b.eventHasLocalActiveResults(event) {
 			signalFirstHandlerStarted()
-			return event.EventCompleted(ctx)
+			_, err := event.waitWithContext(ctx)
+			return err
+		}
+		if b.eventHasLocalSettledResults(event) {
+			signalFirstHandlerStarted()
+			return nil
 		}
 	}
 	event.markStarted()
@@ -591,6 +715,18 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 			b.notifyEventResultChange(event, result, "pending")
 		}
 	}
+	if event.EventTimeout != nil && *event.EventTimeout < 0 {
+		panic("event_timeout must be >= 0 or nil")
+	}
+	if event.EventSlowTimeout != nil && *event.EventSlowTimeout < 0 {
+		panic("event_slow_timeout must be >= 0 or nil")
+	}
+	if event.EventHandlerTimeout != nil && *event.EventHandlerTimeout < 0 {
+		panic("event_handler_timeout must be >= 0 or nil")
+	}
+	if event.EventHandlerSlowTimeout != nil && *event.EventHandlerSlowTimeout < 0 {
+		panic("event_handler_slow_timeout must be >= 0 or nil")
+	}
 	resolved_event_timeout := event.EventTimeout
 	if resolved_event_timeout == nil {
 		resolved_event_timeout = b.EventTimeout
@@ -600,7 +736,7 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 		resolved_event_slow_timeout = b.EventSlowTimeout
 	}
 	var slow_timer *time.Timer
-	if resolved_event_slow_timeout != nil {
+	if resolved_event_slow_timeout != nil && *resolved_event_slow_timeout > 0 {
 		slow_timer = time.AfterFunc(time.Duration(*resolved_event_slow_timeout*float64(time.Second)), func() {
 			if event.status() != "completed" {
 				SlowWarningLogger(fmt.Sprintf("[abxbus] Slow event processing: %s.on(%s) still running", b.Name, event.EventType))
@@ -679,7 +815,7 @@ func (e *BaseEvent) runHandlers(ctx context.Context, bus *EventBus, handlers []*
 				return err
 			}
 			status, result, _, _ := results[i].snapshot()
-			if status == EventResultCompleted && result != nil {
+			if status == EventResultCompleted && result != nil && !isBaseEventResult(result) {
 				for j := i + 1; j < len(results); j++ {
 					nextStatus, _, _, _ := results[j].snapshot()
 					if nextStatus == EventResultPending {
@@ -735,7 +871,7 @@ func (e *BaseEvent) runHandlers(ctx context.Context, bus *EventBus, handlers []*
 		hasSuccessfulResult := func() bool {
 			for _, result := range results {
 				status, value, _, _ := result.snapshot()
-				if status == EventResultCompleted && value != nil {
+				if status == EventResultCompleted && value != nil && !isBaseEventResult(value) {
 					return true
 				}
 			}
@@ -800,30 +936,39 @@ func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, hand
 	if event.dispatchCtx != nil {
 		ctx2 = mergeHandlerContext(ctx, event.dispatchCtx)
 	}
-	resolved_event_timeout := event.EventTimeout
-	if resolved_event_timeout == nil {
-		resolved_event_timeout = bus.EventTimeout
-	}
 	explicit_handler_timeout := handler.HandlerTimeout
 	if explicit_handler_timeout == nil {
 		explicit_handler_timeout = event.EventHandlerTimeout
 	}
+	if explicit_handler_timeout != nil && *explicit_handler_timeout <= 0 {
+		explicit_handler_timeout = nil
+	}
+	resolved_event_timeout := event.EventTimeout
+	if resolved_event_timeout == nil {
+		resolved_event_timeout = bus.EventTimeout
+	}
+	if resolved_event_timeout != nil && *resolved_event_timeout <= 0 {
+		resolved_event_timeout = nil
+	}
 	resolved_handler_timeout := explicit_handler_timeout
+	handler_timeout_from_event_timeout := false
+	if resolved_handler_timeout == nil {
+		resolved_handler_timeout = resolved_event_timeout
+		handler_timeout_from_event_timeout = resolved_handler_timeout != nil
+	} else if resolved_event_timeout != nil && *resolved_event_timeout < *resolved_handler_timeout {
+		resolved_handler_timeout = resolved_event_timeout
+		handler_timeout_from_event_timeout = true
+	}
+	result.HandlerTimeout = resolved_handler_timeout
 	resolved_handler_slow_timeout := handler.HandlerSlowTimeout
 	if resolved_handler_slow_timeout == nil {
 		resolved_handler_slow_timeout = event.EventHandlerSlowTimeout
 	}
 	if resolved_handler_slow_timeout == nil {
-		resolved_handler_slow_timeout = event.EventSlowTimeout
-	}
-	if resolved_handler_slow_timeout == nil {
 		resolved_handler_slow_timeout = bus.EventHandlerSlowTimeout
 	}
-	if resolved_handler_slow_timeout == nil {
-		resolved_handler_slow_timeout = bus.EventSlowTimeout
-	}
 	var handler_slow_timer *time.Timer
-	if resolved_handler_slow_timeout != nil && (resolved_handler_timeout == nil || *resolved_handler_timeout > *resolved_handler_slow_timeout) {
+	if resolved_handler_slow_timeout != nil && *resolved_handler_slow_timeout > 0 && (resolved_handler_timeout == nil || *resolved_handler_timeout > *resolved_handler_slow_timeout) {
 		handler_slow_timer = time.AfterFunc(time.Duration(*resolved_handler_slow_timeout*float64(time.Second)), func() {
 			status, _, _, _ := result.snapshot()
 			if status == EventResultStarted {
@@ -833,13 +978,17 @@ func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, hand
 	}
 	var return_value any
 	err := runWithTimeout(ctx2, resolved_handler_timeout, func() error {
+		if handler_timeout_from_event_timeout {
+			return &EventHandlerAbortedError{Message: "Aborted running handler due to event timeout"}
+		}
 		if resolved_handler_timeout == nil {
 			return &EventHandlerTimeoutError{Message: fmt.Sprintf("%s.on(%s, %s) timed out", bus.Name, event.EventType, handler.HandlerName), TimeoutSeconds: 0}
 		}
 		return &EventHandlerTimeoutError{Message: fmt.Sprintf("%s.on(%s, %s) timed out after %.3fs", bus.Name, event.EventType, handler.HandlerName, *resolved_handler_timeout), TimeoutSeconds: *resolved_handler_timeout}
 	}, func(ctx3 context.Context) error {
 		var err error
-		if run_err := bus.locks.runWithHandlerDispatchContext(result, func() error {
+		ctx3 = context.WithValue(ctx3, handlerExecutionContextKey{}, result)
+		if run_err := bus.locks.runWithHandlerDispatchContext(result, ctx3, func() error {
 			return_value, err = handler.Handle(ctx3, event)
 			return err
 		}); run_err != nil {
@@ -853,6 +1002,17 @@ func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, hand
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return ctx.Err()
+		}
+		var eventTimeoutAbort *EventHandlerAbortedError
+		if handler_timeout_from_event_timeout && errors.As(err, &eventTimeoutAbort) {
+			if result.markError(&EventHandlerAbortedError{Message: "Aborted running handler due to event timeout"}) {
+				bus.notifyEventResultChange(event, result, "completed")
+			}
+			timeoutSeconds := 0.0
+			if resolved_handler_timeout != nil {
+				timeoutSeconds = *resolved_handler_timeout
+			}
+			return &EventTimeoutError{Message: fmt.Sprintf("%s.on(%s) timed out after %.3fs", bus.Name, event.EventType, timeoutSeconds), TimeoutSeconds: timeoutSeconds}
 		}
 		if errors.Is(ctx.Err(), context.Canceled) && errors.Is(err, context.Canceled) {
 			if ctx.Value(handlerCancelReasonContextKey{}) == "first-completion" {
@@ -897,19 +1057,19 @@ func (b *EventBus) processEventImmediately(ctx context.Context, event *BaseEvent
 	}
 	if b.inFlightEventIDs[original_event.EventID] {
 		b.mu.Unlock()
-		if err := original_event.EventCompleted(ctx); err != nil {
+		if _, err := original_event.waitWithContext(ctx); err != nil {
 			return nil, err
 		}
 		return original_event, nil
 	}
 	b.inFlightEventIDs[original_event.EventID] = true
 	b.mu.Unlock()
-	bypass_event_locks := b.locks.getActiveHandlerResult() != nil
+	bypass_event_locks := b.locks.hasAnyActiveHandlerResult()
 	if err := b.processEvent(ctx, original_event, bypass_event_locks, nil, nil); err != nil {
 		return nil, err
 	}
 	if original_event.status() != "completed" {
-		if err := original_event.EventCompleted(ctx); err != nil {
+		if _, err := original_event.waitWithContext(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -940,17 +1100,21 @@ func (b *EventBus) processEventImmediatelyAcrossBuses(ctx context.Context, event
 					seen[bus] = true
 					continue
 				}
+				if bus.eventHasLocalSettledResults(originalEvent) {
+					seen[bus] = true
+					continue
+				}
 				ordered = append(ordered, bus)
 				seen[bus] = true
 			}
 		}
-		if !seen[b] && b.EventHistory.GetEvent(originalEvent.EventID) == originalEvent && !b.eventHasLocalActiveResults(originalEvent) {
+		if !seen[b] && b.EventHistory.GetEvent(originalEvent.EventID) == originalEvent && !b.eventHasLocalActiveResults(originalEvent) && !b.eventHasLocalSettledResults(originalEvent) {
 			ordered = append(ordered, b)
 			seen[b] = true
 		}
 		if len(ordered) == 0 {
 			settleSkippedActiveBuses(originalEvent, skippedActiveBuses)
-			if err := originalEvent.EventCompleted(ctx); err != nil {
+			if _, err := originalEvent.waitWithContext(ctx); err != nil {
 				return nil, err
 			}
 			return originalEvent, nil
@@ -958,6 +1122,9 @@ func (b *EventBus) processEventImmediatelyAcrossBuses(ctx context.Context, event
 
 		initiatingLock := b.locks.getLockForEvent(originalEvent)
 		activeHandlerResult := b.locks.getActiveHandlerResult()
+		if activeHandlerResult == nil {
+			activeHandlerResult = b.locks.getAnyActiveHandlerResult()
+		}
 		releases := []func(){}
 		for _, bus := range ordered {
 			if bus != b {
@@ -965,7 +1132,11 @@ func (b *EventBus) processEventImmediatelyAcrossBuses(ctx context.Context, event
 			}
 		}
 
+		sawAlreadyInFlight := false
 		for _, bus := range ordered {
+			if bus.eventHasLocalSettledResults(originalEvent) {
+				continue
+			}
 			busEventLock := bus.locks.getLockForEvent(originalEvent)
 			bypassEventLocks := activeHandlerResult != nil && (bus == b || (initiatingLock != nil && busEventLock == initiatingLock))
 			bus.mu.Lock()
@@ -979,7 +1150,16 @@ func (b *EventBus) processEventImmediatelyAcrossBuses(ctx context.Context, event
 				bus.inFlightEventIDs[originalEvent.EventID] = true
 			}
 			bus.mu.Unlock()
-			if alreadyInFlight && bus.eventHasLocalActiveResults(originalEvent) {
+			if alreadyInFlight {
+				sawAlreadyInFlight = true
+				continue
+			}
+			if bus.eventHasLocalSettledResults(originalEvent) {
+				if !alreadyInFlight {
+					bus.mu.Lock()
+					delete(bus.inFlightEventIDs, originalEvent.EventID)
+					bus.mu.Unlock()
+				}
 				continue
 			}
 
@@ -994,6 +1174,15 @@ func (b *EventBus) processEventImmediatelyAcrossBuses(ctx context.Context, event
 			release()
 		}
 		if originalEvent.status() == "completed" {
+			return originalEvent, nil
+		}
+		if completeIdleEventAcrossBuses(originalEvent) {
+			return originalEvent, nil
+		}
+		if sawAlreadyInFlight {
+			if _, err := originalEvent.waitWithContext(ctx); err != nil {
+				return nil, err
+			}
 			return originalEvent, nil
 		}
 	}
@@ -1035,16 +1224,16 @@ func (b *EventBus) runloop(ctx context.Context) {
 		}
 		b.inFlightEventIDs[next_event.EventID] = true
 		b.mu.Unlock()
-		eventConcurrency := next_event.EventConcurrency
-		if eventConcurrency == "" {
-			eventConcurrency = b.EventConcurrency
-		}
 		process := func(event *BaseEvent, first_handler_started chan struct{}) {
 			if err := b.processEvent(ctx, event, false, nil, first_handler_started); err != nil && !errors.Is(err, context.Canceled) {
 				// no-op log hook
 			}
 		}
-		if eventConcurrency == EventConcurrencyParallel {
+		nextEventConcurrency := next_event.EventConcurrency
+		if nextEventConcurrency == "" {
+			nextEventConcurrency = b.EventConcurrency
+		}
+		if nextEventConcurrency == EventConcurrencyParallel {
 			first_handler_started := make(chan struct{})
 			go process(next_event, first_handler_started)
 			select {
@@ -1209,7 +1398,6 @@ func EventBusFromJSON(data []byte) (*EventBus, error) {
 		maxHistorySize = ptr(DefaultMaxHistorySize)
 	}
 	eventTimeout := parsed.EventTimeout
-	eventTimeoutWasExplicitNull := rawPayload.EventTimeout != nil && string(rawPayload.EventTimeout) == "null"
 	bus := NewEventBus(parsed.Name, &EventBusOptions{
 		ID:                          parsed.ID,
 		MaxHistorySize:              maxHistorySize,
@@ -1222,9 +1410,6 @@ func EventBusFromJSON(data []byte) (*EventBus, error) {
 		EventHandlerSlowTimeout:     parsed.EventHandlerSlowTimeout,
 		EventHandlerDetectFilePaths: &parsed.EventHandlerDetectFilePaths,
 	})
-	if eventTimeoutWasExplicitNull {
-		bus.EventTimeout = nil
-	}
 	if parsed.Handlers != nil {
 		bus.handlers = parsed.Handlers
 	}

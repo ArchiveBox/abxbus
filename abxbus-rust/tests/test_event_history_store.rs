@@ -20,7 +20,7 @@ fn test_max_history_drop_true_keeps_recent_entries() {
         let event = bus.emit(HistoryEvent {
             ..Default::default()
         });
-        block_on(event.done());
+        let _ = block_on(event.now());
     }
 
     let history = bus.event_history_ids();
@@ -37,7 +37,7 @@ fn test_max_history_drop_false_rejects_new_emit_when_full() {
     let first = bus.emit(HistoryEvent {
         ..Default::default()
     });
-    block_on(first.done());
+    let _ = block_on(first.now());
 
     bus.emit(HistoryEvent {
         ..Default::default()

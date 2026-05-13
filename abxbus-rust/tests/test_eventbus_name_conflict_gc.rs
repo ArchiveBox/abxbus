@@ -240,7 +240,7 @@ fn test_unreferenced_buses_with_history_can_be_cleaned_without_instance_leak() {
             let event = bus.emit(GcHistoryEvent {
                 ..Default::default()
             });
-            block_on(event.done());
+            let _ = block_on(event.now());
         }
         block_on(bus.wait_until_idle(Some(1.0)));
         refs.push(Arc::downgrade(&bus));
@@ -278,7 +278,7 @@ fn test_unreferenced_buses_with_history_are_collected_without_stop() {
             let event = bus.emit(GcImplicitEvent {
                 ..Default::default()
             });
-            block_on(event.done());
+            let _ = block_on(event.now());
         }
         block_on(bus.wait_until_idle(Some(1.0)));
         refs.push(Arc::downgrade(&bus));

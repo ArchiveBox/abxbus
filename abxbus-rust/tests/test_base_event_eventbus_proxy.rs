@@ -57,7 +57,7 @@ fn test_event_event_bus_inside_handler_returns_the_dispatching_bus() {
     });
 
     let event = bus.emit_base(base_event("MainEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     assert!(block_on(bus.wait_until_idle(None)));
 
     assert!(*handler_called.lock().expect("handler_called lock"));
@@ -97,7 +97,7 @@ fn test_legacy_bus_property_is_not_exposed_inside_handlers() {
     });
 
     let event = bus.emit_base(base_event("MainEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     assert!(!*has_serialized_legacy_bus.lock().expect("legacy bus lock"));
     assert!(base_event("DetachedEvent", json!({}))
         .to_json_value()
@@ -126,7 +126,7 @@ fn test_event_bus_aliases_bus_property() {
     });
 
     let event = bus.emit_base(base_event("MainEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
     assert_eq!(
         seen_bus_id.lock().expect("seen bus id").as_deref(),
@@ -169,7 +169,7 @@ fn test_event_event_bus_is_set_for_child_events_emitted_in_handler() {
     });
 
     let event = bus.emit_base(base_event("MainEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     assert!(block_on(bus.wait_until_idle(None)));
     assert_eq!(
         child_bus_name.lock().expect("child bus lock").as_deref(),
@@ -189,7 +189,7 @@ fn test_event_event_bus_is_absent_on_detached_events() {
     );
 
     let original = bus.emit_base(base_event("MainEvent", json!({})));
-    block_on(original.event_completed());
+    let _ = block_on(original.wait());
 
     assert_eq!(
         original.event_bus().map(|bus| bus.name.clone()).as_deref(),
@@ -206,7 +206,7 @@ fn test_event_event_bus_is_available_outside_handler_context() {
     let bus_name = unique_bus_name("EventBusPropertyOutsideHandlerBus");
     let bus = EventBus::new(Some(bus_name.clone()));
     let event = bus.emit_base(base_event("MainEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
     assert_eq!(
         event.event_bus().map(|bus| bus.name.clone()).as_deref(),
@@ -244,9 +244,9 @@ fn test_event_event_bus_returns_correct_bus_when_multiple_buses_exist() {
     });
 
     let event1 = bus1.emit_base(base_event("MainEvent", json!({})));
-    block_on(event1.event_completed());
+    let _ = block_on(event1.wait());
     let event2 = bus2.emit_base(base_event("MainEvent", json!({})));
-    block_on(event2.event_completed());
+    let _ = block_on(event2.wait());
 
     assert_eq!(
         handler1_bus_name
@@ -294,7 +294,7 @@ fn test_event_event_bus_reflects_the_currently_processing_bus_when_forwarded() {
     });
 
     let event = bus1.emit_base(base_event("MainEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     assert!(block_on(bus1.wait_until_idle(None)));
     assert!(block_on(bus2.wait_until_idle(None)));
 
@@ -327,7 +327,7 @@ fn test_event_event_bus_in_nested_handlers_sees_the_same_bus() {
             let current_bus = event.event_bus().expect("outer bus");
             *outer_bus_name.lock().expect("outer bus lock") = Some(current_bus.name.clone());
             let child = current_bus.emit_child_base(base_event("ChildEvent", json!({})));
-            child.done().await;
+            let _ = child.now().await;
             Ok(json!(null))
         }
     });
@@ -343,7 +343,7 @@ fn test_event_event_bus_in_nested_handlers_sees_the_same_bus() {
     });
 
     let parent = bus.emit_base(base_event("MainEvent", json!({})));
-    block_on(parent.event_completed());
+    let _ = block_on(parent.wait());
 
     assert_eq!(
         outer_bus_name.lock().expect("outer bus lock").as_deref(),
@@ -367,7 +367,7 @@ fn test_event_emit_awaited_children_pass_explicit_handler_context_to_immediate_p
         async move {
             let current_bus = event.event_bus().expect("handler bus");
             let child = current_bus.emit_child_base(base_event("ChildEvent", json!({})));
-            child.done().await;
+            let _ = child.now().await;
             *child_ref.lock().expect("child lock") = Some(child);
             Ok(json!(null))
         }
@@ -377,7 +377,7 @@ fn test_event_emit_awaited_children_pass_explicit_handler_context_to_immediate_p
     });
 
     let parent = bus.emit_base(base_event("MainEvent", json!({})));
-    block_on(parent.event_completed());
+    let _ = block_on(parent.wait());
     let child = child_ref
         .lock()
         .expect("child lock")
@@ -421,7 +421,7 @@ fn test_event_emit_sets_parent_child_relationships_through_3_levels() {
                 .push("parent_start".to_string());
             let current_bus = event.event_bus().expect("parent bus");
             let child = current_bus.emit_child_base(base_event("ChildEvent", json!({})));
-            child.done().await;
+            let _ = child.now().await;
             *child_ref.lock().expect("child lock") = Some(child);
             order
                 .lock()
@@ -443,7 +443,7 @@ fn test_event_emit_sets_parent_child_relationships_through_3_levels() {
                 .push("child_start".to_string());
             let current_bus = event.event_bus().expect("child bus");
             let grandchild = current_bus.emit_child_base(base_event("GrandchildEvent", json!({})));
-            grandchild.done().await;
+            let _ = grandchild.now().await;
             *grandchild_ref.lock().expect("grandchild lock") = Some(grandchild);
             order
                 .lock()
@@ -475,7 +475,7 @@ fn test_event_emit_sets_parent_child_relationships_through_3_levels() {
     });
 
     let parent = bus.emit_base(base_event("MainEvent", json!({})));
-    block_on(parent.event_completed());
+    let _ = block_on(parent.wait());
     let child = child_ref
         .lock()
         .expect("child lock")
@@ -540,7 +540,7 @@ fn test_event_emit_with_forwarding_child_dispatch_goes_to_the_correct_bus() {
             let current_bus = event.event_bus().expect("forwarded handler bus");
             assert_eq!(current_bus.name, bus2_name);
             let child = current_bus.emit_child_base(base_event("ChildEvent", json!({})));
-            child.done().await;
+            let _ = child.now().await;
             *child_ref.lock().expect("child_ref lock") = Some(child);
             Ok(json!(null))
         }
@@ -557,7 +557,7 @@ fn test_event_emit_with_forwarding_child_dispatch_goes_to_the_correct_bus() {
     });
 
     let parent = bus1.emit_base(base_event("MainEvent", json!({})));
-    block_on(parent.event_completed());
+    let _ = block_on(parent.wait());
     assert!(block_on(bus1.wait_until_idle(None)));
     assert!(block_on(bus2.wait_until_idle(None)));
 
@@ -598,7 +598,7 @@ fn test_event_event_bus_is_set_on_the_event_after_dispatch_outside_handler() {
             .as_deref(),
         Some(bus_name.as_str())
     );
-    block_on(dispatched.event_completed());
+    let _ = block_on(dispatched.wait());
     bus.stop();
 }
 
@@ -739,8 +739,8 @@ fn test_event_is_child_of_returns_false_for_unrelated_events() {
 
     let parent = bus.emit_base(base_event("LineageParentEvent", json!({})));
     let unrelated = bus.emit_base(base_event("LineageUnrelatedEvent", json!({})));
-    block_on(parent.event_completed());
-    block_on(unrelated.event_completed());
+    let _ = block_on(parent.wait());
+    let _ = block_on(unrelated.wait());
 
     assert!(!bus.event_is_child_of(&unrelated, &parent));
     assert!(!bus.event_is_parent_of(&parent, &unrelated));

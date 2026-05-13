@@ -20,7 +20,7 @@ func TestEventResultSerializesHandlerMetadataAndDerivedFields(t *testing.T) {
 	})
 
 	event := bus.Emit(abxbus.NewBaseEvent("MetadataEvent", nil))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
 	result := event.EventResults[handler.ID]

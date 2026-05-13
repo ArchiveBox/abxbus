@@ -43,7 +43,7 @@ const value = entry.result
 
 ```go
 for _, entry := range event.EventResults {
-	if err := entry.Wait(context.Background()); err != nil {
+	if err := entry.Wait(); err != nil {
 		return err
 	}
 	value := entry.Result

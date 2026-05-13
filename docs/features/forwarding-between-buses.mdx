@@ -78,12 +78,13 @@ billing = BillingService()
 auth.bus.on('*', relay.bus.emit)
 relay.bus.on('*', billing.bus.emit)
 
-result = await auth.bus.emit(UserCreatedEvent(user_id='u-a8d1')).event_result()
+event = await auth.bus.emit(UserCreatedEvent(user_id='u-a8d1')).now(first_result=True)
+result = await event.event_result()
 print(result)
 # 'auth-ok:u-a8d1'
 
 root = auth.bus.emit(UserCreatedEvent(user_id='u-a8d1'))
-await root
+await root.now()
 print(root.event_path)
 # ['AuthBus#a8d1', 'RelayBus#3f2c', 'BillingBus#b91e']
 ```
@@ -143,8 +144,8 @@ auth.bus.on('*', relay.bus.emit)
 relay.bus.on('*', billing.bus.emit)
 
 const event = auth.bus.emit(UserCreatedEvent({ user_id: 'u-a8d1' }))
-await event.done()
-console.log(event.event_result)
+await event.now()
+console.log(await event.eventResult())
 // 'auth-ok:u-a8d1'
 console.log(event.event_path)
 // ['AuthBus#a8d1', 'RelayBus#3f2c', 'BillingBus#b91e']
@@ -223,7 +224,7 @@ let event = auth.emit(UserCreatedEvent {
     ..Default::default()
 });
 let result = block_on(event.event_result(Default::default()))?;
-block_on(event.done());
+block_on(event.now());
 println!("{result}");
 println!("{:?}", event.inner.lock().event_path);
 ```
@@ -287,7 +288,7 @@ func main() {
 	}, nil)
 
 	event := auth.bus.Emit(abxbus.NewBaseEvent("UserCreatedEvent", map[string]any{"user_id": "u-a8d1"}))
-	result, err := event.EventResult(context.Background())
+	result, err := event.EventResult()
 	if err != nil {
 		panic(err)
 	}
@@ -420,7 +421,7 @@ bus_b.on('*', bus_c.emit)
 bus_c.on('*', bus_a.emit)
 
 event = bus_a.emit(PingEvent(message='hello'))
-await event
+await event.now()
 
 print(event.event_path)
 # ['BusA#a8d1', 'BusB#3f2c', 'BusC#b91e']
@@ -447,7 +448,7 @@ busB.on('*', busC.emit)
 busC.on('*', busA.emit)
 
 const event = busA.emit(PingEvent({ message: 'hello' }))
-await event.done()
+await event.now()
 
 console.log(event.event_path)
 // ['BusA#a8d1', 'BusB#3f2c', 'BusC#b91e']
@@ -493,7 +494,7 @@ bus_c.on(PingEvent, move |event: PingEvent| {
 });
 
 let event = bus_a.emit(PingEvent { ..Default::default() });
-block_on(event.done());
+block_on(event.now());
 
 println!("{:?}", event.inner.lock().event_path);
 ```
@@ -518,7 +519,7 @@ busC.On("*", "forward_to_a", func(ctx context.Context, event *abxbus.BaseEvent) 
 }, nil)
 
 event := busA.Emit(abxbus.NewBaseEvent("PingEvent", map[string]any{"message": "hello"}))
-if _, err := event.Done(context.Background()); err != nil {
+if _, err := event.Now(); err != nil {
 	panic(err)
 }
 
@@ -535,7 +536,7 @@ Parent-child tracking also works across forwarded flows:
 
 - if a forwarded event is handled on a downstream bus and that handler emits a child with `event.emit(...)`, the child still links back to the parent via `event_parent_id`
 - nested descendants emitted on downstream buses keep that lineage as they continue through forwarding
-- this remains true for both queue-jumped children (`await child`) and normally queued children (emitted but not immediately awaited)
+- this remains true for both queue-jumped children (`await child.now()`) and normally queued children (emitted but not immediately awaited)
 - `bus.emit(...)` inside a handler remains detached top-level work with no parent link
 
 See [Parent-Child Tracking](./parent-child-tracking) for a deeper walkthrough and tree-log example.

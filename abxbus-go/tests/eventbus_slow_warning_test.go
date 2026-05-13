@@ -35,7 +35,7 @@ func TestSlowEventAndHandlerWarnings(t *testing.T) {
 	}, nil)
 
 	e := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
-	_, err := e.Done(context.Background())
+	_, err := e.Now()
 	if err != nil {
 		t.Fatal(err)
 	}

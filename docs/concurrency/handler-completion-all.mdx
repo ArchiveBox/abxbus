@@ -46,7 +46,7 @@ bus.on(CompletionEvent, fast_handler)
 bus.on(CompletionEvent, slow_handler)
 
 event = bus.emit(CompletionEvent())
-await event
+await event.now()
 
 assert set(seen) == {'fast', 'slow'}
 results = await event.event_results_list(raise_if_any=False, raise_if_none=False)
@@ -82,7 +82,7 @@ bus.on(CompletionEvent, async () => {
 })
 
 const event = bus.emit(CompletionEvent({}))
-await event.done()
+await event.now()
 const results = await event.eventResultsList({ raise_if_any: false, raise_if_none: false })
 
 if (seen.length !== 2) throw new Error('expected all handlers to run')
@@ -130,13 +130,12 @@ func main() {
 	}, nil)
 
 	event := bus.Emit(abxbus.NewBaseEvent("CompletionEvent", nil))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		panic(err)
 	}
 	results, err := event.EventResultsList(
 		context.Background(),
-		nil,
-		&abxbus.EventResultsListOptions{RaiseIfAny: false, RaiseIfNone: false},
+		&abxbus.EventResultOptions{RaiseIfAny: false, RaiseIfNone: false},
 	)
 	if err != nil {
 		panic(err)
@@ -159,7 +158,7 @@ func main() {
 
 ```rust
 use abxbus_rust::{
-    base_event::EventResultsOptions,
+    base_event::EventResultOptions,
     event,
     event_bus::{EventBus, EventBusOptions},
     BaseEvent,
@@ -187,10 +186,10 @@ bus.on(CompletionEvent, |_event: CompletionEvent| async move { Ok(json!("fast"))
 bus.on(CompletionEvent, |_event: CompletionEvent| async move { Ok(json!("slow")) });
 
 let event = bus.emit(CompletionEvent { ..Default::default() });
-let results = block_on(event.event_results_list(EventResultsOptions {
+let results = block_on(event.event_results_list(EventResultOptions {
     raise_if_any: false,
     raise_if_none: false,
-    timeout: None,
+    ..EventResultOptions::default()
 }))?;
 assert_eq!(results.len(), 2);
 ```

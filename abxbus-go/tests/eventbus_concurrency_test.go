@@ -47,7 +47,7 @@ func TestHandlerConcurrencyParallelStartsBoth(t *testing.T) {
 	}
 
 	close(gate)
-	if _, err := e.Done(context.Background()); err != nil {
+	if _, err := e.Now(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -97,9 +97,7 @@ func TestEventHandlerConcurrencyPerEventOverrideControlsExecutionMode(t *testing
 	}
 
 	close(release)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if _, err := emittedParallel.Done(ctx); err != nil {
+	if _, err := emittedParallel.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if maxInFlightByMode["parallel"] < 2 {
@@ -129,7 +127,7 @@ func TestEventHandlerConcurrencyPerEventOverrideControlsExecutionMode(t *testing
 	case <-time.After(30 * time.Millisecond):
 	}
 	close(release)
-	if _, err := emittedSerial.Done(ctx); err != nil {
+	if _, err := emittedSerial.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if maxInFlightByMode["serial"] != 1 {

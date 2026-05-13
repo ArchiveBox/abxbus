@@ -101,7 +101,7 @@ fn test_events_forward_between_buses_without_duplication() {
         value: 1,
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
     block_on(bus_a.wait_until_idle(None));
     block_on(bus_b.wait_until_idle(None));
     block_on(bus_c.wait_until_idle(None));
@@ -180,7 +180,7 @@ fn test_tresultsee_level_hierarchy_bubbling() {
         value: 1,
         ..Default::default()
     });
-    block_on(bottom.done());
+    let _ = block_on(bottom.now());
     block_on(subchild_bus.wait_until_idle(None));
     block_on(child_bus.wait_until_idle(None));
     block_on(parent_bus.wait_until_idle(None));
@@ -211,7 +211,7 @@ fn test_tresultsee_level_hierarchy_bubbling() {
         value: 2,
         ..Default::default()
     });
-    block_on(middle.done());
+    let _ = block_on(middle.now());
     block_on(child_bus.wait_until_idle(None));
     block_on(parent_bus.wait_until_idle(None));
 
@@ -277,7 +277,7 @@ fn test_forwarding_disambiguates_buses_that_share_the_same_name() {
         value: 99,
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
     block_on(bus_a.wait_until_idle(None));
     block_on(bus_b.wait_until_idle(None));
 
@@ -354,7 +354,7 @@ fn test_circular_subscription_prevention() {
         value: 42,
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
     block_on(peer1.wait_until_idle(None));
     block_on(peer2.wait_until_idle(None));
     block_on(peer3.wait_until_idle(None));
@@ -385,7 +385,7 @@ fn test_circular_subscription_prevention() {
         value: 99,
         ..Default::default()
     });
-    block_on(event2.done());
+    let _ = block_on(event2.now());
     block_on(peer1.wait_until_idle(None));
     block_on(peer2.wait_until_idle(None));
     block_on(peer3.wait_until_idle(None));
@@ -475,7 +475,7 @@ fn test_forwarding_loop_prevention() {
         value: 7,
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
     block_on(bus_a.wait_until_idle(None));
     block_on(bus_b.wait_until_idle(None));
     block_on(bus_c.wait_until_idle(None));
@@ -531,7 +531,7 @@ fn test_await_forwarded_event_waits_for_target_bus_handlers() {
         value: 2,
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let mut log = completion_log.lock().expect("log lock").clone();
     log.sort();
@@ -587,7 +587,7 @@ fn test_await_forwarded_event_waits_when_forwarding_handler_is_async_delayed() {
         value: 3,
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     assert!(*bus_a_done.lock().expect("bus_a_done lock"));
     assert!(*bus_b_done.lock().expect("bus_b_done lock"));
@@ -601,12 +601,12 @@ fn test_await_forwarded_event_waits_when_forwarding_handler_is_async_delayed() {
 }
 
 #[test]
-fn test_await_event_done_waits_for_handlers_on_forwarded_buses() {
+fn test_await_event_now_waits_for_handlers_on_forwarded_buses() {
     test_await_forwarded_event_waits_for_target_bus_handlers();
 }
 
 #[test]
-fn test_await_event_done_waits_when_forwarding_handler_is_async_delayed() {
+fn test_await_event_now_waits_when_forwarding_handler_is_async_delayed() {
     test_await_forwarded_event_waits_when_forwarding_handler_is_async_delayed();
 }
 
@@ -640,7 +640,7 @@ fn test_forwarding_same_event_does_not_set_self_parent_id() {
         value: 9,
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
     block_on(origin.wait_until_idle(None));
     block_on(target.wait_until_idle(None));
 
@@ -676,7 +676,7 @@ fn test_proxy_dispatch_auto_links_child_events_like_emit() {
     let root = bus.emit(ProxyDispatchRootEvent {
         ..Default::default()
     });
-    block_on(root.done());
+    let _ = block_on(root.now());
     block_on(bus.wait_until_idle(None));
 
     let root_id = root.inner.inner.lock().event_id.clone();
@@ -715,7 +715,7 @@ fn test_proxy_dispatch_of_same_event_does_not_self_parent_or_self_link_child() {
     let root = bus.emit(ProxyDispatchRootEvent {
         ..Default::default()
     });
-    block_on(root.done());
+    let _ = block_on(root.now());
     block_on(bus.wait_until_idle(None));
 
     let inner = root.inner.inner.lock();

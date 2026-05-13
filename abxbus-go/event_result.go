@@ -146,7 +146,20 @@ func (r *EventResult) markError(err error) bool {
 	return true
 }
 
-func (r *EventResult) Wait(ctx context.Context) error {
+func (r *EventResult) Wait() error {
+	ctx := context.Background()
+	if r.Event != nil {
+		if activeCtx := r.Event.activeOperationContext(); activeCtx != nil {
+			ctx = activeCtx
+		}
+	}
+	return r.waitWithContext(ctx)
+}
+
+func (r *EventResult) waitWithContext(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	select {
 	case <-r.done_ch:
 		return nil

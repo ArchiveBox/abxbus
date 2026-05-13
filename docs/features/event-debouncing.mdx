@@ -42,7 +42,7 @@ existing = await bus.find(
 )
 
 event = existing or bus.emit(ScreenshotEvent(url=url))
-await event
+await event.now()
 result = await event.event_result()
 ```
 
@@ -57,8 +57,8 @@ const existing = await bus.find(
 )
 
 const event = existing ?? bus.emit(ScreenshotEvent({ url }))
-await event.done()
-const result = event.event_result
+await event.now()
+const result = await event.eventResult()
 ```
 
 </Tab>
@@ -93,7 +93,7 @@ let existing = block_on(bus.find_with_options(
 let event = existing.unwrap_or_else(|| {
     bus.emit(ScreenshotEvent { url: url.to_string(), ..Default::default() }).inner
 });
-block_on(event.done());
+block_on(event.now());
 let result = block_on(event.event_result(Default::default()))?;
 ```
 
@@ -115,10 +115,10 @@ event := existing
 if event == nil {
 	event = bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"url": url}))
 }
-if _, err := event.Done(ctx); err != nil {
+if _, err := event.Now(); err != nil {
 	panic(err)
 }
-result, err := event.EventResult(ctx)
+result, err := event.EventResult()
 ```
 
 </Tab>
@@ -142,7 +142,7 @@ in_flight = await bus.find(
 )
 
 event = in_flight or bus.emit(ScreenshotEvent(url=url))
-await event
+await event.now()
 result = await event.event_result()
 ```
 
@@ -157,8 +157,8 @@ const inFlight = await bus.find(
 )
 
 const event = inFlight ?? bus.emit(ScreenshotEvent({ url }))
-await event.done()
-const result = event.event_result
+await event.now()
+const result = await event.eventResult()
 ```
 
 </Tab>
@@ -178,7 +178,7 @@ let in_flight = block_on(bus.find_with_options(
 let event = in_flight.unwrap_or_else(|| {
     bus.emit(ScreenshotEvent { url: url.to_string(), ..Default::default() }).inner
 });
-block_on(event.done());
+block_on(event.now());
 let result = block_on(event.event_result(Default::default()))?;
 ```
 
@@ -200,10 +200,10 @@ event := inFlight
 if event == nil {
 	event = bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"url": url}))
 }
-if _, err := event.Done(ctx); err != nil {
+if _, err := event.Now(); err != nil {
 	panic(err)
 }
-result, err := event.EventResult(ctx)
+result, err := event.EventResult()
 ```
 
 </Tab>
@@ -227,7 +227,7 @@ event = (
     or bus.emit(ScreenshotEvent(url=url))
 )
 
-await event
+await event.now()
 result = await event.event_result()
 ```
 
@@ -240,8 +240,8 @@ const event =
   (await bus.find(ScreenshotEvent, (e) => e.url === url, { past: false, future: 2 })) ??
   bus.emit(ScreenshotEvent({ url }))
 
-await event.done()
-const result = event.event_result
+await event.now()
+const result = await event.eventResult()
 ```
 
 </Tab>
@@ -273,7 +273,7 @@ let event = block_on(bus.find_with_options(
     bus.emit(ScreenshotEvent { url: url.to_string(), ..Default::default() }).inner
 });
 
-block_on(event.done());
+block_on(event.now());
 let result = block_on(event.event_result(Default::default()))?;
 ```
 
@@ -299,10 +299,10 @@ if event == nil {
 	event = bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"url": url}))
 }
 
-if _, err := event.Done(ctx); err != nil {
+if _, err := event.Now(); err != nil {
 	panic(err)
 }
-result, err := event.EventResult(ctx)
+result, err := event.EventResult()
 ```
 
 </Tab>
@@ -322,7 +322,7 @@ async def emit_debounced_screenshot(url: str):
         or await bus.find(ScreenshotEvent, where=lambda e: e.url == url, past=False, future=3)
         or bus.emit(ScreenshotEvent(url=url))
     )
-    await event
+    await event.now()
     return await event.event_result()
 ```
 
@@ -336,8 +336,8 @@ const emitDebouncedScreenshot = async (url: string) => {
     (await bus.find(ScreenshotEvent, (e) => e.url === url, { past: false, future: 3 })) ??
     bus.emit(ScreenshotEvent({ url }))
 
-  await event.done()
-  return event.event_result
+  await event.now()
+  return await event.eventResult()
 }
 ```
 
@@ -371,7 +371,7 @@ fn emit_debounced_screenshot(bus: &EventBus, url: &str) -> Result<Option<serde_j
         bus.emit(ScreenshotEvent { url: url.to_string(), ..Default::default() }).inner
     });
 
-    block_on(event.done());
+    block_on(event.now());
     block_on(event.event_result(Default::default()))
 }
 ```
@@ -399,10 +399,10 @@ func emitDebouncedScreenshot(ctx context.Context, bus *abxbus.EventBus, url stri
 		event = bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"url": url}))
 	}
 
-	if _, err := event.Done(ctx); err != nil {
+	if _, err := event.Now(); err != nil {
 		return nil, err
 	}
-	return event.EventResult(ctx)
+	return event.EventResult()
 }
 ```
 
@@ -413,9 +413,9 @@ func emitDebouncedScreenshot(ctx context.Context, bus *abxbus.EventBus, url stri
 
 - `find(...)` resolves when an event is emitted, not when handlers finish.
 - Always await completion after selecting a debounced event:
-  - Python: `await event`, then `await event.event_result()`
-  - TypeScript: `await event.done()`, then `event.event_result`
-  - Go: `event.Done(ctx)`, then `event.EventResult(ctx)`
+  - Python: `await event.now()`, then `await event.event_result()`
+  - TypeScript: `await event.now()`, then `await event.eventResult()`
+  - Go: `event.Now()`, then `event.EventResult()`
 - Debouncing scope depends on your match key (`where` / event-field filters).  
   Use the narrowest key that represents "same work."
 - Debouncing depends on retained history. If history is aggressively trimmed, your `past` window can become less effective.

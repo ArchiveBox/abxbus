@@ -11,14 +11,14 @@ import (
 
 func TestEventTimeoutMarksAbortedAndCancelledHandlers(t *testing.T) {
 	event_timeout := 0.02
+	no_timeout := 0.0
 	bus := abxbus.NewEventBus("TimeoutReportingBus", &abxbus.EventBusOptions{
-		EventTimeout:            nil,
+		EventTimeout:            &no_timeout,
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
-		EventHandlerSlowTimeout: nil,
-		EventSlowTimeout:        nil,
+		EventHandlerSlowTimeout: &no_timeout,
+		EventSlowTimeout:        &no_timeout,
 	})
-	bus.EventTimeout = nil
 	bus.On("Evt", "slow_first", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
 		select {
 		case <-time.After(250 * time.Millisecond):
@@ -34,7 +34,7 @@ func TestEventTimeoutMarksAbortedAndCancelledHandlers(t *testing.T) {
 	e := abxbus.NewBaseEvent("Evt", nil)
 	e.EventTimeout = &event_timeout
 	e = bus.Emit(e)
-	_, _ = e.Done(context.Background())
+	_, _ = e.Now()
 	if len(e.EventResults) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(e.EventResults))
 	}
@@ -76,7 +76,7 @@ func TestHandlerTimeoutUsesTimedOutErrorMessage(t *testing.T) {
 		}
 	}, overrides)
 	e := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
-	_, err := e.EventResult(context.Background())
+	_, err := e.EventResult()
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}

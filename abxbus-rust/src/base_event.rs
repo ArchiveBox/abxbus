@@ -1,16 +1,6 @@
-use std::{
-    collections::HashMap,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-    thread,
-    time::Duration,
-};
+use std::{collections::HashMap, fmt, sync::Arc, thread, time::Duration};
 
 use event_listener::Event;
-use futures::future::{select, Either, FutureExt};
-use futures_timer::Delay;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Map, Value};
@@ -60,38 +50,50 @@ pub struct BaseEventData {
 pub struct BaseEvent {
     pub inner: Mutex<BaseEventData>,
     pub completed: Event,
-    completion_waiters: AtomicUsize,
     runtime_eventbus_id: Mutex<Option<String>>,
 }
 
-struct CompletionWaiterGuard<'a>(&'a AtomicUsize);
+pub type EventResultInclude = Arc<dyn Fn(Option<&Value>, &EventResult) -> bool + Send + Sync>;
 
-impl<'a> CompletionWaiterGuard<'a> {
-    fn new(waiters: &'a AtomicUsize) -> Self {
-        waiters.fetch_add(1, Ordering::SeqCst);
-        Self(waiters)
-    }
+#[derive(Clone, Debug, Default)]
+pub struct EventWaitOptions {
+    pub timeout: Option<f64>,
+    pub first_result: bool,
 }
 
-impl Drop for CompletionWaiterGuard<'_> {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct EventResultsOptions {
+pub struct EventResultOptions {
     pub raise_if_any: bool,
     pub raise_if_none: bool,
-    pub timeout: Option<f64>,
+    pub include: Option<EventResultInclude>,
 }
 
-impl Default for EventResultsOptions {
+impl Clone for EventResultOptions {
+    fn clone(&self) -> Self {
+        Self {
+            raise_if_any: self.raise_if_any,
+            raise_if_none: self.raise_if_none,
+            include: self.include.clone(),
+        }
+    }
+}
+
+impl fmt::Debug for EventResultOptions {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EventResultOptions")
+            .field("raise_if_any", &self.raise_if_any)
+            .field("raise_if_none", &self.raise_if_none)
+            .field("include", &self.include.as_ref().map(|_| "<include>"))
+            .finish()
+    }
+}
+
+impl Default for EventResultOptions {
     fn default() -> Self {
         Self {
             raise_if_any: true,
-            raise_if_none: true,
-            timeout: None,
+            raise_if_none: false,
+            include: None,
         }
     }
 }
@@ -153,7 +155,13 @@ fn take_usize(payload: &mut Map<String, Value>, key: &str) -> Result<Option<usiz
 }
 
 fn take_option_f64(payload: &mut Map<String, Value>, key: &str) -> Result<Option<f64>, String> {
-    take_from_value(payload, key)
+    let value: Option<f64> = take_from_value(payload, key)?;
+    if let Some(value) = value {
+        if value < 0.0 {
+            return Err(format!("Invalid {key}: must be >= 0 or null"));
+        }
+    }
+    Ok(value)
 }
 
 fn take_option_value(payload: &mut Map<String, Value>, key: &str) -> Option<Value> {
@@ -246,7 +254,6 @@ impl BaseEvent {
                 payload,
             }),
             completed: Event::new(),
-            completion_waiters: AtomicUsize::new(0),
             runtime_eventbus_id: Mutex::new(None),
         }))
     }
@@ -282,8 +289,9 @@ impl BaseEvent {
     }
 
     fn validate_payload_fields(payload: &Map<String, Value>) -> Result<(), String> {
-        const RESERVED_USER_EVENT_FIELDS: &[&str] =
-            &["bus", "emit", "first", "toString", "toJSON", "fromJSON"];
+        const RESERVED_USER_EVENT_FIELDS: &[&str] = &[
+            "bus", "emit", "now", "wait", "toString", "toJSON", "fromJSON",
+        ];
         for key in payload.keys() {
             if RESERVED_USER_EVENT_FIELDS.contains(&key.as_str()) {
                 return Err(format!(
@@ -304,13 +312,95 @@ impl BaseEvent {
         Ok(())
     }
 
-    pub async fn done(self: &Arc<Self>) {
-        crate::event_bus::EventBus::queue_jump_if_waited(self.clone());
-        self.event_completed().await;
+    pub async fn now(self: &Arc<Self>) -> Result<Arc<Self>, String> {
+        self.now_with_options(EventWaitOptions::default()).await
     }
 
-    pub async fn event_completed(self: &Arc<Self>) {
-        crate::event_bus::EventBus::mark_blocks_parent_completion_if_awaited(self.clone());
+    pub async fn now_with_options(
+        self: &Arc<Self>,
+        options: EventWaitOptions,
+    ) -> Result<Arc<Self>, String> {
+        self.ensure_attached_or_completed()?;
+        if options.timeout.is_some_and(|timeout| timeout < 0.0) {
+            return Err("timeout must be >= 0 or None".to_string());
+        }
+        if options.first_result {
+            if self.inner.lock().event_status == EventStatus::Completed {
+                return Ok(self.clone());
+            }
+            let event_for_queue_jump = self.clone();
+            thread::spawn(move || {
+                crate::event_bus::EventBus::queue_jump_if_waited(event_for_queue_jump);
+            });
+            if !self
+                .first_result_or_completion_with_timeout(options.timeout)
+                .await
+            {
+                let event = self.inner.lock();
+                return Err(format!(
+                    "Timed out waiting for {} first result after {:.3}s",
+                    event.event_type,
+                    options.timeout.unwrap_or_default()
+                ));
+            }
+            return Ok(self.clone());
+        }
+        crate::event_bus::EventBus::queue_jump_if_waited(self.clone());
+        if self.event_completed_with_timeout(options.timeout).await {
+            Ok(self.clone())
+        } else {
+            let event = self.inner.lock();
+            Err(format!(
+                "Timed out waiting for {} completion after {:.3}s",
+                event.event_type,
+                options.timeout.unwrap_or_default()
+            ))
+        }
+    }
+
+    fn ensure_attached_or_completed(&self) -> Result<(), String> {
+        let event = self.inner.lock();
+        if event.event_status == EventStatus::Pending
+            && event.event_path.is_empty()
+            && event.event_pending_bus_count == 0
+            && event.event_results.is_empty()
+        {
+            return Err("event has no bus attached".to_string());
+        }
+        Ok(())
+    }
+
+    pub async fn wait(self: &Arc<Self>) -> Result<Arc<Self>, String> {
+        self.wait_with_options(EventWaitOptions::default()).await
+    }
+
+    pub async fn wait_with_options(
+        self: &Arc<Self>,
+        options: EventWaitOptions,
+    ) -> Result<Arc<Self>, String> {
+        self.ensure_attached_or_completed()?;
+        if options.timeout.is_some_and(|timeout| timeout < 0.0) {
+            return Err("timeout must be >= 0 or None".to_string());
+        }
+        let completed = if options.first_result {
+            self.first_result_or_completion_with_timeout(options.timeout)
+                .await
+        } else {
+            self.event_completed_with_timeout(options.timeout).await
+        };
+        if completed {
+            Ok(self.clone())
+        } else {
+            let event = self.inner.lock();
+            Err(format!(
+                "Timed out waiting for {} completion after {:.3}s",
+                event.event_type,
+                options.timeout.unwrap_or_default()
+            ))
+        }
+    }
+
+    async fn wait_for_event_completed(self: &Arc<Self>) {
         loop {
             {
                 let event = self.inner.lock();
@@ -318,113 +408,144 @@ impl BaseEvent {
                     return;
                 }
             }
-            let waiter = CompletionWaiterGuard::new(&self.completion_waiters);
             let listener = self.completed.listen();
             {
                 let event = self.inner.lock();
                 if event.event_status == EventStatus::Completed {
-                    drop(waiter);
                     return;
                 }
             }
             listener.await;
-            drop(waiter);
         }
     }
 
     async fn event_completed_with_timeout(self: &Arc<Self>, timeout: Option<f64>) -> bool {
         let Some(timeout) = timeout else {
-            self.event_completed().await;
+            self.wait_for_event_completed().await;
             return true;
         };
+        if timeout <= 0.0 {
+            self.wait_for_event_completed().await;
+            return true;
+        }
 
-        crate::event_bus::EventBus::mark_blocks_parent_completion_if_awaited(self.clone());
-        let deadline = std::time::Instant::now() + Duration::from_secs_f64(timeout.max(0.0));
+        let deadline = std::time::Instant::now() + Duration::from_secs_f64(timeout);
         loop {
             {
                 let event = self.inner.lock();
                 if event.event_status == EventStatus::Completed {
-                    return true;
-                }
-            }
-            let waiter = CompletionWaiterGuard::new(&self.completion_waiters);
-            let listener = self.completed.listen();
-            {
-                let event = self.inner.lock();
-                if event.event_status == EventStatus::Completed {
-                    drop(waiter);
                     return true;
                 }
             }
 
             let now = std::time::Instant::now();
             if now >= deadline {
-                drop(waiter);
                 return false;
             }
 
             let remaining = deadline.saturating_duration_since(now);
-            match select(listener.boxed(), Delay::new(remaining).boxed()).await {
-                Either::Left((_listener_result, _timeout_future)) => {
-                    drop(waiter);
-                    continue;
-                }
-                Either::Right((_timeout_result, _listener_future)) => {
-                    drop(waiter);
-                    let event = self.inner.lock();
-                    return event.event_status == EventStatus::Completed;
-                }
-            }
+            thread::sleep(remaining.min(Duration::from_millis(1)));
         }
+    }
+
+    async fn first_result_or_completion_with_timeout(
+        self: &Arc<Self>,
+        timeout: Option<f64>,
+    ) -> bool {
+        let deadline = timeout.and_then(|seconds| {
+            if seconds <= 0.0 {
+                None
+            } else {
+                Some(std::time::Instant::now() + Duration::from_secs_f64(seconds))
+            }
+        });
+        loop {
+            if self.has_valid_result() || self.inner.lock().event_status == EventStatus::Completed {
+                return true;
+            }
+            if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    async fn ensure_results_ready(self: &Arc<Self>, first_result: bool) -> Result<(), String> {
+        let status = self.inner.lock().event_status;
+        if status == EventStatus::Completed {
+            return Ok(());
+        }
+        if status == EventStatus::Pending {
+            return self
+                .now_with_options(EventWaitOptions {
+                    timeout: None,
+                    first_result,
+                })
+                .await
+                .map(|_| ());
+        }
+        if first_result {
+            if self.has_valid_result() {
+                return Ok(());
+            }
+            self.wait_with_options(EventWaitOptions {
+                timeout: None,
+                first_result: true,
+            })
+            .await?;
+        }
+        Ok(())
+    }
+
+    fn has_valid_result(&self) -> bool {
+        self.ordered_event_results()
+            .iter()
+            .any(|result| Self::default_result_include(result.result.as_ref(), result))
     }
 
     pub async fn event_result(
         self: &Arc<Self>,
-        options: EventResultsOptions,
+        options: EventResultOptions,
     ) -> Result<Option<Value>, String> {
-        self.event_result_with_filter(options, Self::default_result_include)
-            .await
-    }
-
-    pub async fn event_result_with_filter<F>(
-        self: &Arc<Self>,
-        options: EventResultsOptions,
-        include: F,
-    ) -> Result<Option<Value>, String>
-    where
-        F: Fn(&EventResult) -> bool,
-    {
-        let results = self
-            .event_results_list_with_filter(options, include)
-            .await?;
+        self.ensure_results_ready(true).await?;
+        let include = options.include.clone();
+        let results = if let Some(include) = include {
+            self.collect_event_results(options, move |result, event_result| {
+                include(result, event_result)
+            })
+            .await?
+        } else {
+            self.collect_event_results(options, Self::default_result_include)
+                .await?
+        };
         Ok(results.into_iter().next())
     }
 
     pub async fn event_results_list(
         self: &Arc<Self>,
-        options: EventResultsOptions,
+        options: EventResultOptions,
     ) -> Result<Vec<Value>, String> {
-        self.event_results_list_with_filter(options, Self::default_result_include)
+        self.ensure_results_ready(false).await?;
+        let include = options.include.clone();
+        if let Some(include) = include {
+            self.collect_event_results(options, move |result, event_result| {
+                include(result, event_result)
+            })
             .await
+        } else {
+            self.collect_event_results(options, Self::default_result_include)
+                .await
+        }
     }
 
-    pub async fn event_results_list_with_filter<F>(
+    async fn collect_event_results<F>(
         self: &Arc<Self>,
-        options: EventResultsOptions,
+        options: EventResultOptions,
         include: F,
     ) -> Result<Vec<Value>, String>
     where
-        F: Fn(&EventResult) -> bool,
+        F: Fn(Option<&Value>, &EventResult) -> bool,
     {
-        if !self.event_completed_with_timeout(options.timeout).await {
-            let event = self.inner.lock();
-            return Err(format!(
-                "Timed out waiting for event results after {:.3}s: {}#{}",
-                options.timeout.unwrap_or_default(),
-                event.event_type,
-                short_id(&event.event_id)
-            ));
-        }
         let all_results = self.ordered_event_results();
         let error_results: Vec<String> = all_results
             .iter()
@@ -447,7 +568,10 @@ impl BaseEvent {
 
         let values: Vec<Value> = all_results
             .iter()
-            .filter(|result| include(result))
+            .filter(|result| {
+                let value = result.result.as_ref();
+                include(value, result)
+            })
             .filter_map(|result| result.result.clone())
             .collect();
 
@@ -463,13 +587,10 @@ impl BaseEvent {
         Ok(values)
     }
 
-    fn default_result_include(result: &EventResult) -> bool {
-        result.status == EventResultStatus::Completed
-            && result.error.is_none()
-            && result
-                .result
-                .as_ref()
-                .is_some_and(|value| !value.is_null() && !Self::is_base_event_json(value))
+    fn default_result_include(result: Option<&Value>, event_result: &EventResult) -> bool {
+        event_result.status == EventResultStatus::Completed
+            && event_result.error.is_none()
+            && result.is_some_and(|value| !value.is_null() && !Self::is_base_event_json(value))
     }
 
     pub(crate) fn is_base_event_json(value: &Value) -> bool {
@@ -662,21 +783,20 @@ impl BaseEvent {
     }
 
     fn ordered_event_results_from_data(event: &BaseEventData) -> Vec<EventResult> {
-        let mut results = Vec::new();
+        let mut results = Vec::with_capacity(event.event_results.len());
         for handler_id in &event.event_result_order {
-            if let Some(result) = event.event_results.get(handler_id) {
-                results.push(result.clone());
+            if let Some(event_result) = event.event_results.get(handler_id) {
+                results.push(event_result.clone());
             }
         }
-
-        let mut remaining: Vec<EventResult> = event
+        let mut missing_results: Vec<EventResult> = event
             .event_results
             .iter()
             .filter(|(handler_id, _)| !event.event_result_order.contains(handler_id))
-            .map(|(_, result)| result.clone())
+            .map(|(_, event_result)| event_result.clone())
             .collect();
-        Self::sort_fallback_event_results(&mut remaining);
-        results.extend(remaining);
+        Self::sort_fallback_event_results(&mut missing_results);
+        results.extend(missing_results);
         results
     }
 
@@ -710,12 +830,6 @@ impl BaseEvent {
         self.completed.notify(usize::MAX);
     }
 
-    pub(crate) fn wait_for_completion_waiters(&self) {
-        while self.completion_waiters.load(Ordering::SeqCst) > 0 {
-            thread::yield_now();
-        }
-    }
-
     pub fn event_reset(&self) -> Arc<Self> {
         let mut data = self.inner.lock().clone();
         data.event_id = uuid_v7_string();
@@ -728,7 +842,6 @@ impl BaseEvent {
         Arc::new(Self {
             inner: Mutex::new(data),
             completed: Event::new(),
-            completion_waiters: AtomicUsize::new(0),
             runtime_eventbus_id: Mutex::new(None),
         })
     }
@@ -906,7 +1019,6 @@ impl BaseEvent {
                         .and_then(Value::as_str)
                         .map(ToString::to_string)
                         .unwrap_or(handler_id);
-                    event_result_order.push(resolved_handler_id.clone());
                     normalized_results.insert(resolved_handler_id, raw_result);
                 }
                 object.insert(
@@ -937,7 +1049,6 @@ impl BaseEvent {
         Arc::new(Self {
             inner: Mutex::new(parsed),
             completed: Event::new(),
-            completion_waiters: AtomicUsize::new(0),
             runtime_eventbus_id: Mutex::new(None),
         })
     }

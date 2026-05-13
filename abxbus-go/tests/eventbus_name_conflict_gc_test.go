@@ -21,11 +21,11 @@ func TestSameNameEventBusesKeepIndependentIDsHandlersAndHistory(t *testing.T) {
 		return "second", nil
 	}, nil)
 
-	firstResult, err := first.Emit(abxbus.NewBaseEvent("NameConflictEvent", nil)).EventResult(context.Background())
+	firstResult, err := first.Emit(abxbus.NewBaseEvent("NameConflictEvent", nil)).EventResult()
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondResult, err := second.Emit(abxbus.NewBaseEvent("NameConflictEvent", nil)).EventResult(context.Background())
+	secondResult, err := second.Emit(abxbus.NewBaseEvent("NameConflictEvent", nil)).EventResult()
 	if err != nil {
 		t.Fatal(err)
 	}

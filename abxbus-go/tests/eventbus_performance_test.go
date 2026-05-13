@@ -24,10 +24,8 @@ func assertPerformanceBudget(t *testing.T, scenario string, total int, elapsed t
 
 func waitForPerformanceBatch(t *testing.T, events []*abxbus.BaseEvent) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
 	for _, event := range events {
-		if _, err := event.Done(ctx); err != nil {
+		if _, err := event.Now(); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -212,7 +210,7 @@ func TestPerformanceWorstCaseForwardingQueueJumpTimeouts(t *testing.T) {
 	parentBus.On("WCParent", "forward", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		atomic.AddInt64(&parents, 1)
 		child := childBus.Emit(abxbus.NewBaseEvent("WCChild", map[string]any{"parent": event.EventID, "iteration": event.Payload["iteration"]}))
-		_, _ = child.Done(ctx)
+		_, _ = child.Now()
 		return nil, nil
 	}, nil)
 	childBus.On("WCChild", "child", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
@@ -310,10 +308,8 @@ func TestPerformanceCleanupDestroyKeepsStateBounded(t *testing.T) {
 
 func waitForPerformanceBatchAllowErrors(t *testing.T, events []*abxbus.BaseEvent) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
 	for _, event := range events {
-		_, _ = event.Done(ctx)
+		_, _ = event.Now()
 	}
 }
 

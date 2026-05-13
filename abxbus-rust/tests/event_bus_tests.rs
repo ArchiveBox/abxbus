@@ -29,7 +29,7 @@ fn test_emit_and_handler_result() {
         value: 1,
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let results = event.inner.inner.lock().event_results.clone();
     assert_eq!(results.len(), 1);
@@ -58,7 +58,7 @@ fn test_parallel_handler_concurrency() {
         ..Default::default()
     };
     let emitted = bus.emit(event);
-    block_on(emitted.done());
+    let _ = block_on(emitted.now());
     assert_eq!(emitted.inner.inner.lock().event_results.len(), 2);
     bus.stop();
 }

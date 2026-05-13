@@ -1,5 +1,5 @@
 use abxbus_rust::{
-    base_event::EventResultsOptions,
+    base_event::EventResultOptions,
     event,
     event_bus::{EventBus, FindOptions},
     typed::{BaseEventHandle, EventSpec},
@@ -43,9 +43,9 @@ fn test_on_and_emit_typed_roundtrip() {
         b: 9,
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
-    let first = event.first_result();
+    let first = block_on(event.event_result(EventResultOptions::default())).expect("first result");
     assert_eq!(first, Some(AddResult { sum: 13 }));
     bus.stop();
 }
@@ -59,7 +59,7 @@ fn test_find_returns_typed_payload() {
         b: 1,
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let found = block_on(bus.find(AddEvent::event_type, true, None, None))
         .map(BaseEventHandle::<AddEvent>::from_base_event)
@@ -137,7 +137,7 @@ fn test_find_past_type_inference() {
         b: 20,
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let found = block_on(bus.find(AddEvent::event_type, true, None, None))
         .map(BaseEventHandle::<AddEvent>::from_base_event)
@@ -170,7 +170,7 @@ fn test_dispatch_type_inference() {
     assert_eq!(dispatched_event.b, 6);
     assert_eq!(dispatched_event.event_type, "AddEvent");
 
-    let result = block_on(dispatched_event.event_result(EventResultsOptions::default()))
+    let result = block_on(dispatched_event.event_result(EventResultOptions::default()))
         .expect("typed event result")
         .expect("handler result");
     assert_eq!(result, AddResult { sum: 10 });
@@ -198,18 +198,18 @@ fn test_typed_event_result_accessors_decode_handler_values() {
         ..Default::default()
     });
 
-    let first = block_on(event.event_result(EventResultsOptions {
+    let first = block_on(event.event_result(EventResultOptions {
         raise_if_any: false,
         raise_if_none: true,
-        timeout: None,
+        include: None,
     }))
     .expect("typed first result");
     assert_eq!(first, Some(AddResult { sum: 8 }));
 
-    let values = block_on(event.event_results_list(EventResultsOptions {
+    let values = block_on(event.event_results_list(EventResultOptions {
         raise_if_any: false,
         raise_if_none: true,
-        timeout: None,
+        include: None,
     }))
     .expect("typed results list");
     assert_eq!(values, vec![AddResult { sum: 8 }, AddResult { sum: 15 }]);

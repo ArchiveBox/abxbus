@@ -152,7 +152,7 @@ func TestEventBusMiddlewareReceivesPendingStartedCompletedLifecycleHooks(t *test
 	})
 
 	event := bus.Emit(abxbus.NewBaseEvent("MiddlewareEvent", nil))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -194,7 +194,7 @@ func TestEventBusMiddlewareHooksExecuteInRegistrationOrder(t *testing.T) {
 		return "ok", nil
 	}, nil)
 
-	if _, err := bus.Emit(abxbus.NewBaseEvent("MiddlewareOrderEvent", nil)).Done(context.Background()); err != nil {
+	if _, err := bus.Emit(abxbus.NewBaseEvent("MiddlewareOrderEvent", nil)).Now(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -219,7 +219,7 @@ func TestEventBusMiddlewareNoHandlerEventLifecycle(t *testing.T) {
 	bus := abxbus.NewEventBus("MiddlewareNoHandlerBus", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
 
 	event := bus.Emit(abxbus.NewBaseEvent("MiddlewareNoHandlerEvent", nil))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -254,7 +254,7 @@ func TestEventBusMiddlewareEventLifecycleOrderingIsDeterministicPerEvent(t *test
 			events = append(events, bus.Emit(event))
 		}
 		for _, event := range events {
-			if _, err := event.Done(context.Background()); err != nil {
+			if _, err := event.Now(); err != nil {
 				t.Fatal(err)
 			}
 			seenEvents[event.EventID] = true
@@ -281,7 +281,7 @@ func TestEventBusMiddlewareHooksObserveHandlerErrorsWithoutErrorHookStatus(t *te
 	}, nil)
 
 	event := bus.Emit(abxbus.NewBaseEvent("MiddlewareErrorEvent", nil))
-	_, err := event.EventResult(context.Background())
+	_, err := event.EventResult()
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("expected handler error from event result, got %v", err)
 	}
@@ -319,7 +319,7 @@ func TestEventBusMiddlewareHooksRemainMonotonicOnEventTimeout(t *testing.T) {
 	event := abxbus.NewBaseEvent("MiddlewareTimeoutEvent", nil)
 	event.EventTimeout = &timeout
 
-	_ = bus.Emit(event).EventCompleted(context.Background())
+	_, _ = bus.Emit(event).Wait()
 
 	records := middleware.snapshot()
 	assertRecordStatuses(t, recordsByHook(records, "event"), []string{"pending", "started", "completed"})
@@ -357,7 +357,7 @@ func TestEventBusMiddlewareHardEventTimeoutFinalizesImmediatelyWithoutWaitingFor
 	event.EventTimeout = &timeout
 	startedAt := time.Now()
 	dispatched := bus.Emit(event)
-	if err := dispatched.EventCompleted(context.Background()); err != nil {
+	if _, err := dispatched.Wait(); err != nil {
 		t.Fatal(err)
 	}
 	elapsed := time.Since(startedAt)
@@ -406,7 +406,7 @@ func TestEventBusMiddlewareTimeoutCancelAbortAndResultSchemaTaxonomyRemainsExpli
 	schemaEvent := abxbus.NewBaseEvent("MiddlewareSchemaEvent", nil)
 	schemaEvent.EventResultType = map[string]any{"type": "number"}
 	schemaEvent = serialBus.Emit(schemaEvent)
-	if err := schemaEvent.EventCompleted(context.Background()); err != nil {
+	if _, err := schemaEvent.Wait(); err != nil {
 		t.Fatal(err)
 	}
 	schemaResults := schemaEvent.EventResults
@@ -439,7 +439,7 @@ func TestEventBusMiddlewareTimeoutCancelAbortAndResultSchemaTaxonomyRemainsExpli
 	serialEvent := abxbus.NewBaseEvent("MiddlewareSerialTimeoutEvent", nil)
 	serialEvent.EventTimeout = &serialTimeout
 	serialEvent = serialBus.Emit(serialEvent)
-	if err := serialEvent.EventCompleted(context.Background()); err != nil {
+	if _, err := serialEvent.Wait(); err != nil {
 		t.Fatal(err)
 	}
 	serialErrors := eventResultErrorStrings(serialEvent)
@@ -470,7 +470,7 @@ func TestEventBusMiddlewareTimeoutCancelAbortAndResultSchemaTaxonomyRemainsExpli
 	parallelEvent := abxbus.NewBaseEvent("MiddlewareParallelTimeoutEvent", nil)
 	parallelEvent.EventTimeout = &parallelTimeout
 	parallelEvent = parallelBus.Emit(parallelEvent)
-	if err := parallelEvent.EventCompleted(context.Background()); err != nil {
+	if _, err := parallelEvent.Wait(); err != nil {
 		t.Fatal(err)
 	}
 	parallelErrors := eventResultErrorStrings(parallelEvent)
@@ -514,7 +514,7 @@ func TestEventBusMiddlewareHooksArePerBusOnForwardedEvents(t *testing.T) {
 		return "target", nil
 	}, nil)
 
-	if _, err := busA.Emit(abxbus.NewBaseEvent("MiddlewareForwardEvent", nil)).Done(context.Background()); err != nil {
+	if _, err := busA.Emit(abxbus.NewBaseEvent("MiddlewareForwardEvent", nil)).Now(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -539,7 +539,7 @@ func TestEventBusMiddlewareHooksCoverStringAndWildcardPatterns(t *testing.T) {
 	}, nil)
 
 	event := bus.Emit(abxbus.NewBaseEvent("MiddlewarePatternEvent", nil))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
 	bus.Off("MiddlewarePatternEvent", stringHandler)

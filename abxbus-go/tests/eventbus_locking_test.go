@@ -115,7 +115,7 @@ func TestGlobalSerialAwaitedChildJumpsAheadOfQueuedEventsAcrossBuses(t *testing.
 		child := e.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
 		busB.Emit(child)
 		record("child_dispatched")
-		if _, err := child.Done(ctx); err != nil {
+		if _, err := child.Now(); err != nil {
 			return nil, err
 		}
 		record("child_awaited")
@@ -124,9 +124,7 @@ func TestGlobalSerialAwaitedChildJumpsAheadOfQueuedEventsAcrossBuses(t *testing.
 	}, nil)
 
 	parent := busA.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if _, err := parent.Done(ctx); err != nil {
+	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
 	timeout := 2.0
@@ -220,10 +218,8 @@ func TestEventConcurrencyBusSerialSerializesPerBusButOverlapsAcrossBuses(t *test
 
 	close(releaseA)
 	close(releaseB)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
 	for _, event := range []*abxbus.BaseEvent{firstA, secondA, firstB} {
-		if _, err := event.Done(ctx); err != nil {
+		if _, err := event.Now(); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -275,12 +271,10 @@ func TestEventConcurrencyParallelAllowsSameBusEventsToOverlap(t *testing.T) {
 	}
 	close(release)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if _, err := first.Done(ctx); err != nil {
+	if _, err := first.Now(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.Done(ctx); err != nil {
+	if _, err := second.Now(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -336,12 +330,10 @@ func TestEventConcurrencyOverrideParallelBeatsBusSerialDefault(t *testing.T) {
 	}
 	close(release)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if _, err := emittedFirst.Done(ctx); err != nil {
+	if _, err := emittedFirst.Now(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := emittedSecond.Done(ctx); err != nil {
+	if _, err := emittedSecond.Now(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -401,12 +393,10 @@ func TestEventConcurrencyOverrideBusSerialBeatsBusParallelDefault(t *testing.T) 
 	}
 	close(release)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if _, err := emittedFirst.Done(ctx); err != nil {
+	if _, err := emittedFirst.Now(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := emittedSecond.Done(ctx); err != nil {
+	if _, err := emittedSecond.Now(); err != nil {
 		t.Fatal(err)
 	}
 }

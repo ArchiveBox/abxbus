@@ -65,7 +65,8 @@ async def main() -> None:
     bus = EventBus('MyAuthEventBus')
     bus.on(CreateUserEvent, on_create_user)
 
-    result = await bus.emit(CreateUserEvent(email='someuser@example.com')).event_result()
+    event = await bus.emit(CreateUserEvent(email='someuser@example.com')).now()
+    result = await event.event_result()
     print(result)
     # {'user_id': 'some-user-uuid'}
 
@@ -92,8 +93,8 @@ bus.on(CreateUserEvent, async (event) => {
 })
 
 const event = bus.emit(CreateUserEvent({ email: 'someuser@example.com' }))
-await event.done()
-console.log(event.event_result) // { user_id: 'some-user-uuid' }
+await event.now()
+console.log(await event.eventResult()) // { user_id: 'some-user-uuid' }
 ```
 
 </Tab>
@@ -121,7 +122,7 @@ let event = bus.emit(CreateUserEvent {
     email: "someuser@example.com".to_string(),
     ..Default::default()
 });
-block_on(event.done());
+block_on(event.now());
 ```
 
 </Tab>
@@ -136,7 +137,7 @@ bus.On("CreateUserEvent", "on_create_user", func(ctx context.Context, event *abx
 event := bus.Emit(abxbus.NewBaseEvent("CreateUserEvent", map[string]any{
 	"email": "someuser@example.com",
 }))
-result, err := event.EventResult(context.Background())
+result, err := event.EventResult()
 if err != nil {
 	panic(err)
 }

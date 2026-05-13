@@ -165,12 +165,12 @@ test('OtelTracingMiddleware creates event and handler spans with child event par
   const ChildEvent = BaseEvent.extend('OtelTracingChildEvent', {})
 
   bus.on(ParentEvent, async (event) => {
-    await event.emit(ChildEvent({ event_timeout: 0.2 })).done()
+    await event.emit(ChildEvent({ event_timeout: 0.2 })).now()
     return 'parent'
   })
   bus.on(ChildEvent, () => 'child')
 
-  await bus.emit(ParentEvent({ event_timeout: 0.5 })).done()
+  await bus.emit(ParentEvent({ event_timeout: 0.5 })).now()
   await flushHooks()
 
   const parent_event_span = tracer.spans.find((span) => span.name === 'OtelTracingBus.emit(OtelTracingParentEvent)')
@@ -208,7 +208,7 @@ test('OtelTracingMiddleware names event and handler spans for display', async ()
 
   bus.on(CDPConnect, () => 'connected', { handler_name: 'DebuggerClient.on_CDPConnect' })
 
-  await bus.emit(CDPConnect({ event_timeout: 0.2 })).done()
+  await bus.emit(CDPConnect({ event_timeout: 0.2 })).now()
   await flushHooks()
 
   assert.ok(tracer.spans.find((span) => span.name === 'StagehandExtensionBackground.emit(CDPConnect)'))
@@ -234,7 +234,7 @@ test('OtelTracingMiddleware marks top-level event spans as roots with session at
   })
   const InstantEvent = BaseEvent.extend('OtelTracingInstantEvent', {})
 
-  await bus.emit(InstantEvent({ session_id: 'event-session-456', event_timeout: 0.2 } as any)).eventCompleted()
+  await bus.emit(InstantEvent({ session_id: 'event-session-456', event_timeout: 0.2 } as any)).wait()
   await flushHooks()
 
   const event_span = tracer.spans.find((span) => span.name === 'OtelTracingSessionBus.emit(OtelTracingInstantEvent)')
@@ -282,12 +282,12 @@ test('OtelTracingMiddleware span_factory mirrors abxbus ids into stable parent a
   const ChildEvent = BaseEvent.extend('OtelTracingManualChildEvent', {})
 
   bus.on(ParentEvent, async (event) => {
-    await event.emit(ChildEvent({ event_timeout: 0.2 })).done()
+    await event.emit(ChildEvent({ event_timeout: 0.2 })).now()
     return 'parent'
   })
   bus.on(ChildEvent, () => 'child')
 
-  await bus.emit(ParentEvent({ session_id: 'session-abc', event_timeout: 0.5 } as any)).done()
+  await bus.emit(ParentEvent({ session_id: 'session-abc', event_timeout: 0.5 } as any)).now()
   await flushHooks()
 
   const parent_event_span = spans.find((span) => span.name === 'OtelTracingManualIdsBus.emit(OtelTracingManualParentEvent)')
@@ -368,7 +368,7 @@ test('OtelTracingMiddleware span_factory waits until top-level event completion 
   })
 
   const emission = bus.emit(RootEvent({ event_timeout: 0.5 }))
-  const completion = emission.done()
+  const completion = emission.now()
   await flushHooks()
 
   assert.equal(spans.length, 0)
@@ -417,11 +417,11 @@ test('OtelTracingMiddleware span_provider creates SDK spans with abxbus span con
   const ChildEvent = BaseEvent.extend('OtelTracingProviderChildEvent', {})
 
   bus.on(ParentEvent, async (event) => {
-    await event.emit(ChildEvent({ event_timeout: 0.2 })).done()
+    await event.emit(ChildEvent({ event_timeout: 0.2 })).now()
   })
   bus.on(ChildEvent, () => 'child')
 
-  await bus.emit(ParentEvent({ event_timeout: 0.5 })).done()
+  await bus.emit(ParentEvent({ event_timeout: 0.5 })).now()
   await provider.forceFlush()
   await flushHooks()
 
@@ -484,11 +484,11 @@ test('OtelTracingMiddleware OTLP endpoint batches a completed trace tree into on
   const ChildEvent = BaseEvent.extend('OtelTracingOtlpBatchChildEvent', {})
 
   bus.on(ParentEvent, async (event) => {
-    await event.emit(ChildEvent({ event_timeout: 0.2 })).done()
+    await event.emit(ChildEvent({ event_timeout: 0.2 })).now()
   })
   bus.on(ChildEvent, () => 'child')
 
-  await bus.emit(ParentEvent({ event_timeout: 0.5 })).done()
+  await bus.emit(ParentEvent({ event_timeout: 0.5 })).now()
   for (let index = 0; index < 20 && payloads.length === 0; index += 1) {
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
@@ -549,7 +549,7 @@ test('OtelTracingMiddleware records handler errors on handler and event spans', 
     throw error
   })
 
-  await bus.emit(ErrorEvent({ event_timeout: 0.2 })).eventCompleted()
+  await bus.emit(ErrorEvent({ event_timeout: 0.2 })).wait()
   await flushHooks()
 
   const event_span = tracer.spans.find((span) => span.name === 'OtelTracingErrorBus.emit(OtelTracingErrorEvent)')

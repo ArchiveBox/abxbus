@@ -16,7 +16,7 @@ test('EventBus toJSON/fromJSON roundtrip uses id-keyed structures', async () => 
     event_concurrency: 'parallel',
     event_handler_concurrency: 'parallel',
     event_handler_completion: 'first',
-    event_timeout: null,
+    event_timeout: 0,
     event_handler_slow_timeout: 12,
     event_slow_timeout: 34,
     event_handler_detect_file_paths: false,
@@ -51,7 +51,7 @@ test('EventBus toJSON/fromJSON roundtrip uses id-keyed structures', async () => 
   assert.equal(restored.event_concurrency, 'parallel')
   assert.equal(restored.event_handler_concurrency, 'parallel')
   assert.equal(restored.event_handler_completion, 'first')
-  assert.equal(restored.event_timeout, null)
+  assert.equal(restored.event_timeout, 0)
   assert.equal(restored.event_handler_slow_timeout, 12)
   assert.equal(restored.event_slow_timeout, 34)
   assert.equal(restored.event_handler_detect_file_paths, false)
@@ -63,7 +63,7 @@ test('EventBus toJSON/fromJSON roundtrip uses id-keyed structures', async () => 
   assert.equal(restored.runloop_running, false)
 
   release_pause()
-  await pending_event.done()
+  await pending_event.now()
 })
 
 test('EventBus preserves handler registration order through JSON and restore', async () => {
@@ -89,7 +89,7 @@ test('EventBus preserves handler registration order through JSON and restore', a
   assert.deepEqual(Object.keys(json.handlers), expected_ids)
   assert.deepEqual(json.handlers_by_key.HandlerOrderEvent, expected_ids)
 
-  await bus.emit(HandlerOrderEvent({})).done()
+  await bus.emit(HandlerOrderEvent({})).now()
   assert.deepEqual(original_order, ['first', 'second'])
 
   const restored = EventBus.fromJSON(json)
@@ -109,7 +109,7 @@ test('EventBus preserves handler registration order through JSON and restore', a
     return 'second'
   }
 
-  await restored.emit(HandlerOrderEvent({})).done()
+  await restored.emit(HandlerOrderEvent({})).now()
   assert.deepEqual(restored_order, ['first', 'second'])
 
   bus.destroy()
@@ -124,7 +124,7 @@ test('EventBus.fromJSON recreates missing handler entries from event_result meta
 
   bus.on(SerializableEvent, () => 'ok')
   const event = bus.emit(SerializableEvent({}))
-  await event.done()
+  await event.now()
 
   const handler_id = Array.from(event.event_results.values())[0].handler_id
   const json = bus.toJSON()
@@ -160,5 +160,5 @@ test('EventBus toJSON promotes pending events into event_history snapshot', asyn
   assert.equal(json.pending_event_queue.includes(pending.event_id), true)
 
   release_pause()
-  await pending.done()
+  await pending.now()
 })

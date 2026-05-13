@@ -354,7 +354,7 @@ func assertGoHandlerResultAccepted(t *testing.T, eventPayload map[string]any, re
 	bus.On(event.EventType, "valid", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		return result, nil
 	}, nil)
-	if _, err := bus.Emit(event).EventResult(context.Background()); err != nil {
+	if _, err := bus.Emit(event).EventResult(); err != nil {
 		t.Fatalf("%s should accept handler result %#v: %v", contextLabel, result, err)
 	}
 }
@@ -366,7 +366,7 @@ func assertGoHandlerResultRejected(t *testing.T, eventPayload map[string]any, re
 	bus.On(event.EventType, "invalid", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		return result, nil
 	}, nil)
-	if _, err := bus.Emit(event).EventResult(context.Background()); err == nil || !strings.Contains(err.Error(), "EventHandlerResultSchemaError") {
+	if _, err := bus.Emit(event).EventResult(); err == nil || !strings.Contains(err.Error(), "EventHandlerResultSchemaError") {
 		t.Fatalf("%s should reject handler result %#v with schema error, got %v", contextLabel, result, err)
 	}
 }
@@ -451,10 +451,10 @@ func roundtripBusFixture() map[string]any {
 		"max_history_drop":                false,
 		"event_concurrency":               "bus-serial",
 		"event_timeout":                   60.0,
-		"event_slow_timeout":              nil,
+		"event_slow_timeout":              300.0,
 		"event_handler_concurrency":       "serial",
 		"event_handler_completion":        "all",
-		"event_handler_slow_timeout":      nil,
+		"event_handler_slow_timeout":      30.0,
 		"event_handler_detect_file_paths": false,
 		"handlers": map[string]any{
 			handlerID: map[string]any{

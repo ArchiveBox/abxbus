@@ -24,7 +24,7 @@ test('event results capture handler return values', async () => {
   bus.on(StringResultEvent, () => 'ok')
 
   const event = bus.emit(StringResultEvent({}))
-  await event.done()
+  await event.now()
 
   assert.equal(event.event_results.size, 1)
   const result = Array.from(event.event_results.values())[0]
@@ -38,7 +38,7 @@ test('event_result_type validates handler results', async () => {
   bus.on(ObjectResultEvent, () => ({ value: 'hello', count: 2 }))
 
   const event = bus.emit(ObjectResultEvent({}))
-  await event.done()
+  await event.now()
 
   const result = Array.from(event.event_results.values())[0]
   assert.equal(result.status, 'completed')
@@ -51,7 +51,7 @@ test('event_result_type allows undefined handler return values', async () => {
   bus.on(ObjectResultEvent, () => {})
 
   const event = bus.emit(ObjectResultEvent({}))
-  await event.done()
+  await event.now()
 
   const result = Array.from(event.event_results.values())[0]
   assert.equal(result.status, 'completed')
@@ -64,9 +64,11 @@ test('invalid result marks handler error', async () => {
   bus.on(ObjectResultEvent, () => JSON.parse('{"value":"bad","count":"nope"}'))
 
   const event = bus.emit(ObjectResultEvent({}))
+  await event.now()
   await assert.rejects(
-    () => event.done(),
-    (error: unknown) => error instanceof EventHandlerResultSchemaError
+    () => event.eventResult(),
+    (error: unknown) =>
+      error instanceof AggregateError && error.errors.some((entry: unknown) => entry instanceof EventHandlerResultSchemaError)
   )
 
   const result = Array.from(event.event_results.values())[0]
@@ -81,7 +83,7 @@ test('event with no result schema stores raw values', async () => {
   bus.on(NoResultSchemaEvent, () => ({ raw: true }))
 
   const event = bus.emit(NoResultSchemaEvent({}))
-  await event.done()
+  await event.now()
 
   const result = Array.from(event.event_results.values())[0]
   assert.equal(result.status, 'completed')
@@ -94,7 +96,7 @@ test('event result JSON omits result_type and derives from parent event', async 
   bus.on(StringResultEvent, () => 'ok')
 
   const event = bus.emit(StringResultEvent({}))
-  await event.done()
+  await event.now()
 
   const result = Array.from(event.event_results.values())[0]
   const json = result.toJSON() as Record<string, unknown>
@@ -248,7 +250,7 @@ test('handler result stays pending while waiting for handler lock entry', async 
   await new Promise((resolve) => setTimeout(resolve, 5))
   assert.equal(second_result.status, 'pending')
   first_handler_started.resolve()
-  await event.done()
+  await event.now()
   assert.equal(second_result.status, 'completed')
   bus.destroy()
 })
@@ -291,7 +293,7 @@ test('slow handler warning is based on handler runtime after lock wait', async (
     assert.equal(second_result.status, 'pending')
     await new Promise((resolve) => setTimeout(resolve, 20))
     assert.equal(second_result.status, 'pending')
-    await event.done()
+    await event.now()
 
     assert.equal(
       warnings.some((message) => message.toLowerCase().includes('slow event handler')),

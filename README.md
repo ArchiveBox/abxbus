@@ -20,7 +20,7 @@ def handle_some_event(event: SomeEvent):
     print('hi!')
 
 bus.on(SomeEvent, some_function)
-await bus.emit(SomeEvent({some_data: 132}))
+await bus.emit(SomeEvent(some_data=132)).now()
 # "hi!""
 ```
 
@@ -59,7 +59,7 @@ class UserLoginEvent(BaseEvent[str]):
     is_admin: bool
 
 async def handle_login(event: UserLoginEvent) -> str:
-    auth_request = await event.emit(AuthRequestEvent(...))  # nested events supported
+    auth_request = await event.emit(AuthRequestEvent(...)).now()  # nested events supported
     auth_response = await event.event_bus.find(AuthResponseEvent, child_of=auth_request, future=30)
     return f"User {event.username} logged in admin={event.is_admin} with API response: {await auth_response.event_result()}"
 
@@ -198,7 +198,7 @@ data_bus.on('*', main_bus.emit)  # don't worry! event will only be processed onc
 
 # Events flow through the hierarchy with tracking
 event = main_bus.emit(LoginEvent())
-await event
+await event.now()
 print(event.event_path)  # ['MainBus#ab12', 'AuthBus#cd34', 'DataBus#ef56']  # list of bus labels that already processed the event
 ```
 
@@ -222,7 +222,7 @@ bus.on(GetConfigEvent, load_user_config)
 bus.on(GetConfigEvent, load_system_config)
 
 # Get all handler result values
-event = await bus.emit(GetConfigEvent())
+event = await bus.emit(GetConfigEvent()).now()
 results = await event.event_results_list()
 
 # Inspect per-handler metadata when needed
@@ -254,18 +254,19 @@ If a handler emits and awaits any child events during execution, those events wi
 def child_handler(event: SomeOtherEvent) -> str:
     return 'xzy123'
 
-def main_handler(event: MainEvent) -> str:
+async def main_handler(event: MainEvent) -> str:
     # emit a linked child event
     child_event = event.emit(SomeOtherEvent())
 
-    # awaiting marks it as parent-completion-blocking and can queue-jump it
-    completed_child_event = await child_event
+    # now() marks it as parent-completion-blocking and can queue-jump it
+    completed_child_event = await child_event.now()
     return f'result from awaiting child event: {await completed_child_event.event_result()}'  # 'xyz123'
 
 bus.on(SomeOtherEvent, child_handler)
 bus.on(MainEvent, main_handler)
 
-await bus.emit(MainEvent()).event_result()
+main_event = await bus.emit(MainEvent()).now()
+print(await main_event.event_result())
 # result from awaiting child event: xyz123
 ```
 
@@ -283,7 +284,7 @@ You can also set [`event_concurrency='parallel'`](https://abxbus.archivebox.io/c
 ```python
 async def parent_handler(event: BaseEvent):
     # Most handler code should use this: linked child work that blocks parent completion.
-    blocking_child = await event.emit(ChildEvent())
+    blocking_child = await event.emit(ChildEvent()).now()
     assert blocking_child.event_parent_id == event.event_id
     assert blocking_child.event_blocks_parent_completion is True
 
@@ -293,7 +294,7 @@ async def parent_handler(event: BaseEvent):
     assert linked_background_child.event_blocks_parent_completion is False
 
     # Awaiting bus.emit(...) blocks this handler naturally, but creates a top-level event.
-    detached_blocking_event = await event.event_bus.emit(ChildEvent())
+    detached_blocking_event = await event.event_bus.emit(ChildEvent()).now()
     assert detached_blocking_event.event_parent_id is None
     assert detached_blocking_event.event_blocks_parent_completion is False
 
@@ -308,7 +309,7 @@ async def run_main():
 
     parent_event = bus.emit(ParentEvent())
     print(parent_event.event_children)           # show all the child events emitted during handling of an event
-    await parent_event
+    await parent_event.now()
     print(bus.log_tree())
     await bus.stop()
 
@@ -358,7 +359,7 @@ When you emit an event that triggers child events, use `child_of` to find specif
 
 ```python
 # Emit a parent event that triggers child events
-nav_event = await bus.emit(NavigateToUrlEvent(url="https://example.com"))
+nav_event = await bus.emit(NavigateToUrlEvent(url="https://example.com")).now()
 
 # Find a child event (already fired while NavigateToUrlEvent was being handled)
 new_tab = await bus.find(TabCreatedEvent, child_of=nav_event, past=5)
@@ -381,7 +382,8 @@ See the `EventBus.find(...)` API section below for full parameter details.
 
 > [!IMPORTANT]
 > `find()` resolves when the event is first _emitted_ to the `EventBus`, not when it completes.
-> Use `await event` for immediate-await semantics (queue-jumps when called inside a handler), or `await event.event_completed()` to always wait in normal queue order.
+> Use `await event.now()` for immediate-await semantics (queue-jumps when called inside a handler), or `await event.wait()` to always wait in normal queue order.
+> Python also supports `await event` as a Python-only shortcut for `await event.now()`.
 > If no match is found (or future timeout elapses), `find()` returns `None`.
 
 <br/>
@@ -395,10 +397,8 @@ Avoid re-running expensive work by reusing recent events. The `find()` method ma
 
 ```python
 # Simple debouncing: reuse event from last 10 seconds, or emit new
-event = await (
-    await bus.find(ScreenshotEvent, past=10, future=False)  # Check last 10s of history (instant)
-    or bus.emit(ScreenshotEvent())
-)
+event = await bus.find(ScreenshotEvent, past=10, future=False) or bus.emit(ScreenshotEvent())
+event = await event.now()
 
 # Advanced: check history, wait briefly for new event to appear, fallback to emit new event
 event = (
@@ -406,7 +406,7 @@ event = (
     or await bus.find(SyncEvent, past=False, future=5)   # Wait up to 5s for in-flight
     or bus.emit(SyncEvent())                         # Fallback: emit new
 )
-await event                                              # get completed event
+await event.now()                                              # get completed event
 ```
 
 <br/>
@@ -432,7 +432,8 @@ def do_some_math(event: DoSomeMathEvent) -> int:
     return event.a + event.b
 
 event_bus.on(DoSomeMathEvent, do_some_math)
-print(await event_bus.emit(DoSomeMathEvent(a=100, b=120)).event_result())
+event = await event_bus.emit(DoSomeMathEvent(a=100, b=120)).now(first_result=True)
+print(await event.event_result())
 # 220
 ```
 
@@ -450,7 +451,7 @@ def do_some_math(event: DoSomeMathEvent[int]) -> int:
     event.emit(MathCompleteEvent(final_sum=result))
 
 event_bus.on(DoSomeMathEvent, do_some_math)
-await event_bus.emit(DoSomeMathEvent(a=100, b=120))
+await event_bus.emit(DoSomeMathEvent(a=100, b=120)).now()
 result_event = await event_bus.find(MathCompleteEvent, past=False, future=30)
 print(result_event.final_sum)
 # 220
@@ -475,7 +476,8 @@ async def on_ScreenshotEvent(event: ScreenshotEvent) -> bytes:
 event_bus.on(ScreenshotEvent, on_ScreenshotEvent)
 
 # Handler return values are automatically validated against the bytes type
-returned_bytes = await event_bus.emit(ScreenshotEvent(...)).event_result()
+event = await event_bus.emit(ScreenshotEvent(...)).now(first_result=True)
+returned_bytes = await event.event_result()
 assert isinstance(returned_bytes, bytes)
 ```
 
@@ -512,7 +514,8 @@ async def fetch_from_gmail(event: FetchInboxEvent) -> list[EmailMessage]:
 event_bus.on(FetchInboxEvent, fetch_from_gmail)
 
 # Return values are automatically validated as list[EmailMessage]
-email_list = await event_bus.emit(FetchInboxEvent(account_id='124', ...)).event_result()
+event = await event_bus.emit(FetchInboxEvent(account_id='124', ...)).now(first_result=True)
+email_list = await event.event_result()
 ```
 
 For pure Python usage, `event_result_type` can be any Python/Pydantic type you want. For cross-language JSON roundtrips, object-like shapes (e.g. `TypedDict`, `dataclass`, model-like dict schemas) rehydrate on Python as Pydantic models, map keys are constrained to JSON object string keys, and fine-grained string constraints/custom field validator logic is not preserved.
@@ -545,7 +548,7 @@ request_id.set('req-12345')
 user_id.set('user-abc')
 
 # Handler will see request_id='req-12345' and user_id='user-abc'
-await bus.emit(MyEvent())
+await bus.emit(MyEvent()).now()
 ```
 
 **Context propagates through nested handlers:**
@@ -556,7 +559,7 @@ async def parent_handler(event: ParentEvent) -> str:
     print(f"Parent sees: {request_id.get()}")  # 'req-12345'
 
     # Child events inherit the same context
-    await event.emit(ChildEvent())
+    await event.emit(ChildEvent()).now()
     return "parent_done"
 
 async def child_handler(event: ChildEvent) -> str:
@@ -576,8 +579,8 @@ event_a = bus.emit(MyEvent())  # Handler A sees 'req-A'
 request_id.set('req-B')
 event_b = bus.emit(MyEvent())  # Handler B sees 'req-B'
 
-await event_a  # Still sees 'req-A'
-await event_b  # Still sees 'req-B'
+await event_a.now()  # Still sees 'req-A'
+await event_b.now()  # Still sees 'req-B'
 ```
 
 > [!NOTE]
@@ -656,7 +659,7 @@ bus.on('DataEvent', slow_handler_1)  # Takes 1 second
 bus.on('DataEvent', slow_handler_2)  # Takes 1 second
 
 start = time.time()
-await bus.emit(DataEvent())
+await bus.emit(DataEvent()).now()
 # Total time: ~1 second (not 2)
 ```
 
@@ -684,7 +687,7 @@ bus = EventBus(
     ],
 )
 
-await bus.emit(SecondEventAbc(some_key="banana"))
+await bus.emit(SecondEventAbc(some_key="banana")).now()
 # will persist all events to sqlite + events.jsonl + events.log
 ```
 
@@ -708,19 +711,19 @@ from abxbus.middlewares import EventBusMiddleware
 class AnalyticsMiddleware(EventBusMiddleware):
     async def on_event_result_change(self, eventbus, event, event_result, status):
         if status == 'started':
-            await analytics_bus.emit(HandlerStartedAnalyticsEvent(event_id=event_result.event_id))
+            await analytics_bus.emit(HandlerStartedAnalyticsEvent(event_id=event_result.event_id)).now()
         elif status == 'completed':
             await analytics_bus.emit(
                 HandlerCompletedAnalyticsEvent(
                     event_id=event_result.event_id,
                     error=repr(event_result.error) if event_result.error else None,
                 )
-            )
+            ).now()
 
     async def on_bus_handlers_change(self, eventbus, handler, registered):
         await analytics_bus.emit(
             HandlerRegistryChangedEvent(handler_id=handler.id, registered=registered, bus=eventbus.name)
-        )
+        ).now()
 ```
 
 <br/>
@@ -771,7 +774,7 @@ EventBus(
 Timeout precedence matches TS:
 
 - Effective handler timeout = `min(resolved_handler_timeout, event_timeout)` where `resolved_handler_timeout` resolves in order: `handler.handler_timeout` -> `event.event_handler_timeout` -> `bus.event_timeout`.
-- Slow handler warning threshold resolves in order: `handler.handler_slow_timeout` -> `event.event_handler_slow_timeout` -> `event.event_slow_timeout` -> `bus.event_handler_slow_timeout` -> `bus.event_slow_timeout`.
+- Slow handler warning threshold resolves in order: `handler.handler_slow_timeout` -> `event.event_handler_slow_timeout` -> `bus.event_handler_slow_timeout`.
 
 #### `EventBus` Properties
 
@@ -801,8 +804,8 @@ Enqueue an event for processing and return the pending `Event` immediately (sync
 
 ```python
 event = bus.emit(MyEvent(data="test"))
-result = await event  # immediate-await path (queue-jumps when called inside a handler)
-result_in_queue_order = await event.event_completed()  # always waits in normal queue order
+result = await event.now()  # immediate path (queue-jumps when called inside a handler)
+result_in_queue_order = await event.wait()  # always waits in normal queue order
 ```
 
 **Note:** Queueing is unbounded. History pressure is controlled by `max_history_size` + `max_history_drop`:
@@ -947,40 +950,36 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
 #### `BaseEvent` Methods
 
-##### `await event`
+##### `now(first_result: bool=False, timeout: float | None=None) -> Self`
 
-Immediate-await path for the `Event` object.
+Immediate path for the `Event` object.
 
-- Outside a handler: waits for normal completion and returns the completed event.
-- Inside a handler: queue-jumps this child event so it can run immediately, then returns the completed event.
+- Outside a handler: processes the event immediately when it has not started yet, otherwise waits for completion.
+- Inside a handler: queue-jumps this child event so it can run immediately, then returns the event.
+- `first_result=True` waits only until the first valid result is available; remaining handlers continue running.
+- `timeout` limits this wait call only. Use `event_timeout=0` / `event_handler_timeout=0` to disable execution timeouts.
+- Python-only shortcut: `await event` is equivalent to `await event.now()`.
 
 ```python
 event = bus.emit(MyEvent())
-completed_event = await event
+completed_event = await event.now()
+first_result_event = await event.now(first_result=True, timeout=0.25)
 
-raw_result_values = [(await event_result) for event_result in completed_event.event_results.values()]
+raw_result_values = [event_result.result for event_result in completed_event.event_results.values()]
 # equivalent to: completed_event.event_results_list()  (see below)
 ```
 
-##### `event_completed() -> Self`
-
-Queue-order await path for an event.
+##### `wait(first_result: bool=False, timeout: float | None=None) -> Self`
 
 - Never queue-jumps.
 - Waits until the event is completed by normal runloop queue order.
+- `first_result=True` waits only until the first valid result is available; remaining handlers continue running.
+- `timeout` limits this wait call only.
 
 ```python
 event = bus.emit(MyEvent())
-completed_event = await event.event_completed()
-```
-
-##### `first(timeout: float | None=None, *, raise_if_any: bool=False, raise_if_none: bool=False) -> Any`
-
-Set `event_handler_completion='first'`, wait for completion, and return the first successful non-`None` handler result.
-
-```python
-event = bus.emit(MyEvent())
-value = await event.first()
+completed_event = await event.wait()
+first_result_event = await event.wait(first_result=True)
 ```
 
 ##### `reset() -> Self`
@@ -1005,14 +1004,13 @@ seeded = event.event_result_update(handler=handler_entry, eventbus=bus, status='
 seeded.update(status='completed', result='seeded')
 ```
 
-##### `event_result(timeout: float | None=None, include: EventResultFilter=None, raise_if_any: bool=True, raise_if_none: bool=True) -> Any`
+##### `event_result(include: EventResultFilter=None, raise_if_any: bool=True, raise_if_none: bool=True) -> Any`
 
 Utility method helper to execute all the handlers and return the first handler's raw result value.
 
 **Parameters:**
 
-- `timeout`: Maximum time to wait for handlers to complete (None = use default event timeout)
-- `include`: Filter function to include only specific results (default: only non-None, non-exception results)
+- `include`: Filter function `(result, event_result) -> bool` to include only specific results (default: only non-None, non-exception results)
 - `raise_if_any`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
 - `raise_if_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: True`)
 
@@ -1021,20 +1019,19 @@ Utility method helper to execute all the handlers and return the first handler's
 result = await event.event_result()
 
 # Get result from first handler that returns a string
-valid_result = await event.event_result(include=lambda r: isinstance(r.result, str) and len(r.result) > 100)
+valid_result = await event.event_result(include=lambda result, _: isinstance(result, str) and len(result) > 100)
 
 # Get result but don't raise exceptions or error for 0 results, just return None
 result_or_none = await event.event_result(raise_if_any=False, raise_if_none=False)
 ```
 
-##### `event_results_list(timeout: float | None=None, include: EventResultFilter=None, raise_if_any: bool=True, raise_if_none: bool=True) -> list[Any]`
+##### `event_results_list(include: EventResultFilter=None, raise_if_any: bool=True, raise_if_none: bool=True) -> list[Any]`
 
 Utility method helper to get all raw result values in a list.
 
 **Parameters:**
 
-- `timeout`: Maximum time to wait for handlers to complete (None = use default event timeout)
-- `include`: Filter function to include only specific results (default: only non-None, non-exception results)
+- `include`: Filter function `(result, event_result) -> bool` to include only specific results (default: only non-None, non-exception results)
 - `raise_if_any`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
 - `raise_if_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: True`)
 
@@ -1044,7 +1041,7 @@ results = await event.event_results_list()
 # [result1, result2]
 
 # Only include results that are strings longer than 10 characters
-filtered_results = await event.event_results_list(include=lambda r: isinstance(r.result, str) and len(r.result) > 10)
+filtered_results = await event.event_results_list(include=lambda result, _: isinstance(result, str) and len(result) > 10)
 
 # Get all results without raising on errors
 all_results = await event.event_results_list(raise_if_any=False, raise_if_none=False)
@@ -1061,7 +1058,7 @@ bus = EventBus()
 
 async def some_handler(event: MyEvent):
     # Most handler code should do this: linked child work that blocks parent completion.
-    child_event = await event.emit(ChildEvent())
+    child_event = await event.emit(ChildEvent()).now()
 
     # Un-awaited event.emit(...) keeps parentage without holding the parent open.
     background_child = event.emit(ChildEvent())

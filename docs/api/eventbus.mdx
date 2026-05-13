@@ -259,7 +259,7 @@ result = await event.event_result()
 
 ```ts
 const event = bus.emit(MyEvent({ data: 'x' }))
-const result = await event.first()
+const result = await event.now({ first_result: true }).eventResult()
 ```
 
 </Tab>
@@ -267,7 +267,7 @@ const result = await event.first()
 
 ```go
 event := bus.Emit(abxbus.NewBaseEvent("MyEvent", map[string]any{"data": "x"}))
-result, err := event.EventResult(context.Background())
+result, err := event.EventResult()
 if err != nil {
 	return err
 }

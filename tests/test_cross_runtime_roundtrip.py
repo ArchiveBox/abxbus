@@ -963,7 +963,7 @@ async def _assert_bus_roundtrip_rehydrates_and_resumes(
     assert preseeded.handler is restored.handlers[case.handler_one_id]
 
     trigger = restored.emit(PyTsBusResumeEvent(label='e3'))
-    await asyncio.wait_for(trigger, timeout=EVENT_WAIT_TIMEOUT_SECONDS)
+    await asyncio.wait_for(trigger.wait(), timeout=EVENT_WAIT_TIMEOUT_SECONDS)
 
     done_one = restored.event_history[case.event_one_id]
     done_two = restored.event_history[case.event_two_id]
@@ -1033,7 +1033,7 @@ async def test_python_to_ts_to_python_bus_roundtrip_rehydrates_and_resumes(tmp_p
     assert preseeded.handler is restored.handlers[handler_one_id]
 
     trigger = restored.emit(PyTsBusResumeEvent(label='e3'))
-    await asyncio.wait_for(trigger, timeout=EVENT_WAIT_TIMEOUT_SECONDS)
+    await asyncio.wait_for(trigger.wait(), timeout=EVENT_WAIT_TIMEOUT_SECONDS)
 
     done_one = restored.event_history[event_one.event_id]
     done_two = restored.event_history[event_two.event_id]
@@ -1136,7 +1136,7 @@ async def test_python_to_rust_to_python_bus_roundtrip_rehydrates_and_resumes(tmp
     assert preseeded.handler is restored.handlers[handler_one_id]
 
     trigger = restored.emit(PyTsBusResumeEvent(label='e3'))
-    await asyncio.wait_for(trigger, timeout=EVENT_WAIT_TIMEOUT_SECONDS)
+    await asyncio.wait_for(trigger.wait(), timeout=EVENT_WAIT_TIMEOUT_SECONDS)
 
     done_one = restored.event_history[event_one.event_id]
     done_two = restored.event_history[event_two.event_id]
@@ -1207,7 +1207,7 @@ async def test_python_to_go_to_python_bus_roundtrip_rehydrates_and_resumes(tmp_p
     assert preseeded.handler is restored.handlers[handler_one_id]
 
     trigger = restored.emit(PyTsBusResumeEvent(label='e3'))
-    await asyncio.wait_for(trigger, timeout=EVENT_WAIT_TIMEOUT_SECONDS)
+    await asyncio.wait_for(trigger.wait(), timeout=EVENT_WAIT_TIMEOUT_SECONDS)
 
     done_one = restored.event_history[event_one.event_id]
     done_two = restored.event_history[event_two.event_id]

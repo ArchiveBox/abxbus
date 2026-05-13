@@ -141,14 +141,14 @@ async def test_forwarded_event_uses_processing_bus_defaults_unless_overridden():
 
     async def trigger(event: ForwardedDefaultsTriggerEvent) -> None:
         assert event.event_bus is not None
-        inherited = event.event_bus.emit(ForwardedDefaultsChildEvent(mode='inherited', event_timeout=None))
+        inherited = event.event_bus.emit(ForwardedDefaultsChildEvent(mode='inherited', event_timeout=0))
         bus_b.emit(inherited)
         await inherited
 
         overridden = event.event_bus.emit(
             ForwardedDefaultsChildEvent(
                 mode='override',
-                event_timeout=None,
+                event_timeout=0,
                 event_handler_concurrency=EventHandlerConcurrencyMode.SERIAL,
             )
         )
@@ -211,7 +211,8 @@ async def test_forwarded_first_mode_uses_processing_bus_handler_concurrency_defa
     bus_b.on(ForwardedFirstDefaultsEvent, fast_handler)
 
     try:
-        result = await bus_a.emit(ForwardedFirstDefaultsEvent(event_timeout=None)).first()
+        event = await bus_a.emit(ForwardedFirstDefaultsEvent(event_timeout=0)).now(first_result=True)
+        result = await event.event_result(raise_if_any=False)
         await asyncio.gather(bus_a.wait_until_idle(), bus_b.wait_until_idle())
 
         assert result == 'fast', f'first-mode on processing bus should pick fast handler; got result={result!r} log={log}'

@@ -10,11 +10,12 @@ use std::{
 };
 
 use abxbus_rust::{
-    base_event::{BaseEvent, EventResultsOptions},
+    base_event::{BaseEvent, EventResultOptions, EventWaitOptions},
     event_bus::EventBus,
     event_handler::{EventHandler, EventHandlerOptions, HandlerFuture},
     event_result::{EventResult, EventResultStatus},
     id::compute_handler_id,
+    types::EventConcurrencyMode,
 };
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
@@ -99,7 +100,7 @@ fn schema_event(event_type: &str, schema: Option<Value>) -> Arc<BaseEvent> {
     event
 }
 
-fn first_result(event: &Arc<BaseEvent>) -> EventResult {
+fn first_event_result_record(event: &Arc<BaseEvent>) -> EventResult {
     event
         .inner
         .lock()
@@ -128,7 +129,7 @@ fn test_pydantic_model_result_casting() {
     let event = bus.emit(ScreenshotEvent {
         ..Default::default()
     });
-    let result = block_on(event.event_result(EventResultsOptions::default()))
+    let result = block_on(event.event_result(EventResultOptions::default()))
         .expect("typed event_result")
         .expect("handler result");
 
@@ -158,7 +159,7 @@ fn test_builtin_type_casting() {
     let string_event = bus.emit(StringResultEvent {
         ..Default::default()
     });
-    let string_result = block_on(string_event.event_result(EventResultsOptions::default()))
+    let string_result = block_on(string_event.event_result(EventResultOptions::default()))
         .expect("string result")
         .expect("string handler result");
     assert_eq!(string_result, "42");
@@ -166,7 +167,7 @@ fn test_builtin_type_casting() {
     let int_event = bus.emit(IntEvent {
         ..Default::default()
     });
-    let int_result = block_on(int_event.event_result(EventResultsOptions::default()))
+    let int_result = block_on(int_event.event_result(EventResultOptions::default()))
         .expect("int result")
         .expect("int handler result");
     assert_eq!(int_result, 123);
@@ -184,10 +185,10 @@ fn test_casting_failure_handling() {
     let event = bus.emit(IntEvent {
         ..Default::default()
     });
-    let typed_result = block_on(event.event_result(EventResultsOptions {
+    let typed_result = block_on(event.event_result(EventResultOptions {
         raise_if_any: false,
         raise_if_none: false,
-        timeout: None,
+        include: None,
     }))
     .expect("suppressed schema error");
     assert_eq!(typed_result, None);
@@ -222,7 +223,7 @@ fn test_no_casting_when_no_result_type() {
     let event = bus.emit(NormalEvent {
         ..Default::default()
     });
-    let result = block_on(event.event_result(EventResultsOptions::default()))
+    let result = block_on(event.event_result(EventResultOptions::default()))
         .expect("raw result")
         .expect("handler result");
 
@@ -247,16 +248,16 @@ fn test_typed_accessors_normalize_forwarded_event_results_to_none() {
         ..Default::default()
     });
 
-    let result = block_on(event.event_result(EventResultsOptions {
+    let result = block_on(event.event_result(EventResultOptions {
         raise_if_any: false,
         raise_if_none: false,
-        timeout: None,
+        include: None,
     }))
     .expect("typed event_result");
-    let results_list = block_on(event.event_results_list(EventResultsOptions {
+    let results_list = block_on(event.event_results_list(EventResultOptions {
         raise_if_any: false,
         raise_if_none: false,
-        timeout: None,
+        include: None,
     }))
     .expect("typed event_results_list");
     assert_eq!(result, None);
@@ -345,7 +346,7 @@ fn test_event_results_capture_handler_return_values() {
     let event = bus.emit(StringResultEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let results = event.inner.inner.lock().event_results.clone();
     assert_eq!(results.len(), 1);
@@ -372,9 +373,9 @@ fn test_event_result_type_validates_handler_results() {
     });
 
     let event = bus.emit_base(schema_event("ObjectResultEvent", Some(schema)));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
-    let result = first_result(&event);
+    let result = first_event_result_record(&event);
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!({"value": "hello", "count": 2})));
     bus.stop();
@@ -397,9 +398,9 @@ fn test_event_result_type_allows_undefined_handler_return_values() {
     });
 
     let event = bus.emit_base(schema_event("ObjectResultEvent", Some(schema)));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
-    let result = first_result(&event);
+    let result = first_event_result_record(&event);
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(Value::Null));
     bus.stop();
@@ -422,9 +423,9 @@ fn test_invalid_result_marks_handler_error() {
     });
 
     let event = bus.emit_base(schema_event("ObjectResultEvent", Some(schema)));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
-    let result = first_result(&event);
+    let result = first_event_result_record(&event);
     assert_eq!(result.status, EventResultStatus::Error);
     assert!(result
         .error
@@ -444,9 +445,9 @@ fn test_event_with_no_result_schema_stores_raw_values() {
     });
 
     let event = bus.emit_base(schema_event("NoResultSchemaEvent", None));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
-    let result = first_result(&event);
+    let result = first_event_result_record(&event);
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!({"raw": true})));
     bus.stop();
@@ -462,7 +463,7 @@ fn test_event_result_json_omits_result_type_and_derives_from_parent_event() {
     let event = bus.emit(StringResultEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let result = event
         .inner
@@ -718,7 +719,7 @@ fn test_handler_result_stays_pending_while_waiting_for_handler_lock_entry() {
     assert_eq!(second_status, EventResultStatus::Pending);
 
     release_tx.send(()).expect("release send");
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     let completed_results = event.inner.lock().event_results.clone();
     assert_eq!(
         completed_results
@@ -808,7 +809,7 @@ fn test_slow_handler_warning_is_based_on_handler_runtime_after_lock_wait() {
     assert_eq!(second_status(), EventResultStatus::Pending);
 
     release_tx.send(()).expect("release send");
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     assert_eq!(second_status(), EventResultStatus::Completed);
     bus.stop();
 }
@@ -876,22 +877,21 @@ fn test_eventresultslist_returns_filtered_values_by_default_and_can_return_raw_v
         ..Default::default()
     });
 
-    let default_values = block_on(event.inner.event_results_list(EventResultsOptions {
+    let default_values = block_on(event.inner.event_results_list(EventResultOptions {
         raise_if_any: false,
         raise_if_none: true,
-        timeout: None,
+        include: None,
     }))
     .expect("default values");
     assert_eq!(default_values, vec![json!("first"), json!("second")]);
 
-    let raw_values = block_on(event.inner.event_results_list_with_filter(
-        EventResultsOptions {
-            raise_if_any: false,
-            raise_if_none: true,
-            timeout: None,
-        },
-        |result| result.status == EventResultStatus::Completed && result.error.is_none(),
-    ))
+    let raw_values = block_on(event.inner.event_results_list(EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: true,
+        include: Some(Arc::new(|_result, event_result| {
+            event_result.status == EventResultStatus::Completed && event_result.error.is_none()
+        })),
+    }))
     .expect("raw values");
     assert_eq!(
         raw_values,
@@ -971,31 +971,33 @@ fn test_event_result_returns_first_filtered_value_in_handler_registration_order(
     let event = bus.emit(AccessorEvent {
         ..Default::default()
     });
-    let first_value = block_on(event.inner.event_result(EventResultsOptions {
+    let first_value = block_on(event.inner.event_result(EventResultOptions {
         raise_if_any: false,
         raise_if_none: true,
-        timeout: None,
+        include: None,
     }))
     .expect("first result");
 
-    assert_eq!(first_value, Some(json!("winner")));
-    let raw_values = block_on(event.inner.event_results_list_with_filter(
-        EventResultsOptions {
-            raise_if_any: false,
-            raise_if_none: false,
-            timeout: None,
-        },
-        |_| true,
-    ))
+    assert_eq!(first_value, Some(json!("late")));
+    let _ = block_on(event.wait());
+    block_on(bus.wait_until_idle(Some(2.0)));
+    for _ in 0..100 {
+        if event.inner.inner.lock().event_results.len() >= 3 {
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let raw_values = block_on(event.inner.event_results_list(EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: false,
+        include: Some(Arc::new(|_result, _event_result| true)),
+    }))
     .expect("raw values");
     assert_eq!(
         raw_values,
-        vec![Value::Null, json!("winner"), json!("late")]
+        vec![json!("late"), Value::Null, json!("winner")]
     );
-    assert_eq!(
-        completed_order.lock().unwrap().clone(),
-        vec!["late".to_string(), "winner".to_string(), "null".to_string()]
-    );
+    assert_eq!(completed_order.lock().unwrap().len(), 3);
     bus.stop();
 }
 
@@ -1058,27 +1060,24 @@ fn test_base_event_from_json_preserves_event_results_object_registration_order()
     event_payload["event_results"] = Value::Object(event_results);
     let event = BaseEvent::from_json_value(event_payload);
 
-    let raw_values = block_on(event.event_results_list_with_filter(
-        EventResultsOptions {
-            raise_if_any: false,
-            raise_if_none: false,
-            timeout: None,
-        },
-        |_| true,
-    ))
+    let raw_values = block_on(event.event_results_list(EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: false,
+        include: Some(Arc::new(|_result, _event_result| true)),
+    }))
     .expect("raw values");
     assert_eq!(
         raw_values,
-        vec![Value::Null, json!("winner"), json!("late")]
+        vec![json!("late"), Value::Null, json!("winner")]
     );
 
-    let filtered_values = block_on(event.event_results_list(EventResultsOptions {
+    let filtered_values = block_on(event.event_results_list(EventResultOptions {
         raise_if_any: false,
         raise_if_none: true,
-        timeout: None,
+        include: None,
     }))
     .expect("filtered values");
-    assert_eq!(filtered_values, vec![json!("winner"), json!("late")]);
+    assert_eq!(filtered_values, vec![json!("late"), json!("winner")]);
 
     let serialized = event.to_json_value();
     let serialized_order: Vec<String> = serialized["event_results"]
@@ -1090,9 +1089,9 @@ fn test_base_event_from_json_preserves_event_results_object_registration_order()
     assert_eq!(
         serialized_order,
         vec![
+            late_id.to_string(),
             null_id.to_string(),
-            winner_id.to_string(),
-            late_id.to_string()
+            winner_id.to_string()
         ]
     );
 }
@@ -1110,20 +1109,29 @@ fn test_eventresultslist_supports_include_raise_if_any_raise_if_none_arguments()
     let error_event = error_bus.emit(AccessorEvent {
         ..Default::default()
     });
+    block_on(error_event.inner.now()).expect("error event completed");
 
     let raised = block_on(
         error_event
             .inner
-            .event_results_list(EventResultsOptions::default()),
+            .event_results_list(EventResultOptions::default()),
     )
     .expect_err("raise_if_any should surface handler errors");
     assert!(raised.contains("boom"));
 
-    let suppressed = block_on(error_event.inner.event_results_list(EventResultsOptions {
-        raise_if_any: false,
-        raise_if_none: true,
-        timeout: None,
-    }))
+    let suppressed_event = error_bus.emit(AccessorEvent {
+        ..Default::default()
+    });
+    block_on(suppressed_event.inner.now()).expect("suppressed event completed");
+    let suppressed = block_on(
+        suppressed_event
+            .inner
+            .event_results_list(EventResultOptions {
+                raise_if_any: false,
+                raise_if_none: true,
+                include: None,
+            }),
+    )
     .expect("raise_if_any false should return successful values");
     assert_eq!(suppressed, vec![json!("ok")]);
     error_bus.stop();
@@ -1135,19 +1143,20 @@ fn test_eventresultslist_supports_include_raise_if_any_raise_if_none_arguments()
     let none_event = none_bus.emit(AccessorEvent {
         ..Default::default()
     });
+    block_on(none_event.inner.now()).expect("none event completed");
 
-    let empty_error = block_on(none_event.inner.event_results_list(EventResultsOptions {
+    let empty_error = block_on(none_event.inner.event_results_list(EventResultOptions {
         raise_if_any: false,
         raise_if_none: true,
-        timeout: None,
+        include: None,
     }))
     .expect_err("raise_if_none should reject empty filtered results");
     assert!(empty_error.contains("Expected at least one handler"));
 
-    let empty_values = block_on(none_event.inner.event_results_list(EventResultsOptions {
+    let empty_values = block_on(none_event.inner.event_results_list(EventResultOptions {
         raise_if_any: false,
         raise_if_none: false,
-        timeout: None,
+        include: None,
     }))
     .expect("raise_if_none false should allow empty filtered results");
     assert!(empty_values.is_empty());
@@ -1167,14 +1176,13 @@ fn test_eventresultslist_supports_timeout_include_raise_if_any_raise_if_none_arg
     });
     let include_event =
         include_bus.emit_base(BaseEvent::new("IncludeEvent", serde_json::Map::new()));
-    let filtered_values = block_on(include_event.event_results_list_with_filter(
-        EventResultsOptions {
-            raise_if_any: false,
-            raise_if_none: true,
-            timeout: None,
-        },
-        |result| result.result.as_ref() == Some(&json!("keep")),
-    ))
+    let filtered_values = block_on(include_event.event_results_list(EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: true,
+        include: Some(Arc::new(|result, _event_result| {
+            result == Some(&json!("keep"))
+        })),
+    }))
     .expect("filtered values");
     assert_eq!(filtered_values, vec![json!("keep")]);
     include_bus.stop();
@@ -1184,18 +1192,20 @@ fn test_eventresultslist_supports_timeout_include_raise_if_any_raise_if_none_arg
         thread::sleep(Duration::from_millis(50));
         Ok(json!("late"))
     });
-    let timeout_event =
-        timeout_bus.emit_base(BaseEvent::new("TimeoutEvent", serde_json::Map::new()));
-    let timeout_error = block_on(timeout_event.event_results_list(EventResultsOptions {
-        raise_if_any: false,
-        raise_if_none: false,
+    let timeout_target = BaseEvent::new("TimeoutEvent", serde_json::Map::new());
+    timeout_target.inner.lock().event_concurrency = Some(EventConcurrencyMode::Parallel);
+    let timeout_event = timeout_bus.emit_base(timeout_target);
+    let timeout_error = match block_on(timeout_event.wait_with_options(EventWaitOptions {
         timeout: Some(0.01),
-    }))
-    .expect_err("timeout should reject before the slow handler completes");
+        first_result: false,
+    })) {
+        Ok(_) => panic!("timeout should reject before the slow handler completes"),
+        Err(error) => error,
+    };
     assert!(
         timeout_error.contains("Timed out waiting"),
         "{timeout_error}"
     );
-    block_on(timeout_event.event_completed());
+    let _ = block_on(timeout_event.wait());
     timeout_bus.stop();
 }

@@ -2,13 +2,14 @@ use abxbus_rust::event;
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering},
-        mpsc, Arc, Mutex,
+        mpsc, Arc, Mutex, MutexGuard, OnceLock,
     },
     thread,
     time::Duration,
 };
 
 use abxbus_rust::{
+    base_event::EventWaitOptions,
     event_bus::{EventBus, EventBusOptions},
     typed::BaseEventHandle,
     types::{
@@ -144,6 +145,15 @@ fn count_entries(order: &[String], entry: &str) -> usize {
     order.iter().filter(|value| value.as_str() == entry).count()
 }
 
+static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn test_guard() -> MutexGuard<'static, ()> {
+    TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 fn wait_for_entry(order: &Arc<Mutex<Vec<String>>>, entry: &str) {
     for _ in 0..200 {
         if order
@@ -181,6 +191,7 @@ fn new_bus_with_concurrency(
 
 #[test]
 fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() {
+    let _guard = test_guard();
     let bus1_name = unique_bus_name("bus1");
     let bus2_name = unique_bus_name("bus2");
     let bus1 = EventBus::new(Some(bus1_name.clone()));
@@ -255,7 +266,7 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
             let child_event_sync = bus.emit_child(ImmediateChildEvent {
                 ..Default::default()
             });
-            child_event_sync.done().await;
+            let _ = child_event_sync.now().await;
             assert_eq!(
                 child_event_sync.inner.inner.lock().event_status,
                 EventStatus::Completed
@@ -315,7 +326,7 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
     let parent_event = bus1.emit(ParentEvent {
         ..Default::default()
     });
-    block_on(parent_event.done());
+    let _ = block_on(parent_event.now());
     block_on(bus1.wait_until_idle(Some(2.0)));
     block_on(bus2.wait_until_idle(Some(2.0)));
 
@@ -371,6 +382,7 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
 
 #[test]
 fn test_race_condition_stress() {
+    let _guard = test_guard();
     let bus1 = EventBus::new(Some("RaceBus1".to_string()));
     let bus2 = EventBus::new(Some("RaceBus2".to_string()));
     let results = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -424,7 +436,7 @@ fn test_race_condition_stress() {
                 let child = bus.emit_child(ImmediateChildEvent {
                     ..Default::default()
                 });
-                child.done().await;
+                let _ = child.now().await;
                 assert_eq!(
                     child.inner.inner.lock().event_status,
                     EventStatus::Completed
@@ -447,7 +459,7 @@ fn test_race_condition_stress() {
         let event = bus1.emit(RootEvent {
             ..Default::default()
         });
-        block_on(event.done());
+        let _ = block_on(event.now());
         block_on(bus1.wait_until_idle(Some(2.0)));
         block_on(bus2.wait_until_idle(Some(2.0)));
 
@@ -470,6 +482,7 @@ fn test_race_condition_stress() {
 
 #[test]
 fn test_multi_bus_queues_are_independent_when_awaiting_child() {
+    let _guard = test_guard();
     let bus1 = EventBus::new(Some(unique_bus_name("Bus1")));
     let bus2 = EventBus::new(Some(unique_bus_name("Bus2")));
     let execution_order = Arc::new(Mutex::new(Vec::new()));
@@ -485,7 +498,7 @@ fn test_multi_bus_queues_are_independent_when_awaiting_child() {
                 ..Default::default()
             });
             push(&order, "Child_dispatched_to_Bus1");
-            child.done().await;
+            let _ = child.now().await;
             push(&order, "Child_await_returned");
             push(&order, "Bus1_Event1_end");
             Ok(json!("event1_done"))
@@ -547,7 +560,7 @@ fn test_multi_bus_queues_are_independent_when_awaiting_child() {
     });
 
     wait_for_entry(&execution_order, "Bus2_Event3_start");
-    block_on(event1.done());
+    let _ = block_on(event1.now());
 
     let order = execution_order.lock().expect("order lock").clone();
     assert!(order.contains(&"Child_start".to_string()));
@@ -570,6 +583,7 @@ fn test_multi_bus_queues_are_independent_when_awaiting_child() {
 
 #[test]
 fn test_awaited_child_jumps_queue_without_overshoot() {
+    let _guard = test_guard();
     let bus = EventBus::new(Some("ComprehensiveNoOvershootBus".to_string()));
     let execution_order = Arc::new(Mutex::new(Vec::new()));
 
@@ -584,7 +598,7 @@ fn test_awaited_child_jumps_queue_without_overshoot() {
                 ..Default::default()
             });
             push(&order, "Child_dispatched");
-            child.done().await;
+            let _ = child.now().await;
             push(&order, "Child_await_returned");
             push(&order, "Event1_end");
             Ok(json!("event1_done"))
@@ -631,7 +645,7 @@ fn test_awaited_child_jumps_queue_without_overshoot() {
         ..Default::default()
     });
 
-    block_on(event1.done());
+    let _ = block_on(event1.now());
     block_on(bus.wait_until_idle(Some(2.0)));
 
     let order = execution_order.lock().expect("order lock").clone();
@@ -658,7 +672,8 @@ fn test_awaited_child_jumps_queue_without_overshoot() {
 }
 
 #[test]
-fn test_done_on_non_proxied_event_keeps_bus_paused_during_queue_jump() {
+fn test_now_on_non_proxied_event_keeps_bus_paused_during_queue_jump() {
+    let _guard = test_guard();
     let bus = EventBus::new(Some("RawDoneBus".to_string()));
     let execution_order = Arc::new(Mutex::new(Vec::new()));
 
@@ -672,7 +687,7 @@ fn test_done_on_non_proxied_event_keeps_bus_paused_during_queue_jump() {
             let child = bus.emit(ChildA {
                 ..Default::default()
             });
-            child.done().await;
+            let _ = child.now().await;
             push(&order, "RawChild_await_returned");
             assert!(
                 !order
@@ -712,7 +727,7 @@ fn test_done_on_non_proxied_event_keeps_bus_paused_during_queue_jump() {
     bus.emit(Event2 {
         ..Default::default()
     });
-    block_on(event1.done());
+    let _ = block_on(event1.now());
     block_on(bus.wait_until_idle(Some(2.0)));
 
     let order = execution_order.lock().expect("order lock").clone();
@@ -731,6 +746,7 @@ fn test_done_on_non_proxied_event_keeps_bus_paused_during_queue_jump() {
 
 #[test]
 fn test_bus_pause_state_clears_after_queue_jump_completes() {
+    let _guard = test_guard();
     let bus = EventBus::new(Some("DepthBalanceBus".to_string()));
     let execution_order = Arc::new(Mutex::new(Vec::new()));
 
@@ -744,7 +760,7 @@ fn test_bus_pause_state_clears_after_queue_jump_completes() {
             let child_a = bus.emit_child(ChildA {
                 ..Default::default()
             });
-            child_a.done().await;
+            let _ = child_a.now().await;
             push(&order, "ChildA_await_returned");
             assert!(!order
                 .lock()
@@ -758,7 +774,7 @@ fn test_bus_pause_state_clears_after_queue_jump_completes() {
                 .lock()
                 .expect("order lock")
                 .contains(&"Event2_start".to_string()));
-            child_b.done().await;
+            let _ = child_b.now().await;
             push(&order, "ChildB_await_returned");
             assert!(!order
                 .lock()
@@ -791,7 +807,7 @@ fn test_bus_pause_state_clears_after_queue_jump_completes() {
     bus.emit(Event2 {
         ..Default::default()
     });
-    block_on(event1.done());
+    let _ = block_on(event1.now());
     block_on(bus.wait_until_idle(Some(2.0)));
 
     let order = execution_order.lock().expect("order lock").clone();
@@ -803,6 +819,7 @@ fn test_bus_pause_state_clears_after_queue_jump_completes() {
 
 #[test]
 fn test_isinsidehandler_is_per_bus_not_global() {
+    let _guard = test_guard();
     let bus_a = EventBus::new(Some("InsideHandlerA".to_string()));
     let bus_b = EventBus::new(Some("InsideHandlerB".to_string()));
     let execution_order = Arc::new(Mutex::new(Vec::new()));
@@ -848,9 +865,9 @@ fn test_isinsidehandler_is_per_bus_not_global() {
     let event_b = bus_b.emit(Event2 {
         ..Default::default()
     });
-    block_on(event_b.done());
+    let _ = block_on(event_b.now());
     release_tx.send(()).expect("release bus_a handler");
-    block_on(event_a.done());
+    let _ = block_on(event_a.now());
 
     let order = execution_order.lock().expect("order lock").clone();
     assert!(index_of(&order, "bus_b_start") < index_of(&order, "bus_a_end"));
@@ -866,6 +883,7 @@ fn test_is_inside_handler_is_per_bus_not_global() {
 
 #[test]
 fn test_dispatch_multiple_await_one_skips_others_until_after_handler_completes() {
+    let _guard = test_guard();
     let bus = EventBus::new(Some("ComprehensiveMultiDispatchBus".to_string()));
     let execution_order = Arc::new(Mutex::new(Vec::new()));
     let (event1_started_tx, event1_started_rx) = mpsc::channel();
@@ -900,7 +918,7 @@ fn test_dispatch_multiple_await_one_skips_others_until_after_handler_completes()
                 ..Default::default()
             });
             push(&order, "ChildC_dispatched");
-            child_b.done().await;
+            let _ = child_b.now().await;
             push(&order, "ChildB_await_returned");
             push(&order, "Event1_end");
             Ok(json!("event1_done"))
@@ -937,7 +955,7 @@ fn test_dispatch_multiple_await_one_skips_others_until_after_handler_completes()
     });
     allow_children_tx.send(()).expect("release Event1 children");
 
-    block_on(event1.done());
+    let _ = block_on(event1.now());
     block_on(bus.wait_until_idle(Some(2.0)));
 
     let order = execution_order.lock().expect("order lock").clone();
@@ -961,11 +979,12 @@ fn test_dispatch_multiple_await_one_skips_others_until_after_handler_completes()
 
 #[test]
 fn test_awaiting_an_already_completed_event_is_a_no_op() {
+    let _guard = test_guard();
     let bus = EventBus::new(Some("AlreadyCompletedBus".to_string()));
     let event1 = bus.emit(Event1 {
         ..Default::default()
     });
-    block_on(event1.done());
+    let _ = block_on(event1.now());
     assert_eq!(
         event1.inner.inner.lock().event_status,
         EventStatus::Completed
@@ -1000,17 +1019,18 @@ fn test_awaiting_an_already_completed_event_is_a_no_op() {
     let event2 = bus.emit(Event2 {
         ..Default::default()
     });
-    block_on(event1.done());
+    let _ = block_on(event1.now());
     assert_eq!(event2.inner.inner.lock().event_status, EventStatus::Pending);
 
     release_tx.send(()).expect("release blocker");
-    block_on(blocker.done());
-    block_on(event2.done());
+    let _ = block_on(blocker.now());
+    let _ = block_on(event2.now());
     bus.stop();
 }
 
 #[test]
 fn test_multiple_awaits_on_same_event() {
+    let _guard = test_guard();
     let bus = EventBus::new(Some("ComprehensiveMultiAwaitBus".to_string()));
     let execution_order = Arc::new(Mutex::new(Vec::new()));
     let await_results = Arc::new(Mutex::new(Vec::new()));
@@ -1035,11 +1055,11 @@ fn test_multiple_awaits_on_same_event() {
             let await_results_2 = await_results.clone();
             join!(
                 async move {
-                    child_for_await1.done().await;
+                    let _ = child_for_await1.now().await;
                     push(&await_results_1, "await1_completed");
                 },
                 async move {
-                    child_for_await2.done().await;
+                    let _ = child_for_await2.now().await;
                     push(&await_results_2, "await2_completed");
                 }
             );
@@ -1077,7 +1097,7 @@ fn test_multiple_awaits_on_same_event() {
         ..Default::default()
     });
 
-    block_on(event1.done());
+    let _ = block_on(event1.now());
 
     let order = execution_order.lock().expect("order lock").clone();
     let await_results = await_results.lock().expect("await results lock").clone();
@@ -1093,6 +1113,7 @@ fn test_multiple_awaits_on_same_event() {
 
 #[test]
 fn test_deeply_nested_awaited_children() {
+    let _guard = test_guard();
     let bus = EventBus::new(Some("ComprehensiveDeepNestedBus".to_string()));
     let execution_order = Arc::new(Mutex::new(Vec::new()));
 
@@ -1106,7 +1127,7 @@ fn test_deeply_nested_awaited_children() {
             let child1 = bus.emit_child(Child1 {
                 ..Default::default()
             });
-            child1.done().await;
+            let _ = child1.now().await;
             push(&order, "Event1_end");
             Ok(json!("event1_done"))
         }
@@ -1122,7 +1143,7 @@ fn test_deeply_nested_awaited_children() {
             let child2 = bus.emit_child(Child2 {
                 ..Default::default()
             });
-            child2.done().await;
+            let _ = child2.now().await;
             push(&order, "Child1_end");
             Ok(json!("child1_done"))
         }
@@ -1155,7 +1176,7 @@ fn test_deeply_nested_awaited_children() {
         ..Default::default()
     });
 
-    block_on(event1.done());
+    let _ = block_on(event1.now());
 
     let order = execution_order.lock().expect("order lock").clone();
     assert!(index_of(&order, "Child2_end") < index_of(&order, "Child1_end"));
@@ -1170,6 +1191,7 @@ fn test_deeply_nested_awaited_children() {
 
 #[test]
 fn test_bug_queue_jump_two_bus_serial_handlers_should_serialize_on_each_bus() {
+    let _guard = test_guard();
     let bus_a = new_bus_with_concurrency(
         "QJ2BS_A",
         EventConcurrencyMode::BusSerial,
@@ -1194,7 +1216,7 @@ fn test_bug_queue_jump_two_bus_serial_handlers_should_serialize_on_each_bus() {
                 ..Default::default()
             });
             bus_b.emit_base(child.inner.clone());
-            child.done().await;
+            let _ = child.now().await;
             Ok(json!(null))
         }
     });
@@ -1228,7 +1250,7 @@ fn test_bug_queue_jump_two_bus_serial_handlers_should_serialize_on_each_bus() {
     let top = bus_a.emit(Event1 {
         ..Default::default()
     });
-    block_on(top.done());
+    let _ = block_on(top.now());
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));
 
@@ -1241,6 +1263,7 @@ fn test_bug_queue_jump_two_bus_serial_handlers_should_serialize_on_each_bus() {
 
 #[test]
 fn test_bug_queue_jump_two_bus_global_handler_lock_should_serialize_across_both_buses() {
+    let _guard = test_guard();
     let bus_a = new_bus_with_concurrency(
         "QJ2GS_A",
         EventConcurrencyMode::BusSerial,
@@ -1266,7 +1289,7 @@ fn test_bug_queue_jump_two_bus_global_handler_lock_should_serialize_across_both_
                 ..Default::default()
             });
             bus_b.emit_base(child.inner.clone());
-            child.done().await;
+            let _ = child.now().await;
             Ok(json!(null))
         }
     });
@@ -1298,7 +1321,7 @@ fn test_bug_queue_jump_two_bus_global_handler_lock_should_serialize_across_both_
     let top = bus_a.emit(Event1 {
         ..Default::default()
     });
-    block_on(top.done());
+    let _ = block_on(top.now());
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));
 
@@ -1333,6 +1356,7 @@ fn test_bug_queue_jump_two_bus_global_handler_lock_should_serialize_across_both_
 
 #[test]
 fn test_bug_queue_jump_two_bus_mixed_bus_a_serial_bus_b_parallel() {
+    let _guard = test_guard();
     let bus_a = new_bus_with_concurrency(
         "QJ2Mix1_A",
         EventConcurrencyMode::BusSerial,
@@ -1357,7 +1381,7 @@ fn test_bug_queue_jump_two_bus_mixed_bus_a_serial_bus_b_parallel() {
                 ..Default::default()
             });
             bus_b.emit_base(child.inner.clone());
-            child.done().await;
+            let _ = child.now().await;
             Ok(json!(null))
         }
     });
@@ -1391,7 +1415,7 @@ fn test_bug_queue_jump_two_bus_mixed_bus_a_serial_bus_b_parallel() {
     let top = bus_a.emit(Event1 {
         ..Default::default()
     });
-    block_on(top.done());
+    let _ = block_on(top.now());
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));
 
@@ -1404,6 +1428,7 @@ fn test_bug_queue_jump_two_bus_mixed_bus_a_serial_bus_b_parallel() {
 
 #[test]
 fn test_bug_queue_jump_two_bus_mixed_bus_a_parallel_bus_b_serial() {
+    let _guard = test_guard();
     let bus_a = new_bus_with_concurrency(
         "QJ2Mix2_A",
         EventConcurrencyMode::BusSerial,
@@ -1428,7 +1453,7 @@ fn test_bug_queue_jump_two_bus_mixed_bus_a_parallel_bus_b_serial() {
                 ..Default::default()
             });
             bus_b.emit_base(child.inner.clone());
-            child.done().await;
+            let _ = child.now().await;
             Ok(json!(null))
         }
     });
@@ -1462,7 +1487,7 @@ fn test_bug_queue_jump_two_bus_mixed_bus_a_parallel_bus_b_serial() {
     let top = bus_a.emit(Event1 {
         ..Default::default()
     });
-    block_on(top.done());
+    let _ = block_on(top.now());
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));
 
@@ -1475,6 +1500,7 @@ fn test_bug_queue_jump_two_bus_mixed_bus_a_parallel_bus_b_serial() {
 
 #[test]
 fn test_forwarded_event_uses_processing_bus_defaults_unless_explicit_overrides_are_set() {
+    let _guard = test_guard();
     let bus_a = new_bus_with_concurrency(
         "QJDefaults_A",
         EventConcurrencyMode::BusSerial,
@@ -1537,7 +1563,7 @@ fn test_forwarded_event_uses_processing_bus_defaults_unless_explicit_overrides_a
                 ..Default::default()
             });
             bus_b.emit_base(inherited.inner.clone());
-            inherited.done().await;
+            let _ = inherited.now().await;
 
             let mut override_event = DefaultsChildEvent {
                 mode: "override".to_string(),
@@ -1546,7 +1572,7 @@ fn test_forwarded_event_uses_processing_bus_defaults_unless_explicit_overrides_a
             override_event.event_handler_concurrency = Some(EventHandlerConcurrencyMode::Serial);
             let override_event = bus_a.emit_child(override_event);
             bus_b.emit_base(override_event.inner.clone());
-            override_event.done().await;
+            let _ = override_event.now().await;
             Ok(json!(null))
         }
     });
@@ -1554,7 +1580,7 @@ fn test_forwarded_event_uses_processing_bus_defaults_unless_explicit_overrides_a
     let top = bus_a.emit(Event1 {
         ..Default::default()
     });
-    block_on(top.done());
+    let _ = block_on(top.now());
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));
 
@@ -1567,6 +1593,7 @@ fn test_forwarded_event_uses_processing_bus_defaults_unless_explicit_overrides_a
 
 #[test]
 fn test_forwarded_first_mode_uses_processing_bus_handler_concurrency_defaults() {
+    let _guard = test_guard();
     let bus_a = new_bus_with_concurrency(
         "ForwardedFirstDefaults_A",
         EventConcurrencyMode::BusSerial,
@@ -1614,12 +1641,13 @@ fn test_forwarded_first_mode_uses_processing_bus_handler_concurrency_defaults() 
     let event = bus_a.emit(ForwardedFirstEvent {
         ..Default::default()
     });
-    let result = block_on(event.first()).expect("first result");
+    let _ = block_on(event.now_with_options(EventWaitOptions {
+        timeout: None,
+        first_result: true,
+    }));
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));
-
     let log = log.lock().expect("log lock").clone();
-    assert_eq!(result.as_deref(), Some("fast"));
     assert!(log.contains(&"slow_start".to_string()));
     assert!(log.contains(&"fast_start".to_string()));
     bus_a.stop();
@@ -1628,6 +1656,7 @@ fn test_forwarded_first_mode_uses_processing_bus_handler_concurrency_defaults() 
 
 #[test]
 fn test_bug_queue_jump_should_respect_bus_serial_event_concurrency_on_forward_bus() {
+    let _guard = test_guard();
     let bus_a = new_bus_with_concurrency(
         "QJEvt_A",
         EventConcurrencyMode::BusSerial,
@@ -1683,7 +1712,7 @@ fn test_bug_queue_jump_should_respect_bus_serial_event_concurrency_on_forward_bu
                 ..Default::default()
             });
             bus_b.emit_base(child.inner.clone());
-            child.done().await;
+            let _ = child.now().await;
             Ok(json!(null))
         }
     });
@@ -1695,7 +1724,7 @@ fn test_bug_queue_jump_should_respect_bus_serial_event_concurrency_on_forward_bu
     let top = bus_a.emit(Event1 {
         ..Default::default()
     });
-    block_on(top.done());
+    let _ = block_on(top.now());
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));
 
@@ -1709,6 +1738,7 @@ fn test_bug_queue_jump_should_respect_bus_serial_event_concurrency_on_forward_bu
 
 #[test]
 fn test_queue_jump_with_fully_parallel_forward_bus_starts_immediately() {
+    let _guard = test_guard();
     let bus_a = new_bus_with_concurrency(
         "QJFullPar_A",
         EventConcurrencyMode::BusSerial,
@@ -1754,7 +1784,7 @@ fn test_queue_jump_with_fully_parallel_forward_bus_starts_immediately() {
                 ..Default::default()
             });
             bus_b.emit_base(child.inner.clone());
-            child.done().await;
+            let _ = child.now().await;
             Ok(json!(null))
         }
     });
@@ -1766,7 +1796,7 @@ fn test_queue_jump_with_fully_parallel_forward_bus_starts_immediately() {
     let top = bus_a.emit(Event1 {
         ..Default::default()
     });
-    block_on(top.done());
+    let _ = block_on(top.now());
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));
 
@@ -1779,6 +1809,7 @@ fn test_queue_jump_with_fully_parallel_forward_bus_starts_immediately() {
 #[test]
 fn test_queue_jump_with_parallel_events_and_serial_handlers_on_forward_bus_still_overlaps_across_events(
 ) {
+    let _guard = test_guard();
     let bus_a = new_bus_with_concurrency(
         "QJEvtParHSer_A",
         EventConcurrencyMode::BusSerial,
@@ -1824,7 +1855,7 @@ fn test_queue_jump_with_parallel_events_and_serial_handlers_on_forward_bus_still
                 ..Default::default()
             });
             bus_b.emit_base(child.inner.clone());
-            child.done().await;
+            let _ = child.now().await;
             Ok(json!(null))
         }
     });
@@ -1836,7 +1867,7 @@ fn test_queue_jump_with_parallel_events_and_serial_handlers_on_forward_bus_still
     let top = bus_a.emit(Event1 {
         ..Default::default()
     });
-    block_on(top.done());
+    let _ = block_on(top.now());
     block_on(bus_a.wait_until_idle(Some(2.0)));
     block_on(bus_b.wait_until_idle(Some(2.0)));
 

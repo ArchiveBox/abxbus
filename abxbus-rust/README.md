@@ -41,7 +41,10 @@ let event = bus.emit(UserLoginEvent {
 });
 
 block_on(async {
-    event.done().await;
+    event.now().await?;
     println!("{}", event.inner.to_json_value());
+    Ok::<(), String>(())
 });
 ```
+
+Use `event.now_with_options(EventWaitOptions { first_result: true, ..Default::default() })` when you want to resolve as soon as the first valid result is available while the remaining handlers continue running.

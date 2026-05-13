@@ -345,7 +345,7 @@ anyCompleted, err := bus.Find(
 <Tab title="Python">
 
 ```python
-parent_event = await bus.emit(NavigateToUrlEvent(url='https://example.com'))
+parent_event = await bus.emit(NavigateToUrlEvent(url='https://example.com')).now()
 child = await bus.find(TabCreatedEvent, child_of=parent_event, past=5)
 ```
 
@@ -353,7 +353,7 @@ child = await bus.find(TabCreatedEvent, child_of=parent_event, past=5)
 <Tab title="TypeScript">
 
 ```ts
-const parentEvent = await bus.emit(NavigateToUrlEvent({ url: 'https://example.com' })).done()
+const parentEvent = await bus.emit(NavigateToUrlEvent({ url: 'https://example.com' })).now()
 const child = await bus.find(TabCreatedEvent, { child_of: parentEvent, past: 5 })
 ```
 
@@ -364,7 +364,7 @@ const child = await bus.find(TabCreatedEvent, { child_of: parentEvent, past: 5 }
 parentEvent := bus.Emit(abxbus.NewBaseEvent("NavigateToUrlEvent", map[string]any{
 	"url": "https://example.com",
 }))
-if _, err := parentEvent.Done(ctx); err != nil {
+if _, err := parentEvent.Now(); err != nil {
 	panic(err)
 }
 child, err := bus.Find("TabCreatedEvent", nil, &abxbus.FindOptions{
@@ -387,7 +387,7 @@ event = (
     or await bus.find(ScreenshotEvent, past=False, future=5)
     or bus.emit(ScreenshotEvent())
 )
-await event
+await event.now()
 ```
 
 </Tab>
@@ -398,7 +398,7 @@ const event =
   (await bus.find(ScreenshotEvent, { past: 10, future: false })) ??
   (await bus.find(ScreenshotEvent, { past: false, future: 5 })) ??
   bus.emit(ScreenshotEvent({}))
-await event.done()
+await event.now()
 ```
 
 </Tab>
@@ -418,7 +418,7 @@ if event == nil {
 if event == nil {
 	event = bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", nil))
 }
-if _, err := event.Done(ctx); err != nil {
+if _, err := event.Now(); err != nil {
 	panic(err)
 }
 ```
@@ -429,7 +429,7 @@ if _, err := event.Done(ctx); err != nil {
 ## Important behavior
 
 - `find()` resolves when an event is emitted, not when handlers finish.
-- To wait for handler completion, await the returned event (`await event` in Python, `await event.done()` in TypeScript).
+- To wait for handler completion, call `await event.now()` in Python or TypeScript.
 - If no match is found (or `future` times out), `find()` returns `None` / `null`.
 - If both `past` and `future` are `false`, it returns immediately with no match.
 

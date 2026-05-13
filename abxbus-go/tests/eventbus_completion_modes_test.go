@@ -21,7 +21,7 @@ func TestCompletionModeAllWaitsForAllHandlers(t *testing.T) {
 		return "slow", nil
 	}, nil)
 	e := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
-	if _, err := e.Done(context.Background()); err != nil {
+	if _, err := e.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if !slowDone {
@@ -41,7 +41,10 @@ func TestCompletionModeFirstSerialStopsAfterFirstNonNil(t *testing.T) {
 		return "second", nil
 	}, nil)
 	e := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
-	result, err := e.First(context.Background())
+	if _, err := e.Now(); err != nil {
+		t.Fatal(err)
+	}
+	result, err := e.EventResult(&abxbus.EventResultOptions{RaiseIfAny: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +81,13 @@ func TestCompletionModeFirstParallelReturnsFastAndCancelsSlow(t *testing.T) {
 	}, nil)
 	bus.On("Evt", "fast", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) { return "fast", nil }, nil)
 
-	result, err := bus.Emit(abxbus.NewBaseEvent("Evt", nil)).First(context.Background())
+	event := abxbus.NewBaseEvent("Evt", nil)
+	event.EventHandlerCompletion = abxbus.EventHandlerCompletionFirst
+	emitted := bus.Emit(event)
+	if _, err := emitted.Now(); err != nil {
+		t.Fatal(err)
+	}
+	result, err := emitted.EventResult(&abxbus.EventResultOptions{RaiseIfAny: false})
 	if err != nil {
 		t.Fatal(err)
 	}

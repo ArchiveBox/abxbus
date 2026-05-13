@@ -246,8 +246,12 @@ export class LockManager {
   }
 
   _getActiveHandlerResultForCurrentAsyncContext(): EventResult | undefined {
-    const result = handler_context_storage?.getStore() as EventResult | undefined
+    const result = this._getRawActiveHandlerResultForCurrentAsyncContext()
     return result?.status === 'started' ? result : undefined
+  }
+
+  _getRawActiveHandlerResultForCurrentAsyncContext(): EventResult | undefined {
+    return handler_context_storage?.getStore() as EventResult | undefined
   }
 
   _getActiveHandlerResults(): EventResult[] {

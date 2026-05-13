@@ -36,7 +36,7 @@ func TestEmitAndDispatchUseDefaultBehavior(t *testing.T) {
 	}, nil)
 
 	e := bus.Dispatch(abxbus.NewBaseEvent("CreateUserEvent", map[string]any{"email": "a@b.com"}))
-	if _, err := e.Done(context.Background()); err != nil {
+	if _, err := e.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if e.EventStatus != "completed" {
@@ -49,7 +49,7 @@ func TestEmitAndDispatchUseDefaultBehavior(t *testing.T) {
 		t.Fatalf("expected 2 event results, got %d", len(e.EventResults))
 	}
 
-	values, err := e.EventResultsList(context.Background(), nil, &abxbus.EventResultsListOptions{RaiseIfAny: false, RaiseIfNone: false})
+	values, err := e.EventResultsList(&abxbus.EventResultOptions{RaiseIfAny: false, RaiseIfNone: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestMaxHistoryDropFalseRejectsNewDispatchWhenHistoryIsFull(t *testing.T) {
 
 	for i := 1; i <= 2; i++ {
 		event := bus.Emit(abxbus.NewBaseEvent("NoDropEvent", map[string]any{"seq": i}))
-		if _, err := event.Done(context.Background()); err != nil {
+		if _, err := event.Now(); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -142,7 +142,7 @@ func TestZeroHistorySizeKeepsInflightAndDropsOnCompletion(t *testing.T) {
 
 	close(release)
 	for _, event := range []*abxbus.BaseEvent{first, second} {
-		if _, err := event.Done(context.Background()); err != nil {
+		if _, err := event.Now(); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -175,7 +175,7 @@ func TestZeroHistoryNoDropAllowsBurstQueueingAndDropsCompletedEvents(t *testing.
 
 	close(release)
 	for _, event := range events {
-		if _, err := event.Done(context.Background()); err != nil {
+		if _, err := event.Now(); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -194,7 +194,7 @@ func TestEventResultReturnsFirstCompletedResult(t *testing.T) {
 		return map[string]any{"user_id": "abc"}, nil
 	}, nil)
 	e := bus.Emit(abxbus.NewBaseEvent("ResultEvent", map[string]any{"email": "a@b.com"}))
-	result, err := e.EventResult(context.Background())
+	result, err := e.EventResult()
 	if err != nil {
 		t.Fatal(err)
 	}

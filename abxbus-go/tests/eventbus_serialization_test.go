@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-	"time"
 
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 )
@@ -42,7 +41,7 @@ func TestEventBusSerializationRoundtripPreservesConfigHandlersHistory(t *testing
 	})
 	h := bus.On("Evt", "h", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) { return "ok", nil }, nil)
 	e := bus.Emit(abxbus.NewBaseEvent("Evt", map[string]any{"k": "v"}))
-	if _, err := e.Done(context.Background()); err != nil {
+	if _, err := e.Now(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -115,7 +114,7 @@ func TestEventBusSerializationRoundtripPreservesConfigHandlersHistory(t *testing
 	}
 
 	restored.On("Evt2", "h2", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) { return "ok2", nil }, nil)
-	v, err := restored.Emit(abxbus.NewBaseEvent("Evt2", nil)).EventResult(context.Background())
+	v, err := restored.Emit(abxbus.NewBaseEvent("Evt2", nil)).EventResult()
 	if err != nil || v != "ok2" {
 		t.Fatalf("restored bus should remain functional, result=%#v err=%v", v, err)
 	}
@@ -152,21 +151,21 @@ func TestEventBusSerializationPreservesUnboundedHistoryNull(t *testing.T) {
 	}
 }
 
-func TestEventBusFromJSONPreservesNullEventTimeout(t *testing.T) {
+func TestEventBusFromJSONNullEventTimeoutUsesDefault(t *testing.T) {
 	data := []byte(`{"id":"timeout-null-bus","name":"TimeoutNullBus","max_history_size":100,"max_history_drop":false,"event_concurrency":"bus-serial","event_timeout":null,"event_slow_timeout":null,"event_handler_concurrency":"serial","event_handler_completion":"all","event_handler_slow_timeout":null,"event_handler_detect_file_paths":false,"handlers":{},"handlers_by_key":{},"event_history":{},"pending_event_queue":[]}`)
 	restored, err := abxbus.EventBusFromJSON(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restored.EventTimeout != nil {
-		t.Fatalf("JSON event_timeout:null should disable the bus timeout, got %#v", restored.EventTimeout)
+	if restored.EventTimeout == nil || *restored.EventTimeout != 60.0 {
+		t.Fatalf("JSON event_timeout:null should use the default bus timeout, got %#v", restored.EventTimeout)
 	}
 	roundtripped, err := restored.ToJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(roundtripped, []byte(`"event_timeout":null`)) {
-		t.Fatalf("expected event_timeout null to survive roundtrip: %s", string(roundtripped))
+	if !bytes.Contains(roundtripped, []byte(`"event_timeout":60`)) {
+		t.Fatalf("expected event_timeout default to survive roundtrip: %s", string(roundtripped))
 	}
 }
 
@@ -179,7 +178,7 @@ func TestEventBusFromJSONDefaultsMissingHandlerMaps(t *testing.T) {
 	restored.On("Evt", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		return "ok", nil
 	}, nil)
-	result, err := restored.Emit(abxbus.NewBaseEvent("Evt", nil)).EventResult(context.Background())
+	result, err := restored.Emit(abxbus.NewBaseEvent("Evt", nil)).EventResult()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,9 +219,7 @@ func TestEventBusSerializationPreservesHandlerRegistrationOrderThroughJSONAndRes
 		t.Fatalf("handlers_by_key order mismatch: got %v want %v", got, expectedIDs)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if _, err := bus.Emit(abxbus.NewBaseEvent("HandlerOrderEvent", nil)).Done(ctx); err != nil {
+	if _, err := bus.Emit(abxbus.NewBaseEvent("HandlerOrderEvent", nil)).Now(); err != nil {
 		t.Fatal(err)
 	}
 	if len(originalOrder) != 2 || originalOrder[0] != "first" || originalOrder[1] != "second" {
@@ -268,9 +265,7 @@ func TestEventBusSerializationPreservesHandlerRegistrationOrderThroughJSONAndRes
 		t.Fatalf("reattached handlers_by_key order mismatch: got %v want %v", got, expectedIDs)
 	}
 
-	restoredCtx, restoredCancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer restoredCancel()
-	if _, err := restored.Emit(abxbus.NewBaseEvent("HandlerOrderEvent", nil)).Done(restoredCtx); err != nil {
+	if _, err := restored.Emit(abxbus.NewBaseEvent("HandlerOrderEvent", nil)).Now(); err != nil {
 		t.Fatal(err)
 	}
 	if len(restoredOrder) != 2 || restoredOrder[0] != "first" || restoredOrder[1] != "second" {
@@ -345,20 +340,18 @@ func TestEventBusSerializationPreservesPendingQueueIDs(t *testing.T) {
 		t.Fatalf("restored pending_event_queue missing second event id")
 	}
 
-	timedCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
 	restoredQueued := restored.EventHistory.GetEvent(second.EventID)
 	if restoredQueued == nil {
 		close(release)
 		t.Fatalf("restored history missing queued event")
 	}
-	if _, err := restoredQueued.Done(timedCtx); err != nil {
+	if _, err := restoredQueued.Now(); err != nil {
 		close(release)
 		t.Fatalf("restored queued event should still be processable: %v", err)
 	}
 
 	close(release)
-	if _, err := first.Done(context.Background()); err != nil {
+	if _, err := first.Now(); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -16,7 +16,7 @@ fn schema_event(event_type: &str, schema: Option<Value>) -> Arc<BaseEvent> {
     event
 }
 
-fn first_result(event: &Arc<BaseEvent>) -> EventResult {
+fn first_event_result_record(event: &Arc<BaseEvent>) -> EventResult {
     event
         .inner
         .lock()
@@ -34,7 +34,7 @@ fn assert_schema_roundtrips(schema: Value) {
 }
 
 fn wait(event: &Arc<BaseEvent>) {
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 }
 
 #[test]
@@ -56,7 +56,7 @@ fn test_typed_result_schema_validates_and_parses_handler_result() {
     let event = bus.emit_base(schema_event("TypedResultEvent", Some(schema)));
     wait(&event);
 
-    let result = first_result(&event);
+    let result = first_event_result_record(&event);
     assert_eq!(
         result.status,
         abxbus_rust::event_result::EventResultStatus::Completed
@@ -77,7 +77,7 @@ fn test_result_type_stored_in_event_result() {
     let event = bus.emit_base(schema_event("StringEvent", Some(schema.clone())));
     wait(&event);
 
-    let result = first_result(&event);
+    let result = first_event_result_record(&event);
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result_type_json(&event), Some(schema));
     assert!(
@@ -122,7 +122,7 @@ fn test_simple_typed_result_model_roundtrip_and_status() {
         abxbus_rust::types::EventStatus::Completed
     );
 
-    let result = first_result(&event);
+    let result = first_event_result_record(&event);
     assert_eq!(result.status, EventResultStatus::Completed);
     assert!(result.error.is_none());
     assert_eq!(result.result, Some(json!({"value": "hello", "count": 42})));
@@ -330,7 +330,7 @@ fn test_eventspec_result_schema_runtime_enforcement() {
         ..Default::default()
     });
     wait(&event.inner);
-    let result = first_result(&event.inner);
+    let result = first_event_result_record(&event.inner);
     assert_eq!(result.status, EventResultStatus::Completed);
     let typed: ModuleLevelResult =
         serde_json::from_value(result.result.expect("result")).expect("typed result");
@@ -349,7 +349,7 @@ fn test_eventspec_result_schema_runtime_enforcement() {
         ..Default::default()
     });
     wait(&invalid_event.inner);
-    let invalid_result = first_result(&invalid_event.inner);
+    let invalid_result = first_event_result_record(&invalid_event.inner);
     assert_eq!(invalid_result.status, EventResultStatus::Error);
     assert!(invalid_result
         .error
@@ -476,8 +476,8 @@ fn test_built_in_result_schemas_validate_handler_results() {
     wait(&string_event);
     wait(&number_event);
 
-    let string_result = first_result(&string_event);
-    let number_result = first_result(&number_event);
+    let string_result = first_event_result_record(&string_event);
+    let number_result = first_event_result_record(&number_event);
     assert_eq!(
         string_result.status,
         abxbus_rust::event_result::EventResultStatus::Completed
@@ -519,7 +519,7 @@ fn test_event_result_type_supports_constructor_shorthands_and_enforces_them() {
         let event = bus.emit_base(schema_event(event_type, Some(schema)));
         wait(&event);
         assert_eq!(
-            first_result(&event).status,
+            first_event_result_record(&event).status,
             abxbus_rust::event_result::EventResultStatus::Completed
         );
     }
@@ -534,7 +534,7 @@ fn test_event_result_type_supports_constructor_shorthands_and_enforces_them() {
         Some(json!({"type": "number"})),
     ));
     wait(&invalid);
-    let invalid_result = first_result(&invalid);
+    let invalid_result = first_event_result_record(&invalid);
     assert_eq!(
         invalid_result.status,
         abxbus_rust::event_result::EventResultStatus::Error
@@ -562,7 +562,7 @@ fn test_invalid_handler_result_marks_error_when_schema_is_defined() {
     ));
     wait(&event);
 
-    let result = first_result(&event);
+    let result = first_event_result_record(&event);
     assert_eq!(
         result.status,
         abxbus_rust::event_result::EventResultStatus::Error
@@ -587,7 +587,7 @@ fn test_no_schema_leaves_raw_handler_result_untouched() {
     let event = bus.emit_base(schema_event("NoSchemaEvent", None));
     wait(&event);
 
-    let result = first_result(&event);
+    let result = first_event_result_record(&event);
     assert_eq!(
         result.status,
         abxbus_rust::event_result::EventResultStatus::Completed
@@ -615,7 +615,7 @@ fn test_complex_result_schema_validates_nested_data() {
     let event = bus.emit_base(schema_event("ComplexResultEvent", Some(schema)));
     wait(&event);
 
-    let result = first_result(&event);
+    let result = first_event_result_record(&event);
     assert_eq!(
         result.status,
         abxbus_rust::event_result::EventResultStatus::Completed
@@ -650,7 +650,7 @@ fn test_from_json_converts_event_result_type_into_schema() {
     let dispatched = bus.emit_base(restored);
     wait(&dispatched);
 
-    let result = first_result(&dispatched);
+    let result = first_event_result_record(&dispatched);
     assert_eq!(
         result.status,
         abxbus_rust::event_result::EventResultStatus::Completed
@@ -698,7 +698,7 @@ fn test_from_json_reconstructs_primitive_json_schema() {
     let dispatched = bus.emit_base(restored);
     wait(&dispatched);
 
-    let result = first_result(&dispatched);
+    let result = first_event_result_record(&dispatched);
     assert_eq!(
         result.status,
         abxbus_rust::event_result::EventResultStatus::Completed
@@ -720,7 +720,7 @@ fn test_fromjson_reconstructs_integer_and_null_schemas_for_runtime_validation() 
     ));
     wait(&int_event);
     assert_eq!(
-        first_result(&int_event).status,
+        first_event_result_record(&int_event).status,
         EventResultStatus::Completed
     );
 
@@ -735,7 +735,7 @@ fn test_fromjson_reconstructs_integer_and_null_schemas_for_runtime_validation() 
     ));
     wait(&int_bad_event);
     assert_eq!(
-        first_result(&int_bad_event).status,
+        first_event_result_record(&int_bad_event).status,
         EventResultStatus::Error
     );
 
@@ -745,7 +745,7 @@ fn test_fromjson_reconstructs_integer_and_null_schemas_for_runtime_validation() 
     let null_event = bus.emit_base(schema_event("RawNullEvent", Some(json!({"type": "null"}))));
     wait(&null_event);
     assert_eq!(
-        first_result(&null_event).status,
+        first_event_result_record(&null_event).status,
         EventResultStatus::Completed
     );
     bus.stop();
@@ -821,7 +821,7 @@ fn test_json_schema_list_of_models_deserialization() {
     });
     let valid_event = bus.emit_base(schema_event("ListOfModelsValidEvent", Some(schema.clone())));
     wait(&valid_event);
-    let valid_result = first_result(&valid_event);
+    let valid_result = first_event_result_record(&valid_event);
     assert_eq!(valid_result.status, EventResultStatus::Completed);
     assert_eq!(
         valid_result.result,
@@ -834,7 +834,7 @@ fn test_json_schema_list_of_models_deserialization() {
     let invalid_event = bus.emit_base(schema_event("ListOfModelsInvalidEvent", Some(schema)));
     wait(&invalid_event);
     assert_eq!(
-        first_result(&invalid_event).status,
+        first_event_result_record(&invalid_event).status,
         EventResultStatus::Error
     );
     bus.stop();
@@ -874,7 +874,7 @@ fn test_json_schema_nested_object_collection_deserialization() {
     let valid_event = bus.emit_base(schema_event("NestedObjectValidEvent", Some(schema.clone())));
     wait(&valid_event);
     assert_eq!(
-        first_result(&valid_event).status,
+        first_event_result_record(&valid_event).status,
         EventResultStatus::Completed
     );
 
@@ -884,7 +884,7 @@ fn test_json_schema_nested_object_collection_deserialization() {
     let invalid_event = bus.emit_base(schema_event("NestedObjectInvalidEvent", Some(schema)));
     wait(&invalid_event);
     assert_eq!(
-        first_result(&invalid_event).status,
+        first_event_result_record(&invalid_event).status,
         EventResultStatus::Error
     );
     bus.stop();
@@ -903,7 +903,7 @@ fn test_type_adapter_validation() {
     let valid_event = bus.emit_base(schema_event("TypeAdapterValidEvent", Some(schema.clone())));
     wait(&valid_event);
     assert_eq!(
-        first_result(&valid_event).status,
+        first_event_result_record(&valid_event).status,
         EventResultStatus::Completed
     );
 
@@ -914,7 +914,7 @@ fn test_type_adapter_validation() {
     );
     let invalid_event = bus.emit_base(schema_event("TypeAdapterInvalidEvent", Some(schema)));
     wait(&invalid_event);
-    let invalid_result = first_result(&invalid_event);
+    let invalid_result = first_event_result_record(&invalid_event);
     assert_eq!(invalid_result.status, EventResultStatus::Error);
     assert!(invalid_result
         .error
@@ -959,7 +959,10 @@ fn test_json_schema_typed_dict_rehydrates_to_pydantic_model() {
     });
     let event = bus.emit_base(schema_event("TypedDictValidEvent", Some(schema)));
     wait(&event);
-    assert_eq!(first_result(&event).status, EventResultStatus::Completed);
+    assert_eq!(
+        first_event_result_record(&event).status,
+        EventResultStatus::Completed
+    );
     bus.stop();
 }
 
@@ -984,7 +987,10 @@ fn test_json_schema_optional_typed_dict_is_lax_on_missing_fields() {
         });
         let event = bus.emit_base(schema_event(event_type, Some(optional_schema.clone())));
         wait(&event);
-        assert_eq!(first_result(&event).status, EventResultStatus::Completed);
+        assert_eq!(
+            first_event_result_record(&event).status,
+            EventResultStatus::Completed
+        );
     }
     bus.stop();
 }
@@ -1007,7 +1013,10 @@ fn test_json_schema_dataclass_rehydrates_to_pydantic_model() {
     });
     let event = bus.emit_base(schema_event("DataclassValidEvent", Some(schema)));
     wait(&event);
-    assert_eq!(first_result(&event).status, EventResultStatus::Completed);
+    assert_eq!(
+        first_event_result_record(&event).status,
+        EventResultStatus::Completed
+    );
     bus.stop();
 }
 
@@ -1032,7 +1041,10 @@ fn test_json_schema_list_of_dataclass_rehydrates_to_list_of_models() {
     });
     let event = bus.emit_base(schema_event("DataclassListValidEvent", Some(schema)));
     wait(&event);
-    assert_eq!(first_result(&event).status, EventResultStatus::Completed);
+    assert_eq!(
+        first_event_result_record(&event).status,
+        EventResultStatus::Completed
+    );
     bus.stop();
 }
 
@@ -1056,7 +1068,7 @@ fn test_json_schema_nested_object_and_array_runtime_enforcement() {
         Some(nested_schema.clone()),
     ));
     wait(&valid_event);
-    let valid_result = first_result(&valid_event);
+    let valid_result = first_event_result_record(&valid_event);
     assert_eq!(valid_result.status, EventResultStatus::Completed);
     assert_eq!(
         valid_result.result,
@@ -1073,7 +1085,7 @@ fn test_json_schema_nested_object_and_array_runtime_enforcement() {
         Some(nested_schema),
     ));
     wait(&invalid_event);
-    let invalid_result = first_result(&invalid_event);
+    let invalid_result = first_event_result_record(&invalid_event);
     assert_eq!(invalid_result.status, EventResultStatus::Error);
     assert!(invalid_result
         .error
@@ -1119,7 +1131,7 @@ fn test_module_level_runtime_enforcement() {
     ));
     wait(&valid_event);
     assert_eq!(
-        first_result(&valid_event).status,
+        first_event_result_record(&valid_event).status,
         EventResultStatus::Completed
     );
 
@@ -1130,7 +1142,7 @@ fn test_module_level_runtime_enforcement() {
     );
     let invalid_event = bus.emit_base(schema_event("RuntimeInvalidEvent", Some(module_schema)));
     wait(&invalid_event);
-    let invalid_result = first_result(&invalid_event);
+    let invalid_result = first_event_result_record(&invalid_event);
     assert_eq!(invalid_result.status, EventResultStatus::Error);
     assert!(invalid_result
         .error
@@ -1182,7 +1194,7 @@ fn test_roundtrip_preserves_complex_result_schema_types() {
     let dispatched = bus.emit_base(roundtripped);
     wait(&dispatched);
 
-    let result = first_result(&dispatched);
+    let result = first_event_result_record(&dispatched);
     assert_eq!(
         result.status,
         abxbus_rust::event_result::EventResultStatus::Completed

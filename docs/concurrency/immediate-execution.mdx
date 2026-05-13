@@ -31,7 +31,7 @@ bus = EventBus('RpcBus')
 
 async def on_parent(event: ParentEvent) -> str:
     child = event.emit(ChildEvent())
-    await child  # queue-jump while still inside this handler
+    await child.now()  # queue-jump while still inside this handler
     value = await child.event_result()
     return f'parent got: {value}'
 
@@ -56,8 +56,8 @@ const bus = new EventBus('RpcBus')
 
 bus.on(ParentEvent, async (event) => {
   const child = event.emit(ChildEvent({}))
-  await child.done() // queue-jump while still inside this handler
-  return `parent got: ${child.event_result}`
+  await child.now() // queue-jump while still inside this handler
+  return `parent got: ${await child.eventResult()}`
 })
 
 bus.on(ChildEvent, async () => 'child response')
@@ -87,7 +87,7 @@ let bus = EventBus::new(Some("RpcBus".to_string()));
 bus.on(ParentEvent, |event: ParentEvent| async move {
     let current_bus = event.event_bus().expect("handler bus");
     let child = current_bus.emit_child(ChildEvent { ..Default::default() });
-    child.done().await; // queue-jump while still inside this handler
+    child.now().await; // queue-jump while still inside this handler
     let value = child.event_result(Default::default()).await?;
     Ok(json!(format!("parent got: {value}")))
 });
@@ -105,10 +105,10 @@ bus := abxbus.NewEventBus("RpcBus", nil)
 
 bus.On("ParentEvent", "on_parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 	child := event.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
-	if _, err := child.Done(ctx); err != nil {
+	if _, err := child.Now(); err != nil {
 		return nil, err
 	}
-	value, err := child.EventResult(ctx)
+	value, err := child.EventResult()
 	if err != nil {
 		return nil, err
 	}
@@ -180,9 +180,9 @@ const bus = new EventBus('ParallelRpcBus', { event_concurrency: 'parallel' })
 
 bus.on(ParentEvent, async (event) => {
   const settled = await Promise.allSettled([
-    event.emit(SomeChildEvent1({})).done(),
-    event.emit(SomeChildEvent2({})).done(),
-    event.emit(SomeChildEvent3({})).done(),
+    event.emit(SomeChildEvent1({})).now(),
+    event.emit(SomeChildEvent2({})).now(),
+    event.emit(SomeChildEvent3({})).now(),
   ])
 
   for (const result of settled) {
@@ -211,7 +211,7 @@ bus.On("ParentEvent", "on_parent", func(ctx context.Context, event *abxbus.BaseE
 	}
 
 	for _, child := range children {
-		if _, err := child.Done(ctx); err != nil {
+		if _, err := child.Now(); err != nil {
 			fmt.Printf("child failed: %v\n", err)
 			continue
 		}
@@ -224,7 +224,7 @@ bus.On("ParentEvent", "on_parent", func(ctx context.Context, event *abxbus.BaseE
 </Tab>
 </Tabs>
 
-Python note: `asyncio.gather(..., return_exceptions=True)` is the closest `Promise.allSettled(...)` equivalent here. In Rust, call `done().await` on each emitted child to take the same immediate queue-jump path. In Go, call `Done(ctx)` on each emitted child.
+Python note: `asyncio.gather(..., return_exceptions=True)` is the closest `Promise.allSettled(...)` equivalent here. In Rust, call `now().await` on each emitted child to take the same immediate queue-jump path. In Go, call `Now()` on each emitted child.
 
 ## Execution order example
 
@@ -253,7 +253,7 @@ async def on_parent(event: ParentEvent) -> None:
     # Detached top-level work: no parent link is recorded for the sibling.
     bus.emit(SiblingEvent())
     child = event.emit(ChildEvent())
-    await child
+    await child.now()
     order.append('parent_end')
 
 async def on_child(_: ChildEvent) -> None:
@@ -266,7 +266,7 @@ bus.on(ParentEvent, on_parent)
 bus.on(ChildEvent, on_child)
 bus.on(SiblingEvent, on_sibling)
 
-await bus.emit(ParentEvent())
+await bus.emit(ParentEvent()).now()
 await bus.wait_until_idle()
 
 assert order.index('child') < order.index('parent_end')
@@ -294,7 +294,7 @@ bus.on(ParentEvent, async (event) => {
   // Detached top-level work: no parent link is recorded for the sibling.
   bus.emit(SiblingEvent({}))
   const child = event.emit(ChildEvent({}))
-  await child.done()
+  await child.now()
   order.push('parent_end')
 })
 
@@ -306,7 +306,7 @@ bus.on(SiblingEvent, async () => {
   order.push('sibling')
 })
 
-await bus.emit(ParentEvent({})).done()
+await bus.emit(ParentEvent({})).now()
 await bus.waitUntilIdle()
 
 if (!(order.indexOf('child') < order.indexOf('parent_end'))) throw new Error('child should finish before parent resumes')
@@ -328,7 +328,7 @@ bus.On("ParentEvent", "on_parent", func(ctx context.Context, event *abxbus.BaseE
 	// Detached top-level work: no parent link is recorded for the sibling.
 	bus.Emit(abxbus.NewBaseEvent("SiblingEvent", nil))
 	child := event.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
-	if _, err := child.Done(ctx); err != nil {
+	if _, err := child.Now(); err != nil {
 		return nil, err
 	}
 	order = append(order, "parent_end")
@@ -346,7 +346,7 @@ bus.On("SiblingEvent", "on_sibling", func(ctx context.Context, event *abxbus.Bas
 }, nil)
 
 parent := bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
-if _, err := parent.Done(context.Background()); err != nil {
+if _, err := parent.Now(); err != nil {
 	panic(err)
 }
 if ok := bus.WaitUntilIdle(nil); !ok {
@@ -369,11 +369,11 @@ if ok := bus.WaitUntilIdle(nil); !ok {
 ## Notes
 
 - In Python, `await child_event` inside a handler is the immediate path.
-- In Python, `await child_event.event_completed()` keeps normal queue order (non-queue-jump wait).
-- In TypeScript, use `await child_event.done()`.
-- In TypeScript, `await child_event.eventCompleted()` keeps normal queue order (non-queue-jump wait).
-- In Go, use `childEvent.Done(ctx)` for the immediate path.
-- In Go, use `childEvent.EventCompleted(ctx)` to keep normal queue order.
+- In Python, `await child_event.wait()` keeps normal queue order (non-queue-jump wait).
+- In TypeScript, use `await child_event.now()`.
+- In TypeScript, `await child_event.wait()` keeps normal queue order (non-queue-jump wait).
+- In Go, use `childEvent.Now()` for the immediate path.
+- In Go, use `childEvent.Wait()` to keep normal queue order.
 
 ## Related pages
 

@@ -22,7 +22,7 @@ class ValidationError extends Error {
 // ─── Integration with EventBus ───────────────────────────────────────────────
 
 test('retry: works as event bus handler wrapper (inline HOF)', async () => {
-  const bus = new EventBus('RetryBus', { event_timeout: null })
+  const bus = new EventBus('RetryBus', { event_timeout: 0 })
   const TestEvent = BaseEvent.extend('TestEvent', {})
 
   let calls = 0
@@ -36,7 +36,7 @@ test('retry: works as event bus handler wrapper (inline HOF)', async () => {
   )
 
   const event = bus.emit(TestEvent({}))
-  await event.done()
+  await event.now()
 
   assert.equal(calls, 3)
   const result = Array.from(event.event_results.values())[0]
@@ -45,7 +45,7 @@ test('retry: works as event bus handler wrapper (inline HOF)', async () => {
 })
 
 test('retry: bus handler with retry_on_errors only retries matching errors (inline HOF)', async () => {
-  const bus = new EventBus('RetryFilterBus', { event_timeout: null })
+  const bus = new EventBus('RetryFilterBus', { event_timeout: 0 })
   const TestEvent = BaseEvent.extend('TestEvent', {})
 
   let calls = 0
@@ -58,7 +58,11 @@ test('retry: bus handler with retry_on_errors only retries matching errors (inli
   )
 
   const event = bus.emit(TestEvent({}))
-  await assert.rejects(event.done(), ValidationError)
+  await event.now()
+  await assert.rejects(
+    event.eventResult(),
+    (error: unknown) => error instanceof AggregateError && error.errors.some((entry: unknown) => entry instanceof ValidationError)
+  )
 
   assert.equal(calls, 1)
   const result = Array.from(event.event_results.values())[0]
@@ -67,7 +71,7 @@ test('retry: bus handler with retry_on_errors only retries matching errors (inli
 })
 
 test('retry: @retry() decorated method works with bus.on via bind', async () => {
-  const bus = new EventBus('DecoratorBus', { event_timeout: null })
+  const bus = new EventBus('DecoratorBus', { event_timeout: 0 })
   const TestEvent = BaseEvent.extend('TestEvent', {})
 
   class Handler {
@@ -85,7 +89,7 @@ test('retry: @retry() decorated method works with bus.on via bind', async () => 
   bus.on(TestEvent, handler.onTest.bind(handler))
 
   const event = bus.emit(TestEvent({}))
-  await event.done()
+  await event.now()
   assert.equal(handler.calls, 3)
   const result = Array.from(event.event_results.values())[0]
   assert.equal(result.result, 'handler ok')
@@ -96,7 +100,7 @@ test('retry: @retry() decorated method works with bus.on via bind', async () => 
 test('retry: @retry(scope=class) + bus.on via .bind — serializes across instances', async () => {
   clearSemaphoreRegistry()
 
-  const bus = new EventBus('ScopeClassBus', { event_timeout: null, event_handler_concurrency: 'parallel' })
+  const bus = new EventBus('ScopeClassBus', { event_timeout: 0, event_handler_concurrency: 'parallel' })
   const SomeEvent = BaseEvent.extend('ScopeClassEvent', {})
 
   let active = 0
@@ -122,12 +126,12 @@ test('retry: @retry(scope=class) + bus.on via .bind — serializes across instan
   new SomeService(bus)
 
   const event = bus.emit(SomeEvent({}))
-  await event.done()
+  await event.now()
   assert.equal(max_active, 1, 'class scope should serialize across instances')
 })
 
 test('retry: @retry(scope=instance) + bus.on via .bind — isolates per instance', async () => {
-  const bus = new EventBus('ScopeInstanceBus', { event_timeout: null, event_handler_concurrency: 'parallel' })
+  const bus = new EventBus('ScopeInstanceBus', { event_timeout: 0, event_handler_concurrency: 'parallel' })
   const SomeEvent = BaseEvent.extend('ScopeInstanceEvent', {})
 
   let active = 0
@@ -155,7 +159,7 @@ test('retry: @retry(scope=instance) + bus.on via .bind — isolates per instance
   new SomeService(bus)
 
   const event = bus.emit(SomeEvent({}))
-  await event.done()
+  await event.now()
 
   assert.equal(total_calls, 2, 'both handlers should have run')
   assert.equal(
@@ -168,7 +172,7 @@ test('retry: @retry(scope=instance) + bus.on via .bind — isolates per instance
 test('retry: @retry(scope=global) + bus.on via .bind — all calls share one semaphore', async () => {
   clearSemaphoreRegistry()
 
-  const bus = new EventBus('ScopeGlobalBus', { event_timeout: null, event_handler_concurrency: 'parallel' })
+  const bus = new EventBus('ScopeGlobalBus', { event_timeout: 0, event_handler_concurrency: 'parallel' })
   const SomeEvent = BaseEvent.extend('ScopeGlobalEvent', {})
 
   let active = 0
@@ -194,7 +198,7 @@ test('retry: @retry(scope=global) + bus.on via .bind — all calls share one sem
   new SomeService(bus)
 
   const event = bus.emit(SomeEvent({}))
-  await event.done()
+  await event.now()
   assert.equal(max_active, 1, 'global scope should serialize all calls')
 })
 
@@ -203,7 +207,7 @@ test('retry: @retry(scope=global) + bus.on via .bind — all calls share one sem
 test('retry: HOF retry()(fn).bind(instance) — instance scope works when bind is after wrap', async () => {
   clearSemaphoreRegistry()
 
-  const bus = new EventBus('HOFBindBus', { event_timeout: null, event_handler_concurrency: 'parallel' })
+  const bus = new EventBus('HOFBindBus', { event_timeout: 0, event_handler_concurrency: 'parallel' })
   const SomeEvent = BaseEvent.extend('HOFBindEvent', {})
 
   let active = 0
@@ -229,14 +233,14 @@ test('retry: HOF retry()(fn).bind(instance) — instance scope works when bind i
   bus.on(SomeEvent, handler.bind(some_instance_b))
 
   const event = bus.emit(SomeEvent({}))
-  await event.done()
+  await event.now()
   assert.equal(max_active, 2, 'bind-after-wrap: different instances should run in parallel')
 })
 
 // ─── retry wrapping emit→done (TECHNICALLY SUPPORTED, NOT RECOMMENDED) ──────
 
 test('retry: retry wrapping emit→done retries the full dispatch cycle (discouraged pattern)', async () => {
-  const bus = new EventBus('RetryEmitBus', { event_timeout: null, event_handler_concurrency: 'parallel' })
+  const bus = new EventBus('RetryEmitBus', { event_timeout: 0, event_handler_concurrency: 'parallel' })
 
   const TabsEvent = BaseEvent.extend('TabsEvent', {})
   const DOMEvent = BaseEvent.extend('DOMEvent', {})
@@ -265,12 +269,12 @@ test('retry: retry wrapping emit→done retries the full dispatch cycle (discour
   const [tabs_event, dom_event, screenshot_event] = await Promise.all([
     retry({ max_attempts: 4 })(async () => {
       const event = bus.emit(TabsEvent({}))
-      await event.done()
+      await event.now()
       if (event.event_errors.length) throw event.event_errors[0]
       return event
     })(),
-    bus.emit(DOMEvent({})).done(),
-    bus.emit(ScreenshotEvent({})).done(),
+    bus.emit(DOMEvent({})).now(),
+    bus.emit(ScreenshotEvent({})).now(),
   ])
 
   assert.equal(tabs_attempts, 3)

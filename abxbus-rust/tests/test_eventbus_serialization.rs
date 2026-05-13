@@ -47,7 +47,7 @@ fn assert_eventbus_json_roundtrip_uses_id_keyed_structures(bus_name: &str, bus_i
             event_concurrency: EventConcurrencyMode::Parallel,
             event_handler_concurrency: EventHandlerConcurrencyMode::Parallel,
             event_handler_completion: EventHandlerCompletionMode::First,
-            event_timeout: None,
+            event_timeout: Some(0.0),
             event_slow_timeout: Some(34.0),
             event_handler_slow_timeout: Some(12.0),
             event_handler_detect_file_paths: false,
@@ -61,7 +61,7 @@ fn assert_eventbus_json_roundtrip_uses_id_keyed_structures(bus_name: &str, bus_i
     let event = bus.emit(SerializableEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let payload = bus.to_json_value();
     assert_eq!(payload["id"], bus_id);
@@ -71,7 +71,7 @@ fn assert_eventbus_json_roundtrip_uses_id_keyed_structures(bus_name: &str, bus_i
     assert_eq!(payload["event_concurrency"], "parallel");
     assert_eq!(payload["event_handler_concurrency"], "parallel");
     assert_eq!(payload["event_handler_completion"], "first");
-    assert_eq!(payload["event_timeout"], serde_json::Value::Null);
+    assert_eq!(payload["event_timeout"], 0.0);
     assert_eq!(payload["event_slow_timeout"], 34.0);
     assert_eq!(payload["event_handler_slow_timeout"], 12.0);
     assert_eq!(payload["event_handler_detect_file_paths"], false);
@@ -169,7 +169,7 @@ fn test_eventbus_preserves_handler_registration_order_through_json_and_restore()
     let event = bus.emit(HandlerOrderEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.wait());
     assert_eq!(
         original_order.lock().expect("order").clone(),
         vec!["first".to_string(), "second".to_string()]
@@ -221,7 +221,7 @@ fn test_eventbus_preserves_handler_registration_order_through_json_and_restore()
     let restored_event = restored.emit(HandlerOrderEvent {
         ..Default::default()
     });
-    block_on(restored_event.done());
+    let _ = block_on(restored_event.wait());
     assert_eq!(
         restored_order.lock().expect("order").clone(),
         vec!["first".to_string(), "second".to_string()]
@@ -247,7 +247,7 @@ fn test_baseevent_model_validate_roundtrips_runtime_json_shape() {
     let event = bus.emit(SerializableEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let payload = event.inner.to_json_value();
     let restored_payload = BaseEvent::from_json_value(payload.clone()).to_json_value();
@@ -270,7 +270,7 @@ fn assert_eventbus_recreates_missing_handler_entries_from_event_result_metadata(
     let event = bus.emit(SerializableEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let mut payload = bus.to_json_value();
     payload["handlers"] = json!({});
@@ -336,8 +336,8 @@ fn assert_eventbus_promotes_pending_events_into_event_history() {
     assert!(event_history.contains_key(&pending_id));
     assert_eq!(payload["pending_event_queue"], json!([pending_id]));
 
-    block_on(first.done());
-    block_on(pending.done());
+    let _ = block_on(first.now());
+    let _ = block_on(pending.now());
     bus.stop();
 }
 

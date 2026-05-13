@@ -1,7 +1,10 @@
 package abxbus
 
 import (
+	"bytes"
 	"context"
+	"runtime"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -65,13 +68,23 @@ type LockManager struct {
 	active_mu               sync.Mutex
 	active_handler_result   []*EventResult
 	active_dispatch_context []context.Context
+	active_handler_context  []context.Context
+	active_handler_by_g     map[uint64][]*EventResult
+	active_dispatch_by_g    map[uint64][]context.Context
+	active_context_by_g     map[uint64][]context.Context
 
 	idle_mu      sync.Mutex
 	idle_waiters []chan struct{}
 }
 
 func NewLockManager(bus *EventBus) *LockManager {
-	return &LockManager{bus: bus, bus_event_lock: NewAsyncLock(1)}
+	return &LockManager{
+		bus:                  bus,
+		bus_event_lock:       NewAsyncLock(1),
+		active_handler_by_g:  map[uint64][]*EventResult{},
+		active_dispatch_by_g: map[uint64][]context.Context{},
+		active_context_by_g:  map[uint64][]context.Context{},
+	}
 }
 
 func (l *LockManager) getLockForEvent(event *BaseEvent) *AsyncLock {
@@ -136,14 +149,29 @@ func (l *LockManager) waitUntilRunloopResumed(ctx context.Context) error {
 	}
 }
 
-func (l *LockManager) runWithHandlerDispatchContext(result *EventResult, fn func() error) error {
+func (l *LockManager) runWithHandlerDispatchContext(result *EventResult, handlerCtx context.Context, fn func() error) error {
+	gid := currentGoroutineID()
 	l.active_mu.Lock()
 	l.active_handler_result = append(l.active_handler_result, result)
+	if l.active_handler_by_g == nil {
+		l.active_handler_by_g = map[uint64][]*EventResult{}
+	}
+	if l.active_dispatch_by_g == nil {
+		l.active_dispatch_by_g = map[uint64][]context.Context{}
+	}
+	if l.active_context_by_g == nil {
+		l.active_context_by_g = map[uint64][]context.Context{}
+	}
+	l.active_handler_by_g[gid] = append(l.active_handler_by_g[gid], result)
 	if result != nil && result.Event != nil && result.Event.dispatchCtx != nil {
 		l.active_dispatch_context = append(l.active_dispatch_context, result.Event.dispatchCtx)
+		l.active_dispatch_by_g[gid] = append(l.active_dispatch_by_g[gid], result.Event.dispatchCtx)
 	} else {
 		l.active_dispatch_context = append(l.active_dispatch_context, nil)
+		l.active_dispatch_by_g[gid] = append(l.active_dispatch_by_g[gid], nil)
 	}
+	l.active_handler_context = append(l.active_handler_context, handlerCtx)
+	l.active_context_by_g[gid] = append(l.active_context_by_g[gid], handlerCtx)
 	l.active_mu.Unlock()
 	defer func() {
 		l.active_mu.Lock()
@@ -152,7 +180,26 @@ func (l *LockManager) runWithHandlerDispatchContext(result *EventResult, fn func
 			if l.active_handler_result[i] == result {
 				l.active_handler_result = append(l.active_handler_result[:i], l.active_handler_result[i+1:]...)
 				l.active_dispatch_context = append(l.active_dispatch_context[:i], l.active_dispatch_context[i+1:]...)
+				l.active_handler_context = append(l.active_handler_context[:i], l.active_handler_context[i+1:]...)
 				break
+			}
+		}
+		if stack := l.active_handler_by_g[gid]; len(stack) > 0 {
+			l.active_handler_by_g[gid] = stack[:len(stack)-1]
+			if len(l.active_handler_by_g[gid]) == 0 {
+				delete(l.active_handler_by_g, gid)
+			}
+		}
+		if stack := l.active_dispatch_by_g[gid]; len(stack) > 0 {
+			l.active_dispatch_by_g[gid] = stack[:len(stack)-1]
+			if len(l.active_dispatch_by_g[gid]) == 0 {
+				delete(l.active_dispatch_by_g, gid)
+			}
+		}
+		if stack := l.active_context_by_g[gid]; len(stack) > 0 {
+			l.active_context_by_g[gid] = stack[:len(stack)-1]
+			if len(l.active_context_by_g[gid]) == 0 {
+				delete(l.active_context_by_g, gid)
 			}
 		}
 	}()
@@ -162,10 +209,26 @@ func (l *LockManager) runWithHandlerDispatchContext(result *EventResult, fn func
 func (l *LockManager) getActiveHandlerResult() *EventResult {
 	l.active_mu.Lock()
 	defer l.active_mu.Unlock()
+	gid := currentGoroutineID()
+	if stack := l.active_handler_by_g[gid]; len(stack) > 0 {
+		return stack[len(stack)-1]
+	}
+	return nil
+}
+
+func (l *LockManager) getAnyActiveHandlerResult() *EventResult {
+	l.active_mu.Lock()
+	defer l.active_mu.Unlock()
 	if len(l.active_handler_result) == 0 {
 		return nil
 	}
 	return l.active_handler_result[len(l.active_handler_result)-1]
+}
+
+func (l *LockManager) hasAnyActiveHandlerResult() bool {
+	l.active_mu.Lock()
+	defer l.active_mu.Unlock()
+	return len(l.active_handler_result) > 0
 }
 
 func (l *LockManager) waitForIdle(timeout *float64) bool {
@@ -238,8 +301,30 @@ func (l *LockManager) removeIdleWaiter(waiter chan struct{}) {
 func (l *LockManager) getActiveDispatchContext() context.Context {
 	l.active_mu.Lock()
 	defer l.active_mu.Unlock()
-	if len(l.active_dispatch_context) == 0 {
-		return nil
+	gid := currentGoroutineID()
+	if stack := l.active_dispatch_by_g[gid]; len(stack) > 0 {
+		return stack[len(stack)-1]
 	}
-	return l.active_dispatch_context[len(l.active_dispatch_context)-1]
+	return nil
+}
+
+func (l *LockManager) getActiveHandlerContext() context.Context {
+	l.active_mu.Lock()
+	defer l.active_mu.Unlock()
+	gid := currentGoroutineID()
+	if stack := l.active_context_by_g[gid]; len(stack) > 0 {
+		return stack[len(stack)-1]
+	}
+	return nil
+}
+
+func currentGoroutineID() uint64 {
+	var buf [64]byte
+	n := runtime.Stack(buf[:], false)
+	fields := bytes.Fields(buf[:n])
+	if len(fields) < 2 {
+		return 0
+	}
+	id, _ := strconv.ParseUint(string(fields[1]), 10, 64)
+	return id
 }

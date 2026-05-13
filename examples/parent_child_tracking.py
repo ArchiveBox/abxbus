@@ -39,7 +39,7 @@ async def main() -> None:
                 f'parent_id={short_id(grandchild.event_parent_id)}'
             )
 
-            await grandchild
+            await grandchild.now()
             print(f'  child resumed after awaiting grandchild: {short_id(grandchild.event_id)}')
             return f'child_completed:{event.stage}'
 
@@ -56,7 +56,7 @@ async def main() -> None:
                 f'{awaited_child.event_type}#{short_id(awaited_child.event_id)} '
                 f'parent_id={short_id(awaited_child.event_parent_id)}'
             )
-            await awaited_child
+            await awaited_child.now()
             print(f'  parent resumed after awaited child: {short_id(awaited_child.event_id)}')
 
             background_child = event.emit(ChildEvent(stage='background-child'))
@@ -72,7 +72,7 @@ async def main() -> None:
                 f'{direct_grandchild.event_type}#{short_id(direct_grandchild.event_id)} '
                 f'parent_id={short_id(direct_grandchild.event_parent_id)}'
             )
-            await direct_grandchild
+            await direct_grandchild.now()
 
             return 'parent_completed'
 
@@ -81,7 +81,7 @@ async def main() -> None:
         bus.on(ParentEvent, on_parent)
 
         parent = bus.emit(ParentEvent(workflow='demo-parent-child-tracking'))
-        await parent
+        await parent.now()
         await bus.wait_until_idle()
 
         print('\n=== Event History Relationships ===')

@@ -7,7 +7,7 @@ import (
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 )
 
-func TestDispatchLeavesEventConcurrencyDefaultsUnsetOnEvent(t *testing.T) {
+func TestEventConcurrencyRemainsUnsetOnDispatchAndResolvesDuringProcessing(t *testing.T) {
 	bus := abxbus.NewEventBus("DispatchDefaultsBus", &abxbus.EventBusOptions{
 		EventConcurrency:        abxbus.EventConcurrencyParallel,
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
@@ -18,14 +18,18 @@ func TestDispatchLeavesEventConcurrencyDefaultsUnsetOnEvent(t *testing.T) {
 	}, nil)
 
 	event := bus.Emit(abxbus.NewBaseEvent("DefaultsEvent", nil))
-	if event.EventConcurrency != "" || event.EventHandlerConcurrency != "" || event.EventHandlerCompletion != "" {
-		t.Fatalf("bus defaults should not be copied onto event at dispatch: %#v", event)
+	if event.EventConcurrency != "" ||
+		event.EventHandlerConcurrency != "" ||
+		event.EventHandlerCompletion != "" {
+		t.Fatalf("bus defaults should not be written onto event at dispatch: %#v", event)
 	}
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
-	if event.EventConcurrency != "" || event.EventHandlerConcurrency != "" || event.EventHandlerCompletion != "" {
-		t.Fatalf("bus defaults should remain resolved at processing time only: %#v", event)
+	if event.EventConcurrency != "" ||
+		event.EventHandlerConcurrency != "" ||
+		event.EventHandlerCompletion != "" {
+		t.Fatalf("bus defaults should not be written onto event after processing: %#v", event)
 	}
 }
 
@@ -43,7 +47,7 @@ func TestEventDispatchOverridesBeatBusDefaults(t *testing.T) {
 	event.EventConcurrency = abxbus.EventConcurrencyBusSerial
 	event.EventHandlerConcurrency = abxbus.EventHandlerConcurrencySerial
 	event.EventHandlerCompletion = abxbus.EventHandlerCompletionFirst
-	if _, err := bus.Emit(event).Done(context.Background()); err != nil {
+	if _, err := bus.Emit(event).Now(); err != nil {
 		t.Fatal(err)
 	}
 	if event.EventConcurrency != abxbus.EventConcurrencyBusSerial ||

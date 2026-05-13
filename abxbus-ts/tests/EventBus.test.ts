@@ -81,9 +81,9 @@ test('EventBus with null max_history_size means unlimited', () => {
   assert.equal(bus.event_history.max_history_size, null)
 })
 
-test('EventBus with null event_timeout disables timeouts', () => {
-  const bus = new EventBus('NoTimeoutBus', { event_timeout: null })
-  assert.equal(bus.event_timeout, null)
+test('EventBus with zero event_timeout disables timeouts', () => {
+  const bus = new EventBus('NoTimeoutBus', { event_timeout: 0 })
+  assert.equal(bus.event_timeout, 0)
 })
 
 test('EventBus auto-generates name when not provided', () => {
@@ -156,11 +156,11 @@ test('BaseEvent lifecycle methods are callable and preserve lifecycle behavior',
   assert.equal(standalone.event_status, 'started')
   standalone._markCompleted(false)
   assert.equal(standalone.event_status, 'completed')
-  await standalone.eventCompleted()
+  await standalone.wait()
 
   const bus = new EventBus('LifecycleMethodInvocationBus')
   const dispatched = bus.emit(LifecycleEvent({}))
-  await dispatched.eventCompleted()
+  await dispatched.wait()
   assert.equal(dispatched.event_status, 'completed')
 })
 
@@ -173,7 +173,7 @@ test('BaseEvent toJSON/fromJSON roundtrips runtime fields and event_results', as
   bus.on(RuntimeEvent, () => 'ok')
 
   const event = bus.emit(RuntimeEvent({}))
-  await event.done({ raise_if_any: false })
+  await event.now()
 
   const json = event.toJSON() as Record<string, unknown>
   assert.equal(json.event_status, 'completed')
@@ -224,7 +224,7 @@ test('fromJSON accepts event_parent_id: null and preserves it in toJSON output',
     event_id: '018f8e40-1234-7000-8000-000000001233',
     event_created_at: new Date('2025-01-01T00:00:00.000Z').toISOString(),
     event_type: 'MissingParentIdEvent',
-    event_timeout: null,
+    event_timeout: 0,
   })
   assert.equal(missing_field_event.event_parent_id, null)
 
@@ -233,7 +233,7 @@ test('fromJSON accepts event_parent_id: null and preserves it in toJSON output',
     event_created_at: new Date('2025-01-01T00:00:00.000Z').toISOString(),
     event_type: 'NullParentIdEvent',
     event_parent_id: null,
-    event_timeout: null,
+    event_timeout: 0,
   })
 
   assert.equal(event.event_parent_id, null)
@@ -248,7 +248,7 @@ test('event_emitted_by_handler_id defaults to null and accepts null in fromJSON'
     event_id: '018f8e40-1234-7000-8000-000000001239',
     event_created_at: new Date('2025-01-01T00:00:00.000Z').toISOString(),
     event_type: 'MissingEmittedByIdEvent',
-    event_timeout: null,
+    event_timeout: 0,
   })
   assert.equal(missing_field_event.event_emitted_by_handler_id, null)
 
@@ -257,7 +257,7 @@ test('event_emitted_by_handler_id defaults to null and accepts null in fromJSON'
     event_created_at: new Date('2025-01-01T00:00:00.000Z').toISOString(),
     event_type: 'NullEmittedByIdEvent',
     event_emitted_by_handler_id: null,
-    event_timeout: null,
+    event_timeout: 0,
   })
 
   assert.equal(json_event.event_emitted_by_handler_id, null)
@@ -270,7 +270,7 @@ test('fromJSON deserializes event_result_type and toJSON reserializes schema', (
     event_id: '018f8e40-1234-7000-8000-000000001235',
     event_created_at: new Date('2025-01-01T00:00:01.000Z').toISOString(),
     event_type: 'RawSchemaEvent',
-    event_timeout: null,
+    event_timeout: 0,
     event_result_type: raw_schema,
   })
   const json = event.toJSON() as Record<string, unknown>
@@ -286,11 +286,11 @@ test('fromJSON reconstructs integer and null schemas for runtime validation', as
     event_id: '018f8e40-1234-7000-8000-000000001236',
     event_created_at: new Date('2025-01-01T00:00:02.000Z').toISOString(),
     event_type: 'RawIntegerEvent',
-    event_timeout: null,
+    event_timeout: 0,
     event_result_type: { type: 'integer' },
   })
   bus.on('RawIntegerEvent', () => 123)
-  await bus.emit(int_event).done()
+  await bus.emit(int_event).now()
   const int_result = Array.from(int_event.event_results.values())[0]
   assert.equal(int_result.status, 'completed')
 
@@ -298,11 +298,11 @@ test('fromJSON reconstructs integer and null schemas for runtime validation', as
     event_id: '018f8e40-1234-7000-8000-000000001237',
     event_created_at: new Date('2025-01-01T00:00:03.000Z').toISOString(),
     event_type: 'RawIntegerEventBad',
-    event_timeout: null,
+    event_timeout: 0,
     event_result_type: { type: 'integer' },
   })
   bus.on('RawIntegerEventBad', () => 1.5)
-  await bus.emit(int_bad_event).done({ raise_if_any: false })
+  await bus.emit(int_bad_event).now()
   const int_bad_result = Array.from(int_bad_event.event_results.values())[0]
   assert.equal(int_bad_result.status, 'error')
 
@@ -310,11 +310,11 @@ test('fromJSON reconstructs integer and null schemas for runtime validation', as
     event_id: '018f8e40-1234-7000-8000-000000001238',
     event_created_at: new Date('2025-01-01T00:00:04.000Z').toISOString(),
     event_type: 'RawNullEvent',
-    event_timeout: null,
+    event_timeout: 0,
     event_result_type: { type: 'null' },
   })
   bus.on('RawNullEvent', () => null)
-  await bus.emit(null_event).done()
+  await bus.emit(null_event).now()
   const null_result = Array.from(null_event.event_results.values())[0]
   assert.equal(null_result.status, 'completed')
 
@@ -336,11 +336,11 @@ test('fromJSON reconstructs nested object/array result schemas', async () => {
     event_id: '018f8e40-1234-7000-8000-000000001239',
     event_created_at: new Date('2025-01-01T00:00:05.000Z').toISOString(),
     event_type: 'RawNestedSchemaEvent',
-    event_timeout: null,
+    event_timeout: 0,
     event_result_type: raw_nested_schema,
   })
   bus.on('RawNestedSchemaEvent', () => ({ items: [1, 2, 3], meta: { ok: true } }))
-  await bus.emit(valid_event).done()
+  await bus.emit(valid_event).now()
   const valid_result = Array.from(valid_event.event_results.values())[0]
   assert.equal(valid_result.status, 'completed')
 
@@ -348,11 +348,11 @@ test('fromJSON reconstructs nested object/array result schemas', async () => {
     event_id: '018f8e40-1234-7000-8000-000000001240',
     event_created_at: new Date('2025-01-01T00:00:06.000Z').toISOString(),
     event_type: 'RawNestedSchemaEventBad',
-    event_timeout: null,
+    event_timeout: 0,
     event_result_type: raw_nested_schema,
   })
   bus.on('RawNestedSchemaEventBad', () => ({ items: ['bad'], meta: { ok: 'yes' } }))
-  await bus.emit(invalid_event).done({ raise_if_any: false })
+  await bus.emit(invalid_event).now()
   const invalid_result = Array.from(invalid_event.event_results.values())[0]
   assert.equal(invalid_result.status, 'error')
 
@@ -393,7 +393,7 @@ test('event transitions through pending -> started -> completed', async () => {
   const event = bus.emit(TestEvent({}))
   const original = event._event_original ?? event
 
-  await event.done({ raise_if_any: false })
+  await event.now()
 
   assert.equal(status_during_handler, 'started')
   assert.equal(original.event_status, 'completed')
@@ -406,7 +406,7 @@ test('event with no handlers completes immediately', async () => {
   const OrphanEvent = BaseEvent.extend('OrphanEvent', {})
 
   const event = bus.emit(OrphanEvent({}))
-  await event.done({ raise_if_any: false })
+  await event.now()
 
   const original = event._event_original ?? event
   assert.equal(original.event_status, 'completed')
@@ -484,8 +484,8 @@ test('max_history_drop=false rejects new dispatch when history is full', async (
 
   bus.on(NoDropEvent, () => 'ok')
 
-  await bus.emit(NoDropEvent({ seq: 1 })).done()
-  await bus.emit(NoDropEvent({ seq: 2 })).done()
+  await bus.emit(NoDropEvent({ seq: 1 })).now()
+  await bus.emit(NoDropEvent({ seq: 2 })).now()
 
   assert.equal(bus.event_history.size, 2)
   assert.throws(() => bus.emit(NoDropEvent({ seq: 3 })), /history limit reached \(2\/2\); set event_history\.max_history_drop=true/)
@@ -516,7 +516,7 @@ test('max_history_size=0 with max_history_drop=false still allows unbounded queu
   assert.ok(bus.event_history.size >= 1)
 
   release()
-  await Promise.all(events.map((event) => event.done()))
+  await Promise.all(events.map((event) => event.now()))
   await bus.waitUntilIdle()
 
   assert.equal(bus.event_history.size, 0)
@@ -544,7 +544,7 @@ test('max_history_size=0 keeps in-flight events and drops them on completion', a
   assert.ok(bus.event_history.has(second.event_id))
 
   release()
-  await Promise.all([first.done(), second.done()])
+  await Promise.all([first.now(), second.now()])
   await bus.waitUntilIdle()
 
   assert.equal(bus.event_history.size, 0)
@@ -608,7 +608,7 @@ test('handler error is captured without crashing the bus', async () => {
   })
 
   const event = bus.emit(ErrorEvent({}))
-  await event.done({ raise_if_any: false })
+  await event.now()
 
   const original = event._event_original ?? event
   assert.equal(original.event_status, 'completed')
@@ -644,7 +644,7 @@ test('one handler error does not prevent other handlers from running', async () 
   })
 
   const event = bus.emit(MultiEvent({}))
-  await event.done({ raise_if_any: false })
+  await event.now()
 
   const original = event._event_original ?? event
   assert.equal(original.event_status, 'completed')
@@ -662,7 +662,7 @@ test('one handler error does not prevent other handlers from running', async () 
 })
 
 test('eventResultsList returns filtered values by default and can return raw values with include', async () => {
-  const bus = new EventBus('EventResultsListBus', { event_handler_concurrency: 'serial' })
+  const bus = new EventBus('EventResultsBus', { event_handler_concurrency: 'serial' })
   const ResultListEvent = BaseEvent.extend('ResultListEvent', {})
 
   bus.on(ResultListEvent, () => ({ one: 1 }))
@@ -672,7 +672,8 @@ test('eventResultsList returns filtered values by default and can return raw val
   const values = await bus.emit(ResultListEvent({})).eventResultsList()
   assert.deepEqual(values, [{ one: 1 }, ['two']])
 
-  const raw_values = await bus.emit(ResultListEvent({})).eventResultsList(() => true, {
+  const raw_values = await bus.emit(ResultListEvent({})).eventResultsList({
+    include: (result) => result !== 'never',
     raise_if_any: false,
     raise_if_none: false,
   })
@@ -680,7 +681,7 @@ test('eventResultsList returns filtered values by default and can return raw val
 })
 
 test('eventResultsList returns results in handler registration order', async () => {
-  const bus = new EventBus('EventResultsListOrderBus', { event_handler_concurrency: 'parallel' })
+  const bus = new EventBus('EventResultsOrderBus', { event_handler_concurrency: 'parallel' })
   const ResultOrderEvent = BaseEvent.extend('ResultOrderEvent', {})
   const completed_order: string[] = []
   const registered_at = '2026-01-01T00:00:00.000Z'
@@ -716,13 +717,17 @@ test('eventResultsList returns results in handler registration order', async () 
   const values = await event.eventResultsList({ raise_if_any: false, raise_if_none: true })
   assert.deepEqual(values, ['winner', 'late'])
 
-  const raw_values = await event.eventResultsList(() => true, { raise_if_any: false, raise_if_none: false })
+  const raw_values = await event.eventResultsList({
+    include: (result) => result !== 'never',
+    raise_if_any: false,
+    raise_if_none: false,
+  })
   assert.deepEqual(raw_values, [undefined, 'winner', 'late'])
   assert.deepEqual(completed_order, ['late', 'winner', 'null'])
 })
 
-test('eventResultsList supports timeout/include/raise_if_any/raise_if_none arguments', async () => {
-  const bus = new EventBus('EventResultsListArgsBus', { event_handler_concurrency: 'serial' })
+test('eventResultsList supports include/raise_if_any/raise_if_none arguments', async () => {
+  const bus = new EventBus('EventResultsArgsBus', { event_handler_concurrency: 'serial' })
   const ArgsEvent = BaseEvent.extend('ArgsEvent', {})
   const EmptyEvent = BaseEvent.extend('EmptyEvent', {})
   const IncludeEvent = BaseEvent.extend('IncludeEvent', {})
@@ -733,13 +738,18 @@ test('eventResultsList supports timeout/include/raise_if_any/raise_if_none argum
   bus.on(ArgsEvent, () => {
     throw new Error('boom')
   })
-  await assert.rejects(async () => bus.emit(ArgsEvent({})).eventResultsList(), /boom/)
+  await assert.rejects(
+    async () => bus.emit(ArgsEvent({})).eventResultsList({ raise_if_any: true }),
+    (error) =>
+      error instanceof AggregateError &&
+      error.errors.some((handlerError) => handlerError instanceof Error && handlerError.message === 'boom')
+  )
 
   const values_without_errors = await bus.emit(ArgsEvent({})).eventResultsList({ raise_if_any: false, raise_if_none: true })
   assert.deepEqual(values_without_errors, ['ok'])
 
   bus.on(EmptyEvent, () => undefined)
-  await assert.rejects(async () => bus.emit(EmptyEvent({})).eventResultsList(), /Expected at least one handler/)
+  await assert.rejects(async () => bus.emit(EmptyEvent({})).eventResultsList({ raise_if_none: true }), /Expected at least one handler/)
   const empty_values = await bus.emit(EmptyEvent({})).eventResultsList({ raise_if_any: false, raise_if_none: false })
   assert.deepEqual(empty_values, [])
 
@@ -750,16 +760,24 @@ test('eventResultsList supports timeout/include/raise_if_any/raise_if_none argum
 
   bus.on(IncludeEvent, () => 'keep')
   bus.on(IncludeEvent, () => 'drop')
-  const filtered_values = await bus
-    .emit(IncludeEvent({}))
-    .eventResultsList((result) => result === 'keep', { raise_if_any: false, raise_if_none: true })
+  const seen_include_handlers: Array<string | null> = []
+  const filtered_values = await bus.emit(IncludeEvent({})).eventResultsList({
+    include: (result, event_result) => {
+      assert.equal(result, event_result.result)
+      seen_include_handlers.push(event_result.handler_name)
+      return result === 'keep'
+    },
+    raise_if_any: false,
+    raise_if_none: true,
+  })
   assert.deepEqual(filtered_values, ['keep'])
+  assert.equal(seen_include_handlers.length, 2)
 
   bus.on(TimeoutEvent, async () => {
     await delay(50)
     return 'late'
   })
-  await assert.rejects(async () => bus.emit(TimeoutEvent({})).eventResultsList({ timeout: 0.01 }), /Timed out waiting/)
+  await assert.rejects(async () => bus.emit(TimeoutEvent({})).now({ timeout: 0.01 }).eventResultsList(), /Timed out waiting/)
 })
 
 // ─── Concurrent dispatch ─────────────────────────────────────────────────────
@@ -780,7 +798,7 @@ test('many events dispatched concurrently all complete', async () => {
   }
 
   // Wait for all to complete
-  await Promise.all(events.map((e) => e.done()))
+  await Promise.all(events.map((e) => e.now()))
   await bus.waitUntilIdle()
 
   assert.equal(processed, 100)
@@ -806,9 +824,10 @@ test('dispatch leaves event_timeout unset and processing uses bus timeout defaul
   const event = bus.emit(TEvent({}))
   const original = event._event_original ?? event
 
-  assert.equal(original.event_timeout, null)
+  assert.equal(original.event_timeout ?? null, null)
 
-  await event.done({ raise_if_any: false })
+  await event.now()
+  assert.equal(original.event_timeout ?? null, null)
   assert.equal(original.event_errors.length, 1)
 })
 
@@ -899,7 +918,7 @@ test('circular forwarding does not cause infinite loop', async () => {
   })
 
   const event = bus_a.emit(CircEvent({}))
-  await event.done()
+  await event.now()
   await bus_a.waitUntilIdle()
   await bus_b.waitUntilIdle()
   await bus_c.waitUntilIdle()
@@ -1000,7 +1019,7 @@ test('unreferenced buses with event history are garbage collected without destro
     bus.on(GcEvent, () => {})
     for (let i = 0; i < 200; i += 1) {
       const event = bus.emit(GcEvent({}))
-      await event.done()
+      await event.now()
     }
     await bus.waitUntilIdle()
     return { ref: new WeakRef(bus), id: bus.id }
@@ -1041,7 +1060,7 @@ test('reset creates a fresh pending event for cross-bus dispatch', async () => {
   bus_a.on(ResetEvent, (event) => `a:${event.label}`)
   bus_b.on(ResetEvent, (event) => `b:${event.label}`)
 
-  const completed = await bus_a.emit(ResetEvent({ label: 'hello' })).done()
+  const completed = await bus_a.emit(ResetEvent({ label: 'hello' })).now()
   const fresh = completed.eventReset()
 
   assert.notEqual(fresh.event_id, completed.event_id)
@@ -1050,7 +1069,7 @@ test('reset creates a fresh pending event for cross-bus dispatch', async () => {
   assert.equal(fresh.event_started_at, null)
   assert.equal(fresh.event_completed_at, null)
 
-  const forwarded = await bus_b.emit(fresh).done()
+  const forwarded = await bus_b.emit(fresh).now()
   assert.equal(forwarded.event_status, 'completed')
   assert.equal(
     Array.from(forwarded.event_results.values()).some((result) => result.result === 'b:hello'),
@@ -1082,7 +1101,7 @@ test('scoped handler event reports event_bus and _event_original via in-operator
     has_original = '_event_original' in event
   })
 
-  await bus.emit(ProxyEvent({})).done()
+  await bus.emit(ProxyEvent({})).now()
 
   assert.equal(has_event_bus, true)
   assert.equal(has_legacy_bus, false)
@@ -1103,11 +1122,11 @@ test('max_history_size=0 prunes previously completed events on later dispatch', 
   const bus = new EventBus('ZeroHistoryCoverageBus', { max_history_size: 1 })
   bus.on(HistEvent, () => undefined)
 
-  const first = await bus.emit(HistEvent({ label: 'first' })).done()
+  const first = await bus.emit(HistEvent({ label: 'first' })).now()
   assert.equal(bus.event_history.has(first.event_id), true)
 
   bus.event_history.max_history_size = 0
-  const second = await bus.emit(HistEvent({ label: 'second' })).done()
+  const second = await bus.emit(HistEvent({ label: 'second' })).now()
   assert.equal(bus.event_history.has(first.event_id), false)
   assert.equal(bus.event_history.has(second.event_id), false)
   assert.equal(bus.event_history.size, 0)

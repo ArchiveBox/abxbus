@@ -62,8 +62,8 @@ async function main(): Promise<void> {
     })
   )
 
-  // done() waits for handlers on all forwarded buses, not just the origin bus.
-  await event.done()
+  // now() waits for handlers on all forwarded buses, not just the origin bus.
+  await event.now()
   await Promise.all([busA.waitUntilIdle(), busB.waitUntilIdle(), busC.waitUntilIdle()])
 
   const path = event.event_path

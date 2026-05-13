@@ -77,7 +77,7 @@ func TestTypedEventPayloadAndResultHelpers(t *testing.T) {
 	}, nil)
 
 	event := abxbus.MustNewTypedEventWithResult[addPayload, addResult]("AddEvent", addPayload{A: 4, B: 9})
-	result, err := bus.Emit(event).EventResult(context.Background())
+	result, err := bus.Emit(event).EventResult()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestTypedEventWithResultSchemaValidatesHandlerReturnAtRuntime(t *testing.T)
 	}, nil)
 
 	event := abxbus.MustNewTypedEventWithResult[addPayload, addResult]("TypedSchemaEvent", addPayload{A: 1, B: 2})
-	if _, err := bus.Emit(event).EventResult(context.Background()); err == nil || !strings.Contains(err.Error(), "EventHandlerResultSchemaError") {
+	if _, err := bus.Emit(event).EventResult(); err == nil || !strings.Contains(err.Error(), "EventHandlerResultSchemaError") {
 		t.Fatalf("expected typed result schema error, got %v", err)
 	}
 }
@@ -125,13 +125,13 @@ func TestOnTypedValidatesPayloadBeforeCallingHandler(t *testing.T) {
 	}, nil)
 
 	event := bus.Emit(abxbus.NewBaseEvent("TypedPayloadSchemaEvent", map[string]any{"a": 1}))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if called {
 		t.Fatal("typed handler should not be called when a required payload field is missing")
 	}
-	if _, err := event.EventResult(context.Background()); err == nil || !strings.Contains(err.Error(), "EventHandlerPayloadSchemaError") {
+	if _, err := event.EventResult(); err == nil || !strings.Contains(err.Error(), "EventHandlerPayloadSchemaError") {
 		t.Fatalf("expected typed payload schema error, got %v", err)
 	}
 }
@@ -145,13 +145,13 @@ func TestOnTypedRejectsWrongPayloadFieldType(t *testing.T) {
 	}, nil)
 
 	event := bus.Emit(abxbus.NewBaseEvent("TypedPayloadTypeEvent", map[string]any{"a": "one", "b": 2}))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if called {
 		t.Fatal("typed handler should not be called when a payload field has the wrong type")
 	}
-	if _, err := event.EventResult(context.Background()); err == nil || !strings.Contains(err.Error(), "EventHandlerPayloadSchemaError") {
+	if _, err := event.EventResult(); err == nil || !strings.Contains(err.Error(), "EventHandlerPayloadSchemaError") {
 		t.Fatalf("expected typed payload schema error, got %v", err)
 	}
 }

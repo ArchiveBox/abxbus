@@ -75,7 +75,7 @@ async def test_event_and_result_without_eventbus() -> None:
     assert event_result.status == 'completed'
     assert event.event_results[handler_id] is event_result
 
-    await test_bus.emit(event).event_completed()
+    await test_bus.emit(event).wait()
     assert event.event_completed_at is not None
     await test_bus.stop()
 

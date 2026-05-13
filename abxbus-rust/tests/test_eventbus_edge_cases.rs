@@ -95,7 +95,7 @@ fn test_event_reset_creates_fresh_pending_event_for_cross_bus_dispatch() {
         label: "hello".to_string(),
         ..Default::default()
     });
-    block_on(completed.done());
+    let _ = block_on(completed.now());
     assert_eq!(
         completed.inner.inner.lock().event_status,
         EventStatus::Completed
@@ -114,7 +114,7 @@ fn test_event_reset_creates_fresh_pending_event_for_cross_bus_dispatch() {
     assert_eq!(fresh.inner.inner.lock().event_results.len(), 0);
 
     let forwarded = bus_b.emit(fresh);
-    block_on(forwarded.done());
+    let _ = block_on(forwarded.now());
 
     assert_eq!(
         seen_a.lock().expect("seen_a lock").as_slice(),
@@ -174,7 +174,7 @@ fn test_wait_until_idle_timeout_path_recovers_after_inflight_handler_finishes() 
     );
 
     release_tx.send(()).expect("release handler");
-    block_on(pending.done());
+    let _ = block_on(pending.now());
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
     assert_eq!(
         pending.inner.inner.lock().event_status,
@@ -227,7 +227,7 @@ fn test_stop_timeout_zero_clears_running_bus_and_releases_name() {
     let event = replacement.emit(StopCoverageEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
     assert_eq!(
         event.inner.inner.lock().event_status,
         EventStatus::Completed
@@ -242,7 +242,7 @@ fn test_emit_with_no_handlers_completes_event() {
         ..Default::default()
     });
 
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let inner = event.inner.inner.lock();
     assert_eq!(inner.event_results.len(), 0);
@@ -261,7 +261,7 @@ fn test_wildcard_handler_runs_for_any_event_type() {
         ..Default::default()
     });
 
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let results = event.inner.inner.lock().event_results.clone();
     assert_eq!(results.len(), 1);
@@ -282,7 +282,7 @@ fn test_handler_error_populates_error_status() {
         ..Default::default()
     });
 
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let results = event.inner.inner.lock().event_results.clone();
     assert_eq!(results.len(), 1);

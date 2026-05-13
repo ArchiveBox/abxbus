@@ -216,7 +216,7 @@ class TestRetryWithEventBus:
         bus.on(ScopeClassEvent, service_b.on_scope_class_event)
 
         event = await bus.emit(ScopeClassEvent())
-        await event.event_completed()
+        await event.wait()
 
         assert max_active == 1, f'class scope should serialize across instances, got max_active={max_active}'
         await bus.stop()
@@ -254,7 +254,7 @@ class TestRetryWithEventBus:
         bus.on(ScopeInstanceEvent, service_b.on_scope_instance_event)
 
         event = await bus.emit(ScopeInstanceEvent())
-        await event.event_completed()
+        await event.wait()
 
         assert calls == 2, f'expected both handlers to run, got calls={calls}'
         assert max_active == 2, f'instance scope should allow overlap across instances, got max_active={max_active}'
@@ -291,7 +291,7 @@ class TestRetryWithEventBus:
         bus.on(ScopeGlobalEvent, service_b.on_scope_global_event)
 
         event = await bus.emit(ScopeGlobalEvent())
-        await event.event_completed()
+        await event.wait()
 
         assert max_active == 1, f'global scope should serialize all handlers, got max_active={max_active}'
         await bus.stop()
@@ -329,13 +329,13 @@ class TestRetryWithEventBus:
         bus.on(HofBindEvent, handler.__get__(holder_b, Holder))
 
         event = await bus.emit(HofBindEvent())
-        await event.event_completed()
+        await event.wait()
 
         assert max_active == 2, f'bind-after-wrap instance scope should allow overlap, got max_active={max_active}'
         await bus.stop()
 
     async def test_retry_wrapping_emit_retries_full_dispatch_cycle(self):
-        """Retry wrapper around emit+event_completed should retry full event dispatch when handler errors."""
+        """Retry wrapper around emit+wait should retry full event dispatch when handler errors."""
 
         class TabsEvent(BaseEvent[str]):
             pass
@@ -375,7 +375,7 @@ class TestRetryWithEventBus:
         @retry(max_attempts=4)
         async def emit_tabs_with_retry() -> TabsEvent:
             tabs_event = await bus.emit(TabsEvent())
-            await tabs_event.event_completed()
+            await tabs_event.wait()
             failed_results = [result for result in tabs_event.event_results.values() if result.status == 'error']
             if failed_results:
                 first_error = failed_results[0].error
@@ -386,7 +386,7 @@ class TestRetryWithEventBus:
 
         async def emit_and_wait(event: BaseEvent[str]):
             emitted = await bus.emit(event)
-            await emitted.event_completed()
+            await emitted.wait()
             return emitted
 
         tabs_event, dom_event, screenshot_event = await asyncio.gather(

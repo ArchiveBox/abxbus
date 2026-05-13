@@ -38,7 +38,7 @@ async function main(): Promise<void> {
   async function root_fast_handler(event: InstanceType<typeof RootEvent>): Promise<string> {
     await delay(10)
     const child = event.emit(ChildEvent({ tab_id: 'tab-123', event_timeout: 0.1 }))
-    await child.done()
+    await child.now()
     return 'root_fast_handler_ok'
   }
 
@@ -59,7 +59,7 @@ async function main(): Promise<void> {
   async function child_fast_handler(event: InstanceType<typeof ChildEvent>): Promise<string> {
     await delay(10)
     const grandchild = event.emit(GrandchildEvent({ status: 'ok', event_timeout: 0.05 }))
-    await grandchild.done()
+    await grandchild.now()
     return 'child_handler_ok'
   }
 
@@ -79,8 +79,9 @@ async function main(): Promise<void> {
   bus_b.on(GrandchildEvent, grandchild_slow_handler)
 
   const root_event = bus_a.emit(RootEvent({ url: 'https://example.com', event_timeout: 0.45 }))
-  await root_event.done({ raise_if_any: false })
-  assert.ok(root_event.event_errors.length > 0, 'expected root event to include timeout-related errors')
+  await root_event.now()
+  const errored_events = [...bus_a.event_history.values(), ...bus_b.event_history.values()].filter((event) => event.event_errors.length > 0)
+  assert.ok(errored_events.length > 0, 'expected log tree example to include timeout-related errors')
 
   console.log('\n=== BusA logTree ===')
   console.log(bus_a.logTree())

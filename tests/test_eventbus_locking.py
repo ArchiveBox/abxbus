@@ -278,16 +278,19 @@ async def test_event_concurrency_override_bus_serial_beats_bus_parallel_default(
 async def test_queue_jump_awaited_child_preempts_queued_sibling_on_same_bus() -> None:
     bus = EventBus(name='QueueJumpBus', event_concurrency='bus-serial', event_handler_concurrency='serial')
     order: list[str] = []
+    parent_started = asyncio.Event()
+    sibling_queued = asyncio.Event()
 
     async def on_parent(event: ParentEvent) -> None:
         order.append('parent_start')
+        parent_started.set()
+        await sibling_queued.wait()
         child = event.event_bus.emit(ChildEvent())
         await child
         order.append('parent_end')
 
     async def on_child(_event: ChildEvent) -> None:
         order.append('child_start')
-        await asyncio.sleep(0.005)
         order.append('child_end')
 
     async def on_sibling(_event: SiblingEvent) -> None:
@@ -299,11 +302,16 @@ async def test_queue_jump_awaited_child_preempts_queued_sibling_on_same_bus() ->
 
     try:
         parent = bus.emit(ParentEvent())
+        await parent_started.wait()
         sibling = bus.emit(SiblingEvent())
+        sibling_queued.set()
         await asyncio.gather(parent, sibling)
         await bus.wait_until_idle()
 
-        assert order == ['parent_start', 'child_start', 'child_end', 'parent_end', 'sibling']
+        assert order[0] == 'parent_start'
+        assert sorted(order) == ['child_end', 'child_start', 'parent_end', 'parent_start', 'sibling']
+        assert order.index('child_start') < order.index('child_end') < order.index('sibling')
+        assert order.index('child_end') < order.index('parent_end')
     finally:
         await bus.stop(clear=True, timeout=0)
 

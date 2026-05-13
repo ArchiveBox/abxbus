@@ -483,8 +483,8 @@ fn test_lock_manager_get_lock_for_event_modes() {
     );
     let first = bus_serial.emit_base(empty_event("LockModesEvent"));
     let second = bus_serial.emit_base(empty_event("LockModesEvent"));
-    block_on(first.event_completed());
-    block_on(second.event_completed());
+    let _ = block_on(first.wait());
+    let _ = block_on(second.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 1);
     bus_serial.stop();
 
@@ -511,8 +511,8 @@ fn test_lock_manager_get_lock_for_event_modes() {
     second.inner.lock().event_concurrency = Some(EventConcurrencyMode::Parallel);
     let first = parallel_override_bus.emit_base(first);
     let second = parallel_override_bus.emit_base(second);
-    block_on(first.event_completed());
-    block_on(second.event_completed());
+    let _ = block_on(first.wait());
+    let _ = block_on(second.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 2);
     parallel_override_bus.stop();
 
@@ -554,8 +554,8 @@ fn test_lock_manager_get_lock_for_event_modes() {
     second.inner.lock().event_concurrency = Some(EventConcurrencyMode::GlobalSerial);
     let first = bus_a.emit_base(first);
     let second = bus_b.emit_base(second);
-    block_on(first.event_completed());
-    block_on(second.event_completed());
+    let _ = block_on(first.wait());
+    let _ = block_on(second.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 1);
     bus_a.stop();
     bus_b.stop();
@@ -587,7 +587,7 @@ fn test_lock_manager_get_lock_for_event_handler_modes() {
         max_active.clone(),
     );
     let event = serial_bus.emit_base(empty_event("LockHandlerModesEvent"));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 1);
     serial_bus.stop();
 
@@ -617,7 +617,7 @@ fn test_lock_manager_get_lock_for_event_handler_modes() {
     let event = empty_event("LockHandlerModesEvent");
     event.inner.lock().event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
     let event = parallel_override_bus.emit_base(event);
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 2);
     parallel_override_bus.stop();
 }
@@ -662,8 +662,8 @@ fn test_run_with_event_lock_and_handler_lock_respect_parallel_bypass() {
     }
     let first = parallel_override_bus.emit_base(first);
     let second = parallel_override_bus.emit_base(second);
-    block_on(first.event_completed());
-    block_on(second.event_completed());
+    let _ = block_on(first.wait());
+    let _ = block_on(second.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 4);
     parallel_override_bus.stop();
 
@@ -693,8 +693,8 @@ fn test_run_with_event_lock_and_handler_lock_respect_parallel_bypass() {
     );
     let first = serial_bus.emit_base(empty_event("SerialAcquireEvent"));
     let second = serial_bus.emit_base(empty_event("SerialAcquireEvent"));
-    block_on(first.event_completed());
-    block_on(second.event_completed());
+    let _ = block_on(first.wait());
+    let _ = block_on(second.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 1);
     serial_bus.stop();
 }

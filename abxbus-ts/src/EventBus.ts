@@ -224,9 +224,9 @@ export class EventBus {
     this.event_handler_concurrency = options.event_handler_concurrency ?? 'serial'
     this.event_handler_completion = options.event_handler_completion ?? 'all'
     this.event_handler_detect_file_paths = options.event_handler_detect_file_paths ?? true
-    this.event_timeout = options.event_timeout === undefined ? 60 : options.event_timeout
-    this.event_handler_slow_timeout = options.event_handler_slow_timeout === undefined ? 30 : options.event_handler_slow_timeout
-    this.event_slow_timeout = options.event_slow_timeout === undefined ? 300 : options.event_slow_timeout
+    this.event_timeout = options.event_timeout ?? 60
+    this.event_handler_slow_timeout = options.event_handler_slow_timeout ?? 30
+    this.event_slow_timeout = options.event_slow_timeout ?? 300
 
     // initialize runtime state
     this.runloop_running = false
@@ -367,7 +367,7 @@ export class EventBus {
     fn: () => Promise<void>
   ): Promise<void> {
     try {
-      if (event_timeout === null || pending_entries.length === 0) {
+      if (event_timeout === null || event_timeout <= 0 || pending_entries.length === 0) {
         await fn()
       } else {
         await _runWithTimeout(event_timeout, () => this._createEventTimeoutError(event, pending_entries, event_timeout), fn)
@@ -709,6 +709,10 @@ export class EventBus {
 
   emit<T extends BaseEvent>(event: T): T {
     const original_event = event._event_original ?? event // if event is a bus-scoped proxy already, get the original underlying event object
+    const current_result = this.locks._getRawActiveHandlerResultForCurrentAsyncContext()
+    if (current_result && current_result.status !== 'pending' && current_result.status !== 'started') {
+      return original_event as T
+    }
     if (!original_event.event_bus) {
       // if we are the first bus to emit this event, set the event_bus property on the original event object
       original_event.event_bus = this
@@ -932,6 +936,7 @@ export class EventBus {
       event._markStarted()
       pending_entries = event._createPendingHandlerResults(this)
       const resolved_event_timeout = event.event_timeout ?? this.event_timeout
+      const resolved_event_slow_timeout = event.event_slow_timeout ?? this.event_slow_timeout
       if (this.middlewares.length > 0) {
         for (const entry of pending_entries) {
           await this._onEventResultChange(scoped_event, entry.result, 'pending')
@@ -941,7 +946,9 @@ export class EventBus {
         event,
         () =>
           this._runHandlersWithTimeout(event, pending_entries, resolved_event_timeout, () =>
-            _runWithSlowMonitor(event._createSlowEventWarningTimer(), () => scoped_event._runHandlers(pending_entries))
+            _runWithSlowMonitor(event._createSlowEventWarningTimer(resolved_event_slow_timeout, this.name), () =>
+              scoped_event._runHandlers(pending_entries)
+            )
           ),
         options
       )
@@ -955,7 +962,7 @@ export class EventBus {
     }
   }
 
-  // Called when a handler does `await child.done()` — processes the child event
+  // Called when a handler does `await child.now()` — processes the child event
   // immediately ("queue-jump") instead of waiting for the _runloop to pick it up.
   //
   // Yield-and-reacquire: if the calling handler holds a handler concurrency lock,
@@ -970,18 +977,15 @@ export class EventBus {
     const proxy_result = handler_result?.status === 'started' ? handler_result : undefined
     const currently_active_event_result = proxy_result ?? this.locks._getActiveHandlerResultForCurrentAsyncContext()
     if (!currently_active_event_result) {
-      // Not inside any handler scope — avoid queue-jump, but if this event is
-      // next in line we can process it immediately without waiting on the _runloop.
-      // We must acquire/revalidate the event lock first to avoid racing the runloop
-      // and accidentally reordering/removing the wrong queue head.
       const queue_index = this.pending_event_queue.indexOf(original_event)
-      const can_process_now =
+      const event_lock = this.locks.getLockForEvent(original_event)
+      const can_process_queue_head_normally =
         queue_index === 0 &&
         !this.locks._isPaused() &&
         !this.in_flight_event_ids.has(original_event.event_id) &&
-        !this._hasProcessedEvent(original_event)
-      if (can_process_now) {
-        const event_lock = this.locks.getLockForEvent(original_event)
+        !this._hasProcessedEvent(original_event) &&
+        (event_lock === null || event_lock.in_use === 0)
+      if (can_process_queue_head_normally) {
         let pre_acquired_lock: AsyncLock | null = null
         if (event_lock) {
           await event_lock.acquire()
@@ -989,12 +993,12 @@ export class EventBus {
         }
         const queue_head = this.pending_event_queue[0]
         const queue_head_original = queue_head?._event_original ?? queue_head
-        const still_can_process_now =
+        if (
           queue_head_original === original_event &&
           !this.locks._isPaused() &&
           !this.in_flight_event_ids.has(original_event.event_id) &&
           !this._hasProcessedEvent(original_event)
-        if (still_can_process_now) {
+        ) {
           this.pending_event_queue.shift()
           this.in_flight_event_ids.add(original_event.event_id)
           await this._processEvent(original_event, {
@@ -1002,15 +1006,13 @@ export class EventBus {
             pre_acquired_lock,
           })
           if (original_event.event_status !== 'completed') {
-            await original_event.eventCompleted()
+            await this._processEventImmediatelyAcrossBuses(original_event)
           }
           return event
         }
-        if (pre_acquired_lock) {
-          pre_acquired_lock.release()
-        }
+        pre_acquired_lock?.release()
       }
-      await original_event.eventCompleted()
+      await this._processEventImmediatelyAcrossBuses(original_event)
       return event
     }
 
@@ -1047,78 +1049,83 @@ export class EventBus {
   // Processes a queue-jumped event across all buses that have it emitted.
   // Called from _processEventImmediately after the parent handler's lock has been yielded.
   private async _processEventImmediatelyAcrossBuses(event: BaseEvent): Promise<void> {
-    // Use event_path ordering to pick candidate buses and filter out buses that
-    // haven't seen the event or already processed it.
-    const ordered: EventBus[] = []
-    const seen = new Set<EventBus>()
-    const event_path = Array.isArray(event.event_path) ? event.event_path : []
-    for (const label of event_path) {
-      for (const bus of this.all_instances) {
-        if (bus.label !== label) {
-          continue
-        }
-        if (!bus.event_history.has(event.event_id)) {
-          continue
-        }
-        if (bus._hasProcessedEvent(event)) {
-          continue
-        }
-        if (!seen.has(bus)) {
-          ordered.push(bus)
-          seen.add(bus)
-        }
-      }
-    }
-    if (!seen.has(this) && this.event_history.has(event.event_id)) {
-      ordered.push(this)
-    }
-    if (ordered.length === 0) {
-      await event.eventCompleted()
-      return
-    }
-
     // Determine which event lock the initiating bus resolves to, so we can
     // detect when other buses share the same instance (global-serial).
     const initiating_event_lock = this.locks.getLockForEvent(event)
-    const pause_releases: Array<() => void> = []
 
-    try {
-      for (const bus of ordered) {
-        if (bus !== this) {
-          pause_releases.push(bus.locks._requestRunloopPause())
+    for (;;) {
+      // Use event_path ordering to pick candidate buses and filter out buses
+      // that haven't seen the event or already processed it. Forwarding
+      // handlers can append new buses while this method is already running, so
+      // this list must be rebuilt until the event is fully complete.
+      const ordered: EventBus[] = []
+      const seen = new Set<EventBus>()
+      const event_path = Array.isArray(event.event_path) ? event.event_path : []
+      for (const label of event_path) {
+        for (const bus of this.all_instances) {
+          if (bus.label !== label) {
+            continue
+          }
+          if (!bus.event_history.has(event.event_id)) {
+            continue
+          }
+          if (bus._hasProcessedEvent(event)) {
+            continue
+          }
+          if (!seen.has(bus)) {
+            ordered.push(bus)
+            seen.add(bus)
+          }
+        }
+      }
+      if (!seen.has(this) && this.event_history.has(event.event_id) && !this._hasProcessedEvent(event)) {
+        ordered.push(this)
+      }
+
+      const pause_releases: Array<() => void> = []
+      let processed_bus = false
+      try {
+        for (const bus of ordered) {
+          if (bus !== this) {
+            pause_releases.push(bus.locks._requestRunloopPause())
+          }
+        }
+
+        for (const bus of ordered) {
+          const index = bus.pending_event_queue.indexOf(event)
+          if (index >= 0) {
+            bus.pending_event_queue.splice(index, 1)
+          }
+          if (bus._hasProcessedEvent(event)) {
+            continue
+          }
+          if (bus.in_flight_event_ids.has(event.event_id)) {
+            continue
+          }
+          bus.in_flight_event_ids.add(event.event_id)
+          processed_bus = true
+
+          // Bypass event lock on the initiating bus (we're already inside a handler
+          // that acquired it). For other buses, only bypass if they resolve to the same
+          // lock instance (global-serial shares one lock across all buses).
+          const bus_event_lock = bus.locks.getLockForEvent(event)
+          const should_bypass_event_lock = bus === this || (initiating_event_lock !== null && bus_event_lock === initiating_event_lock)
+
+          await bus._processEvent(event, {
+            bypass_event_locks: should_bypass_event_lock,
+          })
+        }
+      } finally {
+        for (const release of pause_releases) {
+          release()
         }
       }
 
-      for (const bus of ordered) {
-        const index = bus.pending_event_queue.indexOf(event)
-        if (index >= 0) {
-          bus.pending_event_queue.splice(index, 1)
-        }
-        if (bus._hasProcessedEvent(event)) {
-          continue
-        }
-        if (bus.in_flight_event_ids.has(event.event_id)) {
-          continue
-        }
-        bus.in_flight_event_ids.add(event.event_id)
-
-        // Bypass event lock on the initiating bus (we're already inside a handler
-        // that acquired it). For other buses, only bypass if they resolve to the same
-        // lock instance (global-serial shares one lock across all buses).
-        const bus_event_lock = bus.locks.getLockForEvent(event)
-        const should_bypass_event_lock = bus === this || (initiating_event_lock !== null && bus_event_lock === initiating_event_lock)
-
-        await bus._processEvent(event, {
-          bypass_event_locks: should_bypass_event_lock,
-        })
+      if (event.event_status === 'completed') {
+        return
       }
-
-      if (event.event_status !== 'completed') {
-        await event.eventCompleted()
-      }
-    } finally {
-      for (const release of pause_releases) {
-        release()
+      if (!processed_bus) {
+        await new Promise((resolve) => setTimeout(resolve, 1))
       }
     }
   }
@@ -1147,7 +1154,7 @@ export class EventBus {
           pre_acquired_lock = event_lock
         }
         // Queue head may have changed while waiting for the lock
-        // (e.g. done() processing the head immediately). Revalidate
+        // (e.g. now() processing the head immediately). Revalidate
         // before mutating the queue to avoid removing the wrong event.
         const current_head = this.pending_event_queue[0]
         const current_head_original = current_head?._event_original ?? current_head
@@ -1209,6 +1216,9 @@ export class EventBus {
         if (prop === 'dispatch' || prop === 'emit') {
           const emit_child_event = <TChild extends BaseEvent>(child_event: TChild): TChild => {
             const original_child = child_event._event_original ?? child_event
+            if (handler_result && handler_result.status !== 'pending' && handler_result.status !== 'started') {
+              return original_child as TChild
+            }
             if (handler_result) {
               handler_result._linkEmittedChildEvent(original_child)
             } else if (!original_child.event_parent_id && original_child.event_id !== parent_event_id) {

@@ -47,7 +47,7 @@ async def main() -> None:
         print('Dispatching ForwardedEvent on BusA with cyclic forwarding A -> B -> C -> A')
 
         event = bus_a.emit(ForwardedEvent(message='hello across 3 buses'))
-        await event
+        await event.now()
         await asyncio.gather(bus_a.wait_until_idle(), bus_b.wait_until_idle(), bus_c.wait_until_idle())
 
         path = event.event_path

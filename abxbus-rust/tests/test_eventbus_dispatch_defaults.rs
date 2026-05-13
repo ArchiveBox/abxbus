@@ -60,7 +60,7 @@ fn test_bus_default_handler_settings_are_applied() {
         ..Default::default()
     };
     let event = bus.emit(event);
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     assert_eq!(event.inner.inner.lock().event_results.len(), 1);
     bus.stop();
@@ -92,8 +92,8 @@ fn test_event_concurrency_remains_unset_on_dispatch_and_resolves_during_processi
     assert_eq!(implicit.inner.inner.lock().event_concurrency, None);
     assert_eq!(explicit_none.inner.inner.lock().event_concurrency, None);
 
-    block_on(implicit.done());
-    block_on(explicit_none.done());
+    let _ = block_on(implicit.now());
+    let _ = block_on(explicit_none.now());
     assert_eq!(implicit.inner.inner.lock().event_results.len(), 1);
     assert_eq!(explicit_none.inner.inner.lock().event_results.len(), 1);
     bus.stop();
@@ -122,7 +122,7 @@ fn test_event_concurrency_class_override_beats_bus_default() {
         event.inner.inner.lock().event_concurrency,
         Some(EventConcurrencyMode::GlobalSerial)
     );
-    block_on(event.done());
+    let _ = block_on(event.now());
     assert_eq!(event.inner.inner.lock().event_results.len(), 1);
     bus.stop();
 }
@@ -164,8 +164,8 @@ fn test_handler_defaults_remain_unset_on_dispatch_and_resolve_during_processing(
         None
     );
 
-    block_on(implicit.done());
-    block_on(explicit_none.done());
+    let _ = block_on(implicit.now());
+    let _ = block_on(explicit_none.now());
     assert_eq!(implicit.inner.inner.lock().event_results.len(), 1);
     assert_eq!(explicit_none.inner.inner.lock().event_results.len(), 1);
     bus.stop();
@@ -199,7 +199,7 @@ fn test_handler_class_override_beats_bus_defaults() {
         event.inner.inner.lock().event_handler_completion,
         Some(EventHandlerCompletionMode::All)
     );
-    block_on(event.done());
+    let _ = block_on(event.now());
     assert_eq!(event.inner.inner.lock().event_results.len(), 1);
     bus.stop();
 }

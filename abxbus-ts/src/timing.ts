@@ -1,6 +1,6 @@
 export async function _runWithTimeout<T>(timeout_seconds: number | null, on_timeout: () => Error, fn: () => Promise<T>): Promise<T> {
   const task = Promise.resolve().then(fn)
-  if (timeout_seconds === null) {
+  if (timeout_seconds === null || timeout_seconds <= 0) {
     return await task
   }
   const timeout_ms = timeout_seconds * 1000

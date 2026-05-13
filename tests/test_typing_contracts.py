@@ -40,10 +40,10 @@ async def _assert_pipeline_types(bus: EventBus, event: TypeContractEvent) -> Non
 
     emitted_event = bus.emit(TypeContractEvent())
     assert_type(emitted_event, TypeContractEvent)
-    completed_event = await emitted_event.event_completed()
+    completed_event = await emitted_event.wait()
     assert_type(completed_event, TypeContractEvent)
 
-    first_result = await completed_event.first()
+    first_result = await (await completed_event.now(first_result=True)).event_result()
     assert_type(first_result, TypeContractResult | None)
 
     aggregated_result = await completed_event.event_result()
@@ -52,7 +52,7 @@ async def _assert_pipeline_types(bus: EventBus, event: TypeContractEvent) -> Non
     all_values = await completed_event.event_results_list()
     assert_type(all_values, list[TypeContractResult | None])
     for handler_result in completed_event.event_results.values():
-        assert_type(handler_result, EventResult[TypeContractResult])
+        assert_type(handler_result, EventResult[Any])
 
 
 def test_typing_contracts_module_loads() -> None:

@@ -18,6 +18,45 @@ const delay = (ms: number): Promise<void> =>
     setTimeout(resolve, ms)
   })
 
+const deferred = <T = void>() => {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolve_fn, reject_fn) => {
+    resolve = resolve_fn
+    reject = reject_fn
+  })
+  return { promise, resolve, reject }
+}
+
+test('processing time timeout defaults resolve at execution time', async () => {
+  const bus = new EventBus('TimeoutDefaultsResolveBus', {
+    event_timeout: 12,
+    event_slow_timeout: 34,
+    event_handler_slow_timeout: 56,
+  })
+
+  bus.on(TimeoutEvent, async () => 'ok')
+
+  const event = bus.emit(TimeoutEvent({}))
+  assert.equal(event.event_timeout ?? null, null)
+  assert.equal(event.event_handler_timeout, undefined)
+  assert.equal(event.event_handler_slow_timeout ?? null, null)
+  assert.equal(event.event_slow_timeout ?? null, null)
+  assert.equal(event.event_concurrency ?? null, null)
+  assert.equal(event.event_handler_concurrency ?? null, null)
+  assert.equal(event.event_handler_completion ?? null, null)
+
+  await event.now()
+  assert.equal(event.event_timeout ?? null, null)
+  assert.equal(event.event_handler_slow_timeout ?? null, null)
+  assert.equal(event.event_slow_timeout ?? null, null)
+  assert.equal(event.event_concurrency ?? null, null)
+  assert.equal(event.event_handler_concurrency ?? null, null)
+  assert.equal(event.event_handler_completion ?? null, null)
+  const result = Array.from(event.event_results.values())[0]
+  assert.equal(result.handler_timeout, 12)
+})
+
 test('event timeout aborts in-flight handler result', async () => {
   const bus = new EventBus('TimeoutBus')
 
@@ -27,7 +66,7 @@ test('event timeout aborts in-flight handler result', async () => {
   })
 
   const event = bus.emit(TimeoutEvent({ event_timeout: 0.02 }))
-  await event.done({ raise_if_any: false })
+  await event.now()
 
   const result = Array.from(event.event_results.values())[0]
   assert.equal(result.status, 'error')
@@ -54,7 +93,7 @@ test('event timeout does not relabel pre-existing handler timeout errors', async
   })
 
   const event = bus.emit(MixedTimeoutEvent({ event_timeout: 0.05 }))
-  await event.done({ raise_if_any: false })
+  await event.now()
   await bus.waitUntilIdle()
 
   const results = Array.from(event.event_results.values())
@@ -72,7 +111,7 @@ test('handler completes within timeout', async () => {
   })
 
   const event = bus.emit(TimeoutEvent({ event_timeout: 0.5 }))
-  await event.done()
+  await event.now()
 
   const result = Array.from(event.event_results.values())[0]
   assert.equal(result.status, 'completed')
@@ -111,11 +150,11 @@ test('event handler errors expose event_result, cause, and timeout metadata', as
   let aborted_child = null as BaseEvent | null
   bus.on(ParentAbortEvent, async (event) => {
     aborted_child = event.emit(AbortChildEvent({ event_timeout: 0.5 })) ?? null
-    await aborted_child?.done({ raise_if_any: false })
+    await aborted_child?.now()
   })
 
   const timeout_event = bus.emit(TimeoutEvent({ event_timeout: 0.02 }))
-  await timeout_event.done({ raise_if_any: false })
+  await timeout_event.now()
 
   const timeout_result = Array.from(timeout_event.event_results.values())[0]
   const timeout_error = timeout_result.error as EventHandlerAbortedError
@@ -130,7 +169,7 @@ test('event handler errors expose event_result, cause, and timeout metadata', as
   assert.equal(timeout_error.event_timeout, timeout_event.event_timeout)
 
   const cancel_parent = bus.emit(ParentCancelEvent({ event_timeout: 0.02 }))
-  await cancel_parent.done({ raise_if_any: false })
+  await cancel_parent.now()
   await bus.waitUntilIdle()
 
   assert.ok(pending_child, 'pending_child should have been emitted')
@@ -159,7 +198,7 @@ test('event handler errors expose event_result, cause, and timeout metadata', as
   }
 
   const abort_parent = bus.emit(ParentAbortEvent({ event_timeout: 0.05 }))
-  await abort_parent.done({ raise_if_any: false })
+  await abort_parent.now()
   await bus.waitUntilIdle()
 
   assert.ok(aborted_child, 'aborted_child should have been emitted')
@@ -209,7 +248,7 @@ test('event timeouts abort handlers across concurrency modes', async () => {
       bus.on(TimeoutEvent, handler)
 
       const event = bus.emit(TimeoutEvent({ event_timeout: 0.01 }))
-      await event.done({ raise_if_any: false })
+      await event.now()
 
       const result = Array.from(event.event_results.values())[0]
       assert.equal(result.status, 'error', `Expected timeout-driven error for event=${event_mode} handler=${handler_mode.label}`)
@@ -244,7 +283,7 @@ test('timeout still marks event failed when other handlers finish', async () => 
   })
 
   const event = bus.emit(TimeoutEvent({ event_timeout: 0.01 }))
-  await event.done({ raise_if_any: false })
+  await event.now()
 
   const statuses = Array.from(event.event_results.values()).map((result) => result.status)
   assert.ok(statuses.includes('completed'))
@@ -302,7 +341,7 @@ test('event-level timeout marks started parallel handlers as aborted or timed ou
   const event = bus.emit(ParallelAbortOnlyEvent({ event_timeout: 0.03 }))
   await Promise.all([started_a.promise, started_b.promise])
   both_started.resolve()
-  await event.done({ raise_if_any: false })
+  await event.now()
 
   const results = Array.from(event.event_results.values())
   assert.equal(results.length, 2)
@@ -311,10 +350,157 @@ test('event-level timeout marks started parallel handlers as aborted or timed ou
   assert.ok(!results.some((result) => result.error instanceof EventHandlerCancelledError))
 })
 
+test('handler timeout ignores late handler result and late emits', async () => {
+  const bus = new EventBus('TimeoutIgnoresLateHandlerBus')
+  const TimeoutIgnoresLateHandlerEvent = BaseEvent.extend('TimeoutIgnoresLateHandlerEvent', {})
+  const LateAfterTimeoutEvent = BaseEvent.extend('LateAfterTimeoutEvent', {})
+  const late_attempt = deferred()
+  let late_handler_ran = false
+
+  bus.on(
+    TimeoutIgnoresLateHandlerEvent,
+    async (event) => {
+      await delay(40)
+      late_attempt.resolve()
+      event.emit(LateAfterTimeoutEvent({}))
+      return 'late success'
+    },
+    { handler_timeout: 0.01 }
+  )
+  bus.on(LateAfterTimeoutEvent, async () => {
+    late_handler_ran = true
+    return 'late child'
+  })
+
+  const event = bus.emit(TimeoutIgnoresLateHandlerEvent({ event_timeout: 0.2 }))
+  await event.now()
+  await late_attempt.promise
+  await delay(30)
+  await bus.waitUntilIdle(1)
+
+  const slow_result = Array.from(event.event_results.values()).find((result) => result.handler_name === 'anonymous')
+  assert.ok(slow_result)
+  assert.equal(slow_result.status, 'error')
+  assert.ok(slow_result.error instanceof EventHandlerTimeoutError)
+  assert.equal(slow_result.result, undefined)
+  assert.equal(await bus.find(LateAfterTimeoutEvent, { past: true, future: false }), null)
+  assert.equal(late_handler_ran, false)
+})
+
+test('event timeout ignores late handler result and late emits', async () => {
+  const bus = new EventBus('TimeoutIgnoresLateEventBus')
+  const TimeoutIgnoresLateEvent = BaseEvent.extend('TimeoutIgnoresLateEvent', {})
+  const LateAfterTimeoutEvent = BaseEvent.extend('LateAfterTimeoutEventForEventTimeout', {})
+  const late_attempt = deferred()
+  let late_handler_ran = false
+
+  bus.on(TimeoutIgnoresLateEvent, async (event) => {
+    await delay(40)
+    late_attempt.resolve()
+    event.emit(LateAfterTimeoutEvent({}))
+    return 'late success'
+  })
+  bus.on(LateAfterTimeoutEvent, async () => {
+    late_handler_ran = true
+    return 'late child'
+  })
+
+  const event = bus.emit(TimeoutIgnoresLateEvent({ event_timeout: 0.01 }))
+  await event.now()
+  await late_attempt.promise
+  await delay(30)
+  await bus.waitUntilIdle(1)
+
+  const slow_result = Array.from(event.event_results.values())[0]
+  assert.equal(slow_result.status, 'error')
+  assert.ok(slow_result.error instanceof EventHandlerAbortedError)
+  assert.equal(slow_result.result, undefined)
+  assert.equal(await bus.find(LateAfterTimeoutEvent, { past: true, future: false }), null)
+  assert.equal(late_handler_ran, false)
+})
+
 test('slow event warning fires when event exceeds event_slow_timeout', async () => {
   const bus = new EventBus('SlowEventWarnBus', {
-    event_slow_timeout: 0.01,
-    event_handler_slow_timeout: null,
+    event_slow_timeout: 0.5,
+    event_handler_slow_timeout: 0.5,
+  })
+  const warnings: string[] = []
+  const original_warn = console.warn
+  console.warn = (message?: unknown, ...args: unknown[]) => {
+    warnings.push(String(message))
+    if (args.length > 0) {
+      warnings.push(args.map(String).join(' '))
+    }
+  }
+
+  try {
+    bus.on(TimeoutEvent, async () => {
+      await delay(25)
+      warnings.push('slow warning child handler finishing')
+      return 'ok'
+    })
+
+    const event = bus.emit(TimeoutEvent({ event_timeout: 0.5, event_slow_timeout: 0.01, event_handler_slow_timeout: 0 }))
+    await event.now()
+  } finally {
+    console.warn = original_warn
+  }
+
+  assert.ok(
+    warnings.some((message) => message.toLowerCase().includes('slow event processing')),
+    'Expected slow event warning'
+  )
+  assert.ok(
+    warnings.findIndex((message) => message.toLowerCase().includes('slow event processing')) <
+      warnings.findIndex((message) => message.includes('slow warning child handler finishing')),
+    'Expected slow event warning while handler is still running'
+  )
+  assert.ok(!warnings.some((message) => message.toLowerCase().includes('slow event handler')), 'Did not expect slow handler warning')
+})
+
+test('slow handler warning fires when handler runs long', async () => {
+  const bus = new EventBus('SlowHandlerWarnBus', {
+    event_handler_slow_timeout: 0.5,
+    event_slow_timeout: 0.5,
+  })
+  const warnings: string[] = []
+  const original_warn = console.warn
+  console.warn = (message?: unknown, ...args: unknown[]) => {
+    warnings.push(String(message))
+    if (args.length > 0) {
+      warnings.push(args.map(String).join(' '))
+    }
+  }
+
+  try {
+    bus.on(TimeoutEvent, async () => {
+      await delay(25)
+      warnings.push('slow warning child handler finishing')
+      return 'ok'
+    })
+
+    const event = bus.emit(TimeoutEvent({ event_timeout: 0.5, event_slow_timeout: 0, event_handler_slow_timeout: 0.01 }))
+    await event.now()
+  } finally {
+    console.warn = original_warn
+  }
+
+  assert.ok(
+    warnings.some((message) => message.toLowerCase().includes('slow event handler')),
+    'Expected slow handler warning'
+  )
+  assert.ok(
+    warnings.findIndex((message) => message.toLowerCase().includes('slow event handler')) <
+      warnings.findIndex((message) => message.includes('slow warning child handler finishing')),
+    'Expected slow handler warning while handler is still running'
+  )
+  assert.ok(!warnings.some((message) => message.toLowerCase().includes('slow event processing')), 'Did not expect slow event warning')
+})
+
+test('slow handler and slow event warnings can both fire', async () => {
+  const bus = new EventBus('SlowComboWarnBus', {
+    event_handler_slow_timeout: 0.5,
+    event_slow_timeout: 0.5,
   })
   const warnings: string[] = []
   const original_warn = console.warn
@@ -331,21 +517,25 @@ test('slow event warning fires when event exceeds event_slow_timeout', async () 
       return 'ok'
     })
 
-    const event = bus.emit(TimeoutEvent({ event_timeout: 0.5 }))
-    await event.done()
+    const event = bus.emit(TimeoutEvent({ event_timeout: 0.5, event_slow_timeout: 0.01, event_handler_slow_timeout: 0.01 }))
+    await event.now()
   } finally {
     console.warn = original_warn
   }
 
+  assert.ok(
+    warnings.some((message) => message.toLowerCase().includes('slow event handler')),
+    'Expected slow handler warning'
+  )
   assert.ok(
     warnings.some((message) => message.toLowerCase().includes('slow event processing')),
     'Expected slow event warning'
   )
 })
 
-test('slow handler warning fires when handler runs long', async () => {
-  const bus = new EventBus('SlowHandlerWarnBus', {
-    event_handler_slow_timeout: 0.01,
+test('none slow warning thresholds disable event and handler slow warnings', async () => {
+  const bus = new EventBus('NoSlowWarnBus', {
+    event_handler_slow_timeout: null,
     event_slow_timeout: null,
   })
   const warnings: string[] = []
@@ -360,54 +550,21 @@ test('slow handler warning fires when handler runs long', async () => {
   try {
     bus.on(TimeoutEvent, async () => {
       await delay(25)
+      warnings.push('slow warning child handler finishing')
       return 'ok'
     })
 
     const event = bus.emit(TimeoutEvent({ event_timeout: 0.5 }))
-    await event.done()
+    await event.now()
   } finally {
     console.warn = original_warn
   }
 
+  assert.ok(!warnings.some((message) => message.toLowerCase().includes('slow event handler')), 'Did not expect slow handler warning')
+  assert.ok(!warnings.some((message) => message.toLowerCase().includes('slow event processing')), 'Did not expect slow event warning')
   assert.ok(
-    warnings.some((message) => message.toLowerCase().includes('slow event handler')),
-    'Expected slow handler warning'
-  )
-})
-
-test('slow handler and slow event warnings can both fire', async () => {
-  const bus = new EventBus('SlowComboWarnBus', {
-    event_handler_slow_timeout: 0.01,
-    event_slow_timeout: 0.01,
-  })
-  const warnings: string[] = []
-  const original_warn = console.warn
-  console.warn = (message?: unknown, ...args: unknown[]) => {
-    warnings.push(String(message))
-    if (args.length > 0) {
-      warnings.push(args.map(String).join(' '))
-    }
-  }
-
-  try {
-    bus.on(TimeoutEvent, async () => {
-      await delay(25)
-      return 'ok'
-    })
-
-    const event = bus.emit(TimeoutEvent({ event_timeout: 0.5 }))
-    await event.done()
-  } finally {
-    console.warn = original_warn
-  }
-
-  assert.ok(
-    warnings.some((message) => message.toLowerCase().includes('slow event handler')),
-    'Expected slow handler warning'
-  )
-  assert.ok(
-    warnings.some((message) => message.toLowerCase().includes('slow event processing')),
-    'Expected slow event warning'
+    warnings.some((message) => message.includes('slow warning child handler finishing')),
+    'Expected handler to complete'
   )
 })
 
@@ -432,7 +589,7 @@ test('event-level concurrency overrides do not bypass timeout aborts', async () 
       event_handler_concurrency: 'parallel',
     })
   )
-  await event.done({ raise_if_any: false })
+  await event.now()
 
   const result = Array.from(event.event_results.values())[0]
   assert.equal(result.status, 'error')
@@ -462,7 +619,7 @@ test('retry-based handler locks do not bypass timeouts', async () => {
   )
 
   const event = bus.emit(TimeoutEvent({ event_timeout: 0.01 }))
-  await event.done({ raise_if_any: false })
+  await event.now()
 
   const statuses = Array.from(event.event_results.values()).map((result) => result.status)
   assert.ok(statuses.includes('error'))
@@ -482,7 +639,8 @@ test('forwarded event timeout aborts apply across buses', async () => {
   })
 
   const event = bus_a.emit(TimeoutEvent({ event_timeout: 0.01 }))
-  await event.done({ raise_if_any: false })
+  await event.now()
+  await bus_b.waitUntilIdle()
 
   const results = Array.from(event.event_results.values())
   const bus_b_result = results.find((result) => result.eventbus_id === bus_b.id)
@@ -509,15 +667,15 @@ test('queue-jump awaited child timeout aborts still fire across buses', async ()
     // Use scoped bus emit to set parent tracking (event_parent_id, event_emitted_by_handler_id),
     // then also dispatch on bus_b for cross-bus handler execution.
     // Without parent tracking, _processEventImmediately can't detect the queue-jump context
-    // and falls back to eventCompleted(), which deadlocks with global-serial.
+    // and falls back to wait(), which deadlocks with global-serial.
     const child = event.emit(ChildEvent({ event_timeout: 0.01 }))!
     bus_b.emit(child)
     child_ref = child
-    await child.done()
+    await child.now()
   })
 
   const parent = bus_a.emit(ParentEvent({ event_timeout: 0.5 }))
-  await parent.done({ raise_if_any: false })
+  await parent.now()
 
   assert.ok(child_ref)
   const child_results = Array.from(child_ref!.event_results.values())
@@ -568,13 +726,13 @@ for (const handler_mode of STEP1_HANDLER_MODES) {
       ParentEvent,
       withGlobalLock(async (event) => {
         const child = event.emit(ChildEvent({ event_timeout: 0.2, event_handler_concurrency: 'parallel' }))!
-        await child.done()
+        await child.now()
         return 'parent_main'
       })
     )
 
     // This handler queues behind parent_main, then holds the serial lock
-    // while parent_main is trying to reclaim after child.done() completes.
+    // while parent_main is trying to reclaim after child.now() completes.
     bus.on(
       ParentEvent,
       withGlobalLock(async () => {
@@ -584,7 +742,7 @@ for (const handler_mode of STEP1_HANDLER_MODES) {
     )
 
     bus.emit(parent)
-    await parent.done({ raise_if_any: false })
+    await parent.now()
     await bus.waitUntilIdle()
 
     const parent_results = Array.from(parent.event_results.values())
@@ -630,7 +788,7 @@ for (const handler_mode of STEP1_HANDLER_MODES) {
       ChildEvent,
       withGlobalLock(async (event) => {
         const grandchild = event.emit(GrandchildEvent({ event_timeout: 0.2 }))!
-        await grandchild.done()
+        await grandchild.now()
         await delay(40)
         return 'child_done'
       })
@@ -649,7 +807,7 @@ for (const handler_mode of STEP1_HANDLER_MODES) {
       withGlobalLock(async (event) => {
         queued_sibling_ref = event.emit(QueuedSiblingEvent({ event_timeout: 0.2 }))!
         const child = event.emit(ChildEvent({ event_timeout: 0.02 }))!
-        await child.done({ raise_if_any: false })
+        await child.now()
         await delay(40)
       })
     )
@@ -663,7 +821,7 @@ for (const handler_mode of STEP1_HANDLER_MODES) {
     )
 
     const dispatched_parent = bus.emit(ParentEvent({ event_timeout: 0.03 }))
-    await dispatched_parent.done({ raise_if_any: false })
+    await dispatched_parent.now()
     await bus.waitUntilIdle()
 
     const parent_result = Array.from(dispatched_parent.event_results.values())[0]
@@ -680,7 +838,7 @@ for (const handler_mode of STEP1_HANDLER_MODES) {
     assert.equal(lock.in_use, baseline_in_use)
 
     const tail = bus.emit(TailEvent({ event_timeout: 0.05 }))
-    const tail_completed = await Promise.race([tail.done().then(() => true), delay(100).then(() => false)])
+    const tail_completed = await Promise.race([tail.now().then(() => true), delay(100).then(() => false)])
     assert.equal(tail_completed, true)
     assert.equal(tail_runs, 1)
     assert.equal(lock.in_use, baseline_in_use)
@@ -716,7 +874,7 @@ test('parent timeout does not cancel unawaited child handler results under seria
   })
 
   const parent = bus.emit(ParentEvent({ event_timeout: 0.01 }))
-  await parent.done({ raise_if_any: false })
+  await parent.now()
   await bus.waitUntilIdle()
 
   const child = parent.event_children[0]
@@ -755,7 +913,7 @@ test('retry timeout does not cancel unawaited child handler results', async () =
   )
 
   const parent = bus.emit(ParentEvent({ event_timeout: 0.5 }))
-  await parent.done({ raise_if_any: false })
+  await parent.now()
   await bus.waitUntilIdle()
 
   const parent_result = Array.from(parent.event_results.values())[0]
@@ -806,7 +964,7 @@ test('handler_timeout stops in-flight retries without cancelling unawaited child
   const handler_entry = bus.on(ParentEvent, handler, { handler_timeout: 0.35 })
 
   const parent = bus.emit(ParentEvent({ event_timeout: 2 }))
-  await parent.done({ raise_if_any: false })
+  await parent.now()
   await bus.waitUntilIdle()
 
   const parent_result = parent.event_results.get(handler_entry.id)
@@ -824,36 +982,53 @@ test('handler_timeout stops in-flight retries without cancelling unawaited child
   assert.ok(child_results.every((result) => result.status === 'completed'))
 })
 
-test('event_timeout null falls back to bus default', async () => {
+test('event_timeout zero disables timeout instead of using bus default', async () => {
   const bus = new EventBus('TimeoutDefaultBus', { event_timeout: 0.01 })
 
   bus.on(TimeoutEvent, async (_event: BaseEvent) => {
-    await delay(50)
+    await delay(20)
     return 'slow'
   })
 
-  const event = bus.emit(TimeoutEvent({ event_timeout: null }))
-  await event.done({ raise_if_any: false })
+  const event = bus.emit(TimeoutEvent({ event_timeout: 0 }))
+  await event.now()
 
   const result = Array.from(event.event_results.values())[0]
-  assert.equal(result.status, 'error')
-  assert.ok(result.error instanceof EventHandlerAbortedError)
+  assert.equal(result.status, 'completed')
+  assert.equal(result.result, 'slow')
 })
 
-test('bus default null disables timeouts when event_timeout is null', async () => {
-  const bus = new EventBus('TimeoutDisabledBus', { event_timeout: null })
+test('bus default zero disables timeouts when event_timeout is zero', async () => {
+  const bus = new EventBus('TimeoutDisabledBus', { event_timeout: 0 })
 
   bus.on(TimeoutEvent, async () => {
     await delay(20)
     return 'ok'
   })
 
-  const event = bus.emit(TimeoutEvent({ event_timeout: null }))
-  await event.done()
+  const event = bus.emit(TimeoutEvent({ event_timeout: 0 }))
+  await event.now()
 
   const result = Array.from(event.event_results.values())[0]
   assert.equal(result.status, 'completed')
   assert.equal(result.result, 'ok')
+})
+
+test('event_timeout null uses bus default timeout at execution', async () => {
+  const bus = new EventBus('TimeoutNullUsesBusDefault', { event_timeout: 0.01 })
+
+  bus.on(TimeoutEvent, async () => {
+    await delay(20)
+    return 'slow'
+  })
+
+  const event = bus.emit(TimeoutEvent({ event_timeout: null }))
+  await event.now()
+
+  const result = Array.from(event.event_results.values())[0]
+  assert.equal(event.event_timeout ?? null, null)
+  assert.equal(result.status, 'error')
+  assert.ok(result.error instanceof EventHandlerAbortedError)
 })
 
 test('multi-level timeout cascade with mixed cancellations', async () => {
@@ -897,7 +1072,7 @@ test('multi-level timeout cascade with mixed cancellations', async () => {
   const awaited_child_slow = async (event: BaseEvent) => {
     queued_grandchild = event.emit(QueuedGrandchildEvent({ event_timeout: 0.2 }))!
     immediate_grandchild = event.emit(ImmediateGrandchildEvent({ event_timeout: 0.2 }))!
-    await immediate_grandchild.done()
+    await immediate_grandchild.now()
     await delay(100)
     return 'awaited_slow'
   }
@@ -938,12 +1113,12 @@ test('multi-level timeout cascade with mixed cancellations', async () => {
   bus.on(TopEvent, async (event) => {
     queued_child = event.emit(QueuedChildEvent({ event_timeout: 0.2 }))!
     awaited_child = event.emit(AwaitedChildEvent({ event_timeout: 0.03 }))!
-    await awaited_child.done({ raise_if_any: false })
+    await awaited_child.now()
     await delay(80)
   })
 
   const top = bus.emit(TopEvent({ event_timeout: 0.04 }))
-  await top.done({ raise_if_any: false })
+  await top.now()
   await bus.waitUntilIdle()
 
   const top_result = Array.from(top.event_results.values())[0]
@@ -997,7 +1172,7 @@ test('multi-level timeout cascade with mixed cancellations', async () => {
 //     └── SiblingEvent — emitted but NOT awaited
 //           └── 1 handler: runs independently after the parent timeout
 //
-// KEY MECHANIC: When a child event is awaited via event.done() inside a handler,
+// KEY MECHANIC: When a child event is awaited via event.now() inside a handler,
 // it triggers "queue-jumping" via _processEventImmediately (cross-bus).
 // Queue-jumped events use yield-and-reacquire: the parent handler's lock is
 // temporarily released so child handlers can acquire it normally. This means
@@ -1092,7 +1267,7 @@ test('three-level timeout cascade with per-level timeouts and cascading cancella
     queued_grandchild_ref = event.emit(QueuedGrandchildEvent({ event_timeout: 0.5 }))!
     // Queue-jump: processes GrandchildEvent immediately via yield-and-reacquire.
     // All 5 GC handlers run serially. Completes in ~115ms (within 150ms child timeout).
-    await grandchild_ref.done({ raise_if_any: false })
+    await grandchild_ref.now()
     execution_log.push('child_after_grandchild')
     await delay(300) // will be interrupted: child started at ~t=0, timeout at 150ms
     execution_log.push('child_end') // should never reach here
@@ -1125,7 +1300,7 @@ test('three-level timeout cascade with per-level timeouts and cascading cancella
     sibling_ref = event.emit(SiblingEvent({ event_timeout: 0.5 }))!
     // Queue-jump: processes ChildEvent immediately (which in turn queue-jumps
     // GrandchildEvent). This entire subtree resolves in ~80ms (child timeout).
-    await child_ref.done({ raise_if_any: false })
+    await child_ref.now()
     execution_log.push('top_main_after_child')
     await delay(300) // will be interrupted: top_handler_main started at ~t=2, timeout at 250ms
     execution_log.push('top_main_end') // should never reach here
@@ -1146,7 +1321,7 @@ test('three-level timeout cascade with per-level timeouts and cascading cancella
 
   // ── Dispatch and wait ─────────────────────────────────────────────────
   const top = bus.emit(TopEvent({ event_timeout: 0.25 }))
-  await top.done({ raise_if_any: false })
+  await top.now()
   await bus.waitUntilIdle()
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -1318,7 +1493,7 @@ test('unawaited descendant preserves lineage and is not cancelled by ancestor ti
   // OuterEvent handler: emits InnerEvent (awaited), then sleeps long → times out
   const outer_handler = async (event: InstanceType<typeof OuterEvent>) => {
     inner_ref = event.emit(InnerEvent({ event_timeout: 0.04 }))!
-    await inner_ref.done({ raise_if_any: false })
+    await inner_ref.now()
     await delay(200) // interrupted by outer timeout
     return 'outer_done'
   }
@@ -1328,7 +1503,7 @@ test('unawaited descendant preserves lineage and is not cancelled by ancestor ti
   bus.on(DeepEvent, deep_handler)
 
   const outer = bus.emit(OuterEvent({ event_timeout: 0.15 }))
-  await outer.done({ raise_if_any: false })
+  await outer.now()
   await bus.waitUntilIdle()
 
   // Outer handler was aborted by event-level timeout
@@ -1355,7 +1530,7 @@ test('unawaited descendant preserves lineage and is not cancelled by ancestor ti
 })
 
 // =============================================================================
-// When a parent has a timeout but a child has event_timeout: null (no timeout),
+// When a parent has a timeout but a child has event_timeout: 0 (no timeout),
 // the child's handlers run indefinitely on their own — but if the PARENT times
 // out, bus._cancelPendingChildProcessing still cancels any pending child handlers.
 // This tests that cancellation works across timeout/no-timeout boundaries.
@@ -1368,7 +1543,7 @@ test('parent timeout does not cancel unawaited children that have no timeout of 
   const bus = new EventBus('TimeoutBoundaryBus', {
     event_concurrency: 'bus-serial',
     event_handler_concurrency: 'serial',
-    event_timeout: null, // no bus-level default
+    event_timeout: 0, // no bus-level default
   })
 
   let child_ref = null as InstanceType<typeof NoTimeoutChild> | null
@@ -1383,8 +1558,8 @@ test('parent timeout does not cancel unawaited children that have no timeout of 
 
   // Parent handler: emits child (not awaited), then sleeps → parent times out
   const parent_handler = async (event: InstanceType<typeof ParentEvent>) => {
-    // event_timeout: null means the child has no timeout of its own.
-    child_ref = event.emit(NoTimeoutChild({ event_timeout: null }))!
+    // event_timeout: 0 means the child has no timeout of its own.
+    child_ref = event.emit(NoTimeoutChild({ event_timeout: 0 }))!
     await delay(200)
     return 'parent_done'
   }
@@ -1393,7 +1568,7 @@ test('parent timeout does not cancel unawaited children that have no timeout of 
   bus.on(NoTimeoutChild, child_slow_handler)
 
   const parent = bus.emit(ParentEvent({ event_timeout: 0.03 }))
-  await parent.done({ raise_if_any: false })
+  await parent.now()
   await bus.waitUntilIdle()
 
   // Parent timed out

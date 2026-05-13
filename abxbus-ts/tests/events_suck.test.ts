@@ -82,11 +82,17 @@ test('events_suck.make_events works with inline handlers', async () => {
   bus.on(events.FooBarAPIUpdateEvent, (event) => update_from_payload(event))
   bus.on(events.FooBarAPIPingEvent, (event) => ping_from_payload(event))
 
-  const created = await bus.emit(events.FooBarAPICreateEvent({ id: null, name: 'bob', age: 45 })).first()
+  const created = await bus
+    .emit(events.FooBarAPICreateEvent({ id: null, name: 'bob', age: 45 }))
+    .now({ first_result: true })
+    .eventResult()
   assert.ok(created !== undefined)
-  const updated = await bus.emit(events.FooBarAPIUpdateEvent({ id: created, age: 46, source: 'sync' })).first()
+  const updated = await bus
+    .emit(events.FooBarAPIUpdateEvent({ id: created, age: 46, source: 'sync' }))
+    .now({ first_result: true })
+    .eventResult()
   const user_id = 'e692b6cb-ae63-773b-8557-3218f7ce5ced'
-  const pong = await bus.emit(events.FooBarAPIPingEvent({ user_id })).first()
+  const pong = await bus.emit(events.FooBarAPIPingEvent({ user_id })).now({ first_result: true }).eventResult()
 
   assert.equal(created, 'bob-45')
   assert.equal(updated, true)

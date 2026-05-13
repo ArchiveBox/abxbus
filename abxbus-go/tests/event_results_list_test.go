@@ -11,25 +11,25 @@ import (
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 )
 
-func TestEventResultsListOptions(t *testing.T) {
+func TestEventResultOptions(t *testing.T) {
 	bus := abxbus.NewEventBus("ResultsListBus", nil)
 	bus.On("ListEvent", "ok", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) { return "ok", nil }, nil)
 	bus.On("ListEvent", "nil", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) { return nil, nil }, nil)
 	bus.On("ListEvent", "err", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) { return nil, errors.New("boom") }, nil)
 
 	e := bus.Emit(abxbus.NewBaseEvent("ListEvent", nil))
-	if _, err := e.Done(context.Background()); err != nil {
+	if _, err := e.Now(); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := e.EventResultsList(context.Background(), nil, nil); err == nil || err.Error() != "boom" {
+	if _, err := e.EventResultsList(nil); err == nil || err.Error() != "boom" {
 		t.Fatalf("default options should raise first handler error, got %v", err)
 	}
-	if _, err := e.EventResultsList(context.Background(), nil, &abxbus.EventResultsListOptions{RaiseIfAny: true, RaiseIfNone: false}); err == nil || err.Error() != "boom" {
+	if _, err := e.EventResultsList(&abxbus.EventResultOptions{RaiseIfAny: true, RaiseIfNone: false}); err == nil || err.Error() != "boom" {
 		t.Fatalf("RaiseIfAny=true should surface boom, got %v", err)
 	}
 
-	vals, err := e.EventResultsList(context.Background(), nil, &abxbus.EventResultsListOptions{RaiseIfAny: false, RaiseIfNone: false})
+	vals, err := e.EventResultsList(&abxbus.EventResultOptions{RaiseIfAny: false, RaiseIfNone: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,9 +37,9 @@ func TestEventResultsListOptions(t *testing.T) {
 		t.Fatalf("unexpected values for non-raising mode: %#v", vals)
 	}
 
-	onlyNil, err := e.EventResultsList(context.Background(), func(result any, eventResult *abxbus.EventResult) bool {
+	onlyNil, err := e.EventResultsList(&abxbus.EventResultOptions{Include: func(result any, eventResult *abxbus.EventResult) bool {
 		return result == nil
-	}, &abxbus.EventResultsListOptions{RaiseIfAny: false, RaiseIfNone: false})
+	}, RaiseIfAny: false, RaiseIfNone: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,9 +47,9 @@ func TestEventResultsListOptions(t *testing.T) {
 		t.Fatalf("expected include predicate to capture nil results from nil+error handlers, got %#v", onlyNil)
 	}
 
-	if _, err := e.EventResultsList(context.Background(), func(result any, eventResult *abxbus.EventResult) bool {
+	if _, err := e.EventResultsList(&abxbus.EventResultOptions{Include: func(result any, eventResult *abxbus.EventResult) bool {
 		return false
-	}, &abxbus.EventResultsListOptions{RaiseIfAny: false, RaiseIfNone: true}); err == nil {
+	}, RaiseIfAny: false, RaiseIfNone: true}); err == nil {
 		t.Fatal("RaiseIfNone=true should fail when include filter rejects all results")
 	}
 
@@ -69,12 +69,12 @@ func TestEventResultsListOptions(t *testing.T) {
 		t.Fatal("timed out waiting for slow handler start")
 	}
 	tiny := 0.01
-	if _, err := slow.EventResultsList(context.Background(), nil, &abxbus.EventResultsListOptions{Timeout: &tiny, RaiseIfAny: false, RaiseIfNone: false}); err == nil {
+	if _, err := slow.Now(&abxbus.EventWaitOptions{Timeout: &tiny}); err == nil {
 		close(release)
-		t.Fatal("expected timeout error from EventResultsList with timeout option")
+		t.Fatal("expected timeout error from Now with timeout option")
 	}
 	close(release)
-	if _, err := slow.Done(context.Background()); err != nil {
+	if _, err := slow.Now(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -94,7 +94,7 @@ func TestEventResultsListAndFirstUseHandlerRegistrationOrder(t *testing.T) {
 	}, &abxbus.EventHandler{ID: "a-late"})
 
 	e := bus.Emit(abxbus.NewBaseEvent("OrderResultEvent", nil))
-	first, err := e.EventResult(context.Background())
+	first, err := e.EventResult()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestEventResultsListAndFirstUseHandlerRegistrationOrder(t *testing.T) {
 		t.Fatalf("expected EventResult to return first non-nil result in registration order, got %#v", first)
 	}
 
-	values, err := e.EventResultsList(context.Background(), nil, &abxbus.EventResultsListOptions{RaiseIfAny: false, RaiseIfNone: true})
+	values, err := e.EventResultsList(&abxbus.EventResultOptions{RaiseIfAny: false, RaiseIfNone: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,9 +110,9 @@ func TestEventResultsListAndFirstUseHandlerRegistrationOrder(t *testing.T) {
 		t.Fatalf("expected filtered values in registration order, got %#v", values)
 	}
 
-	rawValues, err := e.EventResultsList(context.Background(), func(result any, eventResult *abxbus.EventResult) bool {
+	rawValues, err := e.EventResultsList(&abxbus.EventResultOptions{Include: func(result any, eventResult *abxbus.EventResult) bool {
 		return true
-	}, &abxbus.EventResultsListOptions{RaiseIfAny: false, RaiseIfNone: false})
+	}, RaiseIfAny: false, RaiseIfNone: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestEventResultsListPreservesJSONEventResultsObjectOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := event.EventResult(context.Background())
+	first, err := event.EventResult()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,9 +165,9 @@ func TestEventResultsListPreservesJSONEventResultsObjectOrder(t *testing.T) {
 		t.Fatalf("expected first non-nil result to follow JSON object/registration order, got %#v", first)
 	}
 
-	values, err := event.EventResultsList(context.Background(), func(result any, eventResult *abxbus.EventResult) bool {
+	values, err := event.EventResultsList(&abxbus.EventResultOptions{Include: func(result any, eventResult *abxbus.EventResult) bool {
 		return true
-	}, &abxbus.EventResultsListOptions{RaiseIfAny: false, RaiseIfNone: false})
+	}, RaiseIfAny: false, RaiseIfNone: false})
 	if err != nil {
 		t.Fatal(err)
 	}

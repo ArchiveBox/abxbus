@@ -101,7 +101,7 @@ async function handlerConcurrencyDemo(): Promise<void> {
     bus.on(HandlerEvent, make_handler('slow', 60))
     bus.on(HandlerEvent, make_handler('fast', 20))
     const event = bus.emit(HandlerEvent({ label: mode }))
-    await event.done()
+    await event.now()
     await bus.waitUntilIdle()
     log(`max handler overlap: ${max_in_flight} (expect 1 for serial, >= 2 for parallel)`)
     console.log(`\n=== ${bus.name}.logTree() ===`)
@@ -205,7 +205,7 @@ async function handlerTimeoutDemo(): Promise<void> {
     { handler_timeout: 0.1 }
   )
   const event = bus.emit(TimeoutEvent({ ms: 60, event_handler_timeout: 0.5 }))
-  await event.done({ raise_if_any: false })
+  await event.now()
   const slow_result = event.event_results.get(slow_entry.id)
   const fast_result = event.event_results.get(fast_entry.id)
   assert.ok(slow_result, 'expected slow handler result entry')

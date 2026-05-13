@@ -41,7 +41,7 @@ func TestQueueJumpPreservesParentChildLineageAndFindVisibility(t *testing.T) {
 	bus.On("QueueJumpRootEvent", "on_root", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		appendOrder("root:start")
 		child := event.Emit(abxbus.NewBaseEvent("QueueJumpChildEvent", nil))
-		if _, err := child.Done(ctx); err != nil {
+		if _, err := child.Now(); err != nil {
 			return nil, err
 		}
 		appendOrder("root:end")
@@ -64,14 +64,12 @@ func TestQueueJumpPreservesParentChildLineageAndFindVisibility(t *testing.T) {
 		return "sibling-ok", nil
 	}, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
 	root := bus.Emit(abxbus.NewBaseEvent("QueueJumpRootEvent", nil))
 	sibling := bus.Emit(abxbus.NewBaseEvent("QueueJumpSiblingEvent", nil))
-	if _, err := root.Done(ctx); err != nil {
+	if _, err := root.Now(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sibling.Done(ctx); err != nil {
+	if _, err := sibling.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if !bus.WaitUntilIdle(testFloat64Ptr(2)) {
@@ -173,10 +171,8 @@ func TestConcurrencyIntersectionParallelEventsWithSerialHandlers(t *testing.T) {
 	for idx := 0; idx < 8; idx++ {
 		events = append(events, bus.Emit(abxbus.NewBaseEvent("ConcurrencyIntersectionEvent", map[string]any{"token": idx})))
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
 	for _, event := range events {
-		if err := event.EventCompleted(ctx); err != nil {
+		if _, err := event.Wait(); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -222,7 +218,7 @@ func TestTimeoutEnforcementDoesNotBreakFollowupProcessingOrQueueState(t *testing
 	timedOut := abxbus.NewBaseEvent("TimeoutEnforcementEvent", nil)
 	timedOut.EventTimeout = &timeout
 	timedOut = bus.Emit(timedOut)
-	_, _ = timedOut.Done(context.Background())
+	_, _ = timedOut.Now()
 	if timedOut.EventStatus != "completed" {
 		t.Fatalf("timed-out event should settle completed, got %s", timedOut.EventStatus)
 	}
@@ -236,7 +232,7 @@ func TestTimeoutEnforcementDoesNotBreakFollowupProcessingOrQueueState(t *testing
 	}
 
 	followup := bus.Emit(abxbus.NewBaseEvent("TimeoutFollowupEvent", nil))
-	got, err := followup.EventResult(context.Background())
+	got, err := followup.EventResult()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +264,7 @@ func TestZeroHistoryBackpressureWithFindFutureStillResolvesNewEvents(t *testing.
 	}, nil)
 
 	first := bus.Emit(abxbus.NewBaseEvent("ZeroHistoryEvent", map[string]any{"value": "first"}))
-	if _, err := first.Done(context.Background()); err != nil {
+	if _, err := first.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if bus.EventHistory.Has(first.EventID) {
@@ -327,7 +323,7 @@ func TestContextPropagatesThroughForwardingAndChildDispatchWithLineageIntact(t *
 		capturedParentRequestID, _ = ctx.Value(key).(string)
 		parentEventID = event.EventID
 		child := event.Emit(abxbus.NewBaseEvent("ContextChildEvent", nil))
-		if _, err := child.Done(ctx); err != nil {
+		if _, err := child.Now(); err != nil {
 			return nil, err
 		}
 		return "parent-ok", nil
@@ -342,8 +338,8 @@ func TestContextPropagatesThroughForwardingAndChildDispatchWithLineageIntact(t *
 
 	requestID := "fc81f432-98cd-7a06-824c-dafed74761bb"
 	ctx := context.WithValue(context.Background(), key, requestID)
-	parent := busA.Emit(abxbus.NewBaseEvent("ContextParentEvent", nil))
-	if _, err := parent.Done(ctx); err != nil {
+	parent := busA.EmitWithContext(ctx, abxbus.NewBaseEvent("ContextParentEvent", nil))
+	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if !busB.WaitUntilIdle(testFloat64Ptr(2)) {
@@ -404,8 +400,6 @@ func TestPendingQueueFindVisibilityTransitionsToCompletedAfterRelease(t *testing
 		return "ok:" + event.Payload["tag"].(string), nil
 	}, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
 	blocking := bus.Emit(abxbus.NewBaseEvent("PendingVisibilityEvent", map[string]any{"tag": "blocking"}))
 	testWaitForSignal(t, started, 2*time.Second, "blocking event start")
 
@@ -424,10 +418,10 @@ func TestPendingQueueFindVisibilityTransitionsToCompletedAfterRelease(t *testing
 	}
 
 	close(release)
-	if err := blocking.EventCompleted(ctx); err != nil {
+	if _, err := blocking.Wait(); err != nil {
 		t.Fatal(err)
 	}
-	if err := queued.EventCompleted(ctx); err != nil {
+	if _, err := queued.Wait(); err != nil {
 		t.Fatal(err)
 	}
 	if queued.EventStatus != "completed" {
@@ -448,10 +442,10 @@ func TestHistoryBackpressureRejectsOverflowAndPreservesFindableHistory(t *testin
 
 	first := bus.Emit(abxbus.NewBaseEvent("BackpressureEvent", map[string]any{"value": "first"}))
 	second := bus.Emit(abxbus.NewBaseEvent("BackpressureEvent", map[string]any{"value": "second"}))
-	if _, err := first.Done(context.Background()); err != nil {
+	if _, err := first.Now(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.Done(context.Background()); err != nil {
+	if _, err := second.Now(); err != nil {
 		t.Fatal(err)
 	}
 	foundFirst, err := bus.Find("BackpressureEvent", nil, &abxbus.FindOptions{
@@ -490,7 +484,7 @@ func TestEventBusCrossRuntimeJSONFeaturesUseCanonicalShapes(t *testing.T) {
 		"type":       "object",
 		"properties": map[string]any{"ok": map[string]any{"type": "boolean"}},
 	}
-	if _, err := bus.Emit(event).Done(context.Background()); err != nil {
+	if _, err := bus.Emit(event).Now(); err != nil {
 		t.Fatal(err)
 	}
 

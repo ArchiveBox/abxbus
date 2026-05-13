@@ -1,5 +1,6 @@
 use abxbus_rust::event;
 use std::{
+    process::Command,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc, Arc, Mutex,
@@ -9,9 +10,10 @@ use std::{
 };
 
 use abxbus_rust::{
-    base_event::{now_iso, BaseEvent, EventResultsOptions},
+    base_event::{now_iso, BaseEvent, EventResultOptions, EventWaitOptions},
     event_bus::{EventBus, EventBusOptions},
     event_result::EventResultStatus,
+    typed::IntoBaseEventHandle,
     types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
@@ -104,6 +106,96 @@ event! {
         event_type: "BaseEventQueuedSiblingEvent",
     }
 }
+event! {
+    struct PassiveSerialParentEvent {
+        event_result_type: String,
+        event_type: "PassiveSerialParentEvent",
+    }
+}
+event! {
+    struct PassiveSerialEmittedEvent {
+        event_result_type: String,
+        event_type: "PassiveSerialEmittedEvent",
+    }
+}
+event! {
+    struct PassiveSerialFoundEvent {
+        event_result_type: String,
+        event_type: "PassiveSerialFoundEvent",
+    }
+}
+event! {
+    struct EventCompletedSerialDeadlockWarningParentEvent {
+        event_result_type: String,
+        event_type: "EventCompletedSerialDeadlockWarningParentEvent",
+    }
+}
+event! {
+    struct EventCompletedSerialDeadlockWarningChildEvent {
+        event_result_type: String,
+        event_type: "EventCompletedSerialDeadlockWarningChildEvent",
+    }
+}
+event! {
+    struct PassiveParallelParentEvent {
+        event_result_type: String,
+        event_type: "PassiveParallelParentEvent",
+    }
+}
+event! {
+    struct PassiveParallelEmittedEvent {
+        event_result_type: String,
+        event_type: "PassiveParallelEmittedEvent",
+    }
+}
+event! {
+    struct PassiveParallelFoundEvent {
+        event_result_type: String,
+        event_type: "PassiveParallelFoundEvent",
+    }
+}
+event! {
+    struct FutureParallelSomeOtherEvent {
+        event_result_type: String,
+        event_type: "FutureParallelSomeOtherEvent",
+    }
+}
+event! {
+    struct FutureParallelEvent {
+        event_result_type: String,
+        event_type: "FutureParallelEvent",
+    }
+}
+event! {
+    struct DoneOutsideHandlerBlockerEvent {
+        event_result_type: String,
+        event_type: "DoneOutsideHandlerBlockerEvent",
+    }
+}
+event! {
+    struct DoneOutsideHandlerTargetEvent {
+        event_result_type: String,
+        event_type: "DoneOutsideHandlerTargetEvent",
+    }
+}
+event! {
+    struct DoneOutsideHandlerParallelBlockerEvent {
+        event_result_type: String,
+        event_type: "DoneOutsideHandlerParallelBlockerEvent",
+    }
+}
+event! {
+    struct DoneOutsideHandlerParallelTargetEvent {
+        event_result_type: String,
+        event_type: "DoneOutsideHandlerParallelTargetEvent",
+    }
+}
+event! {
+    struct EventCompletedTimeoutEvent {
+        event_result_type: String,
+        event_type: "EventCompletedTimeoutEvent",
+    }
+}
 fn mk_event(event_type: &str) -> Arc<BaseEvent> {
     let mut payload = Map::new();
     payload.insert("value".to_string(), json!(1));
@@ -128,6 +220,38 @@ fn index_of(order: &[String], value: &str) -> usize {
         .unwrap_or_else(|| panic!("missing {value} in {order:?}"))
 }
 
+fn wait_until_bool(flag: &AtomicBool) {
+    let started = std::time::Instant::now();
+    while !flag.load(Ordering::SeqCst) {
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "timed out waiting for flag"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn base_event_deadlock_warning_child_enabled() -> bool {
+    std::env::var("ABXBUS_RUN_BASE_EVENT_DEADLOCK_WARNING_CHILD").as_deref() == Ok("1")
+}
+
+fn run_base_event_deadlock_warning_child(test_name: &str) -> String {
+    let output = Command::new(std::env::current_exe().expect("current test binary"))
+        .arg("--exact")
+        .arg(test_name)
+        .arg("--nocapture")
+        .env("ABXBUS_RUN_BASE_EVENT_DEADLOCK_WARNING_CHILD", "1")
+        .output()
+        .expect("run base event deadlock warning child test");
+    assert!(
+        output.status.success(),
+        "child test {test_name} failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stderr).to_string()
+}
+
 #[test]
 fn test_baseevent_lifecycle_transitions_are_explicit_and_awaitable() {
     let event = mk_event("BaseEventLifecycleTestEvent");
@@ -142,7 +266,7 @@ fn test_baseevent_lifecycle_transitions_are_explicit_and_awaitable() {
     event.mark_completed();
     assert_eq!(event.inner.lock().event_status, EventStatus::Completed);
     assert!(event.inner.lock().event_completed_at.is_some());
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 }
 
 #[test]
@@ -151,7 +275,7 @@ fn test_event_result_re_raises_first_processing_exception_after_completion() {
         Some("BaseEventDoneRaisesFirstErrorBus".to_string()),
         EventBusOptions {
             event_handler_concurrency: EventHandlerConcurrencyMode::Parallel,
-            event_timeout: None,
+            event_timeout: Some(0.0),
             ..EventBusOptions::default()
         },
     );
@@ -176,7 +300,7 @@ fn test_event_result_re_raises_first_processing_exception_after_completion() {
     let event = bus.emit(BaseEventDoneRaisesFirstErrorEvent {
         ..Default::default()
     });
-    let error = block_on(event.inner.event_result(EventResultsOptions::default()))
+    let error = block_on(event.inner.event_result(EventResultOptions::default()))
         .expect_err("handler error should be surfaced");
 
     assert!(error.contains("first failure"));
@@ -297,7 +421,7 @@ fn test_await_event_queue_jumps_inside_handler() {
             let child = bus.emit_child(BaseEventImmediateChildEvent {
                 ..Default::default()
             });
-            child.done().await;
+            let _ = child.now().await;
             push(&order, "parent_end");
             Ok(json!("parent"))
         }
@@ -324,13 +448,846 @@ fn test_await_event_queue_jumps_inside_handler() {
     let parent = bus.emit(BaseEventImmediateParentEvent {
         ..Default::default()
     });
-    block_on(parent.done());
+    let _ = block_on(parent.now());
     block_on(bus.wait_until_idle(Some(2.0)));
 
     assert_eq!(
         order.lock().expect("order lock").as_slice(),
         ["parent_start", "child", "parent_end", "sibling"]
     );
+    bus.stop();
+}
+
+#[test]
+fn test_now_options_queue_jumps_child_processing_inside_handlers() {
+    let bus = EventBus::new_with_options(
+        Some("BaseEventImmediateQueueJumpArgsBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let child_failed = Arc::new(AtomicBool::new(false));
+
+    let bus_for_parent = bus.clone();
+    let order_for_parent = order.clone();
+    bus.on_raw(
+        "BaseEventImmediateParentEvent",
+        "parent_with_args",
+        move |_event| {
+            let bus = bus_for_parent.clone();
+            let order = order_for_parent.clone();
+            async move {
+                push(&order, "parent_start");
+                bus.emit(BaseEventImmediateSiblingEvent {
+                    ..Default::default()
+                });
+                let child = bus.emit_child(BaseEventImmediateChildEvent {
+                    ..Default::default()
+                });
+                child.now_with_options(EventWaitOptions::default()).await?;
+                push(&order, "parent_end");
+                Ok(json!("parent"))
+            }
+        },
+    );
+
+    let order_for_child = order.clone();
+    let child_failed_for_child = child_failed.clone();
+    bus.on_raw(
+        "BaseEventImmediateChildEvent",
+        "child_error",
+        move |_event| {
+            let order = order_for_child.clone();
+            let child_failed = child_failed_for_child.clone();
+            async move {
+                push(&order, "child");
+                child_failed.store(true, Ordering::SeqCst);
+                Err("child failure".to_string())
+            }
+        },
+    );
+
+    let order_for_sibling = order.clone();
+    bus.on_raw("BaseEventImmediateSiblingEvent", "sibling", move |_event| {
+        let order = order_for_sibling.clone();
+        async move {
+            push(&order, "sibling");
+            Ok(json!("sibling"))
+        }
+    });
+
+    let parent = bus.emit(BaseEventImmediateParentEvent {
+        ..Default::default()
+    });
+    block_on(parent.now()).expect("parent should complete");
+    block_on(bus.wait_until_idle(Some(2.0)));
+
+    assert_eq!(
+        order.lock().expect("order lock").as_slice(),
+        ["parent_start", "child", "parent_end", "sibling"]
+    );
+    assert!(child_failed.load(Ordering::SeqCst));
+    bus.stop();
+}
+
+#[test]
+fn test_now_outside_handler_completes_without_raising_processing_error() {
+    let bus = EventBus::new(Some("BaseEventNowOutsideNoArgsBus".to_string()));
+    bus.on_raw(
+        "BaseEventDoneRaisesFirstErrorEvent",
+        "failing_handler",
+        |_event| async move { Err("outside failure".to_string()) },
+    );
+
+    let event = bus.emit(BaseEventDoneRaisesFirstErrorEvent {
+        ..Default::default()
+    });
+    block_on(event.now()).expect("now should wait for completion without raising handler errors");
+    let error = block_on(event.event_result(EventResultOptions::default()))
+        .expect_err("event_result should raise outside handler errors");
+    assert_eq!(error, "outside failure");
+    assert_eq!(
+        event.inner.inner.lock().event_status,
+        EventStatus::Completed
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_event_result_options_outside_handler_suppresses_processing_error() {
+    let bus = EventBus::new(Some("BaseEventDoneOutsideArgsBus".to_string()));
+    bus.on_raw(
+        "BaseEventDoneRaisesFirstErrorEvent",
+        "failing_handler",
+        |_event| async move { Err("outside suppressed failure".to_string()) },
+    );
+
+    let event = bus.emit(BaseEventDoneRaisesFirstErrorEvent {
+        ..Default::default()
+    });
+    block_on(event.inner.now_with_options(EventWaitOptions::default()))
+        .expect("raise_if_any=false should only wait for completion");
+    assert_eq!(
+        event.inner.inner.lock().event_status,
+        EventStatus::Completed
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_now_outside_handler_queue_jumps_queued_execution() {
+    let bus = EventBus::new_with_options(
+        Some("DoneOutsideHandlerQueueOrderBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let blocker_started = Arc::new(AtomicBool::new(false));
+    let release_blocker = Arc::new(AtomicBool::new(false));
+
+    let order_for_blocker = order.clone();
+    let blocker_started_for_handler = blocker_started.clone();
+    let release_blocker_for_handler = release_blocker.clone();
+    bus.on_raw("DoneOutsideHandlerBlockerEvent", "blocker", move |_event| {
+        let order = order_for_blocker.clone();
+        let blocker_started = blocker_started_for_handler.clone();
+        let release_blocker = release_blocker_for_handler.clone();
+        async move {
+            push(&order, "blocker_start");
+            blocker_started.store(true, Ordering::SeqCst);
+            while !release_blocker.load(Ordering::SeqCst) {
+                thread::sleep(Duration::from_millis(1));
+            }
+            push(&order, "blocker_end");
+            Ok(json!(null))
+        }
+    });
+
+    let order_for_target = order.clone();
+    bus.on_raw("DoneOutsideHandlerTargetEvent", "target", move |_event| {
+        let order = order_for_target.clone();
+        async move {
+            push(&order, "target");
+            Ok(json!(null))
+        }
+    });
+
+    bus.emit(DoneOutsideHandlerBlockerEvent {
+        ..Default::default()
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while !blocker_started.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(blocker_started.load(Ordering::SeqCst));
+
+    let target = bus.emit(DoneOutsideHandlerTargetEvent {
+        ..Default::default()
+    });
+    let target_for_wait = target.clone();
+    let now_thread = thread::spawn(move || block_on(target_for_wait.now()));
+    thread::sleep(Duration::from_millis(50));
+    assert_eq!(
+        order.lock().expect("order lock").as_slice(),
+        ["blocker_start", "target"]
+    );
+    release_blocker.store(true, Ordering::SeqCst);
+    assert!(now_thread
+        .join()
+        .expect("now thread")
+        .map(|event| Arc::ptr_eq(&event.inner, &target.inner))
+        .unwrap_or(false));
+    block_on(bus.wait_until_idle(Some(2.0)));
+    assert_eq!(
+        order.lock().expect("order lock").as_slice(),
+        ["blocker_start", "target", "blocker_end"]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_now_outside_handler_allows_normal_parallel_processing() {
+    let bus = EventBus::new_with_options(
+        Some("DoneOutsideHandlerParallelQueueOrderBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let blocker_started = Arc::new(AtomicBool::new(false));
+    let release_blocker = Arc::new(AtomicBool::new(false));
+
+    let order_for_blocker = order.clone();
+    let blocker_started_for_handler = blocker_started.clone();
+    let release_blocker_for_handler = release_blocker.clone();
+    bus.on_raw(
+        "DoneOutsideHandlerParallelBlockerEvent",
+        "blocker",
+        move |_event| {
+            let order = order_for_blocker.clone();
+            let blocker_started = blocker_started_for_handler.clone();
+            let release_blocker = release_blocker_for_handler.clone();
+            async move {
+                push(&order, "blocker_start");
+                blocker_started.store(true, Ordering::SeqCst);
+                while !release_blocker.load(Ordering::SeqCst) {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                push(&order, "blocker_end");
+                Ok(json!(null))
+            }
+        },
+    );
+
+    let order_for_target = order.clone();
+    bus.on_raw(
+        "DoneOutsideHandlerParallelTargetEvent",
+        "target",
+        move |_event| {
+            let order = order_for_target.clone();
+            async move {
+                push(&order, "target");
+                Ok(json!(null))
+            }
+        },
+    );
+
+    bus.emit(DoneOutsideHandlerParallelBlockerEvent {
+        ..Default::default()
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while !blocker_started.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(blocker_started.load(Ordering::SeqCst));
+
+    let target = bus.emit(DoneOutsideHandlerParallelTargetEvent {
+        event_concurrency: Some(EventConcurrencyMode::Parallel),
+        ..Default::default()
+    });
+    let target_for_wait = target.clone();
+    let done_thread = thread::spawn(move || block_on(target_for_wait.now()));
+    thread::sleep(Duration::from_millis(50));
+    assert_eq!(
+        order.lock().expect("order lock").as_slice(),
+        ["blocker_start", "target"]
+    );
+    release_blocker.store(true, Ordering::SeqCst);
+    assert!(done_thread
+        .join()
+        .expect("done thread")
+        .map(|event| Arc::ptr_eq(&event.inner, &target.inner))
+        .unwrap_or(false));
+    block_on(bus.wait_until_idle(Some(2.0)));
+    assert_eq!(
+        order.lock().expect("order lock").as_slice(),
+        ["blocker_start", "target", "blocker_end"]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_wait_returns_event_without_forcing_queued_execution() {
+    let bus = EventBus::new_with_options(
+        Some("WaitPassiveQueueOrderBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let blocker_started = Arc::new(AtomicBool::new(false));
+    let release_blocker = Arc::new(AtomicBool::new(false));
+
+    let order_for_blocker = order.clone();
+    let blocker_started_for_handler = blocker_started.clone();
+    let release_blocker_for_handler = release_blocker.clone();
+    bus.on_raw("WaitPassiveBlockerEvent", "blocker", move |_event| {
+        let order = order_for_blocker.clone();
+        let blocker_started = blocker_started_for_handler.clone();
+        let release_blocker = release_blocker_for_handler.clone();
+        async move {
+            push(&order, "blocker_start");
+            blocker_started.store(true, Ordering::SeqCst);
+            while !release_blocker.load(Ordering::SeqCst) {
+                thread::sleep(Duration::from_millis(1));
+            }
+            push(&order, "blocker_end");
+            Ok(json!(null))
+        }
+    });
+    let order_for_target = order.clone();
+    bus.on_raw("WaitPassiveTargetEvent", "target", move |_event| {
+        let order = order_for_target.clone();
+        async move {
+            push(&order, "target");
+            Ok(json!("target"))
+        }
+    });
+
+    bus.emit_base(BaseEvent::new("WaitPassiveBlockerEvent", Map::new()));
+    wait_until_bool(&blocker_started);
+    let target = bus.emit_base(BaseEvent::new("WaitPassiveTargetEvent", Map::new()));
+    let target_for_wait = target.clone();
+    let wait_thread = thread::spawn(move || {
+        block_on(target_for_wait.wait_with_options(EventWaitOptions {
+            timeout: Some(1.0),
+            first_result: false,
+        }))
+    });
+    thread::sleep(Duration::from_millis(50));
+    assert_eq!(
+        order.lock().expect("order lock").as_slice(),
+        ["blocker_start"]
+    );
+    release_blocker.store(true, Ordering::SeqCst);
+    assert!(wait_thread
+        .join()
+        .expect("wait thread")
+        .map(|event| Arc::ptr_eq(&event, &target))
+        .unwrap_or(false));
+    assert_eq!(
+        order.lock().expect("order lock").as_slice(),
+        ["blocker_start", "blocker_end", "target"]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_now_returns_event_and_queue_jumps_queued_execution() {
+    let bus = EventBus::new_with_options(
+        Some("NowActiveQueueJumpBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let blocker_started = Arc::new(AtomicBool::new(false));
+    let release_blocker = Arc::new(AtomicBool::new(false));
+
+    let order_for_blocker = order.clone();
+    let blocker_started_for_handler = blocker_started.clone();
+    let release_blocker_for_handler = release_blocker.clone();
+    bus.on_raw("NowActiveBlockerEvent", "blocker", move |_event| {
+        let order = order_for_blocker.clone();
+        let blocker_started = blocker_started_for_handler.clone();
+        let release_blocker = release_blocker_for_handler.clone();
+        async move {
+            push(&order, "blocker_start");
+            blocker_started.store(true, Ordering::SeqCst);
+            while !release_blocker.load(Ordering::SeqCst) {
+                thread::sleep(Duration::from_millis(1));
+            }
+            push(&order, "blocker_end");
+            Ok(json!(null))
+        }
+    });
+    let order_for_target = order.clone();
+    bus.on_raw("NowActiveTargetEvent", "target", move |_event| {
+        let order = order_for_target.clone();
+        async move {
+            push(&order, "target");
+            Ok(json!("target"))
+        }
+    });
+
+    bus.emit_base(BaseEvent::new("NowActiveBlockerEvent", Map::new()));
+    wait_until_bool(&blocker_started);
+    let target = bus.emit_base(BaseEvent::new("NowActiveTargetEvent", Map::new()));
+    let target_for_now = target.clone();
+    let now_thread = thread::spawn(move || {
+        block_on(target_for_now.now_with_options(EventWaitOptions {
+            timeout: Some(1.0),
+            first_result: false,
+        }))
+    });
+    thread::sleep(Duration::from_millis(50));
+    assert_eq!(
+        order.lock().expect("order lock").as_slice(),
+        ["blocker_start", "target"]
+    );
+    assert!(now_thread
+        .join()
+        .expect("now thread")
+        .map(|event| Arc::ptr_eq(&event, &target))
+        .unwrap_or(false));
+    release_blocker.store(true, Ordering::SeqCst);
+    block_on(bus.wait_until_idle(Some(2.0)));
+    assert_eq!(
+        order.lock().expect("order lock").as_slice(),
+        ["blocker_start", "target", "blocker_end"]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_wait_first_result_returns_before_event_completion() {
+    let bus = EventBus::new_with_options(
+        Some("WaitFirstResultBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::Parallel,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Parallel,
+            event_timeout: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let slow_finished = Arc::new(AtomicBool::new(false));
+    bus.on_raw("WaitFirstResultEvent", "medium", |_event| async {
+        thread::sleep(Duration::from_millis(30));
+        Ok(json!("medium"))
+    });
+    bus.on_raw("WaitFirstResultEvent", "fast", |_event| async {
+        thread::sleep(Duration::from_millis(10));
+        Ok(json!("fast"))
+    });
+    let slow_finished_for_handler = slow_finished.clone();
+    bus.on_raw("WaitFirstResultEvent", "slow", move |_event| {
+        let slow_finished = slow_finished_for_handler.clone();
+        async move {
+            thread::sleep(Duration::from_millis(250));
+            slow_finished.store(true, Ordering::SeqCst);
+            Ok(json!("slow"))
+        }
+    });
+
+    let target = BaseEvent::new("WaitFirstResultEvent", Map::new());
+    target.inner.lock().event_concurrency = Some(EventConcurrencyMode::Parallel);
+    let event = bus.emit_base(target);
+    let waited = block_on(event.wait_with_options(EventWaitOptions {
+        timeout: Some(1.0),
+        first_result: true,
+    }))
+    .expect("wait first_result");
+    assert!(Arc::ptr_eq(&waited, &event));
+    assert_eq!(
+        block_on(event.event_result(EventResultOptions {
+            raise_if_any: false,
+            ..EventResultOptions::default()
+        }))
+        .expect("event result"),
+        Some(json!("fast"))
+    );
+    thread::sleep(Duration::from_millis(50));
+    assert_eq!(
+        block_on(event.event_results_list(EventResultOptions {
+            raise_if_any: false,
+            ..EventResultOptions::default()
+        }))
+        .expect("event results list"),
+        vec![json!("medium"), json!("fast")]
+    );
+    assert!(!slow_finished.load(Ordering::SeqCst));
+    assert_ne!(event.inner.lock().event_status, EventStatus::Completed);
+    wait_until_bool(&slow_finished);
+    bus.stop();
+}
+
+#[test]
+fn test_now_first_result_returns_before_event_completion() {
+    let bus = EventBus::new_with_options(
+        Some("NowFirstResultBus".to_string()),
+        EventBusOptions {
+            event_handler_concurrency: EventHandlerConcurrencyMode::Parallel,
+            event_timeout: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let slow_finished = Arc::new(AtomicBool::new(false));
+    let release_slow = Arc::new(AtomicBool::new(false));
+    bus.on_raw("NowFirstResultEvent", "medium", |_event| async {
+        thread::sleep(Duration::from_millis(30));
+        Ok(json!("medium"))
+    });
+    bus.on_raw("NowFirstResultEvent", "fast", |_event| async {
+        thread::sleep(Duration::from_millis(10));
+        Ok(json!("fast"))
+    });
+    let slow_finished_for_handler = slow_finished.clone();
+    let release_slow_for_handler = release_slow.clone();
+    bus.on_raw("NowFirstResultEvent", "slow", move |_event| {
+        let slow_finished = slow_finished_for_handler.clone();
+        let release_slow = release_slow_for_handler.clone();
+        async move {
+            while !release_slow.load(Ordering::SeqCst) {
+                thread::sleep(Duration::from_millis(1));
+            }
+            slow_finished.store(true, Ordering::SeqCst);
+            Ok(json!("slow"))
+        }
+    });
+
+    let target = BaseEvent::new("NowFirstResultEvent", Map::new());
+    target.inner.lock().event_concurrency = Some(EventConcurrencyMode::Parallel);
+    let event = bus.emit_base(target);
+    let waited = block_on(event.now_with_options(EventWaitOptions {
+        timeout: Some(1.0),
+        first_result: true,
+    }))
+    .expect("now first_result");
+    assert!(Arc::ptr_eq(&waited, &event));
+    assert_eq!(
+        block_on(event.event_result(EventResultOptions {
+            raise_if_any: false,
+            ..EventResultOptions::default()
+        }))
+        .expect("event result"),
+        Some(json!("fast"))
+    );
+    thread::sleep(Duration::from_millis(50));
+    assert_eq!(
+        block_on(event.event_results_list(EventResultOptions {
+            raise_if_any: false,
+            ..EventResultOptions::default()
+        }))
+        .expect("event results list"),
+        vec![json!("medium"), json!("fast")]
+    );
+    assert!(!slow_finished.load(Ordering::SeqCst));
+    assert_ne!(event.inner.lock().event_status, EventStatus::Completed);
+    release_slow.store(true, Ordering::SeqCst);
+    wait_until_bool(&slow_finished);
+    block_on(event.wait()).expect("event completed after slow handler release");
+    assert_eq!(event.inner.lock().event_status, EventStatus::Completed);
+    bus.stop();
+}
+
+#[test]
+fn test_event_result_starts_never_started_event_and_returns_first_result() {
+    let bus = EventBus::new_with_options(
+        Some("EventResultShortcutQueueJumpBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let blocker_started = Arc::new(AtomicBool::new(false));
+    let release_blocker = Arc::new(AtomicBool::new(false));
+    let order_for_blocker = order.clone();
+    let blocker_started_for_handler = blocker_started.clone();
+    let release_blocker_for_handler = release_blocker.clone();
+    bus.on_raw(
+        "EventResultShortcutBlockerEvent",
+        "blocker",
+        move |_event| {
+            let order = order_for_blocker.clone();
+            let blocker_started = blocker_started_for_handler.clone();
+            let release_blocker = release_blocker_for_handler.clone();
+            async move {
+                push(&order, "blocker_start");
+                blocker_started.store(true, Ordering::SeqCst);
+                while !release_blocker.load(Ordering::SeqCst) {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                push(&order, "blocker_end");
+                Ok(json!(null))
+            }
+        },
+    );
+    let order_for_target = order.clone();
+    bus.on_raw("EventResultShortcutTargetEvent", "target", move |_event| {
+        let order = order_for_target.clone();
+        async move {
+            push(&order, "target");
+            Ok(json!("target"))
+        }
+    });
+
+    bus.emit_base(BaseEvent::new(
+        "EventResultShortcutBlockerEvent",
+        Map::new(),
+    ));
+    wait_until_bool(&blocker_started);
+    let target = bus.emit_base(BaseEvent::new("EventResultShortcutTargetEvent", Map::new()));
+    let target_for_result = target.clone();
+    let result_thread = thread::spawn(move || {
+        block_on(target_for_result.event_result(EventResultOptions::default()))
+    });
+    thread::sleep(Duration::from_millis(50));
+    assert_eq!(
+        order.lock().expect("order lock").as_slice(),
+        ["blocker_start", "target"]
+    );
+    assert_eq!(
+        result_thread
+            .join()
+            .expect("result thread")
+            .expect("result"),
+        Some(json!("target"))
+    );
+    release_blocker.store(true, Ordering::SeqCst);
+    bus.stop();
+}
+
+#[test]
+fn test_event_results_list_starts_never_started_event_and_returns_all_results() {
+    let bus = EventBus::new_with_options(
+        Some("EventResultsShortcutQueueJumpBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let blocker_started = Arc::new(AtomicBool::new(false));
+    let release_blocker = Arc::new(AtomicBool::new(false));
+    let order_for_blocker = order.clone();
+    let blocker_started_for_handler = blocker_started.clone();
+    let release_blocker_for_handler = release_blocker.clone();
+    bus.on_raw(
+        "EventResultsShortcutBlockerEvent",
+        "blocker",
+        move |_event| {
+            let order = order_for_blocker.clone();
+            let blocker_started = blocker_started_for_handler.clone();
+            let release_blocker = release_blocker_for_handler.clone();
+            async move {
+                push(&order, "blocker_start");
+                blocker_started.store(true, Ordering::SeqCst);
+                while !release_blocker.load(Ordering::SeqCst) {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                push(&order, "blocker_end");
+                Ok(json!(null))
+            }
+        },
+    );
+    let order_for_first = order.clone();
+    bus.on_raw("EventResultsShortcutTargetEvent", "first", move |_event| {
+        let order = order_for_first.clone();
+        async move {
+            push(&order, "first");
+            Ok(json!("first"))
+        }
+    });
+    let order_for_second = order.clone();
+    bus.on_raw("EventResultsShortcutTargetEvent", "second", move |_event| {
+        let order = order_for_second.clone();
+        async move {
+            push(&order, "second");
+            Ok(json!("second"))
+        }
+    });
+
+    bus.emit_base(BaseEvent::new(
+        "EventResultsShortcutBlockerEvent",
+        Map::new(),
+    ));
+    wait_until_bool(&blocker_started);
+    let target = bus.emit_base(BaseEvent::new(
+        "EventResultsShortcutTargetEvent",
+        Map::new(),
+    ));
+    let target_for_results = target.clone();
+    let results_thread = thread::spawn(move || {
+        block_on(target_for_results.event_results_list(EventResultOptions::default()))
+    });
+    thread::sleep(Duration::from_millis(50));
+    assert_eq!(
+        order.lock().expect("order lock").as_slice(),
+        ["blocker_start", "first", "second"]
+    );
+    assert_eq!(
+        results_thread
+            .join()
+            .expect("results thread")
+            .expect("results"),
+        vec![json!("first"), json!("second")]
+    );
+    let mut mapped_values: Vec<Value> = target
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .filter_map(|event_result| event_result.result.clone())
+        .collect();
+    mapped_values.sort_by_key(|value| value.as_str().unwrap_or_default().to_string());
+    assert_eq!(mapped_values, vec![json!("first"), json!("second")]);
+    release_blocker.store(true, Ordering::SeqCst);
+    bus.stop();
+}
+
+#[test]
+fn test_now_on_already_executing_event_waits_without_duplicate_execution() {
+    let bus = EventBus::new_with_options(
+        Some("NowAlreadyExecutingBus".to_string()),
+        EventBusOptions {
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            event_timeout: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let started = Arc::new(AtomicBool::new(false));
+    let release = Arc::new(AtomicBool::new(false));
+    let run_count = Arc::new(AtomicUsize::new(0));
+    let started_for_handler = started.clone();
+    let release_for_handler = release.clone();
+    let run_count_for_handler = run_count.clone();
+    bus.on_raw("NowAlreadyExecutingEvent", "handler", move |_event| {
+        let started = started_for_handler.clone();
+        let release = release_for_handler.clone();
+        let run_count = run_count_for_handler.clone();
+        async move {
+            run_count.fetch_add(1, Ordering::SeqCst);
+            started.store(true, Ordering::SeqCst);
+            while !release.load(Ordering::SeqCst) {
+                thread::sleep(Duration::from_millis(1));
+            }
+            Ok(json!("done"))
+        }
+    });
+
+    let event = bus.emit_base(BaseEvent::new("NowAlreadyExecutingEvent", Map::new()));
+    wait_until_bool(&started);
+    let event_for_now = event.clone();
+    let now_thread = thread::spawn(move || {
+        block_on(event_for_now.now_with_options(EventWaitOptions {
+            timeout: Some(1.0),
+            first_result: false,
+        }))
+    });
+    thread::sleep(Duration::from_millis(50));
+    assert_eq!(run_count.load(Ordering::SeqCst), 1);
+    release.store(true, Ordering::SeqCst);
+    assert!(now_thread
+        .join()
+        .expect("now thread")
+        .map(|completed| Arc::ptr_eq(&completed, &event))
+        .unwrap_or(false));
+    assert_eq!(
+        block_on(event.event_result(EventResultOptions::default())).expect("result"),
+        Some(json!("done"))
+    );
+    assert_eq!(run_count.load(Ordering::SeqCst), 1);
+    bus.stop();
+}
+
+#[test]
+fn test_event_result_options_apply_to_current_results() {
+    let bus = EventBus::new_with_options(
+        Some("EventResultOptionsCurrentResultsBus".to_string()),
+        EventBusOptions {
+            event_handler_concurrency: EventHandlerConcurrencyMode::Parallel,
+            event_timeout: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let release_slow = Arc::new(AtomicBool::new(false));
+    bus.on_raw(
+        "EventResultOptionsCurrentResultsEvent",
+        "fail",
+        |_event| async { Err("option boom".to_string()) },
+    );
+    bus.on_raw(
+        "EventResultOptionsCurrentResultsEvent",
+        "keep",
+        |_event| async { Ok(json!("keep")) },
+    );
+    let release_slow_for_handler = release_slow.clone();
+    bus.on_raw(
+        "EventResultOptionsCurrentResultsEvent",
+        "slow",
+        move |_event| {
+            let release_slow = release_slow_for_handler.clone();
+            async move {
+                while !release_slow.load(Ordering::SeqCst) {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Ok(json!("late"))
+            }
+        },
+    );
+
+    let event = block_on(
+        bus.emit_base(BaseEvent::new(
+            "EventResultOptionsCurrentResultsEvent",
+            Map::new(),
+        ))
+        .now_with_options(EventWaitOptions {
+            timeout: Some(1.0),
+            first_result: true,
+        }),
+    )
+    .expect("now first_result");
+    assert_eq!(
+        block_on(event.event_result(EventResultOptions {
+            raise_if_any: false,
+            ..EventResultOptions::default()
+        }))
+        .expect("event result"),
+        Some(json!("keep"))
+    );
+    assert!(block_on(event.event_result(EventResultOptions {
+        raise_if_any: true,
+        ..EventResultOptions::default()
+    }))
+    .expect_err("raise_if_any should surface current error")
+    .contains("option boom"));
+    assert_eq!(
+        block_on(event.event_results_list(EventResultOptions {
+            include: Some(Arc::new(
+                |result, _event_result| result == Some(&json!("missing"))
+            )),
+            raise_if_any: false,
+            raise_if_none: false,
+        }))
+        .expect("filtered results"),
+        Vec::<Value>::new()
+    );
+    release_slow.store(true, Ordering::SeqCst);
     bus.stop();
 }
 
@@ -389,9 +1346,9 @@ fn test_parallel_event_concurrency_plus_immediate_execution_races_child_events_i
                 let child3 = bus.emit_child(BaseEventParallelImmediateChildEvent3 {
                     ..Default::default()
                 });
-                child1.done().await;
-                child2.done().await;
-                child3.done().await;
+                let _ = child1.now().await;
+                let _ = child2.now().await;
+                let _ = child3.now().await;
                 push(&order, "parent_end");
                 Ok(json!("parent"))
             }
@@ -433,7 +1390,7 @@ fn test_parallel_event_concurrency_plus_immediate_execution_races_child_events_i
         .contains(&"parent_end".to_string()));
 
     release.store(true, Ordering::SeqCst);
-    block_on(parent.done());
+    let _ = block_on(parent.now());
     block_on(bus.wait_until_idle(Some(2.0)));
 
     let order = order.lock().expect("order lock").clone();
@@ -446,7 +1403,7 @@ fn test_parallel_event_concurrency_plus_immediate_execution_races_child_events_i
 }
 
 #[test]
-fn test_event_completed_waits_in_queue_order_inside_handler() {
+fn test_wait_waits_in_queue_order_inside_handler() {
     let bus = EventBus::new_with_options(
         Some("BaseEventQueueOrderBus".to_string()),
         EventBusOptions {
@@ -456,21 +1413,28 @@ fn test_event_completed_waits_in_queue_order_inside_handler() {
         },
     );
     let order = Arc::new(Mutex::new(Vec::new()));
+    let sibling_started = Arc::new(AtomicBool::new(false));
 
     let bus_for_parent = bus.clone();
     let order_for_parent = order.clone();
+    let sibling_started_for_parent = sibling_started.clone();
     bus.on_raw("BaseEventQueuedParentEvent", "parent", move |_event| {
         let bus = bus_for_parent.clone();
         let order = order_for_parent.clone();
+        let sibling_started = sibling_started_for_parent.clone();
         async move {
             push(&order, "parent_start");
             bus.emit(BaseEventQueuedSiblingEvent {
                 ..Default::default()
             });
+            let deadline = std::time::Instant::now() + Duration::from_millis(500);
+            while !sibling_started.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(1));
+            }
             let child = bus.emit_child(BaseEventQueuedChildEvent {
                 ..Default::default()
             });
-            child.event_completed().await;
+            let _ = child.wait().await;
             push(&order, "parent_end");
             Ok(json!("parent"))
         }
@@ -488,10 +1452,13 @@ fn test_event_completed_waits_in_queue_order_inside_handler() {
     });
 
     let order_for_sibling = order.clone();
+    let sibling_started_for_sibling = sibling_started.clone();
     bus.on_raw("BaseEventQueuedSiblingEvent", "sibling", move |_event| {
         let order = order_for_sibling.clone();
+        let sibling_started = sibling_started_for_sibling.clone();
         async move {
             push(&order, "sibling_start");
+            sibling_started.store(true, Ordering::SeqCst);
             thread::sleep(Duration::from_millis(5));
             push(&order, "sibling_end");
             Ok(json!("sibling"))
@@ -501,12 +1468,461 @@ fn test_event_completed_waits_in_queue_order_inside_handler() {
     let parent = bus.emit(BaseEventQueuedParentEvent {
         ..Default::default()
     });
-    block_on(parent.done());
+    let _ = block_on(parent.now());
     block_on(bus.wait_until_idle(Some(2.0)));
 
     let order = order.lock().expect("order lock").clone();
     assert!(index_of(&order, "sibling_start") < index_of(&order, "child_start"));
     assert!(index_of(&order, "child_end") < index_of(&order, "parent_end"));
+    bus.stop();
+}
+
+#[test]
+fn test_wait_is_passive_inside_handlers_and_times_out_for_serial_events() {
+    let bus = EventBus::new_with_options(
+        Some("PassiveSerialEventCompletedBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+
+    let bus_for_parent = bus.clone();
+    let order_for_parent = order.clone();
+    bus.on_raw("PassiveSerialParentEvent", "parent", move |_event| {
+        let bus = bus_for_parent.clone();
+        let order = order_for_parent.clone();
+        async move {
+            push(&order, "parent_start");
+            let emitted = bus.emit_child(PassiveSerialEmittedEvent {
+                ..Default::default()
+            });
+            let found_source = bus.emit_child(PassiveSerialFoundEvent {
+                ..Default::default()
+            });
+            let found = bus
+                .find("PassiveSerialFoundEvent", true, None, None)
+                .await
+                .expect("found queued serial event");
+            let found_id = found.inner.lock().event_id.clone();
+            let found_source_id = found_source.inner.inner.lock().event_id.clone();
+            assert_eq!(found_id, found_source_id);
+
+            let emitted_error = match emitted
+                .wait_with_options(EventWaitOptions {
+                    timeout: Some(0.02),
+                    first_result: false,
+                })
+                .await
+            {
+                Ok(_) => panic!("emitted serial wait should time out"),
+                Err(error) => error,
+            };
+            assert!(emitted_error.contains("Timed out waiting"));
+            push(&order, "emitted_timeout");
+            let found_error = match found
+                .wait_with_options(EventWaitOptions {
+                    timeout: Some(0.02),
+                    first_result: false,
+                })
+                .await
+            {
+                Ok(_) => panic!("found serial wait should time out"),
+                Err(error) => error,
+            };
+            assert!(found_error.contains("Timed out waiting"));
+            push(&order, "found_timeout");
+
+            let snapshot = order.lock().expect("order lock").clone();
+            assert!(!snapshot.iter().any(|item| item == "emitted_start"));
+            assert!(!snapshot.iter().any(|item| item == "found_start"));
+            assert!(!emitted.inner.inner.lock().event_blocks_parent_completion);
+            assert!(!found.inner.lock().event_blocks_parent_completion);
+            push(&order, "parent_end");
+            Ok(json!("parent"))
+        }
+    });
+    let order_for_emitted = order.clone();
+    bus.on_raw("PassiveSerialEmittedEvent", "emitted", move |_event| {
+        let order = order_for_emitted.clone();
+        async move {
+            push(&order, "emitted_start");
+            Ok(json!("emitted"))
+        }
+    });
+    let order_for_found = order.clone();
+    bus.on_raw("PassiveSerialFoundEvent", "found", move |_event| {
+        let order = order_for_found.clone();
+        async move {
+            push(&order, "found_start");
+            Ok(json!("found"))
+        }
+    });
+
+    let parent = bus.emit(PassiveSerialParentEvent {
+        ..Default::default()
+    });
+    let _ = block_on(parent.now());
+    block_on(bus.wait_until_idle(Some(2.0)));
+    assert_eq!(
+        order.lock().expect("order lock").as_slice(),
+        [
+            "parent_start",
+            "emitted_timeout",
+            "found_timeout",
+            "parent_end",
+            "emitted_start",
+            "found_start"
+        ]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_wait_serial_wait_inside_handler_times_out_and_warns_about_slow_handler() {
+    let stderr = run_base_event_deadlock_warning_child(
+        "__abxbus_event_completed_serial_wait_deadlock_warning_child",
+    );
+    let slow_warning_index = stderr
+        .to_lowercase()
+        .find("slow event handler")
+        .unwrap_or_else(|| panic!("expected slow handler warning in stderr, got: {stderr}"));
+    let timeout_marker_index = stderr
+        .find("serial event_completed timeout observed")
+        .unwrap_or_else(|| panic!("expected timeout marker in stderr, got: {stderr}"));
+    assert!(
+        slow_warning_index < timeout_marker_index,
+        "slow handler warning should be emitted while handler is still waiting, got: {stderr}"
+    );
+}
+
+#[test]
+fn __abxbus_event_completed_serial_wait_deadlock_warning_child() {
+    if !base_event_deadlock_warning_child_enabled() {
+        return;
+    }
+    let bus = EventBus::new_with_options(
+        Some("EventCompletedSerialDeadlockWarningBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_slow_timeout: Some(0.0),
+            event_handler_slow_timeout: Some(0.01),
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+
+    let bus_for_parent = bus.clone();
+    let order_for_parent = order.clone();
+    bus.on_raw(
+        "EventCompletedSerialDeadlockWarningParentEvent",
+        "parent",
+        move |_event| {
+            let bus = bus_for_parent.clone();
+            let order = order_for_parent.clone();
+            async move {
+                push(&order, "parent_start");
+                let child = bus.emit_child(EventCompletedSerialDeadlockWarningChildEvent {
+                    ..Default::default()
+                });
+                let found = bus
+                    .find(
+                        "EventCompletedSerialDeadlockWarningChildEvent",
+                        true,
+                        None,
+                        None,
+                    )
+                    .await
+                    .expect("expected to find queued serial child event");
+                let found_id = found.inner.lock().event_id.clone();
+                let child_id = child.inner.inner.lock().event_id.clone();
+                assert_eq!(found_id, child_id);
+                let error = match found
+                    .wait_with_options(EventWaitOptions {
+                        timeout: Some(0.05),
+                        first_result: false,
+                    })
+                    .await
+                {
+                    Ok(_) => panic!("serial child wait should time out"),
+                    Err(error) => error,
+                };
+                assert!(error.contains("Timed out waiting"));
+                eprintln!(
+                    "serial event_completed timeout observed while parent handler is still running"
+                );
+                push(&order, "child_timeout");
+                assert!(!order
+                    .lock()
+                    .expect("order lock")
+                    .iter()
+                    .any(|item| item == "child_start"));
+                assert!(!found.inner.lock().event_blocks_parent_completion);
+                push(&order, "parent_end");
+                Ok(json!("parent"))
+            }
+        },
+    );
+    let order_for_child = order.clone();
+    bus.on_raw(
+        "EventCompletedSerialDeadlockWarningChildEvent",
+        "child",
+        move |_event| {
+            let order = order_for_child.clone();
+            async move {
+                push(&order, "child_start");
+                Ok(json!("child"))
+            }
+        },
+    );
+
+    let parent = bus.emit(EventCompletedSerialDeadlockWarningParentEvent {
+        ..Default::default()
+    });
+    let _ = block_on(parent.now());
+    block_on(bus.wait_until_idle(Some(2.0)));
+    assert_eq!(
+        order.lock().expect("order lock").as_slice(),
+        ["parent_start", "child_timeout", "parent_end", "child_start"]
+    );
+    bus.stop();
+}
+
+#[test]
+fn test_wait_waits_for_normal_parallel_processing_inside_handlers() {
+    let bus = EventBus::new_with_options(
+        Some("PassiveParallelEventCompletedBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+
+    let bus_for_parent = bus.clone();
+    let order_for_parent = order.clone();
+    bus.on_raw("PassiveParallelParentEvent", "parent", move |_event| {
+        let bus = bus_for_parent.clone();
+        let order = order_for_parent.clone();
+        async move {
+            push(&order, "parent_start");
+            let emitted = bus.emit_child(PassiveParallelEmittedEvent {
+                event_concurrency: Some(EventConcurrencyMode::Parallel),
+                ..Default::default()
+            });
+            let found_source = bus.emit_child(PassiveParallelFoundEvent {
+                event_concurrency: Some(EventConcurrencyMode::Parallel),
+                ..Default::default()
+            });
+            let found = bus
+                .find("PassiveParallelFoundEvent", true, None, None)
+                .await
+                .expect("found queued parallel event");
+            let found_id = found.inner.lock().event_id.clone();
+            let found_source_id = found_source.inner.inner.lock().event_id.clone();
+            assert_eq!(found_id, found_source_id);
+
+            emitted
+                .wait_with_options(EventWaitOptions {
+                    timeout: Some(1.0),
+                    first_result: false,
+                })
+                .await
+                .expect("emitted parallel event should complete");
+            push(&order, "emitted_completed");
+            found
+                .wait_with_options(EventWaitOptions {
+                    timeout: Some(1.0),
+                    first_result: false,
+                })
+                .await
+                .expect("found parallel event should complete");
+            push(&order, "found_completed");
+            assert!(!emitted.inner.inner.lock().event_blocks_parent_completion);
+            assert!(!found.inner.lock().event_blocks_parent_completion);
+            push(&order, "parent_end");
+            Ok(json!("parent"))
+        }
+    });
+    let order_for_emitted = order.clone();
+    bus.on_raw("PassiveParallelEmittedEvent", "emitted", move |_event| {
+        let order = order_for_emitted.clone();
+        async move {
+            push(&order, "emitted_start");
+            thread::sleep(Duration::from_millis(5));
+            push(&order, "emitted_end");
+            Ok(json!("emitted"))
+        }
+    });
+    let order_for_found = order.clone();
+    bus.on_raw("PassiveParallelFoundEvent", "found", move |_event| {
+        let order = order_for_found.clone();
+        async move {
+            push(&order, "found_start");
+            thread::sleep(Duration::from_millis(5));
+            push(&order, "found_end");
+            Ok(json!("found"))
+        }
+    });
+
+    let parent = bus.emit(PassiveParallelParentEvent {
+        ..Default::default()
+    });
+    let _ = block_on(parent.now());
+    block_on(bus.wait_until_idle(Some(2.0)));
+    let order = order.lock().expect("order lock").clone();
+    assert!(index_of(&order, "emitted_end") < index_of(&order, "emitted_completed"));
+    assert!(index_of(&order, "found_end") < index_of(&order, "found_completed"));
+    assert_eq!(order.last().map(String::as_str), Some("parent_end"));
+    bus.stop();
+}
+
+#[test]
+fn test_wait_waits_for_future_parallel_event_found_after_handler_starts() {
+    let bus = EventBus::new_with_options(
+        Some("FutureParallelEventCompletedBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            ..EventBusOptions::default()
+        },
+    );
+    let other_started = Arc::new(AtomicBool::new(false));
+    let release_find = Arc::new(AtomicBool::new(false));
+    let parallel_started = Arc::new(AtomicBool::new(false));
+    let continued = Arc::new(AtomicBool::new(false));
+    let waited_for = Arc::new(Mutex::new(None::<Duration>));
+
+    let bus_for_other = bus.clone();
+    let other_started_for_handler = other_started.clone();
+    let release_find_for_handler = release_find.clone();
+    let continued_for_handler = continued.clone();
+    let waited_for_handler = waited_for.clone();
+    bus.on_raw("FutureParallelSomeOtherEvent", "other", move |_event| {
+        let bus = bus_for_other.clone();
+        let other_started = other_started_for_handler.clone();
+        let release_find = release_find_for_handler.clone();
+        let continued = continued_for_handler.clone();
+        let waited_for = waited_for_handler.clone();
+        async move {
+            other_started.store(true, Ordering::SeqCst);
+            while !release_find.load(Ordering::SeqCst) {
+                thread::sleep(Duration::from_millis(1));
+            }
+            let found = bus
+                .find("FutureParallelEvent", true, None, None)
+                .await
+                .expect("expected to find pending parallel event");
+            let started_at = std::time::Instant::now();
+            found
+                .wait_with_options(EventWaitOptions {
+                    timeout: Some(1.0),
+                    first_result: false,
+                })
+                .await
+                .expect("parallel event should complete");
+            *waited_for.lock().expect("waited_for lock") = Some(started_at.elapsed());
+            continued.store(true, Ordering::SeqCst);
+            Ok(json!("other"))
+        }
+    });
+
+    let parallel_started_for_handler = parallel_started.clone();
+    bus.on_raw("FutureParallelEvent", "parallel", move |_event| {
+        let parallel_started = parallel_started_for_handler.clone();
+        async move {
+            parallel_started.store(true, Ordering::SeqCst);
+            thread::sleep(Duration::from_millis(250));
+            Ok(json!("parallel"))
+        }
+    });
+
+    let other = bus.emit(FutureParallelSomeOtherEvent {
+        ..Default::default()
+    });
+    wait_until_bool(&other_started);
+    bus.emit(FutureParallelEvent {
+        event_concurrency: Some(EventConcurrencyMode::Parallel),
+        ..Default::default()
+    });
+    wait_until_bool(&parallel_started);
+    release_find.store(true, Ordering::SeqCst);
+    wait_until_bool(&continued);
+    let _ = block_on(other.now());
+    block_on(bus.wait_until_idle(Some(2.0)));
+    let waited = waited_for
+        .lock()
+        .expect("waited_for lock")
+        .expect("waited duration");
+    assert!(waited >= Duration::from_millis(150));
+    bus.stop();
+}
+
+#[test]
+fn test_wait_returns_event_accepts_timeout_and_rejects_unattached_pending_event() {
+    let pending = EventCompletedTimeoutEvent {
+        ..Default::default()
+    }
+    .into_base_event_handle();
+    let error = match block_on(pending.wait_with_options(EventWaitOptions {
+        timeout: Some(0.01),
+        first_result: false,
+    })) {
+        Ok(_) => panic!("pending event without bus should reject"),
+        Err(error) => error,
+    };
+    assert_eq!(error, "event has no bus attached");
+
+    let completed = EventCompletedTimeoutEvent {
+        ..Default::default()
+    }
+    .into_base_event_handle();
+    completed.inner.inner.lock().event_status = EventStatus::Completed;
+    let returned = block_on(completed.wait_with_options(EventWaitOptions {
+        timeout: Some(0.01),
+        first_result: false,
+    }))
+    .expect("completed event should not require bus");
+    assert!(Arc::ptr_eq(&returned.inner, &completed.inner));
+
+    let bus = EventBus::new_with_options(
+        Some("EventCompletedTimeoutBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            ..EventBusOptions::default()
+        },
+    );
+    let release_handler = Arc::new(AtomicBool::new(false));
+    let release_handler_for_handler = release_handler.clone();
+    bus.on_raw("EventCompletedTimeoutEvent", "slow", move |_event| {
+        let release_handler = release_handler_for_handler.clone();
+        async move {
+            while !release_handler.load(Ordering::SeqCst) {
+                thread::sleep(Duration::from_millis(1));
+            }
+            Ok(json!(null))
+        }
+    });
+
+    let event = bus.emit(EventCompletedTimeoutEvent {
+        ..Default::default()
+    });
+    let error = match block_on(event.wait_with_options(EventWaitOptions {
+        timeout: Some(0.01),
+        first_result: false,
+    })) {
+        Ok(_) => panic!("wait should time out"),
+        Err(error) => error,
+    };
+    assert!(error.contains("Timed out waiting"));
+
+    release_handler.store(true, Ordering::SeqCst);
+    let returned = block_on(event.wait_with_options(EventWaitOptions {
+        timeout: Some(1.0),
+        first_result: false,
+    }))
+    .expect("event should complete after release");
+    assert!(Arc::ptr_eq(&returned.inner, &event.inner));
     bus.stop();
 }
 
@@ -526,7 +1942,7 @@ fn test_base_event_runtime_state_transitions() {
     assert_eq!(event.inner.lock().event_status, EventStatus::Started);
     event.mark_completed();
     assert_eq!(event.inner.lock().event_status, EventStatus::Completed);
-    block_on(event.done());
+    let _ = block_on(event.now());
 }
 
 #[test]
@@ -652,7 +2068,9 @@ fn test_event_status_is_serialized_and_stateful() {
 
 #[test]
 fn test_reserved_runtime_fields_are_rejected() {
-    for field in ["bus", "emit", "first", "toString", "toJSON", "fromJSON"] {
+    for field in [
+        "bus", "emit", "now", "wait", "toString", "toJSON", "fromJSON",
+    ] {
         let mut payload = Map::new();
         payload.insert(field.to_string(), json!(true));
         let error = unwrap_event_error(BaseEvent::try_new("ReservedFieldEvent", payload));
@@ -769,7 +2187,7 @@ fn test_event_emitted_by_handler_id_defaults_to_null_and_accepts_null_in_fromjso
 }
 
 #[test]
-fn test_done_re_raises_the_first_processing_exception_after_completion() {
+fn test_event_result_re_raises_the_first_processing_exception_after_completion() {
     test_event_result_re_raises_first_processing_exception_after_completion();
 }
 
@@ -791,13 +2209,13 @@ fn test_base_event_event_result_update_status_only_update_does_not_implicitly_pa
 }
 
 #[test]
-fn test_await_event_done_queue_jumps_child_processing_inside_handlers() {
+fn test_now_queue_jumps_child_processing_inside_handlers() {
     test_await_event_queue_jumps_inside_handler();
 }
 
 #[test]
-fn test_await_event_eventcompleted_preserves_normal_queue_order_inside_handlers() {
-    test_event_completed_waits_in_queue_order_inside_handler();
+fn test_wait_preserves_normal_queue_order_inside_handlers() {
+    test_wait_waits_in_queue_order_inside_handler();
 }
 
 #[test]

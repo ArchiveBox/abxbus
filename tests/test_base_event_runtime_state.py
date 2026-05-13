@@ -181,7 +181,7 @@ async def test_event_status_is_serialized_and_stateful():
 
     bus.on('SampleEvent', slow_handler)
 
-    processing_task = asyncio.create_task(bus.emit(event).event_completed())
+    processing_task = asyncio.create_task(bus.emit(event).wait())
     try:
         await asyncio.wait_for(handler_entered.wait(), timeout=1.0)
         started_payload = event.model_dump(mode='json')

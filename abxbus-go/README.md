@@ -7,7 +7,7 @@ Implemented core features:
 - typed payload/result helpers for Go structs
 - event_concurrency, event_handler_concurrency, event_handler_completion
 - `find()` / `filter()` history and future lookup helpers
-- queue-jump via `event.Done(ctx)`
+- queue-jump via `event.Now()`; use `event.Wait()` for passive completion waits
 - timeout handling with context propagation
 - `event_result_type` JSON Schema enforcement for handler return values
 - JSON-compatible snake_case wire format

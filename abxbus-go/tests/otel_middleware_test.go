@@ -30,7 +30,7 @@ func TestOtelTracingMiddlewareCreatesEventAndHandlerSpans(t *testing.T) {
 	}, nil)
 
 	event := bus.Emit(abxbus.NewBaseEvent("OtelEvent", map[string]any{"session_id": "event-session-456", "value": "x"}))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -84,7 +84,7 @@ func TestOtelTracingMiddlewareNamesEventAndHandlerSpansForDisplay(t *testing.T) 
 	eventTimeout := 0.2
 	event := abxbus.NewBaseEvent("CDPConnect", nil)
 	event.EventTimeout = &eventTimeout
-	if _, err := bus.Emit(event).Done(context.Background()); err != nil {
+	if _, err := bus.Emit(event).Now(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -103,7 +103,7 @@ func TestOtelTracingMiddlewareParentsChildEventToEmittingHandlerSpan(t *testing.
 	bus := abxbus.NewEventBus("OtelParentBus", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
 	bus.On("ParentOtelEvent", "parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		child := event.Emit(abxbus.NewBaseEvent("ChildOtelEvent", nil))
-		if _, err := child.Done(ctx); err != nil {
+		if _, err := child.Now(); err != nil {
 			return nil, err
 		}
 		return "parent", nil
@@ -113,7 +113,7 @@ func TestOtelTracingMiddlewareParentsChildEventToEmittingHandlerSpan(t *testing.
 	}, nil)
 
 	parent := bus.Emit(abxbus.NewBaseEvent("ParentOtelEvent", nil))
-	if _, err := parent.Done(context.Background()); err != nil {
+	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -178,7 +178,7 @@ func TestOtelTracingMiddlewareWaitsUntilTopLevelEventCompletionBeforeEndingSpans
 	}
 
 	close(release)
-	if _, err := emitted.Done(context.Background()); err != nil {
+	if _, err := emitted.Now(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -210,7 +210,7 @@ func TestOtelTracingMiddlewareRecordsHandlerErrors(t *testing.T) {
 	}, nil)
 
 	event := bus.Emit(abxbus.NewBaseEvent("OtelErrorEvent", nil))
-	if err := event.EventCompleted(context.Background()); err != nil {
+	if _, err := event.Wait(); err != nil {
 		t.Fatal(err)
 	}
 

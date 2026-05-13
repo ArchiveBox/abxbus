@@ -44,7 +44,7 @@ async def h2(_: HandlerEvent) -> None:
 bus.on(HandlerEvent, h1)
 bus.on(HandlerEvent, h2)
 
-await bus.emit(HandlerEvent())
+await bus.emit(HandlerEvent()).now()
 
 assert log == ['h1_start', 'h1_end', 'h2_start', 'h2_end']
 ```
@@ -71,7 +71,7 @@ bus.on(HandlerEvent, async () => {
   log.push('h2_end')
 })
 
-await bus.emit(HandlerEvent({})).done()
+await bus.emit(HandlerEvent({})).now()
 
 if (JSON.stringify(log) !== JSON.stringify(['h1_start', 'h1_end', 'h2_start', 'h2_end'])) {
   throw new Error('expected serial handler execution order')
@@ -113,7 +113,7 @@ func main() {
 	}, nil)
 
 	event := bus.Emit(abxbus.NewBaseEvent("HandlerEvent", nil))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		panic(err)
 	}
 
@@ -154,7 +154,7 @@ bus.on(HandlerEvent, |_event: HandlerEvent| async move { Ok(()) });
 bus.on(HandlerEvent, |_event: HandlerEvent| async move { Ok(()) });
 
 let event = bus.emit(HandlerEvent { ..Default::default() });
-block_on(event.done());
+block_on(event.now());
 ```
 
 </Tab>

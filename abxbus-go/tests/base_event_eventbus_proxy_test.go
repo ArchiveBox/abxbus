@@ -16,7 +16,7 @@ func TestBaseEventCarriesEventBusReferenceDuringDispatch(t *testing.T) {
 	}, nil)
 
 	event := bus.Emit(abxbus.NewBaseEvent("ProxyEvent", nil))
-	result, err := event.EventResult(context.Background())
+	result, err := event.EventResult()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestBaseEventBusReferenceReflectsForwardedProcessingBus(t *testing.T) {
 	}, nil)
 
 	event := source.Emit(abxbus.NewBaseEvent("ProxyForwardEvent", nil))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
 	timeout := 2.0
@@ -74,7 +74,7 @@ func TestEventEmitFromForwardedHandlerDispatchesChildOnTargetBus(t *testing.T) {
 			t.Fatalf("target parent handler should see target bus, got %p want %p", event.Bus, target)
 		}
 		child = event.Emit(abxbus.NewBaseEvent("ProxyChildEvent", nil))
-		if _, err := child.Done(ctx); err != nil {
+		if _, err := child.Now(); err != nil {
 			return nil, err
 		}
 		return "parent", nil
@@ -85,7 +85,7 @@ func TestEventEmitFromForwardedHandlerDispatchesChildOnTargetBus(t *testing.T) {
 	}, nil)
 
 	parent := source.Emit(abxbus.NewBaseEvent("ProxyParentEvent", nil))
-	if _, err := parent.Done(context.Background()); err != nil {
+	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
 	timeout := 2.0

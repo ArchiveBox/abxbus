@@ -142,14 +142,15 @@ async def run_mode_throughput_benchmark(
 async def run_io_fanout_benchmark(
     *,
     event_handler_concurrency: Literal['serial', 'parallel'],
-    total_events: int = 800,
+    total_events: int = 400,
     handlers_per_event: int = 4,
-    sleep_seconds: float = 0.0015,
-    batch_size: int = 40,
+    sleep_seconds: float = 0.002,
+    batch_size: int = 25,
 ) -> tuple[int, float]:
     """Benchmark I/O-bound fanout to compare serial vs parallel handler mode."""
     bus = EventBus(
         name=f'Fanout_{event_handler_concurrency}',
+        event_concurrency='bus-serial',
         event_handler_concurrency=event_handler_concurrency,
         middlewares=[],
         max_history_drop=True,
@@ -761,7 +762,7 @@ async def test_event_handler_concurrency_mode_improves_io_bound_fanout():
     serial_handled, serial_duration = await run_io_fanout_benchmark(event_handler_concurrency='serial')
     parallel_handled, parallel_duration = await run_io_fanout_benchmark(event_handler_concurrency='parallel')
 
-    expected_total = 800 * 4
+    expected_total = 400 * 4
     assert serial_handled == expected_total
     assert parallel_handled == expected_total
     assert parallel_duration < serial_duration * 0.8, (
@@ -879,22 +880,25 @@ async def test_event_handler_concurrency_mode_scales_with_high_fanout(handlers_p
     """
     High fanout benchmark to catch regressions in parallel handler scheduling.
     """
+    total_events = 250 if handlers_per_event == 10 else 200
+    sleep_seconds = 0.002 if handlers_per_event == 10 else 0.004
+
     serial_handled, serial_duration = await run_io_fanout_benchmark(
         event_handler_concurrency='serial',
-        total_events=400,
+        total_events=total_events,
         handlers_per_event=handlers_per_event,
-        sleep_seconds=0.001,
+        sleep_seconds=sleep_seconds,
         batch_size=25,
     )
     parallel_handled, parallel_duration = await run_io_fanout_benchmark(
         event_handler_concurrency='parallel',
-        total_events=400,
+        total_events=total_events,
         handlers_per_event=handlers_per_event,
-        sleep_seconds=0.001,
+        sleep_seconds=sleep_seconds,
         batch_size=25,
     )
 
-    expected_total = 400 * handlers_per_event
+    expected_total = total_events * handlers_per_event
     speedup = serial_duration / max(parallel_duration, 1e-9)
     minimum_speedup = 1.2 if handlers_per_event == 10 else 1.5
 

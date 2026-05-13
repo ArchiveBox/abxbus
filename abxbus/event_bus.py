@@ -26,6 +26,7 @@ from abxbus.base_event import (
     EventHandlerCompletionMode,
     EventHandlerConcurrencyMode,
     EventResult,
+    EventResultsDict,
     EventStatus,
     PythonIdentifierStr,
     PythonIdStr,
@@ -120,6 +121,21 @@ def get_current_eventbus() -> 'EventBus | None':
 def in_handler_context() -> bool:
     """Return True when called from inside an executing handler context."""
     return get_current_handler_id() is not None
+
+
+def current_handler_context_is_stale() -> bool:
+    """Return True when this async context belongs to a handler that already settled."""
+    current_event = get_current_event()
+    current_handler_id = get_current_handler_id()
+    if current_event is None or current_handler_id is None:
+        return False
+    current_task = asyncio.current_task()
+    if current_task is not None and current_task.cancelling():
+        return True
+    current_result = current_event.event_results.get(current_handler_id)
+    if current_result is None:
+        return False
+    return current_result.status not in ('pending', 'started')
 
 
 class EventBus:
@@ -282,20 +298,20 @@ class EventBus:
             self.event_handler_completion = EventHandlerCompletionMode(event_handler_completion or EventHandlerCompletionMode.ALL)
         except ValueError as exc:
             raise AssertionError(f'event_handler_completion must be "all" or "first", got: {event_handler_completion!r}') from exc
-        self.event_timeout = event_timeout
-        self.event_slow_timeout = event_slow_timeout
-        self.event_handler_slow_timeout = event_handler_slow_timeout
+        self.event_timeout = 60.0 if event_timeout is None else event_timeout
+        self.event_slow_timeout = 300.0 if event_slow_timeout is None else event_slow_timeout
+        self.event_handler_slow_timeout = 30.0 if event_handler_slow_timeout is None else event_handler_slow_timeout
         self.event_handler_detect_file_paths = bool(event_handler_detect_file_paths)
         self.warn_on_duplicate_handler_names = bool(warn_on_duplicate_handler_names)
         self.max_handler_recursion_depth = int(max_handler_recursion_depth)
-        assert self.event_timeout is None or self.event_timeout > 0, (
-            f'event_timeout must be > 0 or None, got: {self.event_timeout!r}'
+        assert self.event_timeout is None or self.event_timeout >= 0, (
+            f'event_timeout must be >= 0 or None, got: {self.event_timeout!r}'
         )
-        assert self.event_slow_timeout is None or self.event_slow_timeout > 0, (
-            f'event_slow_timeout must be > 0 or None, got: {self.event_slow_timeout!r}'
+        assert self.event_slow_timeout is None or self.event_slow_timeout >= 0, (
+            f'event_slow_timeout must be >= 0 or None, got: {self.event_slow_timeout!r}'
         )
-        assert self.event_handler_slow_timeout is None or self.event_handler_slow_timeout > 0, (
-            f'event_handler_slow_timeout must be > 0 or None, got: {self.event_handler_slow_timeout!r}'
+        assert self.event_handler_slow_timeout is None or self.event_handler_slow_timeout >= 0, (
+            f'event_handler_slow_timeout must be >= 0 or None, got: {self.event_handler_slow_timeout!r}'
         )
         assert self.max_handler_recursion_depth >= 0, (
             f'max_handler_recursion_depth must be >= 0, got: {self.max_handler_recursion_depth!r}'
@@ -660,7 +676,7 @@ class EventBus:
                 hydrated_results[event_result.handler_id] = event_result
                 pending_child_links.append((event_result, child_ids))
 
-            event.event_results = hydrated_results
+            event.event_results = EventResultsDict(hydrated_results)
             bus.event_history[event.event_id] = event
 
         pending_event_ids: list[str] = []
@@ -866,20 +882,19 @@ class EventBus:
 
     @staticmethod
     def _resolve_event_slow_timeout(event: BaseEvent[Any], eventbus: 'EventBus') -> float | None:
-        event_slow_timeout = event.event_slow_timeout
-        if event_slow_timeout is not None:
-            return event_slow_timeout
-        return eventbus.event_slow_timeout
+        event_slow_timeout = event.event_slow_timeout if event.event_slow_timeout is not None else eventbus.event_slow_timeout
+        return event_slow_timeout if event_slow_timeout is not None and event_slow_timeout > 0 else None
 
     @staticmethod
     def _resolve_handler_slow_timeout(event: BaseEvent[Any], handler: EventHandler, eventbus: 'EventBus') -> float | None:
-        if 'handler_slow_timeout' in handler.model_fields_set:
+        if 'handler_slow_timeout' in handler.model_fields_set and handler.handler_slow_timeout is not None:
             return handler.handler_slow_timeout
-        if event.event_handler_slow_timeout is not None:
-            return event.event_handler_slow_timeout
-        if event.event_slow_timeout is not None:
-            return event.event_slow_timeout
-        return eventbus.event_handler_slow_timeout
+        event_handler_slow_timeout = (
+            event.event_handler_slow_timeout
+            if event.event_handler_slow_timeout is not None
+            else eventbus.event_handler_slow_timeout
+        )
+        return event_handler_slow_timeout if event_handler_slow_timeout is not None and event_handler_slow_timeout > 0 else None
 
     @staticmethod
     def _resolve_handler_timeout(
@@ -888,14 +903,18 @@ class EventBus:
         eventbus: 'EventBus',
         timeout_override: float | None = None,
     ) -> float | None:
-        if 'handler_timeout' in handler.model_fields_set:
+        if 'handler_timeout' in handler.model_fields_set and handler.handler_timeout is not None:
             resolved_handler_timeout = handler.handler_timeout
         elif event.event_handler_timeout is not None:
             resolved_handler_timeout = event.event_handler_timeout
         else:
-            resolved_handler_timeout = eventbus.event_timeout
+            resolved_handler_timeout = None
 
-        resolved_event_timeout = event.event_timeout if event.event_timeout is not None else eventbus.event_timeout
+        if resolved_handler_timeout is not None and resolved_handler_timeout <= 0:
+            resolved_handler_timeout = None
+
+        raw_event_timeout = event.event_timeout if event.event_timeout is not None else eventbus.event_timeout
+        resolved_event_timeout = raw_event_timeout if raw_event_timeout is not None and raw_event_timeout > 0 else None
 
         if resolved_handler_timeout is None and resolved_event_timeout is None:
             resolved_timeout = None
@@ -905,6 +924,9 @@ class EventBus:
             resolved_timeout = resolved_handler_timeout
         else:
             resolved_timeout = min(resolved_handler_timeout, resolved_event_timeout)
+
+        if timeout_override is not None and timeout_override <= 0:
+            timeout_override = None
 
         if timeout_override is None:
             return resolved_timeout
@@ -1142,6 +1164,9 @@ class EventBus:
         assert event.event_created_at, 'Missing event.event_created_at: str = monotonic_datetime()'
         assert event.event_type and event.event_type.isidentifier(), 'Missing event.event_type: str'
 
+        if current_handler_context_is_stale():
+            return event
+
         # Capture emit-time context for propagation to handlers (GitHub issue #20)
         # This ensures ContextVars set before emit() are accessible in handlers
         if event._get_dispatch_context() is None:  # pyright: ignore[reportPrivateUsage]
@@ -1210,7 +1235,7 @@ class EventBus:
                 # Resolve future find waiters immediately on emit so callers
                 # don't wait for queue position or handler execution.
                 self._resolve_find_waiters(event)
-                if in_handler_context() and self.locks.get_lock_for_event(self, event) is None:
+                if self.locks.get_lock_for_event(self, event) is None:
                     self._start_parallel_event_task_from_queue(event)
                 if logger.isEnabledFor(logging.INFO):
                     logger.info(
@@ -1980,7 +2005,7 @@ class EventBus:
         event: BaseEvent[Any],
     ) -> Callable[[], Coroutine[Any, Any, None]] | None:
         event_slow_timeout = self._resolve_event_slow_timeout(event, self)
-        if event_slow_timeout is None:
+        if event_slow_timeout is None or event_slow_timeout <= 0:
             return None
         return partial(self._slow_event_warning_monitor, event, event_slow_timeout)
 
@@ -2072,9 +2097,11 @@ class EventBus:
         # Get applicable handlers
         applicable_handlers = self._get_handlers_for_event(event)
         slow_event_monitor_factory = self._create_slow_event_warning_timer(event)
-        resolved_event_timeout = (
-            timeout if timeout is not None else (event.event_timeout if event.event_timeout is not None else self.event_timeout)
-        )
+        resolved_event_timeout = timeout if timeout is not None else event.event_timeout
+        if resolved_event_timeout is None:
+            resolved_event_timeout = self.event_timeout
+        if resolved_event_timeout is not None and resolved_event_timeout <= 0:
+            resolved_event_timeout = None
 
         await self.on_event_change(event, EventStatus.PENDING)
 

@@ -22,8 +22,11 @@ test('event_concurrency remains unset on dispatch and resolves during processing
   assert.equal(implicit.event_concurrency ?? null, null)
   assert.equal(explicit_null.event_concurrency ?? null, null)
 
-  await implicit.done()
-  await explicit_null.done()
+  await implicit.now()
+  await explicit_null.now()
+
+  assert.equal(implicit.event_concurrency ?? null, null)
+  assert.equal(explicit_null.event_concurrency ?? null, null)
 })
 
 test('event_concurrency class override beats bus default', async () => {
@@ -32,7 +35,7 @@ test('event_concurrency class override beats bus default', async () => {
 
   const event = bus.emit(ConcurrencyOverrideEvent({}))
   assert.equal(event.event_concurrency, 'global-serial')
-  await event.done()
+  await event.now()
 })
 
 test('handler defaults remain unset on dispatch and resolve during processing', async () => {
@@ -55,8 +58,13 @@ test('handler defaults remain unset on dispatch and resolve during processing', 
   assert.equal(explicit_null.event_handler_concurrency ?? null, null)
   assert.equal(explicit_null.event_handler_completion ?? null, null)
 
-  await implicit.done()
-  await explicit_null.done()
+  await implicit.now()
+  await explicit_null.now()
+
+  assert.equal(implicit.event_handler_concurrency ?? null, null)
+  assert.equal(implicit.event_handler_completion ?? null, null)
+  assert.equal(explicit_null.event_handler_concurrency ?? null, null)
+  assert.equal(explicit_null.event_handler_completion ?? null, null)
 })
 
 test('handler class override beats bus defaults', async () => {
@@ -69,5 +77,5 @@ test('handler class override beats bus defaults', async () => {
   const event = bus.emit(HandlerOverrideEvent({}))
   assert.equal(event.event_handler_concurrency, 'serial')
   assert.equal(event.event_handler_completion, 'all')
-  await event.done()
+  await event.now()
 })

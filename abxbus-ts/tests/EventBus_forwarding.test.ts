@@ -80,7 +80,7 @@ test('forwarding disambiguates buses that share the same name', async () => {
   assert.deepEqual(event.event_path, [bus_a.label, bus_b.label])
 })
 
-test('await event.done waits for handlers on forwarded buses', async () => {
+test('await event.now waits for handlers on forwarded buses', async () => {
   const bus_a = new EventBus('BusA')
   const bus_b = new EventBus('BusB')
   const bus_c = new EventBus('BusC')
@@ -112,7 +112,7 @@ test('await event.done waits for handlers on forwarded buses', async () => {
 
   const event = bus_a.emit(PingEvent({ value: 2 }))
 
-  await event.done()
+  await event.now()
 
   assert.deepEqual(completion_log.sort(), ['A', 'B', 'C'])
   assert.equal(event.event_pending_bus_count, 0)
@@ -181,7 +181,7 @@ test('circular forwarding A->B->C->A does not loop', async () => {
   assert.deepEqual(event2.event_path, [peer2.label, peer3.label, peer1.label])
 })
 
-test('await event.done waits when forwarding handler is async-delayed', async () => {
+test('await event.now waits when forwarding handler is async-delayed', async () => {
   const bus_a = new EventBus('BusA')
   const bus_b = new EventBus('BusB')
 
@@ -209,7 +209,7 @@ test('await event.done waits when forwarding handler is async-delayed', async ()
   })
 
   const event = bus_a.emit(PingEvent({ value: 3 }))
-  await event.done()
+  await event.now()
 
   assert.equal(bus_a_done, true)
   assert.equal(bus_b_done, true)
@@ -246,7 +246,10 @@ test('forwarded first-mode uses processing-bus handler defaults', async () => {
   bus_b.on(ForwardedFirstDefaultsEvent, slow_handler)
   bus_b.on(ForwardedFirstDefaultsEvent, fast_handler)
 
-  const result = await bus_a.emit(ForwardedFirstDefaultsEvent({ event_timeout: null })).first()
+  const result = await bus_a
+    .emit(ForwardedFirstDefaultsEvent({ event_timeout: 0 }))
+    .now({ first_result: true })
+    .eventResult()
   await Promise.all([bus_a.waitUntilIdle(), bus_b.waitUntilIdle()])
 
   assert.equal(result, 'fast', `expected first-mode on processing bus to pick fast handler, got ${String(result)} log=${log}`)
@@ -264,7 +267,7 @@ test('proxy dispatch auto-links child events like emit', async () => {
   bus.on(ProxyDispatchChildEvent, () => 'child')
 
   const root = bus.emit(ProxyDispatchRootEvent({}))
-  await Promise.all([bus.waitUntilIdle(), root.done()])
+  await Promise.all([bus.waitUntilIdle(), root.now()])
 
   const child = root.event_children[0]
   assert.ok(child)
@@ -282,7 +285,7 @@ test('proxy dispatch of same event does not self-parent or self-link child', asy
   })
 
   const root = bus.emit(ProxyDispatchRootEvent({}))
-  await Promise.all([bus.waitUntilIdle(), root.done()])
+  await Promise.all([bus.waitUntilIdle(), root.now()])
 
   assert.equal(root.event_parent_id, null)
   assert.equal(root.event_children.length, 0)

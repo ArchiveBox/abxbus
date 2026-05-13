@@ -394,7 +394,7 @@ impl LockManager {
 
     pub fn get_lock_for_event_handler(
         &self,
-        bus: &EventBus,
+        _bus: &EventBus,
         event: &Arc<BaseEvent>,
         _event_result: &EventResult,
     ) -> Option<Arc<ReentrantLock>> {
@@ -402,7 +402,7 @@ impl LockManager {
             .inner
             .lock()
             .event_handler_concurrency
-            .unwrap_or(bus.event_handler_concurrency);
+            .unwrap_or(_bus.event_handler_concurrency);
         match resolved {
             EventHandlerConcurrencyMode::Parallel => None,
             EventHandlerConcurrencyMode::Serial => {

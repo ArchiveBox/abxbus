@@ -1,7 +1,6 @@
 package abxbus_test
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -48,15 +47,28 @@ func TestEventResultJSONRoundtrip(t *testing.T) {
 	}
 }
 
-func TestEventResultWaitTimeout(t *testing.T) {
+func TestEventResultWaitBlocksUntilSettled(t *testing.T) {
 	bus := abxbus.NewEventBus("ResultBus", nil)
 	h := abxbus.NewEventHandler(bus.Name, bus.ID, "Evt", "h", nil)
 	e := abxbus.NewBaseEvent("Evt", nil)
 	r := abxbus.NewEventResult(e, h)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	if err := r.Wait(ctx); err == nil {
-		t.Fatal("expected timeout")
+
+	done := make(chan error, 1)
+	go func() { done <- r.Wait() }()
+	select {
+	case err := <-done:
+		t.Fatalf("wait should block while result is pending, got %v", err)
+	case <-time.After(10 * time.Millisecond):
+	}
+
+	r.Update(&abxbus.EventResultUpdateOptions{Status: abxbus.EventResultCompleted})
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for completed result")
 	}
 }
 
@@ -104,16 +116,27 @@ func TestEventResultUnmarshalResetsWaitStateForPendingResults(t *testing.T) {
 	if err := result.UnmarshalJSON(completed); err != nil {
 		t.Fatal(err)
 	}
-	if err := result.Wait(context.Background()); err != nil {
+	if err := result.Wait(); err != nil {
 		t.Fatalf("completed result should wait immediately: %v", err)
 	}
 	if err := result.UnmarshalJSON(pending); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	if err := result.Wait(ctx); err == nil {
-		t.Fatal("pending result should not inherit the closed wait channel from a previous unmarshal")
+	done := make(chan error, 1)
+	go func() { done <- result.Wait() }()
+	select {
+	case err := <-done:
+		t.Fatalf("pending result should not inherit the closed wait channel from a previous unmarshal, got %v", err)
+	case <-time.After(10 * time.Millisecond):
+	}
+	result.Update(&abxbus.EventResultUpdateOptions{Status: abxbus.EventResultCompleted})
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for completed result")
 	}
 }
 

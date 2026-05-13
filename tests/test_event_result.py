@@ -9,7 +9,7 @@ from typing import Any, Literal, assert_type
 
 from pydantic import BaseModel
 
-from abxbus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus, EventResult
 
 
 class ScreenshotEventResult(BaseModel):
@@ -168,7 +168,7 @@ async def test_typed_accessors_normalize_forwarded_event_results_to_none():
 
     event = await bus.emit(ForwardingTypedEvent())
 
-    def include_all(_: Any) -> bool:
+    def include_all(_: Any, __: EventResult[Any]) -> bool:
         return True
 
     result = await event.event_result(include=include_all, raise_if_any=False, raise_if_none=False)
@@ -179,7 +179,7 @@ async def test_typed_accessors_normalize_forwarded_event_results_to_none():
     await bus.stop(clear=True)
 
 
-async def test_event_result_returns_first_filtered_value_in_handler_registration_order():
+async def test_event_result_and_results_list_use_registration_order_for_current_result_subset():
     """Result accessors should use handler registration order, not completion timestamps."""
     bus = EventBus(name='event_result_registration_order_bus', event_handler_concurrency='parallel')
 
@@ -210,7 +210,7 @@ async def test_event_result_returns_first_filtered_value_in_handler_registration
     for handler in handlers:
         handler.handler_registered_at = '2026-01-01T00:00:00.000000Z'
 
-    event = bus.emit(AccessorEvent())
+    event = await bus.emit(AccessorEvent()).now()
     assert await event.event_result(raise_if_any=False, raise_if_none=True) == 'winner'
     assert await event.event_results_list(raise_if_any=False, raise_if_none=True) == ['winner', 'late']
     assert list(event.event_results) == [handler.id for handler in handlers]
@@ -249,7 +249,7 @@ async def test_run_handler_marks_started_after_handler_lock_entry():
     assert event.event_results[second_entry.id].status == 'pending'
 
     release_first_handler.set()
-    await pending_event.event_completed()
+    await pending_event.wait()
     assert event.event_results[first_entry.id].status == 'completed'
     assert event.event_results[second_entry.id].status == 'completed'
     assert event.event_results[first_entry.id].result == 'first'
@@ -302,7 +302,7 @@ async def test_run_handler_starts_slow_monitor_after_lock_wait(caplog: Any):
     release_first_handler.set()
 
     try:
-        await pending_event.event_completed()
+        await pending_event.wait()
     finally:
         await bus.stop(clear=True)
 

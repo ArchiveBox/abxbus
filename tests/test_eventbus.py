@@ -1765,7 +1765,7 @@ class TestEventResults:
         assert 'v2' in results.values()
 
     async def test_manual_dict_merge(self, eventbus):
-        """Users can merge dict handler results manually from event_results_list()."""
+        """Users can merge dict handler results manually from event_results()."""
 
         async def config_base(event):
             return {'debug': False, 'port': 8080, 'name': 'base'}
@@ -1778,7 +1778,7 @@ class TestEventResults:
 
         event = await eventbus.emit(BaseEvent(event_type='GetConfig'))
         merged = {}
-        for result in await event.event_results_list(include=lambda r: isinstance(r.result, dict), raise_if_any=False):
+        for result in await event.event_results_list(include=lambda result, _: isinstance(result, dict), raise_if_any=False):
             assert isinstance(result, dict)
             merged.update(result)
 
@@ -1799,7 +1799,7 @@ class TestEventResults:
 
         merged_bad = {}
         for result in await event_bad.event_results_list(
-            include=lambda r: isinstance(r.result, dict),
+            include=lambda result, _: isinstance(result, dict),
             raise_if_any=False,
             raise_if_none=False,
         ):
@@ -1822,7 +1822,7 @@ class TestEventResults:
         event = await eventbus.emit(BaseEvent(event_type='ConflictEvent'))
 
         merged = {}
-        for result in await event.event_results_list(include=lambda r: isinstance(r.result, dict), raise_if_any=False):
+        for result in await event.event_results_list(include=lambda result, _: isinstance(result, dict), raise_if_any=False):
             assert isinstance(result, dict)
             merged.update(result)
 
@@ -1831,7 +1831,7 @@ class TestEventResults:
         assert merged['unique2'] == 'b'
 
     async def test_manual_list_flatten(self, eventbus):
-        """Users can flatten list handler results manually from event_results_list()."""
+        """Users can flatten list handler results manually from event_results()."""
 
         async def errors1(event):
             return ['error1', 'error2']
@@ -1849,7 +1849,7 @@ class TestEventResults:
         event = await eventbus.emit(BaseEvent(event_type='GetErrors'))
         all_errors = [
             item
-            for result in await event.event_results_list(include=lambda r: isinstance(r.result, list), raise_if_any=False)
+            for result in await event.event_results_list(include=lambda result, _: isinstance(result, list), raise_if_any=False)
             if isinstance(result, list)
             for item in result
         ]
@@ -1867,7 +1867,7 @@ class TestEventResults:
         result = [
             item
             for nested in await event_single.event_results_list(
-                include=lambda r: isinstance(r.result, list),
+                include=lambda result, _: isinstance(result, list),
                 raise_if_any=False,
                 raise_if_none=False,
             )
@@ -2100,7 +2100,7 @@ class TestComplexIntegration:
             assert data_bus.label in event.event_path
 
             dict_result: dict[str, Any] = {}
-            for result in await event.event_results_list(include=lambda r: isinstance(r.result, dict), raise_if_any=False):
+            for result in await event.event_results_list(include=lambda result, _: isinstance(result, dict), raise_if_any=False):
                 assert isinstance(result, dict)
                 dict_result.update(result)
             # Should have merged all dict returns
@@ -2108,7 +2108,9 @@ class TestComplexIntegration:
 
             list_result = [
                 item
-                for result in await event.event_results_list(include=lambda r: isinstance(r.result, list), raise_if_any=False)
+                for result in await event.event_results_list(
+                    include=lambda result, _: isinstance(result, list), raise_if_any=False
+                )
                 if isinstance(result, list)
                 for item in result
             ]
@@ -2177,7 +2179,7 @@ class TestComplexIntegration:
 
             dict_result: dict[str, Any] = {}
             for result in await event.event_results_list(
-                include=lambda r: isinstance(r.result, dict),
+                include=lambda result, _: isinstance(result, dict),
                 raise_if_any=False,
                 raise_if_none=False,
             ):
@@ -2247,7 +2249,7 @@ class TestComplexIntegration:
             list_result = [
                 item
                 for result in await event.event_results_list(
-                    include=lambda r: isinstance(r.result, list),
+                    include=lambda result, _: isinstance(result, list),
                     raise_if_any=False,
                     raise_if_none=False,
                 )

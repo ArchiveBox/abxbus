@@ -5,7 +5,7 @@ use std::{
 };
 
 use abxbus_rust::{
-    base_event::BaseEvent,
+    base_event::{BaseEvent, EventResultOptions, EventWaitOptions},
     event,
     event_bus::{EventBus, EventBusOptions},
     event_result::EventResultStatus,
@@ -17,6 +17,14 @@ use serde_json::{json, Map, Value};
 event! {
     struct CompletionEvent {
         event_result_type: Value,
+    }
+}
+
+fn non_raising_result_options() -> EventResultOptions {
+    EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: false,
+        include: None,
     }
 }
 
@@ -49,7 +57,10 @@ fn emit_with_first_completion(
         ..Default::default()
     };
     let event = bus.emit(event);
-    block_on(event.done());
+    let _ = block_on(event.now_with_options(EventWaitOptions {
+        timeout: None,
+        first_result: true,
+    }));
     event
 }
 
@@ -81,10 +92,13 @@ fn test_event_handler_completion_bus_default_first_serial() {
         ..Default::default()
     });
     assert_eq!(event.inner.inner.lock().event_handler_completion, None);
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     assert!(!*second_handler_called.lock().expect("called lock"));
-    assert_eq!(event.first_result(), Some(json!("first")));
+    assert_eq!(
+        block_on(event.event_result(non_raising_result_options())).expect("first result"),
+        Some(json!("first"))
+    );
     let results = event.inner.inner.lock().event_results.clone();
     let first_result = results
         .values()
@@ -137,7 +151,7 @@ fn test_event_handler_completion_explicit_override_beats_bus_default() {
         event.inner.inner.lock().event_handler_completion,
         Some(EventHandlerCompletionMode::All)
     );
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     assert!(*second_handler_called.lock().expect("called lock"));
     let results = event.inner.inner.lock().event_results.clone();
@@ -188,11 +202,14 @@ fn test_event_parallel_first_races_and_cancels_non_winners() {
     };
     let event = bus.emit(event);
     let started = std::time::Instant::now();
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     assert!(started.elapsed() < Duration::from_millis(200));
     assert!(*slow_started.lock().expect("slow started lock"));
-    assert_eq!(event.first_result(), Some(json!("winner")));
+    assert_eq!(
+        block_on(event.event_result(non_raising_result_options())).expect("first result"),
+        Some(json!("winner"))
+    );
 
     let results = event.inner.inner.lock().event_results.clone();
     let winner_result = results
@@ -219,7 +236,7 @@ fn test_event_parallel_first_races_and_cancels_non_winners() {
 }
 
 #[test]
-fn test_event_first_shortcut_sets_mode_and_cancels_parallel_losers() {
+fn test_event_handler_completion_first_cancels_parallel_losers() {
     let bus = EventBus::new_with_options(
         Some("CompletionFirstShortcutBus".to_string()),
         EventBusOptions {
@@ -245,10 +262,41 @@ fn test_event_first_shortcut_sets_mode_and_cancels_parallel_losers() {
     });
 
     let event = bus.emit(CompletionEvent {
+        event_handler_completion: Some(EventHandlerCompletionMode::First),
         ..Default::default()
     });
-    assert_eq!(event.inner.inner.lock().event_handler_completion, None);
-    let first_value = block_on(event.first()).expect("first result");
+    assert_eq!(
+        event.inner.inner.lock().event_handler_completion,
+        Some(EventHandlerCompletionMode::First)
+    );
+    let _ = block_on(event.now());
+    block_on(bus.wait_until_idle(Some(2.0)));
+    for _ in 0..100 {
+        if event
+            .inner
+            .inner
+            .lock()
+            .event_results
+            .values()
+            .any(|result| {
+                result.status == EventResultStatus::Completed
+                    && result.result == Some(json!("fast"))
+            })
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let first_value = event
+        .inner
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .find(|result| {
+            result.status == EventResultStatus::Completed && result.result == Some(json!("fast"))
+        })
+        .and_then(|result| result.result.clone());
 
     assert_eq!(first_value, Some(json!("fast")));
     assert_eq!(
@@ -296,7 +344,7 @@ fn test_event_first_preserves_falsy_results() {
     });
 
     let event = emit_with_first_completion(&bus);
-    let result = event.first_result_or_error().expect("first result");
+    let result = block_on(event.event_result(non_raising_result_options())).expect("first result");
     assert_eq!(result, Some(json!(0)));
     assert!(!*second_handler_called.lock().expect("called lock"));
     bus.stop();
@@ -325,7 +373,8 @@ fn test_event_first_preserves_false_and_empty_string_results() {
         }
     });
     let false_event = emit_with_first_completion(&false_bus);
-    let false_result = false_event.first_result_or_error().expect("first result");
+    let false_result =
+        block_on(false_event.event_result(non_raising_result_options())).expect("first result");
     assert_eq!(false_result, Some(json!(false)));
     assert!(!*false_second_called.lock().expect("called lock"));
     false_bus.stop();
@@ -351,7 +400,8 @@ fn test_event_first_preserves_false_and_empty_string_results() {
         }
     });
     let str_event = emit_with_first_completion(&str_bus);
-    let str_result = str_event.first_result_or_error().expect("first result");
+    let str_result =
+        block_on(str_event.event_result(non_raising_result_options())).expect("first result");
     assert_eq!(str_result, Some(json!("")));
     assert!(!*str_second_called.lock().expect("called lock"));
     str_bus.stop();
@@ -385,7 +435,7 @@ fn test_event_first_skips_none_result_and_uses_next_winner() {
     });
 
     let event = emit_with_first_completion(&bus);
-    let result = event.first_result_or_error().expect("first result");
+    let result = block_on(event.event_result(non_raising_result_options())).expect("first result");
 
     assert_eq!(result, Some(json!("winner")));
     assert!(!*third_handler_called.lock().expect("called lock"));
@@ -434,7 +484,7 @@ fn test_event_first_skips_baseevent_result_and_uses_next_winner() {
     });
 
     let event = emit_with_first_completion(&bus);
-    let result = event.first_result_or_error().expect("first result");
+    let result = block_on(event.event_result(non_raising_result_options())).expect("first result");
 
     assert_eq!(result, Some(json!("winner")));
     assert!(!*third_handler_called.lock().expect("called lock"));
@@ -477,7 +527,7 @@ fn test_event_handler_concurrency_bus_default_remains_unset_on_dispatch() {
         ..Default::default()
     });
     assert_eq!(event.inner.inner.lock().event_handler_concurrency, None);
-    block_on(event.done());
+    let _ = block_on(event.now());
     bus.stop();
 }
 
@@ -513,7 +563,7 @@ fn test_event_handler_concurrency_per_event_override_controls_execution_mode() {
         ..Default::default()
     };
     let serial_event = bus.emit(serial_event);
-    block_on(serial_event.done());
+    let _ = block_on(serial_event.now());
     assert_eq!(*max_in_flight.lock().expect("max lock"), 1);
 
     *in_flight.lock().expect("in flight lock") = 0;
@@ -523,7 +573,7 @@ fn test_event_handler_concurrency_per_event_override_controls_execution_mode() {
         ..Default::default()
     };
     let parallel_event = bus.emit(parallel_event);
-    block_on(parallel_event.done());
+    let _ = block_on(parallel_event.now());
     assert!(*max_in_flight.lock().expect("max lock") >= 2);
     bus.stop();
 }

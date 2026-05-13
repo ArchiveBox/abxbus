@@ -64,7 +64,8 @@ bus.on(UserActionEvent, on)
 bus.on('UserActionEvent', on_by_name)
 bus.on('*', on_any)
 
-await bus.emit(UserActionEvent(action='click')).event_result()
+event = await bus.emit(UserActionEvent(action='click')).now()
+result = await event.event_result()
 
 typed_match = await bus.find(UserActionEvent)          # UserActionEvent | None
 named_match = await bus.find('UserActionEvent')        # BaseEvent[Any] | None
@@ -134,7 +135,7 @@ let event = bus.emit(UserActionEvent {
     action: "click".to_string(),
     ..Default::default()
 });
-block_on(event.done());
+block_on(event.now());
 
 let typed_match = block_on(bus.find::<UserActionEvent>(true, None));
 let named_match = block_on(bus.find("UserActionEvent", true, None, None));
@@ -190,7 +191,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	_, err = bus.Emit(event).EventResult(context.Background())
+	_, err = bus.Emit(event).EventResult()
 	if err != nil {
 		panic(err)
 	}

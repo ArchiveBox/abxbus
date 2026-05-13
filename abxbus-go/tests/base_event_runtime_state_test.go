@@ -35,7 +35,7 @@ func TestBaseEventRuntimeStateTransitionsAndJSON(t *testing.T) {
 	if event.EventCompletedAt != nil {
 		t.Fatal("new event should not have event_completed_at")
 	}
-	if _, err := bus.Emit(event).Done(context.Background()); err != nil {
+	if _, err := bus.Emit(event).Now(); err != nil {
 		t.Fatal(err)
 	}
 	if event.EventStatus != "completed" {

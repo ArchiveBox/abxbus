@@ -9,6 +9,7 @@ use std::{
 };
 
 use abxbus_rust::{
+    base_event::{EventResultOptions, EventWaitOptions},
     event_bus::{EventBus, EventBusOptions},
     types::{EventHandlerCompletionMode, EventHandlerConcurrencyMode},
 };
@@ -54,7 +55,10 @@ fn test_log_tree_single_event() {
         data: Some("test".to_string()),
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now_with_options(EventWaitOptions {
+        timeout: None,
+        first_result: true,
+    }));
 
     let output = bus.log_tree();
     assert!(output.contains("└── ✅ RootEvent#"));
@@ -83,7 +87,7 @@ fn test_log_tree_with_handler_results() {
         data: Some("test".to_string()),
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let output = bus.log_tree();
     assert!(output.contains("└── ✅ RootEvent#"));
@@ -113,7 +117,7 @@ fn test_log_tree_with_handler_errors() {
         data: Some("test".to_string()),
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let output = bus.log_tree();
     assert!(output.contains(&format!("{}.error_handler#", bus.label())));
@@ -136,7 +140,7 @@ fn test_log_tree_first_mode_control_cancellations_use_cancelled_icon() {
     let bus = EventBus::new_with_options(
         Some("CancelledLogBus".to_string()),
         EventBusOptions {
-            event_timeout: None,
+            event_timeout: Some(0.0),
             event_handler_concurrency: EventHandlerConcurrencyMode::Parallel,
             ..EventBusOptions::default()
         },
@@ -156,7 +160,14 @@ fn test_log_tree_first_mode_control_cancellations_use_cancelled_icon() {
         ..Default::default()
     };
     let event = bus.emit(event);
-    let first = block_on(event.first()).expect("first result");
+    let _ = block_on(event.now());
+    block_on(bus.wait_until_idle(Some(2.0)));
+    let first = block_on(event.event_result(EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: false,
+        include: None,
+    }))
+    .expect("first result");
     assert_eq!(first, Some("fast result".to_string()));
 
     let output = bus.log_tree();
@@ -184,7 +195,7 @@ fn test_log_tree_complex_nested() {
                 value: Some(100),
                 ..Default::default()
             });
-            child.done().await;
+            let _ = child.now().await;
             Ok(json!("Root processed"))
         }
     });
@@ -195,7 +206,7 @@ fn test_log_tree_complex_nested() {
                 nested: None,
                 ..Default::default()
             });
-            grandchild.done().await;
+            let _ = grandchild.now().await;
             Ok(json!([1, 2, 3]))
         }
     });
@@ -209,7 +220,7 @@ fn test_log_tree_complex_nested() {
         data: Some("root_data".to_string()),
         ..Default::default()
     });
-    block_on(root.done());
+    let _ = block_on(root.now());
 
     let output = bus.log_tree();
     assert!(output.contains("✅ RootEvent#"));
@@ -246,8 +257,8 @@ fn test_log_tree_multiple_roots() {
         data: Some("second".to_string()),
         ..Default::default()
     });
-    block_on(root_1.done());
-    block_on(root_2.done());
+    let _ = block_on(root_1.now());
+    let _ = block_on(root_2.now());
 
     let output = bus.log_tree();
     assert_eq!(output.matches("├── ✅ RootEvent#").count(), 1);
@@ -277,7 +288,7 @@ fn test_log_tree_timing_info() {
         data: None,
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let output = bus.log_tree();
     assert!(output.contains('('));
@@ -326,7 +337,7 @@ fn test_log_tree_running_handler() {
     assert!(output.contains(&format!("{}.running_handler#", bus.label())));
     assert!(output.contains("🏃 RootEvent#"));
     release_handler.store(true, Ordering::SeqCst);
-    block_on(event.done());
+    let _ = block_on(event.now());
     bus.stop();
 }
 

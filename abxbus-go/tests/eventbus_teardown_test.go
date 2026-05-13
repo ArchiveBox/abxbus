@@ -18,7 +18,7 @@ func TestDestroyClearsRuntimeStateAndCancelsPendingFinds(t *testing.T) {
 	}, nil)
 
 	e := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
-	if _, err := e.Done(context.Background()); err != nil {
+	if _, err := e.Now(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -54,7 +54,7 @@ func TestDestroyClearsRuntimeStateAndCancelsPendingFinds(t *testing.T) {
 	}
 
 	e2 := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
-	if _, err := e2.Done(context.Background()); err != nil {
+	if _, err := e2.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if calls.Load() != 1 {
@@ -69,7 +69,7 @@ func TestDestroyClearsRuntimeStateAndCancelsPendingFinds(t *testing.T) {
 		return "new", nil
 	}, nil)
 	e3 := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
-	if _, err := e3.Done(context.Background()); err != nil {
+	if _, err := e3.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if calls.Load() != 2 {

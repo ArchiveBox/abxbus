@@ -32,7 +32,7 @@ console.log(
 
 // Phase 2: Wait for all to complete
 const t2 = performance.now()
-await Promise.all(pending.map((e) => e.done()))
+await Promise.all(pending.map((e) => e.now()))
 await bus.waitUntilIdle()
 const t3 = performance.now()
 console.log(`Await completion: ${(t3 - t2).toFixed(0)}ms`)

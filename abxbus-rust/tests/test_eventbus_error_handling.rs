@@ -84,7 +84,7 @@ fn test_handler_error_is_captured_and_does_not_prevent_other_handlers_from_runni
     let event = bus.emit(TestEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let event_results = event.inner.inner.lock().event_results.clone();
     assert_eq!(event_results.len(), 2);
@@ -132,7 +132,7 @@ fn test_event_event_errors_collects_handler_errors() {
     let event = bus.emit(TestEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let mut errors = event.inner.event_errors();
     errors.sort();
@@ -153,7 +153,7 @@ fn test_handler_error_does_not_prevent_event_completion() {
     let event = bus.emit(TestEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     assert_eq!(
         event.inner.inner.lock().event_status,
@@ -219,7 +219,7 @@ fn test_async_handler_rejection_is_captured_as_error() {
     let event = bus.emit(TestEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     assert_eq!(
         event.inner.inner.lock().event_status,
@@ -266,7 +266,7 @@ fn test_error_in_forwarded_event_handler_does_not_block_source_bus() {
     let event = bus_a.emit(ForwardEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     assert_eq!(
         event.inner.inner.lock().event_status,
@@ -302,7 +302,7 @@ fn test_event_with_no_handlers_completes_without_errors() {
     let event = bus.emit(OrphanEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     assert_eq!(
         event.inner.inner.lock().event_status,
@@ -324,7 +324,7 @@ fn test_error_handler_result_fields_are_populated_correctly() {
     let event = bus.emit(TestEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let result = event
         .inner
@@ -365,7 +365,7 @@ fn test_result_schema_mismatch_uses_event_handler_result_schema_error() {
             "type": "integer"
         }),
     ));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
     let result = event
         .inner
@@ -404,7 +404,7 @@ fn test_handler_timeout_uses_event_handler_timeout_error() {
     let event = bus.emit(TimeoutTaxonomyEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let result = event
         .inner
@@ -451,7 +451,7 @@ fn test_first_mode_pending_non_winner_uses_cancelled_error_class() {
     });
 
     let event = bus.emit_base(BaseEvent::new("TaxonomyEvent", serde_json::Map::new()));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
     let loser_result = event
         .inner
@@ -508,7 +508,7 @@ fn test_parallel_first_started_loser_uses_aborted_error_class() {
     });
 
     let event = bus.emit_base(BaseEvent::new("TaxonomyEvent", serde_json::Map::new()));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
     let slow_result = event
         .inner

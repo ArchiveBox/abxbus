@@ -49,7 +49,7 @@ func TestEventResetCreatesFreshPendingEventForCrossBusDispatch(t *testing.T) {
 	}, nil)
 
 	completed := busA.Emit(abxbus.NewBaseEvent("ResetCoverageEvent", map[string]any{"label": "hello"}))
-	if _, err := completed.Done(context.Background()); err != nil {
+	if _, err := completed.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if completed.EventStatus != "completed" || len(completed.EventResults) != 1 {
@@ -71,7 +71,7 @@ func TestEventResetCreatesFreshPendingEventForCrossBusDispatch(t *testing.T) {
 	}
 
 	forwarded := busB.Emit(fresh)
-	if _, err := forwarded.Done(context.Background()); err != nil {
+	if _, err := forwarded.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if forwarded.EventStatus != "completed" {

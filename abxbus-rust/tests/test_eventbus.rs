@@ -10,7 +10,7 @@ use std::{
 };
 
 use abxbus_rust::{
-    base_event::{BaseEvent, EventResultsOptions},
+    base_event::{BaseEvent, EventResultOptions, EventWaitOptions},
     event_bus::{EventBus, EventBusOptions},
     event_result::{EventResult, EventResultStatus},
     types::{
@@ -166,7 +166,7 @@ fn test_eventbus_locks_methods_are_callable_and_preserve_lock_resolution_behavio
         "GateInvocationEvent",
         serde_json::Map::new(),
     ));
-    block_on(emitted.done());
+    let _ = block_on(emitted.now());
     assert!(bus.locks.wait_for_idle(Some(Duration::from_secs(1)), || bus
         .is_idle_and_queue_empty()));
     bus.stop();
@@ -361,7 +361,7 @@ fn test_event_transitions_through_pending_started_completed() {
     });
 
     let event = bus.emit_base(base_event("StatusLifecycleEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
     assert_eq!(
         *status_during_handler.lock().expect("status lock"),
@@ -379,7 +379,7 @@ fn test_event_transitions_through_pending_started_completed() {
 fn test_event_with_no_handlers_completes_immediately() {
     let bus = EventBus::new(Some("NoHandlerBus".to_string()));
     let event = bus.emit_base(base_event("OrphanEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
     let inner = event.inner.lock();
     assert_eq!(inner.event_status, EventStatus::Completed);
@@ -396,7 +396,8 @@ fn test_auto_start_and_stop() {
     let event = bus.emit(UserActionEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    block_on(event.inner.now_with_options(EventWaitOptions::default()))
+        .expect("now should complete");
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
     assert!(bus.is_running_for_test());
 
@@ -416,7 +417,8 @@ fn test_wait_until_idle_recovers_when_idle_flag_was_cleared() {
     let event = bus.emit(UserActionEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    block_on(event.inner.now_with_options(EventWaitOptions::default()))
+        .expect("now should complete");
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
 
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
@@ -503,7 +505,7 @@ fn test_emit_and_result() {
     }
 
     release_tx.send(()).expect("release handler");
-    block_on(queued.event_completed());
+    let _ = block_on(queued.wait());
 
     let inner = queued.inner.lock();
     assert_eq!(inner.event_status, EventStatus::Completed);
@@ -520,8 +522,8 @@ fn test_dispatched_events_appear_in_event_history() {
     let bus = EventBus::new(Some("HistoryBus".to_string()));
     let event_a = bus.emit_base(base_event("EventA", json!({})));
     let event_b = bus.emit_base(base_event("EventB", json!({})));
-    block_on(event_a.event_completed());
-    block_on(event_b.event_completed());
+    let _ = block_on(event_a.wait());
+    let _ = block_on(event_b.wait());
     assert!(block_on(bus.wait_until_idle(None)));
 
     assert_eq!(bus.event_history_size(), 2);
@@ -595,7 +597,7 @@ fn test_history_is_trimmed_to_max_history_size_completed_events_removed_first() 
 
     for seq in 0..10 {
         let event = bus.emit_base(base_event("TrimEvent", json!({"seq": seq})));
-        block_on(event.event_completed());
+        let _ = block_on(event.wait());
     }
     assert!(block_on(bus.wait_until_idle(None)));
 
@@ -632,7 +634,7 @@ fn test_unlimited_history_max_history_size_null_keeps_all_events() {
 
     for _ in 0..150 {
         let event = bus.emit_base(base_event("PingEvent", json!({})));
-        block_on(event.event_completed());
+        let _ = block_on(event.wait());
     }
     assert!(block_on(bus.wait_until_idle(None)));
 
@@ -662,7 +664,7 @@ fn test_max_history_drop_false_rejects_new_dispatch_when_history_is_full() {
 
     for seq in 1..=2 {
         let event = bus.emit_base(base_event("NoDropEvent", json!({"seq": seq})));
-        block_on(event.event_completed());
+        let _ = block_on(event.wait());
     }
 
     assert_eq!(bus.event_history_size(), 2);
@@ -732,8 +734,8 @@ fn test_max_history_size_0_keeps_in_flight_events_and_drops_them_on_completion()
         .recv_timeout(Duration::from_secs(1))
         .expect("second handler should start");
     release_tx.send(()).expect("release second");
-    block_on(first.event_completed());
-    block_on(second.event_completed());
+    let _ = block_on(first.wait());
+    let _ = block_on(second.wait());
     assert!(block_on(bus.wait_until_idle(None)));
 
     assert_eq!(bus.event_history_size(), 0);
@@ -792,7 +794,7 @@ fn test_max_history_size_0_with_max_history_drop_false_still_allows_unbounded_qu
         release_tx.send(()).expect("release event");
     }
     for event in &events {
-        block_on(event.event_completed());
+        let _ = block_on(event.wait());
     }
     assert!(block_on(bus.wait_until_idle(None)));
 
@@ -819,7 +821,7 @@ fn test_handler_registration_by_string_matches_extend_name() {
     });
 
     let event = bus.emit_base(base_event("NamedEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
     assert_eq!(
         received.lock().expect("received lock").as_slice(),
@@ -858,7 +860,7 @@ fn test_class_matcher_matches_generic_base_event_by_event_type() {
     });
 
     let event = bus.emit_base(base_event("DifferentNameFromClass", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
     assert_eq!(
         seen.lock().expect("seen lock").as_slice(),
@@ -897,8 +899,8 @@ fn test_wildcard_handler_receives_all_events() {
 
     let event_a = bus.emit_base(base_event("EventA", json!({})));
     let event_b = bus.emit_base(base_event("EventB", json!({})));
-    block_on(event_a.event_completed());
-    block_on(event_b.event_completed());
+    let _ = block_on(event_a.wait());
+    let _ = block_on(event_b.wait());
 
     assert_eq!(
         types.lock().expect("types lock").as_slice(),
@@ -933,7 +935,7 @@ fn test_wait_for_result() {
         .expect("completion order lock")
         .push("enqueue_done".to_string());
 
-    block_on(event.done());
+    let _ = block_on(event.now());
     completion_order
         .lock()
         .expect("completion order lock")
@@ -978,7 +980,7 @@ fn test_error_handling() {
     let event = bus.emit(UserActionEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
     let event_results = event.inner.inner.lock().event_results.clone();
 
     let failing_result = event_results
@@ -1023,9 +1025,9 @@ fn test_event_result_raises_exception_group_when_multiple_handlers_fail() {
     let event = bus.emit(UserActionEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
-    let error = block_on(event.inner.event_result(EventResultsOptions::default()))
+    let error = block_on(event.inner.event_result(EventResultOptions::default()))
         .expect_err("multiple handler errors should be raised");
     assert!(error.contains("2 handler error(s)"), "{error}");
     assert!(error.contains("ValueError: first failure"), "{error}");
@@ -1044,11 +1046,40 @@ fn test_event_result_single_handler_error_raises_original_exception() {
     let event = bus.emit(UserActionEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
-    let error = block_on(event.inner.event_result(EventResultsOptions::default()))
+    let error = block_on(event.inner.event_result(EventResultOptions::default()))
         .expect_err("single handler error should be raised");
     assert_eq!(error, "ValueError: single failure");
+    bus.stop();
+}
+
+#[test]
+fn test_event_result_raise_if_any_options() {
+    let bus = EventBus::new(Some("DoneRaiseIfAnyBus".to_string()));
+
+    bus.on_raw("UserActionEvent", "failing_handler", |_event| async move {
+        Err("ValueError: done failure".to_string())
+    });
+
+    let event = bus.emit(UserActionEvent {
+        ..Default::default()
+    });
+
+    block_on(event.inner.now_with_options(EventWaitOptions::default()))
+        .expect("now should complete");
+    let error = match block_on(event.inner.event_result(EventResultOptions::default())) {
+        Ok(_) => panic!("event_result should raise handler errors by default"),
+        Err(error) => error,
+    };
+    assert_eq!(error, "ValueError: done failure");
+
+    block_on(event.inner.event_result(EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: false,
+        include: None,
+    }))
+    .expect("raise_if_any=false should only inspect results");
     bus.stop();
 }
 
@@ -1065,7 +1096,7 @@ fn test_event_results_access() {
     });
 
     let event = bus.emit_base(base_event("TestEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     let event_results = event.inner.lock().event_results.clone();
     assert_eq!(event_results.len(), 2);
     assert_eq!(
@@ -1084,7 +1115,7 @@ fn test_event_results_access() {
     );
 
     let empty_event = bus.emit_base(base_event("EmptyEvent", json!({})));
-    block_on(empty_event.event_completed());
+    let _ = block_on(empty_event.wait());
     assert_eq!(empty_event.inner.lock().event_results.len(), 0);
     bus.stop();
 }
@@ -1104,7 +1135,7 @@ fn test_by_handler_name() {
     });
 
     let event = bus.emit_base(base_event("TestEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     let event_results = event.inner.lock().event_results.clone();
     let process_results: Vec<Value> = event_results
         .values()
@@ -1140,7 +1171,7 @@ fn test_by_handler_id() {
     );
 
     let event = bus.emit_base(base_event("TestEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     let event_results = event.inner.lock().event_results.clone();
     let ids: BTreeSet<String> = event_results.keys().cloned().collect();
     let values: Vec<Value> = event_results
@@ -1163,7 +1194,7 @@ fn test_string_indexing() {
     });
 
     let event = bus.emit_base(base_event("TestEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     let event_results = event.inner.lock().event_results.clone();
     let my_handler_result = event_results
         .values()
@@ -1200,7 +1231,7 @@ fn test_emit_alias_dispatches_event() {
         ..Default::default()
     });
     let event_id = event.inner.inner.lock().event_id.clone();
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     assert_eq!(
         handled_event_ids
@@ -1268,8 +1299,8 @@ fn test_handler_registration() {
         ..Default::default()
     });
     block_on(async {
-        user.event_completed().await;
-        system.done().await;
+        let _ = user.wait().await;
+        let _ = system.now().await;
         assert!(bus.wait_until_idle(Some(1.0)).await);
     });
 
@@ -1300,7 +1331,7 @@ fn test_event_subclass_type() {
 
     let result = bus.emit(event);
     assert_eq!(result.inner.inner.lock().event_type, "CreateAgentTaskEvent");
-    block_on(result.done());
+    let _ = block_on(result.now());
     bus.stop();
 }
 
@@ -1325,7 +1356,7 @@ fn test_event_type_and_version_identity_fields() {
         "CreateAgentTaskEvent"
     );
     assert_eq!(emitted.inner.inner.lock().event_version, "0.0.1");
-    block_on(emitted.done());
+    let _ = block_on(emitted.now());
     bus.stop();
 }
 
@@ -1355,7 +1386,7 @@ fn test_event_version_defaults_and_overrides() {
         ..Default::default()
     });
     assert_eq!(dispatched.inner.inner.lock().event_version, "1.2.3");
-    block_on(dispatched.done());
+    let _ = block_on(dispatched.now());
 
     let restored = BaseEvent::from_json_value(dispatched.inner.to_json_value());
     assert_eq!(restored.inner.lock().event_version, "1.2.3");
@@ -1419,8 +1450,8 @@ fn test_automatic_event_type_derivation() {
     let user = bus.emit(user);
     let system = bus.emit(system);
     block_on(async {
-        user.done().await;
-        system.done().await;
+        let _ = user.wait().await;
+        let _ = system.wait().await;
         assert!(bus.wait_until_idle(Some(1.0)).await);
     });
 
@@ -1473,7 +1504,7 @@ fn test_explicit_event_type_override() {
     };
     let event = bus.emit(event);
     assert_eq!(event.inner.inner.lock().event_type, "CustomEventType");
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     assert_eq!(
         received.lock().expect("received lock").as_slice(),
@@ -1523,7 +1554,7 @@ fn test_multiple_handlers_parallel() {
     let event = bus.emit(UserActionEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
     let duration = start.elapsed();
 
     assert!(
@@ -1562,7 +1593,7 @@ fn test_handler_can_be_sync_or_async() {
     );
 
     let event = bus.emit_base(base_event("TestEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     let results: Vec<Value> = event
         .inner
         .lock()
@@ -1694,7 +1725,7 @@ fn test_class_and_instance_method_handlers() {
             "user_id": "dab45f48-9e3a-7042-80f8-ac8f07b6cfe3"
         }),
     ));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
     let seen = results_seen.lock().expect("results seen lock").clone();
     assert_eq!(seen.len(), 5);
@@ -1746,7 +1777,7 @@ fn test_batch_emit_with_gather() {
     ];
 
     for event in &events {
-        block_on(event.event_completed());
+        let _ = block_on(event.wait());
     }
 
     assert_eq!(events.len(), 3);
@@ -1769,7 +1800,7 @@ fn test_concurrent_emit_calls() {
     }
 
     for event in &events {
-        block_on(event.event_completed());
+        let _ = block_on(event.wait());
     }
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
     assert_eq!(bus.event_history_size(), 100);
@@ -1855,7 +1886,7 @@ fn test_event_with_complex_data() {
             }
         }),
     ));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
     assert_eq!(
         event.inner.lock().payload["details"]["nested"]["list"][2]["inner"],
@@ -1880,18 +1911,18 @@ fn test_dispatch_returns_event_results() {
     let event = bus.emit(UserActionEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
     let all_results = block_on(
         event
             .inner
-            .event_results_list(EventResultsOptions::default()),
+            .event_results_list(EventResultOptions::default()),
     )
     .expect("event results list");
 
     assert_eq!(all_results, vec![json!({"result": "test_result"})]);
 
     let result_no_handlers = bus.emit_base(base_event("NoHandlersEvent", json!({})));
-    block_on(result_no_handlers.event_completed());
+    let _ = block_on(result_no_handlers.wait());
     assert_eq!(result_no_handlers.inner.lock().event_results.len(), 0);
     bus.stop();
 }
@@ -1905,14 +1936,14 @@ fn test_handler() {
     });
 
     let event = bus.emit_base(base_event("TestEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
-    let all_results = block_on(event.event_results_list(EventResultsOptions::default()))
+    let all_results = block_on(event.event_results_list(EventResultOptions::default()))
         .expect("event results list");
     assert_eq!(all_results, vec![json!({"result": "test_result"})]);
 
     let no_handlers = bus.emit_base(base_event("NoHandlersEvent", json!({})));
-    block_on(no_handlers.event_completed());
+    let _ = block_on(no_handlers.wait());
     assert_eq!(no_handlers.inner.lock().event_results.len(), 0);
     bus.stop();
 }
@@ -1938,7 +1969,7 @@ fn test_event_results_indexing() {
     }
 
     let event = bus.emit_base(base_event("TestEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     let event_results = event.inner.lock().event_results.clone();
 
     assert_eq!(
@@ -1978,15 +2009,14 @@ fn test_manual_dict_merge() {
     });
 
     let event = bus.emit_base(base_event("GetConfig", json!({})));
-    block_on(event.event_completed());
-    let dict_results = block_on(event.event_results_list_with_filter(
-        EventResultsOptions {
-            raise_if_any: false,
-            raise_if_none: true,
-            timeout: None,
-        },
-        |result| result.result.as_ref().is_some_and(Value::is_object),
-    ))
+    let _ = block_on(event.wait());
+    let dict_results = block_on(event.event_results_list(EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: true,
+        include: Some(Arc::new(|result, _event_result| {
+            result.is_some_and(Value::is_object)
+        })),
+    }))
     .expect("dict results");
     let mut merged = serde_json::Map::new();
     for result in dict_results {
@@ -2001,15 +2031,14 @@ fn test_manual_dict_merge() {
         Ok(json!("not a dict"))
     });
     let event_bad = bus.emit_base(base_event("BadConfig", json!({})));
-    block_on(event_bad.event_completed());
-    let merged_bad = block_on(event_bad.event_results_list_with_filter(
-        EventResultsOptions {
-            raise_if_any: false,
-            raise_if_none: false,
-            timeout: None,
-        },
-        |result| result.result.as_ref().is_some_and(Value::is_object),
-    ))
+    let _ = block_on(event_bad.wait());
+    let merged_bad = block_on(event_bad.event_results_list(EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: false,
+        include: Some(Arc::new(|result, _event_result| {
+            result.is_some_and(Value::is_object)
+        })),
+    }))
     .expect("empty dict results");
     assert!(merged_bad.is_empty());
     bus.stop();
@@ -2027,15 +2056,14 @@ fn test_manual_dict_merge_conflicts_last_write_wins() {
     });
 
     let event = bus.emit_base(base_event("ConflictEvent", json!({})));
-    block_on(event.event_completed());
-    let dict_results = block_on(event.event_results_list_with_filter(
-        EventResultsOptions {
-            raise_if_any: false,
-            raise_if_none: true,
-            timeout: None,
-        },
-        |result| result.result.as_ref().is_some_and(Value::is_object),
-    ))
+    let _ = block_on(event.wait());
+    let dict_results = block_on(event.event_results_list(EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: true,
+        include: Some(Arc::new(|result, _event_result| {
+            result.is_some_and(Value::is_object)
+        })),
+    }))
     .expect("dict results");
     let mut merged = serde_json::Map::new();
     for result in dict_results {
@@ -2063,15 +2091,14 @@ fn test_manual_list_flatten() {
     });
 
     let event = bus.emit_base(base_event("GetErrors", json!({})));
-    block_on(event.event_completed());
-    let list_results = block_on(event.event_results_list_with_filter(
-        EventResultsOptions {
-            raise_if_any: false,
-            raise_if_none: true,
-            timeout: None,
-        },
-        |result| result.result.as_ref().is_some_and(Value::is_array),
-    ))
+    let _ = block_on(event.wait());
+    let list_results = block_on(event.event_results_list(EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: true,
+        include: Some(Arc::new(|result, _event_result| {
+            result.is_some_and(Value::is_array)
+        })),
+    }))
     .expect("list results");
     let flattened: Vec<Value> = list_results
         .iter()
@@ -2092,15 +2119,14 @@ fn test_manual_list_flatten() {
         Ok(json!("single"))
     });
     let event_single = bus.emit_base(base_event("GetSingle", json!({})));
-    block_on(event_single.event_completed());
-    let single_lists = block_on(event_single.event_results_list_with_filter(
-        EventResultsOptions {
-            raise_if_any: false,
-            raise_if_none: false,
-            timeout: None,
-        },
-        |result| result.result.as_ref().is_some_and(Value::is_array),
-    ))
+    let _ = block_on(event_single.wait());
+    let single_lists = block_on(event_single.event_results_list(EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: false,
+        include: Some(Arc::new(|result, _event_result| {
+            result.is_some_and(Value::is_array)
+        })),
+    }))
     .expect("empty list results");
     assert!(single_lists.is_empty());
     bus.stop();
@@ -2118,7 +2144,7 @@ fn test_by_handler_name_access() {
     });
 
     let event = bus.emit_base(base_event("TestEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     let event_results = event.inner.lock().event_results.clone();
 
     assert_eq!(
@@ -2188,7 +2214,7 @@ fn test_forwarding_flattens_results() {
     });
 
     let event = bus1.emit_base(base_event("TestEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     block_on(bus1.wait_until_idle(None));
     block_on(bus2.wait_until_idle(None));
     block_on(bus3.wait_until_idle(None));
@@ -2244,7 +2270,7 @@ fn test_by_eventbus_id_and_path() {
     });
 
     let event = bus1.emit_base(base_event("DataEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     block_on(bus1.wait_until_idle(None));
     block_on(bus2.wait_until_idle(None));
 
@@ -2321,7 +2347,7 @@ fn test_complex_multi_bus_scenario() {
     });
 
     let event = app_bus.emit_base(base_event("ValidationRequest", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     block_on(app_bus.wait_until_idle(None));
     block_on(auth_bus.wait_until_idle(None));
     block_on(data_bus.wait_until_idle(None));
@@ -2342,14 +2368,13 @@ fn test_complex_multi_bus_scenario() {
         vec![app_bus.label(), auth_bus.label(), data_bus.label()]
     );
 
-    let dict_results = block_on(event.event_results_list_with_filter(
-        EventResultsOptions {
-            raise_if_any: false,
-            raise_if_none: true,
-            timeout: None,
-        },
-        |result| result.result.as_ref().is_some_and(Value::is_object),
-    ))
+    let dict_results = block_on(event.event_results_list(EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: true,
+        include: Some(Arc::new(|result, _event_result| {
+            result.is_some_and(Value::is_object)
+        })),
+    }))
     .expect("dict results");
     let mut merged = serde_json::Map::new();
     for result in dict_results {
@@ -2359,14 +2384,13 @@ fn test_complex_multi_bus_scenario() {
     assert_eq!(merged.get("auth_valid"), Some(&json!(true)));
     assert_eq!(merged.get("data_valid"), Some(&json!(true)));
 
-    let list_results = block_on(event.event_results_list_with_filter(
-        EventResultsOptions {
-            raise_if_any: false,
-            raise_if_none: true,
-            timeout: None,
-        },
-        |result| result.result.as_ref().is_some_and(Value::is_array),
-    ))
+    let list_results = block_on(event.event_results_list(EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: true,
+        include: Some(Arc::new(|result, _event_result| {
+            result.is_some_and(Value::is_array)
+        })),
+    }))
     .expect("list results");
     let flattened: Vec<Value> = list_results
         .iter()
@@ -2407,7 +2431,7 @@ fn test_event_result_type_enforcement_with_dict() {
     let event = base_event("DictResultEvent", json!({}));
     event.inner.lock().event_result_type = Some(json!({"type": "object"}));
     let event = bus.emit_base(event);
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     let event_results = event.inner.lock().event_results.clone();
 
     for handler_name in ["dict_handler1", "dict_handler2"] {
@@ -2451,7 +2475,7 @@ fn test_event_result_type_enforcement_with_list() {
     let event = base_event("ListResultEvent", json!({}));
     event.inner.lock().event_result_type = Some(json!({"type": "array"}));
     let event = bus.emit_base(event);
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     let event_results = event.inner.lock().event_results.clone();
 
     for handler_name in ["list_handler1", "list_handler2"] {
@@ -2473,14 +2497,13 @@ fn test_event_result_type_enforcement_with_list() {
         assert!(error.contains("expected array"), "{error}");
     }
 
-    let list_results = block_on(event.event_results_list_with_filter(
-        EventResultsOptions {
-            raise_if_any: false,
-            raise_if_none: false,
-            timeout: None,
-        },
-        |result| result.result.as_ref().is_some_and(Value::is_array),
-    ))
+    let list_results = block_on(event.event_results_list(EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: false,
+        include: Some(Arc::new(|result, _event_result| {
+            result.is_some_and(Value::is_array)
+        })),
+    }))
     .expect("list results");
     let flattened: Vec<Value> = list_results
         .iter()
@@ -2508,7 +2531,7 @@ fn test_handler_error_is_captured_without_crashing_the_bus() {
     });
 
     let event = bus.emit_base(base_event("ErrorEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
     assert_eq!(event.inner.lock().event_status, EventStatus::Completed);
     let errors = event.event_errors();
@@ -2548,7 +2571,7 @@ fn test_one_handler_error_does_not_prevent_other_handlers_from_running() {
     });
 
     let event = bus.emit_base(base_event("ErrorIsolationEvent", json!({})));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
     assert!(second_ran.load(Ordering::SeqCst));
     let results = event.inner.lock().event_results.clone();
@@ -2593,7 +2616,7 @@ fn test_many_events_dispatched_concurrently_all_complete() {
         .map(|join| join.join().expect("emit thread"))
         .collect();
     for event in &events {
-        block_on(event.event_completed());
+        let _ = block_on(event.wait());
         assert_eq!(event.inner.lock().event_status, EventStatus::Completed);
     }
     assert_eq!(count.load(Ordering::SeqCst), 25);
@@ -2617,7 +2640,7 @@ fn test_dispatch_leaves_event_timeout_unset_and_processing_uses_bus_timeout_defa
     assert_eq!(event.inner.lock().event_timeout, None);
     let event = bus.emit_base(event);
     assert_eq!(event.inner.lock().event_timeout, None);
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     let result = event
         .inner
         .lock()
@@ -2646,7 +2669,7 @@ fn test_event_with_explicit_timeout_is_not_overridden_by_bus_default() {
     let event = base_event("ExplicitTimeoutEvent", json!({}));
     event.inner.lock().event_timeout = Some(2.0);
     let event = bus.emit_base(event);
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     let result = event
         .inner
         .lock()
@@ -2712,7 +2735,7 @@ fn test_unreferenced_buses_with_event_history_are_garbage_collected_without_dest
             let event = bus.emit(UserActionEvent {
                 ..Default::default()
             });
-            block_on(event.done());
+            let _ = block_on(event.now());
         }
         block_on(bus.wait_until_idle(Some(2.0)));
         assert_eq!(bus.event_history_size(), 10);
@@ -2748,7 +2771,7 @@ fn test_reset_creates_a_fresh_pending_event_for_cross_bus_dispatch() {
     );
 
     let completed = bus_a.emit_base(base_event("ResetEvent", json!({"label": "hello"})));
-    block_on(completed.event_completed());
+    let _ = block_on(completed.wait());
     assert_eq!(completed.inner.lock().event_status, EventStatus::Completed);
     assert_eq!(completed.inner.lock().event_results.len(), 1);
 
@@ -2760,7 +2783,7 @@ fn test_reset_creates_a_fresh_pending_event_for_cross_bus_dispatch() {
     assert_eq!(fresh.inner.lock().event_results.len(), 0);
 
     let forwarded = bus_b.emit_base(fresh);
-    block_on(forwarded.event_completed());
+    let _ = block_on(forwarded.wait());
     assert_eq!(forwarded.inner.lock().event_status, EventStatus::Completed);
     assert_eq!(forwarded.inner.lock().event_results.len(), 1);
     let event_path = forwarded.inner.lock().event_path.clone();
@@ -2784,11 +2807,11 @@ fn test_max_history_size_0_prunes_previously_completed_events_on_later_dispatch(
     });
 
     let first = bus.emit_base(base_event("ZeroHistPruneEvent", json!({"seq": 1})));
-    block_on(first.event_completed());
+    let _ = block_on(first.wait());
     assert_eq!(bus.event_history_size(), 0);
 
     let second = bus.emit_base(base_event("ZeroHistPruneEvent", json!({"seq": 2})));
-    block_on(second.event_completed());
+    let _ = block_on(second.wait());
     assert_eq!(bus.event_history_size(), 0);
     assert!(bus.runtime_payload_for_test().is_empty());
     bus.stop();
@@ -2806,7 +2829,7 @@ fn test_base_event_to_json_from_json_roundtrips_runtime_fields_and_event_results
     let event = bus.emit(RuntimeSerializationEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let serialized = event.inner.to_json_value();
     assert_eq!(
@@ -2907,7 +2930,7 @@ fn test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() {
             event_concurrency: EventConcurrencyMode::Parallel,
             event_handler_concurrency: EventHandlerConcurrencyMode::Parallel,
             event_handler_completion: EventHandlerCompletionMode::First,
-            event_timeout: None,
+            event_timeout: Some(0.0),
             event_slow_timeout: Some(34.0),
             event_handler_slow_timeout: Some(12.0),
             event_handler_detect_file_paths: false,
@@ -2922,7 +2945,7 @@ fn test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() {
     let event = bus.emit(RuntimeSerializationEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let payload = bus.to_json_value();
     assert_eq!(serde_json::to_value(&*bus).expect("bus serde"), payload);
@@ -2932,7 +2955,7 @@ fn test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() {
     assert_eq!(payload["max_history_size"], 500);
     assert_eq!(payload["max_history_drop"], false);
     assert_eq!(payload["event_concurrency"], "parallel");
-    assert_eq!(payload["event_timeout"], Value::Null);
+    assert_eq!(payload["event_timeout"], 0.0);
     assert_eq!(payload["event_slow_timeout"], 34.0);
     assert_eq!(payload["event_handler_concurrency"], "parallel");
     assert_eq!(payload["event_handler_completion"], "first");
@@ -2991,7 +3014,7 @@ fn test_eventbus_validate_creates_missing_handler_entries_from_event_results() {
     let event = bus.emit(RuntimeSerializationEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let mut payload = bus.to_json_value();
     payload["handlers"] = json!({});
@@ -3052,8 +3075,8 @@ fn test_eventbus_model_dump_promotes_pending_events_into_event_history() {
     assert!(event_history.contains_key(&second_id));
     assert_eq!(payload["pending_event_queue"], json!([second_id]));
 
-    block_on(first.done());
-    block_on(second.done());
+    let _ = block_on(first.now());
+    let _ = block_on(second.now());
     bus.stop();
 }
 
@@ -3088,7 +3111,7 @@ fn test_wait_until_idle_timeout_returns_after_timeout_when_work_is_still_in_flig
     assert!(elapsed < Duration::from_secs(1));
     assert!(!bus.is_idle_and_queue_empty());
 
-    block_on(event.done());
+    let _ = block_on(event.now());
     assert!(block_on(bus.wait_until_idle(None)));
     bus.stop();
 }
@@ -3151,7 +3174,7 @@ fn test_unbounded_history_disables_history_rejection() {
         let event = bus.emit(UserActionEvent {
             ..Default::default()
         });
-        block_on(event.done());
+        let _ = block_on(event.now());
     }
 
     assert_eq!(bus.event_history_size(), 150);
@@ -3159,16 +3182,16 @@ fn test_unbounded_history_disables_history_rejection() {
 }
 
 #[test]
-fn test_event_bus_with_null_event_timeout_disables_timeouts() {
+fn test_event_bus_with_zero_event_timeout_disables_timeouts() {
     let bus = EventBus::new_with_options(
         Some("NoTimeoutBus".to_string()),
         EventBusOptions {
-            event_timeout: None,
+            event_timeout: Some(0.0),
             ..EventBusOptions::default()
         },
     );
 
-    assert_eq!(bus.event_timeout, None);
+    assert_eq!(bus.event_timeout, Some(0.0));
     bus.stop();
 }
 
@@ -3204,8 +3227,8 @@ fn test_eventbus_with_null_max_history_size_means_unlimited() {
 }
 
 #[test]
-fn test_eventbus_with_null_event_timeout_disables_timeouts() {
-    test_event_bus_with_null_event_timeout_disables_timeouts();
+fn test_eventbus_with_zero_event_timeout_disables_timeouts() {
+    test_event_bus_with_zero_event_timeout_disables_timeouts();
 }
 
 #[test]
@@ -3301,7 +3324,7 @@ fn test_custom_handler_recursion_depth_allows_deeper_nested_handlers() {
                     "RecursiveEvent",
                     json!({"level": level + 1, "max_level": max_level}),
                 ));
-                child.done().await;
+                let _ = child.now().await;
             }
             Ok(json!(null))
         }
@@ -3311,7 +3334,7 @@ fn test_custom_handler_recursion_depth_allows_deeper_nested_handlers() {
         "RecursiveEvent",
         json!({"level": 0, "max_level": 5}),
     ));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     assert_eq!(
         seen_levels.lock().expect("seen levels lock").as_slice(),
         &[0, 1, 2, 3, 4, 5]
@@ -3335,7 +3358,7 @@ fn test_default_handler_recursion_depth_still_catches_runaway_loops() {
                     "RecursiveEvent",
                     json!({"level": level + 1, "max_level": max_level}),
                 ));
-                child.done().await;
+                let _ = child.now().await;
             }
             Ok(json!(null))
         }
@@ -3345,7 +3368,7 @@ fn test_default_handler_recursion_depth_still_catches_runaway_loops() {
         "RecursiveEvent",
         json!({"level": 0, "max_level": 3}),
     ));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
 
     let has_recursion_error = bus
         .runtime_payload_for_test()
@@ -3379,12 +3402,12 @@ fn test_base_event_lifecycle_methods_are_callable_and_preserve_lifecycle_behavio
     assert_eq!(standalone.inner.lock().event_status, EventStatus::Started);
     standalone.mark_completed();
     assert_eq!(standalone.inner.lock().event_status, EventStatus::Completed);
-    block_on(standalone.done());
+    let _ = block_on(standalone.now());
 
     let dispatched = bus.emit(LifecycleMethodInvocationEvent {
         ..Default::default()
     });
-    block_on(dispatched.done());
+    let _ = block_on(dispatched.now());
     assert_eq!(
         dispatched.inner.inner.lock().event_status,
         EventStatus::Completed

@@ -45,7 +45,7 @@ test('legacy bus property is not exposed inside handlers', async () => {
     has_legacy_bus = 'bus' in event
   })
 
-  await bus.emit(MainEvent({})).done()
+  await bus.emit(MainEvent({})).now()
   assert.equal(legacy_bus_value, undefined)
   assert.equal(has_legacy_bus, false)
 })
@@ -62,7 +62,7 @@ test('event.event_bus is set for child events emitted in handler', async () => {
   })
   bus.on(ChildEvent, () => {})
 
-  await bus.emit(MainEvent({})).done()
+  await bus.emit(MainEvent({})).now()
   assert.equal(child_bus_name, 'EventBusPropertyFallbackBus')
   assert.equal(child_legacy_bus_value, undefined)
 })
@@ -72,7 +72,7 @@ test('event.event_bus is absent on detached events', async () => {
   bus.on(MainEvent, () => {})
 
   const original = bus.emit(MainEvent({}))
-  await original.done()
+  await original.now()
 
   const detached = BaseEvent.fromJSON(original.toJSON())
   assert.equal(detached.event_bus, undefined)
@@ -84,7 +84,7 @@ test('event.event_bus is absent on detached events', async () => {
 test('event.event_bus is available outside handler context', async () => {
   const bus = new EventBus('EventBusPropertyOutsideHandlerBus')
   const event = bus.emit(MainEvent({}))
-  await event.done()
+  await event.now()
 
   assert.equal(event.event_bus!.name, 'EventBusPropertyOutsideHandlerBus')
   assert.equal(Reflect.get(event, 'bus'), undefined)
@@ -148,7 +148,7 @@ test('event.event_bus in nested handlers sees the same bus', async () => {
 
     // Dispatch child using event.emit.
     const child = event.emit(ChildEvent({}))
-    await child.done()
+    await child.now()
   })
 
   bus.on(ChildEvent, (event) => {
@@ -156,7 +156,7 @@ test('event.event_bus in nested handlers sees the same bus', async () => {
   })
 
   const parent = bus.emit(MainEvent({}))
-  await parent.done()
+  await parent.now()
 
   assert.equal(outer_bus_name, 'MainBus')
   assert.equal(inner_bus_name, 'MainBus')
@@ -180,11 +180,11 @@ test('event.emit awaited children pass explicit handler context to immediate pro
   try {
     bus.on(MainEvent, async (event) => {
       const child = event.emit(ChildEvent({}))
-      await child.done()
+      await child.now()
     })
     bus.on(ChildEvent, () => 'child-ok')
 
-    await bus.emit(MainEvent({})).done()
+    await bus.emit(MainEvent({})).now()
   } finally {
     EventBus.prototype._processEventImmediately = original_process_event_immediately
   }
@@ -204,7 +204,7 @@ test('event.emit sets parent-child relationships through 3 levels', async () => 
     assert.equal(event.event_bus?.name, 'MainBus')
 
     child_ref = event.emit(ChildEvent({}))
-    await child_ref.done()
+    await child_ref.now()
 
     execution_order.push('parent_end')
   })
@@ -214,7 +214,7 @@ test('event.emit sets parent-child relationships through 3 levels', async () => 
     assert.equal(event.event_bus?.name, 'MainBus')
 
     grandchild_ref = event.emit(GrandchildEvent({}))
-    await grandchild_ref.done()
+    await grandchild_ref.now()
 
     execution_order.push('child_end')
   })
@@ -226,7 +226,7 @@ test('event.emit sets parent-child relationships through 3 levels', async () => 
   })
 
   const parent_event = bus.emit(MainEvent({}))
-  await parent_event.done()
+  await parent_event.now()
 
   // Child events should queue-jump and complete before their parents return
   assert.deepEqual(execution_order, ['parent_start', 'child_start', 'grandchild_start', 'grandchild_end', 'child_end', 'parent_end'])
@@ -261,7 +261,7 @@ test('event.emit with forwarding: child dispatch goes to the correct bus', async
 
     // Child dispatched via event.emit should go to bus2.
     const child = event.emit(ChildEvent({}))
-    await child.done()
+    await child.now()
   })
 
   bus2.on(ChildEvent, (event) => {
@@ -396,8 +396,8 @@ test('eventIsChildOf returns false for unrelated events', async () => {
 
   const parent_event = bus.emit(LineageParentEvent({}))
   const unrelated_event = bus.emit(LineageUnrelatedEvent({}))
-  await parent_event.done()
-  await unrelated_event.done()
+  await parent_event.now()
+  await unrelated_event.now()
 
   assert.equal(bus.eventIsChildOf(unrelated_event, parent_event), false)
   assert.equal(bus.eventIsParentOf(parent_event, unrelated_event), false)

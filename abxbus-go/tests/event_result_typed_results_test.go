@@ -22,6 +22,15 @@ func firstEventResult(event *abxbus.BaseEvent) *abxbus.EventResult {
 	return nil
 }
 
+func eventResultByHandlerName(event *abxbus.BaseEvent, handlerName string) *abxbus.EventResult {
+	for _, result := range event.EventResults {
+		if result.HandlerName == handlerName {
+			return result
+		}
+	}
+	return nil
+}
+
 func assertSchemaResult(t *testing.T, name string, schema map[string]any, value any, wantError bool) {
 	t.Helper()
 	bus := abxbus.NewEventBus(name+"Bus", nil)
@@ -30,12 +39,12 @@ func assertSchemaResult(t *testing.T, name string, schema map[string]any, value 
 		return value, nil
 	}, nil)
 	event := bus.Emit(schemaEvent(eventType, schema))
-	_, err := event.Done(context.Background())
+	_, err := event.Now()
 	if wantError {
 		if err != nil {
 			t.Fatalf("%s: event completion should collect handler schema errors, got %v", name, err)
 		}
-		if _, err := event.EventResult(context.Background()); err == nil || !strings.Contains(err.Error(), "EventHandlerResultSchemaError") {
+		if _, err := event.EventResult(); err == nil || !strings.Contains(err.Error(), "EventHandlerResultSchemaError") {
 			t.Fatalf("%s: expected schema error from result accessor, got %v", name, err)
 		}
 		result := firstEventResult(event)
@@ -68,7 +77,7 @@ func TestTypedResultSchemaValidatesHandlerResult(t *testing.T) {
 	}, nil)
 
 	event := bus.Emit(schemaEvent("TypedResultEvent", schema))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
 	result := firstEventResult(event)
@@ -92,10 +101,10 @@ func TestInvalidHandlerResultMarksErrorWhenSchemaIsDefined(t *testing.T) {
 	}, nil)
 
 	event := bus.Emit(schemaEvent("InvalidTypedResultEvent", schema))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := event.EventResult(context.Background()); err == nil || !strings.Contains(err.Error(), "EventHandlerResultSchemaError") {
+	if _, err := event.EventResult(); err == nil || !strings.Contains(err.Error(), "EventHandlerResultSchemaError") {
 		t.Fatalf("expected schema error from result accessor, got %v", err)
 	}
 	result := firstEventResult(event)
@@ -112,7 +121,7 @@ func TestNoSchemaLeavesRawHandlerResultUntouched(t *testing.T) {
 	}, nil)
 
 	event := bus.Emit(abxbus.NewBaseEvent("NoSchemaEvent", nil))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
 	result := firstEventResult(event)
@@ -149,7 +158,7 @@ func TestComplexResultSchemaValidatesNestedData(t *testing.T) {
 	}, nil)
 
 	event := bus.Emit(schemaEvent("ComplexTypedResultEvent", schema))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -318,7 +327,7 @@ func TestSchemaReferencesAndAnyOfAreEnforced(t *testing.T) {
 	}, nil)
 
 	event := bus.Emit(schemaEvent("SchemaRefEvent", schema))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
 }

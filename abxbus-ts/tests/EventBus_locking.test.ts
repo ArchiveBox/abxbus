@@ -24,7 +24,7 @@ C) Precedence resolution
 - Conflicting settings (event says parallel, bus says serial) choose wrong winner.
 
 D) Queue-jump / awaited events
-- event.done() inside handler doesn’t jump the queue across buses.
+- event.now() inside handler doesn’t jump the queue across buses.
 - Queue-jump bypasses locks incorrectly in contexts where it shouldn’t.
 - Queue-jump fails when event already in-flight.
 
@@ -61,8 +61,8 @@ J) Handler result validation
 
 K) Idle / completion
 - waitUntilIdle() returns early with in-flight events.
-- event.done() resolves before children complete.
-- event.done() never resolves due to deadlock in runloop.
+- event.now() resolves before children complete.
+- event.now() never resolves due to deadlock in runloop.
 
 L) Reentrancy / nested awaits
 - Nested awaited child events starve sibling handlers.
@@ -158,13 +158,13 @@ test('global-serial: awaited child jumps ahead of queued events across buses', a
     const child = event.emit(ChildEvent({}))!
     bus_b.emit(child)
     order.push('child_dispatched')
-    await child.done()
+    await child.now()
     order.push('child_awaited')
     order.push('parent_end')
   })
 
   const parent = bus_a.emit(ParentEvent({}))
-  await parent.done()
+  await parent.now()
   await bus_b.waitUntilIdle()
 
   const child_start_idx = order.indexOf('child_start')
@@ -327,7 +327,7 @@ test('bus-serial: awaiting child on one bus does not block other bus queue', asy
   bus_a.on(ParentEvent, async (event) => {
     order.push('parent_start')
     const child = event.emit(ChildEvent({}))!
-    await child.done()
+    await child.now()
     order.push('parent_end')
   })
 
@@ -341,7 +341,7 @@ test('bus-serial: awaiting child on one bus does not block other bus queue', asy
   await sleep(0)
   bus_b.emit(OtherEvent({}))
 
-  await parent.done()
+  await parent.now()
   await bus_a.waitUntilIdle()
   await bus_b.waitUntilIdle()
 
@@ -410,7 +410,7 @@ test('parallel: handlers overlap for same event when event_handler_concurrency i
   const event = bus.emit(ParallelHandlerEvent({}))
   await sleep(0)
   resolve()
-  await event.done()
+  await event.now()
   await bus.waitUntilIdle()
 
   assert.ok(max_in_flight >= 2)
@@ -495,7 +495,7 @@ test('retry: instance scope serializes selected handlers per event in parallel m
   bus.on(SerializedEvent, handlers.parallel.bind(handlers))
 
   const event = bus.emit(SerializedEvent({}))
-  await event.done()
+  await event.now()
   await bus.waitUntilIdle()
 
   const step1_end = log.findIndex((entry) => entry.startsWith('step1_end_'))
@@ -764,7 +764,7 @@ test('null: event_handler_concurrency null resolves to bus defaults', async () =
   const event = bus.emit(AutoHandlerEvent({ event_handler_concurrency: null }))
   await sleep(0)
   resolve()
-  await event.done()
+  await event.now()
   await bus.waitUntilIdle()
 
   assert.equal(max_in_flight, 1)
@@ -795,13 +795,13 @@ test('queue-jump: awaited child preempts queued sibling on same bus', async () =
     bus.emit(SiblingEvent({}))
     const child = event.emit(ChildEvent({}))!
     order.push('child_dispatched')
-    await child.done()
+    await child.now()
     order.push('child_awaited')
     order.push('parent_end')
   })
 
   const parent = bus.emit(ParentEvent({}))
-  await parent.done()
+  await parent.now()
   await bus.waitUntilIdle()
 
   const child_start_idx = order.indexOf('child_start')
@@ -852,13 +852,13 @@ test('queue-jump: same event handlers on separate buses stay isolated without fo
     bus_a.emit(SiblingEvent({}))
     const shared = event.emit(SharedEvent({}))!
     order.push('shared_dispatched')
-    await shared.done()
+    await shared.now()
     order.push('shared_awaited')
     order.push('parent_end')
   })
 
   const parent = bus_a.emit(ParentEvent({}))
-  await parent.done()
+  await parent.now()
   await Promise.all([bus_a.waitUntilIdle(), bus_b.waitUntilIdle()])
 
   assert.equal(bus_a_shared_runs, 1)
@@ -899,7 +899,7 @@ test('queue-jump: awaiting in-flight event does not double-run handlers', async 
   await started
 
   let done_resolved = false
-  const done_promise = child.done().then(() => {
+  const done_promise = child.now().then(() => {
     done_resolved = true
   })
 
@@ -918,7 +918,7 @@ test('edge-case: event with no handlers completes immediately', async () => {
   const bus = new EventBus('NoHandlerBus')
 
   const event = bus.emit(NoHandlerEvent({}))
-  await event.done()
+  await event.now()
   await bus.waitUntilIdle()
 
   assert.equal(event.event_status, 'completed')
@@ -1047,7 +1047,7 @@ test('find: past returns in-flight dispatched event and done waits', async () =>
   assert.equal(found.event_bus.name, 'FindFutureBus')
 
   resolve()
-  const completed = await found.done()
+  const completed = await found.now()
   assert.equal(completed.event_status, 'completed')
 })
 
@@ -1066,7 +1066,7 @@ test('find: future waits for next event when none in-flight', async () => {
   assert.equal(found.value, 99)
   assert.ok(found.event_bus)
   assert.equal(found.event_bus.name, 'FindWaitBus')
-  await found.done()
+  await found.now()
 })
 
 test('find: most recent wins across completed and in-flight', async () => {
@@ -1091,5 +1091,5 @@ test('find: most recent wins across completed and in-flight', async () => {
   assert.ok(found.event_status !== 'completed')
 
   resolve()
-  await found.done()
+  await found.now()
 })

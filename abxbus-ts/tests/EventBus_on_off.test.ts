@@ -18,7 +18,7 @@ test('on stores EventHandler entry and indexes it by event key', async () => {
   assert.equal((bus.handlers_by_key.get('RegistryEvent') ?? []).includes(entry.id), true)
 
   const dispatched = bus.emit(RegistryEvent({}))
-  await dispatched.done()
+  await dispatched.now()
 
   const result = dispatched.event_results.get(entry.id)
   assert.ok(result)
@@ -70,7 +70,7 @@ test('off removes handlers by callable, handler id, entry object, or all', async
   )
 
   const dispatched = bus.emit(RegistryEvent({}))
-  await dispatched.done()
+  await dispatched.now()
   assert.equal(dispatched.event_results.size, 0)
 })
 
@@ -90,7 +90,7 @@ test('on accepts sync handlers and dispatch captures their return values', async
   assert.equal(normalized_result, 'normalized')
 
   const dispatched = bus.emit(NormalizeEvent({}))
-  await dispatched.done()
+  await dispatched.now()
   const result = dispatched.event_results.get(entry.id)
 
   assert.ok(result)
@@ -116,7 +116,7 @@ test('on keeps async handlers normalized through _handler_async', async () => {
   assert.equal(normalized_result, 'async_normalized')
 
   const dispatched = bus.emit(NormalizeEvent({}))
-  await dispatched.done()
+  await dispatched.now()
   const result = dispatched.event_results.get(entry.id)
 
   assert.ok(result)

@@ -19,7 +19,7 @@ func TestQueueJumpProcessesChildInsideParentHandler(t *testing.T) {
 
 	bus.On("Parent", "on_parent", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
 		capturedChild = e.Emit(abxbus.NewBaseEvent("Child", nil))
-		if _, err := capturedChild.Done(ctx); err != nil {
+		if _, err := capturedChild.Now(); err != nil {
 			return nil, err
 		}
 		if capturedChild.EventStatus == "completed" {
@@ -31,10 +31,8 @@ func TestQueueJumpProcessesChildInsideParentHandler(t *testing.T) {
 		return "child", nil
 	}, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	parent := bus.Emit(abxbus.NewBaseEvent("Parent", nil))
-	if _, err := parent.Done(ctx); err != nil {
+	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if !childProcessedBeforeParentReturn {
@@ -59,14 +57,14 @@ func TestQueueJumpProcessesChildInsideParentHandler(t *testing.T) {
 		t.Fatalf("expected awaited child to block parent completion")
 	}
 
-	childResult, err := capturedChild.EventResult(ctx)
+	childResult, err := capturedChild.EventResult()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if childResult != "child" {
 		t.Fatalf("expected child result value, got %#v", childResult)
 	}
-	parentResult, err := parent.EventResult(ctx)
+	parentResult, err := parent.EventResult()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,10 +92,8 @@ func TestEventEmitWithoutAwaitTracksChildButDoesNotBlockParentCompletion(t *test
 		return "child", nil
 	}, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
 	parent := bus.Emit(abxbus.NewBaseEvent("Parent", nil))
-	if _, err := parent.Done(ctx); err != nil {
+	if _, err := parent.Now(); err != nil {
 		close(releaseChild)
 		t.Fatal(err)
 	}
@@ -133,7 +129,7 @@ func TestEventEmitWithoutAwaitTracksChildButDoesNotBlockParentCompletion(t *test
 		t.Fatalf("child should still be blocked after parent completion")
 	}
 	close(releaseChild)
-	if _, err := capturedChild.Done(ctx); err != nil {
+	if _, err := capturedChild.Now(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -157,10 +153,8 @@ func TestBusEmitInsideHandlerIsUntrackedBackgroundEvent(t *testing.T) {
 		return "background", nil
 	}, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
 	parent := bus.Emit(abxbus.NewBaseEvent("Parent", nil))
-	if _, err := parent.Done(ctx); err != nil {
+	if _, err := parent.Now(); err != nil {
 		close(releaseBg)
 		t.Fatal(err)
 	}
@@ -194,7 +188,7 @@ func TestBusEmitInsideHandlerIsUntrackedBackgroundEvent(t *testing.T) {
 		t.Fatal("timed out waiting for background event to start")
 	}
 	close(releaseBg)
-	if _, err := background.Done(ctx); err != nil {
+	if _, err := background.Now(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -209,7 +203,7 @@ func TestAwaitedBusEmitInsideHandlerQueueJumpsButStaysUntrackedRootEvent(t *test
 
 	bus.On("Parent", "on_parent", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
 		background = bus.Emit(abxbus.NewBaseEvent("Background", map[string]any{"mode": "awaited"}))
-		if _, err := background.Done(ctx); err != nil {
+		if _, err := background.Now(); err != nil {
 			return nil, err
 		}
 		backgroundCompletedBeforeParentReturn = background.EventStatus == "completed"
@@ -219,10 +213,8 @@ func TestAwaitedBusEmitInsideHandlerQueueJumpsButStaysUntrackedRootEvent(t *test
 		return "background", nil
 	}, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
 	parent := bus.Emit(abxbus.NewBaseEvent("Parent", nil))
-	if _, err := parent.Done(ctx); err != nil {
+	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if background == nil {
@@ -269,7 +261,7 @@ func TestErroringParentHandlersStillTrackChildrenAndContinue(t *testing.T) {
 	}, nil)
 
 	parent := bus.Emit(abxbus.NewBaseEvent("Parent", nil))
-	if _, err := parent.Done(context.Background()); err != nil {
+	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if len(childEvents) != 2 {
@@ -306,7 +298,7 @@ func TestEventChildrenTrackDirectAndNestedDescendants(t *testing.T) {
 	}, nil)
 
 	parent := bus.Emit(abxbus.NewBaseEvent("Parent", nil))
-	if _, err := parent.Done(context.Background()); err != nil {
+	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
 	timeout := 2.0

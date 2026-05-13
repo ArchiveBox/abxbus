@@ -27,7 +27,7 @@ func TestOnOffByEntryByIDAndRemoveAll(t *testing.T) {
 	}, nil)
 
 	e1 := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
-	if _, err := e1.Done(context.Background()); err != nil {
+	if _, err := e1.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if eventCalls.Load() != 2 || wildcardCalls.Load() != 1 {
@@ -39,7 +39,7 @@ func TestOnOffByEntryByIDAndRemoveAll(t *testing.T) {
 
 	bus.Off("Evt", h1)
 	e2 := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
-	if _, err := e2.Done(context.Background()); err != nil {
+	if _, err := e2.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if eventCalls.Load() != 3 || wildcardCalls.Load() != 2 {
@@ -51,7 +51,7 @@ func TestOnOffByEntryByIDAndRemoveAll(t *testing.T) {
 
 	bus.Off("Evt", h2.ID)
 	e3 := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
-	if _, err := e3.Done(context.Background()); err != nil {
+	if _, err := e3.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if eventCalls.Load() != 3 || wildcardCalls.Load() != 3 {
@@ -63,7 +63,7 @@ func TestOnOffByEntryByIDAndRemoveAll(t *testing.T) {
 
 	bus.Off("Evt", nil)
 	e4 := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
-	if _, err := e4.Done(context.Background()); err != nil {
+	if _, err := e4.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if eventCalls.Load() != 3 || wildcardCalls.Load() != 4 {
@@ -72,7 +72,7 @@ func TestOnOffByEntryByIDAndRemoveAll(t *testing.T) {
 
 	bus.Off("*", nil)
 	e5 := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
-	if _, err := e5.Done(context.Background()); err != nil {
+	if _, err := e5.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if eventCalls.Load() != 3 || wildcardCalls.Load() != 4 {

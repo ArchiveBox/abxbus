@@ -40,7 +40,7 @@ def _make_bus_with_pending_event() -> tuple[EventBus, SerializableEvent, str]:
         event_concurrency='parallel',
         event_handler_concurrency='parallel',
         event_handler_completion='first',
-        event_timeout=None,
+        event_timeout=0,
         event_slow_timeout=34.0,
         event_handler_slow_timeout=12.0,
         event_handler_detect_file_paths=False,

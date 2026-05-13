@@ -511,7 +511,7 @@ class TestParentEventTracking:
         assert captured_child.event_blocks_parent_completion is False
         assert captured_child in parent.event_children
 
-        await asyncio.wait_for(parent_event.event_completed(), timeout=1.0)
+        await asyncio.wait_for(parent_event.wait(), timeout=1.0)
         assert parent.event_status == 'completed'
         assert captured_child.event_status != 'completed'
 
@@ -548,7 +548,7 @@ class TestParentEventTracking:
         assert captured_child.event_blocks_parent_completion is False
         assert captured_child not in parent.event_children
 
-        await asyncio.wait_for(parent_event.event_completed(), timeout=1.0)
+        await asyncio.wait_for(parent_event.wait(), timeout=1.0)
         assert parent.event_status == 'completed'
         assert captured_child.event_status != 'completed'
 

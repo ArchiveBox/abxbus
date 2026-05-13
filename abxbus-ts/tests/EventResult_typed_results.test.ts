@@ -57,7 +57,7 @@ test('typed result schema validates and parses handler result', async () => {
   bus.on(TypedResultEvent, () => ({ value: 'hello', count: 42 }))
 
   const event = bus.emit(TypedResultEvent({}))
-  await event.done()
+  await event.now()
 
   const result = Array.from(event.event_results.values())[0]
   assert.equal(result.status, 'completed')
@@ -72,8 +72,8 @@ test('built-in result schemas validate handler results', async () => {
 
   const string_event = bus.emit(StringResultEvent({}))
   const number_event = bus.emit(NumberResultEvent({}))
-  await string_event.done()
-  await number_event.done()
+  await string_event.now()
+  await number_event.now()
 
   const string_result = Array.from(string_event.event_results.values())[0]
   const number_result = Array.from(number_event.event_results.values())[0]
@@ -99,7 +99,7 @@ test('event_result_type supports constructor shorthands and enforces them', asyn
   const array_event = bus.emit(ConstructorArrayResultEvent({}))
   const object_event = bus.emit(ConstructorObjectResultEvent({}))
 
-  await Promise.all([string_event.done(), number_event.done(), boolean_event.done(), array_event.done(), object_event.done()])
+  await Promise.all([string_event.now(), number_event.now(), boolean_event.now(), array_event.now(), object_event.now()])
 
   assert.equal(typeof (string_event.event_result_type as { safeParse?: unknown } | undefined)?.safeParse, 'function')
   assert.equal(typeof (number_event.event_result_type as { safeParse?: unknown } | undefined)?.safeParse, 'function')
@@ -118,9 +118,11 @@ test('event_result_type supports constructor shorthands and enforces them', asyn
   })
   bus.on(invalid_number_event, () => JSON.parse('"not-a-number"'))
   const invalid = bus.emit(invalid_number_event({}))
+  await invalid.now()
   await assert.rejects(
-    () => invalid.done(),
-    (error: unknown) => error instanceof EventHandlerResultSchemaError
+    () => invalid.eventResult(),
+    (error: unknown) =>
+      error instanceof AggregateError && error.errors.some((entry: unknown) => entry instanceof EventHandlerResultSchemaError)
   )
   const invalid_result = Array.from(invalid.event_results.values())[0]
   assert.equal(invalid_result?.status, 'error')
@@ -134,9 +136,11 @@ test('invalid handler result marks error when schema is defined', async () => {
   bus.on(NumberResultEvent, () => JSON.parse('"not-a-number"'))
 
   const event = bus.emit(NumberResultEvent({}))
+  await event.now()
   await assert.rejects(
-    () => event.done(),
-    (error: unknown) => error instanceof EventHandlerResultSchemaError
+    () => event.eventResult(),
+    (error: unknown) =>
+      error instanceof AggregateError && error.errors.some((entry: unknown) => entry instanceof EventHandlerResultSchemaError)
   )
 
   const result = Array.from(event.event_results.values())[0]
@@ -151,7 +155,7 @@ test('no schema leaves raw handler result untouched', async () => {
   bus.on(NoSchemaEvent, () => ({ raw: true }))
 
   const event = bus.emit(NoSchemaEvent({}))
-  await event.done()
+  await event.now()
 
   const result = Array.from(event.event_results.values())[0]
   assert.equal(result.status, 'completed')
@@ -167,7 +171,7 @@ test('complex result schema validates nested data', async () => {
   }))
 
   const event = bus.emit(ComplexResultEvent({}))
-  await event.done()
+  await event.now()
 
   const result = Array.from(event.event_results.values())[0]
   assert.equal(result.status, 'completed')
@@ -190,7 +194,7 @@ test('fromJSON converts event_result_type into zod schema', async () => {
   bus.on(TypedResultEvent, () => ({ value: 'from-json', count: 7 }))
 
   const dispatched = bus.emit(restored)
-  await dispatched.done()
+  await dispatched.now()
 
   const result = Array.from(dispatched.event_results.values())[0]
   assert.equal(result.status, 'completed')
@@ -212,7 +216,7 @@ test('fromJSON reconstructs primitive JSON schema', async () => {
 
   bus.on('PrimitiveResultEvent', () => true)
   const dispatched = bus.emit(restored)
-  await dispatched.done()
+  await dispatched.now()
 
   const result = Array.from(dispatched.event_results.values())[0]
   assert.equal(result.status, 'completed')
@@ -261,7 +265,7 @@ test('roundtrip preserves complex result schema types', async () => {
   }))
 
   const dispatched = bus.emit(roundtripped)
-  await dispatched.done()
+  await dispatched.now()
 
   const result = Array.from(dispatched.event_results.values())[0]
   assert.equal(result.status, 'completed')

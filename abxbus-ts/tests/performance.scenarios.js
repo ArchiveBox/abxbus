@@ -72,7 +72,7 @@ const trimBusHistoryToOneEvent = async (hooks, bus, TrimEvent) => {
   bus.event_history.max_history_size = TRIM_TARGET
   bus.event_history.max_history_drop = true
   let trimEvent = bus.emit(TrimEvent({}))
-  await trimEvent.done()
+  await trimEvent.now()
   trimEvent = null
   await bus.waitUntilIdle()
   assert(bus.event_history.size <= TRIM_TARGET, `trim-to-1 failed for ${bus.toString()}: ${bus.event_history.size}/${TRIM_TARGET}`)
@@ -102,7 +102,7 @@ const runCleanupBurst = async ({ hooks, EventBus, CleanupEvent, TrimEvent, buses
       pending.push(
         bus
           .emit(CleanupEvent({}))
-          .done()
+          .now()
           .then(() => undefined)
       )
     }
@@ -131,7 +131,7 @@ const runWarmup = async (input) => {
     for (let j = 0; j < 256; j += 1) {
       pending.push(bus.emit(WarmEvent({})))
     }
-    await Promise.all(pending.map((event) => event.done()))
+    await Promise.all(pending.map((event) => event.now()))
     await bus.waitUntilIdle()
   }
 
@@ -284,7 +284,7 @@ export const runPerf50kEvents = async (input) => {
       dispatched += 1
     }
 
-    await Promise.all(pending.map((event) => event.done()))
+    await Promise.all(pending.map((event) => event.now()))
     await bus.waitUntilIdle()
     if (dispatched % 2048 === 0) memory.sample()
   }
@@ -379,7 +379,7 @@ export const runPerfEphemeralBuses = async (input) => {
       pending.push(bus.emit(SimpleEvent({})))
     }
 
-    await Promise.all(pending.map((event) => event.done()))
+    await Promise.all(pending.map((event) => event.now()))
     await bus.waitUntilIdle()
     await trimBusHistoryToOneEvent(hooks, bus, TrimEvent)
     bus.destroy()
@@ -447,7 +447,7 @@ export const runPerfSingleEventManyFixedHandlers = async (input) => {
   const t0 = hooks.now()
 
   const event = bus.emit(FixedHandlersEvent({}))
-  await event.done()
+  await event.now()
   await bus.waitUntilIdle()
 
   const totalMs = hooks.now() - t0
@@ -507,7 +507,7 @@ export const runPerfOnOffChurn = async (input) => {
     bus.on(RequestEvent, oneOffHandler)
 
     const ev = bus.emit(RequestEvent({}))
-    await ev.done()
+    await ev.now()
 
     bus.off(RequestEvent, oneOffHandler)
   }
@@ -582,7 +582,7 @@ export const runPerfWorstCase = async (input) => {
       // Yield once so near-zero timeout paths execute without adding a large fixed delay.
       await hooks.sleep(0)
     }
-    await gc.done()
+    await gc.now()
   })
 
   busC.on(GrandchildEvent, () => {
@@ -605,7 +605,7 @@ export const runPerfWorstCase = async (input) => {
       )
       busC.emit(child)
       try {
-        await child.done()
+        await child.now()
       } catch {
         // Timeouts are expected for timeout iterations.
       }
@@ -615,7 +615,7 @@ export const runPerfWorstCase = async (input) => {
     const parent = ParentEvent({})
     const evA = busA.emit(parent)
     busB.emit(parent)
-    await evA.done()
+    await evA.now()
     busA.off(ParentEvent, ephemeralHandler)
 
     if (i % 10 === 0) {

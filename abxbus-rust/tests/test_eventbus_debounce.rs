@@ -75,7 +75,7 @@ fn test_simple_debounce_with_child_of_reuses_recent_event() {
             });
             *child_id.lock().expect("child id lock") =
                 Some(child.inner.inner.lock().event_id.clone());
-            child.done().await;
+            let _ = child.now().await;
             Ok(json!("parent_done"))
         }
     });
@@ -88,7 +88,7 @@ fn test_simple_debounce_with_child_of_reuses_recent_event() {
     let parent = bus.emit(ParentEvent {
         ..Default::default()
     });
-    block_on(parent.done());
+    let _ = block_on(parent.now());
     let emitted_child_id = wait_for_string(&child_id);
 
     let reused = block_on(bus.find_with_options(
@@ -109,7 +109,7 @@ fn test_simple_debounce_with_child_of_reuses_recent_event() {
         })
         .inner
     });
-    block_on(reused.event_completed());
+    let _ = block_on(reused.wait());
 
     assert_eq!(reused.inner.lock().event_id, emitted_child_id);
     assert_eq!(
@@ -153,7 +153,7 @@ fn test_debounce_uses_future_match_before_dispatch_fallback() {
         })
         .inner
     });
-    block_on(resolved.event_completed());
+    let _ = block_on(resolved.wait());
 
     assert_eq!(resolved.inner.lock().event_type, "SyncEvent");
     bus.stop();
@@ -180,7 +180,7 @@ fn test_debounce_prefers_recent_history() {
         target_id: TARGET_ID_1.to_string(),
         ..Default::default()
     });
-    block_on(original.done());
+    let _ = block_on(original.now());
 
     let found = block_on(bus.find_with_options(
         "ScreenshotEvent",
@@ -198,7 +198,7 @@ fn test_debounce_prefers_recent_history() {
         })
         .inner
     });
-    block_on(found.event_completed());
+    let _ = block_on(found.wait());
 
     let found_id = found.inner.lock().event_id.clone();
     let original_id = original.inner.inner.lock().event_id.clone();
@@ -238,7 +238,7 @@ fn test_debounce_dispatches_when_recent_missing() {
         })
         .inner
     });
-    block_on(result.event_completed());
+    let _ = block_on(result.wait());
 
     assert_eq!(
         result.inner.lock().payload.get("target_id"),
@@ -269,7 +269,7 @@ fn test_dispatches_new_when_stale() {
         target_id: TARGET_ID_1.to_string(),
         ..Default::default()
     });
-    block_on(original.done());
+    let _ = block_on(original.now());
 
     let result = block_on(bus.find_with_options(
         "ScreenshotEvent",
@@ -286,7 +286,7 @@ fn test_dispatches_new_when_stale() {
         })
         .inner
     });
-    block_on(result.event_completed());
+    let _ = block_on(result.wait());
 
     let screenshots = bus
         .runtime_payload_for_test()
@@ -353,7 +353,7 @@ fn test_or_chain_without_waiting_finds_existing() {
         target_id: TARGET_ID_1.to_string(),
         ..Default::default()
     });
-    block_on(original.done());
+    let _ = block_on(original.now());
 
     let start = Instant::now();
     let result = block_on(bus.find_with_options(
@@ -372,7 +372,7 @@ fn test_or_chain_without_waiting_finds_existing() {
         })
         .inner
     });
-    block_on(result.event_completed());
+    let _ = block_on(result.wait());
     let elapsed = start.elapsed();
 
     let result_id = result.inner.lock().event_id.clone();
@@ -406,7 +406,7 @@ fn test_or_chain_without_waiting_dispatches_when_no_match() {
         })
         .inner
     });
-    block_on(result.event_completed());
+    let _ = block_on(result.wait());
     let elapsed = start.elapsed();
 
     assert_eq!(
@@ -471,9 +471,9 @@ fn test_or_chain_multiple_sequential_lookups() {
         .inner
     });
 
-    block_on(result_1.event_completed());
-    block_on(result_2.event_completed());
-    block_on(result_3.event_completed());
+    let _ = block_on(result_1.wait());
+    let _ = block_on(result_2.wait());
+    let _ = block_on(result_3.wait());
 
     assert!(start.elapsed() < Duration::from_millis(200));
     let result_1_id = result_1.inner.lock().event_id.clone();

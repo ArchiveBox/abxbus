@@ -613,7 +613,7 @@ const assertTsSchemaEnforcementAfterRuntimeReload = async (
   const wrong_event = BaseEvent.fromJSON(screenshot_payload)
   assert.equal(typeof (wrong_event.event_result_type as { safeParse?: unknown } | undefined)?.safeParse, 'function')
   const wrong_dispatched = wrong_bus.emit(wrong_event)
-  await runWithTimeout(wrong_dispatched.done({ raise_if_any: false }), EVENT_WAIT_TIMEOUT_MS, 'wrong-shape event completion')
+  await runWithTimeout(wrong_dispatched.now(), EVENT_WAIT_TIMEOUT_MS, 'wrong-shape event completion')
   const wrong_result = Array.from(wrong_dispatched.event_results.values())[0]
   assert.equal(wrong_result.status, 'error')
   assert.equal((wrong_result.error as { name?: string } | undefined)?.name, 'EventHandlerResultSchemaError')
@@ -636,7 +636,7 @@ const assertTsSchemaEnforcementAfterRuntimeReload = async (
   const right_event = BaseEvent.fromJSON(screenshot_payload)
   assert.equal(typeof (right_event.event_result_type as { safeParse?: unknown } | undefined)?.safeParse, 'function')
   const right_dispatched = right_bus.emit(right_event)
-  await runWithTimeout(right_dispatched.done(), EVENT_WAIT_TIMEOUT_MS, 'right-shape event completion')
+  await runWithTimeout(right_dispatched.now(), EVENT_WAIT_TIMEOUT_MS, 'right-shape event completion')
   const right_result = Array.from(right_dispatched.event_results.values())[0]
   assert.equal(right_result.status, 'completed')
   assert.deepEqual(right_result.result, {
@@ -930,7 +930,7 @@ test('ts -> python -> ts bus roundtrip rehydrates and resumes pending queue', as
   restored_handler_two.handler = restored_handler_two_fn
 
   const trigger = restored.emit(ResumeEvent({ label: 'e3' }))
-  await runWithTimeout(trigger.done(), EVENT_WAIT_TIMEOUT_MS, 'bus resume completion')
+  await runWithTimeout(trigger.wait(), EVENT_WAIT_TIMEOUT_MS, 'bus resume completion')
 
   const done_one = restored.event_history.get(event_one.event_id)
   const done_two = restored.event_history.get(event_two.event_id)
@@ -1022,7 +1022,7 @@ test('ts -> rust -> ts bus roundtrip rehydrates and resumes pending queue', asyn
   restored_handler_two.handler = restored_handler_two_fn
 
   const trigger = restored.emit(ResumeEvent({ label: 'e3' }))
-  await runWithTimeout(trigger.done(), EVENT_WAIT_TIMEOUT_MS, 'bus resume completion')
+  await runWithTimeout(trigger.wait(), EVENT_WAIT_TIMEOUT_MS, 'bus resume completion')
 
   const done_one = restored.event_history.get(event_one.event_id)
   const done_two = restored.event_history.get(event_two.event_id)
@@ -1114,7 +1114,7 @@ test('ts -> go -> ts bus roundtrip rehydrates and resumes pending queue', async 
   restored_handler_two.handler = restored_handler_two_fn
 
   const trigger = restored.emit(ResumeEvent({ label: 'e3' }))
-  await runWithTimeout(trigger.done(), EVENT_WAIT_TIMEOUT_MS, 'bus resume completion')
+  await runWithTimeout(trigger.wait(), EVENT_WAIT_TIMEOUT_MS, 'bus resume completion')
 
   const done_one = restored.event_history.get(event_one.event_id)
   const done_two = restored.event_history.get(event_two.event_id)
