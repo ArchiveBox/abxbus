@@ -129,6 +129,7 @@ fn test_pydantic_model_result_casting() {
     let event = bus.emit(ScreenshotEvent {
         ..Default::default()
     });
+    block_on(event.inner.now()).expect("complete screenshot event");
     let result = block_on(event.event_result(EventResultOptions::default()))
         .expect("typed event_result")
         .expect("handler result");
@@ -159,6 +160,7 @@ fn test_builtin_type_casting() {
     let string_event = bus.emit(StringResultEvent {
         ..Default::default()
     });
+    block_on(string_event.inner.now()).expect("complete string event");
     let string_result = block_on(string_event.event_result(EventResultOptions::default()))
         .expect("string result")
         .expect("string handler result");
@@ -167,6 +169,7 @@ fn test_builtin_type_casting() {
     let int_event = bus.emit(IntEvent {
         ..Default::default()
     });
+    block_on(int_event.inner.now()).expect("complete int event");
     let int_result = block_on(int_event.event_result(EventResultOptions::default()))
         .expect("int result")
         .expect("int handler result");
@@ -223,6 +226,7 @@ fn test_no_casting_when_no_result_type() {
     let event = bus.emit(NormalEvent {
         ..Default::default()
     });
+    block_on(event.inner.now()).expect("complete normal event");
     let result = block_on(event.event_result(EventResultOptions::default()))
         .expect("raw result")
         .expect("handler result");
@@ -247,6 +251,7 @@ fn test_typed_accessors_normalize_forwarded_event_results_to_none() {
     let event = bus.emit(ForwardingBaseEventHandle {
         ..Default::default()
     });
+    block_on(event.inner.now()).expect("complete forwarded result event");
 
     let result = block_on(event.event_result(EventResultOptions {
         raise_if_any: false,
@@ -264,12 +269,12 @@ fn test_typed_accessors_normalize_forwarded_event_results_to_none() {
     assert!(results_list.is_empty());
 
     let raw_results = event.inner.inner.lock().event_results.clone();
-    assert!(raw_results.values().any(|result| result
-        .result
-        .as_ref()
-        .is_some_and(|value| value.get("event_type")
-            == Some(&json!("ForwardedEventFromHandler"))
-            && value.get("event_id").is_some())));
+    assert!(raw_results.values().any(|result| {
+        result.result.as_ref().is_some_and(|value| {
+            value.get("event_type") == Some(&json!("ForwardedEventFromHandler"))
+                && value.get("event_id").is_some()
+        })
+    }));
     bus.stop();
 }
 
@@ -525,8 +530,7 @@ fn test_eventhandler_json_roundtrips_handler_metadata() {
 
 #[test]
 fn test_eventhandler_computehandlerid_matches_uuidv5_seed_algorithm() {
-    let expected_seed =
-        "018f8e40-1234-7000-8000-000000001234|pkg.module.handler|~/project/app.py:123|2025-01-02T03:04:05.678901000Z|StandaloneEvent";
+    let expected_seed = "018f8e40-1234-7000-8000-000000001234|pkg.module.handler|~/project/app.py:123|2025-01-02T03:04:05.678901000Z|StandaloneEvent";
     let expected_id = "19ea9fe8-cfbe-541e-8a35-2579e4e9efff";
 
     let eventbus_id = "018f8e40-1234-7000-8000-000000001234";
@@ -876,6 +880,7 @@ fn test_eventresultslist_returns_filtered_values_by_default_and_can_return_raw_v
     let event = bus.emit(AccessorEvent {
         ..Default::default()
     });
+    block_on(event.inner.now()).expect("complete accessor event");
 
     let default_values = block_on(event.inner.event_results_list(EventResultOptions {
         raise_if_any: false,
@@ -971,6 +976,7 @@ fn test_event_result_returns_first_filtered_value_in_handler_registration_order(
     let event = bus.emit(AccessorEvent {
         ..Default::default()
     });
+    block_on(event.inner.now()).expect("complete accessor event");
     let first_value = block_on(event.inner.event_result(EventResultOptions {
         raise_if_any: false,
         raise_if_none: true,

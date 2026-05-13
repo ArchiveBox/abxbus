@@ -9,10 +9,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 )
+
+var schemaAssertionEventID atomic.Uint64
 
 func TestGoRoundtripCLIPreservesEventJSONShape(t *testing.T) {
 	tempDir := t.TempDir()
@@ -350,7 +353,10 @@ func assertGoResultSchemaSemantics(t *testing.T, payload any, cases []roundtripE
 func assertGoHandlerResultAccepted(t *testing.T, eventPayload map[string]any, result any, contextLabel string) {
 	t.Helper()
 	event := hydrateEventPayload(t, eventPayload)
+	event = resetEventForSchemaAssertion(t, event)
+	isolateSchemaAssertionEvent(event)
 	bus := abxbus.NewEventBus("GoRoundtripSchemaAccepted", nil)
+	defer bus.Stop()
 	bus.On(event.EventType, "valid", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		return result, nil
 	}, nil)
@@ -362,13 +368,33 @@ func assertGoHandlerResultAccepted(t *testing.T, eventPayload map[string]any, re
 func assertGoHandlerResultRejected(t *testing.T, eventPayload map[string]any, result any, contextLabel string) {
 	t.Helper()
 	event := hydrateEventPayload(t, eventPayload)
+	event = resetEventForSchemaAssertion(t, event)
+	isolateSchemaAssertionEvent(event)
 	bus := abxbus.NewEventBus("GoRoundtripSchemaRejected", nil)
+	defer bus.Stop()
 	bus.On(event.EventType, "invalid", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		return result, nil
 	}, nil)
 	if _, err := bus.Emit(event).EventResult(); err == nil || !strings.Contains(err.Error(), "EventHandlerResultSchemaError") {
 		t.Fatalf("%s should reject handler result %#v with schema error, got %v", contextLabel, result, err)
 	}
+}
+
+func resetEventForSchemaAssertion(t *testing.T, event *abxbus.BaseEvent) *abxbus.BaseEvent {
+	t.Helper()
+	reset, err := event.EventReset()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reset
+}
+
+func isolateSchemaAssertionEvent(event *abxbus.BaseEvent) {
+	event.EventType = fmt.Sprintf("GoSchemaAssertionEvent%d", schemaAssertionEventID.Add(1))
+	event.EventPath = []string{}
+	event.EventParentID = nil
+	event.EventEmittedByHandlerID = nil
+	event.EventPendingBusCount = 0
 }
 
 func hydrateEventPayload(t *testing.T, eventPayload map[string]any) *abxbus.BaseEvent {

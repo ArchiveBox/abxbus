@@ -201,43 +201,6 @@ func measureJSONLBridgeWarmLatencyMS(t *testing.T, jsonlPath string) float64 {
 	return float64(time.Since(start).Microseconds()) / 1000.0 / measuredTarget
 }
 
-func TestJSONLBridgeListenerWorker(t *testing.T) {
-	if os.Getenv("ABXBUS_GO_BRIDGE_WORKER") != "1" {
-		t.Skip("bridge listener worker helper")
-	}
-	if len(os.Args) < 2 {
-		t.Fatal("missing worker config path")
-	}
-	configPath := os.Args[len(os.Args)-1]
-	var config bridgeWorkerConfig
-	readJSONFile(t, configPath, &config)
-
-	bridge := abxbus.NewJSONLEventBridge(config.Path, 0.05, "JSONLWorker")
-	defer bridge.Close()
-
-	received := make(chan struct{})
-	receivedOnce := sync.Once{}
-	bridge.On("*", "capture", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
-		if err := os.WriteFile(config.OutputPath, mustJSON(t, event), 0o644); err != nil {
-			return nil, err
-		}
-		receivedOnce.Do(func() { close(received) })
-		return nil, nil
-	}, nil)
-	if err := bridge.Start(); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(config.ReadyPath, []byte("ready"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	select {
-	case <-received:
-	case <-time.After(30 * time.Second):
-		t.Fatal("worker timed out waiting for bridge event")
-	}
-}
-
 type bridgeWorkerConfig struct {
 	Path       string `json:"path"`
 	ReadyPath  string `json:"ready_path"`
@@ -291,8 +254,7 @@ type bridgeWorkerProcess struct {
 
 func startBridgeWorker(t *testing.T, configPath string) *bridgeWorkerProcess {
 	t.Helper()
-	cmd := exec.Command(os.Args[0], "-test.run=TestJSONLBridgeListenerWorker", "--", configPath)
-	cmd.Env = append(os.Environ(), "ABXBUS_GO_BRIDGE_WORKER=1")
+	cmd := exec.Command("go", "run", "./roundtrip_cli", "jsonl-listener", configPath)
 	worker := &bridgeWorkerProcess{cmd: cmd, done: make(chan error, 1)}
 	cmd.Stdout = &worker.stdout
 	cmd.Stderr = &worker.stderr

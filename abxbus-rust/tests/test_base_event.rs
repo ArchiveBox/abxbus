@@ -20,9 +20,9 @@ use futures::executor::block_on;
 use serde_json::{json, Map, Value};
 
 event! {
-    struct BaseEventDoneRaisesFirstErrorEvent {
+    struct BaseEventNowRaisesFirstErrorEvent {
         event_result_type: String,
-        event_type: "BaseEventDoneRaisesFirstErrorEvent",
+        event_type: "BaseEventNowRaisesFirstErrorEvent",
     }
 }
 event! {
@@ -167,27 +167,27 @@ event! {
     }
 }
 event! {
-    struct DoneOutsideHandlerBlockerEvent {
+    struct WaitOutsideHandlerBlockerEvent {
         event_result_type: String,
-        event_type: "DoneOutsideHandlerBlockerEvent",
+        event_type: "WaitOutsideHandlerBlockerEvent",
     }
 }
 event! {
-    struct DoneOutsideHandlerTargetEvent {
+    struct WaitOutsideHandlerTargetEvent {
         event_result_type: String,
-        event_type: "DoneOutsideHandlerTargetEvent",
+        event_type: "WaitOutsideHandlerTargetEvent",
     }
 }
 event! {
-    struct DoneOutsideHandlerParallelBlockerEvent {
+    struct WaitOutsideHandlerParallelBlockerEvent {
         event_result_type: String,
-        event_type: "DoneOutsideHandlerParallelBlockerEvent",
+        event_type: "WaitOutsideHandlerParallelBlockerEvent",
     }
 }
 event! {
-    struct DoneOutsideHandlerParallelTargetEvent {
+    struct WaitOutsideHandlerParallelTargetEvent {
         event_result_type: String,
-        event_type: "DoneOutsideHandlerParallelTargetEvent",
+        event_type: "WaitOutsideHandlerParallelTargetEvent",
     }
 }
 event! {
@@ -272,7 +272,7 @@ fn test_baseevent_lifecycle_transitions_are_explicit_and_awaitable() {
 #[test]
 fn test_event_result_re_raises_first_processing_exception_after_completion() {
     let bus = EventBus::new_with_options(
-        Some("BaseEventDoneRaisesFirstErrorBus".to_string()),
+        Some("BaseEventNowRaisesFirstErrorBus".to_string()),
         EventBusOptions {
             event_handler_concurrency: EventHandlerConcurrencyMode::Parallel,
             event_timeout: Some(0.0),
@@ -281,7 +281,7 @@ fn test_event_result_re_raises_first_processing_exception_after_completion() {
     );
 
     bus.on_raw(
-        "BaseEventDoneRaisesFirstErrorEvent",
+        "BaseEventNowRaisesFirstErrorEvent",
         "first_failure",
         |_event| async {
             thread::sleep(Duration::from_millis(1));
@@ -289,7 +289,7 @@ fn test_event_result_re_raises_first_processing_exception_after_completion() {
         },
     );
     bus.on_raw(
-        "BaseEventDoneRaisesFirstErrorEvent",
+        "BaseEventNowRaisesFirstErrorEvent",
         "second_failure",
         |_event| async {
             thread::sleep(Duration::from_millis(10));
@@ -297,9 +297,10 @@ fn test_event_result_re_raises_first_processing_exception_after_completion() {
         },
     );
 
-    let event = bus.emit(BaseEventDoneRaisesFirstErrorEvent {
+    let event = bus.emit(BaseEventNowRaisesFirstErrorEvent {
         ..Default::default()
     });
+    block_on(event.inner.now()).expect("complete error event");
     let error = block_on(event.inner.event_result(EventResultOptions::default()))
         .expect_err("handler error should be surfaced");
 
@@ -537,12 +538,12 @@ fn test_now_options_queue_jumps_child_processing_inside_handlers() {
 fn test_now_outside_handler_completes_without_raising_processing_error() {
     let bus = EventBus::new(Some("BaseEventNowOutsideNoArgsBus".to_string()));
     bus.on_raw(
-        "BaseEventDoneRaisesFirstErrorEvent",
+        "BaseEventNowRaisesFirstErrorEvent",
         "failing_handler",
         |_event| async move { Err("outside failure".to_string()) },
     );
 
-    let event = bus.emit(BaseEventDoneRaisesFirstErrorEvent {
+    let event = bus.emit(BaseEventNowRaisesFirstErrorEvent {
         ..Default::default()
     });
     block_on(event.now()).expect("now should wait for completion without raising handler errors");
@@ -558,14 +559,14 @@ fn test_now_outside_handler_completes_without_raising_processing_error() {
 
 #[test]
 fn test_event_result_options_outside_handler_suppresses_processing_error() {
-    let bus = EventBus::new(Some("BaseEventDoneOutsideArgsBus".to_string()));
+    let bus = EventBus::new(Some("BaseEventNowOutsideArgsBus".to_string()));
     bus.on_raw(
-        "BaseEventDoneRaisesFirstErrorEvent",
+        "BaseEventNowRaisesFirstErrorEvent",
         "failing_handler",
         |_event| async move { Err("outside suppressed failure".to_string()) },
     );
 
-    let event = bus.emit(BaseEventDoneRaisesFirstErrorEvent {
+    let event = bus.emit(BaseEventNowRaisesFirstErrorEvent {
         ..Default::default()
     });
     block_on(event.inner.now_with_options(EventWaitOptions::default()))
@@ -580,7 +581,7 @@ fn test_event_result_options_outside_handler_suppresses_processing_error() {
 #[test]
 fn test_now_outside_handler_queue_jumps_queued_execution() {
     let bus = EventBus::new_with_options(
-        Some("DoneOutsideHandlerQueueOrderBus".to_string()),
+        Some("WaitOutsideHandlerQueueOrderBus".to_string()),
         EventBusOptions {
             event_concurrency: EventConcurrencyMode::BusSerial,
             event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
@@ -594,7 +595,7 @@ fn test_now_outside_handler_queue_jumps_queued_execution() {
     let order_for_blocker = order.clone();
     let blocker_started_for_handler = blocker_started.clone();
     let release_blocker_for_handler = release_blocker.clone();
-    bus.on_raw("DoneOutsideHandlerBlockerEvent", "blocker", move |_event| {
+    bus.on_raw("WaitOutsideHandlerBlockerEvent", "blocker", move |_event| {
         let order = order_for_blocker.clone();
         let blocker_started = blocker_started_for_handler.clone();
         let release_blocker = release_blocker_for_handler.clone();
@@ -610,7 +611,7 @@ fn test_now_outside_handler_queue_jumps_queued_execution() {
     });
 
     let order_for_target = order.clone();
-    bus.on_raw("DoneOutsideHandlerTargetEvent", "target", move |_event| {
+    bus.on_raw("WaitOutsideHandlerTargetEvent", "target", move |_event| {
         let order = order_for_target.clone();
         async move {
             push(&order, "target");
@@ -618,7 +619,7 @@ fn test_now_outside_handler_queue_jumps_queued_execution() {
         }
     });
 
-    bus.emit(DoneOutsideHandlerBlockerEvent {
+    bus.emit(WaitOutsideHandlerBlockerEvent {
         ..Default::default()
     });
     let deadline = std::time::Instant::now() + Duration::from_secs(1);
@@ -627,7 +628,7 @@ fn test_now_outside_handler_queue_jumps_queued_execution() {
     }
     assert!(blocker_started.load(Ordering::SeqCst));
 
-    let target = bus.emit(DoneOutsideHandlerTargetEvent {
+    let target = bus.emit(WaitOutsideHandlerTargetEvent {
         ..Default::default()
     });
     let target_for_wait = target.clone();
@@ -654,7 +655,7 @@ fn test_now_outside_handler_queue_jumps_queued_execution() {
 #[test]
 fn test_now_outside_handler_allows_normal_parallel_processing() {
     let bus = EventBus::new_with_options(
-        Some("DoneOutsideHandlerParallelQueueOrderBus".to_string()),
+        Some("WaitOutsideHandlerParallelQueueOrderBus".to_string()),
         EventBusOptions {
             event_concurrency: EventConcurrencyMode::BusSerial,
             event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
@@ -669,7 +670,7 @@ fn test_now_outside_handler_allows_normal_parallel_processing() {
     let blocker_started_for_handler = blocker_started.clone();
     let release_blocker_for_handler = release_blocker.clone();
     bus.on_raw(
-        "DoneOutsideHandlerParallelBlockerEvent",
+        "WaitOutsideHandlerParallelBlockerEvent",
         "blocker",
         move |_event| {
             let order = order_for_blocker.clone();
@@ -689,7 +690,7 @@ fn test_now_outside_handler_allows_normal_parallel_processing() {
 
     let order_for_target = order.clone();
     bus.on_raw(
-        "DoneOutsideHandlerParallelTargetEvent",
+        "WaitOutsideHandlerParallelTargetEvent",
         "target",
         move |_event| {
             let order = order_for_target.clone();
@@ -700,7 +701,7 @@ fn test_now_outside_handler_allows_normal_parallel_processing() {
         },
     );
 
-    bus.emit(DoneOutsideHandlerParallelBlockerEvent {
+    bus.emit(WaitOutsideHandlerParallelBlockerEvent {
         ..Default::default()
     });
     let deadline = std::time::Instant::now() + Duration::from_secs(1);
@@ -709,7 +710,7 @@ fn test_now_outside_handler_allows_normal_parallel_processing() {
     }
     assert!(blocker_started.load(Ordering::SeqCst));
 
-    let target = bus.emit(DoneOutsideHandlerParallelTargetEvent {
+    let target = bus.emit(WaitOutsideHandlerParallelTargetEvent {
         event_concurrency: Some(EventConcurrencyMode::Parallel),
         ..Default::default()
     });
@@ -1161,6 +1162,81 @@ fn test_event_results_list_starts_never_started_event_and_returns_all_results() 
 }
 
 #[test]
+fn test_event_result_helpers_do_not_wait_for_started_event() {
+    let bus = EventBus::new_with_options(
+        Some("EventResultHelpersStartedBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::Parallel,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Parallel,
+            event_timeout: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let handler_started = Arc::new(AtomicBool::new(false));
+    let release_handler = Arc::new(AtomicBool::new(false));
+    let handler_started_for_handler = handler_started.clone();
+    let release_handler_for_handler = release_handler.clone();
+    bus.on_raw("EventResultHelpersStartedEvent", "slow", move |_event| {
+        let handler_started = handler_started_for_handler.clone();
+        let release_handler = release_handler_for_handler.clone();
+        async move {
+            handler_started.store(true, Ordering::SeqCst);
+            while !release_handler.load(Ordering::SeqCst) {
+                thread::sleep(Duration::from_millis(1));
+            }
+            Ok(json!("late"))
+        }
+    });
+
+    let event = bus.emit_base(BaseEvent::new("EventResultHelpersStartedEvent", Map::new()));
+    wait_until_bool(&handler_started);
+    assert_eq!(event.inner.lock().event_status, EventStatus::Started);
+
+    let event_for_result = event.clone();
+    let (result_tx, result_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = result_tx.send(block_on(event_for_result.event_result(
+            EventResultOptions {
+                raise_if_any: true,
+                raise_if_none: false,
+                include: None,
+            },
+        )));
+    });
+    assert_eq!(
+        result_rx
+            .recv_timeout(Duration::from_millis(50))
+            .expect("event_result should not wait for a started event")
+            .expect("event_result"),
+        None
+    );
+
+    let event_for_results = event.clone();
+    let (results_tx, results_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = results_tx.send(block_on(event_for_results.event_results_list(
+            EventResultOptions {
+                raise_if_any: true,
+                raise_if_none: false,
+                include: None,
+            },
+        )));
+    });
+    assert_eq!(
+        results_rx
+            .recv_timeout(Duration::from_millis(50))
+            .expect("event_results_list should not wait for a started event")
+            .expect("event_results_list"),
+        Vec::<Value>::new()
+    );
+    assert_eq!(event.inner.lock().event_status, EventStatus::Started);
+
+    release_handler.store(true, Ordering::SeqCst);
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+    bus.stop();
+}
+
+#[test]
 fn test_now_on_already_executing_event_waits_without_duplicate_execution() {
     let bus = EventBus::new_with_options(
         Some("NowAlreadyExecutingBus".to_string()),
@@ -1234,7 +1310,10 @@ fn test_event_result_options_apply_to_current_results() {
     bus.on_raw(
         "EventResultOptionsCurrentResultsEvent",
         "keep",
-        |_event| async { Ok(json!("keep")) },
+        |_event| async {
+            thread::sleep(Duration::from_millis(10));
+            Ok(json!("keep"))
+        },
     );
     let release_slow_for_handler = release_slow.clone();
     bus.on_raw(

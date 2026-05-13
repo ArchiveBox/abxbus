@@ -93,7 +93,7 @@ func TestForwardingDisambiguatesBusesThatShareTheSameName(t *testing.T) {
 	}
 }
 
-func TestAwaitDoneWaitsForHandlersOnForwardedBuses(t *testing.T) {
+func TestAwaitNowWaitsForHandlersOnForwardedBuses(t *testing.T) {
 	busA := abxbus.NewEventBus("ForwardWaitA", nil)
 	busB := abxbus.NewEventBus("ForwardWaitB", nil)
 	busC := abxbus.NewEventBus("ForwardWaitC", nil)

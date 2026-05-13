@@ -39,7 +39,7 @@ func TestPerformance50kEvents(t *testing.T) {
 		MaxHistorySize: &historySize,
 		MaxHistoryDrop: true,
 	})
-	defer bus.Destroy()
+	defer bus.Stop()
 
 	var processed int64
 	var checksum int64
@@ -109,7 +109,7 @@ func TestPerformanceEphemeralBuses(t *testing.T) {
 		if !bus.WaitUntilIdle(&timeout) {
 			t.Fatal("timed out waiting for ephemeral bus")
 		}
-		bus.Destroy()
+		bus.Stop()
 	}
 	elapsed := time.Since(started)
 	totalEvents := totalBuses * eventsPerBus
@@ -129,7 +129,7 @@ func TestPerformanceSingleEventManyParallelHandlers(t *testing.T) {
 		EventHandlerCompletion:      abxbus.EventHandlerCompletionAll,
 		EventHandlerDetectFilePaths: ptrBool(false),
 	})
-	defer bus.Destroy()
+	defer bus.Stop()
 
 	var handled int64
 	for index := 0; index < totalHandlers; index++ {
@@ -162,7 +162,7 @@ func TestPerformanceOnOffChurn(t *testing.T) {
 		MaxHistorySize: &historySize,
 		MaxHistoryDrop: true,
 	})
-	defer bus.Destroy()
+	defer bus.Stop()
 
 	var handled int64
 	started := time.Now()
@@ -196,13 +196,13 @@ func TestPerformanceWorstCaseForwardingQueueJumpTimeouts(t *testing.T) {
 		MaxHistorySize: &historySize,
 		MaxHistoryDrop: true,
 	})
-	defer parentBus.Destroy()
+	defer parentBus.Stop()
 	childBus := abxbus.NewEventBus("PerfWorstChildBus", &abxbus.EventBusOptions{
 		MaxHistorySize: &historySize,
 		MaxHistoryDrop: true,
 		EventTimeout:   &eventTimeout,
 	})
-	defer childBus.Destroy()
+	defer childBus.Stop()
 
 	var parents int64
 	var children int64
@@ -259,7 +259,7 @@ func TestPerformanceWorstCaseForwardingQueueJumpTimeouts(t *testing.T) {
 	assertPerformanceBudget(t, "worst-case forwarding + timeouts", totalEvents, elapsed, "event")
 }
 
-func TestPerformanceCleanupDestroyKeepsStateBounded(t *testing.T) {
+func TestPerformanceCleanupStopKeepsStateBounded(t *testing.T) {
 	busesPerBurst := 80
 	eventsPerBus := 64
 	historySize := 128
@@ -268,7 +268,7 @@ func TestPerformanceCleanupDestroyKeepsStateBounded(t *testing.T) {
 
 	started := time.Now()
 	for busIndex := 0; busIndex < busesPerBurst; busIndex++ {
-		bus := abxbus.NewEventBus(fmt.Sprintf("CleanupEqDestroy-%d", busIndex), &abxbus.EventBusOptions{
+		bus := abxbus.NewEventBus(fmt.Sprintf("CleanupEqStop-%d", busIndex), &abxbus.EventBusOptions{
 			MaxHistorySize: &historySize,
 			MaxHistoryDrop: true,
 		})
@@ -294,16 +294,16 @@ func TestPerformanceCleanupDestroyKeepsStateBounded(t *testing.T) {
 			t.Fatalf("trim-to-one failed: history=%d target=%d", bus.EventHistory.Size(), trimTarget)
 		}
 
-		bus.Destroy()
+		bus.Stop()
 		if bus.EventHistory.Size() != 0 {
-			t.Fatalf("destroy should clear history, got %d", bus.EventHistory.Size())
+			t.Fatalf("stop should clear history, got %d", bus.EventHistory.Size())
 		}
 		if !bus.IsIdleAndQueueEmpty() {
-			t.Fatal("destroyed bus should be idle with an empty queue")
+			t.Fatal("stopped bus should be idle with an empty queue")
 		}
 	}
 	elapsed := time.Since(started)
-	assertPerformanceBudget(t, "cleanup destroy bounded state", totalEvents, elapsed, "event")
+	assertPerformanceBudget(t, "cleanup stop bounded state", totalEvents, elapsed, "event")
 }
 
 func waitForPerformanceBatchAllowErrors(t *testing.T, events []*abxbus.BaseEvent) {
@@ -341,7 +341,7 @@ func runFanoutBenchmark(t *testing.T, mode abxbus.EventHandlerConcurrencyMode) (
 		EventHandlerConcurrency:     mode,
 		EventHandlerDetectFilePaths: ptrBool(false),
 	})
-	defer bus.Destroy()
+	defer bus.Stop()
 
 	var handled int64
 	for index := 0; index < handlersPerEvent; index++ {

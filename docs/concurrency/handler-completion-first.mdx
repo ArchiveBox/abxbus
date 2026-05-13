@@ -129,7 +129,14 @@ func main() {
 	}, nil)
 
 	event := bus.Emit(abxbus.NewBaseEvent("CompletionEvent", nil))
-	value, err := event.First(context.Background())
+	_, err := event.Now(&abxbus.EventWaitOptions{FirstResult: true})
+	if err != nil {
+		panic(err)
+	}
+	value, err := event.EventResult(&abxbus.EventResultOptions{
+		RaiseIfAny:  false,
+		RaiseIfNone: false,
+	})
 	if err != nil {
 		panic(err)
 	}

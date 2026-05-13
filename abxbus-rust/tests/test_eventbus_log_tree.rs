@@ -57,7 +57,7 @@ fn test_log_tree_single_event() {
     });
     let _ = block_on(event.now_with_options(EventWaitOptions {
         timeout: None,
-        first_result: true,
+        first_result: false,
     }));
 
     let output = bus.log_tree();
@@ -173,7 +173,7 @@ fn test_log_tree_first_mode_control_cancellations_use_cancelled_icon() {
     let output = bus.log_tree();
     assert!(output.contains(&format!("🚫 {}.slow_handler#", bus.label())));
     assert!(!output.contains(&format!("❌ {}.slow_handler#", bus.label())));
-    assert!(output.contains("Aborted: Aborted: first() resolved"));
+    assert!(output.contains("Aborted: Aborted: first result resolved"));
     bus.stop();
 }
 

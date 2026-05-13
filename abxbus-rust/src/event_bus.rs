@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BinaryHeap, HashMap, HashSet, VecDeque},
     sync::{
         atomic::{AtomicUsize, Ordering},
         mpsc as std_mpsc, Arc, OnceLock, Weak,
@@ -28,6 +28,9 @@ use crate::{
 pub(crate) static GLOBAL_SERIAL_LOCK: OnceLock<Arc<ReentrantLock>> = OnceLock::new();
 static HANDLER_EXECUTOR: OnceLock<HandlerExecutor> = OnceLock::new();
 static HANDLER_CALL_EXECUTOR: OnceLock<HandlerExecutor> = OnceLock::new();
+static QUEUE_JUMP_EXECUTOR: OnceLock<HandlerExecutor> = OnceLock::new();
+static SLOW_WARNING_SCHEDULER: OnceLock<SlowWarningScheduler> = OnceLock::new();
+static STALE_HANDLER_CONTEXTS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static ALL_INSTANCES: OnceLock<Mutex<Vec<Weak<EventBus>>>> = OnceLock::new();
 thread_local! {
     static CURRENT_BUS_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
@@ -61,6 +64,7 @@ struct BusRuntime {
 }
 
 type HandlerJob = Box<dyn FnOnce() + Send + 'static>;
+type SlowWarningJob = Box<dyn FnOnce() + Send + 'static>;
 
 struct HandlerExecutor {
     sender: std_mpsc::Sender<HandlerJob>,
@@ -91,6 +95,89 @@ impl HandlerExecutor {
 
     fn spawn(&self, job: impl FnOnce() + Send + 'static) {
         let _ = self.sender.send(Box::new(job));
+    }
+}
+
+struct ScheduledSlowWarningJob {
+    due_at: Instant,
+    sequence: usize,
+    job: Option<SlowWarningJob>,
+}
+
+impl PartialEq for ScheduledSlowWarningJob {
+    fn eq(&self, other: &Self) -> bool {
+        self.due_at == other.due_at && self.sequence == other.sequence
+    }
+}
+
+impl Eq for ScheduledSlowWarningJob {}
+
+impl PartialOrd for ScheduledSlowWarningJob {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ScheduledSlowWarningJob {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other
+            .due_at
+            .cmp(&self.due_at)
+            .then_with(|| other.sequence.cmp(&self.sequence))
+    }
+}
+
+struct SlowWarningScheduler {
+    sender: std_mpsc::Sender<ScheduledSlowWarningJob>,
+    next_sequence: AtomicUsize,
+}
+
+impl SlowWarningScheduler {
+    fn new() -> Self {
+        let (sender, receiver) = std_mpsc::channel::<ScheduledSlowWarningJob>();
+        thread::spawn(move || {
+            let mut tasks = BinaryHeap::<ScheduledSlowWarningJob>::new();
+            loop {
+                if tasks.is_empty() {
+                    match receiver.recv() {
+                        Ok(task) => tasks.push(task),
+                        Err(_) => break,
+                    }
+                }
+
+                let now = Instant::now();
+                while tasks.peek().is_some_and(|task| task.due_at <= now) {
+                    if let Some(mut task) = tasks.pop() {
+                        let Some(job) = task.job.take() else {
+                            continue;
+                        };
+                        job();
+                    }
+                }
+
+                let Some(next_due) = tasks.peek().map(|task| task.due_at) else {
+                    continue;
+                };
+                match receiver.recv_timeout(next_due.saturating_duration_since(Instant::now())) {
+                    Ok(task) => tasks.push(task),
+                    Err(std_mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(std_mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
+        });
+        Self {
+            sender,
+            next_sequence: AtomicUsize::new(0),
+        }
+    }
+
+    fn schedule(&self, delay: Duration, job: impl FnOnce() + Send + 'static) {
+        let sequence = self.next_sequence.fetch_add(1, Ordering::Relaxed);
+        let _ = self.sender.send(ScheduledSlowWarningJob {
+            due_at: Instant::now() + delay,
+            sequence,
+            job: Some(Box::new(job)),
+        });
     }
 }
 
@@ -200,6 +287,34 @@ impl EventBus {
         HANDLER_CALL_EXECUTOR.get_or_init(HandlerExecutor::new)
     }
 
+    fn queue_jump_executor() -> &'static HandlerExecutor {
+        QUEUE_JUMP_EXECUTOR.get_or_init(HandlerExecutor::new)
+    }
+
+    fn slow_warning_scheduler() -> &'static SlowWarningScheduler {
+        SLOW_WARNING_SCHEDULER.get_or_init(SlowWarningScheduler::new)
+    }
+
+    fn stale_handler_contexts() -> &'static Mutex<HashSet<String>> {
+        STALE_HANDLER_CONTEXTS.get_or_init(|| Mutex::new(HashSet::new()))
+    }
+
+    fn handler_context_key(event_id: &str, handler_id: &str) -> String {
+        format!("{event_id}\0{handler_id}")
+    }
+
+    fn mark_handler_context_stale(event_id: &str, handler_id: &str) {
+        Self::stale_handler_contexts()
+            .lock()
+            .insert(Self::handler_context_key(event_id, handler_id));
+    }
+
+    fn clear_handler_context_stale(event_id: &str, handler_id: &str) {
+        Self::stale_handler_contexts()
+            .lock()
+            .remove(&Self::handler_context_key(event_id, handler_id));
+    }
+
     pub fn global_serial_lock() -> Arc<ReentrantLock> {
         GLOBAL_SERIAL_LOCK
             .get_or_init(|| Arc::new(ReentrantLock::default()))
@@ -218,6 +333,15 @@ impl EventBus {
         else {
             return false;
         };
+        if Self::stale_handler_contexts()
+            .lock()
+            .contains(&Self::handler_context_key(
+                &current_event_id,
+                &current_handler_id,
+            ))
+        {
+            return true;
+        }
 
         let Some(current_event) = Self::live_instances()
             .into_iter()
@@ -225,9 +349,10 @@ impl EventBus {
         else {
             return false;
         };
-        let status = current_event
-            .inner
-            .lock()
+        let Some(current_inner) = current_event.inner.try_lock() else {
+            return false;
+        };
+        let status = current_inner
             .event_results
             .get(&current_handler_id)
             .map(|result| result.status);
@@ -235,6 +360,10 @@ impl EventBus {
             status,
             Some(EventResultStatus::Pending | EventResultStatus::Started)
         )
+    }
+
+    pub fn is_inside_handler_context() -> bool {
+        CURRENT_HANDLER_ID.with(|handler_id| handler_id.borrow().is_some())
     }
 
     fn live_instances() -> Vec<Arc<EventBus>> {
@@ -1230,9 +1359,9 @@ impl EventBus {
         if Self::current_handler_context_is_stale() {
             return event;
         }
-        let emitted_from_active_handler =
-            CURRENT_EVENT_ID.with(|event_id| event_id.borrow().is_some())
-                && CURRENT_HANDLER_ID.with(|handler_id| handler_id.borrow().is_some());
+        let emitted_from_active_handler = CURRENT_EVENT_ID
+            .with(|event_id| event_id.borrow().is_some())
+            && CURRENT_HANDLER_ID.with(|handler_id| handler_id.borrow().is_some());
 
         let bus_label = self.label();
         if event.inner.lock().event_path.contains(&bus_label) {
@@ -1317,7 +1446,40 @@ impl EventBus {
     }
 
     pub fn queue_jump_if_waited(event: Arc<BaseEvent>) {
+        Self::queue_jump_if_waited_blocking(event, false);
+    }
+
+    pub fn queue_jump_if_waited_from_handler(event: Arc<BaseEvent>) {
+        Self::queue_jump_if_waited_blocking(event, true);
+    }
+
+    fn queue_jump_if_waited_blocking(event: Arc<BaseEvent>, dedicated_thread: bool) {
+        let (tx, rx) = std_mpsc::channel();
         let initiating_context = Self::mark_blocks_parent_completion_if_awaited(event.clone());
+        let job = move || {
+            block_on(Self::queue_jump_if_waited_async_with_context(
+                event,
+                initiating_context,
+            ));
+            let _ = tx.send(());
+        };
+        if dedicated_thread {
+            thread::spawn(job);
+        } else {
+            Self::queue_jump_executor().spawn(job);
+        }
+        let _ = rx.recv();
+    }
+
+    pub async fn queue_jump_if_waited_async(event: Arc<BaseEvent>) {
+        let initiating_context = Self::mark_blocks_parent_completion_if_awaited(event.clone());
+        Self::queue_jump_if_waited_async_with_context(event, initiating_context).await;
+    }
+
+    pub async fn queue_jump_if_waited_async_with_context(
+        event: Arc<BaseEvent>,
+        initiating_context: Option<(String, String, String)>,
+    ) {
         let initiating_bus = initiating_context
             .as_ref()
             .and_then(|(bus_id, _, _)| Self::live_instance_by_id(bus_id))
@@ -1331,10 +1493,11 @@ impl EventBus {
             return;
         }
 
-        let mut instances = ALL_INSTANCES.get_or_init(|| Mutex::new(Vec::new())).lock();
-        instances.retain(|entry| entry.upgrade().is_some());
-        let live_buses: Vec<Arc<EventBus>> = instances.iter().filter_map(Weak::upgrade).collect();
-        drop(instances);
+        let live_buses: Vec<Arc<EventBus>> = {
+            let mut instances = ALL_INSTANCES.get_or_init(|| Mutex::new(Vec::new())).lock();
+            instances.retain(|entry| entry.upgrade().is_some());
+            instances.iter().filter_map(Weak::upgrade).collect()
+        };
 
         let mut ordered = Vec::new();
         for label in event_path {
@@ -1353,13 +1516,16 @@ impl EventBus {
             let should_bypass_event_lock = initiating_bus
                 .as_ref()
                 .is_some_and(|initiating| Arc::ptr_eq(&bus, initiating))
-                || initiating_event_lock.as_ref().is_some_and(|initiating_lock| {
-                    bus.locks
-                        .get_lock_for_event(&bus, &event)
-                        .as_ref()
-                        .is_some_and(|bus_lock| Arc::ptr_eq(bus_lock, initiating_lock))
-                });
-            bus.process_event_immediately_if_queued(event.clone(), should_bypass_event_lock);
+                || initiating_event_lock
+                    .as_ref()
+                    .is_some_and(|initiating_lock| {
+                        bus.locks
+                            .get_lock_for_event(&bus, &event)
+                            .as_ref()
+                            .is_some_and(|bus_lock| Arc::ptr_eq(bus_lock, initiating_lock))
+                    });
+            bus.process_event_immediately_if_queued(event.clone(), should_bypass_event_lock)
+                .await;
         }
     }
 
@@ -1408,7 +1574,12 @@ impl EventBus {
         Some((current_bus_id, current_event_id, current_handler_id))
     }
 
-    fn process_event_immediately_if_queued(&self, event: Arc<BaseEvent>, bypass_event_lock: bool) {
+    async fn process_event_immediately_if_queued(
+        &self,
+        event: Arc<BaseEvent>,
+        bypass_event_lock: bool,
+    ) {
+        let runloop_pause = self.locks.request_runloop_pause();
         let event_id = event.inner.lock().event_id.clone();
         {
             let inner = event.inner.lock();
@@ -1445,25 +1616,20 @@ impl EventBus {
         if !removed && !bypass_event_lock {
             return;
         }
-        let bus = self.clone();
-        let (tx, rx) = std_mpsc::channel();
-        Self::handler_call_executor().spawn(move || {
-            if bypass_event_lock {
-                {
-                    let mut processing = bus.runtime.processing_event_ids.lock();
-                    if !processing.insert(event_id.clone()) {
-                        let _ = tx.send(());
-                        return;
-                    }
+        if bypass_event_lock {
+            {
+                let mut processing = self.runtime.processing_event_ids.lock();
+                if !processing.insert(event_id.clone()) {
+                    return;
                 }
-                block_on(bus.process_event_inner(event));
-            } else {
-                block_on(bus.process_event(event));
             }
-            bus.runtime.processing_event_ids.lock().remove(&event_id);
-            let _ = tx.send(());
-        });
-        let _ = rx.recv();
+            self.process_event_inner(event).await;
+            self.runtime.processing_event_ids.lock().remove(&event_id);
+        } else {
+            self.process_event(event).await;
+        }
+        drop(runloop_pause);
+        self.runtime.queue_notify.notify(usize::MAX);
     }
 
     fn register_in_history(&self, event: Arc<BaseEvent>) -> bool {
@@ -2033,6 +2199,10 @@ impl EventBus {
     async fn process_event_inner(&self, event: Arc<BaseEvent>) {
         event.mark_started();
         let started_at = Instant::now();
+        let mut event_timeout = event.inner.lock().event_timeout.or(self.event_timeout);
+        if event_timeout.is_some_and(|timeout| timeout <= 0.0) {
+            event_timeout = None;
+        }
         let (event_type_for_slow_warning, event_slow_timeout) = {
             let inner = event.inner.lock();
             (
@@ -2041,11 +2211,14 @@ impl EventBus {
             )
         };
         if let Some(event_slow_timeout) = event_slow_timeout {
-            if event_slow_timeout > 0.0 {
+            if event_slow_timeout > 0.0
+                && event_timeout.is_none_or(|timeout| event_slow_timeout < timeout)
+            {
                 let event_for_warning = event.clone();
                 let bus_name_for_warning = self.name.clone();
-                thread::spawn(move || {
-                    thread::sleep(Duration::from_secs_f64(event_slow_timeout));
+                Self::slow_warning_scheduler().schedule(
+                    Duration::from_secs_f64(event_slow_timeout),
+                    move || {
                     let still_running =
                         event_for_warning.inner.lock().event_status != EventStatus::Completed;
                     if still_running {
@@ -2060,7 +2233,8 @@ impl EventBus {
                         "Slow event processing: {bus_name_for_warning}.on({event_type_for_slow_warning}, {running_handler_count} handlers) still running after {event_slow_timeout:.3}s"
                     );
                     }
-                });
+                    },
+                );
             }
         }
 
@@ -2072,11 +2246,6 @@ impl EventBus {
             .cloned()
             .unwrap_or_default();
         handlers.extend(self.handlers.lock().get("*").cloned().unwrap_or_default());
-        handlers.sort_by(|left, right| {
-            left.handler_registered_at
-                .cmp(&right.handler_registered_at)
-                .then_with(|| left.id.cmp(&right.id))
-        });
 
         let handler_concurrency = event
             .inner
@@ -2085,10 +2254,6 @@ impl EventBus {
             .unwrap_or(self.event_handler_concurrency);
         let handler_completion = self.handler_completion_for_event(&event);
 
-        let mut event_timeout = event.inner.lock().event_timeout.or(self.event_timeout);
-        if event_timeout.is_some_and(|timeout| timeout <= 0.0) {
-            event_timeout = None;
-        }
         self.create_pending_handler_results(&event, &handlers, event_timeout);
 
         match handler_concurrency {
@@ -2274,11 +2439,23 @@ impl EventBus {
                 )
             })
             .collect();
+        let mut ordered_handler_ids: Vec<(String, String)> = pending_results
+            .iter()
+            .map(|(handler_id, result)| {
+                (
+                    result.handler.handler_registered_at.clone(),
+                    handler_id.clone(),
+                )
+            })
+            .collect();
+        ordered_handler_ids.sort();
         let mut inner = event.inner.lock();
-        for (handler_id, result) in pending_results {
+        for (_, handler_id) in ordered_handler_ids {
             if !inner.event_result_order.contains(&handler_id) {
-                inner.event_result_order.push(handler_id.clone());
+                inner.event_result_order.push(handler_id);
             }
+        }
+        for (handler_id, result) in pending_results {
             inner.event_results.entry(handler_id).or_insert(result);
         }
     }
@@ -2371,8 +2548,9 @@ impl EventBus {
                 }
                 result.status = EventResultStatus::Error;
                 result.result = None;
-                result.error =
-                    Some("EventHandlerCancelledError: Cancelled: first() resolved".to_string());
+                result.error = Some(
+                    "EventHandlerCancelledError: Cancelled: first result resolved".to_string(),
+                );
                 if result.started_at.is_none() {
                     result.started_at = Some(now_iso());
                 }
@@ -2417,8 +2595,9 @@ impl EventBus {
                 continue;
             }
             if result.status == EventResultStatus::Pending {
-                result.error =
-                    Some("EventHandlerCancelledError: Cancelled: first() resolved".to_string());
+                result.error = Some(
+                    "EventHandlerCancelledError: Cancelled: first result resolved".to_string(),
+                );
             } else if result.status == EventResultStatus::Started
                 || (result.status == EventResultStatus::Completed
                     && winner_completed_at
@@ -2427,7 +2606,7 @@ impl EventBus {
                         .is_some_and(|(winner_at, result_at)| result_at >= winner_at))
             {
                 result.error =
-                    Some("EventHandlerAbortedError: Aborted: first() resolved".to_string());
+                    Some("EventHandlerAbortedError: Aborted: first result resolved".to_string());
             } else {
                 continue;
             }
@@ -2439,7 +2618,7 @@ impl EventBus {
             result.completed_at = Some(now_iso());
         }
         drop(inner);
-        self.cancel_children(event, "first() resolved");
+        self.cancel_children(event, "first result resolved");
     }
 
     fn handler_dispatched_ancestor(&self, event: &Arc<BaseEvent>, handler_id: &str) -> usize {
@@ -2507,7 +2686,6 @@ impl EventBus {
     ) -> bool {
         let handler_id = handler.id.clone();
         let context_snapshot = self.context_for_event(&event);
-        let _context_guard = context_snapshot.clone().map(dcontext::attach);
         CURRENT_BUS_ID.with(|id| *id.borrow_mut() = Some(self.id.clone()));
         CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = Some(event.inner.lock().event_id.clone()));
         CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = Some(handler_id.clone()));
@@ -2562,6 +2740,12 @@ impl EventBus {
             (None, Some(b)) => Some(b),
             (None, None) => None,
         };
+        let handler_timeout_won_on_timeout =
+            explicit_handler_timeout.is_some_and(|handler_timeout| {
+                remaining_event_timeout
+                    .map(|event_remaining| handler_timeout <= event_remaining)
+                    .unwrap_or(true)
+            });
 
         let recursion_depth = self.handler_dispatched_ancestor(&event, &handler.id);
         if recursion_depth > self.max_handler_recursion_depth {
@@ -2628,46 +2812,81 @@ impl EventBus {
             slow_timeout = None;
         }
         if let Some(slow_timeout) = slow_timeout {
+            if call_timeout.is_some_and(|timeout| timeout <= slow_timeout) {
+                return self
+                    .run_handler_call(
+                        event,
+                        handler,
+                        call_timeout,
+                        handler_timeout_won_on_timeout,
+                        context_snapshot,
+                        inline_call,
+                    )
+                    .await;
+            }
             let event_for_warning = event.clone();
             let handler_id_for_warning = handler.id.clone();
             let handler_name_for_warning = handler.handler_name.clone();
             let bus_name_for_warning = self.name.clone();
-            thread::spawn(move || {
-                thread::sleep(Duration::from_secs_f64(slow_timeout));
-                let still_running = event_for_warning
-                    .inner
-                    .lock()
-                    .event_results
-                    .get(&handler_id_for_warning)
-                    .is_some_and(|result| result.status == EventResultStatus::Started);
-                if still_running {
-                    eprintln!(
+            Self::slow_warning_scheduler().schedule(
+                Duration::from_secs_f64(slow_timeout),
+                move || {
+                    let still_running = event_for_warning
+                        .inner
+                        .lock()
+                        .event_results
+                        .get(&handler_id_for_warning)
+                        .is_some_and(|result| result.status == EventResultStatus::Started);
+                    if still_running {
+                        eprintln!(
                         "Slow event handler: {bus_name_for_warning}.on({event_type_for_slow_warning}, {handler_name_for_warning}) still running after {slow_timeout:.3}s"
                     );
-                }
-            });
+                    }
+                },
+            );
         }
 
+        self.run_handler_call(
+            event,
+            handler,
+            call_timeout,
+            handler_timeout_won_on_timeout,
+            context_snapshot,
+            inline_call,
+        )
+        .await
+    }
+
+    async fn run_handler_call(
+        &self,
+        event: Arc<BaseEvent>,
+        handler: EventHandler,
+        call_timeout: Option<f64>,
+        handler_timeout_won_on_timeout: bool,
+        context_snapshot: Option<dcontext::ContextSnapshot>,
+        _inline_call: bool,
+    ) -> bool {
         let call = handler
             .callable
             .as_ref()
             .expect("handler callable missing")
             .clone();
         let event_clone = event.clone();
+        let event_id_for_call = event.inner.lock().event_id.clone();
+        let handler_id_for_call = handler.id.clone();
         let runloop_pause = self.locks.request_runloop_pause();
-        let call_result = if inline_call && call_timeout.is_none() {
-            Ok(call(event_clone).await)
-        } else {
+        let call_result = {
             let (tx, rx) = std_mpsc::channel();
             let context_bus_id = self.id.clone();
-            let context_event_id = event.inner.lock().event_id.clone();
-            let context_handler_id = handler.id.clone();
+            let context_event_id = event_id_for_call.clone();
+            let context_handler_id = handler_id_for_call.clone();
             Self::handler_call_executor().spawn(move || {
                 let _context_guard = context_snapshot.map(dcontext::attach);
                 CURRENT_BUS_ID.with(|id| *id.borrow_mut() = Some(context_bus_id));
-                CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = Some(context_event_id));
-                CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = Some(context_handler_id));
+                CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = Some(context_event_id.clone()));
+                CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = Some(context_handler_id.clone()));
                 let response = block_on(call(event_clone));
+                Self::clear_handler_context_stale(&context_event_id, &context_handler_id);
                 CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = None);
                 CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = None);
                 CURRENT_BUS_ID.with(|id| *id.borrow_mut() = None);
@@ -2681,6 +2900,9 @@ impl EventBus {
                 rx.recv().map_err(|_| "handler channel closed".to_string())
             }
         };
+        if matches!(call_result, Err(ref error) if error == "timeout") {
+            Self::mark_handler_context_stale(&event_id_for_call, &handler_id_for_call);
+        }
         drop(runloop_pause);
         Self::notify_all_queues();
 
@@ -2713,12 +2935,7 @@ impl EventBus {
             }
             Err(error) => {
                 current.status = EventResultStatus::Error;
-                let handler_timeout_won = explicit_handler_timeout.is_some_and(|handler_timeout| {
-                    remaining_event_timeout
-                        .map(|event_remaining| handler_timeout <= event_remaining)
-                        .unwrap_or(true)
-                });
-                let error_type = if error == "timeout" && handler_timeout_won {
+                let error_type = if error == "timeout" && handler_timeout_won_on_timeout {
                     "EventHandlerTimeoutError"
                 } else {
                     "EventHandlerAbortedError"
@@ -2733,7 +2950,7 @@ impl EventBus {
                     .lock()
                     .event_results
                     .insert(handler.id.clone(), current);
-                return error == "timeout" && !handler_timeout_won;
+                return error == "timeout" && !handler_timeout_won_on_timeout;
             }
         }
 

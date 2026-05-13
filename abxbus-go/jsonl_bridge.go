@@ -121,7 +121,7 @@ func (b *JSONLEventBridge) Close() {
 		cancel()
 	}
 	b.wg.Wait()
-	b.inboundBus.Destroy()
+	b.inboundBus.Stop()
 }
 
 func (b *JSONLEventBridge) listenLoop(ctx context.Context) {

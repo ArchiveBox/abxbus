@@ -481,8 +481,11 @@ async def test_dispatch_type_inference():
     isinstance_type_event = CustomEvent()
     assert_type(isinstance(bus.emit(isinstance_type_event), CustomEvent), Literal[True])
 
-    # We should be able to use it without casting
-    result = await dispatched_event.event_result()
+    # We should be able to use it without casting. Use an event emitted after
+    # the handler is registered so this assertion covers typed result access.
+    result_event = bus.emit(CustomEvent())
+    await result_event.now()
+    result = await result_event.event_result()
 
     # Type checking for the result
     assert_type(result, CustomResult | None)  # Should be CustomResult | None
@@ -495,8 +498,11 @@ async def test_dispatch_type_inference():
     # Before: event = cast(CustomEvent, bus.emit(CustomEvent()))
     # After: event = bus.emit(CustomEvent())  # Type is preserved!
 
+    await another_event.now()
     await another_event.event_result()
+    await type_event.now()
     await type_event.event_result()
+    await isinstance_type_event.now()
     await isinstance_type_event.event_result()
 
     await bus.stop(clear=True)

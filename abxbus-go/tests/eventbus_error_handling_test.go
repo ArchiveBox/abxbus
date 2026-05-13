@@ -20,13 +20,13 @@ func TestEventResultPropagatesHandlerError(t *testing.T) {
 	}
 }
 
-func TestDoneRaiseIfAnyOptions(t *testing.T) {
-	bus := abxbus.NewEventBus("DoneRaiseIfAnyBus", nil)
-	bus.On("DoneErrorEvent", "boom", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+func TestNowRaiseIfAnyOptions(t *testing.T) {
+	bus := abxbus.NewEventBus("NowRaiseIfAnyBus", nil)
+	bus.On("NowErrorEvent", "boom", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
 		return nil, errors.New("boom")
 	}, nil)
 
-	event := bus.Emit(abxbus.NewBaseEvent("DoneErrorEvent", nil))
+	event := bus.Emit(abxbus.NewBaseEvent("NowErrorEvent", nil))
 	if _, err := event.Now(); err != nil {
 		t.Fatalf("Now should wait for completion without surfacing handler errors, got %v", err)
 	}

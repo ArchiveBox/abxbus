@@ -1056,10 +1056,10 @@ fn test_event_result_single_handler_error_raises_original_exception() {
 
 #[test]
 fn test_event_result_raise_if_any_options() {
-    let bus = EventBus::new(Some("DoneRaiseIfAnyBus".to_string()));
+    let bus = EventBus::new(Some("NowRaiseIfAnyBus".to_string()));
 
     bus.on_raw("UserActionEvent", "failing_handler", |_event| async move {
-        Err("ValueError: done failure".to_string())
+        Err("ValueError: handler failure".to_string())
     });
 
     let event = bus.emit(UserActionEvent {
@@ -1072,7 +1072,7 @@ fn test_event_result_raise_if_any_options() {
         Ok(_) => panic!("event_result should raise handler errors by default"),
         Err(error) => error,
     };
-    assert_eq!(error, "ValueError: done failure");
+    assert_eq!(error, "ValueError: handler failure");
 
     block_on(event.inner.event_result(EventResultOptions {
         raise_if_any: false,
@@ -2716,7 +2716,7 @@ fn test_unreferenced_eventbus_can_be_garbage_collected_not_retained_by_all_insta
 }
 
 #[test]
-fn test_unreferenced_buses_with_event_history_are_garbage_collected_without_destroy() {
+fn test_unreferenced_buses_with_event_history_are_garbage_collected_without_stop() {
     let mut refs = Vec::new();
     let mut bus_ids = Vec::new();
 

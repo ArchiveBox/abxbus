@@ -324,7 +324,7 @@ func TestComprehensiveAwaitedParallelQueueJumpChildDoesNotPauseLaterParallelChil
 
 		e.Emit(newChild("bg"))
 		appendLocked(&mu, &order, "parent_after_bg_emit")
-		found, err := bus.Find("ParallelPauseDoneEvent", func(event *abxbus.BaseEvent) bool {
+		found, err := bus.Find("ParallelPauseObservedEvent", func(event *abxbus.BaseEvent) bool {
 			return event.Payload["name"] == "bg"
 		}, &abxbus.FindOptions{Past: true, Future: 0.2})
 		if err != nil {
@@ -341,13 +341,13 @@ func TestComprehensiveAwaitedParallelQueueJumpChildDoesNotPauseLaterParallelChil
 		name, _ := e.Payload["name"].(string)
 		appendLocked(&mu, &order, "child_start_"+name)
 		if name == "bg" {
-			e.Emit(abxbus.NewBaseEvent("ParallelPauseDoneEvent", map[string]any{"name": "bg"}))
+			e.Emit(abxbus.NewBaseEvent("ParallelPauseObservedEvent", map[string]any{"name": "bg"}))
 		}
 		appendLocked(&mu, &order, "child_end_"+name)
 		return name, nil
 	}, nil)
-	bus.On("ParallelPauseDoneEvent", "done_handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
-		appendLocked(&mu, &order, "done_seen")
+	bus.On("ParallelPauseObservedEvent", "observed_handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		appendLocked(&mu, &order, "observed_seen")
 		return nil, nil
 	}, nil)
 

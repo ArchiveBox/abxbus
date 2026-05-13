@@ -513,6 +513,41 @@ test('eventResultsList: starts never-started event and returns all results', asy
   bus.destroy()
 })
 
+test('event result helpers do not wait for started event', async () => {
+  const StartedEvent = BaseEvent.extend('EventResultHelpersStartedEvent', { event_result_type: z.string() })
+  const bus = new EventBus('EventResultHelpersStartedBus', {
+    event_concurrency: 'parallel',
+    event_handler_concurrency: 'parallel',
+    event_timeout: 0,
+  })
+  let releaseHandler: (() => void) | undefined
+  const handlerReleased = new Promise<void>((resolve) => {
+    releaseHandler = resolve
+  })
+  let handlerStartedResolve: (() => void) | undefined
+  const handlerStarted = new Promise<void>((resolve) => {
+    handlerStartedResolve = resolve
+  })
+
+  bus.on(StartedEvent, async () => {
+    handlerStartedResolve?.()
+    await handlerReleased
+    return 'late'
+  })
+
+  const event = bus.emit(StartedEvent({}))
+  await handlerStarted
+
+  assert.equal(event.event_status, 'started')
+  assert.equal(await event.eventResult({ raise_if_none: false }), undefined)
+  assert.deepEqual(await event.eventResultsList({ raise_if_none: false }), [])
+  assert.equal(event.event_status, 'started')
+
+  releaseHandler?.()
+  await bus.waitUntilIdle()
+  bus.destroy()
+})
+
 test('now: already executing event waits without duplicate execution', async () => {
   const ExecutingEvent = BaseEvent.extend('NowAlreadyExecutingEvent', { event_result_type: z.string() })
   const bus = new EventBus('NowAlreadyExecutingBus', {
@@ -562,7 +597,10 @@ test('eventResult: options apply to current results', async () => {
   bus.on(ResultOptionsEvent, async () => {
     throw new Error('option boom')
   })
-  bus.on(ResultOptionsEvent, async () => 'keep')
+  bus.on(ResultOptionsEvent, async () => {
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    return 'keep'
+  })
   bus.on(ResultOptionsEvent, async () => {
     await slowReleased
     return 'late'

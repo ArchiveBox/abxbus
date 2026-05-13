@@ -28,10 +28,7 @@ fn assert_original_fields_survive(original: &Value, roundtripped: &Value) {
             "missing key after roundtrip: {key}"
         );
         if let (Some(left), Some(right)) = (roundtripped[key].as_f64(), value.as_f64()) {
-            assert!(
-                (left - right).abs() < f64::EPSILON,
-                "field changed: {key}"
-            );
+            assert!((left - right).abs() < f64::EPSILON, "field changed: {key}");
             continue;
         }
         assert_eq!(&roundtripped[key], value, "field changed: {key}");

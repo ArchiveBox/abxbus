@@ -101,7 +101,7 @@ async def test_now_queue_jumps_inside_handler():
         pass
 
     bus = EventBus(
-        name='QueueJumpDoneAliasBus',
+        name='QueueJumpNowBus',
         event_concurrency='bus-serial',
         event_handler_concurrency='serial',
     )
@@ -142,7 +142,7 @@ async def test_now_preserves_handler_errors_inside_handler():
         pass
 
     bus = EventBus(
-        name='QueueJumpDoneAliasArgsBus',
+        name='QueueJumpNowArgsBus',
         event_concurrency='bus-serial',
         event_handler_concurrency='serial',
     )
@@ -185,7 +185,7 @@ async def test_wait_outside_handler_preserves_normal_queue_order():
         pass
 
     bus = EventBus(
-        name='DoneOutsideHandlerQueueOrderBus',
+        name='WaitOutsideHandlerQueueOrderBus',
         event_concurrency='bus-serial',
         event_handler_concurrency='serial',
     )
@@ -229,7 +229,7 @@ async def test_wait_outside_handler_allows_normal_parallel_processing():
         pass
 
     bus = EventBus(
-        name='DoneOutsideHandlerParallelQueueOrderBus',
+        name='WaitOutsideHandlerParallelQueueOrderBus',
         event_concurrency='bus-serial',
         event_handler_concurrency='serial',
     )
@@ -556,6 +556,42 @@ async def test_event_results_list_starts_never_started_event_and_returns_all_res
         await bus.stop()
 
 
+async def test_event_result_helpers_do_not_wait_for_started_event():
+    class StartedEvent(BaseEvent[str]):
+        pass
+
+    bus = EventBus(
+        name='EventResultHelpersStartedBus',
+        event_concurrency='parallel',
+        event_handler_concurrency='parallel',
+        event_timeout=0,
+    )
+    handler_started = asyncio.Event()
+    release_handler = asyncio.Event()
+
+    async def slow_handler(_: StartedEvent) -> str:
+        handler_started.set()
+        await release_handler.wait()
+        return 'late'
+
+    bus.on(StartedEvent, slow_handler)
+
+    try:
+        event = bus.emit(StartedEvent())
+        await asyncio.wait_for(handler_started.wait(), timeout=1.0)
+
+        assert event.event_status == EventStatus.STARTED
+        assert await asyncio.wait_for(event.event_result(raise_if_none=False), timeout=0.05) is None
+        assert await asyncio.wait_for(event.event_results_list(raise_if_none=False), timeout=0.05) == []
+        assert event.event_status == EventStatus.STARTED
+
+        release_handler.set()
+        await bus.wait_until_idle(timeout=1.0)
+    finally:
+        release_handler.set()
+        await bus.stop()
+
+
 async def test_now_on_already_executing_event_waits_without_duplicate_execution():
     class ExecutingEvent(BaseEvent[str]):
         pass
@@ -600,6 +636,7 @@ async def test_event_result_options_apply_to_current_results():
         raise RuntimeError('option boom')
 
     async def keep_handler(_: ResultOptionsEvent) -> str:
+        await asyncio.sleep(0.01)
         return 'keep'
 
     async def slow_handler(_: ResultOptionsEvent) -> str:
@@ -633,7 +670,7 @@ async def test_event_result_raises_processing_error_group_after_completion():
         pass
 
     bus = EventBus(
-        name='BaseEventDoneRaisesFirstErrorBus',
+        name='BaseEventNowRaisesFirstErrorBus',
         event_handler_concurrency='parallel',
         event_timeout=0,
     )
@@ -665,7 +702,7 @@ async def test_event_result_accepts_error_options_outside_handler():
     class ErrorEvent(BaseEvent[None]):
         pass
 
-    bus = EventBus(name='BaseEventDoneArgsOutsideBus')
+    bus = EventBus(name='BaseEventNowArgsOutsideBus')
 
     async def handler(_: ErrorEvent) -> None:
         raise ValueError('outside suppressed failure')
@@ -766,7 +803,7 @@ async def test_awaited_parallel_queue_jump_child_does_not_pause_later_parallel_c
     class ChildEvent(BaseEvent[str]):
         name: str
 
-    class DoneEvent(BaseEvent[None]):
+    class ObservedEvent(BaseEvent[None]):
         name: str
 
     bus = EventBus(
@@ -787,7 +824,7 @@ async def test_awaited_parallel_queue_jump_child_does_not_pause_later_parallel_c
         event.emit(ChildEvent(name='bg', event_concurrency=EventConcurrencyMode.PARALLEL))
         log.append('parent_after_bg_emit')
         found = await bus.find(
-            DoneEvent,
+            ObservedEvent,
             lambda candidate: candidate.name == 'bg',
             past=True,
             future=0.2,
@@ -798,16 +835,16 @@ async def test_awaited_parallel_queue_jump_child_does_not_pause_later_parallel_c
     async def on_child(event: ChildEvent) -> str:
         log.append(f'child_start_{event.name}')
         if event.name == 'bg':
-            event.emit(DoneEvent(name='bg'))
+            event.emit(ObservedEvent(name='bg'))
         log.append(f'child_end_{event.name}')
         return event.name
 
-    async def on_done(_: DoneEvent) -> None:
-        log.append('done_seen')
+    async def on_observed(_: ObservedEvent) -> None:
+        log.append('observed_seen')
 
     bus.on(ParentEvent, on_parent)
     bus.on(ChildEvent, on_child)
-    bus.on(DoneEvent, on_done)
+    bus.on(ObservedEvent, on_observed)
 
     await bus.emit(ParentEvent(event_timeout=0))
     await bus.wait_until_idle()

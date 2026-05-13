@@ -16,7 +16,7 @@ use futures::executor::block_on;
 use futures_timer::Delay;
 use serde_json::{json, Map, Value};
 
-const PERFORMANCE_MAX_MS_PER_UNIT: f64 = 0.5;
+const PERFORMANCE_MAX_MS_PER_UNIT: f64 = 0.3;
 static PERFORMANCE_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn performance_test_guard() -> MutexGuard<'static, ()> {
@@ -176,10 +176,6 @@ fn test_performance_ephemeral_buses() {
 }
 
 #[test]
-#[cfg_attr(
-    debug_assertions,
-    ignore = "50k parallel handler performance budget is measured with cargo test --release"
-)]
 fn test_performance_single_event_many_parallel_handlers() {
     let _perf_guard = performance_test_guard();
     let total_handlers = 50_000usize;

@@ -1052,8 +1052,6 @@ export class BaseEvent {
     const original = this._event_original ?? this
     if (original.event_status === 'pending' && original.event_results.size === 0) {
       await this.now({ first_result: true })
-    } else if (original.event_status !== 'completed' && !this._hasIncludedResult(options)) {
-      await this.wait({ first_result: true })
     }
     return this._collectResultValues(options, 'registration').at(0)
   }
@@ -1062,8 +1060,6 @@ export class BaseEvent {
     const original = this._event_original ?? this
     if (original.event_status === 'pending' && original.event_results.size === 0) {
       await this.now({ first_result: false })
-    } else if (original.event_status === 'started' && original.event_results.size === 0) {
-      await this.wait({ first_result: false })
     }
     return this._collectResultValues(options, 'registration')
   }

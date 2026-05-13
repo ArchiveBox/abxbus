@@ -12,7 +12,7 @@ import (
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 )
 
-func TestBaseEventDoneWithoutBus(t *testing.T) {
+func TestBaseEventNowWithoutBus(t *testing.T) {
 	e := abxbus.NewBaseEvent("NoBus", nil)
 	if _, err := e.Now(); err == nil || !strings.Contains(err.Error(), "no bus attached") {
 		t.Fatalf("expected missing bus error, got %v", err)
@@ -22,7 +22,7 @@ func TestBaseEventDoneWithoutBus(t *testing.T) {
 	}
 }
 
-func TestBaseEventDoneAllowsCompletedRestoredEventWithoutBus(t *testing.T) {
+func TestBaseEventNowAllowsCompletedRestoredEventWithoutBus(t *testing.T) {
 	raw := []byte(`{
 		"event_type": "RestoredCompletedEvent",
 		"event_version": "0.0.1",
@@ -56,33 +56,33 @@ func TestBaseEventDoneAllowsCompletedRestoredEventWithoutBus(t *testing.T) {
 	}
 }
 
-func TestBaseEventDoneInsideHandlerNoArgs(t *testing.T) {
-	bus := abxbus.NewEventBus("BaseEventDoneInsideNoArgsBus", &abxbus.EventBusOptions{
+func TestBaseEventNowInsideHandlerNoArgs(t *testing.T) {
+	bus := abxbus.NewEventBus("BaseEventNowInsideNoArgsBus", &abxbus.EventBusOptions{
 		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
 	})
 	order := []string{}
 
-	bus.On("DoneInsideNoArgsParent", "parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("NowInsideNoArgsParent", "parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		order = append(order, "parent_start")
-		event.Bus.Emit(abxbus.NewBaseEvent("DoneInsideNoArgsSibling", nil))
-		child := event.Emit(abxbus.NewBaseEvent("DoneInsideNoArgsChild", nil))
+		event.Bus.Emit(abxbus.NewBaseEvent("NowInsideNoArgsSibling", nil))
+		child := event.Emit(abxbus.NewBaseEvent("NowInsideNoArgsChild", nil))
 		if _, err := child.Now(); err != nil {
 			return nil, err
 		}
 		order = append(order, "parent_end")
 		return nil, nil
 	}, nil)
-	bus.On("DoneInsideNoArgsChild", "child", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("NowInsideNoArgsChild", "child", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		order = append(order, "child")
 		return nil, nil
 	}, nil)
-	bus.On("DoneInsideNoArgsSibling", "sibling", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("NowInsideNoArgsSibling", "sibling", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		order = append(order, "sibling")
 		return nil, nil
 	}, nil)
 
-	parent := bus.Emit(abxbus.NewBaseEvent("DoneInsideNoArgsParent", nil))
+	parent := bus.Emit(abxbus.NewBaseEvent("NowInsideNoArgsParent", nil))
 	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -95,34 +95,34 @@ func TestBaseEventDoneInsideHandlerNoArgs(t *testing.T) {
 	}
 }
 
-func TestBaseEventDoneInsideHandlerWithArgs(t *testing.T) {
-	bus := abxbus.NewEventBus("BaseEventDoneInsideArgsBus", &abxbus.EventBusOptions{
+func TestBaseEventNowInsideHandlerWithArgs(t *testing.T) {
+	bus := abxbus.NewEventBus("BaseEventNowInsideArgsBus", &abxbus.EventBusOptions{
 		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
 	})
 	order := []string{}
 	var child *abxbus.BaseEvent
 
-	bus.On("DoneInsideArgsParent", "parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("NowInsideArgsParent", "parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		order = append(order, "parent_start")
-		event.Bus.Emit(abxbus.NewBaseEvent("DoneInsideArgsSibling", nil))
-		child = event.Emit(abxbus.NewBaseEvent("DoneInsideArgsChild", nil))
+		event.Bus.Emit(abxbus.NewBaseEvent("NowInsideArgsSibling", nil))
+		child = event.Emit(abxbus.NewBaseEvent("NowInsideArgsChild", nil))
 		if _, err := child.Now(); err != nil {
 			return nil, err
 		}
 		order = append(order, "parent_end")
 		return nil, nil
 	}, nil)
-	bus.On("DoneInsideArgsChild", "child", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("NowInsideArgsChild", "child", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		order = append(order, "child")
 		return nil, errors.New("child failure")
 	}, nil)
-	bus.On("DoneInsideArgsSibling", "sibling", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("NowInsideArgsSibling", "sibling", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		order = append(order, "sibling")
 		return nil, nil
 	}, nil)
 
-	parent := bus.Emit(abxbus.NewBaseEvent("DoneInsideArgsParent", nil))
+	parent := bus.Emit(abxbus.NewBaseEvent("NowInsideArgsParent", nil))
 	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -141,8 +141,8 @@ func TestBaseEventDoneInsideHandlerWithArgs(t *testing.T) {
 	}
 }
 
-func TestDoneOutsideHandlerPreservesNormalQueueOrder(t *testing.T) {
-	bus := abxbus.NewEventBus("DoneOutsideHandlerQueueOrderBus", &abxbus.EventBusOptions{
+func TestWaitOutsideHandlerPreservesNormalQueueOrder(t *testing.T) {
+	bus := abxbus.NewEventBus("WaitOutsideHandlerQueueOrderBus", &abxbus.EventBusOptions{
 		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
 	})
@@ -150,27 +150,27 @@ func TestDoneOutsideHandlerPreservesNormalQueueOrder(t *testing.T) {
 	blockerStarted := make(chan struct{})
 	releaseBlocker := make(chan struct{})
 
-	bus.On("DoneOutsideHandlerBlockerEvent", "blocker", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("WaitOutsideHandlerBlockerEvent", "blocker", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		order = append(order, "blocker_start")
 		close(blockerStarted)
 		<-releaseBlocker
 		order = append(order, "blocker_end")
 		return nil, nil
 	}, nil)
-	bus.On("DoneOutsideHandlerTargetEvent", "target", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("WaitOutsideHandlerTargetEvent", "target", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		order = append(order, "target")
 		return nil, nil
 	}, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	bus.Emit(abxbus.NewBaseEvent("DoneOutsideHandlerBlockerEvent", nil))
+	bus.Emit(abxbus.NewBaseEvent("WaitOutsideHandlerBlockerEvent", nil))
 	select {
 	case <-blockerStarted:
 	case <-ctx.Done():
 		t.Fatal("blocker did not start")
 	}
-	target := bus.Emit(abxbus.NewBaseEvent("DoneOutsideHandlerTargetEvent", nil))
+	target := bus.Emit(abxbus.NewBaseEvent("WaitOutsideHandlerTargetEvent", nil))
 	doneCh := make(chan error, 1)
 	go func() {
 		_, err := target.Wait()
@@ -178,7 +178,7 @@ func TestDoneOutsideHandlerPreservesNormalQueueOrder(t *testing.T) {
 	}()
 	time.Sleep(50 * time.Millisecond)
 	if strings.Join(order, ",") != "blocker_start" {
-		t.Fatalf("Now outside handlers should not queue-jump target, got %v", order)
+		t.Fatalf("Wait outside handlers should not queue-jump target, got %v", order)
 	}
 	close(releaseBlocker)
 	if err := <-doneCh; err != nil {
@@ -193,8 +193,8 @@ func TestDoneOutsideHandlerPreservesNormalQueueOrder(t *testing.T) {
 	}
 }
 
-func TestDoneOutsideHandlerAllowsNormalParallelProcessing(t *testing.T) {
-	bus := abxbus.NewEventBus("DoneOutsideHandlerParallelQueueOrderBus", &abxbus.EventBusOptions{
+func TestNowOutsideHandlerAllowsNormalParallelProcessing(t *testing.T) {
+	bus := abxbus.NewEventBus("NowOutsideHandlerParallelQueueOrderBus", &abxbus.EventBusOptions{
 		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
 	})
@@ -202,27 +202,27 @@ func TestDoneOutsideHandlerAllowsNormalParallelProcessing(t *testing.T) {
 	blockerStarted := make(chan struct{})
 	releaseBlocker := make(chan struct{})
 
-	bus.On("DoneOutsideHandlerParallelBlockerEvent", "blocker", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("NowOutsideHandlerParallelBlockerEvent", "blocker", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		order = append(order, "blocker_start")
 		close(blockerStarted)
 		<-releaseBlocker
 		order = append(order, "blocker_end")
 		return nil, nil
 	}, nil)
-	bus.On("DoneOutsideHandlerParallelTargetEvent", "target", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("NowOutsideHandlerParallelTargetEvent", "target", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		order = append(order, "target")
 		return nil, nil
 	}, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	bus.Emit(abxbus.NewBaseEvent("DoneOutsideHandlerParallelBlockerEvent", nil))
+	bus.Emit(abxbus.NewBaseEvent("NowOutsideHandlerParallelBlockerEvent", nil))
 	select {
 	case <-blockerStarted:
 	case <-ctx.Done():
 		t.Fatal("blocker did not start")
 	}
-	target := abxbus.NewBaseEvent("DoneOutsideHandlerParallelTargetEvent", nil)
+	target := abxbus.NewBaseEvent("NowOutsideHandlerParallelTargetEvent", nil)
 	target.EventConcurrency = abxbus.EventConcurrencyParallel
 	target = bus.Emit(target)
 	doneCh := make(chan error, 1)
@@ -277,12 +277,12 @@ func TestWaitReturnsEventWithoutForcingQueuedExecution(t *testing.T) {
 		t.Fatal("blocker did not start")
 	}
 	target := bus.Emit(abxbus.NewBaseEvent("WaitPassiveTargetEvent", nil))
-	waitDone := make(chan *abxbus.BaseEvent, 1)
+	waitedEvent := make(chan *abxbus.BaseEvent, 1)
 	waitErr := make(chan error, 1)
 	timeout := 1.0
 	go func() {
 		event, err := target.Wait(&abxbus.EventWaitOptions{Timeout: &timeout})
-		waitDone <- event
+		waitedEvent <- event
 		waitErr <- err
 	}()
 	time.Sleep(50 * time.Millisecond)
@@ -293,7 +293,7 @@ func TestWaitReturnsEventWithoutForcingQueuedExecution(t *testing.T) {
 	if err := <-waitErr; err != nil {
 		t.Fatal(err)
 	}
-	if <-waitDone != target {
+	if <-waitedEvent != target {
 		t.Fatal("Wait should return the event")
 	}
 	if strings.Join(order, ",") != "blocker_start,blocker_end,target" {
@@ -331,12 +331,12 @@ func TestNowReturnsEventAndQueueJumpsQueuedExecution(t *testing.T) {
 		t.Fatal("blocker did not start")
 	}
 	target := bus.Emit(abxbus.NewBaseEvent("NowActiveTargetEvent", nil))
-	nowDone := make(chan *abxbus.BaseEvent, 1)
+	processedEvent := make(chan *abxbus.BaseEvent, 1)
 	nowErr := make(chan error, 1)
 	timeout := 1.0
 	go func() {
 		event, err := target.Now(&abxbus.EventWaitOptions{Timeout: &timeout})
-		nowDone <- event
+		processedEvent <- event
 		nowErr <- err
 	}()
 	time.Sleep(50 * time.Millisecond)
@@ -346,7 +346,7 @@ func TestNowReturnsEventAndQueueJumpsQueuedExecution(t *testing.T) {
 	if err := <-nowErr; err != nil {
 		t.Fatal(err)
 	}
-	if <-nowDone != target {
+	if <-processedEvent != target {
 		t.Fatal("Now should return the event")
 	}
 	close(releaseBlocker)
@@ -590,6 +590,74 @@ func TestEventResultsListStartsNeverStartedEventAndReturnsAllResults(t *testing.
 	close(releaseBlocker)
 }
 
+func TestEventResultHelpersDoNotWaitForStartedEvent(t *testing.T) {
+	noTimeout := 0.0
+	bus := abxbus.NewEventBus("EventResultHelpersStartedBus", &abxbus.EventBusOptions{
+		EventConcurrency:        abxbus.EventConcurrencyParallel,
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
+		EventTimeout:            &noTimeout,
+	})
+	handlerStarted := make(chan struct{})
+	releaseHandler := make(chan struct{})
+	bus.On("EventResultHelpersStartedEvent", "slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		close(handlerStarted)
+		<-releaseHandler
+		return "late", nil
+	}, nil)
+
+	event := bus.Emit(abxbus.NewBaseEvent("EventResultHelpersStartedEvent", nil))
+	<-handlerStarted
+
+	if event.EventStatus != "started" {
+		t.Fatalf("expected started event, got %s", event.EventStatus)
+	}
+	resultCh := make(chan any, 1)
+	resultErrCh := make(chan error, 1)
+	go func() {
+		result, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfNone: false})
+		resultCh <- result
+		resultErrCh <- err
+	}()
+	select {
+	case err := <-resultErrCh:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(50 * time.Millisecond):
+		t.Fatal("EventResult should not wait for a started event")
+	}
+	if result := <-resultCh; result != nil {
+		t.Fatalf("expected nil current result, got %#v", result)
+	}
+
+	resultsCh := make(chan []any, 1)
+	resultsErrCh := make(chan error, 1)
+	go func() {
+		results, err := event.EventResultsList(&abxbus.EventResultOptions{RaiseIfNone: false})
+		resultsCh <- results
+		resultsErrCh <- err
+	}()
+	select {
+	case err := <-resultsErrCh:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(50 * time.Millisecond):
+		t.Fatal("EventResultsList should not wait for a started event")
+	}
+	if results := <-resultsCh; len(results) != 0 {
+		t.Fatalf("expected no current results, got %#v", results)
+	}
+	if event.EventStatus != "started" {
+		t.Fatalf("result helpers should not complete the event, got %s", event.EventStatus)
+	}
+	close(releaseHandler)
+	timeout := 1.0
+	if !bus.WaitUntilIdle(&timeout) {
+		t.Fatal("timed out waiting for bus")
+	}
+}
+
 func TestNowOnAlreadyExecutingEventWaitsWithoutDuplicateExecution(t *testing.T) {
 	noTimeout := 0.0
 	bus := abxbus.NewEventBus("NowAlreadyExecutingBus", &abxbus.EventBusOptions{
@@ -647,6 +715,7 @@ func TestEventResultOptionsApplyToCurrentResults(t *testing.T) {
 		return nil, errors.New("option boom")
 	}, nil)
 	bus.On("EventResultOptionsCurrentResultsEvent", "keep", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		time.Sleep(10 * time.Millisecond)
 		return "keep", nil
 	}, nil)
 	bus.On("EventResultOptionsCurrentResultsEvent", "slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
@@ -681,13 +750,13 @@ func TestEventResultOptionsApplyToCurrentResults(t *testing.T) {
 	close(releaseSlow)
 }
 
-func TestBaseEventDoneOutsideHandlerNoArgs(t *testing.T) {
-	bus := abxbus.NewEventBus("BaseEventDoneOutsideNoArgsBus", nil)
-	bus.On("DoneOutsideNoArgsEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+func TestBaseEventNowOutsideHandlerNoArgs(t *testing.T) {
+	bus := abxbus.NewEventBus("BaseEventNowOutsideNoArgsBus", nil)
+	bus.On("NowOutsideNoArgsEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		return nil, errors.New("outside failure")
 	}, nil)
 
-	event := bus.Emit(abxbus.NewBaseEvent("DoneOutsideNoArgsEvent", nil))
+	event := bus.Emit(abxbus.NewBaseEvent("NowOutsideNoArgsEvent", nil))
 	if _, err := event.Now(); err != nil {
 		t.Fatalf("Now should wait without surfacing handler errors, got %v", err)
 	}
@@ -699,13 +768,13 @@ func TestBaseEventDoneOutsideHandlerNoArgs(t *testing.T) {
 	}
 }
 
-func TestBaseEventDoneOutsideHandlerWithArgs(t *testing.T) {
-	bus := abxbus.NewEventBus("BaseEventDoneOutsideArgsBus", nil)
-	bus.On("DoneOutsideArgsEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+func TestBaseEventNowOutsideHandlerWithArgs(t *testing.T) {
+	bus := abxbus.NewEventBus("BaseEventNowOutsideArgsBus", nil)
+	bus.On("NowOutsideArgsEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		return nil, errors.New("outside suppressed failure")
 	}, nil)
 
-	event := bus.Emit(abxbus.NewBaseEvent("DoneOutsideArgsEvent", nil))
+	event := bus.Emit(abxbus.NewBaseEvent("NowOutsideArgsEvent", nil))
 	if _, err := event.Now(); err != nil {
 		t.Fatalf("RaiseIfAny=false should only wait for completion, got %v", err)
 	}
@@ -1195,7 +1264,7 @@ func TestWaitWaitsForFutureParallelEventFoundAfterHandlerStarts(t *testing.T) {
 		t.Fatal("timed out waiting for bus to become idle")
 	}
 	if waited := <-waitedFor; waited < 150*time.Millisecond {
-		t.Fatalf("event_completed returned too early; waited %s", waited)
+		t.Fatalf("wait returned too early; waited %s", waited)
 	}
 }
 

@@ -716,8 +716,8 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                 return self.result
 
         except asyncio.CancelledError as exc:
-            if 'first() resolved' in str(exc):
-                handler_interrupted_error = EventHandlerAbortedError('Aborted: first() resolved')
+            if 'first result resolved' in str(exc):
+                handler_interrupted_error = EventHandlerAbortedError('Aborted: first result resolved')
             else:
                 handler_interrupted_error = EventHandlerAbortedError(
                     f'Event handler {self.handler.label}({event}) was interrupted because of a parent timeout'
@@ -1332,7 +1332,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     ) -> None:
         if event_result.status in ('completed', 'error'):
             return
-        event_result.update(error=EventHandlerCancelledError('Cancelled: first() resolved'))
+        event_result.update(error=EventHandlerCancelledError('Cancelled: first result resolved'))
         await eventbus.on_event_result_change(self, event_result, EventStatus.COMPLETED)
 
     async def _run_handlers(
@@ -1397,7 +1397,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
                     if winner_handler_id is not None:
                         for pending_task in pending_tasks:
-                            pending_task.cancel('first() resolved')
+                            pending_task.cancel('first result resolved')
                         if pending_tasks:
                             await asyncio.gather(*pending_tasks, return_exceptions=True)
 
@@ -1477,10 +1477,10 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     def _is_first_mode_control_error(error: BaseException | None) -> bool:
         if error is None:
             return False
-        if 'first() resolved' in str(error):
+        if 'first result resolved' in str(error):
             return True
         cause = getattr(error, '__cause__', None)
-        return isinstance(cause, BaseException) and 'first() resolved' in str(cause)
+        return isinstance(cause, BaseException) and 'first result resolved' in str(cause)
 
     def _is_unattached_pending_event(self) -> bool:
         return (
@@ -1537,12 +1537,6 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         self._mark_blocks_parent_completion_if_awaited_from_emitting_handler()
         if self.event_status == EventStatus.PENDING and not self._event_is_complete_flag:
             await self.now(first_result=True)
-        elif (
-            self.event_status != EventStatus.COMPLETED
-            and not self._event_is_complete_flag
-            and not self._has_included_event_result(include)
-        ):
-            await self.wait(first_result=True)
 
         valid_results, error_results = self._sorted_included_event_results(
             include,
@@ -1587,7 +1581,6 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     ) -> list[T_EventResultType | None]:
         """Get all result values in a list [handler1_result, handler2_result, ...]"""
         include = include or self._event_result_is_truthy
-        self._mark_blocks_parent_completion_if_awaited_from_emitting_handler()
         if self.event_status == EventStatus.PENDING and not self._event_is_complete_flag:
             await self.now(first_result=False)
 

@@ -80,6 +80,6 @@ func TestWaitChildDispatchPreservesHandlerContext(t *testing.T) {
 		t.Fatal("timed out waiting for bus to become idle")
 	}
 	if childSeen != "trace-789" {
-		t.Fatalf("child handler did not receive parent handler context through event_completed, got %q", childSeen)
+		t.Fatalf("child handler did not receive parent handler context through wait, got %q", childSeen)
 	}
 }

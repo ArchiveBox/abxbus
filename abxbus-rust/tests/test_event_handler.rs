@@ -114,7 +114,7 @@ fn test_event_handler_completion_bus_default_first_serial() {
         .error
         .as_deref()
         .unwrap_or_default()
-        .contains("Cancelled: first() resolved"));
+        .contains("Cancelled: first result resolved"));
     bus.stop();
 }
 
@@ -231,7 +231,7 @@ fn test_event_parallel_first_races_and_cancels_non_winners() {
         .error
         .as_deref()
         .unwrap_or_default()
-        .contains("first() resolved")));
+        .contains("first result resolved")));
     bus.stop();
 }
 
@@ -315,7 +315,7 @@ fn test_event_handler_completion_first_cancels_parallel_losers() {
                 .error
                 .as_deref()
                 .unwrap_or_default()
-                .contains("first() resolved")));
+                .contains("first result resolved")));
     bus.stop();
 }
 
@@ -505,7 +505,7 @@ fn test_event_first_skips_baseevent_result_and_uses_next_winner() {
                 .error
                 .as_deref()
                 .unwrap_or_default()
-                .contains("first() resolved")
+                .contains("first result resolved")
     }));
     bus.stop();
 }

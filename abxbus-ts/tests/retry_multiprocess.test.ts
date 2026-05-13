@@ -95,7 +95,7 @@ test('retry: semaphore_scope=multiprocess serializes across JS processes', async
   }
 })
 
-test('retry: semaphore_scope=multiprocess contends with Python retry() using the same semaphore name', async (t) => {
+test('retry: semaphore_scope=multiprocess contends with Python retry() using the same semaphore name', async () => {
   const local_venv_python = resolve(
     repo_root,
     '.venv',
@@ -115,8 +115,7 @@ test('retry: semaphore_scope=multiprocess contends with Python retry() using the
     return probe.status === 0
   })
   if (!python) {
-    t.skip('python abxbus runtime is unavailable for cross-language multiprocess test')
-    return
+    throw new Error('python abxbus runtime is unavailable for cross-language multiprocess test')
   }
 
   const semaphore_name = `retry-crosslang-${Date.now()}-${Math.random().toString(16).slice(2)}`

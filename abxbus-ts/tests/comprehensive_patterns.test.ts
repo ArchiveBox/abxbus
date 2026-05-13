@@ -329,7 +329,7 @@ test('awaited parallel queue-jump child does not pause later parallel child even
   const ChildEvent = BaseEvent.extend('ParallelPauseChildEvent', {
     name: z.string(),
   })
-  const DoneEvent = BaseEvent.extend('ParallelPauseDoneEvent', {
+  const ObservedEvent = BaseEvent.extend('ParallelPauseObservedEvent', {
     name: z.string(),
   })
   const log: string[] = []
@@ -344,7 +344,7 @@ test('awaited parallel queue-jump child does not pause later parallel child even
 
     event.emit(ChildEvent({ name: 'bg', event_concurrency: 'parallel' } as any))
     log.push('parent_after_bg_emit')
-    const found = await bus.find(DoneEvent, (candidate) => candidate.name === 'bg', {
+    const found = await bus.find(ObservedEvent, (candidate) => candidate.name === 'bg', {
       past: true,
       future: 0.2,
     })
@@ -355,13 +355,13 @@ test('awaited parallel queue-jump child does not pause later parallel child even
   bus.on(ChildEvent, async (event) => {
     log.push(`child_start_${event.name}`)
     if (event.name === 'bg') {
-      event.emit(DoneEvent({ name: 'bg' }))
+      event.emit(ObservedEvent({ name: 'bg' }))
     }
     log.push(`child_end_${event.name}`)
     return event.name
   })
-  bus.on(DoneEvent, () => {
-    log.push('done_seen')
+  bus.on(ObservedEvent, () => {
+    log.push('observed_seen')
   })
 
   const parent = bus.emit(ParentEvent({ event_timeout: 0 }))

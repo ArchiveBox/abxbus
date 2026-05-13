@@ -711,7 +711,7 @@ func defaultEventResultOptions(options ...*EventResultOptions) *EventResultOptio
 }
 
 func (e *BaseEvent) ensureResultsReady(ctx context.Context, firstResult bool) error {
-	if e.hasAnySettledResult() {
+	if e.status() != "pending" || e.hasAnySettledResult() {
 		return nil
 	}
 	if firstResult {

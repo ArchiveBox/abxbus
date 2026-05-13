@@ -76,7 +76,7 @@ func TestOtelTracingMiddlewareNamesEventAndHandlerSpansForDisplay(t *testing.T) 
 		Tracer: provider.Tracer("abxbus-test"),
 	})
 	bus := abxbus.NewEventBus("StagehandExtensionBackground", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
-	t.Cleanup(bus.Destroy)
+	t.Cleanup(bus.Stop)
 	bus.On("CDPConnect", "DebuggerClient.on_CDPConnect", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		return "connected", nil
 	}, nil)
@@ -150,7 +150,7 @@ func TestOtelTracingMiddlewareWaitsUntilTopLevelEventCompletionBeforeEndingSpans
 		Tracer: provider.Tracer("abxbus-test"),
 	})
 	bus := abxbus.NewEventBus("OtelRootStartBus", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
-	t.Cleanup(bus.Destroy)
+	t.Cleanup(bus.Stop)
 
 	started := make(chan struct{})
 	release := make(chan struct{})

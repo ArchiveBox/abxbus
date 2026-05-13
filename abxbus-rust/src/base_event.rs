@@ -329,8 +329,15 @@ impl BaseEvent {
                 return Ok(self.clone());
             }
             let event_for_queue_jump = self.clone();
+            let initiating_context =
+                crate::event_bus::EventBus::mark_blocks_parent_completion_if_awaited(self.clone());
             thread::spawn(move || {
-                crate::event_bus::EventBus::queue_jump_if_waited(event_for_queue_jump);
+                futures::executor::block_on(
+                    crate::event_bus::EventBus::queue_jump_if_waited_async_with_context(
+                        event_for_queue_jump,
+                        initiating_context,
+                    ),
+                );
             });
             if !self
                 .first_result_or_completion_with_timeout(options.timeout)
@@ -345,7 +352,11 @@ impl BaseEvent {
             }
             return Ok(self.clone());
         }
-        crate::event_bus::EventBus::queue_jump_if_waited(self.clone());
+        if crate::event_bus::EventBus::is_inside_handler_context() {
+            crate::event_bus::EventBus::queue_jump_if_waited_from_handler(self.clone());
+        } else {
+            crate::event_bus::EventBus::queue_jump_if_waited(self.clone());
+        }
         if self.event_completed_with_timeout(options.timeout).await {
             Ok(self.clone())
         } else {
@@ -483,16 +494,6 @@ impl BaseEvent {
                 })
                 .await
                 .map(|_| ());
-        }
-        if first_result {
-            if self.has_valid_result() {
-                return Ok(());
-            }
-            self.wait_with_options(EventWaitOptions {
-                timeout: None,
-                first_result: true,
-            })
-            .await?;
         }
         Ok(())
     }
