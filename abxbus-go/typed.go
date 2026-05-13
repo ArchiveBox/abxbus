@@ -267,8 +267,8 @@ func OnTyped[TPayload any, TResult any, THandler TypedEventHandler[TPayload, TRe
 			if handlerType.NumIn() != 1 && handlerType.NumIn() != 2 {
 				return zero, fmt.Errorf("unsupported typed handler signature: %T", handler)
 			}
-			payloadValue := reflect.ValueOf(payload)
-			if !payloadValue.Type().AssignableTo(handlerType.In(0)) {
+			payloadValue, ok := reflectValueForTypedPayload(payload, handlerType.In(0))
+			if !ok {
 				return zero, fmt.Errorf("unsupported typed handler signature: %T", handler)
 			}
 			withContext := handlerType.NumIn() == 2
@@ -314,6 +314,19 @@ func OnTyped[TPayload any, TResult any, THandler TypedEventHandler[TPayload, TRe
 			}
 		}
 	}, options)
+}
+
+func reflectValueForTypedPayload(payload any, targetType reflect.Type) (reflect.Value, bool) {
+	payloadValue := reflect.ValueOf(payload)
+	if payloadValue.IsValid() {
+		return payloadValue, payloadValue.Type().AssignableTo(targetType)
+	}
+	switch targetType.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflect.Zero(targetType), true
+	default:
+		return reflect.Value{}, false
+	}
 }
 
 func EventPayloadAs[T any](event *BaseEvent) (T, error) {

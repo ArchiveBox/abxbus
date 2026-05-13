@@ -966,6 +966,7 @@ type namedBaseNoContextHandler func(*abxbus.BaseEvent) error
 type namedBaseWithContextHandler func(*abxbus.BaseEvent, context.Context) (any, error)
 type namedTypedNoContextHandler func(addPayload) addResult
 type namedTypedWithContextHandler func(addPayload, context.Context) (addResult, error)
+type namedTypedAnyHandler func(any) (addResult, error)
 
 func TestEmitAcceptsTypedStructAndDerivesPayloadAndConfig(t *testing.T) {
 	bus := abxbus.NewEventBus("StructEmitBus", nil)
@@ -1156,6 +1157,33 @@ func TestOnTypedSupportsNamedHandlerFunctionTypes(t *testing.T) {
 	}
 	if contextTypedResult.Sum != 13 || !gotCtx {
 		t.Fatalf("expected named typed context result sum=13 and ctx=true, got result=%#v ctx=%v", contextTypedResult, gotCtx)
+	}
+}
+
+func TestOnTypedNamedAnyHandlerAcceptsNilPayload(t *testing.T) {
+	bus := abxbus.NewEventBus("TypedNamedAnyNilPayloadBus", nil)
+	called := false
+
+	abxbus.OnTyped[any, addResult](bus, "TypedNamedAnyNilPayloadEvent", "typed", namedTypedAnyHandler(func(payload any) (addResult, error) {
+		called = true
+		if payload != nil {
+			t.Fatalf("expected nil payload, got %#v", payload)
+		}
+		return addResult{Sum: 1}, nil
+	}), nil)
+
+	event := abxbus.NewBaseEvent("TypedNamedAnyNilPayloadEvent", nil)
+	event.Payload = nil
+	result, err := bus.Emit(event).EventResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	typedResult, err := abxbus.EventResultAs[addResult](result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if typedResult.Sum != 1 || !called {
+		t.Fatalf("expected named typed any handler to receive nil payload and return sum=1, got result=%#v called=%v", typedResult, called)
 	}
 }
 
