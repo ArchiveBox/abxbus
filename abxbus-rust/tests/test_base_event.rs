@@ -66,6 +66,13 @@ event! {
     }
 }
 event! {
+    struct BaseEventAttachedMutationEvent {
+        value: String,
+        event_result_type: String,
+        event_type: "BaseEventAttachedMutationEvent",
+    }
+}
+event! {
     struct BaseEventImmediateParentEvent {
         event_result_type: String,
         event_type: "BaseEventImmediateParentEvent",
@@ -2747,6 +2754,31 @@ fn test_builtin_event_prefixed_override_is_allowed() {
     assert_eq!(inner.event_timeout, Some(123.0));
     assert_eq!(inner.event_slow_timeout, Some(9.0));
     assert_eq!(inner.event_handler_timeout, Some(45.0));
+    drop(inner);
+    bus.destroy();
+}
+
+#[test]
+fn test_attached_typed_event_mutations_sync_to_inner_event() {
+    let _guard = test_guard();
+    let bus = EventBus::new(Some("BaseEventAttachedMutationBus".to_string()));
+    let emitted = bus.emit(BaseEventAttachedMutationEvent {
+        value: "before".to_string(),
+        event_timeout: Some(1.0),
+        ..Default::default()
+    });
+    let mut mutated = emitted.clone();
+    mutated.value = "after".to_string();
+    mutated.event_timeout = Some(2.0);
+
+    let json_value = mutated.to_json_value();
+    assert_eq!(json_value["value"], "after");
+    assert_eq!(json_value["event_timeout"], 2.0);
+
+    let inner = mutated._inner_event();
+    let inner = inner.inner.lock();
+    assert_eq!(inner.payload.get("value"), Some(&json!("after")));
+    assert_eq!(inner.event_timeout, Some(2.0));
     drop(inner);
     bus.destroy();
 }

@@ -394,7 +394,8 @@ impl BaseEvent {
         }
     }
 
-    fn ensure_attached_or_completed(&self) -> Result<(), String> {
+    #[doc(hidden)]
+    pub fn ensure_attached_or_completed(&self) -> Result<(), String> {
         let event = self.inner.lock();
         if event.event_status == EventStatus::Pending
             && event.event_path.is_empty()

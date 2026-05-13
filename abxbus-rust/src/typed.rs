@@ -268,13 +268,14 @@ pub trait TypedEventObject:
 
     #[doc(hidden)]
     fn _inner_event(&self) -> Arc<RawBaseEvent> {
-        if let Some(event) = self._attached_inner_event() {
-            return event;
-        }
         let value = serde_json::to_value(self).expect("event payload serialization failed");
         let Value::Object(payload_map) = value else {
             panic!("event payload must serialize to a JSON object");
         };
+        if let Some(event) = Self::attached_inner_event_from_payload(&payload_map) {
+            sync_inner_event_from_payload::<Self>(&event, payload_map);
+            return event;
+        }
         build_inner_event_from_payload::<Self>(payload_map)
     }
 
@@ -282,6 +283,17 @@ pub trait TypedEventObject:
     fn _attached_inner_event(&self) -> Option<Arc<RawBaseEvent>> {
         let value = serde_json::to_value(self).ok()?;
         let event_id = value
+            .get("event_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        EventBus::event_for_event_id(event_id)
+    }
+
+    #[doc(hidden)]
+    fn attached_inner_event_from_payload(
+        payload_map: &Map<String, Value>,
+    ) -> Option<Arc<RawBaseEvent>> {
+        let event_id = payload_map
             .get("event_id")
             .and_then(Value::as_str)
             .unwrap_or_default();
@@ -345,6 +357,31 @@ where
         }
     }
     inner
+}
+
+#[doc(hidden)]
+pub fn sync_inner_event_from_payload<E>(event: &Arc<RawBaseEvent>, payload_map: Map<String, Value>)
+where
+    E: EventSpec,
+{
+    let updated = build_inner_event_from_payload::<E>(payload_map);
+    let updated = updated.inner.lock();
+    let mut current = event.inner.lock();
+    current.event_type = updated.event_type.clone();
+    current.event_version = updated.event_version.clone();
+    current.event_timeout = updated.event_timeout;
+    current.event_slow_timeout = updated.event_slow_timeout;
+    current.event_concurrency = updated.event_concurrency;
+    current.event_handler_timeout = updated.event_handler_timeout;
+    current.event_handler_slow_timeout = updated.event_handler_slow_timeout;
+    current.event_handler_concurrency = updated.event_handler_concurrency;
+    current.event_handler_completion = updated.event_handler_completion;
+    current.event_blocks_parent_completion = updated.event_blocks_parent_completion;
+    current.event_result_type = updated.event_result_type.clone();
+    current.event_parent_id = updated.event_parent_id.clone();
+    current.event_emitted_by_handler_id = updated.event_emitted_by_handler_id.clone();
+    current.event_created_at = updated.event_created_at.clone();
+    current.payload = updated.payload.clone();
 }
 
 #[doc(hidden)]
@@ -1147,8 +1184,9 @@ macro_rules! _inner_event_parse {
             }
 
             fn inner_event(&self) -> Result<std::sync::Arc<$crate::base_event::BaseEvent>, String> {
-                $crate::typed::TypedEventObject::_attached_inner_event(self)
-                    .ok_or_else(|| "event has no bus attached".to_string())
+                let event = $crate::typed::TypedEventObject::_inner_event(self);
+                event.ensure_attached_or_completed()?;
+                Ok(event)
             }
 
             #[doc(hidden)]

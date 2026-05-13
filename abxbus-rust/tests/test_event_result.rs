@@ -1148,6 +1148,10 @@ fn test_base_event_from_json_preserves_event_results_object_registration_order()
 #[test]
 fn test_eventresultslist_supports_include_raise_if_any_raise_if_none_arguments() {
     let _guard = event_result_test_guard();
+    eventresultslist_supports_include_raise_if_any_raise_if_none_arguments();
+}
+
+fn eventresultslist_supports_include_raise_if_any_raise_if_none_arguments() {
     let error_bus = EventBus::new(Some("EventResultsListErrorsBus".to_string()));
     error_bus.on_raw("AccessorEvent", "failing_handler", |_event| async move {
         Err("boom".to_string())
@@ -1422,7 +1426,8 @@ fn test_event_result_default_options_contract() {
 
 #[test]
 fn test_eventresultslist_supports_timeout_include_raise_if_any_raise_if_none_arguments() {
-    test_eventresultslist_supports_include_raise_if_any_raise_if_none_arguments();
+    let _guard = event_result_test_guard();
+    eventresultslist_supports_include_raise_if_any_raise_if_none_arguments();
 
     let include_bus = EventBus::new(Some("EventResultsListIncludeBus".to_string()));
     include_bus.on_raw("IncludeEvent", "keep_handler", |_event| async move {
