@@ -1273,5 +1273,4 @@ Timeline:
 - 2025-10 `v1.5.1`: Browser-Use v0.6.0 released, first version powered by `bubus`
 - 2025-11 `v1.7.1`: `bubus` forked to `pirate/bbus` temporarily; `ContextVar` support, `Middlewares`, and `bus.find()` added
 - 2026-01 `v2.3.2`: `bubus-ts` Typescript implementation released, cross-compatible with Python version (now `abxbus-ts`)
-- 2026-03 `v2.4.1`: Fork renamed from `pirate/bbus -> ArchiveBox/abxbus`; added dual `CJS`/`ESM` support, bugfixes and perf improvmeents
-- 2026-03 `v2.4.9`: Added `update()`, `uninstall()`, and support for `uv`, `gem`, `cargo`, `go get`, `docker`, and `nix`. Used in new [`abx-dl`](https://github.com/ArchiveBox/abx-dl) project and [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox).
+- 2026-03 `v2.4.1`: Fork renamed from `pirate/bbus -> ArchiveBox/abxbus`; added dual `CJS`/`ESM` support, bugfixes and perf improvments
