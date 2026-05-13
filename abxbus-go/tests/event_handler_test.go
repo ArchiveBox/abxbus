@@ -97,6 +97,41 @@ func TestEventBusOnSupportsEventFirstOptionalContextHandlerSignatures(t *testing
 	}
 }
 
+type nilNamedHandler func(*abxbus.BaseEvent) error
+
+func TestEventBusOnTreatsTypedNilHandlersAsNoop(t *testing.T) {
+	bus := abxbus.NewEventBus("TypedNilHandlerBus", nil)
+
+	var direct abxbus.EventHandlerCallable
+	var valueError func(*abxbus.BaseEvent) (any, error)
+	var valueErrorCtx func(*abxbus.BaseEvent, context.Context) (any, error)
+	var errorOnly func(*abxbus.BaseEvent) error
+	var errorOnlyCtx func(*abxbus.BaseEvent, context.Context) error
+	var voidOnly func(*abxbus.BaseEvent)
+	var voidCtx func(*abxbus.BaseEvent, context.Context)
+	var named nilNamedHandler
+
+	bus.On("TypedNilHandlerEvent", "direct", direct, nil)
+	bus.On("TypedNilHandlerEvent", "value_error", valueError, nil)
+	bus.On("TypedNilHandlerEvent", "value_error_ctx", valueErrorCtx, nil)
+	bus.On("TypedNilHandlerEvent", "error_only", errorOnly, nil)
+	bus.On("TypedNilHandlerEvent", "error_only_ctx", errorOnlyCtx, nil)
+	bus.On("TypedNilHandlerEvent", "void", voidOnly, nil)
+	bus.On("TypedNilHandlerEvent", "void_ctx", voidCtx, nil)
+	bus.On("TypedNilHandlerEvent", "named", named, nil)
+
+	values, err := bus.Emit(abxbus.NewBaseEvent("TypedNilHandlerEvent", nil)).EventResultsList(&abxbus.EventResultOptions{
+		RaiseIfAny:  true,
+		RaiseIfNone: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 0 {
+		t.Fatalf("typed nil handlers should be no-ops, got values %#v", values)
+	}
+}
+
 // Folded from event_handler_ids_test.go to keep test layout class-based.
 func TestBusAndEventIDsAreUUIDv7(t *testing.T) {
 	bus := abxbus.NewEventBus("BusId", nil)

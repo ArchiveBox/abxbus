@@ -97,6 +97,10 @@ func (h *EventHandler) Handle(ctx context.Context, event *BaseEvent) (any, error
 func (h *EventHandler) ToJSON() ([]byte, error) { return json.Marshal(h) }
 
 func normalizeEventHandlerCallable(handler any) (EventHandlerCallable, error) {
+	value := reflect.ValueOf(handler)
+	if value.IsValid() && value.Kind() == reflect.Func && value.IsNil() {
+		return nil, nil
+	}
 	switch typed := handler.(type) {
 	case nil:
 		return nil, nil
@@ -127,7 +131,6 @@ func normalizeEventHandlerCallable(handler any) (EventHandlerCallable, error) {
 			return nil, nil
 		}, nil
 	default:
-		value := reflect.ValueOf(handler)
 		if !value.IsValid() || value.Kind() != reflect.Func || value.IsNil() {
 			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
 		}
