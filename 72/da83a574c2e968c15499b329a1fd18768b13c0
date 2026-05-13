@@ -1,0 +1,51 @@
+abxbus-go/base_event.go
+  s_6a8c07f028b30c::t_2bda17a8b096e0 264
+abxbus-ts/src/logging.ts
+  305ee7dbd16b3e44 188-190
+abxbus-ts/tests/EventBus_serialization.test.ts
+  s_6a8c07f028b30c::t_4fefd83d583a40 148-170
+abxbus-ts/tests/cross_runtime_roundtrip.test.ts
+  s_6a8c07f028b30c::t_f5bf0a3dff30cb 1054,1066-1070,1088
+  6a8c07f028b30c43 959,971-975,993
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "72da83a574c2e968c15499b329a1fd18768b13c0",
+  "prompts": {
+    "305ee7dbd16b3e44": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019dce22-d203-71d0-966d-c3304c639b70",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "total_additions": 72,
+      "total_deletions": 52,
+      "accepted_lines": 17,
+      "overriden_lines": 0
+    },
+    "6a8c07f028b30c43": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting",
+      "total_additions": 1690,
+      "total_deletions": 1482,
+      "accepted_lines": 1929,
+      "overriden_lines": 0
+    }
+  },
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
