@@ -290,7 +290,11 @@ func TestEventResultsListDefaultsFilterEmptyValuesRaiseErrorsAndOptionsOverride(
 		return "drop", nil
 	}, nil)
 	seenHandlerNames := []string{}
-	filteredValues, err := bus.Emit(abxbus.NewBaseEvent("ResultOptionsIncludeEvent", nil)).EventResultsList(&abxbus.EventResultOptions{
+	includeEvent := bus.Emit(abxbus.NewBaseEvent("ResultOptionsIncludeEvent", nil))
+	if _, err := includeEvent.Now(); err != nil {
+		t.Fatal(err)
+	}
+	filteredValues, err := includeEvent.EventResultsList(&abxbus.EventResultOptions{
 		RaiseIfAny:  false,
 		RaiseIfNone: true,
 		Include: func(result any, eventResult *abxbus.EventResult) bool {

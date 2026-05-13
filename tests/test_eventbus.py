@@ -1740,7 +1740,8 @@ class TestEventResults:
         eventbus.on('ResultOptionsDefaultEvent', none_handler)
         eventbus.on('ResultOptionsDefaultEvent', forwarded_event_handler)
 
-        event = await eventbus.emit(BaseEvent(event_type='ResultOptionsDefaultEvent'))
+        event = eventbus.emit(BaseEvent(event_type='ResultOptionsDefaultEvent'))
+        await event.now()
         assert await event.event_results_list() == ['ok']
 
         async def error_ok_handler(event):
@@ -1752,13 +1753,15 @@ class TestEventResults:
         eventbus.on('ResultOptionsErrorEvent', error_ok_handler)
         eventbus.on('ResultOptionsErrorEvent', error_handler)
 
-        error_event = await eventbus.emit(BaseEvent(event_type='ResultOptionsErrorEvent'))
+        error_event = eventbus.emit(BaseEvent(event_type='ResultOptionsErrorEvent'))
+        await error_event.now()
         with pytest.raises(ValueError, match='boom'):
             await error_event.event_results_list()
         assert await error_event.event_results_list(raise_if_any=False, raise_if_none=True) == ['ok']
 
         eventbus.on('ResultOptionsEmptyEvent', none_handler)
-        empty_event = await eventbus.emit(BaseEvent(event_type='ResultOptionsEmptyEvent'))
+        empty_event = eventbus.emit(BaseEvent(event_type='ResultOptionsEmptyEvent'))
+        await empty_event.now()
         with pytest.raises(ValueError, match='Expected at least one handler'):
             await empty_event.event_results_list(raise_if_none=True)
         assert await empty_event.event_results_list(raise_if_any=False, raise_if_none=False) == []
@@ -1777,7 +1780,8 @@ class TestEventResults:
             seen_handler_names.append(event_result.handler_name)
             return result == 'keep'
 
-        included_event = await eventbus.emit(BaseEvent(event_type='ResultOptionsIncludeEvent'))
+        included_event = eventbus.emit(BaseEvent(event_type='ResultOptionsIncludeEvent'))
+        await included_event.now()
         filtered_values = await included_event.event_results_list(
             include=include_keep,
             raise_if_any=False,

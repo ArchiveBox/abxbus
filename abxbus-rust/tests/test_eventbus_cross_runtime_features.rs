@@ -274,7 +274,7 @@ fn test_concurrency_intersection_parallel_events_with_serial_handlers_stays_seri
 }
 
 #[test]
-fn test_timeout_enforcement_preserves_follow_up_processing_and_queue_state() {
+fn test_timeout_enforcement_does_not_break_followup_processing_or_queue_state() {
     let bus = EventBus::new_with_options(
         Some("ParityTimeoutEnforcementBus".to_string()),
         EventBusOptions {

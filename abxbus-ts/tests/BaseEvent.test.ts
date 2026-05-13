@@ -475,7 +475,7 @@ test('now: timeout limits caller wait and background processing continues', asyn
   bus.destroy()
 })
 
-test('eventResult: starts never-started event and returns first result', async () => {
+test('test_event_result_starts_never_started_event_and_returns_first_result', async () => {
   const BlockerEvent = BaseEvent.extend('EventResultShortcutBlockerEvent', {})
   const TargetEvent = BaseEvent.extend('EventResultShortcutTargetEvent', { event_result_type: z.string() })
   const bus = new EventBus('EventResultShortcutQueueJumpBus', {
@@ -515,7 +515,7 @@ test('eventResult: starts never-started event and returns first result', async (
   bus.destroy()
 })
 
-test('eventResultsList: starts never-started event and returns all results', async () => {
+test('test_event_results_list_starts_never_started_event_and_returns_all_results', async () => {
   const BlockerEvent = BaseEvent.extend('EventResultsShortcutBlockerEvent', {})
   const TargetEvent = BaseEvent.extend('EventResultsShortcutTargetEvent', { event_result_type: z.string() })
   const bus = new EventBus('EventResultsShortcutQueueJumpBus', {
@@ -565,7 +565,7 @@ test('eventResultsList: starts never-started event and returns all results', asy
   bus.destroy()
 })
 
-test('event result helpers do not wait for started event', async () => {
+test('test_event_result_helpers_do_not_wait_for_started_event', async () => {
   const StartedEvent = BaseEvent.extend('EventResultHelpersStartedEvent', { event_result_type: z.string() })
   const bus = new EventBus('EventResultHelpersStartedBus', {
     event_concurrency: 'parallel',
@@ -662,7 +662,7 @@ test('now: rapid handler churn does not duplicate execution', async () => {
   bus.destroy()
 })
 
-test('eventResult: options apply to current results', async () => {
+test('test_event_result_options_apply_to_current_results', async () => {
   const ResultOptionsEvent = BaseEvent.extend('EventResultOptionsCurrentResultsEvent', { event_result_type: z.string() })
   const bus = new EventBus('EventResultOptionsCurrentResultsBus', {
     event_handler_concurrency: 'parallel',

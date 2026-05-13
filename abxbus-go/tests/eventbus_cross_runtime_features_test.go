@@ -232,6 +232,9 @@ func TestTimeoutEnforcementDoesNotBreakFollowupProcessingOrQueueState(t *testing
 	}
 
 	followup := bus.Emit(abxbus.NewBaseEvent("TimeoutFollowupEvent", nil))
+	if _, err := followup.Now(); err != nil {
+		t.Fatal(err)
+	}
 	got, err := followup.EventResult()
 	if err != nil {
 		t.Fatal(err)

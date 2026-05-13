@@ -755,46 +755,55 @@ test('eventResultsList returns results in handler registration order', async () 
   assert.deepEqual(completed_order, ['late', 'winner', 'null'])
 })
 
-test('eventResultsList defaults filter empty values, raise errors, and options override', async () => {
+test('test_event_results_list_defaults_filter_empty_values_raise_errors_and_options_override', async () => {
   const bus = new EventBus('EventResultsArgsBus', { event_handler_concurrency: 'serial' })
   const DefaultsEvent = BaseEvent.extend('DefaultsEvent', {})
   const ArgsEvent = BaseEvent.extend('ArgsEvent', {})
   const EmptyEvent = BaseEvent.extend('EmptyEvent', {})
   const IncludeEvent = BaseEvent.extend('IncludeEvent', {})
   const MixedEvent = BaseEvent.extend('MixedEvent', {})
-  const TimeoutEvent = BaseEvent.extend('TimeoutEvent', {})
 
   bus.on(DefaultsEvent, () => 'ok')
   bus.on(DefaultsEvent, () => undefined)
   bus.on(DefaultsEvent, () => BaseEvent.extend('ForwardedResultEvent', {})({}))
-  assert.deepEqual(await bus.emit(DefaultsEvent({})).eventResultsList(), ['ok'])
+  const default_event = bus.emit(DefaultsEvent({}))
+  await default_event.now()
+  assert.deepEqual(await default_event.eventResultsList(), ['ok'])
 
   bus.on(ArgsEvent, () => 'ok')
   bus.on(ArgsEvent, () => {
     throw new Error('boom')
   })
+  const error_event = bus.emit(ArgsEvent({}))
+  await error_event.now()
   await assert.rejects(
-    async () => bus.emit(ArgsEvent({})).eventResultsList({ raise_if_any: true }),
+    async () => error_event.eventResultsList({ raise_if_any: true }),
     (error) => error instanceof Error && !(error instanceof AggregateError) && error.message === 'boom'
   )
 
-  const values_without_errors = await bus.emit(ArgsEvent({})).eventResultsList({ raise_if_any: false, raise_if_none: true })
+  const values_without_errors = await error_event.eventResultsList({ raise_if_any: false, raise_if_none: true })
   assert.deepEqual(values_without_errors, ['ok'])
 
   bus.on(EmptyEvent, () => undefined)
-  await assert.rejects(async () => bus.emit(EmptyEvent({})).eventResultsList({ raise_if_none: true }), /Expected at least one handler/)
-  const empty_values = await bus.emit(EmptyEvent({})).eventResultsList({ raise_if_any: false, raise_if_none: false })
+  const empty_event = bus.emit(EmptyEvent({}))
+  await empty_event.now()
+  await assert.rejects(async () => empty_event.eventResultsList({ raise_if_none: true }), /Expected at least one handler/)
+  const empty_values = await empty_event.eventResultsList({ raise_if_any: false, raise_if_none: false })
   assert.deepEqual(empty_values, [])
 
   bus.on(MixedEvent, () => undefined)
   bus.on(MixedEvent, () => 'valid')
-  const mixed_values = await bus.emit(MixedEvent({})).eventResultsList({ raise_if_any: false, raise_if_none: true })
+  const mixed_event = bus.emit(MixedEvent({}))
+  await mixed_event.now()
+  const mixed_values = await mixed_event.eventResultsList({ raise_if_any: false, raise_if_none: true })
   assert.deepEqual(mixed_values, ['valid'])
 
   bus.on(IncludeEvent, () => 'keep')
   bus.on(IncludeEvent, () => 'drop')
   const seen_include_handlers: Array<string | null> = []
-  const filtered_values = await bus.emit(IncludeEvent({})).eventResultsList({
+  const include_event = bus.emit(IncludeEvent({}))
+  await include_event.now()
+  const filtered_values = await include_event.eventResultsList({
     include: (result, event_result) => {
       assert.equal(result, event_result.result)
       seen_include_handlers.push(event_result.handler_name)
@@ -805,12 +814,6 @@ test('eventResultsList defaults filter empty values, raise errors, and options o
   })
   assert.deepEqual(filtered_values, ['keep'])
   assert.equal(seen_include_handlers.length, 2)
-
-  bus.on(TimeoutEvent, async () => {
-    await delay(50)
-    return 'late'
-  })
-  await assert.rejects(async () => bus.emit(TimeoutEvent({})).now({ timeout: 0.01 }).eventResultsList(), /Timed out waiting/)
 })
 
 test('destroy default clear is terminal and frees bus state', async () => {

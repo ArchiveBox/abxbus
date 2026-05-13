@@ -126,7 +126,7 @@ test('concurrency intersection: parallel events with serial handlers stays seria
   bus.destroy()
 })
 
-test('timeout enforcement preserves follow-up processing and queue state', async () => {
+test('test_timeout_enforcement_does_not_break_followup_processing_or_queue_state', async () => {
   const bus = new EventBus('ParityTimeoutEnforcementBus', {
     event_handler_concurrency: 'parallel',
   })
