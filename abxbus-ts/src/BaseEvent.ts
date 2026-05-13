@@ -396,11 +396,11 @@ export class BaseEvent {
 
     const event_schema = ctor.event_schema ?? BaseEventSchema
     const base_data: Record<string, unknown> = {
-      event_id: uuidv7(),
-      event_created_at: monotonicDatetime(),
+      ...merged_data,
+      event_id: merged_data.event_id ?? uuidv7(),
+      event_created_at: merged_data.event_created_at ?? monotonicDatetime(),
       event_type,
       event_version,
-      ...merged_data,
       event_result_type,
     }
     if (event_schema === BaseEventSchema) {

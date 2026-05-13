@@ -137,14 +137,8 @@ fn test_handler_defaults_remain_unset_on_dispatch_and_resolve_during_processing(
 
     assert_eq!(implicit.event_handler_concurrency, None);
     assert_eq!(implicit.event_handler_completion, None);
-    assert_eq!(
-        explicit_none.event_handler_concurrency,
-        None
-    );
-    assert_eq!(
-        explicit_none.event_handler_completion,
-        None
-    );
+    assert_eq!(explicit_none.event_handler_concurrency, None);
+    assert_eq!(explicit_none.event_handler_completion, None);
 
     let _ = block_on(implicit.now());
     let _ = block_on(explicit_none.now());

@@ -591,10 +591,7 @@ fn test_circular_forwarding_from_middle_peer_does_not_loop() {
         event._inner_event().inner.lock().event_path,
         vec![bus_b.label(), bus_c.label(), bus_a.label()]
     );
-    assert_eq!(
-        event.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(event.event_status.read(), EventStatus::Completed);
     bus_a.destroy();
     bus_b.destroy();
     bus_c.destroy();
@@ -1016,7 +1013,9 @@ fn test_proxy_dispatch_auto_links_child_events_like_emit() {
 
     let root_id = root.event_id.clone();
     let child_ids: Vec<String> = root
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .flat_map(|result| result.event_children.clone())

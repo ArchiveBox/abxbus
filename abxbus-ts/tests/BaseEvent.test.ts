@@ -565,6 +565,115 @@ test('test_event_results_list_starts_never_started_event_and_returns_all_results
   bus.destroy()
 })
 
+test('test_awaited_parallel_queue_jump_child_does_not_pause_later_parallel_child_events', async () => {
+  const bus = new EventBus('ParallelQueueJumpDoesNotPauseBus', {
+    event_concurrency: 'bus-serial',
+    event_handler_concurrency: 'serial',
+    max_history_size: 100,
+  })
+  const ParentEvent = BaseEvent.extend('ParallelPauseParentEvent', {})
+  const ChildEvent = BaseEvent.extend('ParallelPauseChildEvent', {
+    name: z.string(),
+  })
+  const ObservedEvent = BaseEvent.extend('ParallelPauseObservedEvent', {
+    name: z.string(),
+  })
+  const log: string[] = []
+
+  bus.on(ParentEvent, async (event) => {
+    log.push('parent_start')
+    await event
+      .emit(ChildEvent({ name: 'awaited', event_concurrency: 'parallel' } as any))
+      .now({ first_result: true })
+      .eventResult()
+    log.push('parent_after_awaited')
+
+    event.emit(ChildEvent({ name: 'bg', event_concurrency: 'parallel' } as any))
+    log.push('parent_after_bg_emit')
+    const found = await bus.find(ObservedEvent, (candidate) => candidate.name === 'bg', {
+      past: true,
+      future: 0.2,
+    })
+    log.push(`parent_found_${found !== null}`)
+    assert.notEqual(found, null, `background parallel child should run while parent handler is waiting. Log: [${log.join(', ')}]`)
+  })
+
+  bus.on(ChildEvent, async (event) => {
+    log.push(`child_start_${event.name}`)
+    if (event.name === 'bg') {
+      event.emit(ObservedEvent({ name: 'bg' }))
+    }
+    log.push(`child_end_${event.name}`)
+    return event.name
+  })
+  bus.on(ObservedEvent, () => {
+    log.push('observed_seen')
+  })
+
+  const parent = bus.emit(ParentEvent({ event_timeout: 0 }))
+  await parent.now()
+  await bus.waitUntilIdle()
+
+  assert.ok(
+    log.indexOf('child_start_bg') < log.indexOf('parent_found_true'),
+    `background child must run before find returns. Log: [${log.join(', ')}]`
+  )
+  bus.destroy()
+})
+
+test('test_serial_queue_jump_child_does_not_pause_existing_parallel_event', async () => {
+  const bus = new EventBus('ParallelEventNotPausedBySerialQueueJumpBus', {
+    event_concurrency: 'bus-serial',
+    event_handler_concurrency: 'serial',
+    max_history_size: 100,
+  })
+  const ParentEvent = BaseEvent.extend('ParallelNotPausedParentEvent', {})
+  const ParallelEvent = BaseEvent.extend('ParallelNotPausedParallelEvent', {})
+  const ChildEvent = BaseEvent.extend('ParallelNotPausedChildEvent', {})
+  const log: string[] = []
+  let markParallelDone: (() => void) | undefined
+  const parallelDone = new Promise<void>((resolve) => {
+    markParallelDone = resolve
+  })
+
+  bus.on(ParentEvent, async (event) => {
+    log.push('parent_start')
+    event.emit(ParallelEvent({ event_concurrency: 'parallel' } as any))
+    const child = event.emit(ChildEvent({}))
+    await child.now()
+    log.push('parent_after_child')
+  })
+
+  bus.on(ParallelEvent, async () => {
+    log.push('parallel_start')
+    await delay(5)
+    log.push('parallel_end')
+    markParallelDone?.()
+  })
+
+  bus.on(ChildEvent, async () => {
+    log.push('child_start')
+    const sawParallelDone = await Promise.race([parallelDone.then(() => true), delay(500).then(() => false)])
+    log.push(sawParallelDone ? 'child_saw_parallel_done' : 'child_missed_parallel_done')
+    log.push('child_end')
+  })
+
+  const parent = bus.emit(ParentEvent({ event_timeout: 0 }))
+  await parent.now()
+  await bus.waitUntilIdle()
+
+  assert.ok(
+    log.indexOf('parallel_start') < log.indexOf('child_end'),
+    `parallel event should start during child queue-jump. Log: [${log.join(', ')}]`
+  )
+  assert.ok(
+    log.indexOf('parallel_end') < log.indexOf('child_end'),
+    `parallel event should finish during child queue-jump. Log: [${log.join(', ')}]`
+  )
+  assert.ok(log.includes('child_saw_parallel_done'), `child should observe parallel completion. Log: [${log.join(', ')}]`)
+  bus.destroy()
+})
+
 test('test_event_result_helpers_do_not_wait_for_started_event', async () => {
   const StartedEvent = BaseEvent.extend('EventResultHelpersStartedEvent', { event_result_type: z.string() })
   const bus = new EventBus('EventResultHelpersStartedBus', {
@@ -1172,6 +1281,23 @@ test('BaseEvent rejects model_* fields in payload and event shape', () => {
   assert.throws(() => {
     void ModelReservedEvent({ model_something_random: 1 } as unknown as never)
   }, /starts with "model_" and is reserved/i)
+})
+
+test('BaseEvent auto-generates required metadata when partial input fields are undefined', () => {
+  const PartialMetadataEvent = BaseEvent.extend('BaseEventPartialMetadataEvent', {
+    value: z.string(),
+  })
+
+  const event = PartialMetadataEvent({
+    event_id: undefined,
+    event_created_at: undefined,
+    value: 'ok',
+  } as unknown as never)
+
+  assert.equal(event.value, 'ok')
+  assert.match(event.event_id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+  assert.equal(typeof event.event_created_at, 'string')
+  assert.match(event.event_created_at, /Z$/)
 })
 
 test('BaseEvent toJSON/fromJSON roundtrips runtime fields and event_results', async () => {

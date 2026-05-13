@@ -11,7 +11,7 @@ use std::{
 use abxbus_rust::{
     base_event::EventWaitOptions,
     event_bus::{EventBus, EventBusOptions},
-        types::{
+    types::{
         EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventStatus,
     },
 };
@@ -266,13 +266,12 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
                 ..Default::default()
             });
             let _ = child_event_sync.now().await;
-            assert_eq!(
-                child_event_sync.event_status.read(),
-                EventStatus::Completed
-            );
+            assert_eq!(child_event_sync.event_status.read(), EventStatus::Completed);
             assert!(
                 child_event_sync
-                    ._inner_event().inner.lock()
+                    ._inner_event()
+                    .inner
+                    .lock()
                     .event_path
                     .contains(&bus2_label),
                 "awaited child should be forwarded to bus2"
@@ -290,14 +289,18 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
             let parent_id = event.inner.lock().event_id.clone();
             assert_eq!(
                 child_event_async
-                    ._inner_event().inner.lock()
+                    ._inner_event()
+                    .inner
+                    .lock()
                     .event_parent_id
                     .as_deref(),
                 Some(parent_id.as_str())
             );
             assert_eq!(
                 child_event_sync
-                    ._inner_event().inner.lock()
+                    ._inner_event()
+                    .inner
+                    .lock()
                     .event_parent_id
                     .as_deref(),
                 Some(parent_id.as_str())
@@ -421,7 +424,8 @@ fn test_race_condition_stress() {
                 children.push(
                     bus.emit_child(QueuedChildEvent {
                         ..Default::default()
-                    })._inner_event(),
+                    })
+                    ._inner_event(),
                 );
             }
             for _ in 0..3 {
@@ -429,10 +433,7 @@ fn test_race_condition_stress() {
                     ..Default::default()
                 });
                 let _ = child.now().await;
-                assert_eq!(
-                    child.event_status.read(),
-                    EventStatus::Completed
-                );
+                assert_eq!(child.event_status.read(), EventStatus::Completed);
                 children.push(child._inner_event());
             }
             let parent_id = event.inner.lock().event_id.clone();
@@ -652,14 +653,8 @@ fn test_awaited_child_jumps_queue_without_overshoot() {
     assert!(event2_start_idx > event1_end_idx);
     assert!(event3_start_idx > event1_end_idx);
     assert!(event2_start_idx < event3_start_idx);
-    assert_eq!(
-        event2.event_status.read(),
-        EventStatus::Completed
-    );
-    assert_eq!(
-        event3.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(event2.event_status.read(), EventStatus::Completed);
+    assert_eq!(event3.event_status.read(), EventStatus::Completed);
     bus.destroy();
 }
 
@@ -972,10 +967,7 @@ fn test_awaiting_an_already_completed_event_is_a_no_op() {
         ..Default::default()
     });
     let _ = block_on(event1.now());
-    assert_eq!(
-        event1.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(event1.event_status.read(), EventStatus::Completed);
 
     let (started_tx, started_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
@@ -1035,9 +1027,13 @@ fn test_multiple_awaits_on_same_event() {
                 ..Default::default()
             });
             let child_for_await1 =
-                <ChildEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(child._inner_event());
+                <ChildEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(
+                    child._inner_event(),
+                );
             let child_for_await2 =
-                <ChildEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(child._inner_event());
+                <ChildEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(
+                    child._inner_event(),
+                );
             let await_results_1 = await_results.clone();
             let await_results_2 = await_results.clone();
             join!(

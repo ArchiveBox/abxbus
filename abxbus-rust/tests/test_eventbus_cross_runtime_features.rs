@@ -173,7 +173,9 @@ fn test_queue_jump_preserves_parent_child_lineage_and_find_visibility() {
         Some(root.event_id.as_str())
     );
     let root_result = root
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .find(|result| result.handler.handler_name == "on_root")
@@ -258,7 +260,9 @@ fn test_concurrency_intersection_parallel_events_with_serial_handlers_stays_seri
         assert_eq!(max_by_event.get(&event_id), Some(&1));
         assert!(
             event
-                ._inner_event().inner.lock()
+                ._inner_event()
+                .inner
+                .lock()
                 .event_results
                 .values()
                 .all(|result| result.status
@@ -305,12 +309,11 @@ fn test_timeout_enforcement_does_not_break_followup_processing_or_queue_state() 
         ..Default::default()
     });
     let _ = block_on(timed_out.now());
-    assert_eq!(
-        timed_out.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(timed_out.event_status.read(), EventStatus::Completed);
     assert!(timed_out
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .all(|result| result.status == abxbus_rust::event_result::EventResultStatus::Error));
@@ -320,13 +323,17 @@ fn test_timeout_enforcement_does_not_break_followup_processing_or_queue_state() 
     });
     let _ = block_on(followup.now());
     assert!(followup
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .all(|result| result.status == abxbus_rust::event_result::EventResultStatus::Completed));
     assert_eq!(
         followup
-            ._inner_event().inner.lock()
+            ._inner_event()
+            .inner
+            .lock()
             .event_results
             .values()
             .next()
@@ -472,12 +479,16 @@ fn test_context_propagates_through_forwarding_and_child_dispatch_with_lineage_in
         Some(parent_event_id.as_str())
     );
     assert!(parent
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_path
         .first()
         .is_some_and(|path| path.starts_with("ParityContextForwardA#")));
     assert!(parent
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_path
         .iter()
         .any(|path| path.starts_with("ParityContextForwardB#")));

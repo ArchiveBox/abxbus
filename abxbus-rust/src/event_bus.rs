@@ -652,7 +652,7 @@ impl EventBus {
                             .inner
                             .lock()
                             .event_concurrency
-                            .unwrap_or(EventConcurrencyMode::BusSerial);
+                            .unwrap_or(bus.event_concurrency);
                         match mode {
                             EventConcurrencyMode::Parallel => {
                                 thread::spawn(move || {
@@ -1587,6 +1587,9 @@ impl EventBus {
             .lock()
             .event_concurrency
             .unwrap_or(self.event_concurrency);
+        if emitted_from_active_handler && event_concurrency != EventConcurrencyMode::Parallel {
+            self.pause_current_handler_queue_jumps();
+        }
         if event_concurrency == EventConcurrencyMode::Parallel {
             self.start_parallel_event_task_from_queue(event.clone());
         }
@@ -1595,6 +1598,28 @@ impl EventBus {
             self.runtime.queue_notify.notify(1);
         }
         event
+    }
+
+    fn pause_current_handler_queue_jumps(&self) {
+        let context = CURRENT_EVENT_ID.with(|event_id| {
+            CURRENT_HANDLER_ID
+                .with(|handler_id| Some((event_id.borrow().clone()?, handler_id.borrow().clone()?)))
+        });
+        let Some((current_event_id, current_handler_id)) = context else {
+            return;
+        };
+        for bus in Self::live_instances() {
+            let Some(parent_event) = bus.runtime.events.lock().get(&current_event_id).cloned()
+            else {
+                continue;
+            };
+            let mut parent_inner = parent_event.inner.lock();
+            let Some(result) = parent_inner.event_results.get_mut(&current_handler_id) else {
+                continue;
+            };
+            result.ensure_queue_jump_pause(self.locks.clone());
+            break;
+        }
     }
 
     pub fn queue_jump_if_waited(event: Arc<BaseEvent>) {
@@ -3151,8 +3176,10 @@ impl EventBus {
             .cloned()
             .expect("missing result row");
         if current.status != EventResultStatus::Started {
+            current.release_queue_jump_pauses();
             return false;
         }
+        current.release_queue_jump_pauses();
 
         match call_result {
             Ok(Ok(value)) => match event.validate_result_value(value) {

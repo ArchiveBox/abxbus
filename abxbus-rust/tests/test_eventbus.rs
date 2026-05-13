@@ -407,8 +407,7 @@ fn test_auto_start_and_destroy() {
     let event = bus.emit(UserActionEvent {
         ..Default::default()
     });
-    block_on(event.now_with_options(EventWaitOptions::default()))
-        .expect("now should complete");
+    block_on(event.now_with_options(EventWaitOptions::default())).expect("now should complete");
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
     assert!(bus.is_running_for_test());
 
@@ -428,8 +427,7 @@ fn test_wait_until_idle_recovers_when_idle_flag_was_cleared() {
     let event = bus.emit(UserActionEvent {
         ..Default::default()
     });
-    block_on(event.now_with_options(EventWaitOptions::default()))
-        .expect("now should complete");
+    block_on(event.now_with_options(EventWaitOptions::default())).expect("now should complete");
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
 
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
@@ -1261,11 +1259,8 @@ fn test_event_result_raises_exception_group_when_multiple_handlers_fail() {
     });
     let _ = block_on(event.now());
 
-    let error = block_on(
-        event
-            .event_result_with_options(EventResultOptions::default()),
-    )
-    .expect_err("multiple handler errors should be raised");
+    let error = block_on(event.event_result_with_options(EventResultOptions::default()))
+        .expect_err("multiple handler errors should be raised");
     assert!(error.contains("2 handler error(s)"), "{error}");
     assert!(error.contains("ValueError: first failure"), "{error}");
     assert!(error.contains("RuntimeError: second failure"), "{error}");
@@ -1285,11 +1280,8 @@ fn test_event_result_single_handler_error_raises_original_exception() {
     });
     let _ = block_on(event.now());
 
-    let error = block_on(
-        event
-            .event_result_with_options(EventResultOptions::default()),
-    )
-    .expect_err("single handler error should be raised");
+    let error = block_on(event.event_result_with_options(EventResultOptions::default()))
+        .expect_err("single handler error should be raised");
     assert_eq!(error, "ValueError: single failure");
     bus.destroy();
 }
@@ -1306,12 +1298,8 @@ fn test_event_result_raise_if_any_options() {
         ..Default::default()
     });
 
-    block_on(event.now_with_options(EventWaitOptions::default()))
-        .expect("now should complete");
-    let error = match block_on(
-        event
-            .event_result_with_options(EventResultOptions::default()),
-    ) {
+    block_on(event.now_with_options(EventWaitOptions::default())).expect("now should complete");
+    let error = match block_on(event.event_result_with_options(EventResultOptions::default())) {
         Ok(_) => panic!("event_result should raise handler errors by default"),
         Err(error) => error,
     };
@@ -1589,10 +1577,7 @@ fn test_emit_alias_dispatches_event() {
             .as_slice(),
         std::slice::from_ref(&event_id)
     );
-    assert_eq!(
-        event.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(event.event_status.read(), EventStatus::Completed);
     assert!(event.event_path.read().contains(&bus.label()));
     bus.destroy();
 }
@@ -1700,10 +1685,7 @@ fn test_event_type_and_version_identity_fields() {
         ..Default::default()
     };
     let emitted = bus.emit(task);
-    assert_eq!(
-        emitted.event_type,
-        "CreateAgentTaskEvent"
-    );
+    assert_eq!(emitted.event_type, "CreateAgentTaskEvent");
     assert_eq!(emitted.event_version, "0.0.1");
     let _ = block_on(emitted.now());
     bus.destroy();
@@ -2241,11 +2223,9 @@ fn test_dispatch_returns_event_results() {
         ..Default::default()
     });
     let _ = block_on(event.now());
-    let all_results = block_on(
-        event
-            .event_results_list_with_options(EventResultOptions::default()),
-    )
-    .expect("event results list");
+    let all_results =
+        block_on(event.event_results_list_with_options(EventResultOptions::default()))
+            .expect("event results list");
 
     assert_eq!(all_results, vec![json!({"result": "test_result"})]);
 
@@ -3164,9 +3144,9 @@ fn test_base_event_to_json_from_json_roundtrips_runtime_fields_and_event_results
     });
     let _ = block_on(event.now());
 
-        let serialized = event.to_json_value();
-        let base = event._inner_event();
-        assert_eq!(
+    let serialized = event.to_json_value();
+    let base = event._inner_event();
+    assert_eq!(
         serde_json::to_value(&*base).expect("base event serde"),
         serialized
     );
@@ -3184,7 +3164,9 @@ fn test_base_event_to_json_from_json_roundtrips_runtime_fields_and_event_results
     let json_results = serialized["event_results"].as_object().expect("object");
     assert_eq!(json_results.len(), 1);
     let handler_id = event
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .next()
@@ -3685,10 +3667,7 @@ fn test_base_event_lifecycle_methods_are_callable_and_preserve_lifecycle_behavio
         ..Default::default()
     });
     let _ = block_on(dispatched.now());
-    assert_eq!(
-        dispatched.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(dispatched.event_status.read(), EventStatus::Completed);
     bus.destroy();
 }
 
@@ -3799,9 +3778,7 @@ mod folded_test_event_history_store {
 // Folded from test_eventbus_edge_cases.rs to keep test layout class-based.
 mod folded_test_eventbus_edge_cases {
     use abxbus_rust::event;
-    use abxbus_rust::{
-        event_bus::EventBus, event_result::EventResultStatus,         types::EventStatus,
-    };
+    use abxbus_rust::{event_bus::EventBus, event_result::EventResultStatus, types::EventStatus};
     use futures::executor::block_on;
     use serde::{Deserialize, Serialize};
     use serde_json::json;
@@ -3895,10 +3872,7 @@ mod folded_test_eventbus_edge_cases {
             ..Default::default()
         });
         let _ = block_on(completed.now());
-        assert_eq!(
-            completed.event_status.read(),
-            EventStatus::Completed
-        );
+        assert_eq!(completed.event_status.read(), EventStatus::Completed);
         assert_eq!(completed.event_results.read().len(), 1);
 
         let fresh = completed.event_reset();
@@ -3966,18 +3940,12 @@ mod folded_test_eventbus_edge_cases {
         let elapsed = start.elapsed();
         assert!(!idle);
         assert!(elapsed < Duration::from_millis(500));
-        assert_ne!(
-            pending.event_status.read(),
-            EventStatus::Completed
-        );
+        assert_ne!(pending.event_status.read(), EventStatus::Completed);
 
         release_tx.send(()).expect("release handler");
         let _ = block_on(pending.now());
         assert!(block_on(bus.wait_until_idle(Some(1.0))));
-        assert_eq!(
-            pending.event_status.read(),
-            EventStatus::Completed
-        );
+        assert_eq!(pending.event_status.read(), EventStatus::Completed);
         bus.destroy();
     }
 
@@ -4026,10 +3994,7 @@ mod folded_test_eventbus_edge_cases {
             ..Default::default()
         });
         let _ = block_on(event.now());
-        assert_eq!(
-            event.event_status.read(),
-            EventStatus::Completed
-        );
+        assert_eq!(event.event_status.read(), EventStatus::Completed);
         replacement.destroy();
     }
 

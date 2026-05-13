@@ -1519,7 +1519,11 @@ func TestDestroyingOneBusDoesNotBreakSharedHandlersOrForwardTargets(t *testing.T
 	source.Destroy()
 
 	direct := target.Emit(abxbus.NewBaseEvent("SharedDestroyEvent", nil))
-	if result, err := direct.EventResult(); err != nil || result != "shared" {
+	completedDirect, err := direct.Now()
+	if err != nil {
+		t.Fatalf("target should still process after source destroy: %v", err)
+	}
+	if result, err := completedDirect.EventResult(); err != nil || result != "shared" {
 		t.Fatalf("destroying source should not affect target; result=%#v err=%v", result, err)
 	}
 	if seen.Load() != 3 {

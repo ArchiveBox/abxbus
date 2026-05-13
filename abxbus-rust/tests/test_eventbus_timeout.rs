@@ -11,7 +11,7 @@ use abxbus_rust::{
     event_bus::{EventBus, EventBusOptions},
     event_handler::EventHandlerOptions,
     event_result::{EventResult, EventResultStatus},
-        types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
+    types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
@@ -204,7 +204,9 @@ fn test_event_timeout_aborts_in_flight_handler_result() {
     let _ = block_on(event.now());
 
     let result = event
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .next()
@@ -245,7 +247,9 @@ fn test_handler_completes_within_timeout() {
     let _ = block_on(event.now());
 
     let result = event
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .next()
@@ -293,7 +297,9 @@ fn test_event_timeouts_abort_handlers_across_concurrency_modes() {
             let _ = block_on(event.now());
 
             let result = event
-                ._inner_event().inner.lock()
+                ._inner_event()
+                .inner
+                .lock()
                 .event_results
                 .values()
                 .next()
@@ -541,7 +547,9 @@ fn assert_event_timeout_does_not_relabel_preexisting_handler_timeout() {
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
 
     let results: Vec<_> = event
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .cloned()
@@ -601,7 +609,9 @@ fn test_timeout_still_marks_event_failed_when_other_handlers_finish() {
     let _ = block_on(event.now());
 
     let statuses: Vec<EventResultStatus> = event
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .map(|result| result.status)
@@ -652,7 +662,9 @@ fn test_event_timeout_is_hard_cap_in_parallel_mode() {
     assert!(started.elapsed() < Duration::from_millis(90));
 
     let results: Vec<_> = event
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .cloned()
@@ -710,7 +722,9 @@ fn test_event_level_timeout_marks_started_parallel_handlers_as_aborted_or_timed_
     let _ = block_on(event.now());
 
     let results: Vec<_> = event
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .cloned()
@@ -758,7 +772,9 @@ fn test_event_level_concurrency_overrides_do_not_bypass_timeout_aborts() {
     let _ = block_on(event.now());
 
     let result = event
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .next()
@@ -896,7 +912,9 @@ fn test_forwarded_timeout_path_does_not_stall_followup_events() {
     assert!(block_on(bus_b.wait_until_idle(Some(2.0))));
 
     let parent_result = parent
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .find(|result| result.handler.handler_name == "parent_handler")
@@ -1170,7 +1188,9 @@ fn test_processing_time_timeout_defaults_resolve_at_execution_time() {
         assert_eq!(inner.event_handler_completion, None);
     }
     let result = event
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .next()
@@ -1214,7 +1234,9 @@ fn test_parent_timeout_does_not_cancel_unawaited_child_with_own_timeout() {
     thread::sleep(Duration::from_millis(120));
 
     let parent_result = parent
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .next()
@@ -1284,7 +1306,9 @@ fn test_parent_timeout_does_not_cancel_unawaited_children_that_have_no_timeout_o
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
 
     let parent_result = parent
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .next()
@@ -1362,7 +1386,9 @@ fn test_parent_timeout_does_not_cancel_unawaited_child_handler_results_under_ser
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
 
     let parent_result = parent
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .next()
@@ -1433,7 +1459,9 @@ fn test_parent_timeout_cancels_awaited_child_handler_results() {
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
 
     let parent_result = parent
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .next()
@@ -1667,7 +1695,9 @@ fn test_followup_event_runs_after_parent_timeout_in_queue_jump_path() {
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
 
     let parent_result = parent
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .next()
@@ -1746,7 +1776,9 @@ fn test_regression_parent_timeout_while_reacquire_waits_behind_third_serial_hand
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
 
     let parent_results: Vec<_> = parent
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .cloned()
@@ -1923,7 +1955,9 @@ fn test_absent_event_timeout_falls_back_to_bus_default() {
     let _ = block_on(event.now());
 
     let result = event
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .next()
@@ -1957,7 +1991,9 @@ fn test_event_timeout_none_uses_bus_default_timeout_at_execution() {
     let _ = block_on(event.now());
 
     let result = event
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .next()
@@ -2702,7 +2738,9 @@ fn test_handler_timeout_resolution_matches_ts_precedence() {
     let tighter_event_timeout = bus.emit(tighter_event_timeout);
     let _ = block_on(tighter_event_timeout.now());
     let tighter_results = tighter_event_timeout
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .clone();
     assert!(tighter_results

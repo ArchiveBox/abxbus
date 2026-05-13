@@ -1356,6 +1356,129 @@ func TestWaitWaitsForNormalParallelProcessingInsideHandlers(t *testing.T) {
 	}
 }
 
+func TestAwaitedParallelQueueJumpChildDoesNotPauseLaterParallelChildEvents(t *testing.T) {
+	bus := abxbus.NewEventBus("ParallelQueueJumpDoesNotPauseBus", &abxbus.EventBusOptions{
+		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+	})
+	var mu sync.Mutex
+	order := []string{}
+
+	newChild := func(name string) *abxbus.BaseEvent {
+		child := abxbus.NewBaseEvent("ParallelPauseChildEvent", map[string]any{"name": name})
+		child.EventConcurrency = abxbus.EventConcurrencyParallel
+		return child
+	}
+
+	bus.On("ParallelPauseParentEvent", "parent_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		appendLocked(&mu, &order, "parent_start")
+		if _, err := e.Emit(newChild("awaited")).Now(&abxbus.EventWaitOptions{FirstResult: true}); err != nil {
+			return nil, err
+		}
+		appendLocked(&mu, &order, "parent_after_awaited")
+
+		e.Emit(newChild("bg"))
+		appendLocked(&mu, &order, "parent_after_bg_emit")
+		found, err := bus.Find("ParallelPauseObservedEvent", func(event *abxbus.BaseEvent) bool {
+			return event.Payload["name"] == "bg"
+		}, &abxbus.FindOptions{Past: true, Future: 0.2})
+		if err != nil {
+			return nil, err
+		}
+		if found == nil {
+			appendLocked(&mu, &order, "parent_found_false")
+			return nil, errors.New("background parallel child should run while parent handler is waiting")
+		}
+		appendLocked(&mu, &order, "parent_found_true")
+		return nil, nil
+	}, nil)
+
+	bus.On("ParallelPauseChildEvent", "child_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		name, _ := e.Payload["name"].(string)
+		appendLocked(&mu, &order, "child_start_"+name)
+		if name == "bg" {
+			e.Emit(abxbus.NewBaseEvent("ParallelPauseObservedEvent", map[string]any{"name": "bg"}))
+		}
+		appendLocked(&mu, &order, "child_end_"+name)
+		return name, nil
+	}, nil)
+	bus.On("ParallelPauseObservedEvent", "observed_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		appendLocked(&mu, &order, "observed_seen")
+		return nil, nil
+	}, nil)
+
+	parent := bus.Emit(abxbus.NewBaseEvent("ParallelPauseParentEvent", nil))
+	if _, err := parent.Now(); err != nil {
+		t.Fatal(err)
+	}
+	assertWaitIdle(t, bus)
+
+	entries := snapshotLocked(&mu, &order)
+	if requireIndex(t, entries, "child_start_bg") > requireIndex(t, entries, "parent_found_true") {
+		t.Fatalf("background child must run before find returns, got %v", entries)
+	}
+}
+
+func TestSerialQueueJumpChildDoesNotPauseExistingParallelEvent(t *testing.T) {
+	bus := abxbus.NewEventBus("ParallelEventNotPausedBySerialQueueJumpBus", &abxbus.EventBusOptions{
+		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+	})
+	var mu sync.Mutex
+	order := []string{}
+	parallelDone := make(chan struct{})
+
+	bus.On("ParallelNotPausedParentEvent", "parent_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		appendLocked(&mu, &order, "parent_start")
+		parallelEvent := abxbus.NewBaseEvent("ParallelNotPausedParallelEvent", nil)
+		parallelEvent.EventConcurrency = abxbus.EventConcurrencyParallel
+		e.Emit(parallelEvent)
+		child := e.Emit(abxbus.NewBaseEvent("ParallelNotPausedChildEvent", nil))
+		if _, err := child.Now(); err != nil {
+			return nil, err
+		}
+		appendLocked(&mu, &order, "parent_after_child")
+		return nil, nil
+	}, nil)
+
+	bus.On("ParallelNotPausedParallelEvent", "parallel_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		appendLocked(&mu, &order, "parallel_start")
+		time.Sleep(5 * time.Millisecond)
+		appendLocked(&mu, &order, "parallel_end")
+		close(parallelDone)
+		return nil, nil
+	}, nil)
+
+	bus.On("ParallelNotPausedChildEvent", "child_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		appendLocked(&mu, &order, "child_start")
+		select {
+		case <-parallelDone:
+			appendLocked(&mu, &order, "child_saw_parallel_done")
+		case <-time.After(500 * time.Millisecond):
+			appendLocked(&mu, &order, "child_missed_parallel_done")
+		}
+		appendLocked(&mu, &order, "child_end")
+		return nil, nil
+	}, nil)
+
+	parent := bus.Emit(abxbus.NewBaseEvent("ParallelNotPausedParentEvent", nil))
+	if _, err := parent.Now(); err != nil {
+		t.Fatal(err)
+	}
+	assertWaitIdle(t, bus)
+
+	entries := snapshotLocked(&mu, &order)
+	if requireIndex(t, entries, "parallel_start") > requireIndex(t, entries, "child_end") {
+		t.Fatalf("parallel event should start during child queue-jump, got %v", entries)
+	}
+	if requireIndex(t, entries, "parallel_end") > requireIndex(t, entries, "child_end") {
+		t.Fatalf("parallel event should finish during child queue-jump, got %v", entries)
+	}
+	if baseEventIndexOf(entries, "child_saw_parallel_done") == -1 {
+		t.Fatalf("child should observe parallel completion, got %v", entries)
+	}
+}
+
 func TestWaitWaitsForFutureParallelEventFoundAfterHandlerStarts(t *testing.T) {
 	bus := abxbus.NewEventBus("FutureParallelEventCompletedBus", &abxbus.EventBusOptions{
 		EventConcurrency: abxbus.EventConcurrencyBusSerial,

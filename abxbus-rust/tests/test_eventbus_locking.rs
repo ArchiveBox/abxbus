@@ -10,7 +10,7 @@ use std::{
 use abxbus_rust::{
     event_bus::{EventBus, EventBusOptions},
     event_result::EventResultStatus,
-        types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
+    types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
@@ -122,12 +122,16 @@ fn test_queue_jump() {
     assert_eq!(order, vec![0, 2, 1]);
 
     let sibling_started = sibling
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_started_at
         .clone()
         .unwrap_or_default();
     let jumped_started = jumped
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_started_at
         .clone()
         .unwrap_or_default();
@@ -217,12 +221,16 @@ fn test_bus_serial_processes_in_order() {
     });
 
     let event1_started = event1
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_started_at
         .clone()
         .unwrap_or_default();
     let event2_started = event2
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_started_at
         .clone()
         .unwrap_or_default();
@@ -465,9 +473,11 @@ fn test_global_serial_awaited_child_jumps_ahead_of_queued_events_across_buses() 
             let child = bus_a.emit_child(WorkEvent {
                 ..Default::default()
             });
-            bus_b.emit(<WorkEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(
-                child._inner_event(),
-            ));
+            bus_b.emit(
+                <WorkEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(
+                    child._inner_event(),
+                ),
+            );
             order
                 .lock()
                 .expect("order lock")
@@ -1626,7 +1636,9 @@ fn test_awaiting_in_flight_event_does_not_double_run_handlers() {
         .recv_timeout(Duration::from_secs(1))
         .expect("handler should start");
 
-    let child_for_wait = <WorkEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(child._inner_event());
+    let child_for_wait = <WorkEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(
+        child._inner_event(),
+    );
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     thread::spawn(move || {
         let _ = block_on(child_for_wait.now());

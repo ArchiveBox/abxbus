@@ -1409,18 +1409,9 @@ fn test_multiple_concurrent_future_finds() {
         resolved.insert(label, event_id);
     }
 
-    assert_eq!(
-        resolved.get("normal"),
-        Some(&normal.event_id.clone())
-    );
-    assert_eq!(
-        resolved.get("system"),
-        Some(&system.event_id.clone())
-    );
-    assert_eq!(
-        resolved.get("special"),
-        Some(&special.event_id.clone())
-    );
+    assert_eq!(resolved.get("normal"), Some(&normal.event_id.clone()));
+    assert_eq!(resolved.get("system"), Some(&system.event_id.clone()));
+    assert_eq!(resolved.get("special"), Some(&special.event_id.clone()));
     bus.destroy();
 }
 
@@ -1470,8 +1461,7 @@ fn test_find_child_of_returns_child_event() {
             let child = bus.emit_child(ChildEvent {
                 ..Default::default()
             });
-            *child_id.lock().expect("child id lock") =
-                Some(child.event_id.clone());
+            *child_id.lock().expect("child id lock") = Some(child.event_id.clone());
             Ok(json!("parent"))
         }
     });
@@ -1531,8 +1521,7 @@ fn test_find_child_of_returns_grandchild_event() {
             let child = bus.emit_child(ChildEvent {
                 ..Default::default()
             });
-            *child_id.lock().expect("child id lock") =
-                Some(child.event_id.clone());
+            *child_id.lock().expect("child id lock") = Some(child.event_id.clone());
             let _ = child.now().await;
             Ok(json!("parent"))
         }
@@ -1588,8 +1577,7 @@ fn test_child_of_works_across_forwarded_buses() {
             let child = auth_bus.emit_child(ChildEvent {
                 ..Default::default()
             });
-            *child_id.lock().expect("child id lock") =
-                Some(child.event_id.clone());
+            *child_id.lock().expect("child id lock") = Some(child.event_id.clone());
             let _ = child.now().await;
             Ok(json!("auth"))
         }
@@ -1786,8 +1774,7 @@ fn test_find_catches_child_event_that_fired_during_parent_handler() {
                 tab_id: "06bee4cf-9f51-7e5d-82d3-65f35169329c".to_string(),
                 ..Default::default()
             });
-            *tab_event_id.lock().expect("tab id lock") =
-                Some(tab.event_id.clone());
+            *tab_event_id.lock().expect("tab id lock") = Some(tab.event_id.clone());
             let _ = tab.now().await;
             Ok(json!("nav"))
         }
@@ -1945,8 +1932,7 @@ fn test_find_with_all_parameters_combined() {
                 category: "screenshot".to_string(),
                 ..Default::default()
             });
-            *child_id.lock().expect("child id lock") =
-                Some(child.event_id.clone());
+            *child_id.lock().expect("child id lock") = Some(child.event_id.clone());
             let _ = child.now().await;
             Ok(json!("parent"))
         }
@@ -2206,8 +2192,7 @@ fn test_find_with_child_of_and_future_timeout() {
             let child = bus.emit_child(ChildEvent {
                 ..Default::default()
             });
-            *child_id.lock().expect("child id lock") =
-                Some(child.event_id.clone());
+            *child_id.lock().expect("child id lock") = Some(child.event_id.clone());
             Ok(json!("parent"))
         }
     });
@@ -2312,10 +2297,7 @@ fn test_filter_respects_limit() {
     let matches = block_on(bus.filter("work", true, None, None, Some(2)));
     assert_eq!(
         event_ids(&matches),
-        vec![
-            third.event_id.clone(),
-            second.event_id.clone(),
-        ]
+        vec![third.event_id.clone(), second.event_id.clone(),]
     );
     bus.destroy();
 }
@@ -2351,10 +2333,7 @@ fn test_filter_respects_where_predicate() {
     ));
     assert_eq!(
         event_ids(&matches),
-        vec![
-            second.event_id.clone(),
-            first.event_id.clone(),
-        ]
+        vec![second.event_id.clone(), first.event_id.clone(),]
     );
     bus.destroy();
 }
@@ -2381,10 +2360,7 @@ fn test_filter_supports_field_equality_filters() {
             ..FilterOptions::default()
         },
     ));
-    assert_eq!(
-        event_ids(&matches),
-        vec![target.event_id.clone()]
-    );
+    assert_eq!(event_ids(&matches), vec![target.event_id.clone()]);
     bus.destroy();
 }
 
@@ -2404,10 +2380,7 @@ fn test_filter_wildcard_matches_all_event_types_newest_first() {
     let matches = block_on(bus.filter("*", true, None, None, None));
     assert_eq!(
         event_ids(&matches),
-        vec![
-            second.event_id.clone(),
-            first.event_id.clone(),
-        ]
+        vec![second.event_id.clone(), first.event_id.clone(),]
     );
     bus.destroy();
 }
@@ -2432,10 +2405,7 @@ fn test_filter_child_of_returns_matching_descendants() {
     });
 
     let matches = block_on(bus.filter("child", true, None, Some(parent._inner_event()), None));
-    assert_eq!(
-        event_ids(&matches),
-        vec![child.event_id.clone()]
-    );
+    assert_eq!(event_ids(&matches), vec![child.event_id.clone()]);
     bus.destroy();
 }
 
@@ -2458,10 +2428,7 @@ fn test_filter_past_time_window_filters_by_age() {
             ..FilterOptions::default()
         },
     ));
-    assert_eq!(
-        event_ids(&matches),
-        vec![fresh.event_id.clone()]
-    );
+    assert_eq!(event_ids(&matches), vec![fresh.event_id.clone()]);
     bus.destroy();
 }
 
@@ -2514,10 +2481,7 @@ fn test_filter_limit_short_circuits_future_wait() {
     let start = Instant::now();
     let matches = block_on(bus.filter("work", true, Some(2.0), None, Some(1)));
     assert!(start.elapsed() < Duration::from_millis(200));
-    assert_eq!(
-        event_ids(&matches),
-        vec![past.event_id.clone()]
-    );
+    assert_eq!(event_ids(&matches), vec![past.event_id.clone()]);
     bus.destroy();
 }
 

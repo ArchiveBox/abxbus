@@ -49,9 +49,7 @@ fn drop_in_flight(in_flight: &Arc<Mutex<i64>>) {
     *in_flight -= 1;
 }
 
-fn emit_with_first_completion(
-    bus: &Arc<EventBus>,
-) -> CompletionEvent {
+fn emit_with_first_completion(bus: &Arc<EventBus>) -> CompletionEvent {
     let event = CompletionEvent {
         event_handler_completion: Some(EventHandlerCompletionMode::First),
         ..Default::default()
@@ -275,7 +273,9 @@ fn test_event_handler_completion_first_cancels_parallel_losers() {
     block_on(bus.wait_until_idle(Some(2.0)));
     for _ in 0..100 {
         if event
-            ._inner_event().inner.lock()
+            ._inner_event()
+            .inner
+            .lock()
             .event_results
             .values()
             .any(|result| {
@@ -288,7 +288,9 @@ fn test_event_handler_completion_first_cancels_parallel_losers() {
         thread::sleep(Duration::from_millis(5));
     }
     let first_value = event
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .find(|result| {
@@ -303,7 +305,9 @@ fn test_event_handler_completion_first_cancels_parallel_losers() {
     );
     assert!(!*slow_handler_completed.lock().expect("slow completed lock"));
     assert!(event
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .any(|result| result.status == EventResultStatus::Error

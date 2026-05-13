@@ -8,7 +8,7 @@ use std::{
 use abxbus_rust::{
     base_event::BaseEvent,
     event_bus::{EventBus, EventBusOptions},
-        types::{EventHandlerConcurrencyMode, EventStatus},
+    types::{EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
@@ -444,7 +444,9 @@ fn test_event_children_tracks_direct_and_nested_descendants() {
     let grandchild_id = grandchild.inner.lock().event_id.clone();
 
     let parent_children = parent
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .get(&parent_handler.id)
         .expect("parent result")
@@ -594,9 +596,11 @@ fn test_cross_eventbus_dispatch_preserves_parent_tracking() {
             let child = bus_1.emit_child(ChildEvent {
                 ..Default::default()
             });
-            bus_2.emit(<ChildEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(
-                child._inner_event(),
-            ));
+            bus_2.emit(
+                <ChildEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(
+                    child._inner_event(),
+                ),
+            );
             Ok(json!("bus1"))
         }
     });
@@ -751,7 +755,9 @@ fn test_bus_emit_outside_handler_does_not_guess_a_parent_when_multiple_handlers_
     assert_eq!(unrelated_child.event_parent_id.clone(), None);
     assert_eq!(
         unrelated_child
-            ._inner_event().inner.lock()
+            ._inner_event()
+            .inner
+            .lock()
             .event_emitted_by_handler_id,
         None
     );
@@ -808,7 +814,9 @@ fn test_erroring_parent_handlers_still_preserve_child_event_parent_id() {
         );
     }
     let parent_errors = parent
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .filter(|result| result.error.is_some())
@@ -894,13 +902,12 @@ fn test_parent_completion_waits_for_awaited_children() {
         .recv_timeout(Duration::from_secs(1))
         .expect("child should start");
     thread::sleep(Duration::from_millis(30));
-    assert_ne!(
-        parent.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_ne!(parent.event_status.read(), EventStatus::Completed);
 
     let parent_children_before_release: usize = parent
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .map(|result| result.event_children.len())
@@ -911,10 +918,7 @@ fn test_parent_completion_waits_for_awaited_children() {
     release_children_tx.send(()).expect("release child b send");
     let _ = block_on(parent.now());
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
-    assert_eq!(
-        parent.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(parent.event_status.read(), EventStatus::Completed);
     let child_refs = child_refs.lock().expect("child refs lock").clone();
     assert_eq!(child_refs.len(), 2);
     for child in child_refs {
@@ -964,10 +968,7 @@ fn test_event_emit_without_await_sets_parentage_without_blocking_parent_completi
         ..Default::default()
     });
     let _ = block_on(parent.now());
-    assert_eq!(
-        parent.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(parent.event_status.read(), EventStatus::Completed);
 
     child_started_rx
         .recv_timeout(Duration::from_secs(1))
@@ -1042,10 +1043,7 @@ fn test_awaited_event_emit_child_blocks_parent_completion_and_queue_jumps() {
         .recv_timeout(Duration::from_secs(1))
         .expect("child should queue-jump and start");
     thread::sleep(Duration::from_millis(30));
-    assert_ne!(
-        parent.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_ne!(parent.event_status.read(), EventStatus::Completed);
 
     let child = child_ref
         .lock()
@@ -1060,10 +1058,7 @@ fn test_awaited_event_emit_child_blocks_parent_completion_and_queue_jumps() {
     assert_eq!(parent_child_id, child_id);
     release_child_tx.send(()).expect("release child send");
     let _ = block_on(parent.now());
-    assert_eq!(
-        parent.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(parent.event_status.read(), EventStatus::Completed);
     assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
     bus.destroy();
 }
@@ -1156,10 +1151,7 @@ fn test_bus_emit_inside_handler_does_not_link_parent_when_not_using_event_emit()
         .recv_timeout(Duration::from_secs(1))
         .expect("child should start");
     let _ = block_on(parent.now());
-    assert_eq!(
-        parent.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(parent.event_status.read(), EventStatus::Completed);
 
     let child = child_ref
         .lock()
@@ -1172,7 +1164,9 @@ fn test_bus_emit_inside_handler_does_not_link_parent_when_not_using_event_emit()
     assert_ne!(child.inner.lock().event_status, EventStatus::Completed);
 
     let parent_children: usize = parent
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .map(|result| result.event_children.len())
@@ -1253,10 +1247,7 @@ fn test_outside_now_of_bus_emit_child_keeps_it_independent_of_active_handler() {
 
     release_parent_tx.send(()).expect("release parent send");
     let _ = block_on(parent.now());
-    assert_eq!(
-        parent.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(parent.event_status.read(), EventStatus::Completed);
     assert_ne!(child.inner.lock().event_status, EventStatus::Completed);
 
     release_child_tx.send(()).expect("release child send");
@@ -1333,10 +1324,7 @@ fn test_outside_wait_of_bus_emit_child_keeps_it_independent_of_active_handler() 
 
     release_parent_tx.send(()).expect("release parent send");
     let _ = block_on(parent.now());
-    assert_eq!(
-        parent.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(parent.event_status.read(), EventStatus::Completed);
     assert_ne!(child.inner.lock().event_status, EventStatus::Completed);
 
     release_child_tx.send(()).expect("release child send");

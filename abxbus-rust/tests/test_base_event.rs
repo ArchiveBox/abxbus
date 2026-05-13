@@ -174,6 +174,44 @@ event! {
     }
 }
 event! {
+    struct ParallelPauseParentEvent {
+        event_result_type: String,
+        event_type: "ParallelPauseParentEvent",
+    }
+}
+event! {
+    struct ParallelPauseChildEvent {
+        name: String,
+        event_result_type: String,
+        event_type: "ParallelPauseChildEvent",
+    }
+}
+event! {
+    struct ParallelPauseObservedEvent {
+        name: String,
+        event_result_type: String,
+        event_type: "ParallelPauseObservedEvent",
+    }
+}
+event! {
+    struct ParallelNotPausedParentEvent {
+        event_result_type: String,
+        event_type: "ParallelNotPausedParentEvent",
+    }
+}
+event! {
+    struct ParallelNotPausedParallelEvent {
+        event_result_type: String,
+        event_type: "ParallelNotPausedParallelEvent",
+    }
+}
+event! {
+    struct ParallelNotPausedChildEvent {
+        event_result_type: String,
+        event_type: "ParallelNotPausedChildEvent",
+    }
+}
+event! {
     struct FutureParallelSomeOtherEvent {
         event_result_type: String,
         event_type: "FutureParallelSomeOtherEvent",
@@ -328,17 +366,11 @@ fn test_event_result_re_raises_first_processing_exception_after_completion() {
         ..Default::default()
     });
     block_on(event.now()).expect("complete error event");
-    let error = block_on(
-        event
-            .event_result_with_options(EventResultOptions::default()),
-    )
-    .expect_err("handler error should be surfaced");
+    let error = block_on(event.event_result_with_options(EventResultOptions::default()))
+        .expect_err("handler error should be surfaced");
 
     assert!(error.contains("first failure"));
-    assert_eq!(
-        event.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(event.event_status.read(), EventStatus::Completed);
     let results = event.event_results.read();
     assert_eq!(results.len(), 2);
     assert!(results
@@ -523,8 +555,7 @@ fn test_typed_event_emit_inside_handler_no_args() {
                 let child = event.emit(BaseEventImmediateChildEvent {
                     ..Default::default()
                 });
-                *child_ref.lock().expect("child ref lock") =
-                    Some(child.event_id.clone());
+                *child_ref.lock().expect("child ref lock") = Some(child.event_id.clone());
                 let _ = child.now().await;
                 push(&order, "parent_end");
                 Ok("parent".to_string())
@@ -572,7 +603,9 @@ fn test_typed_event_emit_inside_handler_no_args() {
         .clone()
         .expect("child id");
     let parent_children = parent
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .flat_map(|result| result.event_children.clone())
@@ -679,10 +712,7 @@ fn test_base_event_now_outside_handler_no_args() {
     let error = block_on(event.event_result_with_options(EventResultOptions::default()))
         .expect_err("event_result should raise outside handler errors");
     assert_eq!(error, "outside failure");
-    assert_eq!(
-        event.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(event.event_status.read(), EventStatus::Completed);
     bus.destroy();
 }
 
@@ -704,10 +734,7 @@ fn test_base_event_now_outside_handler_with_args() {
         ..EventWaitOptions::default()
     }))
     .expect("raise_if_any=false should only wait for completion");
-    assert_eq!(
-        event.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(event.event_status.read(), EventStatus::Completed);
     bus.destroy();
 }
 
@@ -1476,10 +1503,7 @@ fn test_now_timeout_limits_caller_wait_and_background_processing_continues() {
     };
     assert!(error.contains("Timed out waiting"));
     wait_until_bool(&started);
-    assert_ne!(
-        event.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_ne!(event.event_status.read(), EventStatus::Completed);
     assert!(!handler_done.load(Ordering::SeqCst));
 
     release.store(true, Ordering::SeqCst);
@@ -1489,16 +1513,10 @@ fn test_now_timeout_limits_caller_wait_and_background_processing_continues() {
     }))
     .map(|completed| completed.event_id == event.event_id)
     .unwrap_or(false));
+    assert_eq!(event.event_status.read(), EventStatus::Completed);
     assert_eq!(
-        event.event_status.read(),
-        EventStatus::Completed
-    );
-    assert_eq!(
-        block_on(
-            event
-                .event_result_with_options(EventResultOptions::default())
-        )
-        .expect("event result"),
+        block_on(event.event_result_with_options(EventResultOptions::default()))
+            .expect("event result"),
         Some("done".to_string())
     );
     assert!(handler_done.load(Ordering::SeqCst));
@@ -2188,6 +2206,207 @@ fn test_wait_waits_for_normal_parallel_processing_inside_handlers() {
 }
 
 #[test]
+fn test_awaited_parallel_queue_jump_child_does_not_pause_later_parallel_child_events() {
+    let _guard = test_guard();
+    let bus = EventBus::new_with_options(
+        Some("ParallelQueueJumpDoesNotPauseBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            max_history_size: Some(100),
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+
+    let bus_for_parent = bus.clone();
+    let order_for_parent = order.clone();
+    bus.on(
+        ParallelPauseParentEvent,
+        move |event: ParallelPauseParentEvent| {
+            let bus = bus_for_parent.clone();
+            let order = order_for_parent.clone();
+            async move {
+                push(&order, "parent_start");
+                let child = event.emit(ParallelPauseChildEvent {
+                    name: "awaited".to_string(),
+                    event_concurrency: Some(EventConcurrencyMode::Parallel),
+                    ..Default::default()
+                });
+                child
+                    .now_with_options(EventWaitOptions {
+                        timeout: None,
+                        first_result: true,
+                    })
+                    .await?;
+                push(&order, "parent_after_awaited");
+
+                event.emit(ParallelPauseChildEvent {
+                    name: "bg".to_string(),
+                    event_concurrency: Some(EventConcurrencyMode::Parallel),
+                    ..Default::default()
+                });
+                push(&order, "parent_after_bg_emit");
+                let found = bus
+                    .find("ParallelPauseObservedEvent", true, Some(0.2), None)
+                    .await;
+                push(&order, &format!("parent_found_{}", found.is_some()));
+                if found.is_none() {
+                    return Err(
+                        "background parallel child should run while parent handler is waiting"
+                            .to_string(),
+                    );
+                }
+                Ok("parent".to_string())
+            }
+        },
+    );
+
+    let order_for_child = order.clone();
+    bus.on(
+        ParallelPauseChildEvent,
+        move |event: ParallelPauseChildEvent| {
+            let order = order_for_child.clone();
+            async move {
+                push(&order, &format!("child_start_{}", event.name));
+                if event.name == "bg" {
+                    event.emit(ParallelPauseObservedEvent {
+                        name: "bg".to_string(),
+                        ..Default::default()
+                    });
+                }
+                push(&order, &format!("child_end_{}", event.name));
+                Ok(event.name)
+            }
+        },
+    );
+    let order_for_observed = order.clone();
+    bus.on(
+        ParallelPauseObservedEvent,
+        move |_event: ParallelPauseObservedEvent| {
+            let order = order_for_observed.clone();
+            async move {
+                push(&order, "observed_seen");
+                Ok("observed".to_string())
+            }
+        },
+    );
+
+    let parent = bus.emit(ParallelPauseParentEvent {
+        event_timeout: Some(0.0),
+        ..Default::default()
+    });
+    block_on(parent.now()).expect("parent should complete");
+    block_on(bus.wait_until_idle(Some(1.0)));
+
+    let order = order.lock().expect("order lock").clone();
+    assert!(
+        index_of(&order, "child_start_bg") < index_of(&order, "parent_found_true"),
+        "{order:?}"
+    );
+    bus.destroy();
+}
+
+#[test]
+fn test_serial_queue_jump_child_does_not_pause_existing_parallel_event() {
+    let _guard = test_guard();
+    let bus = EventBus::new_with_options(
+        Some("ParallelEventNotPausedBySerialQueueJumpBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            max_history_size: Some(100),
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let parallel_done = Arc::new(AtomicBool::new(false));
+
+    let order_for_parent = order.clone();
+    bus.on(
+        ParallelNotPausedParentEvent,
+        move |event: ParallelNotPausedParentEvent| {
+            let order = order_for_parent.clone();
+            async move {
+                push(&order, "parent_start");
+                event.emit(ParallelNotPausedParallelEvent {
+                    event_concurrency: Some(EventConcurrencyMode::Parallel),
+                    ..Default::default()
+                });
+                let child = event.emit(ParallelNotPausedChildEvent {
+                    ..Default::default()
+                });
+                child.now().await?;
+                push(&order, "parent_after_child");
+                Ok("parent".to_string())
+            }
+        },
+    );
+
+    let order_for_parallel = order.clone();
+    let parallel_done_for_handler = parallel_done.clone();
+    bus.on(
+        ParallelNotPausedParallelEvent,
+        move |_event: ParallelNotPausedParallelEvent| {
+            let order = order_for_parallel.clone();
+            let parallel_done = parallel_done_for_handler.clone();
+            async move {
+                push(&order, "parallel_start");
+                thread::sleep(Duration::from_millis(5));
+                push(&order, "parallel_end");
+                parallel_done.store(true, Ordering::SeqCst);
+                Ok("parallel".to_string())
+            }
+        },
+    );
+
+    let order_for_child = order.clone();
+    let parallel_done_for_child = parallel_done.clone();
+    bus.on(
+        ParallelNotPausedChildEvent,
+        move |_event: ParallelNotPausedChildEvent| {
+            let order = order_for_child.clone();
+            let parallel_done = parallel_done_for_child.clone();
+            async move {
+                push(&order, "child_start");
+                let started_at = std::time::Instant::now();
+                while !parallel_done.load(Ordering::SeqCst)
+                    && started_at.elapsed() < Duration::from_millis(500)
+                {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                if parallel_done.load(Ordering::SeqCst) {
+                    push(&order, "child_saw_parallel_done");
+                } else {
+                    push(&order, "child_missed_parallel_done");
+                }
+                push(&order, "child_end");
+                Ok("child".to_string())
+            }
+        },
+    );
+
+    let parent = bus.emit(ParallelNotPausedParentEvent {
+        event_timeout: Some(0.0),
+        ..Default::default()
+    });
+    block_on(parent.now()).expect("parent should complete");
+    block_on(bus.wait_until_idle(Some(1.0)));
+
+    let order = order.lock().expect("order lock").clone();
+    assert!(
+        index_of(&order, "parallel_start") < index_of(&order, "child_end"),
+        "{order:?}"
+    );
+    assert!(
+        index_of(&order, "parallel_end") < index_of(&order, "child_end"),
+        "{order:?}"
+    );
+    assert!(order.iter().any(|entry| entry == "child_saw_parallel_done"));
+    bus.destroy();
+}
+
+#[test]
 fn test_wait_waits_for_future_parallel_event_found_after_handler_starts() {
     let _guard = test_guard();
     let bus = EventBus::new_with_options(
@@ -2273,8 +2492,7 @@ fn test_wait_returns_event_accepts_timeout_and_rejects_unattached_pending_event(
     let _guard = test_guard();
     let pending = EventCompletedTimeoutEvent {
         ..Default::default()
-    }
-    ;
+    };
     let error = match block_on(pending.wait_with_options(EventWaitOptions {
         timeout: Some(0.01),
         first_result: false,
@@ -2286,8 +2504,7 @@ fn test_wait_returns_event_accepts_timeout_and_rejects_unattached_pending_event(
 
     let completed = EventCompletedTimeoutEvent {
         ..Default::default()
-    }
-    ;
+    };
     completed.event_status.set(EventStatus::Completed);
     let returned = block_on(completed.wait_with_options(EventWaitOptions {
         timeout: Some(0.01),

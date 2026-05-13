@@ -167,7 +167,9 @@ pub fn is_live_option_string_none(value: &Live<Option<String>>) -> bool {
     value.read().is_none()
 }
 
-pub fn is_live_event_results_empty(value: &Live<std::collections::HashMap<String, EventResult>>) -> bool {
+pub fn is_live_event_results_empty(
+    value: &Live<std::collections::HashMap<String, EventResult>>,
+) -> bool {
     value.read().is_empty()
 }
 
@@ -258,7 +260,9 @@ fn primitive_result_type_schema<T: 'static>() -> Option<Value> {
     }
 }
 
-pub trait TypedEventObject: EventSpec<payload = Self> + Serialize + DeserializeOwned + Clone {
+pub trait TypedEventObject:
+    EventSpec<payload = Self> + Serialize + DeserializeOwned + Clone
+{
     #[doc(hidden)]
     fn _from_inner_event(event: Arc<RawBaseEvent>) -> Self;
 
@@ -350,23 +354,62 @@ pub fn payload_value_from_inner_event(event: &Arc<RawBaseEvent>) -> Value {
     payload.insert("event_type".to_string(), json!(event.event_type));
     payload.insert("event_version".to_string(), json!(event.event_version));
     payload.insert("event_timeout".to_string(), json!(event.event_timeout));
-    payload.insert("event_slow_timeout".to_string(), json!(event.event_slow_timeout));
-    payload.insert("event_concurrency".to_string(), json!(event.event_concurrency));
-    payload.insert("event_handler_timeout".to_string(), json!(event.event_handler_timeout));
-    payload.insert("event_handler_slow_timeout".to_string(), json!(event.event_handler_slow_timeout));
-    payload.insert("event_handler_concurrency".to_string(), json!(event.event_handler_concurrency));
-    payload.insert("event_handler_completion".to_string(), json!(event.event_handler_completion));
-    payload.insert("event_blocks_parent_completion".to_string(), json!(event.event_blocks_parent_completion));
-    payload.insert("event_result_type".to_string(), json!(event.event_result_type));
+    payload.insert(
+        "event_slow_timeout".to_string(),
+        json!(event.event_slow_timeout),
+    );
+    payload.insert(
+        "event_concurrency".to_string(),
+        json!(event.event_concurrency),
+    );
+    payload.insert(
+        "event_handler_timeout".to_string(),
+        json!(event.event_handler_timeout),
+    );
+    payload.insert(
+        "event_handler_slow_timeout".to_string(),
+        json!(event.event_handler_slow_timeout),
+    );
+    payload.insert(
+        "event_handler_concurrency".to_string(),
+        json!(event.event_handler_concurrency),
+    );
+    payload.insert(
+        "event_handler_completion".to_string(),
+        json!(event.event_handler_completion),
+    );
+    payload.insert(
+        "event_blocks_parent_completion".to_string(),
+        json!(event.event_blocks_parent_completion),
+    );
+    payload.insert(
+        "event_result_type".to_string(),
+        json!(event.event_result_type),
+    );
     payload.insert("event_id".to_string(), json!(event.event_id));
     payload.insert("event_path".to_string(), json!(event.event_path));
     payload.insert("event_parent_id".to_string(), json!(event.event_parent_id));
-    payload.insert("event_emitted_by_handler_id".to_string(), json!(event.event_emitted_by_handler_id));
-    payload.insert("event_pending_bus_count".to_string(), json!(event.event_pending_bus_count));
-    payload.insert("event_created_at".to_string(), json!(event.event_created_at));
+    payload.insert(
+        "event_emitted_by_handler_id".to_string(),
+        json!(event.event_emitted_by_handler_id),
+    );
+    payload.insert(
+        "event_pending_bus_count".to_string(),
+        json!(event.event_pending_bus_count),
+    );
+    payload.insert(
+        "event_created_at".to_string(),
+        json!(event.event_created_at),
+    );
     payload.insert("event_status".to_string(), json!(event.event_status));
-    payload.insert("event_started_at".to_string(), json!(event.event_started_at));
-    payload.insert("event_completed_at".to_string(), json!(event.event_completed_at));
+    payload.insert(
+        "event_started_at".to_string(),
+        json!(event.event_started_at),
+    );
+    payload.insert(
+        "event_completed_at".to_string(),
+        json!(event.event_completed_at),
+    );
     payload.insert("event_results".to_string(), json!(event.event_results));
     Value::Object(payload)
 }
@@ -397,13 +440,10 @@ impl EventBus {
         E::_from_inner_event(emitted)
     }
 
-    pub fn emit_with_options<E: TypedEventObject>(
-        &self,
-        event: E,
-        queue_jump: bool,
-    ) -> E {
+    pub fn emit_with_options<E: TypedEventObject>(&self, event: E, queue_jump: bool) -> E {
         self.raise_if_terminal_destroyed();
-        let emitted = self.enqueue_base_with_options(<E as TypedEventObject>::_inner_event(&event), queue_jump);
+        let emitted = self
+            .enqueue_base_with_options(<E as TypedEventObject>::_inner_event(&event), queue_jump);
         E::_from_inner_event(emitted)
     }
 
@@ -413,13 +453,12 @@ impl EventBus {
         E::_from_inner_event(emitted)
     }
 
-    pub fn emit_child_with_options<E: TypedEventObject>(
-        &self,
-        event: E,
-        queue_jump: bool,
-    ) -> E {
+    pub fn emit_child_with_options<E: TypedEventObject>(&self, event: E, queue_jump: bool) -> E {
         self.raise_if_terminal_destroyed();
-        let emitted = self.enqueue_child_base_with_options(<E as TypedEventObject>::_inner_event(&event), queue_jump);
+        let emitted = self.enqueue_child_base_with_options(
+            <E as TypedEventObject>::_inner_event(&event),
+            queue_jump,
+        );
         E::_from_inner_event(emitted)
     }
 

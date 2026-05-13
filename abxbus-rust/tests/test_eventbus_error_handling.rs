@@ -155,10 +155,7 @@ fn test_handler_error_does_not_prevent_event_completion() {
     });
     let _ = block_on(event.now());
 
-    assert_eq!(
-        event.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(event.event_status.read(), EventStatus::Completed);
     assert!(event.event_completed_at.read().is_some());
     assert_eq!(event.event_errors().len(), 1);
     bus.destroy();
@@ -183,18 +180,14 @@ fn test_error_in_one_event_does_not_affect_subsequent_queued_events() {
     });
     block_on(bus.wait_until_idle(None));
 
-    assert_eq!(
-        event_1.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(event_1.event_status.read(), EventStatus::Completed);
     assert_eq!(event_1.event_errors().len(), 1);
-    assert_eq!(
-        event_2.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(event_2.event_status.read(), EventStatus::Completed);
     assert_eq!(event_2.event_errors().len(), 0);
     let result = event_2
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .next()
@@ -219,16 +212,15 @@ fn test_async_handler_rejection_is_captured_as_error() {
     });
     let _ = block_on(event.now());
 
-    assert_eq!(
-        event.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(event.event_status.read(), EventStatus::Completed);
     let errors = event.event_errors();
     assert_eq!(errors.len(), 1);
     assert!(errors[0].contains("async rejection"));
 
     let result = event
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .next()
@@ -264,10 +256,7 @@ fn test_error_in_forwarded_event_handler_does_not_block_source_bus() {
     });
     let _ = block_on(event.now());
 
-    assert_eq!(
-        event.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(event.event_status.read(), EventStatus::Completed);
 
     let event_results = event.event_results.read();
     let bus_a_result = event_results
@@ -300,10 +289,7 @@ fn test_event_with_no_handlers_completes_without_errors() {
     });
     let _ = block_on(event.now());
 
-    assert_eq!(
-        event.event_status.read(),
-        EventStatus::Completed
-    );
+    assert_eq!(event.event_status.read(), EventStatus::Completed);
     assert_eq!(event.event_results.read().len(), 0);
     assert_eq!(event.event_errors().len(), 0);
     bus.destroy();
@@ -323,7 +309,9 @@ fn test_error_handler_result_fields_are_populated_correctly() {
     let _ = block_on(event.now());
 
     let result = event
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .next()
@@ -401,7 +389,9 @@ fn test_handler_timeout_uses_event_handler_timeout_error() {
     let _ = block_on(event.now());
 
     let result = event
-        ._inner_event().inner.lock()
+        ._inner_event()
+        .inner
+        .lock()
         .event_results
         .values()
         .next()

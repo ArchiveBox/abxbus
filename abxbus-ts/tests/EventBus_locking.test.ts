@@ -132,7 +132,7 @@ test('global-serial: only one event processes at a time across buses', async () 
   assert.deepEqual(starts_b, [0, 1, 2])
 })
 
-test('global-serial: awaited child jumps ahead of queued events across buses', async () => {
+test('test_global_serial_awaited_child_jumps_ahead_of_queued_events_across_buses', async () => {
   const ParentEvent = BaseEvent.extend('ParentEvent', {})
   const ChildEvent = BaseEvent.extend('ChildEvent', {})
   const QueuedEvent = BaseEvent.extend('QueuedEvent', {})
