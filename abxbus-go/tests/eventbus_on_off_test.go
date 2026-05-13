@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
 )
 
 func TestOnOffByEntryByIDAndRemoveAll(t *testing.T) {

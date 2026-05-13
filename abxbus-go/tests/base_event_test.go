@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
 	"github.com/google/uuid"
 	"strings"
 	"sync"

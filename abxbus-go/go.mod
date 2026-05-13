@@ -1,4 +1,4 @@
-module github.com/ArchiveBox/abxbus/abxbus-go
+module github.com/ArchiveBox/abxbus/abxbus-go/v2
 
 go 1.25.0
 

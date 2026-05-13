@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
 )
 
 const performanceMaxMsPerUnit = 0.3

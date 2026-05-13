@@ -2,7 +2,7 @@ package abxbus_test
 
 import (
 	"context"
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
 	"strconv"
 	"sync"
 	"testing"

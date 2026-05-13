@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
 )
 
 func assertJSONKeyBefore(t *testing.T, data []byte, firstKey string, secondKey string) {

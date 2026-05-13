@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
 )
 
 func TestLogTreeShowsParentChildAndHandlerResults(t *testing.T) {

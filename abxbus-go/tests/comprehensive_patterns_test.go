@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
 )
 
 func appendLocked(mu *sync.Mutex, entries *[]string, entry string) {

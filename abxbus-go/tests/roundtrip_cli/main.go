@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
 )
 
 func usage() {

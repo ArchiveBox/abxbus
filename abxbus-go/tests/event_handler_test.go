@@ -3,7 +3,7 @@ package abxbus_test
 import (
 	"context"
 	"encoding/json"
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
 	"github.com/google/uuid"
 	"testing"
 )

@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/ArchiveBox/abxbus/abxbus-go/jsonschema"
+	"github.com/ArchiveBox/abxbus/abxbus-go/v2/jsonschema"
 )
 
 func Event[T any](payload T) (*BaseEvent, error) {

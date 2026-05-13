@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
 )
 
 func TestEventResultPropagatesHandlerError(t *testing.T) {
