@@ -84,7 +84,7 @@ let event = bus.emit(OrderCreatedEvent {
     ..Default::default()
 });
 
-let typed_result = block_on(event.event_result(Default::default()))?
+let typed_result = block_on(event.event_result())?
     .expect("handler result");
 ```
 

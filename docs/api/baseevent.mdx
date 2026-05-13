@@ -171,7 +171,7 @@ let pending = bus.emit(MyEvent {
 });
 block_on(pending.now())?;
 block_on(pending.wait())?;
-let value = block_on(pending.event_result(EventResultOptions::default()))?;
+let value = block_on(pending.event_result())?;
 ```
 
 </Tab>
@@ -215,7 +215,7 @@ let completed = block_on(event.now_with_options(EventWaitOptions {
     first_result: true,
     ..Default::default()
 }))?;
-let value = block_on(completed.event_result(EventResultOptions::default()))?;
+let value = block_on(completed.event_result())?;
 ```
 
 </Tab>
@@ -251,7 +251,6 @@ const errors = event.event_errors
 ```go
 items, err := event.EventResultsList()
 filtered, err := event.EventResultsList(
-	context.Background(),
 	&abxbus.EventResultOptions{
 		Include: func(result any, eventResult *abxbus.EventResult) bool {
 			_, ok := result.(string)
@@ -267,7 +266,7 @@ filtered, err := event.EventResultsList(
 <Tab title="Rust">
 
 ```rust
-let items = block_on(event.event_results_list(EventResultOptions {
+let items = block_on(event.event_results_list_with_options(EventResultOptions {
     raise_if_any: false,
     raise_if_none: false,
     ..EventResultOptions::default()

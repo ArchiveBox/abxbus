@@ -53,6 +53,7 @@ struct BusRuntime {
     destroyed: Mutex<bool>,
     terminal_destroyed: Mutex<bool>,
     loop_started: Mutex<bool>,
+    active_event_ids: Mutex<HashSet<String>>,
     processing_event_ids: Mutex<HashSet<String>>,
     events: Mutex<HashMap<String, Arc<BaseEvent>>>,
     event_contexts: Mutex<HashMap<String, dcontext::ContextSnapshot>>,
@@ -506,6 +507,7 @@ impl EventBus {
                 destroyed: Mutex::new(false),
                 terminal_destroyed: Mutex::new(false),
                 loop_started: Mutex::new(false),
+                active_event_ids: Mutex::new(HashSet::new()),
                 processing_event_ids: Mutex::new(HashSet::new()),
                 events: Mutex::new(HashMap::new()),
                 event_contexts: Mutex::new(HashMap::new()),
@@ -573,9 +575,14 @@ impl EventBus {
     }
 
     fn ensure_loop_started(&self) {
-        self.raise_if_terminal_destroyed();
+        if *self.runtime.terminal_destroyed.lock() {
+            return;
+        }
         let mut started = self.runtime.loop_started.lock();
         if *started {
+            return;
+        }
+        if *self.runtime.terminal_destroyed.lock() {
             return;
         }
         *self.runtime.destroyed.lock() = false;
@@ -598,10 +605,19 @@ impl EventBus {
                 loop {
                     bus.locks.wait_until_runloop_resumed();
                     let listener = bus.runtime.queue_notify.listen();
-                    let next_event = bus.runtime.queue.lock().pop_front();
+                    let next_event = {
+                        let mut queue = bus.runtime.queue.lock();
+                        let next_event = queue.pop_front();
+                        if let Some(event) = &next_event {
+                            let event_id = event.inner.lock().event_id.clone();
+                            bus.runtime.active_event_ids.lock().insert(event_id);
+                        }
+                        next_event
+                    };
                     if let Some(event) = next_event {
                         drop(listener);
                         let bus_for_task = bus.clone();
+                        let event_id = event.inner.lock().event_id.clone();
                         let mode = event
                             .inner
                             .lock()
@@ -611,12 +627,18 @@ impl EventBus {
                             EventConcurrencyMode::Parallel => {
                                 thread::spawn(move || {
                                     block_on(bus_for_task.process_event(event));
+                                    bus_for_task
+                                        .runtime
+                                        .active_event_ids
+                                        .lock()
+                                        .remove(&event_id);
                                 });
                                 thread::sleep(Duration::from_millis(1));
                             }
                             EventConcurrencyMode::GlobalSerial
                             | EventConcurrencyMode::BusSerial => {
                                 bus.process_event(event).await;
+                                bus.runtime.active_event_ids.lock().remove(&event_id);
                             }
                         }
                         continue;
@@ -640,18 +662,27 @@ impl EventBus {
                 .position(|queued| queued.inner.lock().event_id == event_id)
             {
                 queue.remove(index);
+                self.runtime
+                    .active_event_ids
+                    .lock()
+                    .insert(event_id.clone());
                 true
             } else {
                 false
             }
         };
-        if !removed || event.inner.lock().event_status == EventStatus::Completed {
+        if !removed {
+            return;
+        }
+        if event.inner.lock().event_status == EventStatus::Completed {
+            self.runtime.active_event_ids.lock().remove(&event_id);
             return;
         }
 
         let bus = self.clone();
         thread::spawn(move || {
             block_on(bus.process_event(event));
+            bus.runtime.active_event_ids.lock().remove(&event_id);
         });
     }
 
@@ -689,6 +720,7 @@ impl EventBus {
             let _ = sender.send(None);
         }
         self.runtime.queue.lock().clear();
+        self.runtime.active_event_ids.lock().clear();
         self.runtime.processing_event_ids.lock().clear();
         self.runtime.event_contexts.lock().clear();
         self.runtime.event_context_count.store(0, Ordering::SeqCst);
@@ -722,8 +754,9 @@ impl EventBus {
 
     pub fn is_idle_and_queue_empty(&self) -> bool {
         let queue_empty = self.runtime.queue.lock().is_empty();
+        let no_active = self.runtime.active_event_ids.lock().is_empty();
         let no_processing = self.runtime.processing_event_ids.lock().is_empty();
-        queue_empty && no_processing
+        queue_empty && no_active && no_processing
     }
 
     pub fn is_running_for_test(&self) -> bool {
@@ -1135,7 +1168,7 @@ impl EventBus {
                 .and_then(|value| serde_json::from_value(value).ok())
                 .unwrap_or(EventConcurrencyMode::BusSerial),
             event_timeout: match payload.get("event_timeout") {
-                Some(Value::Null) => None,
+                Some(Value::Null) => Some(60.0),
                 Some(value) => value.as_f64(),
                 None => Some(60.0),
             },
@@ -1677,6 +1710,10 @@ impl EventBus {
                 .position(|queued| queued.inner.lock().event_id == event_id)
             {
                 queue.remove(index);
+                self.runtime
+                    .active_event_ids
+                    .lock()
+                    .insert(event_id.clone());
                 true
             } else {
                 false
@@ -1685,10 +1722,17 @@ impl EventBus {
         if !removed && !bypass_event_lock {
             return;
         }
+        if !removed {
+            self.runtime
+                .active_event_ids
+                .lock()
+                .insert(event_id.clone());
+        }
         if bypass_event_lock {
             {
                 let mut processing = self.runtime.processing_event_ids.lock();
                 if !processing.insert(event_id.clone()) {
+                    self.runtime.active_event_ids.lock().remove(&event_id);
                     return;
                 }
             }
@@ -1697,6 +1741,7 @@ impl EventBus {
         } else {
             self.process_event(event).await;
         }
+        self.runtime.active_event_ids.lock().remove(&event_id);
         drop(runloop_pause);
         self.runtime.queue_notify.notify(usize::MAX);
     }

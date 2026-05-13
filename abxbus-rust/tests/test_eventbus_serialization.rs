@@ -101,19 +101,65 @@ fn assert_eventbus_json_roundtrip_uses_id_keyed_structures(bus_name: &str, bus_i
 }
 
 #[test]
-fn test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() {
-    assert_eventbus_json_roundtrip_uses_id_keyed_structures(
-        "SerializableBusModelDump",
-        "018f8e40-1234-7000-8000-000000001234",
-    );
-}
-
-#[test]
 fn test_eventbus_to_json_from_json_roundtrip_uses_id_keyed_structures() {
     assert_eventbus_json_roundtrip_uses_id_keyed_structures(
         "SerializableBusToJson",
         "018f8e40-1234-7000-8000-000000001235",
     );
+}
+
+#[test]
+fn test_eventbus_serialization_preserves_unbounded_history_null() {
+    let bus = EventBus::new_with_options(
+        Some("UnlimitedSerBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            max_history_drop: false,
+            ..EventBusOptions::default()
+        },
+    );
+    let payload = bus.to_json_value();
+    assert_eq!(payload["max_history_size"], Value::Null);
+
+    let restored = EventBus::from_json_value(payload);
+    assert_eq!(restored.to_json_value()["max_history_size"], Value::Null);
+    restored.destroy();
+    bus.destroy();
+}
+
+#[test]
+fn test_eventbus_from_json_null_event_timeout_uses_default() {
+    let bus = EventBus::new(Some("TimeoutNullBus".to_string()));
+    let mut payload = bus.to_json_value();
+    payload["event_timeout"] = Value::Null;
+
+    let restored = EventBus::from_json_value(payload);
+    assert_eq!(restored.to_json_value()["event_timeout"], json!(60.0));
+    restored.destroy();
+    bus.destroy();
+}
+
+#[test]
+fn test_eventbus_from_json_defaults_missing_handler_maps() {
+    let bus = EventBus::new(Some("MissingHandlerMaps".to_string()));
+    let mut payload = bus.to_json_value();
+    payload.as_object_mut().expect("payload").remove("handlers");
+    payload
+        .as_object_mut()
+        .expect("payload")
+        .remove("handlers_by_key");
+
+    let restored = EventBus::from_json_value(payload);
+    restored.on_raw("SerializableEvent", "handler", |_event| async move {
+        Ok(json!({}))
+    });
+    let event = restored.emit(SerializableEvent {
+        ..Default::default()
+    });
+    let _ = block_on(event.now());
+    assert_eq!(event.inner.inner.lock().event_results.len(), 1);
+    restored.destroy();
+    bus.destroy();
 }
 
 #[test]
@@ -291,11 +337,6 @@ fn assert_eventbus_recreates_missing_handler_entries_from_event_result_metadata(
 }
 
 #[test]
-fn test_eventbus_validate_creates_missing_handler_entries_from_event_results() {
-    assert_eventbus_recreates_missing_handler_entries_from_event_result_metadata();
-}
-
-#[test]
 fn test_eventbus_from_json_recreates_missing_handler_entries_from_event_result_metadata() {
     assert_eventbus_recreates_missing_handler_entries_from_event_result_metadata();
 }
@@ -342,29 +383,35 @@ fn assert_eventbus_promotes_pending_events_into_event_history() {
 }
 
 #[test]
-fn test_eventbus_model_dump_promotes_pending_events_into_event_history() {
-    assert_eventbus_promotes_pending_events_into_event_history();
-}
-
-#[test]
 fn test_eventbus_to_json_promotes_pending_events_into_event_history_snapshot() {
     assert_eventbus_promotes_pending_events_into_event_history();
 }
 
 #[test]
-fn test_eventbus_tojson_fromjson_roundtrip_uses_id_keyed_structures() {
-    assert_eventbus_json_roundtrip_uses_id_keyed_structures(
-        "SerializableBusToJSON",
-        "018f8e40-1234-7000-8000-000000001236",
+fn test_eventbus_from_json_preserves_event_history_object_order() {
+    let bus = EventBus::new(Some("HistoryOrderBus".to_string()));
+    let first = bus.emit(SerializableEvent {
+        ..Default::default()
+    });
+    let second = bus.emit(SerializableEvent {
+        ..Default::default()
+    });
+    let _ = block_on(first.now());
+    let _ = block_on(second.now());
+    let first_id = first.inner.inner.lock().event_id.clone();
+    let second_id = second.inner.inner.lock().event_id.clone();
+
+    let payload = bus.to_json_value();
+    assert_eq!(
+        json_object_keys(&payload, "event_history"),
+        vec![first_id.clone(), second_id.clone()]
     );
-}
 
-#[test]
-fn test_eventbus_fromjson_recreates_missing_handler_entries_from_event_result_metadata() {
-    assert_eventbus_recreates_missing_handler_entries_from_event_result_metadata();
-}
-
-#[test]
-fn test_eventbus_tojson_promotes_pending_events_into_event_history_snapshot() {
-    assert_eventbus_promotes_pending_events_into_event_history();
+    let restored = EventBus::from_json_value(payload);
+    assert_eq!(
+        json_object_keys(&restored.to_json_value(), "event_history"),
+        vec![first_id, second_id]
+    );
+    restored.destroy();
+    bus.destroy();
 }

@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
+	"github.com/google/uuid"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 )
 
 func TestBaseEventNowWithoutBus(t *testing.T) {
@@ -67,7 +67,8 @@ func TestBaseEventNowInsideHandlerNoArgs(t *testing.T) {
 		order = append(order, "parent_start")
 		event.Bus.Emit(abxbus.NewBaseEvent("NowInsideNoArgsSibling", nil))
 		child := event.Emit(abxbus.NewBaseEvent("NowInsideNoArgsChild", nil))
-		if _, err := child.Now(); err != nil {
+		timeout := 1.0
+		if _, err := child.Now(&abxbus.EventWaitOptions{Timeout: &timeout}); err != nil {
 			return nil, err
 		}
 		order = append(order, "parent_end")
@@ -392,12 +393,12 @@ func TestWaitFirstResultReturnsBeforeEventCompletion(t *testing.T) {
 	if completed != event {
 		t.Fatal("Wait should return the event")
 	}
-	value, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: abxbus.Ptr(false)})
+	value, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: false})
 	if err != nil || value != "fast" {
 		t.Fatalf("expected first current result, got %#v err=%v", value, err)
 	}
 	time.Sleep(50 * time.Millisecond)
-	values, err := event.EventResultsList(&abxbus.EventResultOptions{RaiseIfAny: abxbus.Ptr(false)})
+	values, err := event.EventResultsList(&abxbus.EventResultOptions{RaiseIfAny: false})
 	if err != nil || len(values) != 2 || values[0] != "medium" || values[1] != "fast" {
 		t.Fatalf("expected current result subset in registration order, got %#v err=%v", values, err)
 	}
@@ -462,12 +463,12 @@ func TestNowFirstResultReturnsBeforeEventCompletion(t *testing.T) {
 	if completed != event {
 		t.Fatal("Now should return the event")
 	}
-	value, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: abxbus.Ptr(false)})
+	value, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: false})
 	if err != nil || value != "fast" {
 		t.Fatalf("expected first current result, got %#v err=%v", value, err)
 	}
 	time.Sleep(50 * time.Millisecond)
-	values, err := event.EventResultsList(&abxbus.EventResultOptions{RaiseIfAny: abxbus.Ptr(false)})
+	values, err := event.EventResultsList(&abxbus.EventResultOptions{RaiseIfAny: false})
 	if err != nil || len(values) != 2 || values[0] != "medium" || values[1] != "fast" {
 		t.Fatalf("expected current result subset in registration order, got %#v err=%v", values, err)
 	}
@@ -614,7 +615,7 @@ func TestEventResultHelpersDoNotWaitForStartedEvent(t *testing.T) {
 	resultCh := make(chan any, 1)
 	resultErrCh := make(chan error, 1)
 	go func() {
-		result, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfNone: abxbus.Ptr(false)})
+		result, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfNone: false})
 		resultCh <- result
 		resultErrCh <- err
 	}()
@@ -633,7 +634,7 @@ func TestEventResultHelpersDoNotWaitForStartedEvent(t *testing.T) {
 	resultsCh := make(chan []any, 1)
 	resultsErrCh := make(chan error, 1)
 	go func() {
-		results, err := event.EventResultsList(&abxbus.EventResultOptions{RaiseIfNone: abxbus.Ptr(false)})
+		results, err := event.EventResultsList(&abxbus.EventResultOptions{RaiseIfNone: false})
 		resultsCh <- results
 		resultsErrCh <- err
 	}()
@@ -730,19 +731,19 @@ func TestEventResultOptionsApplyToCurrentResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: abxbus.Ptr(false)})
+	result, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: false})
 	if err != nil || result != "keep" {
 		t.Fatalf("expected keep result, got %#v err=%v", result, err)
 	}
-	if _, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: abxbus.Ptr(true)}); err == nil || !strings.Contains(err.Error(), "option boom") {
+	if _, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: true}); err == nil || !strings.Contains(err.Error(), "option boom") {
 		t.Fatalf("expected option boom, got %v", err)
 	}
 	results, err := event.EventResultsList(&abxbus.EventResultOptions{
 		Include: func(result any, eventResult *abxbus.EventResult) bool {
 			return result == "missing"
 		},
-		RaiseIfAny:  abxbus.Ptr(false),
-		RaiseIfNone: abxbus.Ptr(false),
+		RaiseIfAny:  false,
+		RaiseIfNone: false,
 	})
 	if err != nil || len(results) != 0 {
 		t.Fatalf("expected empty filtered results, got %#v err=%v", results, err)
@@ -757,7 +758,8 @@ func TestBaseEventNowOutsideHandlerNoArgs(t *testing.T) {
 	}, nil)
 
 	event := bus.Emit(abxbus.NewBaseEvent("NowOutsideNoArgsEvent", nil))
-	if _, err := event.Now(); err != nil {
+	timeout := 1.0
+	if _, err := event.Now(&abxbus.EventWaitOptions{Timeout: &timeout}); err != nil {
 		t.Fatalf("Now should wait without surfacing handler errors, got %v", err)
 	}
 	if _, err := event.EventResult(); err == nil || err.Error() != "outside failure" {
@@ -1317,4 +1319,182 @@ func baseEventContainsString(values []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// Folded from base_event_eventbus_proxy_test.go to keep test layout class-based.
+func TestBaseEventCarriesEventBusReferenceDuringDispatch(t *testing.T) {
+	bus := abxbus.NewEventBus("ProxyBus", nil)
+	var seenBus *abxbus.EventBus
+	bus.On("ProxyEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		seenBus = event.Bus
+		return event.Bus.Name, nil
+	}, nil)
+
+	event := bus.Emit(abxbus.NewBaseEvent("ProxyEvent", nil))
+	result, err := event.EventResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seenBus != bus || event.Bus != bus || result != "ProxyBus" {
+		t.Fatalf("event bus reference mismatch: seen=%p event=%p bus=%p result=%#v", seenBus, event.Bus, bus, result)
+	}
+}
+
+func TestBaseEventBusReferenceReflectsForwardedProcessingBus(t *testing.T) {
+	source := abxbus.NewEventBus("ProxySourceBus", nil)
+	target := abxbus.NewEventBus("ProxyTargetBus", nil)
+	source.On("*", "forward", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		target.Emit(event)
+		return "forwarded", nil
+	}, nil)
+
+	var targetSeenBus *abxbus.EventBus
+	target.On("ProxyForwardEvent", "target", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		targetSeenBus = event.Bus
+		return event.Bus.Name, nil
+	}, nil)
+
+	event := source.Emit(abxbus.NewBaseEvent("ProxyForwardEvent", nil))
+	if _, err := event.Now(); err != nil {
+		t.Fatal(err)
+	}
+	timeout := 2.0
+	if !target.WaitUntilIdle(&timeout) {
+		t.Fatal("target bus did not become idle")
+	}
+
+	if targetSeenBus != target {
+		t.Fatalf("forwarded handler should see target bus, got %p want %p", targetSeenBus, target)
+	}
+	if event.Bus != source {
+		t.Fatalf("source event bus reference should be restored after forwarded processing, got %p want %p", event.Bus, source)
+	}
+	if len(event.EventPath) != 2 || event.EventPath[0] != source.Label() || event.EventPath[1] != target.Label() {
+		t.Fatalf("unexpected forwarded event path: %#v", event.EventPath)
+	}
+}
+
+func TestEventEmitFromForwardedHandlerDispatchesChildOnTargetBus(t *testing.T) {
+	source := abxbus.NewEventBus("ProxyChildSourceBus", nil)
+	target := abxbus.NewEventBus("ProxyChildTargetBus", nil)
+	source.On("*", "forward", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		target.Emit(event)
+		return "forwarded", nil
+	}, nil)
+
+	var child *abxbus.BaseEvent
+	var childSeenBus *abxbus.EventBus
+	targetHandler := target.On("ProxyParentEvent", "target_parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		if event.Bus != target {
+			t.Fatalf("target parent handler should see target bus, got %p want %p", event.Bus, target)
+		}
+		child = event.Emit(abxbus.NewBaseEvent("ProxyChildEvent", nil))
+		if _, err := child.Now(); err != nil {
+			return nil, err
+		}
+		return "parent", nil
+	}, nil)
+	target.On("ProxyChildEvent", "target_child", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		childSeenBus = event.Bus
+		return "child", nil
+	}, nil)
+
+	parent := source.Emit(abxbus.NewBaseEvent("ProxyParentEvent", nil))
+	if _, err := parent.Now(); err != nil {
+		t.Fatal(err)
+	}
+	timeout := 2.0
+	if !target.WaitUntilIdle(&timeout) {
+		t.Fatal("target bus did not become idle")
+	}
+
+	if child == nil {
+		t.Fatal("expected forwarded handler to emit child")
+	}
+	if child.Bus != target || childSeenBus != target {
+		t.Fatalf("child should be dispatched and processed on target bus, child.Bus=%p seen=%p target=%p", child.Bus, childSeenBus, target)
+	}
+	if len(child.EventPath) != 1 || child.EventPath[0] != target.Label() {
+		t.Fatalf("child emitted from forwarded handler should stay on target bus, path=%#v", child.EventPath)
+	}
+	if child.EventParentID == nil || *child.EventParentID != parent.EventID {
+		t.Fatalf("child parent ID should link to forwarded parent")
+	}
+	if child.EventEmittedByHandlerID == nil || *child.EventEmittedByHandlerID != targetHandler.ID {
+		t.Fatalf("child emitted-by handler should be target handler %s, got %#v", targetHandler.ID, child.EventEmittedByHandlerID)
+	}
+}
+
+// Folded from base_event_runtime_state_test.go to keep test layout class-based.
+func mustJSON(t *testing.T, event *abxbus.BaseEvent) []byte {
+	t.Helper()
+	data, err := event.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestBaseEventRuntimeStateTransitionsAndJSON(t *testing.T) {
+	bus := abxbus.NewEventBus("RuntimeStateBus", nil)
+	bus.On("RuntimeStateEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		if event.EventStatus != "started" {
+			t.Fatalf("handler should see started status, got %s", event.EventStatus)
+		}
+		if event.EventStartedAt == nil {
+			t.Fatal("event_started_at should be set before handler runs")
+		}
+		return "ok", nil
+	}, nil)
+
+	event := abxbus.NewBaseEvent("RuntimeStateEvent", nil)
+	if event.EventStatus != "pending" {
+		t.Fatalf("new event should start pending, got %s", event.EventStatus)
+	}
+	if event.EventCompletedAt != nil {
+		t.Fatal("new event should not have event_completed_at")
+	}
+	if _, err := bus.Emit(event).Now(); err != nil {
+		t.Fatal(err)
+	}
+	if event.EventStatus != "completed" {
+		t.Fatalf("completed event status mismatch: %s", event.EventStatus)
+	}
+	if event.EventCompletedAt == nil {
+		t.Fatal("completed event should have event_completed_at")
+	}
+
+	restored, err := abxbus.BaseEventFromJSON(mustJSON(t, event))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.EventStatus != "completed" || restored.EventCompletedAt == nil || len(restored.EventResults) != 1 {
+		t.Fatalf("runtime JSON state did not roundtrip: %#v", restored)
+	}
+}
+
+// Folded from ids_test.go to keep test layout class-based.
+func TestGeneratedRuntimeIDsUseExpectedUUIDVersions(t *testing.T) {
+	busID, err := uuid.Parse(abxbus.NewEventBus("IDsBus", nil).ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventID, err := uuid.Parse(abxbus.NewBaseEvent("IDsEvent", nil).EventID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handlerID := abxbus.ComputeHandlerID(
+		"018f8e40-1234-7000-8000-000000001234",
+		"handler",
+		nil,
+		"2025-01-02T03:04:05.678901000Z",
+		"IDsEvent",
+	)
+	parsedHandlerID, err := uuid.Parse(handlerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if busID.Version() != 7 || eventID.Version() != 7 || parsedHandlerID.Version() != 5 {
+		t.Fatalf("unexpected uuid versions: bus=%d event=%d handler=%d", busID.Version(), eventID.Version(), parsedHandlerID.Version())
+	}
 }

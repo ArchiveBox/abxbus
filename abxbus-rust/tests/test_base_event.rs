@@ -3,7 +3,7 @@ use std::{
     process::Command,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc, Arc, Mutex,
+        mpsc, Arc, Mutex, MutexGuard, OnceLock,
     },
     thread,
     time::Duration,
@@ -18,6 +18,14 @@ use abxbus_rust::{
 };
 use futures::executor::block_on;
 use serde_json::{json, Map, Value};
+
+fn test_guard() -> MutexGuard<'static, ()> {
+    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("base event test lock")
+}
 
 event! {
     struct BaseEventNowRaisesFirstErrorEvent {
@@ -254,6 +262,7 @@ fn run_base_event_deadlock_warning_child(test_name: &str) -> String {
 
 #[test]
 fn test_baseevent_lifecycle_transitions_are_explicit_and_awaitable() {
+    let _guard = test_guard();
     let event = mk_event("BaseEventLifecycleTestEvent");
     assert_eq!(event.inner.lock().event_status, EventStatus::Pending);
     assert!(event.inner.lock().event_started_at.is_none());
@@ -271,6 +280,7 @@ fn test_baseevent_lifecycle_transitions_are_explicit_and_awaitable() {
 
 #[test]
 fn test_event_result_re_raises_first_processing_exception_after_completion() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("BaseEventNowRaisesFirstErrorBus".to_string()),
         EventBusOptions {
@@ -323,6 +333,7 @@ fn test_event_result_re_raises_first_processing_exception_after_completion() {
 
 #[test]
 fn test_event_result_update_creates_and_updates_typed_handler_results() {
+    let _guard = test_guard();
     let bus = EventBus::new(Some("BaseEventEventResultUpdateBus".to_string()));
     let event = BaseEvent::new("BaseEventEventResultUpdateEvent", Map::new());
     let handler_entry = bus.on_raw(
@@ -367,6 +378,7 @@ fn test_event_result_update_creates_and_updates_typed_handler_results() {
 
 #[test]
 fn test_event_result_update_status_only_preserves_existing_error_and_result() {
+    let _guard = test_guard();
     let bus = EventBus::new(Some("BaseEventEventResultUpdateStatusOnlyBus".to_string()));
     let event = BaseEvent::new("BaseEventEventResultUpdateStatusOnlyEvent", Map::new());
     let handler_entry = bus.on_raw(
@@ -402,7 +414,8 @@ fn test_event_result_update_status_only_preserves_existing_error_and_result() {
 }
 
 #[test]
-fn test_await_event_queue_jumps_inside_handler() {
+fn test_base_event_now_inside_handler_no_args() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("BaseEventImmediateQueueJumpBus".to_string()),
         EventBusOptions {
@@ -464,7 +477,8 @@ fn test_await_event_queue_jumps_inside_handler() {
 }
 
 #[test]
-fn test_now_options_queue_jumps_child_processing_inside_handlers() {
+fn test_base_event_now_inside_handler_with_args() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("BaseEventImmediateQueueJumpArgsBus".to_string()),
         EventBusOptions {
@@ -492,7 +506,12 @@ fn test_now_options_queue_jumps_child_processing_inside_handlers() {
                 let child = bus.emit_child(BaseEventImmediateChildEvent {
                     ..Default::default()
                 });
-                child.now_with_options(EventWaitOptions::default()).await?;
+                child
+                    .now_with_options(EventWaitOptions {
+                        timeout: Some(1.0),
+                        ..EventWaitOptions::default()
+                    })
+                    .await?;
                 push(&order, "parent_end");
                 Ok(json!("parent"))
             }
@@ -539,7 +558,8 @@ fn test_now_options_queue_jumps_child_processing_inside_handlers() {
 }
 
 #[test]
-fn test_now_outside_handler_completes_without_raising_processing_error() {
+fn test_base_event_now_outside_handler_no_args() {
+    let _guard = test_guard();
     let bus = EventBus::new(Some("BaseEventNowOutsideNoArgsBus".to_string()));
     bus.on_raw(
         "BaseEventNowRaisesFirstErrorEvent",
@@ -562,7 +582,8 @@ fn test_now_outside_handler_completes_without_raising_processing_error() {
 }
 
 #[test]
-fn test_event_result_options_outside_handler_suppresses_processing_error() {
+fn test_base_event_now_outside_handler_with_args() {
+    let _guard = test_guard();
     let bus = EventBus::new(Some("BaseEventNowOutsideArgsBus".to_string()));
     bus.on_raw(
         "BaseEventNowRaisesFirstErrorEvent",
@@ -573,8 +594,11 @@ fn test_event_result_options_outside_handler_suppresses_processing_error() {
     let event = bus.emit(BaseEventNowRaisesFirstErrorEvent {
         ..Default::default()
     });
-    block_on(event.inner.now_with_options(EventWaitOptions::default()))
-        .expect("raise_if_any=false should only wait for completion");
+    block_on(event.inner.now_with_options(EventWaitOptions {
+        timeout: Some(1.0),
+        ..EventWaitOptions::default()
+    }))
+    .expect("raise_if_any=false should only wait for completion");
     assert_eq!(
         event.inner.inner.lock().event_status,
         EventStatus::Completed
@@ -584,6 +608,7 @@ fn test_event_result_options_outside_handler_suppresses_processing_error() {
 
 #[test]
 fn test_now_outside_handler_queue_jumps_queued_execution() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("WaitOutsideHandlerQueueOrderBus".to_string()),
         EventBusOptions {
@@ -658,6 +683,7 @@ fn test_now_outside_handler_queue_jumps_queued_execution() {
 
 #[test]
 fn test_now_outside_handler_allows_normal_parallel_processing() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("WaitOutsideHandlerParallelQueueOrderBus".to_string()),
         EventBusOptions {
@@ -741,6 +767,7 @@ fn test_now_outside_handler_allows_normal_parallel_processing() {
 
 #[test]
 fn test_wait_returns_event_without_forcing_queued_execution() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("WaitPassiveQueueOrderBus".to_string()),
         EventBusOptions {
@@ -809,6 +836,7 @@ fn test_wait_returns_event_without_forcing_queued_execution() {
 
 #[test]
 fn test_now_returns_event_and_queue_jumps_queued_execution() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("NowActiveQueueJumpBus".to_string()),
         EventBusOptions {
@@ -878,6 +906,7 @@ fn test_now_returns_event_and_queue_jumps_queued_execution() {
 
 #[test]
 fn test_wait_first_result_returns_before_event_completion() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("WaitFirstResultBus".to_string()),
         EventBusOptions {
@@ -940,6 +969,7 @@ fn test_wait_first_result_returns_before_event_completion() {
 
 #[test]
 fn test_now_first_result_returns_before_event_completion() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("NowFirstResultBus".to_string()),
         EventBusOptions {
@@ -1009,6 +1039,7 @@ fn test_now_first_result_returns_before_event_completion() {
 
 #[test]
 fn test_event_result_starts_never_started_event_and_returns_first_result() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("EventResultShortcutQueueJumpBus".to_string()),
         EventBusOptions {
@@ -1078,6 +1109,7 @@ fn test_event_result_starts_never_started_event_and_returns_first_result() {
 
 #[test]
 fn test_event_results_list_starts_never_started_event_and_returns_all_results() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("EventResultsShortcutQueueJumpBus".to_string()),
         EventBusOptions {
@@ -1167,6 +1199,7 @@ fn test_event_results_list_starts_never_started_event_and_returns_all_results() 
 
 #[test]
 fn test_event_result_helpers_do_not_wait_for_started_event() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("EventResultHelpersStartedBus".to_string()),
         EventBusOptions {
@@ -1242,6 +1275,7 @@ fn test_event_result_helpers_do_not_wait_for_started_event() {
 
 #[test]
 fn test_now_on_already_executing_event_waits_without_duplicate_execution() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("NowAlreadyExecutingBus".to_string()),
         EventBusOptions {
@@ -1297,6 +1331,7 @@ fn test_now_on_already_executing_event_waits_without_duplicate_execution() {
 
 #[test]
 fn test_event_result_options_apply_to_current_results() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("EventResultOptionsCurrentResultsBus".to_string()),
         EventBusOptions {
@@ -1378,6 +1413,7 @@ fn test_event_result_options_apply_to_current_results() {
 
 #[test]
 fn test_parallel_event_concurrency_plus_immediate_execution_races_child_events_inside_handlers() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("BaseEventParallelImmediateRaceBus".to_string()),
         EventBusOptions {
@@ -1489,6 +1525,7 @@ fn test_parallel_event_concurrency_plus_immediate_execution_races_child_events_i
 
 #[test]
 fn test_wait_waits_in_queue_order_inside_handler() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("BaseEventQueueOrderBus".to_string()),
         EventBusOptions {
@@ -1564,6 +1601,7 @@ fn test_wait_waits_in_queue_order_inside_handler() {
 
 #[test]
 fn test_wait_is_passive_inside_handlers_and_times_out_for_serial_events() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("PassiveSerialEventCompletedBus".to_string()),
         EventBusOptions {
@@ -1666,6 +1704,7 @@ fn test_wait_is_passive_inside_handlers_and_times_out_for_serial_events() {
 
 #[test]
 fn test_wait_serial_wait_inside_handler_times_out_and_warns_about_slow_handler() {
+    let _guard = test_guard();
     let stderr = run_base_event_deadlock_warning_child(
         "__abxbus_event_completed_serial_wait_deadlock_warning_child",
     );
@@ -1776,6 +1815,7 @@ fn __abxbus_event_completed_serial_wait_deadlock_warning_child() {
 
 #[test]
 fn test_wait_waits_for_normal_parallel_processing_inside_handlers() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("PassiveParallelEventCompletedBus".to_string()),
         EventBusOptions {
@@ -1865,6 +1905,7 @@ fn test_wait_waits_for_normal_parallel_processing_inside_handlers() {
 
 #[test]
 fn test_wait_waits_for_future_parallel_event_found_after_handler_starts() {
+    let _guard = test_guard();
     let bus = EventBus::new_with_options(
         Some("FutureParallelEventCompletedBus".to_string()),
         EventBusOptions {
@@ -1945,6 +1986,7 @@ fn test_wait_waits_for_future_parallel_event_found_after_handler_starts() {
 
 #[test]
 fn test_wait_returns_event_accepts_timeout_and_rejects_unattached_pending_event() {
+    let _guard = test_guard();
     let pending = EventCompletedTimeoutEvent {
         ..Default::default()
     }
@@ -2013,6 +2055,7 @@ fn test_wait_returns_event_accepts_timeout_and_rejects_unattached_pending_event(
 
 #[test]
 fn test_base_event_json_roundtrip() {
+    let _guard = test_guard();
     let event = mk_event("test_event");
     let json_value = event.to_json_value();
     let deserialized = BaseEvent::from_json_value(json_value.clone());
@@ -2021,6 +2064,7 @@ fn test_base_event_json_roundtrip() {
 
 #[test]
 fn test_base_event_runtime_state_transitions() {
+    let _guard = test_guard();
     let event = mk_event("runtime_event");
     assert_eq!(event.inner.lock().event_status, EventStatus::Pending);
     event.mark_started();
@@ -2032,6 +2076,7 @@ fn test_base_event_runtime_state_transitions() {
 
 #[test]
 fn test_monotonicdatetime_emits_parseable_monotonic_iso_timestamps() {
+    let _guard = test_guard();
     let first = now_iso();
     let second = now_iso();
 
@@ -2041,12 +2086,8 @@ fn test_monotonicdatetime_emits_parseable_monotonic_iso_timestamps() {
 }
 
 #[test]
-fn test_monotonic_datetime_emits_parseable_monotonic_iso_timestamps() {
-    test_monotonicdatetime_emits_parseable_monotonic_iso_timestamps();
-}
-
-#[test]
 fn test_python_serialized_at_fields_are_strings() {
+    let _guard = test_guard();
     let timestamp = now_iso();
     assert!(timestamp.contains('T'));
     assert!(timestamp.ends_with('Z'));
@@ -2064,6 +2105,7 @@ fn test_python_serialized_at_fields_are_strings() {
 
 #[test]
 fn test_baseevent_reset_returns_a_fresh_pending_event_that_can_be_redispatched() {
+    let _guard = test_guard();
     let event = mk_event("BaseEventResetEvent");
     event.mark_started();
     event.mark_completed();
@@ -2082,6 +2124,7 @@ fn test_baseevent_reset_returns_a_fresh_pending_event_that_can_be_redispatched()
 
 #[test]
 fn test_event_at_fields_are_recognized() {
+    let _guard = test_guard();
     let event = BaseEvent::from_json_value(json!({
         "event_id": "018f8e40-1234-7000-8000-000000001240",
         "event_created_at": "2025-01-02T03:04:05.678901234Z",
@@ -2117,6 +2160,7 @@ fn test_event_at_fields_are_recognized() {
 
 #[test]
 fn test_baseevent_fromjson_preserves_nullable_parent_emitted_metadata() {
+    let _guard = test_guard();
     let event = BaseEvent::from_json_value(json!({
         "event_id": "018f8e40-1234-7000-8000-000000001234",
         "event_created_at": "2025-01-01T00:00:00.000Z",
@@ -2135,6 +2179,7 @@ fn test_baseevent_fromjson_preserves_nullable_parent_emitted_metadata() {
 
 #[test]
 fn test_event_status_is_serialized_and_stateful() {
+    let _guard = test_guard();
     let event = mk_event("SerializeStatusEvent");
 
     let pending_payload = event.to_json_value();
@@ -2153,6 +2198,7 @@ fn test_event_status_is_serialized_and_stateful() {
 
 #[test]
 fn test_reserved_runtime_fields_are_rejected() {
+    let _guard = test_guard();
     for field in [
         "bus", "emit", "now", "wait", "toString", "toJSON", "fromJSON",
     ] {
@@ -2165,6 +2211,7 @@ fn test_reserved_runtime_fields_are_rejected() {
 
 #[test]
 fn test_unknown_event_prefixed_field_rejected_in_payload() {
+    let _guard = test_guard();
     let mut payload = Map::new();
     payload.insert("event_unknown".to_string(), json!("bad"));
 
@@ -2174,6 +2221,7 @@ fn test_unknown_event_prefixed_field_rejected_in_payload() {
 
 #[test]
 fn test_model_prefixed_field_rejected_in_payload() {
+    let _guard = test_guard();
     let mut payload = Map::new();
     payload.insert("model_config".to_string(), json!("bad"));
 
@@ -2183,6 +2231,7 @@ fn test_model_prefixed_field_rejected_in_payload() {
 
 #[test]
 fn test_builtin_event_prefixed_override_is_allowed() {
+    let _guard = test_guard();
     let bus = EventBus::new(Some("BaseEventAllowedConfigBus".to_string()));
     let event = BaseEventAllowedEventConfigEvent {
         ..Default::default()
@@ -2202,6 +2251,7 @@ fn test_builtin_event_prefixed_override_is_allowed() {
 
 #[test]
 fn test_from_json_accepts_event_parent_id_null_and_preserves_it_in_to_json_output() {
+    let _guard = test_guard();
     let event = BaseEvent::from_json_value(json!({
         "event_id": "018f8e40-1234-7000-8000-000000001234",
         "event_created_at": "2025-01-01T00:00:00.000Z",
@@ -2229,6 +2279,7 @@ fn test_from_json_accepts_event_parent_id_null_and_preserves_it_in_to_json_outpu
 
 #[test]
 fn test_event_emitted_by_handler_id_defaults_to_null_and_accepts_null_in_from_json() {
+    let _guard = test_guard();
     let fresh_event = mk_event("NullEmittedByDefaultEvent");
     assert_eq!(fresh_event.inner.lock().event_emitted_by_handler_id, None);
 
@@ -2261,70 +2312,1117 @@ fn test_event_emitted_by_handler_id_defaults_to_null_and_accepts_null_in_from_js
     );
 }
 
-#[test]
-fn test_fromjson_accepts_event_parent_id_null_and_preserves_it_in_tojson_output() {
-    test_from_json_accepts_event_parent_id_null_and_preserves_it_in_to_json_output();
+// Folded from test_base_event_eventbus_proxy.rs to keep test layout class-based.
+mod folded_test_base_event_eventbus_proxy {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex, MutexGuard, OnceLock,
+    };
+
+    use abxbus_rust::{base_event::BaseEvent, event_bus::EventBus, types::EventStatus};
+    use futures::executor::block_on;
+    use serde_json::{json, Map, Value};
+
+    fn base_event(event_type: &str, payload: Value) -> Arc<BaseEvent> {
+        let Value::Object(payload) = payload else {
+            panic!("test payload must be an object");
+        };
+        BaseEvent::new(event_type, payload)
+    }
+
+    fn unique_bus_name(prefix: &str) -> String {
+        static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+        format!("Proxy{prefix}{}", NEXT_ID.fetch_add(1, Ordering::Relaxed))
+    }
+
+    fn proxy_test_guard() -> MutexGuard<'static, ()> {
+        static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("proxy test lock")
+    }
+
+    fn history_event(bus: &Arc<EventBus>, event_type: &str) -> Arc<BaseEvent> {
+        bus.runtime_payload_for_test()
+            .values()
+            .find(|event| event.inner.lock().event_type == event_type)
+            .cloned()
+            .unwrap_or_else(|| panic!("missing {event_type} in history"))
+    }
+
+    #[test]
+    fn test_event_event_bus_inside_handler_returns_the_dispatching_bus() {
+        let _guard = proxy_test_guard();
+        let bus_name = unique_bus_name("TestBus");
+        let bus = EventBus::new(Some(bus_name.clone()));
+        let handler_called = Arc::new(Mutex::new(false));
+        let handler_bus_name = Arc::new(Mutex::new(None::<String>));
+        let child_event = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
+
+        let handler_called_for_handler = handler_called.clone();
+        let handler_bus_name_for_handler = handler_bus_name.clone();
+        let child_event_for_handler = child_event.clone();
+        bus.on_raw("MainEvent", "main_handler", move |event| {
+            let handler_called = handler_called_for_handler.clone();
+            let handler_bus_name = handler_bus_name_for_handler.clone();
+            let child_event = child_event_for_handler.clone();
+            async move {
+                *handler_called.lock().expect("handler_called lock") = true;
+                let current_bus = event.event_bus().expect("event bus inside handler");
+                *handler_bus_name.lock().expect("handler_bus_name lock") =
+                    Some(current_bus.name.clone());
+                let child = current_bus.emit_child_base(base_event("ChildEvent", json!({})));
+                *child_event.lock().expect("child_event lock") = Some(child);
+                Ok(json!(null))
+            }
+        });
+        bus.on_raw("ChildEvent", "child_handler", |_event| async move {
+            Ok(json!(null))
+        });
+
+        let event = bus.emit_base(base_event("MainEvent", json!({})));
+        let _ = block_on(event.wait());
+        assert!(block_on(bus.wait_until_idle(None)));
+
+        assert!(*handler_called.lock().expect("handler_called lock"));
+        assert_eq!(
+            handler_bus_name
+                .lock()
+                .expect("handler_bus_name lock")
+                .as_deref(),
+            Some(bus_name.as_str())
+        );
+        let child = child_event
+            .lock()
+            .expect("child_event lock")
+            .clone()
+            .expect("child event should have been dispatched");
+        assert_eq!(child.inner.lock().event_type, "ChildEvent");
+        assert_eq!(
+            child.event_bus().map(|bus| bus.name.clone()).as_deref(),
+            Some(bus_name.as_str())
+        );
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_legacy_bus_property_is_not_exposed_inside_handlers() {
+        let _guard = proxy_test_guard();
+        let bus = EventBus::new(Some("NoLegacyEventBusPropertyBus".to_string()));
+        let has_serialized_legacy_bus = Arc::new(Mutex::new(true));
+
+        let has_serialized_legacy_bus_for_handler = has_serialized_legacy_bus.clone();
+        bus.on_raw("MainEvent", "handler", move |event| {
+            let has_serialized_legacy_bus = has_serialized_legacy_bus_for_handler.clone();
+            async move {
+                *has_serialized_legacy_bus.lock().expect("legacy bus lock") =
+                    event.to_json_value().get("bus").is_some();
+                Ok(json!(null))
+            }
+        });
+
+        let event = bus.emit_base(base_event("MainEvent", json!({})));
+        let _ = block_on(event.wait());
+        assert!(!*has_serialized_legacy_bus.lock().expect("legacy bus lock"));
+        assert!(base_event("DetachedEvent", json!({}))
+            .to_json_value()
+            .get("bus")
+            .is_none());
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_event_bus_aliases_bus_property() {
+        let _guard = proxy_test_guard();
+        let bus = EventBus::new(Some("AliasBus".to_string()));
+        let seen_bus_id = Arc::new(Mutex::new(None::<String>));
+        let seen_event_bus_id = Arc::new(Mutex::new(None::<String>));
+
+        let seen_bus_id_for_handler = seen_bus_id.clone();
+        let seen_event_bus_id_for_handler = seen_event_bus_id.clone();
+        bus.on_raw("MainEvent", "handler", move |event| {
+            let seen_bus_id = seen_bus_id_for_handler.clone();
+            let seen_event_bus_id = seen_event_bus_id_for_handler.clone();
+            async move {
+                *seen_bus_id.lock().expect("seen bus id") = event.bus().map(|bus| bus.id.clone());
+                *seen_event_bus_id.lock().expect("seen event bus id") =
+                    event.event_bus().map(|bus| bus.id.clone());
+                Ok(json!(null))
+            }
+        });
+
+        let event = bus.emit_base(base_event("MainEvent", json!({})));
+        let _ = block_on(event.wait());
+
+        assert_eq!(
+            seen_bus_id.lock().expect("seen bus id").as_deref(),
+            Some(bus.id.as_str())
+        );
+        assert_eq!(
+            seen_event_bus_id
+                .lock()
+                .expect("seen event bus id")
+                .as_deref(),
+            Some(bus.id.as_str())
+        );
+        assert!(!event
+            .to_json_value()
+            .as_object()
+            .unwrap()
+            .contains_key("bus"));
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_event_event_bus_is_set_for_child_events_emitted_in_handler() {
+        let _guard = proxy_test_guard();
+        let bus_name = unique_bus_name("EventBusPropertyFallbackBus");
+        let bus = EventBus::new(Some(bus_name.clone()));
+        let child_bus_name = Arc::new(Mutex::new(None::<String>));
+
+        let child_bus_name_for_handler = child_bus_name.clone();
+        bus.on_raw("MainEvent", "handler", move |event| {
+            let child_bus_name = child_bus_name_for_handler.clone();
+            async move {
+                let current_bus = event.event_bus().expect("handler bus");
+                let child = current_bus.emit_child_base(base_event("ChildEvent", json!({})));
+                *child_bus_name.lock().expect("child bus lock") =
+                    child.event_bus().map(|bus| bus.name.clone());
+                Ok(json!(null))
+            }
+        });
+        bus.on_raw("ChildEvent", "child_handler", |_event| async move {
+            Ok(json!(null))
+        });
+
+        let event = bus.emit_base(base_event("MainEvent", json!({})));
+        let _ = block_on(event.wait());
+        assert!(block_on(bus.wait_until_idle(None)));
+        assert_eq!(
+            child_bus_name.lock().expect("child bus lock").as_deref(),
+            Some(bus_name.as_str())
+        );
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_event_event_bus_is_absent_on_detached_events() {
+        let _guard = proxy_test_guard();
+        let bus_name = unique_bus_name("EventBusPropertyDetachedBus");
+        let bus = EventBus::new(Some(bus_name.clone()));
+        bus.on_raw(
+            "MainEvent",
+            "handler",
+            |_event| async move { Ok(json!(null)) },
+        );
+
+        let original = bus.emit_base(base_event("MainEvent", json!({})));
+        let _ = block_on(original.wait());
+
+        assert_eq!(
+            original.event_bus().map(|bus| bus.name.clone()).as_deref(),
+            Some(bus_name.as_str())
+        );
+        let detached = BaseEvent::from_json_value(original.to_json_value());
+        assert!(detached.event_bus().is_none());
+        assert_eq!(detached.inner.lock().event_path, vec![bus.label()]);
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_event_event_bus_is_available_outside_handler_context() {
+        let _guard = proxy_test_guard();
+        let bus_name = unique_bus_name("EventBusPropertyOutsideHandlerBus");
+        let bus = EventBus::new(Some(bus_name.clone()));
+        let event = bus.emit_base(base_event("MainEvent", json!({})));
+        let _ = block_on(event.wait());
+
+        assert_eq!(
+            event.event_bus().map(|bus| bus.name.clone()).as_deref(),
+            Some(bus_name.as_str())
+        );
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_event_event_bus_returns_correct_bus_when_multiple_buses_exist() {
+        let _guard = proxy_test_guard();
+        let bus1_name = unique_bus_name("Bus1");
+        let bus2_name = unique_bus_name("Bus2");
+        let bus1 = EventBus::new(Some(bus1_name.clone()));
+        let bus2 = EventBus::new(Some(bus2_name.clone()));
+        let handler1_bus_name = Arc::new(Mutex::new(None::<String>));
+        let handler2_bus_name = Arc::new(Mutex::new(None::<String>));
+
+        let handler1_bus_name_for_handler = handler1_bus_name.clone();
+        bus1.on_raw("MainEvent", "handler1", move |event| {
+            let handler1_bus_name = handler1_bus_name_for_handler.clone();
+            async move {
+                *handler1_bus_name.lock().expect("handler1 bus lock") =
+                    event.event_bus().map(|bus| bus.name.clone());
+                Ok(json!(null))
+            }
+        });
+        let handler2_bus_name_for_handler = handler2_bus_name.clone();
+        bus2.on_raw("MainEvent", "handler2", move |event| {
+            let handler2_bus_name = handler2_bus_name_for_handler.clone();
+            async move {
+                *handler2_bus_name.lock().expect("handler2 bus lock") =
+                    event.event_bus().map(|bus| bus.name.clone());
+                Ok(json!(null))
+            }
+        });
+
+        let event1 = bus1.emit_base(base_event("MainEvent", json!({})));
+        let _ = block_on(event1.wait());
+        let event2 = bus2.emit_base(base_event("MainEvent", json!({})));
+        let _ = block_on(event2.wait());
+
+        assert_eq!(
+            handler1_bus_name
+                .lock()
+                .expect("handler1 bus lock")
+                .as_deref(),
+            Some(bus1_name.as_str())
+        );
+        assert_eq!(
+            handler2_bus_name
+                .lock()
+                .expect("handler2 bus lock")
+                .as_deref(),
+            Some(bus2_name.as_str())
+        );
+        bus1.destroy();
+        bus2.destroy();
+    }
+
+    #[test]
+    fn test_event_event_bus_reflects_the_currently_processing_bus_when_forwarded() {
+        let _guard = proxy_test_guard();
+        let bus1_name = unique_bus_name("Bus1");
+        let bus2_name = unique_bus_name("Bus2");
+        let bus1 = EventBus::new(Some(bus1_name));
+        let bus2 = EventBus::new(Some(bus2_name.clone()));
+        let bus2_handler_bus_name = Arc::new(Mutex::new(None::<String>));
+
+        let bus2_for_forward = bus2.clone();
+        bus1.on_raw("*", "forward_to_bus2", move |event| {
+            let bus2 = bus2_for_forward.clone();
+            async move {
+                bus2.emit_base(event);
+                Ok(json!(null))
+            }
+        });
+
+        let handler_bus_name = bus2_handler_bus_name.clone();
+        bus2.on_raw("MainEvent", "bus2_handler", move |event| {
+            let handler_bus_name = handler_bus_name.clone();
+            async move {
+                *handler_bus_name.lock().expect("handler_bus_name lock") =
+                    event.event_bus().map(|bus| bus.name.clone());
+                Ok(json!(null))
+            }
+        });
+
+        let event = bus1.emit_base(base_event("MainEvent", json!({})));
+        let _ = block_on(event.wait());
+        assert!(block_on(bus1.wait_until_idle(None)));
+        assert!(block_on(bus2.wait_until_idle(None)));
+
+        assert_eq!(
+            bus2_handler_bus_name
+                .lock()
+                .expect("handler_bus_name lock")
+                .as_deref(),
+            Some(bus2_name.as_str())
+        );
+        assert_eq!(
+            event.inner.lock().event_path,
+            vec![bus1.label(), bus2.label()]
+        );
+        bus1.destroy();
+        bus2.destroy();
+    }
+
+    #[test]
+    fn test_event_event_bus_in_nested_handlers_sees_the_same_bus() {
+        let _guard = proxy_test_guard();
+        let bus_name = unique_bus_name("MainBus");
+        let bus = EventBus::new(Some(bus_name.clone()));
+        let outer_bus_name = Arc::new(Mutex::new(None::<String>));
+        let inner_bus_name = Arc::new(Mutex::new(None::<String>));
+
+        let outer_bus_name_for_handler = outer_bus_name.clone();
+        bus.on_raw("MainEvent", "outer_handler", move |event| {
+            let outer_bus_name = outer_bus_name_for_handler.clone();
+            async move {
+                let current_bus = event.event_bus().expect("outer bus");
+                *outer_bus_name.lock().expect("outer bus lock") = Some(current_bus.name.clone());
+                let child = current_bus.emit_child_base(base_event("ChildEvent", json!({})));
+                let _ = child.now().await;
+                Ok(json!(null))
+            }
+        });
+
+        let inner_bus_name_for_handler = inner_bus_name.clone();
+        bus.on_raw("ChildEvent", "inner_handler", move |event| {
+            let inner_bus_name = inner_bus_name_for_handler.clone();
+            async move {
+                *inner_bus_name.lock().expect("inner bus lock") =
+                    event.event_bus().map(|bus| bus.name.clone());
+                Ok(json!(null))
+            }
+        });
+
+        let parent = bus.emit_base(base_event("MainEvent", json!({})));
+        let _ = block_on(parent.wait());
+
+        assert_eq!(
+            outer_bus_name.lock().expect("outer bus lock").as_deref(),
+            Some(bus_name.as_str())
+        );
+        assert_eq!(
+            inner_bus_name.lock().expect("inner bus lock").as_deref(),
+            Some(bus_name.as_str())
+        );
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_event_emit_awaited_children_pass_explicit_handler_context_to_immediate_processing() {
+        let _guard = proxy_test_guard();
+        let bus = EventBus::new(Some("ExplicitEventEmitHandlerContextBus".to_string()));
+        let child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
+
+        let child_ref_for_handler = child_ref.clone();
+        bus.on_raw("MainEvent", "main_handler", move |event| {
+            let child_ref = child_ref_for_handler.clone();
+            async move {
+                let current_bus = event.event_bus().expect("handler bus");
+                let child = current_bus.emit_child_base(base_event("ChildEvent", json!({})));
+                let _ = child.now().await;
+                *child_ref.lock().expect("child lock") = Some(child);
+                Ok(json!(null))
+            }
+        });
+        bus.on_raw("ChildEvent", "child_handler", |_event| async move {
+            Ok(json!("child-ok"))
+        });
+
+        let parent = bus.emit_base(base_event("MainEvent", json!({})));
+        let _ = block_on(parent.wait());
+        let child = child_ref
+            .lock()
+            .expect("child lock")
+            .clone()
+            .expect("child event");
+        let child_inner = child.inner.lock();
+        let parent_inner = parent.inner.lock();
+        assert_eq!(
+            child_inner.event_parent_id.as_deref(),
+            Some(parent_inner.event_id.as_str())
+        );
+        assert_eq!(
+            child_inner.event_emitted_by_handler_id.as_deref(),
+            parent_inner
+                .event_results
+                .values()
+                .find(|result| result.handler.handler_name == "main_handler")
+                .map(|result| result.handler.id.as_str())
+        );
+        assert!(child_inner.event_blocks_parent_completion);
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_event_emit_sets_parent_child_relationships_through_3_levels() {
+        let _guard = proxy_test_guard();
+        let bus_name = unique_bus_name("MainBus");
+        let bus = EventBus::new(Some(bus_name.clone()));
+        let execution_order = Arc::new(Mutex::new(Vec::<String>::new()));
+        let child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
+        let grandchild_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
+
+        let order_for_parent = execution_order.clone();
+        let child_ref_for_parent = child_ref.clone();
+        bus.on_raw("MainEvent", "parent_handler", move |event| {
+            let order = order_for_parent.clone();
+            let child_ref = child_ref_for_parent.clone();
+            async move {
+                order
+                    .lock()
+                    .expect("order lock")
+                    .push("parent_start".to_string());
+                let current_bus = event.event_bus().expect("parent bus");
+                let child = current_bus.emit_child_base(base_event("ChildEvent", json!({})));
+                let _ = child.now().await;
+                *child_ref.lock().expect("child lock") = Some(child);
+                order
+                    .lock()
+                    .expect("order lock")
+                    .push("parent_end".to_string());
+                Ok(json!(null))
+            }
+        });
+
+        let order_for_child = execution_order.clone();
+        let grandchild_ref_for_child = grandchild_ref.clone();
+        bus.on_raw("ChildEvent", "child_handler", move |event| {
+            let order = order_for_child.clone();
+            let grandchild_ref = grandchild_ref_for_child.clone();
+            async move {
+                order
+                    .lock()
+                    .expect("order lock")
+                    .push("child_start".to_string());
+                let current_bus = event.event_bus().expect("child bus");
+                let grandchild =
+                    current_bus.emit_child_base(base_event("GrandchildEvent", json!({})));
+                let _ = grandchild.now().await;
+                *grandchild_ref.lock().expect("grandchild lock") = Some(grandchild);
+                order
+                    .lock()
+                    .expect("order lock")
+                    .push("child_end".to_string());
+                Ok(json!(null))
+            }
+        });
+
+        let order_for_grandchild = execution_order.clone();
+        bus.on_raw("GrandchildEvent", "grandchild_handler", move |event| {
+            let order = order_for_grandchild.clone();
+            let bus_name = bus_name.clone();
+            async move {
+                assert_eq!(
+                    event.event_bus().map(|bus| bus.name.clone()).as_deref(),
+                    Some(bus_name.as_str())
+                );
+                order
+                    .lock()
+                    .expect("order lock")
+                    .push("grandchild_start".to_string());
+                order
+                    .lock()
+                    .expect("order lock")
+                    .push("grandchild_end".to_string());
+                Ok(json!(null))
+            }
+        });
+
+        let parent = bus.emit_base(base_event("MainEvent", json!({})));
+        let _ = block_on(parent.wait());
+        let child = child_ref
+            .lock()
+            .expect("child lock")
+            .clone()
+            .expect("child event");
+        let grandchild = grandchild_ref
+            .lock()
+            .expect("grandchild lock")
+            .clone()
+            .expect("grandchild event");
+
+        assert_eq!(
+            execution_order.lock().expect("order lock").as_slice(),
+            &[
+                "parent_start".to_string(),
+                "child_start".to_string(),
+                "grandchild_start".to_string(),
+                "grandchild_end".to_string(),
+                "child_end".to_string(),
+                "parent_end".to_string(),
+            ]
+        );
+        assert_eq!(parent.inner.lock().event_status, EventStatus::Completed);
+        assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
+        assert_eq!(grandchild.inner.lock().event_status, EventStatus::Completed);
+        assert_eq!(
+            child.inner.lock().event_parent_id.as_deref(),
+            Some(parent.inner.lock().event_id.as_str())
+        );
+        assert_eq!(
+            grandchild.inner.lock().event_parent_id.as_deref(),
+            Some(child.inner.lock().event_id.as_str())
+        );
+        assert!(bus.event_is_child_of(&child, &parent));
+        assert!(bus.event_is_child_of(&grandchild, &parent));
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_event_emit_with_forwarding_child_dispatch_goes_to_the_correct_bus() {
+        let _guard = proxy_test_guard();
+        let bus1_name = unique_bus_name("Bus1");
+        let bus2_name = unique_bus_name("Bus2");
+        let bus1 = EventBus::new(Some(bus1_name));
+        let bus2 = EventBus::new(Some(bus2_name.clone()));
+        let child_handler_bus_name = Arc::new(Mutex::new(None::<String>));
+        let child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
+
+        let bus2_for_forward = bus2.clone();
+        bus1.on_raw("*", "forward_to_bus2", move |event| {
+            let bus2 = bus2_for_forward.clone();
+            async move {
+                bus2.emit_base(event);
+                Ok(json!(null))
+            }
+        });
+
+        let child_ref_for_handler = child_ref.clone();
+        bus2.on_raw("MainEvent", "bus2_main_handler", move |event| {
+            let child_ref = child_ref_for_handler.clone();
+            let bus2_name = bus2_name.clone();
+            async move {
+                let current_bus = event.event_bus().expect("forwarded handler bus");
+                assert_eq!(current_bus.name, bus2_name);
+                let child = current_bus.emit_child_base(base_event("ChildEvent", json!({})));
+                let _ = child.now().await;
+                *child_ref.lock().expect("child_ref lock") = Some(child);
+                Ok(json!(null))
+            }
+        });
+
+        let child_bus_name = child_handler_bus_name.clone();
+        bus2.on_raw("ChildEvent", "bus2_child_handler", move |event| {
+            let child_bus_name = child_bus_name.clone();
+            async move {
+                *child_bus_name.lock().expect("child_bus_name lock") =
+                    event.event_bus().map(|bus| bus.name.clone());
+                Ok(json!("child-ok"))
+            }
+        });
+
+        let parent = bus1.emit_base(base_event("MainEvent", json!({})));
+        let _ = block_on(parent.wait());
+        assert!(block_on(bus1.wait_until_idle(None)));
+        assert!(block_on(bus2.wait_until_idle(None)));
+
+        let child = child_ref
+            .lock()
+            .expect("child_ref lock")
+            .clone()
+            .expect("child event");
+        assert_eq!(
+            child_handler_bus_name
+                .lock()
+                .expect("child_bus_name lock")
+                .as_deref(),
+            Some(bus2.name.as_str())
+        );
+        assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
+        assert_eq!(
+            child.inner.lock().event_parent_id.as_deref(),
+            Some(parent.inner.lock().event_id.as_str())
+        );
+        assert_eq!(child.inner.lock().event_path, vec![bus2.label()]);
+        bus1.destroy();
+        bus2.destroy();
+    }
+
+    #[test]
+    fn test_event_event_bus_is_set_on_the_event_after_dispatch_outside_handler() {
+        let _guard = proxy_test_guard();
+        let bus_name = unique_bus_name("TestBus");
+        let bus = EventBus::new(Some(bus_name.clone()));
+        let raw_event = BaseEvent::new("MainEvent", Map::new());
+        assert!(raw_event.event_bus().is_none());
+
+        let dispatched = bus.emit_base(raw_event);
+        assert_eq!(
+            dispatched
+                .event_bus()
+                .map(|bus| bus.name.clone())
+                .as_deref(),
+            Some(bus_name.as_str())
+        );
+        let _ = block_on(dispatched.wait());
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_event_emit_from_handler_correctly_attributes_event_emitted_by_handler_id() {
+        let _guard = proxy_test_guard();
+        let bus = EventBus::new(Some(unique_bus_name("TestBus")));
+
+        bus.on_raw("MainEvent", "main_handler", move |event| async move {
+            let current_bus = event.event_bus().expect("handler bus");
+            current_bus.emit_child_base(base_event("ChildEvent", json!({})));
+            Ok(json!(null))
+        });
+        bus.on_raw("ChildEvent", "child_handler", |_event| async move {
+            Ok(json!(null))
+        });
+
+        let parent = bus.emit_base(base_event("MainEvent", json!({})));
+        assert!(block_on(bus.wait_until_idle(None)));
+        let child = history_event(&bus, "ChildEvent");
+
+        assert_eq!(
+            child.inner.lock().event_parent_id.as_deref(),
+            Some(parent.inner.lock().event_id.as_str())
+        );
+        let emitted_by = child
+            .inner
+            .lock()
+            .event_emitted_by_handler_id
+            .clone()
+            .expect("event_emitted_by_handler_id");
+        assert!(parent.inner.lock().event_results.contains_key(&emitted_by));
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_dispatch_preserves_explicit_event_parent_id_and_does_not_override_it() {
+        let _guard = proxy_test_guard();
+        let bus = EventBus::new(Some("ExplicitParentBus".to_string()));
+        let explicit_parent_id = "018f8e40-1234-7000-8000-000000001234".to_string();
+
+        let explicit_parent_id_for_handler = explicit_parent_id.clone();
+        bus.on_raw("MainEvent", "main_handler", move |event| {
+            let explicit_parent_id = explicit_parent_id_for_handler.clone();
+            async move {
+                let current_bus = event.event_bus().expect("handler bus");
+                let child = base_event("ChildEvent", json!({}));
+                child.inner.lock().event_parent_id = Some(explicit_parent_id);
+                current_bus.emit_child_base(child);
+                Ok(json!(null))
+            }
+        });
+
+        let parent = bus.emit_base(base_event("MainEvent", json!({})));
+        assert!(block_on(bus.wait_until_idle(None)));
+        let child = history_event(&bus, "ChildEvent");
+        assert_eq!(
+            child.inner.lock().event_parent_id.as_deref(),
+            Some(explicit_parent_id.as_str())
+        );
+        assert_ne!(
+            child.inner.lock().event_parent_id.as_deref(),
+            Some(parent.inner.lock().event_id.as_str())
+        );
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_event_is_child_of_and_event_is_parent_of_work_for_direct_children() {
+        let _guard = proxy_test_guard();
+        let bus = EventBus::new(Some("ParentChildBus".to_string()));
+        bus.on_raw(
+            "LineageParentEvent",
+            "parent_handler",
+            move |event| async move {
+                event
+                    .event_bus()
+                    .expect("handler bus")
+                    .emit_child_base(base_event("LineageChildEvent", json!({})));
+                Ok(json!(null))
+            },
+        );
+
+        let parent = bus.emit_base(base_event("LineageParentEvent", json!({})));
+        assert!(block_on(bus.wait_until_idle(None)));
+        let child = history_event(&bus, "LineageChildEvent");
+
+        assert_eq!(
+            child.inner.lock().event_parent_id.as_deref(),
+            Some(parent.inner.lock().event_id.as_str())
+        );
+        assert!(bus.event_is_child_of(&child, &parent));
+        assert!(bus.event_is_parent_of(&parent, &child));
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_event_is_child_of_works_for_grandchildren() {
+        let _guard = proxy_test_guard();
+        let bus = EventBus::new(Some("GrandchildBus".to_string()));
+        bus.on_raw(
+            "LineageParentEvent",
+            "parent_handler",
+            move |event| async move {
+                event
+                    .event_bus()
+                    .expect("handler bus")
+                    .emit_child_base(base_event("LineageChildEvent", json!({})));
+                Ok(json!(null))
+            },
+        );
+        bus.on_raw(
+            "LineageChildEvent",
+            "child_handler",
+            move |event| async move {
+                event
+                    .event_bus()
+                    .expect("handler bus")
+                    .emit_child_base(base_event("LineageGrandchildEvent", json!({})));
+                Ok(json!(null))
+            },
+        );
+
+        let parent = bus.emit_base(base_event("LineageParentEvent", json!({})));
+        assert!(block_on(bus.wait_until_idle(None)));
+        let child = history_event(&bus, "LineageChildEvent");
+        let grandchild = history_event(&bus, "LineageGrandchildEvent");
+
+        assert!(bus.event_is_child_of(&child, &parent));
+        assert!(bus.event_is_child_of(&grandchild, &parent));
+        assert_eq!(
+            grandchild.inner.lock().event_parent_id.as_deref(),
+            Some(child.inner.lock().event_id.as_str())
+        );
+        assert!(bus.event_is_parent_of(&parent, &grandchild));
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_event_is_child_of_returns_false_for_unrelated_events() {
+        let _guard = proxy_test_guard();
+        let bus = EventBus::new(Some("UnrelatedBus".to_string()));
+
+        let parent = bus.emit_base(base_event("LineageParentEvent", json!({})));
+        let unrelated = bus.emit_base(base_event("LineageUnrelatedEvent", json!({})));
+        let _ = block_on(parent.wait());
+        let _ = block_on(unrelated.wait());
+
+        assert!(!bus.event_is_child_of(&unrelated, &parent));
+        assert!(!bus.event_is_parent_of(&parent, &unrelated));
+        bus.destroy();
+    }
 }
 
-#[test]
-fn test_event_emitted_by_handler_id_defaults_to_null_and_accepts_null_in_fromjson() {
-    test_event_emitted_by_handler_id_defaults_to_null_and_accepts_null_in_from_json();
+// Folded from test_base_event_runtime_state.rs to keep test layout class-based.
+mod folded_test_base_event_runtime_state {
+    use abxbus_rust::event;
+    use std::{
+        sync::{mpsc, Arc, Mutex},
+        thread,
+        time::Duration,
+    };
+
+    use abxbus_rust::{
+        base_event::{now_iso, BaseEvent},
+        event_bus::EventBus,
+        event_result::EventResultStatus,
+        types::EventStatus,
+    };
+    use futures::executor::block_on;
+    use serde_json::{json, Map, Value};
+
+    event! {
+        struct RuntimeSampleEvent {
+            data: String,
+            event_result_type: String,
+            event_type: "RuntimeSampleEvent",
+        }
+    }
+    event! {
+        struct RuntimeSeededEvent {
+            data: String,
+            event_result_type: String,
+            event_type: "RuntimeSeededEvent",
+        }
+    }
+    fn sample_event(data: &str) -> Arc<BaseEvent> {
+        let mut payload = Map::new();
+        payload.insert("data".to_string(), json!(data));
+        BaseEvent::new("RuntimeSampleEvent", payload)
+    }
+
+    #[test]
+    fn test_event_started_at_with_deserialized_event() {
+        let event = sample_event("original");
+        let event_dict = event.to_json_value();
+
+        let deserialized_event = BaseEvent::from_json_value(event_dict);
+        let deserialized = deserialized_event.inner.lock();
+
+        assert_eq!(deserialized.event_started_at, None);
+        assert_eq!(deserialized.event_completed_at, None);
+    }
+
+    #[test]
+    fn test_event_started_at_with_json_deserialization() {
+        let event = sample_event("json_test");
+        let json_str = serde_json::to_string(&event.to_json_value()).expect("event json");
+        let json_value: Value = serde_json::from_str(&json_str).expect("event json value");
+
+        let deserialized_event = BaseEvent::from_json_value(json_value);
+        let deserialized = deserialized_event.inner.lock();
+
+        assert_eq!(deserialized.event_started_at, None);
+        assert_eq!(deserialized.event_completed_at, None);
+    }
+
+    #[test]
+    fn test_event_started_at_after_processing() {
+        let bus = EventBus::new(Some("RuntimeStateProcessingBus".to_string()));
+        bus.on_raw("RuntimeSampleEvent", "handler", |_event| async {
+            thread::sleep(Duration::from_millis(10));
+            Ok(json!("done"))
+        });
+
+        let event = bus.emit(RuntimeSampleEvent {
+            data: "processing_test".to_string(),
+            ..Default::default()
+        });
+        let _ = block_on(event.now());
+
+        let event = event.inner.inner.lock();
+        assert!(event.event_started_at.is_some());
+        assert!(event.event_completed_at.is_some());
+        assert_eq!(event.event_status, EventStatus::Completed);
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_event_without_handlers_completes_and_serializes_runtime_state() {
+        let event = RuntimeSampleEvent {
+            data: "no_handlers".to_string(),
+            ..Default::default()
+        };
+        let bus = EventBus::new(Some("RuntimeStateNoHandlersBus".to_string()));
+
+        assert_eq!(event.event_started_at, None);
+        assert_eq!(event.event_completed_at, None);
+
+        let processed_event = bus.emit(event);
+        let _ = block_on(processed_event.now());
+
+        let processed = processed_event.inner.inner.lock();
+        assert_eq!(processed.event_status, EventStatus::Completed);
+        assert_eq!(processed.event_pending_bus_count, 0);
+        assert!(processed.event_results.is_empty());
+        assert!(processed.event_started_at.is_some());
+        assert!(processed.event_completed_at.is_some());
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_event_with_manually_set_completed_at_reconciles_through_dispatch() {
+        let event = sample_event("manual");
+        let bus = EventBus::new(Some("RuntimeStateManualCompletedAtBus".to_string()));
+        event.inner.lock().event_completed_at = Some(now_iso());
+
+        {
+            let event = event.inner.lock();
+            assert_eq!(event.event_started_at, None);
+            assert_eq!(event.event_status, EventStatus::Pending);
+            assert!(event.event_completed_at.is_some());
+        }
+
+        let processed_event = bus.emit_base(event);
+        let _ = block_on(processed_event.now());
+
+        {
+            let processed = processed_event.inner.lock();
+            assert_eq!(processed.event_status, EventStatus::Completed);
+            assert!(processed.event_started_at.is_some());
+            assert!(processed.event_completed_at.is_some());
+        }
+
+        let mut seeded_payload = Map::new();
+        seeded_payload.insert("data".to_string(), json!("manual_seeded_result"));
+        let seeded_event = BaseEvent::new("RuntimeSeededEvent", seeded_payload);
+        let handler_entry = bus.on_raw("RuntimeSeededEvent", "handler", |_event| async {
+            Ok(json!("done"))
+        });
+        let seeded_result = seeded_event.event_result_update(
+            &handler_entry,
+            Some(EventResultStatus::Started),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(seeded_event.inner.lock().event_status, EventStatus::Started);
+        assert_eq!(seeded_event.inner.lock().event_completed_at, None);
+        seeded_event
+            .inner
+            .lock()
+            .event_results
+            .get_mut(&seeded_result.handler.id)
+            .expect("seeded result")
+            .update(
+                Some(EventResultStatus::Completed),
+                Some(Some(json!("done"))),
+                None,
+            );
+        assert_eq!(seeded_event.inner.lock().event_completed_at, None);
+
+        let reconciled = bus.emit_base(seeded_event);
+        let _ = block_on(reconciled.now());
+        let reconciled = reconciled.inner.lock();
+        assert_eq!(reconciled.event_status, EventStatus::Completed);
+        assert!(reconciled.event_started_at.is_some());
+        assert!(reconciled.event_completed_at.is_some());
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_event_copy_preserves_runtime_attrs() {
+        let event = sample_event("copy_test");
+        let copied_event = BaseEvent::from_json_value(event.to_json_value());
+
+        assert_eq!(copied_event.inner.lock().event_started_at, None);
+        assert_eq!(copied_event.inner.lock().event_completed_at, None);
+    }
+
+    #[test]
+    fn test_event_started_at_is_serialized_and_stateful() {
+        let bus = EventBus::new(Some("RuntimeStateStartedAtBus".to_string()));
+        let event = sample_event("serialize_started_at");
+        let pending_payload = event.to_json_value();
+        assert!(pending_payload
+            .as_object()
+            .unwrap()
+            .contains_key("event_started_at"));
+        assert_eq!(pending_payload["event_started_at"], Value::Null);
+
+        let handler_entry = bus.on_raw("RuntimeSampleEvent", "handler", |_event| async {
+            Ok(json!("ok"))
+        });
+        event.event_result_update(
+            &handler_entry,
+            Some(EventResultStatus::Started),
+            None,
+            None,
+            None,
+        );
+        let first_started_at = event.to_json_value()["event_started_at"]
+            .as_str()
+            .expect("started at")
+            .to_string();
+
+        let forced_started_at = "2020-01-01T00:00:00.000000000Z".to_string();
+        event
+            .inner
+            .lock()
+            .event_results
+            .get_mut(&handler_entry.id)
+            .expect("handler result")
+            .started_at = Some(forced_started_at.clone());
+
+        let second_started_at = event.to_json_value()["event_started_at"]
+            .as_str()
+            .expect("started at")
+            .to_string();
+        assert_eq!(second_started_at, first_started_at);
+        assert_ne!(second_started_at, forced_started_at);
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_event_result_update_started_marks_event_started_and_clears_completion() {
+        let bus = EventBus::new(Some("RuntimeStateResultUpdateStartedBus".to_string()));
+        let event = sample_event("result_update_started");
+        event.inner.lock().event_completed_at = Some(now_iso());
+        let handler_entry = bus.on_raw("RuntimeSampleEvent", "handler", |_event| async {
+            Ok(json!("ok"))
+        });
+
+        let result = event.event_result_update(
+            &handler_entry,
+            Some(EventResultStatus::Started),
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(result.status, EventResultStatus::Started);
+        let event = event.inner.lock();
+        assert_eq!(event.event_status, EventStatus::Started);
+        assert!(event.event_started_at.is_some());
+        assert_eq!(event.event_completed_at, None);
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_event_status_is_serialized_and_stateful() {
+        let bus = EventBus::new(Some("RuntimeStateStatusBus".to_string()));
+        let event = sample_event("serialize_status");
+        assert_eq!(event.to_json_value()["event_status"], "pending");
+
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let release_rx = Arc::new(Mutex::new(release_rx));
+        bus.on_raw("RuntimeSampleEvent", "slow_handler", move |_event| {
+            let entered_tx = entered_tx.clone();
+            let release_rx = release_rx.clone();
+            async move {
+                let _ = entered_tx.send(());
+                release_rx
+                    .lock()
+                    .expect("release lock")
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("release handler");
+                Ok(json!("ok"))
+            }
+        });
+
+        let processing_event = bus.emit_base(event);
+        entered_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("handler entered");
+        assert_eq!(processing_event.to_json_value()["event_status"], "started");
+
+        release_tx.send(()).expect("release send");
+        let _ = block_on(processing_event.now());
+        assert_eq!(
+            processing_event.to_json_value()["event_status"],
+            "completed"
+        );
+        bus.destroy();
+    }
 }
 
-#[test]
-fn test_event_result_re_raises_the_first_processing_exception_after_completion() {
-    test_event_result_re_raises_first_processing_exception_after_completion();
-}
+// Folded from test_ids.rs to keep test layout class-based.
+mod folded_test_ids {
+    use abxbus_rust::{
+        event_bus::EventBus,
+        event_handler::EventHandler,
+        id::{compute_handler_id, handler_id_namespace},
+    };
+    use serde_json::Map;
+    use uuid::Uuid;
 
-#[test]
-fn test_baseevent_eventresultupdate_creates_and_updates_typed_handler_results() {
-    test_event_result_update_creates_and_updates_typed_handler_results();
-}
+    #[test]
+    fn test_bus_and_event_ids_are_uuid_v7() {
+        let bus = EventBus::new(Some("BusId".to_string()));
+        let bus_id = Uuid::parse_str(&bus.id).expect("bus id must parse");
+        assert_eq!(bus_id.get_version_num(), 7);
 
-#[test]
-fn test_baseevent_eventresultupdate_status_only_update_does_not_implicitly_pass_undefined_result_error_keys(
-) {
-    test_event_result_update_status_only_preserves_existing_error_and_result();
-}
+        let event = abxbus_rust::base_event::BaseEvent::new("work", Map::new());
+        let event_id = Uuid::parse_str(&event.inner.lock().event_id).expect("event id must parse");
+        assert_eq!(event_id.get_version_num(), 7);
+    }
 
-#[test]
-fn test_base_event_event_result_update_status_only_update_does_not_implicitly_pass_undefined_result_error_keys(
-) {
-    test_event_result_update_status_only_preserves_existing_error_and_result();
-}
+    #[test]
+    fn test_handler_id_uses_v5_namespace_seed_compatible_with_python_ts() {
+        let eventbus_id = "018f6f0e-79b2-7cc5-aed9-f0f9a4e5e6b0";
+        let handler_name = "module.fn";
+        let handler_registered_at = "2026-01-01T00:00:00.000Z";
+        let event_pattern = "work";
+        let expected_seed =
+            format!("{eventbus_id}|{handler_name}|unknown|{handler_registered_at}|{event_pattern}");
 
-#[test]
-fn test_now_queue_jumps_child_processing_inside_handlers() {
-    test_await_event_queue_jumps_inside_handler();
-}
+        let expected = Uuid::new_v5(&handler_id_namespace(), expected_seed.as_bytes()).to_string();
+        let actual = compute_handler_id(
+            eventbus_id,
+            handler_name,
+            None,
+            handler_registered_at,
+            event_pattern,
+        );
+        assert_eq!(actual, expected);
 
-#[test]
-fn test_wait_preserves_normal_queue_order_inside_handlers() {
-    test_wait_waits_in_queue_order_inside_handler();
-}
-
-#[test]
-fn test_baseevent_rejects_reserved_runtime_fields_in_payload_and_event_shape() {
-    test_reserved_runtime_fields_are_rejected();
-}
-
-#[test]
-fn test_baseevent_rejects_unknown_event_fields_while_allowing_known_event_overrides() {
-    test_unknown_event_prefixed_field_rejected_in_payload();
-    test_builtin_event_prefixed_override_is_allowed();
-}
-
-#[test]
-fn test_baseevent_rejects_model_fields_in_payload_and_event_shape() {
-    test_model_prefixed_field_rejected_in_payload();
-}
-
-#[test]
-fn test_baseevent_tojson_fromjson_roundtrips_runtime_fields_and_event_results() {
-    test_base_event_json_roundtrip();
-}
-
-#[test]
-fn test_baseevent_event_at_fields_are_recognized_and_normalized() {
-    test_event_at_fields_are_recognized();
+        let entry = EventHandler::from_callable(
+            event_pattern.to_string(),
+            handler_name.to_string(),
+            "BusId".to_string(),
+            eventbus_id.to_string(),
+            std::sync::Arc::new(|_event| Box::pin(async { Ok(serde_json::Value::Null) })),
+        );
+        let ns = Uuid::parse_str(&entry.id).expect("handler id must parse");
+        assert_eq!(ns.get_version_num(), 5);
+    }
 }

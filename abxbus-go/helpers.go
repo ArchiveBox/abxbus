@@ -29,6 +29,4 @@ func monotonicDatetime(isoString ...string) string {
 	return now.Format(fixedRFC3339Nano)
 }
 
-func Ptr[T any](v T) *T { return &v }
-
-func ptr[T any](v T) *T { return Ptr(v) }
+func ptr[T any](v T) *T { return &v }

@@ -196,7 +196,7 @@ bus.on(CompletionEvent, |_event: CompletionEvent| async move {
 });
 
 let event = bus.emit(CompletionEvent { ..Default::default() });
-let value = block_on(event.event_result(Default::default()))?;
+let value = block_on(event.event_result())?;
 assert_eq!(value, Some(json!("winner")));
 ```
 

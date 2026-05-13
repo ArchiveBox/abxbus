@@ -532,10 +532,11 @@ export class EventBus {
     }
     const bus = new EventBus(name, options)
 
-    if (!record.handlers || typeof record.handlers !== 'object' || Array.isArray(record.handlers)) {
+    const raw_handlers = record.handlers ?? {}
+    if (!raw_handlers || typeof raw_handlers !== 'object' || Array.isArray(raw_handlers)) {
       throw new Error('EventBus.fromJSON(data) requires handlers as an id-keyed object')
     }
-    for (const [handler_id, payload] of Object.entries(record.handlers as Record<string, unknown>)) {
+    for (const [handler_id, payload] of Object.entries(raw_handlers as Record<string, unknown>)) {
       if (!payload || typeof payload !== 'object') {
         continue
       }
@@ -549,11 +550,12 @@ export class EventBus {
       bus.handlers.set(parsed.id, parsed)
     }
 
-    if (!record.handlers_by_key || typeof record.handlers_by_key !== 'object' || Array.isArray(record.handlers_by_key)) {
+    const raw_handlers_by_key = record.handlers_by_key ?? {}
+    if (!raw_handlers_by_key || typeof raw_handlers_by_key !== 'object' || Array.isArray(raw_handlers_by_key)) {
       throw new Error('EventBus.fromJSON(data) requires handlers_by_key as an object')
     }
     bus.handlers_by_key.clear()
-    for (const [raw_key, raw_ids] of Object.entries(record.handlers_by_key as Record<string, unknown>)) {
+    for (const [raw_key, raw_ids] of Object.entries(raw_handlers_by_key as Record<string, unknown>)) {
       if (!Array.isArray(raw_ids)) {
         continue
       }

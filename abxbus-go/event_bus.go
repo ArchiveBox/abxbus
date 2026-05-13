@@ -37,8 +37,8 @@ type EventBusOptions struct {
 }
 
 type EventBusDestroyOptions struct {
-	Timeout *float64
-	Clear   *bool
+	Timeout float64
+	Clear   any
 }
 
 type FindOptions struct {
@@ -1494,7 +1494,46 @@ func EventBusFromJSON(data []byte) (*EventBus, error) {
 		event.Bus = bus
 		for _, result := range event.EventResults {
 			result.Event = event
-			if handler := bus.handlers[result.HandlerID]; handler != nil {
+			handler := bus.handlers[result.HandlerID]
+			if handler == nil && result.HandlerID != "" {
+				eventPattern := result.HandlerEventPattern
+				if eventPattern == "" {
+					eventPattern = event.EventType
+				}
+				handlerName := result.HandlerName
+				if handlerName == "" {
+					handlerName = result.HandlerID
+				}
+				handler = &EventHandler{
+					ID:                  result.HandlerID,
+					EventBusName:        result.EventBusName,
+					EventBusID:          result.EventBusID,
+					EventPattern:        eventPattern,
+					HandlerName:         handlerName,
+					HandlerFilePath:     result.HandlerFilePath,
+					HandlerTimeout:      result.HandlerTimeout,
+					HandlerSlowTimeout:  result.HandlerSlowTimeout,
+					HandlerRegisteredAt: result.HandlerRegisteredAt,
+				}
+				if handler.EventBusName == "" {
+					handler.EventBusName = bus.Name
+				}
+				if handler.EventBusID == "" {
+					handler.EventBusID = bus.ID
+				}
+				bus.handlers[handler.ID] = handler
+				found := false
+				for _, existingID := range bus.handlersByKey[eventPattern] {
+					if existingID == handler.ID {
+						found = true
+						break
+					}
+				}
+				if !found {
+					bus.handlersByKey[eventPattern] = append(bus.handlersByKey[eventPattern], handler.ID)
+				}
+			}
+			if handler != nil {
 				result.Handler = handler
 			}
 		}
@@ -1873,12 +1912,10 @@ func resolveEventBusDestroyOptions(options *EventBusDestroyOptions) (timeout *fl
 	if options == nil {
 		return nil, clear
 	}
-	if options.Timeout != nil {
-		timeout = options.Timeout
+	if options.Timeout > 0 {
+		timeout = &options.Timeout
 	}
-	if options.Clear != nil {
-		clear = *options.Clear
-	}
+	clear = optionalBoolOption(options.Clear, "Clear", clear)
 	return timeout, clear
 }
 

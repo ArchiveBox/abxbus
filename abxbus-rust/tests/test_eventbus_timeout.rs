@@ -1490,11 +1490,6 @@ fn test_parent_timeout_cancels_awaited_child_handler_results() {
 }
 
 #[test]
-fn test_nested_timeout_scenario_from_issue() {
-    test_parent_timeout_cancels_awaited_child_handler_results();
-}
-
-#[test]
 fn test_multi_bus_timeout_is_recorded_on_target_bus() {
     let _guard = timeout_test_guard();
     let bus_a = EventBus::new(Some("MultiTimeoutA".to_string()));
@@ -2871,14 +2866,4 @@ fn __abxbus_no_slow_warning_child() {
         return;
     }
     run_slow_warning_event(Some(0.0), Some(0.0));
-}
-
-#[test]
-fn test_slow_event_warning_fires_when_event_exceeds_event_slow_timeout() {
-    test_event_slow_warning_uses_event_slow_timeout();
-}
-
-#[test]
-fn test_slow_handler_warning_fires_when_handler_runs_long() {
-    test_handler_slow_warning_uses_event_handler_slow_timeout();
 }

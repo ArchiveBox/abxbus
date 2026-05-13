@@ -877,11 +877,6 @@ fn test_isinsidehandler_is_per_bus_not_global() {
 }
 
 #[test]
-fn test_is_inside_handler_is_per_bus_not_global() {
-    test_isinsidehandler_is_per_bus_not_global();
-}
-
-#[test]
 fn test_dispatch_multiple_await_one_skips_others_until_after_handler_completes() {
     let _guard = test_guard();
     let bus = EventBus::new(Some("ComprehensiveMultiDispatchBus".to_string()));
@@ -1875,44 +1870,4 @@ fn test_queue_jump_with_parallel_events_and_serial_handlers_on_forward_bus_still
     assert!(index_of(&log, "child_b_start") < index_of(&log, "slow_end"));
     bus_a.destroy();
     bus_b.destroy();
-}
-
-#[test]
-fn test_forwarded_first_mode_uses_processing_bus_handler_defaults() {
-    test_forwarded_first_mode_uses_processing_bus_handler_concurrency_defaults();
-}
-
-#[test]
-fn test_comprehensive_patterns() {
-    test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking();
-}
-
-#[test]
-fn test_multi_bus_forwarding_with_queued_events() {
-    test_multi_bus_queues_are_independent_when_awaiting_child();
-}
-
-#[test]
-fn test_awaited_child_jumps_queue_no_overshoot() {
-    test_awaited_child_jumps_queue_without_overshoot();
-}
-
-#[test]
-fn test_dispatch_multiple_await_one_skips_others() {
-    test_dispatch_multiple_await_one_skips_others_until_after_handler_completes();
-}
-
-#[test]
-fn test_await_already_completed_event() {
-    test_awaiting_an_already_completed_event_is_a_no_op();
-}
-
-#[test]
-fn test_multiple_awaits_same_event() {
-    test_multiple_awaits_on_same_event();
-}
-
-#[test]
-fn test_forwarded_event_uses_processing_bus_defaults_unless_overridden() {
-    test_forwarded_event_uses_processing_bus_defaults_unless_explicit_overrides_are_set();
 }

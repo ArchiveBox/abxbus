@@ -54,11 +54,43 @@ func TestSimpleDebounceWithChildOfReusesRecentEvent(t *testing.T) {
 	}
 }
 
-func TestSimpleDebounceUsesRecentHistoryOrDispatchesNew(t *testing.T) {
-	TestSimpleDebounceWithChildOfReusesRecentEvent(t)
+func TestReturnsExistingFreshEvent(t *testing.T) {
+	bus := abxbus.NewEventBus("DebounceFreshBus", nil)
+	bus.On("ScreenshotEvent", "complete", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		return "done", nil
+	}, nil)
+
+	original := bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"target_id": debounceTargetID1}))
+	if _, err := original.Now(); err != nil {
+		t.Fatal(err)
+	}
+
+	isFresh := func(event *abxbus.BaseEvent) bool {
+		if event.EventCompletedAt == nil {
+			return false
+		}
+		completedAt, err := time.Parse(time.RFC3339Nano, *event.EventCompletedAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return time.Since(completedAt) < 5*time.Second
+	}
+	found, err := bus.Find("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
+		return event.Payload["target_id"] == debounceTargetID1 && isFresh(event)
+	}, &abxbus.FindOptions{Past: true, Future: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := debounceEmitFallback(bus, "ScreenshotEvent", map[string]any{"target_id": debounceTargetID1}, found)
+	if _, err := result.Now(); err != nil {
+		t.Fatal(err)
+	}
+	if result.EventID != original.EventID {
+		t.Fatalf("expected debounce to reuse %s, got %s", original.EventID, result.EventID)
+	}
 }
 
-func TestDebounceUsesFutureMatchBeforeDispatchFallback(t *testing.T) {
+func TestAdvancedDebouncePrefersHistoryThenWaitsFutureThenDispatches(t *testing.T) {
 	bus := abxbus.NewEventBus("AdvancedDebounceBus", nil)
 	pending := make(chan *abxbus.BaseEvent, 1)
 	errs := make(chan error, 1)
@@ -105,59 +137,7 @@ func TestDebounceUsesFutureMatchBeforeDispatchFallback(t *testing.T) {
 	}
 }
 
-func TestAdvancedDebouncePrefersHistoryThenWaitsFutureThenDispatches(t *testing.T) {
-	TestDebounceUsesFutureMatchBeforeDispatchFallback(t)
-}
-
-func TestAdvancedDebouncePrefersHistoryThenWaitsForFutureThenDispatches(t *testing.T) {
-	TestDebounceUsesFutureMatchBeforeDispatchFallback(t)
-}
-
-func TestDebouncePrefersRecentHistory(t *testing.T) {
-	bus := abxbus.NewEventBus("DebounceFreshBus", nil)
-	bus.On("ScreenshotEvent", "complete", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
-		return "done", nil
-	}, nil)
-
-	original := bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"target_id": debounceTargetID1}))
-	if _, err := original.Now(); err != nil {
-		t.Fatal(err)
-	}
-
-	isFresh := func(event *abxbus.BaseEvent) bool {
-		if event.EventCompletedAt == nil {
-			return false
-		}
-		completedAt, err := time.Parse(time.RFC3339Nano, *event.EventCompletedAt)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return time.Since(completedAt) < 5*time.Second
-	}
-	found, err := bus.Find("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
-		return event.Payload["target_id"] == debounceTargetID1 && isFresh(event)
-	}, &abxbus.FindOptions{Past: true, Future: false})
-	if err != nil {
-		t.Fatal(err)
-	}
-	result := debounceEmitFallback(bus, "ScreenshotEvent", map[string]any{"target_id": debounceTargetID1}, found)
-	if _, err := result.Now(); err != nil {
-		t.Fatal(err)
-	}
-	if result.EventID != original.EventID {
-		t.Fatalf("expected debounce to reuse %s, got %s", original.EventID, result.EventID)
-	}
-}
-
-func TestReturnsExistingFreshEvent(t *testing.T) {
-	TestDebouncePrefersRecentHistory(t)
-}
-
-func TestDebounceReturnsExistingFreshEvent(t *testing.T) {
-	TestDebouncePrefersRecentHistory(t)
-}
-
-func TestDebounceDispatchesWhenRecentMissing(t *testing.T) {
+func TestDispatchesNewWhenNoMatch(t *testing.T) {
 	bus := abxbus.NewEventBus("DebounceNoMatchBus", nil)
 	bus.On("ScreenshotEvent", "complete", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
 		return "done", nil
@@ -181,14 +161,6 @@ func TestDebounceDispatchesWhenRecentMissing(t *testing.T) {
 	}
 }
 
-func TestDispatchesNewWhenNoMatch(t *testing.T) {
-	TestDebounceDispatchesWhenRecentMissing(t)
-}
-
-func TestDebounceDispatchesNewWhenNoMatch(t *testing.T) {
-	TestDebounceDispatchesWhenRecentMissing(t)
-}
-
 func TestDispatchesNewWhenStale(t *testing.T) {
 	bus := abxbus.NewEventBus("DebounceStaleBus", nil)
 	bus.On("ScreenshotEvent", "complete", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
@@ -200,7 +172,7 @@ func TestDispatchesNewWhenStale(t *testing.T) {
 		t.Fatal(err)
 	}
 	found, err := bus.Find("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
-		return event.Payload["target_id"] == debounceTargetID2
+		return event.Payload["target_id"] == debounceTargetID1 && false
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
@@ -221,10 +193,6 @@ func TestDispatchesNewWhenStale(t *testing.T) {
 	}
 }
 
-func TestDebounceDispatchesNewWhenExistingIsStale(t *testing.T) {
-	TestDispatchesNewWhenStale(t)
-}
-
 func TestFindPastOnlyReturnsImmediatelyWithoutWaiting(t *testing.T) {
 	bus := abxbus.NewEventBus("DebouncePastOnlyBus", nil)
 	start := time.Now()
@@ -239,11 +207,6 @@ func TestFindPastOnlyReturnsImmediatelyWithoutWaiting(t *testing.T) {
 	if elapsed >= 50*time.Millisecond {
 		t.Fatalf("past-only empty find should return immediately, elapsed=%s", elapsed)
 	}
-}
-
-func TestDebouncePastOnlyAndPastWindowLookupsReturnImmediatelyWhenEmpty(t *testing.T) {
-	TestFindPastOnlyReturnsImmediatelyWithoutWaiting(t)
-	TestFindPastFloatReturnsImmediatelyWithoutWaiting(t)
 }
 
 func TestFindPastFloatReturnsImmediatelyWithoutWaiting(t *testing.T) {
@@ -365,8 +328,4 @@ func TestOrChainMultipleSequentialLookups(t *testing.T) {
 	if result3.Payload["target_id"] != debounceTargetID2 {
 		t.Fatalf("expected target_id=%s, got %#v", debounceTargetID2, result3.Payload["target_id"])
 	}
-}
-
-func TestDebounceOrChainHandlesSequentialLookupsWithoutBlocking(t *testing.T) {
-	TestOrChainMultipleSequentialLookups(t)
 }

@@ -5,12 +5,14 @@
 
 import asyncio
 import logging
-from typing import Any, Literal, assert_type
+from typing import Any, assert_type
 
 import pytest
 from pydantic import BaseModel
+from uuid_extensions import uuid7str
 
 from abxbus import BaseEvent, EventBus, EventResult
+from abxbus.event_handler import EventHandler
 
 
 class ScreenshotEventResult(BaseModel):
@@ -31,7 +33,7 @@ class IntEvent(BaseEvent[int]):
     pass
 
 
-async def test_pydantic_model_result_casting():
+async def test_typed_result_schema_validates_handler_result():
     """Test that handler results are automatically cast to Pydantic models."""
     bus = EventBus(name='pydantic_test_bus')
 
@@ -55,7 +57,7 @@ async def test_pydantic_model_result_casting():
     await bus.destroy(clear=True)
 
 
-async def test_builtin_type_casting():
+async def test_builtin_result_schema_validates_handler_results():
     """Test that handler results are automatically cast to built-in types."""
     bus = EventBus(name='builtin_test_bus')
 
@@ -84,7 +86,7 @@ async def test_builtin_type_casting():
     await bus.destroy(clear=True)
 
 
-async def test_casting_failure_handling():
+async def test_invalid_handler_result_marks_error_when_schema_is_defined():
     """Test that casting failures are handled gracefully."""
     bus = EventBus(name='failure_test_bus')
 
@@ -108,7 +110,7 @@ async def test_casting_failure_handling():
     await bus.destroy(clear=True)
 
 
-async def test_all_error_result_options_match_cross_language_matrix():
+async def test_event_result_all_error_options_contract():
     bus = EventBus(name='all_error_result_options_bus', event_handler_concurrency='parallel')
 
     class AllErrorEvent(BaseEvent[str]):
@@ -125,10 +127,15 @@ async def test_all_error_result_options_match_cross_language_matrix():
 
     event = await bus.emit(AllErrorEvent()).now()
 
-    with pytest.raises(ExceptionGroup):
+    with pytest.raises(ExceptionGroup) as result_errors:
         await event.event_result()
-    with pytest.raises(ExceptionGroup):
+    assert len(result_errors.value.exceptions) == 2
+    assert {str(error) for error in result_errors.value.exceptions} == {'first failure', 'second failure'}
+
+    with pytest.raises(ExceptionGroup) as list_errors:
         await event.event_results_list()
+    assert len(list_errors.value.exceptions) == 2
+    assert {str(error) for error in list_errors.value.exceptions} == {'first failure', 'second failure'}
 
     assert await event.event_result(raise_if_any=False, raise_if_none=False) is None
     assert await event.event_results_list(raise_if_any=False, raise_if_none=False) == []
@@ -151,7 +158,80 @@ async def test_all_error_result_options_match_cross_language_matrix():
     await bus.destroy(clear=True)
 
 
-async def test_no_casting_when_no_result_type():
+async def test_event_result_default_options_contract():
+    error_bus = EventBus(name='event_result_default_error_options_bus')
+
+    class DefaultErrorEvent(BaseEvent[str]):
+        pass
+
+    async def fail(event: DefaultErrorEvent) -> str:
+        raise ValueError('default failure')
+
+    error_bus.on(DefaultErrorEvent, fail)
+    error_event = await error_bus.emit(DefaultErrorEvent()).now()
+
+    with pytest.raises(ValueError, match='default failure'):
+        await error_event.event_result()
+    with pytest.raises(ValueError, match='default failure'):
+        await error_event.event_results_list()
+
+    assert await error_event.event_result(raise_if_any=False) is None
+    assert await error_event.event_results_list(raise_if_any=False) == []
+
+    await error_bus.destroy(clear=True)
+
+    empty_bus = EventBus(name='event_result_default_none_options_bus')
+
+    class DefaultNoneEvent(BaseEvent[str]):
+        pass
+
+    empty_event = await empty_bus.emit(DefaultNoneEvent()).now()
+    assert await empty_event.event_result() is None
+    assert await empty_event.event_results_list() == []
+
+    with pytest.raises(ValueError, match='Expected at least one handler'):
+        await empty_event.event_result(raise_if_none=True)
+    with pytest.raises(ValueError, match='Expected at least one handler'):
+        await empty_event.event_results_list(raise_if_none=True)
+
+    await empty_bus.destroy(clear=True)
+
+
+async def test_event_result_error_shapes_use_single_exception_or_group():
+    bus = EventBus(name='error_shape_contract_bus', event_handler_concurrency='parallel')
+
+    class SingleErrorEvent(BaseEvent[None]):
+        pass
+
+    class MultiErrorEvent(BaseEvent[None]):
+        pass
+
+    async def single_fail(event: SingleErrorEvent) -> None:
+        raise ValueError('single shape failure')
+
+    async def first_fail(event: MultiErrorEvent) -> None:
+        raise ValueError('first shape failure')
+
+    async def second_fail(event: MultiErrorEvent) -> None:
+        raise RuntimeError('second shape failure')
+
+    bus.on(SingleErrorEvent, single_fail)
+    bus.on(MultiErrorEvent, first_fail)
+    bus.on(MultiErrorEvent, second_fail)
+
+    single_event = await bus.emit(SingleErrorEvent()).now()
+    with pytest.raises(ValueError, match='single shape failure'):
+        await single_event.event_result()
+
+    multi_event = await bus.emit(MultiErrorEvent()).now()
+    with pytest.raises(ExceptionGroup, match='had 2 handler error') as exc_info:
+        await multi_event.event_result()
+    assert {type(error) for error in exc_info.value.exceptions} == {ValueError, RuntimeError}
+
+    await bus.destroy(clear=True)
+
+
+async def test_no_schema_leaves_raw_handler_result_untouched():
     """Test that events without result_type work normally."""
     bus = EventBus(name='normal_test_bus')
 
@@ -521,9 +601,9 @@ async def test_dispatch_type_inference():
     dispatched_type_event = bus.emit(type_event)
     assert_type(dispatched_type_event, CustomEvent)
 
-    # Validate assert_type with isinstance expression using emit()
+    # Validate isinstance expression using emit()
     isinstance_type_event = CustomEvent()
-    assert_type(isinstance(bus.emit(isinstance_type_event), CustomEvent), Literal[True])
+    assert isinstance(bus.emit(isinstance_type_event), CustomEvent)
 
     # We should be able to use it without casting. Use an event emitted after
     # the handler is registered so this assertion covers typed result access.
@@ -1112,3 +1192,396 @@ async def test_simple_typed_result_model_roundtrip_and_status() -> None:
         assert event_result.result == SimpleResult(value='hello', count=42)
     finally:
         await bus.destroy(clear=True)
+
+
+class StandaloneEvent(BaseEvent[str]):
+    data: str
+
+
+@pytest.mark.asyncio
+async def test_event_result_run_handler_with_base_event() -> None:
+    """EventResult should run correctly when called directly with a real BaseEvent."""
+    event = StandaloneEvent(data='ok')
+
+    async def handler(_event: StandaloneEvent) -> str:
+        return 'ok'
+
+    handler_entry = EventHandler.from_callable(
+        handler=handler,
+        event_pattern='StandaloneEvent',
+        eventbus_name='Standalone',
+        eventbus_id='dafc8026-409b-7794-8067-62e302999216',
+    )
+
+    event_result: EventResult[str] = EventResult(
+        event_id=event.event_id,
+        handler=handler_entry,
+        timeout=event.event_timeout,
+        result_type=str,
+    )
+
+    test_bus = EventBus(name='StandaloneTest1')
+    result_value = await event_result.run_handler(
+        event,
+        eventbus=test_bus,
+        timeout=event.event_timeout,
+    )
+
+    assert result_value == 'ok'
+    assert event_result.status == 'completed'
+    assert event_result.result == 'ok'
+    await test_bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_event_and_result_without_eventbus() -> None:
+    """Verify BaseEvent + EventResult work without instantiating an EventBus."""
+
+    event = StandaloneEvent(data='message')
+
+    def handler(evt: StandaloneEvent) -> str:
+        return evt.data.upper()
+
+    handler_entry = EventHandler.from_callable(
+        handler=handler,
+        event_pattern='StandaloneEvent',
+        eventbus_name='EventBus',
+        eventbus_id='00000000-0000-0000-0000-000000000000',
+    )
+    assert handler_entry.id is not None
+    handler_id = handler_entry.id
+    event_result = event.event_result_update(handler=handler_entry, status='pending')
+
+    test_bus = EventBus(name='StandaloneTest2')
+    value = await event_result.run_handler(
+        event,
+        eventbus=test_bus,
+        timeout=event.event_timeout,
+    )
+
+    assert value == 'MESSAGE'
+    assert event_result.status == 'completed'
+    assert event.event_results[handler_id] is event_result
+
+    await test_bus.emit(event).wait()
+    assert event.event_completed_at is not None
+    await test_bus.destroy()
+
+
+def test_event_handler_model_is_serializable() -> None:
+    """EventHandler is a Pydantic model and can round-trip serialized metadata."""
+
+    def handler(event: StandaloneEvent) -> str:
+        return event.data
+
+    entry = EventHandler.from_callable(
+        handler=handler,
+        event_pattern='StandaloneEvent',
+        eventbus_name='StandaloneBus',
+        eventbus_id='018f8e40-1234-7000-8000-000000001234',
+    )
+
+    dumped = entry.model_dump(mode='json')
+    assert dumped['event_pattern'] == 'StandaloneEvent'
+    assert dumped['eventbus_name'] == 'StandaloneBus'
+    assert dumped.get('handler') is None
+
+    loaded = EventHandler.model_validate(dumped)
+    assert loaded.id == entry.id
+    assert loaded.event_pattern == entry.event_pattern
+    assert loaded.handler is None
+
+
+def test_event_handler_id_matches_typescript_uuidv5_algorithm() -> None:
+    expected_seed = '018f8e40-1234-7000-8000-000000001234|pkg.module.handler|~/project/app.py:123|2025-01-02T03:04:05.678901000Z|StandaloneEvent'
+    expected_id = '19ea9fe8-cfbe-541e-8a35-2579e4e9efff'
+
+    entry = EventHandler(
+        handler_name='pkg.module.handler',
+        handler_file_path='~/project/app.py:123',
+        handler_registered_at='2025-01-02T03:04:05.678901000Z',
+        event_pattern='StandaloneEvent',
+        eventbus_name='StandaloneBus',
+        eventbus_id='018f8e40-1234-7000-8000-000000001234',
+    )
+
+    assert (
+        f'{entry.eventbus_id}|{entry.handler_name}|{entry.handler_file_path}|{entry.handler_registered_at}|{entry.event_pattern}'
+        == expected_seed
+    )
+    assert entry.compute_handler_id() == expected_id
+    assert entry.id == expected_id
+
+
+def test_event_handler_model_detects_handler_file_path() -> None:
+    def handler(event: StandaloneEvent) -> str:
+        return event.data
+
+    entry = EventHandler.from_callable(
+        handler=handler,
+        event_pattern='StandaloneEvent',
+        eventbus_name='StandaloneBus',
+        eventbus_id='018f8e40-1234-7000-8000-000000001234',
+    )
+
+    assert entry.handler_file_path is not None
+    expected_suffix = f'test_event_result.py:{handler.__code__.co_firstlineno}'
+    assert entry.handler_file_path.endswith(expected_suffix)
+
+
+def test_event_handler_from_callable_supports_id_override_and_detect_file_path_toggle() -> None:
+    def handler(event: StandaloneEvent) -> str:
+        return event.data
+
+    explicit_id = '018f8e40-1234-7000-8000-000000009999'
+    explicit = EventHandler.from_callable(
+        handler=handler,
+        id=explicit_id,
+        event_pattern='StandaloneEvent',
+        eventbus_name='StandaloneBus',
+        eventbus_id='018f8e40-1234-7000-8000-000000001234',
+        detect_handler_file_path=False,
+    )
+    assert explicit.id == explicit_id
+
+    no_detect = EventHandler.from_callable(
+        handler=handler,
+        event_pattern='StandaloneEvent',
+        eventbus_name='StandaloneBus',
+        eventbus_id='018f8e40-1234-7000-8000-000000001234',
+        detect_handler_file_path=False,
+    )
+    assert no_detect.handler_file_path is None
+
+
+def test_event_result_update_keeps_consistent_ordering_semantics_for_status_result_error() -> None:
+    def handler(event: StandaloneEvent) -> str:
+        return event.data
+
+    handler_entry = EventHandler.from_callable(
+        handler=handler,
+        event_pattern='StandaloneEvent',
+        eventbus_name='StandaloneBus',
+        eventbus_id='018f8e40-1234-7000-8000-000000001234',
+    )
+    event_result: EventResult[str] = EventResult(
+        event_id=uuid7str(),
+        handler=handler_entry,
+        timeout=None,
+        result_type=str,
+    )
+
+    existing_error = RuntimeError('existing')
+    event_result.error = existing_error
+    event_result.update(status='completed')
+    assert event_result.status == 'completed'
+    assert event_result.error is existing_error
+
+    event_result.update(status='error', result='seeded')
+    assert event_result.result == 'seeded'
+    assert event_result.status == 'error'
+
+
+def test_construct_pending_handler_result_matches_pydantic_constructor() -> None:
+    def handler(event: StandaloneEvent) -> str:
+        return event.data
+
+    handler_entry = EventHandler.from_callable(
+        handler=handler,
+        event_pattern='StandaloneEvent',
+        eventbus_name='StandaloneBus',
+        eventbus_id='018f8e40-1234-7000-8000-000000001234',
+    )
+    event_id = uuid7str()
+    fast_result = EventResult[str].construct_pending_handler_result(
+        event_id=event_id,
+        handler=handler_entry,
+        status='pending',
+        timeout=1.25,
+        result_type=str,
+    )
+    validated_result = EventResult[str](
+        id=fast_result.id,
+        event_id=event_id,
+        handler=handler_entry,
+        status='pending',
+        timeout=1.25,
+        result_type=str,
+    )
+
+    assert fast_result.model_dump(mode='json') == validated_result.model_dump(mode='json')
+    assert fast_result.result_type is validated_result.result_type
+    assert fast_result.handler is handler_entry
+    assert validated_result.handler is handler_entry
+    assert fast_result.handler_completed_signal is validated_result.handler_completed_signal
+
+
+def test_event_result_serializes_handler_metadata_and_derived_fields() -> None:
+    """EventResult stores handler metadata and derives convenience fields from it."""
+
+    def handler(event: StandaloneEvent) -> str:
+        return event.data
+
+    entry = EventHandler.from_callable(
+        handler=handler,
+        event_pattern='StandaloneEvent',
+        eventbus_name='StandaloneBus',
+        eventbus_id='018f8e40-1234-7000-8000-000000001234',
+    )
+
+    result = EventResult(
+        event_id=uuid7str(),
+        handler=entry,
+    )
+    payload = result.model_dump(mode='json')
+
+    assert 'handler' not in payload
+    assert 'result_type' not in payload
+    assert payload['handler_id'] == entry.id
+    assert payload['handler_name'] == entry.handler_name
+    assert payload['handler_event_pattern'] == entry.event_pattern
+    assert payload['eventbus_id'] == entry.eventbus_id
+    assert payload['eventbus_name'] == entry.eventbus_name
+
+
+# Folded from test_typed_events.py to keep test layout class-based.
+"""Static typing contracts for the event execution pipeline.
+
+This module is never imported by runtime code. It exists so strict type checks
+(`pyright`, `ty`) fail if the end-to-end event handler pipeline is weakened.
+"""
+
+from typing import Any
+
+from pydantic import BaseModel
+
+from abxbus.base_event import BaseEvent
+
+
+class TypeContractResult(BaseModel):
+    message: str
+
+
+class TypeContractEvent(BaseEvent[TypeContractResult]):
+    pass
+
+
+async def _contract_handler(event: TypeContractEvent) -> TypeContractResult:
+    return TypeContractResult(message=event.event_type)
+
+
+async def _assert_pipeline_types(bus: EventBus, event: TypeContractEvent) -> None:
+    handler_entry = bus.on(TypeContractEvent, _contract_handler)
+    assert_type(handler_entry, EventHandler)
+
+    dispatched_event = bus.emit(event)
+    assert_type(dispatched_event, TypeContractEvent)
+
+    typed_pending_result = dispatched_event.event_result_update(handler_entry, eventbus=bus, status='pending')
+    assert_type(typed_pending_result, EventResult[TypeContractResult])
+    result_run_value = await typed_pending_result.run_handler(dispatched_event, eventbus=bus, timeout=event.event_timeout)
+    assert_type(result_run_value, TypeContractResult | BaseEvent[Any] | None)
+    assert_type(typed_pending_result.result, TypeContractResult | BaseEvent[Any] | None)
+
+    emitted_event = bus.emit(TypeContractEvent())
+    assert_type(emitted_event, TypeContractEvent)
+    completed_event = await emitted_event.wait()
+    assert_type(completed_event, TypeContractEvent)
+
+    first_result = await (await completed_event.now(first_result=True)).event_result()
+    assert_type(first_result, TypeContractResult | None)
+
+    aggregated_result = await completed_event.event_result()
+    assert_type(aggregated_result, TypeContractResult | None)
+
+    all_values = await completed_event.event_results_list()
+    assert_type(all_values, list[TypeContractResult | None])
+    for handler_result in completed_event.event_results.values():
+        assert_type(handler_result, EventResult[Any])
+
+
+def test_typing_contracts_module_loads() -> None:
+    """Runtime no-op so this file is a valid pytest module."""
+    assert callable(_assert_pipeline_types)
+
+
+# Consolidated from tests/test_handler_registration_typing.py
+
+"""Static typing contracts for EventBus.on overload behavior.
+
+This file is for static type checking only (pyright/ty), not runtime pytest execution.
+"""
+
+# pyright: strict, reportUnnecessaryTypeIgnoreComment=true
+
+from typing import TYPE_CHECKING
+
+from abxbus.base_event import BaseEvent
+from abxbus.event_bus import EventBus
+
+
+class _SomeEventClass(BaseEvent[str]):
+    pass
+
+
+class _OtherEventClass(BaseEvent[str]):
+    pass
+
+
+class _EventTypeA(BaseEvent[int]):
+    field_a: int = 1234
+
+
+class _EventTypeB(BaseEvent[int]):
+    field_b: int = 5678
+
+
+class _EventTypeSubclassOfA(_EventTypeA):
+    field_sub: float = 123.123
+
+
+def _some_handler(event: _SomeEventClass) -> str:
+    return 'ok'
+
+
+def _base_handler(event: BaseEvent[Any]) -> str:
+    return 'ok'
+
+
+def _other_handler(event: _OtherEventClass) -> str:
+    return 'ok'
+
+
+def _handler_for_a(event: _EventTypeA) -> int:
+    return event.field_a
+
+
+def _handler_for_specific_subclass(event: _EventTypeSubclassOfA) -> int:
+    return int(event.field_sub)
+
+
+if TYPE_CHECKING:
+    _bus = EventBus()
+
+    # Class pattern should preserve strict subclass typing.
+    _class_entry = _bus.on(_SomeEventClass, _some_handler)
+    assert_type(_class_entry, EventHandler)
+
+    # String pattern is intentionally looser: BaseEvent handlers and subclass handlers are both accepted.
+    _string_base_entry = _bus.on('SomeEventClass', _base_handler)
+    assert_type(_string_base_entry, EventHandler)
+    _string_subclass_entry = _bus.on('SomeEventClass', _some_handler)
+    assert_type(_string_subclass_entry, EventHandler)
+
+    # Expected static type errors:
+    # 1) class pattern should reject a mismatched event subclass handler
+    _bus.on(_SomeEventClass, _other_handler)  # pyright: ignore[reportCallIssue, reportArgumentType]  # ty: ignore[no-matching-overload]
+
+    # Variance contracts for class patterns:
+    # 2) unrelated class pattern should reject handler expecting a different event class
+    _bus.on(_EventTypeB, _handler_for_a)  # type: ignore
+    # 3) subclass pattern accepts base-class handler (contravariant safe)
+    _subclass_ok = _bus.on(_EventTypeSubclassOfA, _handler_for_a)
+    assert_type(_subclass_ok, EventHandler)
+    # 4) base-class pattern rejects subclass-only handler
+    _bus.on(_EventTypeA, _handler_for_specific_subclass)  # type: ignore

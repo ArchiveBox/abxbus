@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { BaseEvent, EventBus } from '../../src/index.js'
-import { async_local_storage, hasAsyncLocalStorage } from '../../src/async_context.js'
+import { BaseEvent, EventBus } from '../src/index.js'
+import { async_local_storage, hasAsyncLocalStorage } from '../src/async_context.js'
 
 type ContextStore = {
   request_id?: string

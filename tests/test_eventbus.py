@@ -194,8 +194,8 @@ class TestEventBusBasics:
         with pytest.raises(RuntimeError, match='destroyed'):
             await bus.find(DestroyEvent, future=False)
 
-    async def test_destroy_clear_false_preserves_handlers_and_history_and_resumes(self):
-        """destroy(clear=False) stops runtime work but keeps enough state to resume."""
+    async def test_destroy_clear_false_preserves_handlers_and_history_resolves_waiters_and_resumes(self):
+        """destroy(clear=False) stops runtime work, resolves waiters, and keeps enough state to resume."""
 
         class ReusableEvent(BaseEvent[str]):
             pass
@@ -212,8 +212,12 @@ class TestEventBusBasics:
         first = await bus.emit(ReusableEvent())
         assert await first.event_result() == 'handled:1'
 
+        waiter_task = asyncio.create_task(bus.find('NeverHappens', past=False, future=True))
+        await asyncio.sleep(0)
+
         await bus.destroy(timeout=0, clear=False)
 
+        assert await asyncio.wait_for(waiter_task, timeout=1.0) is None
         assert bus._is_running is False
         assert bus.pending_event_queue is None
         assert len(bus.handlers) == 1
@@ -1716,6 +1720,68 @@ class TestDebouncePatterns:
 class TestEventResults:
     """Test the event results functionality on BaseEvent"""
 
+    async def test_event_results_list_defaults_filter_empty_values_raise_errors_and_options_override(self, eventbus):
+        """EventBus result helpers default to valid payloads, then expose explicit override knobs."""
+
+        async def ok_handler(event):
+            return 'ok'
+
+        async def none_handler(event):
+            return None
+
+        async def forwarded_event_handler(event):
+            return BaseEvent(event_type='ForwardedResult')
+
+        eventbus.on('ResultOptionsDefaultEvent', ok_handler)
+        eventbus.on('ResultOptionsDefaultEvent', none_handler)
+        eventbus.on('ResultOptionsDefaultEvent', forwarded_event_handler)
+
+        event = await eventbus.emit(BaseEvent(event_type='ResultOptionsDefaultEvent'))
+        assert await event.event_results_list() == ['ok']
+
+        async def error_ok_handler(event):
+            return 'ok'
+
+        async def error_handler(event):
+            raise ValueError('boom')
+
+        eventbus.on('ResultOptionsErrorEvent', error_ok_handler)
+        eventbus.on('ResultOptionsErrorEvent', error_handler)
+
+        error_event = await eventbus.emit(BaseEvent(event_type='ResultOptionsErrorEvent'))
+        with pytest.raises(ValueError, match='boom'):
+            await error_event.event_results_list()
+        assert await error_event.event_results_list(raise_if_any=False, raise_if_none=True) == ['ok']
+
+        eventbus.on('ResultOptionsEmptyEvent', none_handler)
+        empty_event = await eventbus.emit(BaseEvent(event_type='ResultOptionsEmptyEvent'))
+        with pytest.raises(ValueError, match='Expected at least one handler'):
+            await empty_event.event_results_list(raise_if_none=True)
+        assert await empty_event.event_results_list(raise_if_any=False, raise_if_none=False) == []
+
+        async def keep_handler(event):
+            return 'keep'
+
+        async def drop_handler(event):
+            return 'drop'
+
+        eventbus.on('ResultOptionsIncludeEvent', keep_handler)
+        eventbus.on('ResultOptionsIncludeEvent', drop_handler)
+        seen_handler_names: list[str] = []
+
+        def include_keep(result: Any, event_result: Any) -> bool:
+            seen_handler_names.append(event_result.handler_name)
+            return result == 'keep'
+
+        included_event = await eventbus.emit(BaseEvent(event_type='ResultOptionsIncludeEvent'))
+        filtered_values = await included_event.event_results_list(
+            include=include_keep,
+            raise_if_any=False,
+            raise_if_none=True,
+        )
+        assert filtered_values == ['keep']
+        assert len(seen_handler_names) == 2
+
     async def test_dispatch_returns_event_results(self, eventbus):
         """Test that dispatch returns BaseEvent with result methods"""
 
@@ -2355,3 +2421,1912 @@ class TestComplexIntegration:
 
         finally:
             await bus.destroy(timeout=0, clear=True)
+
+
+# Folded from test_eventbus_edge_cases.py to keep test layout class-based.
+
+import pytest
+
+from abxbus import BaseEvent, EventStatus
+
+
+class ResetCoverageEvent(BaseEvent[None]):
+    label: str
+
+
+class IdleTimeoutCoverageEvent(BaseEvent[None]):
+    label: str = 'slow'
+
+
+class DestroyCoverageEvent(BaseEvent[None]):
+    label: str = 'destroy'
+
+
+@pytest.mark.asyncio
+async def test_event_reset_creates_fresh_pending_event_for_cross_bus_dispatch():
+    bus_a = EventBus(name='ResetCoverageBusA')
+    bus_b = EventBus(name='ResetCoverageBusB')
+    seen_a: list[str] = []
+    seen_b: list[str] = []
+
+    bus_a.on(ResetCoverageEvent, lambda event: seen_a.append(event.label))
+    bus_b.on(ResetCoverageEvent, lambda event: seen_b.append(event.label))
+
+    completed = await bus_a.emit(ResetCoverageEvent(label='hello'))
+    assert completed.event_status == EventStatus.COMPLETED
+    assert len(completed.event_results) == 1
+
+    fresh = completed.event_reset()
+    assert fresh.event_id != completed.event_id
+    assert fresh.event_status == EventStatus.PENDING
+    assert fresh.event_completed_at is None
+    assert fresh.event_results == {}
+
+    forwarded = await bus_b.emit(fresh)
+    assert forwarded.event_status == EventStatus.COMPLETED
+    assert seen_a == ['hello']
+    assert seen_b == ['hello']
+    assert any(path.startswith('ResetCoverageBusA#') for path in forwarded.event_path)
+    assert any(path.startswith('ResetCoverageBusB#') for path in forwarded.event_path)
+
+    await bus_a.destroy(timeout=0, clear=True)
+    await bus_b.destroy(timeout=0, clear=True)
+
+
+@pytest.mark.asyncio
+async def test_wait_until_idle_timeout_path_recovers_after_inflight_handler_finishes():
+    bus = EventBus(name='IdleTimeoutCoverageBus')
+    handler_started = asyncio.Event()
+    release_handler = asyncio.Event()
+
+    async def slow_handler(event: IdleTimeoutCoverageEvent) -> None:
+        handler_started.set()
+        await release_handler.wait()
+
+    bus.on(IdleTimeoutCoverageEvent, slow_handler)
+    pending = bus.emit(IdleTimeoutCoverageEvent())
+    await handler_started.wait()
+
+    start = time.perf_counter()
+    await bus.wait_until_idle(timeout=0.01)
+    elapsed = time.perf_counter() - start
+    assert elapsed < 0.5
+    assert pending.event_status != EventStatus.COMPLETED
+
+    release_handler.set()
+    await pending
+    await bus.wait_until_idle(timeout=1.0)
+    assert pending.event_status == EventStatus.COMPLETED
+
+    await bus.destroy(timeout=0, clear=True)
+
+
+@pytest.mark.asyncio
+async def test_destroy_with_timeout_waits_before_clearing_runtime():
+    bus = EventBus(name='DestroyTimeoutBus')
+    handler_started = asyncio.Event()
+    handler_finished = asyncio.Event()
+
+    async def slow_handler(event: DestroyCoverageEvent) -> None:
+        handler_started.set()
+        await asyncio.sleep(0.05)
+        handler_finished.set()
+
+    bus.on(DestroyCoverageEvent, slow_handler)
+    _pending = bus.emit(DestroyCoverageEvent())
+    await handler_started.wait()
+
+    start = time.perf_counter()
+    await bus.destroy(timeout=1.0, clear=False)
+    elapsed = time.perf_counter() - start
+
+    assert elapsed >= 0.03
+    assert handler_finished.is_set()
+    assert bus._is_running is False
+    assert len(bus.event_history) == 1
+    assert not bus._destroyed
+
+    await bus.destroy(timeout=0, clear=True)
+
+
+# Folded from test_eventbus_middleware.py to keep test layout class-based.
+# pyright: basic
+"""Consolidated middleware tests."""
+
+import json
+import multiprocessing
+import sqlite3
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+
+import pytest
+from pydantic import Field
+
+from abxbus import SQLiteHistoryMirrorMiddleware
+from abxbus.middlewares import (
+    AutoErrorEventMiddleware,
+    AutoHandlerChangeEventMiddleware,
+    AutoReturnEventMiddleware,
+    BusHandlerRegisteredEvent,
+    BusHandlerUnregisteredEvent,
+    EventBusMiddleware,
+    LoggerEventBusMiddleware,
+    OtelTracingMiddleware,
+    WALEventBusMiddleware,
+)
+
+
+class TestWALPersistence:
+    """Test automatic WAL persistence functionality"""
+
+    async def test_wal_persistence_handler(self, tmp_path):
+        """Test that events are automatically persisted to WAL file"""
+        # Create event bus with WAL path
+        wal_path = tmp_path / 'test_events.jsonl'
+        bus = EventBus(name='TestBus', middlewares=[WALEventBusMiddleware(wal_path)])
+
+        try:
+            # Emit some events
+            events = []
+            for i in range(3):
+                event = UserActionEvent(action=f'action_{i}', user_id=f'user_{i}')
+                emitted_event = bus.emit(event)
+                completed_event = await emitted_event
+                events.append(completed_event)
+
+            # Wait for processing
+            await bus.wait_until_idle()
+
+            # Check WAL file exists
+            assert wal_path.exists()
+
+            # Read and verify JSONL content
+            lines = wal_path.read_text().strip().split('\n')
+            assert len(lines) == 3
+
+            # Parse each line as JSON
+            for i, line in enumerate(lines):
+                data = json.loads(line)
+                assert data['action'] == f'action_{i}'
+                assert data['user_id'] == f'user_{i}'
+                assert data['event_type'] == 'UserActionEvent'
+                assert isinstance(data['event_created_at'], str)
+                datetime.fromisoformat(data['event_created_at'])
+
+        finally:
+            await bus.destroy()
+
+    async def test_wal_persistence_creates_parent_dir(self, tmp_path):
+        """Test that WAL persistence creates parent directories"""
+        # Use a nested path that doesn't exist
+        wal_path = tmp_path / 'nested' / 'dirs' / 'events.jsonl'
+        assert not wal_path.parent.exists()
+
+        # Create event bus
+        bus = EventBus(name='TestBus', middlewares=[WALEventBusMiddleware(wal_path)])
+
+        try:
+            # Emit an event
+            event = bus.emit(UserActionEvent(action='test', user_id='e692b6cb-ae63-773b-8557-3218f7ce5ced'))
+            await event
+
+            # Wait for WAL persistence to complete
+            await bus.wait_until_idle()
+
+            # Parent directory should be created after event is processed
+            assert wal_path.parent.exists()
+
+            # Check file was created
+            assert wal_path.exists()
+        finally:
+            await bus.destroy()
+
+    async def test_wal_persistence_skips_incomplete_events(self, tmp_path):
+        """Test that WAL persistence only writes completed events"""
+        wal_path = tmp_path / 'incomplete_events.jsonl'
+        bus = EventBus(name='TestBus', middlewares=[WALEventBusMiddleware(wal_path)])
+
+        try:
+            # Add a slow handler that will delay completion
+            async def slow_handler(event: BaseEvent) -> str:
+                await asyncio.sleep(0.1)
+                return 'slow'
+
+            bus.on('UserActionEvent', slow_handler)
+
+            # Emit event without waiting
+            event = bus.emit(UserActionEvent(action='test', user_id='e692b6cb-ae63-773b-8557-3218f7ce5ced'))
+
+            # Check file doesn't exist yet (event not completed)
+            assert not wal_path.exists()
+
+            # Wait for completion
+            event = await event
+            await bus.wait_until_idle()
+
+            # Now file should exist with completed event
+            assert wal_path.exists()
+            lines = wal_path.read_text().strip().split('\n')
+            assert len(lines) == 1
+            data = json.loads(lines[0])
+            assert data['event_type'] == 'UserActionEvent'
+            # The WAL should have been written after the event completed
+            assert data['action'] == 'test'
+            assert data['user_id'] == 'e692b6cb-ae63-773b-8557-3218f7ce5ced'
+
+        finally:
+            await bus.destroy()
+
+
+class TestHandlerMiddleware:
+    """Tests for the handler middleware pipeline."""
+
+    async def test_middleware_constructor_auto_inits_classes_and_keeps_hook_order(self):
+        calls: list[str] = []
+
+        class ClassMiddleware(EventBusMiddleware):
+            def __init__(self):
+                calls.append('class:init')
+
+            async def on_event_result_change(self, eventbus: EventBus, event: BaseEvent, event_result, status):
+                if status == 'started':
+                    calls.append('class:started')
+                elif status == 'completed':
+                    calls.append('class:completed')
+
+        class InstanceMiddleware(EventBusMiddleware):
+            async def on_event_result_change(self, eventbus: EventBus, event: BaseEvent, event_result, status):
+                if status == 'started':
+                    calls.append('instance:started')
+                elif status == 'completed':
+                    calls.append('instance:completed')
+
+        instance_middleware = InstanceMiddleware()
+        bus = EventBus(middlewares=[ClassMiddleware, instance_middleware])
+        bus.on('UserActionEvent', lambda event: 'ok')
+
+        try:
+            completed = await bus.emit(UserActionEvent(action='test', user_id='d592b79f-4dd9-7d4d-88b1-0d0db7d84fcf'))
+            await bus.wait_until_idle()
+
+            assert isinstance(bus.middlewares[0], ClassMiddleware)
+            assert bus.middlewares[1] is instance_middleware
+            assert completed.event_results
+            assert calls == [
+                'class:init',
+                'class:started',
+                'instance:started',
+                'class:completed',
+                'instance:completed',
+            ]
+        finally:
+            await bus.destroy()
+
+    async def test_middleware_wraps_successful_handler(self):
+        calls: list[tuple[str, str]] = []
+
+        class TrackingMiddleware(EventBusMiddleware):
+            def __init__(self, call_log: list[tuple[str, str]]):
+                self.call_log = call_log
+
+            async def on_event_result_change(self, eventbus: EventBus, event: BaseEvent, event_result, status):
+                if status == 'started':
+                    self.call_log.append(('before', event_result.status))
+                elif status == 'completed':
+                    self.call_log.append(('after', event_result.status))
+
+        bus = EventBus(middlewares=[TrackingMiddleware(calls)])
+        bus.on('UserActionEvent', lambda event: 'ok')
+
+        try:
+            completed = await bus.emit(UserActionEvent(action='test', user_id='d592b79f-4dd9-7d4d-88b1-0d0db7d84fcf'))
+            await bus.wait_until_idle()
+
+            assert completed.event_results
+            result = next(iter(completed.event_results.values()))
+            assert result.status == 'completed'
+            assert result.result == 'ok'
+            assert calls == [('before', 'started'), ('after', 'completed')]
+        finally:
+            await bus.destroy()
+
+    async def test_middleware_observes_handler_errors(self):
+        observations: list[tuple[str, str]] = []
+
+        class ErrorMiddleware(EventBusMiddleware):
+            def __init__(self, log: list[tuple[str, str]]):
+                self.log = log
+
+            async def on_event_result_change(self, eventbus: EventBus, event: BaseEvent, event_result, status):
+                if status == 'started':
+                    self.log.append(('before', event_result.status))
+                elif status == 'completed' and event_result.error:
+                    self.log.append(('error', type(event_result.error).__name__))
+
+        async def failing_handler(event: BaseEvent) -> None:
+            raise ValueError('boom')
+
+        bus = EventBus(middlewares=[ErrorMiddleware(observations)])
+        bus.on('UserActionEvent', failing_handler)
+
+        try:
+            event = await bus.emit(UserActionEvent(action='fail', user_id='16599da2-bf1d-7a5d-8e6e-ba01f216519a'))
+            await bus.wait_until_idle()
+
+            result = next(iter(event.event_results.values()))
+            assert result.status == 'error'
+            assert isinstance(result.error, ValueError)
+            assert observations == [('before', 'started'), ('error', 'ValueError')]
+        finally:
+            await bus.destroy()
+
+    async def test_middleware_hook_statuses_never_emit_error(self):
+        observed_event_statuses: list[str] = []
+        observed_result_hook_statuses: list[str] = []
+        observed_result_runtime_statuses: list[str] = []
+
+        class LifecycleMiddleware(EventBusMiddleware):
+            async def on_event_change(self, eventbus: EventBus, event: BaseEvent, status):
+                observed_event_statuses.append(str(status))
+
+            async def on_event_result_change(self, eventbus: EventBus, event: BaseEvent, event_result, status):
+                observed_result_hook_statuses.append(str(status))
+                observed_result_runtime_statuses.append(event_result.status)
+
+        async def failing_handler(event: BaseEvent) -> None:
+            raise ValueError('boom')
+
+        bus = EventBus(middlewares=[LifecycleMiddleware()], max_history_size=None)
+        bus.on(UserActionEvent, failing_handler)
+
+        try:
+            event = await bus.emit(UserActionEvent(action='fail', user_id='2a312e4d-3035-7883-86b9-578ce47046b2'))
+            await bus.wait_until_idle()
+
+            result = next(iter(event.event_results.values()))
+            assert result.status == 'error'
+            assert isinstance(result.error, ValueError)
+
+            assert observed_event_statuses == ['pending', 'started', 'completed']
+            assert observed_result_hook_statuses == ['pending', 'started', 'completed']
+            assert observed_result_runtime_statuses[-1] == 'error'
+            assert 'error' not in observed_event_statuses
+            assert 'error' not in observed_result_hook_statuses
+        finally:
+            await bus.destroy()
+
+    async def test_middleware_event_status_order_is_deterministic_for_each_event(self):
+        event_statuses_by_id: dict[str, list[str]] = {}
+
+        class LifecycleMiddleware(EventBusMiddleware):
+            async def on_event_change(self, eventbus: EventBus, event: BaseEvent, status):
+                event_statuses_by_id.setdefault(event.event_id, []).append(str(status))
+
+        async def handler(_event: UserActionEvent) -> str:
+            await asyncio.sleep(0)
+            return 'ok'
+
+        bus = EventBus(middlewares=[LifecycleMiddleware()], max_history_size=None)
+        bus.on(UserActionEvent, handler)
+
+        batch_count = 5
+        events_per_batch = 50
+        try:
+            for batch_index in range(batch_count):
+                events = [
+                    bus.emit(
+                        UserActionEvent(
+                            action='deterministic',
+                            user_id=f'u-{batch_index}-{event_index}',
+                        )
+                    )
+                    for event_index in range(events_per_batch)
+                ]
+                await asyncio.gather(*events)
+                await bus.wait_until_idle()
+
+                for event in events:
+                    assert event_statuses_by_id[event.event_id] == ['pending', 'started', 'completed']
+
+            assert len(event_statuses_by_id) == batch_count * events_per_batch
+        finally:
+            await bus.destroy()
+
+    async def test_middleware_event_and_result_lifecycle_remains_monotonic_on_timeout(self):
+        observed_event_statuses: list[str] = []
+        observed_result_transitions: list[tuple[str, str, str]] = []
+
+        class LifecycleMiddleware(EventBusMiddleware):
+            async def on_event_change(self, eventbus: EventBus, event: BaseEvent, status):
+                observed_event_statuses.append(str(status))
+
+            async def on_event_result_change(self, eventbus: EventBus, event: BaseEvent, event_result, status):
+                observed_result_transitions.append((event_result.handler_name, str(status), event_result.status))
+
+        class TimeoutLifecycleEvent(BaseEvent[str]):
+            event_timeout: float | None = 0.02
+
+        async def slow_handler(_event: TimeoutLifecycleEvent) -> str:
+            await asyncio.sleep(0.05)
+            return 'slow'
+
+        async def pending_handler(_event: TimeoutLifecycleEvent) -> str:
+            return 'pending'
+
+        bus = EventBus(middlewares=[LifecycleMiddleware()])
+        bus.on(TimeoutLifecycleEvent, slow_handler)
+        bus.on(TimeoutLifecycleEvent, pending_handler)
+
+        try:
+            await bus.emit(TimeoutLifecycleEvent())
+            await bus.wait_until_idle()
+
+            assert observed_event_statuses == ['pending', 'started', 'completed']
+
+            slow_transitions = [entry for entry in observed_result_transitions if entry[0].endswith('slow_handler')]
+            pending_transitions = [entry for entry in observed_result_transitions if entry[0].endswith('pending_handler')]
+
+            assert [status for _, status, _ in slow_transitions] == ['pending', 'started', 'completed']
+            assert [result_status for _, _, result_status in slow_transitions] == ['pending', 'started', 'error']
+
+            assert [status for _, status, _ in pending_transitions] == ['pending', 'completed']
+            assert [result_status for _, _, result_status in pending_transitions] == ['pending', 'error']
+        finally:
+            await bus.destroy()
+
+    async def test_auto_error_event_middleware_emits_and_guards_recursion(self):
+        seen: list[tuple[str, str]] = []
+        bus = EventBus(middlewares=[AutoErrorEventMiddleware()])
+
+        class UserActionEventErrorEvent(BaseEvent[None]):
+            error_type: str
+
+        async def fail_handler(event: BaseEvent) -> None:
+            raise ValueError('boom')
+
+        async def fail_auto(event: UserActionEventErrorEvent) -> None:
+            raise RuntimeError('nested')
+
+        async def on_auto_error_event(event: UserActionEventErrorEvent) -> None:
+            seen.append((event.event_type, event.error_type))
+
+        bus.on(UserActionEvent, fail_handler)
+        bus.on(UserActionEventErrorEvent, on_auto_error_event)
+        bus.on(UserActionEventErrorEvent, fail_auto)
+
+        try:
+            await bus.emit(UserActionEvent(action='fail', user_id='e692b6cb-ae63-773b-8557-3218f7ce5ced'))
+            await bus.wait_until_idle()
+            assert seen == [('UserActionEventErrorEvent', 'ValueError')]
+            assert await bus.find('UserActionEventErrorEventErrorEvent', past=True, future=False) is None
+        finally:
+            await bus.destroy()
+
+    async def test_auto_return_event_middleware_emits_and_guards_recursion(self):
+        seen: list[tuple[str, Any]] = []
+        bus = EventBus(middlewares=[AutoReturnEventMiddleware()])
+
+        class UserActionEventResultEvent(BaseEvent[None]):
+            data: Any
+
+        async def ok_handler(event: BaseEvent) -> int:
+            return 123
+
+        async def non_none_auto(event: UserActionEventResultEvent) -> str:
+            return 'nested'
+
+        async def on_auto_result_event(event: UserActionEventResultEvent) -> None:
+            seen.append((event.event_type, event.data))
+
+        bus.on(UserActionEvent, ok_handler)
+        bus.on(UserActionEventResultEvent, on_auto_result_event)
+        bus.on(UserActionEventResultEvent, non_none_auto)
+
+        try:
+            await bus.emit(UserActionEvent(action='ok', user_id='2a312e4d-3035-7883-86b9-578ce47046b2'))
+            await bus.wait_until_idle()
+            assert seen == [('UserActionEventResultEvent', 123)]
+            assert await bus.find('UserActionEventResultEventResultEvent', past=True, future=False) is None
+        finally:
+            await bus.destroy()
+
+    async def test_auto_return_event_middleware_skips_baseevent_returns(self):
+        seen: list[tuple[str, Any]] = []
+        bus = EventBus(middlewares=[AutoReturnEventMiddleware()])
+
+        class UserActionEventResultEvent(BaseEvent[None]):
+            data: Any
+
+        class ReturnedEvent(BaseEvent):
+            value: int
+
+        async def returns_event(event: BaseEvent) -> ReturnedEvent:
+            return ReturnedEvent(value=7)
+
+        async def on_auto_result_event(event: UserActionEventResultEvent) -> None:
+            seen.append((event.event_type, event.data))
+
+        bus.on(UserActionEvent, returns_event)
+        bus.on(UserActionEventResultEvent, on_auto_result_event)
+
+        try:
+            parent = await bus.emit(UserActionEvent(action='ok', user_id='6eb8a717-e19d-728b-8905-97f7e20c002e'))
+            await bus.wait_until_idle()
+            assert len(parent.event_results) == 1
+            only_result = next(iter(parent.event_results.values()))
+            assert isinstance(only_result.result, ReturnedEvent)
+            assert seen == []
+            assert await bus.find('UserActionEventResultEvent', past=True, future=False) is None
+        finally:
+            await bus.destroy()
+
+    async def test_auto_handler_change_event_middleware_emits_registered_and_unregistered(self):
+        registered: list[BusHandlerRegisteredEvent] = []
+        unregistered: list[BusHandlerUnregisteredEvent] = []
+        bus = EventBus(middlewares=[AutoHandlerChangeEventMiddleware()])
+
+        def on_registered(event: BusHandlerRegisteredEvent) -> None:
+            registered.append(event)
+
+        def on_unregistered(event: BusHandlerUnregisteredEvent) -> None:
+            unregistered.append(event)
+
+        bus.on(BusHandlerRegisteredEvent, on_registered)
+        bus.on(BusHandlerUnregisteredEvent, on_unregistered)
+
+        async def target_handler(event: UserActionEvent) -> None:
+            return None
+
+        try:
+            handler_entry = bus.on(UserActionEvent, target_handler)
+            await bus.wait_until_idle()
+
+            bus.off(UserActionEvent, handler_entry)
+            await bus.wait_until_idle()
+
+            matching_registered = [event for event in registered if event.handler.id == handler_entry.id]
+            matching_unregistered = [event for event in unregistered if event.handler.id == handler_entry.id]
+            assert matching_registered
+            assert matching_unregistered
+            assert matching_registered[-1].handler.eventbus_id == bus.id
+            assert matching_registered[-1].handler.eventbus_name == bus.name
+            assert matching_registered[-1].handler.event_pattern == 'UserActionEvent'
+            assert matching_unregistered[-1].handler.event_pattern == 'UserActionEvent'
+        finally:
+            await bus.destroy()
+
+    async def test_otel_tracing_middleware_tracks_parent_event_and_handler_spans(self):
+        class RootEvent(BaseEvent):
+            pass
+
+        class ChildEvent(BaseEvent):
+            pass
+
+        class FakeSpan:
+            def __init__(self, name: str, context: Any = None, start_time: int | None = None):
+                self.name = name
+                self.context = context
+                self.start_time = start_time
+                self.end_time: int | None = None
+                self.attrs: dict[str, Any] = {}
+                self.errors: list[str] = []
+                self.ended = False
+
+            def set_attribute(self, key: str, value: Any):
+                self.attrs[key] = value
+
+            def record_exception(self, error: BaseException):
+                self.errors.append(type(error).__name__)
+
+            def end(self, end_time: int | None = None):
+                self.end_time = end_time
+                self.ended = True
+
+        class FakeTracer:
+            def __init__(self):
+                self.spans: list[FakeSpan] = []
+
+            def start_span(self, name: str, context: Any = None, start_time: int | None = None):
+                span = FakeSpan(name, context=context, start_time=start_time)
+                self.spans.append(span)
+                return span
+
+        class FakeTraceAPI:
+            @staticmethod
+            def set_span_in_context(span: FakeSpan):
+                return {'parent': span}
+
+        tracer = FakeTracer()
+        bus = EventBus(middlewares=[OtelTracingMiddleware(tracer=tracer, trace_api=FakeTraceAPI())], name='TraceBus')
+
+        async def child_handler(event: ChildEvent) -> None:
+            return None
+
+        async def root_handler(event: RootEvent) -> None:
+            child = event.emit(ChildEvent())
+            await child
+
+        bus.on(RootEvent, root_handler)
+        bus.on(ChildEvent, child_handler)
+
+        try:
+            await bus.emit(RootEvent())
+            await bus.wait_until_idle()
+
+            root_event_span = next(span for span in tracer.spans if span.attrs.get('abxbus.event_type') == 'RootEvent')
+            root_handler_span = next(
+                span for span in tracer.spans if str(span.attrs.get('abxbus.handler_name', '')).endswith('root_handler')
+            )
+            child_event_span = next(span for span in tracer.spans if span.attrs.get('abxbus.event_type') == 'ChildEvent')
+            child_handler_span = next(
+                span for span in tracer.spans if str(span.attrs.get('abxbus.handler_name', '')).endswith('child_handler')
+            )
+
+            assert [span.name for span in tracer.spans] == [
+                'TraceBus.emit(RootEvent)',
+                f'{root_handler_span.attrs["abxbus.handler_name"]}(RootEvent)',
+                'TraceBus.emit(ChildEvent)',
+                f'{child_handler_span.attrs["abxbus.handler_name"]}(ChildEvent)',
+            ]
+            assert root_event_span.context is None
+            assert root_event_span.attrs.get('abxbus.trace.root') is True
+            assert root_handler_span.context['parent'] is root_event_span
+            assert child_event_span.context['parent'] is root_handler_span
+            assert child_handler_span.context['parent'] is child_event_span
+            assert root_event_span.attrs.get('abxbus.event_bus.name') == bus.name
+            assert root_handler_span.attrs.get('abxbus.event_bus.name') == bus.name
+            assert child_event_span.attrs.get('abxbus.event_bus.name') == bus.name
+            assert child_handler_span.attrs.get('abxbus.event_bus.name') == bus.name
+            assert child_event_span.attrs.get('abxbus.event_parent_id') == root_event_span.attrs.get('abxbus.event_id')
+            assert child_event_span.attrs.get('abxbus.event_emitted_by_handler_id') == root_handler_span.attrs.get(
+                'abxbus.handler_id'
+            )
+            assert all(span.ended for span in tracer.spans)
+            assert all(span.start_time is not None for span in tracer.spans)
+            assert all(span.end_time is not None for span in tracer.spans)
+            assert all(span.end_time > span.start_time for span in tracer.spans if span.end_time and span.start_time)
+        finally:
+            await bus.destroy()
+
+
+class TestSQLiteHistoryMirror:
+    async def test_sqlite_history_persists_events_and_results(self, tmp_path):
+        db_path = tmp_path / 'events.sqlite'
+        middleware = SQLiteHistoryMirrorMiddleware(db_path)
+        bus = EventBus(middlewares=[middleware])
+
+        async def handler(event: BaseEvent) -> str:
+            return 'ok'
+
+        bus.on('UserActionEvent', handler)
+
+        try:
+            await bus.emit(UserActionEvent(action='ping', user_id='b57fcb67-faeb-7a56-8907-116d8cbb1472'))
+            await bus.wait_until_idle()
+
+            conn = sqlite3.connect(db_path)
+            events = conn.execute('SELECT phase, event_status FROM events_log ORDER BY id').fetchall()
+            assert [phase for phase, _ in events] == ['pending', 'started', 'completed']
+            assert [status for _, status in events] == ['pending', 'started', 'completed']
+
+            result_rows = conn.execute(
+                'SELECT phase, status, result_repr, error_repr FROM event_results_log ORDER BY id'
+            ).fetchall()
+            conn.close()
+
+            assert [phase for phase, *_ in result_rows] == ['pending', 'started', 'completed']
+            assert [status for _, status, *_ in result_rows] == ['pending', 'started', 'completed']
+            assert result_rows[-1][2] == "'ok'"
+            assert result_rows[-1][3] is None
+        finally:
+            await bus.destroy()
+
+    def test_sqlite_history_close_is_idempotent(self, tmp_path):
+        db_path = tmp_path / 'events.sqlite'
+        middleware = SQLiteHistoryMirrorMiddleware(db_path)
+
+        middleware.close()
+        middleware.close()
+
+        with pytest.raises(sqlite3.ProgrammingError):
+            middleware._conn.execute('SELECT 1')
+
+
+class TestLoggerMiddleware:
+    async def test_logger_middleware_writes_file(self, tmp_path):
+        log_path = tmp_path / 'events.log'
+        bus = EventBus(middlewares=[LoggerEventBusMiddleware(log_path)])
+
+        async def handler(event: BaseEvent) -> str:
+            return 'logged'
+
+        bus.on('UserActionEvent', handler)
+
+        try:
+            await bus.emit(UserActionEvent(action='log', user_id='1d4087d7-e791-702f-80b9-0fb09b726bc6'))
+            await bus.wait_until_idle()
+
+            assert log_path.exists()
+            contents = log_path.read_text().strip().splitlines()
+            assert contents
+            assert 'UserActionEvent' in contents[-1]
+        finally:
+            await bus.destroy()
+
+    async def test_logger_middleware_stdout_only(self, capsys):
+        bus = EventBus(middlewares=[LoggerEventBusMiddleware()])
+
+        async def handler(event: BaseEvent) -> str:
+            return 'stdout'
+
+        bus.on('UserActionEvent', handler)
+
+        try:
+            await bus.emit(UserActionEvent(action='log', user_id='1d4087d7-e791-702f-80b9-0fb09b726bc6'))
+            await bus.wait_until_idle()
+
+            captured = capsys.readouterr()
+            assert 'UserActionEvent' in captured.out
+            assert 'stdout' not in captured.err
+        finally:
+            await bus.destroy()
+
+    async def test_sqlite_history_records_errors(self, tmp_path):
+        db_path = tmp_path / 'events.sqlite'
+        middleware = SQLiteHistoryMirrorMiddleware(db_path)
+        bus = EventBus(middlewares=[middleware])
+
+        async def failing_handler(event: BaseEvent) -> None:
+            raise RuntimeError('handler boom')
+
+        bus.on('UserActionEvent', failing_handler)
+
+        try:
+            await bus.emit(UserActionEvent(action='boom', user_id='28536f9b-4031-7f53-827f-98c24c1b3839'))
+            await bus.wait_until_idle()
+
+            conn = sqlite3.connect(db_path)
+            result_rows = conn.execute('SELECT phase, status, error_repr FROM event_results_log ORDER BY id').fetchall()
+            events = conn.execute('SELECT phase, event_status FROM events_log ORDER BY id').fetchall()
+            conn.close()
+
+            assert [phase for phase, *_ in result_rows] == ['pending', 'started', 'completed']
+            assert [status for _, status, *_ in result_rows] == ['pending', 'started', 'error']
+            assert 'RuntimeError' in result_rows[-1][2]
+            assert [phase for phase, _ in events] == ['pending', 'started', 'completed']
+            assert [status for _, status in events] == ['pending', 'started', 'completed']
+        finally:
+            await bus.destroy()
+
+
+class MiddlewarePatternEvent(BaseEvent[str]):
+    pass
+
+
+async def _flush_hook_tasks(ticks: int = 6) -> None:
+    for _ in range(ticks):
+        await asyncio.sleep(0)
+
+
+async def test_middleware_hooks_cover_class_string_and_wildcard_patterns() -> None:
+    event_statuses_by_id: dict[str, list[str]] = {}
+    result_hook_statuses_by_handler: dict[str, list[str]] = {}
+    result_runtime_statuses_by_handler: dict[str, list[str]] = {}
+    handler_change_records: list[dict[str, Any]] = []
+
+    class RecordingMiddleware(EventBusMiddleware):
+        async def on_event_change(self, eventbus: EventBus, event: BaseEvent[Any], status) -> None:
+            event_statuses_by_id.setdefault(event.event_id, []).append(str(status))
+
+        async def on_event_result_change(self, eventbus: EventBus, event: BaseEvent[Any], event_result, status) -> None:
+            handler_id = event_result.handler_id
+            result_hook_statuses_by_handler.setdefault(handler_id, []).append(str(status))
+            result_runtime_statuses_by_handler.setdefault(handler_id, []).append(event_result.status)
+
+        async def on_bus_handlers_change(self, eventbus: EventBus, handler, registered: bool) -> None:
+            handler_change_records.append(
+                {
+                    'handler_id': handler.id,
+                    'event_pattern': handler.event_pattern,
+                    'registered': registered,
+                    'eventbus_id': handler.eventbus_id,
+                }
+            )
+
+    bus = EventBus(name='MiddlewareHookPatternParityBus', middlewares=[RecordingMiddleware()])
+
+    async def class_handler(event: MiddlewarePatternEvent) -> str:
+        return 'class-result'
+
+    async def string_handler(event: BaseEvent[Any]) -> str:
+        assert event.event_type == 'MiddlewarePatternEvent'
+        return 'string-result'
+
+    async def wildcard_handler(event: BaseEvent[Any]) -> str:
+        return f'wildcard:{event.event_type}'
+
+    class_entry = bus.on(MiddlewarePatternEvent, class_handler)
+    string_entry = bus.on('MiddlewarePatternEvent', string_handler)
+    wildcard_entry = bus.on('*', wildcard_handler)
+
+    try:
+        await _flush_hook_tasks()
+
+        registered_records = [record for record in handler_change_records if record['registered'] is True]
+        assert len(registered_records) == 3
+
+        expected_patterns = {
+            class_entry.id: 'MiddlewarePatternEvent',
+            string_entry.id: 'MiddlewarePatternEvent',
+            wildcard_entry.id: '*',
+        }
+        assert {record['handler_id'] for record in registered_records} == set(expected_patterns)
+        for record in registered_records:
+            assert record['event_pattern'] == expected_patterns[record['handler_id']]
+            assert record['eventbus_id'] == bus.id
+
+        event = await bus.emit(MiddlewarePatternEvent(event_timeout=0.2))
+        await bus.wait_until_idle()
+
+        assert str(event.event_status) == 'completed'
+        assert event_statuses_by_id[event.event_id] == ['pending', 'started', 'completed']
+        assert set(event.event_results) == set(expected_patterns)
+
+        for handler_id in expected_patterns:
+            assert result_hook_statuses_by_handler[handler_id] == ['pending', 'started', 'completed']
+            assert result_runtime_statuses_by_handler[handler_id] == ['pending', 'started', 'completed']
+
+        assert event.event_results[class_entry.id].result == 'class-result'
+        assert event.event_results[string_entry.id].result == 'string-result'
+        assert event.event_results[wildcard_entry.id].result == 'wildcard:MiddlewarePatternEvent'
+
+        bus.off(MiddlewarePatternEvent, class_entry)
+        bus.off('MiddlewarePatternEvent', string_entry)
+        bus.off('*', wildcard_entry)
+        await _flush_hook_tasks()
+
+        unregistered_records = [record for record in handler_change_records if record['registered'] is False]
+        assert len(unregistered_records) == 3
+        assert {record['handler_id'] for record in unregistered_records} == set(expected_patterns)
+        for record in unregistered_records:
+            assert record['event_pattern'] == expected_patterns[record['handler_id']]
+    finally:
+        await bus.destroy()
+
+
+async def test_middleware_hooks_cover_string_and_wildcard_patterns_for_ad_hoc_baseevent() -> None:
+    event_statuses_by_id: dict[str, list[str]] = {}
+    result_hook_statuses_by_handler: dict[str, list[str]] = {}
+    result_runtime_statuses_by_handler: dict[str, list[str]] = {}
+    handler_change_records: list[dict[str, Any]] = []
+
+    class RecordingMiddleware(EventBusMiddleware):
+        async def on_event_change(self, eventbus: EventBus, event: BaseEvent[Any], status) -> None:
+            event_statuses_by_id.setdefault(event.event_id, []).append(str(status))
+
+        async def on_event_result_change(self, eventbus: EventBus, event: BaseEvent[Any], event_result, status) -> None:
+            handler_id = event_result.handler_id
+            result_hook_statuses_by_handler.setdefault(handler_id, []).append(str(status))
+            result_runtime_statuses_by_handler.setdefault(handler_id, []).append(event_result.status)
+
+        async def on_bus_handlers_change(self, eventbus: EventBus, handler, registered: bool) -> None:
+            handler_change_records.append(
+                {
+                    'handler_id': handler.id,
+                    'event_pattern': handler.event_pattern,
+                    'registered': registered,
+                    'eventbus_id': handler.eventbus_id,
+                }
+            )
+
+    bus = EventBus(name='MiddlewareHookStringPatternParityBus', middlewares=[RecordingMiddleware()])
+    ad_hoc_event_type = 'AdHocPatternEvent'
+
+    async def string_handler(event: BaseEvent[Any]) -> str:
+        assert event.event_type == ad_hoc_event_type
+        return f'string:{event.event_type}'
+
+    async def wildcard_handler(event: BaseEvent[Any]) -> str:
+        return f'wildcard:{event.event_type}'
+
+    string_entry = bus.on(ad_hoc_event_type, string_handler)
+    wildcard_entry = bus.on('*', wildcard_handler)
+
+    try:
+        await _flush_hook_tasks()
+
+        registered_records = [record for record in handler_change_records if record['registered'] is True]
+        assert len(registered_records) == 2
+
+        expected_patterns = {
+            string_entry.id: ad_hoc_event_type,
+            wildcard_entry.id: '*',
+        }
+        assert {record['handler_id'] for record in registered_records} == set(expected_patterns)
+        for record in registered_records:
+            assert record['event_pattern'] == expected_patterns[record['handler_id']]
+            assert record['eventbus_id'] == bus.id
+
+        event = await bus.emit(BaseEvent(event_type=ad_hoc_event_type, event_timeout=0.2))
+        await bus.wait_until_idle()
+
+        assert str(event.event_status) == 'completed'
+        assert event_statuses_by_id[event.event_id] == ['pending', 'started', 'completed']
+        assert set(event.event_results) == set(expected_patterns)
+
+        for handler_id in expected_patterns:
+            assert result_hook_statuses_by_handler[handler_id] == ['pending', 'started', 'completed']
+            assert result_runtime_statuses_by_handler[handler_id] == ['pending', 'started', 'completed']
+
+        assert event.event_results[string_entry.id].result == f'string:{ad_hoc_event_type}'
+        assert event.event_results[wildcard_entry.id].result == f'wildcard:{ad_hoc_event_type}'
+
+        bus.off(ad_hoc_event_type, string_entry)
+        bus.off('*', wildcard_entry)
+        await _flush_hook_tasks()
+
+        unregistered_records = [record for record in handler_change_records if record['registered'] is False]
+        assert len(unregistered_records) == 2
+        assert {record['handler_id'] for record in unregistered_records} == set(expected_patterns)
+        for record in unregistered_records:
+            assert record['event_pattern'] == expected_patterns[record['handler_id']]
+    finally:
+        await bus.destroy()
+
+
+class HistoryTestEvent(BaseEvent):
+    """Event for verifying middleware mirroring behaviour."""
+
+    payload: str
+    should_fail: bool = False
+
+
+def _summarize_history(history: dict[str, BaseEvent[Any]]) -> list[dict[str, Any]]:
+    """Collect comparable information about events stored in history."""
+    summary: list[dict[str, Any]] = []
+    for event in history.values():
+        handler_results = [
+            {
+                'handler_name': result.handler_name.rsplit('.', 1)[-1],
+                'status': result.status,
+                'result': result.result,
+                'error': repr(result.error) if result.error else None,
+            }
+            for result in sorted(event.event_results.values(), key=lambda r: r.handler_name)
+        ]
+        summary.append(
+            {
+                'event_type': event.event_type,
+                'event_status': event.event_status,
+                'event_path_length': len(event.event_path),
+                'children': sorted(child.event_type for child in event.event_children),
+                'handler_results': handler_results,
+            }
+        )
+    return sorted(summary, key=lambda record: record['event_type'])
+
+
+async def _run_scenario(
+    *,
+    middlewares: Sequence[Any] = (),
+    should_fail: bool = False,
+) -> list[dict[str, Any]]:
+    """Execute a simple scenario and return the history summary."""
+    bus = EventBus(middlewares=list(middlewares))
+
+    async def ok_handler(event: HistoryTestEvent) -> str:
+        return f'ok-{event.payload}'
+
+    async def conditional_handler(event: HistoryTestEvent) -> str:
+        if event.should_fail:
+            raise RuntimeError('boom')
+        return 'fine'
+
+    bus.on('HistoryTestEvent', ok_handler)
+    bus.on('HistoryTestEvent', conditional_handler)
+
+    try:
+        await bus.emit(HistoryTestEvent(payload='payload', should_fail=should_fail))
+        await bus.wait_until_idle()
+    finally:
+        summary = _summarize_history(bus.event_history)
+        await bus.destroy()
+
+    return summary
+
+
+@pytest.mark.asyncio
+async def test_sqlite_mirror_matches_inmemory_success(tmp_path: Path) -> None:
+    db_path = tmp_path / 'events_success.sqlite'
+    in_memory_result = await _run_scenario()
+    sqlite_result = await _run_scenario(middlewares=[SQLiteHistoryMirrorMiddleware(db_path)])
+    assert sqlite_result == in_memory_result
+
+    conn = sqlite3.connect(db_path)
+    event_phases = conn.execute('SELECT phase FROM events_log ORDER BY id').fetchall()
+    conn.close()
+    assert {phase for (phase,) in event_phases} >= {'pending', 'started', 'completed'}
+
+
+@pytest.mark.asyncio
+async def test_sqlite_mirror_matches_inmemory_error(tmp_path: Path) -> None:
+    db_path = tmp_path / 'events_error.sqlite'
+    in_memory_result = await _run_scenario(should_fail=True)
+    sqlite_result = await _run_scenario(
+        middlewares=[SQLiteHistoryMirrorMiddleware(db_path)],
+        should_fail=True,
+    )
+    assert sqlite_result == in_memory_result
+
+    conn = sqlite3.connect(db_path)
+    phases = conn.execute('SELECT DISTINCT phase FROM events_log').fetchall()
+    conn.close()
+    assert {phase for (phase,) in phases} >= {'pending', 'started', 'completed'}
+
+
+def _worker_dispatch(db_path: str, worker_id: int) -> None:
+    """Process entrypoint for exercising concurrent writes."""
+
+    async def run() -> None:
+        middleware = SQLiteHistoryMirrorMiddleware(Path(db_path))
+        bus = EventBus(name=f'WorkerBus{worker_id}', middlewares=[middleware])
+
+        async def handler(event: HistoryTestEvent) -> str:
+            return f'worker-{worker_id}'
+
+        bus.on('HistoryTestEvent', handler)
+        try:
+            await bus.emit(HistoryTestEvent(payload=f'worker-{worker_id}'))
+            await bus.wait_until_idle()
+        finally:
+            await bus.destroy()
+
+    asyncio.run(run())
+
+
+def test_sqlite_mirror_supports_concurrent_processes(tmp_path: Path) -> None:
+    db_path = tmp_path / 'shared_history.sqlite'
+    ctx = multiprocessing.get_context('spawn')
+    processes = [ctx.Process(target=_worker_dispatch, args=(str(db_path), idx)) for idx in range(3)]
+    for proc in processes:
+        proc.start()
+    for proc in processes:
+        proc.join(timeout=20)
+        assert proc.exitcode == 0
+
+    conn = sqlite3.connect(db_path)
+    events = conn.execute('SELECT DISTINCT eventbus_name FROM events_log').fetchall()
+    results_count = conn.execute('SELECT COUNT(*) FROM event_results_log').fetchone()
+    conn.close()
+
+    bus_labels = {name for (name,) in events}
+    assert len(bus_labels) == 3
+    for idx in range(3):
+        assert any(label.startswith(f'WorkerBus{idx}#') and len(label.rsplit('#', 1)[-1]) == 4 for label in bus_labels)
+    assert results_count is not None
+    # Each worker records pending/started/completed for its single handler
+    assert results_count[0] == 9
+
+
+# Folded from test_eventbus_name_conflict_gc.py to keep test layout class-based.
+# pyright: basic
+"""
+Tests for EventBus name conflict resolution with garbage collection.
+
+Tests that EventBus instances that would be garbage collected don't cause
+name conflicts when creating new instances with the same name.
+"""
+
+import gc
+import weakref
+
+import pytest
+
+from abxbus import BaseEvent
+
+
+class TestNameConflictGC:
+    """Test EventBus name conflict resolution with garbage collection"""
+
+    def test_name_conflict_with_live_reference(self):
+        """Test that name conflict generates a warning and auto-generates a unique name"""
+        # Create an EventBus with a specific name
+        bus1 = EventBus(name='GCTestConflict')
+
+        # Try to create another with the same name - should warn and auto-generate unique name
+        with pytest.warns(UserWarning, match='EventBus with name "GCTestConflict" already exists'):
+            bus2 = EventBus(name='GCTestConflict')
+
+        # The second bus should have a unique name
+        assert bus2.name.startswith('GCTestConflict_')
+        assert bus2.name != 'GCTestConflict'
+        assert len(bus2.name) == len('GCTestConflict_') + 8  # Original name + underscore + 8 char suffix
+
+    def test_name_no_conflict_after_deletion(self):
+        """Test that name conflict is NOT raised after the existing bus is deleted and GC runs"""
+        import gc
+
+        # Create an EventBus with a specific name
+        bus1 = EventBus(name='GCTestBus1')
+
+        # Delete the reference and force GC
+        del bus1
+        gc.collect()  # Force garbage collection to release the WeakSet reference
+
+        # Creating another with the same name should work since the first one was collected
+        bus2 = EventBus(name='GCTestBus1')
+        assert bus2.name == 'GCTestBus1'
+
+    def test_name_no_conflict_with_no_reference(self):
+        """Test that name conflict is NOT raised when the existing bus was never assigned"""
+        import gc
+
+        # Create an EventBus with a specific name but don't keep a reference
+        EventBus(name='GCTestBus2')  # No assignment, will be garbage collected
+        gc.collect()  # Force garbage collection
+
+        # Creating another with the same name should work since the first one is gone
+        bus2 = EventBus(name='GCTestBus2')
+        assert bus2.name == 'GCTestBus2'
+
+    def test_name_conflict_with_weak_reference_only(self):
+        """Test that name conflict is NOT raised when only weak references exist"""
+        import gc
+
+        # Create an EventBus and keep only a weak reference
+        bus1 = EventBus(name='GCTestBus3')
+        weak_ref = weakref.ref(bus1)
+
+        # Verify the weak reference works
+        assert weak_ref() is bus1
+
+        # Delete the strong reference and force GC
+        del bus1
+        gc.collect()  # Force garbage collection
+
+        # At this point, only the weak reference exists (and the WeakSet reference)
+        # Creating another with the same name should work
+        bus2 = EventBus(name='GCTestBus3')
+        assert bus2.name == 'GCTestBus3'
+
+        # The weak reference should now return None
+        assert weak_ref() is None
+
+    def test_multiple_buses_with_gc(self):
+        """Test multiple EventBus instances with some being garbage collected"""
+        import gc
+
+        # Create multiple buses, some with strong refs, some without
+        bus1 = EventBus(name='GCMulti1')
+        EventBus(name='GCMulti2')  # Will be GC'd
+        bus3 = EventBus(name='GCMulti3')
+        EventBus(name='GCMulti4')  # Will be GC'd
+
+        gc.collect()  # Force garbage collection
+
+        # Should be able to create new buses with the names of GC'd buses
+        bus2_new = EventBus(name='GCMulti2')
+        bus4_new = EventBus(name='GCMulti4')
+
+        # But not with names of buses that still exist - they get auto-generated names
+        with pytest.warns(UserWarning, match='EventBus with name "GCMulti1" already exists'):
+            bus1_conflict = EventBus(name='GCMulti1')
+        assert bus1_conflict.name.startswith('GCMulti1_')
+
+        with pytest.warns(UserWarning, match='EventBus with name "GCMulti3" already exists'):
+            bus3_conflict = EventBus(name='GCMulti3')
+        assert bus3_conflict.name.startswith('GCMulti3_')
+
+    @pytest.mark.asyncio
+    async def test_name_conflict_after_destroy_and_clear(self):
+        """Test that clearing an EventBus allows reusing its name"""
+        import gc
+
+        # Create an EventBus
+        bus1 = EventBus(name='GCDestroyClear')
+
+        # Destroy and clear it (this renames the bus to _destroyed_* and removes from all_instances)
+        await bus1.destroy(clear=True)
+
+        # Delete the reference and force GC
+        del bus1
+        gc.collect()
+
+        # Now we should be able to create a new one with the same name
+        bus2 = EventBus(name='GCDestroyClear')
+        assert bus2.name == 'GCDestroyClear'
+
+    def test_weakset_behavior(self):
+        """Test that the WeakSet properly tracks EventBus instances"""
+        initial_count = len(EventBus.all_instances)
+
+        # Create some buses
+        bus1 = EventBus(name='WeakTest1')
+        bus2 = EventBus(name='WeakTest2')
+        bus3 = EventBus(name='WeakTest3')
+
+        # Check they're tracked
+        assert len(EventBus.all_instances) == initial_count + 3
+
+        # Delete one
+        del bus2
+
+        # The WeakSet should automatically remove it (no gc.collect needed)
+        # But we need to check the actual buses in the set, not just the count
+        names = {bus.name for bus in EventBus.all_instances if hasattr(bus, 'name') and bus.name.startswith('WeakTest')}
+        assert 'WeakTest1' in names
+        assert 'WeakTest3' in names
+        # WeakTest2 might still be there until the next iteration
+
+    def test_eventbus_removed_from_weakset(self):
+        """Test that dead EventBus instances are removed from WeakSet after GC"""
+        import gc
+
+        # Create a bus that will be "dead" (no strong references)
+        EventBus(name='GCDeadBus')
+        gc.collect()  # Force garbage collection
+
+        # When we try to create a new bus with the same name, it should work
+        bus = EventBus(name='GCDeadBus')
+        assert bus.name == 'GCDeadBus'
+
+        # The dead bus should have been removed from all_instances
+        names = [b.name for b in EventBus.all_instances if hasattr(b, 'name') and b.name == 'GCDeadBus']
+        assert len(names) == 1  # Only the new one
+
+    def test_concurrent_name_creation(self):
+        """Test that concurrent creation with same name generates warning and unique name"""
+        # This tests the edge case where two buses might be created nearly simultaneously
+        bus1 = EventBus(name='ConcurrentTest')
+
+        # Even if we're in the middle of checking, the second one should get a unique name
+        with pytest.warns(UserWarning, match='EventBus with name "ConcurrentTest" already exists'):
+            bus2 = EventBus(name='ConcurrentTest')
+
+        assert bus1.name == 'ConcurrentTest'
+        assert bus2.name.startswith('ConcurrentTest_')
+        assert bus2.name != bus1.name
+
+    @pytest.mark.asyncio
+    async def test_unreferenced_buses_with_history_can_be_cleaned_without_instance_leak(self):
+        """
+        Buses with populated history may outlive local scope while runloops are still active,
+        but they must be releasable via explicit cleanup without leaking all_instances.
+        """
+        import gc
+
+        class GcHistoryEvent(BaseEvent[str]):
+            pass
+
+        baseline_instances = len(EventBus.all_instances)
+        refs: list[weakref.ReferenceType[EventBus]] = []
+
+        async def create_and_fill_bus(index: int) -> weakref.ReferenceType[EventBus]:
+            bus = EventBus(name=f'GCNoDestroyBus_{index}')
+            bus.on(GcHistoryEvent, lambda e: 'ok')
+            for _ in range(40):
+                await bus.emit(GcHistoryEvent())
+            await bus.wait_until_idle()
+            return weakref.ref(bus)
+
+        for i in range(30):
+            refs.append(await create_and_fill_bus(i))
+
+        # Encourage GC/finalization first (best effort without explicit destroy()).
+        for _ in range(20):
+            gc.collect()
+            await asyncio.sleep(0.02)
+
+        alive_buses = [ref() for ref in refs if ref() is not None]
+        still_live = [bus for bus in alive_buses if bus is not None]
+
+        # Deterministically clean up anything still alive.
+        for bus in still_live:
+            await bus.destroy(clear=True, timeout=0)
+        # Loop variable keeps a strong ref to the last bus in CPython.
+        if still_live:
+            del bus
+        del still_live
+        del alive_buses
+
+        # Final GC and WeakSet purge.
+        for _ in range(10):
+            gc.collect()
+            await asyncio.sleep(0.01)
+        _ = list(EventBus.all_instances)
+
+        assert all(ref() is None for ref in refs), 'all buses should be collectable after cleanup'
+        assert len(EventBus.all_instances) <= baseline_instances
+
+    @pytest.mark.asyncio
+    async def test_unreferenced_buses_with_history_are_collected_without_destroy(self):
+        """
+        Unreferenced buses should be collectable without explicit destroy(clear=True),
+        even after processing events and populating history.
+        """
+        import gc
+
+        class GcImplicitEvent(BaseEvent[str]):
+            pass
+
+        baseline_instances = len(EventBus.all_instances)
+        refs: list[weakref.ReferenceType[EventBus]] = []
+
+        async def create_and_fill_bus(index: int) -> weakref.ReferenceType[EventBus]:
+            bus = EventBus(name=f'GCImplicitNoDestroy_{index}')
+            bus.on(GcImplicitEvent, lambda e: 'ok')
+            for _ in range(30):
+                await bus.emit(GcImplicitEvent())
+            await bus.wait_until_idle()
+            return weakref.ref(bus)
+
+        for i in range(20):
+            refs.append(await create_and_fill_bus(i))
+
+        for _ in range(80):
+            gc.collect()
+            await asyncio.sleep(0.02)
+            if all(ref() is None for ref in refs):
+                break
+
+        # Force WeakSet iteration to purge any dead refs.
+        _ = list(EventBus.all_instances)
+
+        assert all(ref() is None for ref in refs), 'all unreferenced buses should be collected without destroy()'
+        assert len(EventBus.all_instances) <= baseline_instances
+
+    def test_subclass_registry_and_global_lock_are_collected_with_subclass(self):
+        """
+        When a temporary EventBus subclass goes out of scope, its class-scoped
+        all_instances registry and global-serial lock should be collectable too.
+        """
+        subclass_ref = None
+        registry_ref = None
+        lock_ref = None
+        bus_ref = None
+
+        def create_scoped_subclass() -> None:
+            class ScopedSubclassBus(EventBus):
+                pass
+
+            bus = ScopedSubclassBus(name='ScopedSubclassBus', event_concurrency='global-serial')
+            nonlocal subclass_ref, registry_ref, lock_ref, bus_ref
+            subclass_ref = weakref.ref(ScopedSubclassBus)
+            registry_ref = weakref.ref(ScopedSubclassBus.all_instances)
+            lock_ref = weakref.ref(bus.event_global_serial_lock)
+            bus_ref = weakref.ref(bus)
+
+        create_scoped_subclass()
+        assert subclass_ref is not None
+        assert registry_ref is not None
+        assert lock_ref is not None
+        assert bus_ref is not None
+
+        for _ in range(500):
+            gc.collect()
+            if subclass_ref() is None and registry_ref() is None and lock_ref() is None and bus_ref() is None:
+                break
+
+        assert bus_ref() is None, 'subclass bus instance should be collectable'
+        assert subclass_ref() is None, 'subclass type should be collectable'
+        assert registry_ref() is None, 'subclass all_instances registry should be collectable'
+        assert lock_ref() is None, 'subclass global-serial lock should be collectable'
+
+
+# Folded from test_eventbus_retry_integration.py to keep test layout class-based.
+
+from abxbus import BaseEvent
+from abxbus.retry import retry
+
+
+class TestRetryWithEventBus:
+    """Test @retry decorator with EventBus handlers."""
+
+    async def test_retry_decorator_on_eventbus_handler(self):
+        """Test that @retry decorator works correctly when applied to EventBus handlers."""
+        handler_calls: list[tuple[str, float]] = []
+
+        class TestEvent(BaseEvent[str]):
+            """Simple test event."""
+
+            message: str
+
+        bus = EventBus(name='test_retry_bus')
+
+        @retry(
+            max_attempts=3,
+            retry_after=0.1,
+            timeout=1.0,
+            semaphore_limit=1,
+            semaphore_scope='global',
+        )
+        async def retrying_handler(event: TestEvent) -> str:
+            call_time = time.time()
+            handler_calls.append(('called', call_time))
+
+            if len(handler_calls) < 3:
+                raise ValueError(f'Attempt {len(handler_calls)} failed')
+
+            return f'Success: {event.message}'
+
+        bus.on('TestEvent', retrying_handler)
+
+        event = TestEvent(message='Hello retry!')
+        completed_event = await bus.emit(event)
+        await bus.wait_until_idle(timeout=5)
+
+        assert len(handler_calls) == 3, f'Expected 3 attempts, got {len(handler_calls)}'
+        for i in range(1, len(handler_calls)):
+            delay = handler_calls[i][1] - handler_calls[i - 1][1]
+            assert delay >= 0.08, f'Retry delay {i} was {delay:.3f}s, expected >= 0.08s'
+
+        assert completed_event.event_status == 'completed'
+        handler_result = await completed_event.event_result()
+        assert handler_result == 'Success: Hello retry!'
+
+        await bus.destroy()
+
+    async def test_retry_with_semaphore_on_multiple_handlers(self):
+        """Test @retry decorator with semaphore limiting concurrent handler executions."""
+        active_handlers: list[int] = []
+        max_concurrent = 0
+        handler_results: dict[int, list[tuple[str, float]]] = {1: [], 2: [], 3: [], 4: []}
+
+        class WorkEvent(BaseEvent[str]):
+            """Event that triggers work."""
+
+            work_id: int
+
+        bus = EventBus(name='test_concurrent_bus', event_handler_concurrency='parallel')
+
+        def create_handler(handler_id: int):
+            @retry(
+                max_attempts=1,
+                timeout=5.0,
+                semaphore_limit=2,
+                semaphore_name='test_handler_sem',
+                semaphore_scope='global',
+            )
+            async def limited_handler(event: WorkEvent) -> str:
+                nonlocal max_concurrent
+                active_handlers.append(handler_id)
+                handler_results[handler_id].append(('started', time.time()))
+
+                current_concurrent = len(active_handlers)
+                max_concurrent = max(max_concurrent, current_concurrent)
+                await asyncio.sleep(0.2)
+
+                active_handlers.remove(handler_id)
+                handler_results[handler_id].append(('completed', time.time()))
+                return f'Handler {handler_id} processed work {event.work_id}'
+
+            limited_handler.__name__ = f'limited_handler_{handler_id}'
+            return limited_handler
+
+        for i in range(1, 5):
+            handler = create_handler(i)
+            bus.on('WorkEvent', handler)
+
+        event = WorkEvent(work_id=1)
+        await bus.emit(event)
+        await bus.wait_until_idle(timeout=3)
+
+        assert max_concurrent == 2, f'Max concurrent was {max_concurrent}, expected exactly 2 with semaphore_limit=2'
+        for handler_id in range(1, 5):
+            assert len(handler_results[handler_id]) == 2, f'Handler {handler_id} should have started and completed'
+
+        await bus.destroy()
+
+    async def test_retry_timeout_with_eventbus_handler(self):
+        """Test that retry timeout works correctly with EventBus handlers."""
+
+        class TimeoutEvent(BaseEvent[str]):
+            """Event for timeout testing."""
+
+            test_id: str
+            event_timeout: float | None = 1
+
+        bus = EventBus(name='test_timeout_bus')
+        handler_started = False
+
+        @retry(
+            max_attempts=1,
+            timeout=0.2,
+        )
+        async def wrapped_handler(event: TimeoutEvent) -> str:
+            nonlocal handler_started
+            handler_started = True
+            await asyncio.sleep(5)
+            return 'Should not reach here'
+
+        bus.on(TimeoutEvent, wrapped_handler)
+
+        event = TimeoutEvent(test_id='7ebbd9f4-755a-7f13-828a-183dfe2d4302')
+        await bus.emit(event)
+        await bus.wait_until_idle(timeout=2)
+
+        assert handler_started, 'Handler should have started'
+        assert len(event.event_results) == 1
+        result = next(iter(event.event_results.values()))
+        assert result.status == 'error'
+        assert result.error is not None
+        assert isinstance(result.error, TimeoutError)
+
+        await bus.destroy()
+
+    async def test_retry_with_event_type_filter(self):
+        """Test retry decorator with specific exception types."""
+
+        class RetryTestEvent(BaseEvent[str]):
+            """Event for testing retry on specific exceptions."""
+
+            attempt_limit: int
+
+        bus = EventBus(name='test_exception_filter_bus')
+        attempt_count = 0
+
+        @retry(
+            max_attempts=4,
+            retry_after=0.05,
+            timeout=1.0,
+            retry_on_errors=[ValueError, RuntimeError],
+        )
+        async def selective_retry_handler(event: RetryTestEvent) -> str:
+            nonlocal attempt_count
+            attempt_count += 1
+
+            if attempt_count == 1:
+                raise ValueError('This should be retried')
+            if attempt_count == 2:
+                raise RuntimeError('This should also be retried')
+            if attempt_count == 3:
+                raise TypeError('This should NOT be retried')
+
+            return 'Success'
+
+        bus.on('RetryTestEvent', selective_retry_handler)
+
+        event = RetryTestEvent(attempt_limit=3)
+        await bus.emit(event)
+        await bus.wait_until_idle(timeout=2)
+
+        assert attempt_count == 3, f'Expected 3 attempts, got {attempt_count}'
+        handler_id = list(event.event_results.keys())[0]
+        result = event.event_results[handler_id]
+        assert result.status == 'error'
+        assert isinstance(result.error, TypeError)
+        assert 'This should NOT be retried' in str(result.error)
+
+        await bus.destroy()
+
+    async def test_retry_decorated_method_class_scope_serializes_across_instances(self):
+        """Class scope semaphore should serialize bound method handlers across instances."""
+
+        class ScopeClassEvent(BaseEvent[str]):
+            pass
+
+        bus = EventBus(name='test_scope_class_bus', event_handler_concurrency='parallel')
+        active = 0
+        max_active = 0
+
+        class SomeService:
+            @retry(
+                max_attempts=1,
+                semaphore_scope='class',
+                semaphore_limit=1,
+                semaphore_name='on_scope_class_event',
+            )
+            async def on_scope_class_event(self, _event: ScopeClassEvent) -> str:
+                nonlocal active, max_active
+                active += 1
+                max_active = max(max_active, active)
+                await asyncio.sleep(0.05)
+                active -= 1
+                return 'ok'
+
+        service_a = SomeService()
+        service_b = SomeService()
+        bus.on(ScopeClassEvent, service_a.on_scope_class_event)
+        bus.on(ScopeClassEvent, service_b.on_scope_class_event)
+
+        event = await bus.emit(ScopeClassEvent())
+        await event.wait()
+
+        assert max_active == 1, f'class scope should serialize across instances, got max_active={max_active}'
+        await bus.destroy()
+
+    async def test_retry_decorated_method_instance_scope_allows_parallel_across_instances(self):
+        """Instance scope semaphore should allow bound handlers from different instances to overlap."""
+
+        class ScopeInstanceEvent(BaseEvent[str]):
+            pass
+
+        bus = EventBus(name='test_scope_instance_bus', event_handler_concurrency='parallel')
+        active = 0
+        max_active = 0
+        calls = 0
+
+        class SomeService:
+            @retry(
+                max_attempts=1,
+                semaphore_scope='instance',
+                semaphore_limit=1,
+                semaphore_name='on_scope_instance_event',
+            )
+            async def on_scope_instance_event(self, _event: ScopeInstanceEvent) -> str:
+                nonlocal active, max_active, calls
+                active += 1
+                max_active = max(max_active, active)
+                calls += 1
+                await asyncio.sleep(0.05)
+                active -= 1
+                return 'ok'
+
+        service_a = SomeService()
+        service_b = SomeService()
+        bus.on(ScopeInstanceEvent, service_a.on_scope_instance_event)
+        bus.on(ScopeInstanceEvent, service_b.on_scope_instance_event)
+
+        event = await bus.emit(ScopeInstanceEvent())
+        await event.wait()
+
+        assert calls == 2, f'expected both handlers to run, got calls={calls}'
+        assert max_active == 2, f'instance scope should allow overlap across instances, got max_active={max_active}'
+        await bus.destroy()
+
+    async def test_retry_decorated_method_global_scope_serializes_all_bound_handlers(self):
+        """Global scope semaphore should serialize bound method handlers across all instances."""
+
+        class ScopeGlobalEvent(BaseEvent[str]):
+            pass
+
+        bus = EventBus(name='test_scope_global_bus', event_handler_concurrency='parallel')
+        active = 0
+        max_active = 0
+
+        class SomeService:
+            @retry(
+                max_attempts=1,
+                semaphore_scope='global',
+                semaphore_limit=1,
+                semaphore_name='on_scope_global_event',
+            )
+            async def on_scope_global_event(self, _event: ScopeGlobalEvent) -> str:
+                nonlocal active, max_active
+                active += 1
+                max_active = max(max_active, active)
+                await asyncio.sleep(0.05)
+                active -= 1
+                return 'ok'
+
+        service_a = SomeService()
+        service_b = SomeService()
+        bus.on(ScopeGlobalEvent, service_a.on_scope_global_event)
+        bus.on(ScopeGlobalEvent, service_b.on_scope_global_event)
+
+        event = await bus.emit(ScopeGlobalEvent())
+        await event.wait()
+
+        assert max_active == 1, f'global scope should serialize all handlers, got max_active={max_active}'
+        await bus.destroy()
+
+    async def test_retry_hof_bind_after_wrap_instance_scope_preserves_instance_isolation(self):
+        """HOF pattern retry(...)(fn) then bind to instances should keep instance-scope isolation."""
+
+        class HofBindEvent(BaseEvent[str]):
+            pass
+
+        bus = EventBus(name='test_hof_bind_bus', event_handler_concurrency='parallel')
+        active = 0
+        max_active = 0
+
+        @retry(
+            max_attempts=1,
+            semaphore_scope='instance',
+            semaphore_limit=1,
+            semaphore_name='hof_bind_handler',
+        )
+        async def handler(self: object, _event: HofBindEvent) -> str:
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.05)
+            active -= 1
+            return 'ok'
+
+        class Holder:
+            pass
+
+        holder_a = Holder()
+        holder_b = Holder()
+        bus.on(HofBindEvent, handler.__get__(holder_a, Holder))
+        bus.on(HofBindEvent, handler.__get__(holder_b, Holder))
+
+        event = await bus.emit(HofBindEvent())
+        await event.wait()
+
+        assert max_active == 2, f'bind-after-wrap instance scope should allow overlap, got max_active={max_active}'
+        await bus.destroy()
+
+    async def test_retry_wrapping_emit_retries_full_dispatch_cycle(self):
+        """Retry wrapper around emit+wait should retry full event dispatch when handler errors."""
+
+        class TabsEvent(BaseEvent[str]):
+            pass
+
+        class DOMEvent(BaseEvent[str]):
+            pass
+
+        class ScreenshotEvent(BaseEvent[str]):
+            pass
+
+        bus = EventBus(name='test_retry_emit_bus', event_handler_concurrency='parallel')
+        tabs_attempts = 0
+        dom_calls = 0
+        screenshot_calls = 0
+
+        async def tabs_handler(_event: TabsEvent) -> str:
+            nonlocal tabs_attempts
+            tabs_attempts += 1
+            if tabs_attempts < 3:
+                raise RuntimeError(f'tabs fail attempt {tabs_attempts}')
+            return 'tabs ok'
+
+        async def dom_handler(_event: DOMEvent) -> str:
+            nonlocal dom_calls
+            dom_calls += 1
+            return 'dom ok'
+
+        async def screenshot_handler(_event: ScreenshotEvent) -> str:
+            nonlocal screenshot_calls
+            screenshot_calls += 1
+            return 'screenshot ok'
+
+        bus.on(TabsEvent, tabs_handler)
+        bus.on(DOMEvent, dom_handler)
+        bus.on(ScreenshotEvent, screenshot_handler)
+
+        @retry(max_attempts=4)
+        async def emit_tabs_with_retry() -> TabsEvent:
+            tabs_event = await bus.emit(TabsEvent())
+            await tabs_event.wait()
+            failed_results = [result for result in tabs_event.event_results.values() if result.status == 'error']
+            if failed_results:
+                first_error = failed_results[0].error
+                if isinstance(first_error, Exception):
+                    raise first_error
+                raise RuntimeError(f'tabs emit failed with non-exception error payload: {first_error!r}')
+            return tabs_event
+
+        async def emit_and_wait(event: BaseEvent[str]):
+            emitted = await bus.emit(event)
+            await emitted.wait()
+            return emitted
+
+        tabs_event, dom_event, screenshot_event = await asyncio.gather(
+            emit_tabs_with_retry(),
+            emit_and_wait(DOMEvent()),
+            emit_and_wait(ScreenshotEvent()),
+        )
+
+        assert tabs_attempts == 3, f'expected 3 attempts for tabs flow, got {tabs_attempts}'
+        assert tabs_event.event_status == 'completed'
+        assert dom_calls == 1
+        assert screenshot_calls == 1
+        assert dom_event.event_status == 'completed'
+        assert screenshot_event.event_status == 'completed'
+        await bus.destroy()
+
+
+# Folded from test_eventbus_subclass_isolation.py to keep test layout class-based.
+from abxbus import BaseEvent
+
+
+def test_eventbus_subclasses_isolate_registries_and_global_serial_locks() -> None:
+    class IsolatedBusA(EventBus):
+        pass
+
+    class IsolatedBusB(EventBus):
+        pass
+
+    bus_a1 = IsolatedBusA('IsolatedBusA1', event_concurrency='global-serial')
+    bus_a2 = IsolatedBusA('IsolatedBusA2', event_concurrency='global-serial')
+    bus_b1 = IsolatedBusB('IsolatedBusB1', event_concurrency='global-serial')
+
+    assert bus_a1 in IsolatedBusA.all_instances
+    assert bus_a2 in IsolatedBusA.all_instances
+    assert bus_b1 not in IsolatedBusA.all_instances
+    assert bus_b1 in IsolatedBusB.all_instances
+    assert bus_a1 not in IsolatedBusB.all_instances
+    assert bus_a1 not in EventBus.all_instances
+    assert bus_b1 not in EventBus.all_instances
+
+    lock_a1 = bus_a1.locks.get_lock_for_event(bus_a1, BaseEvent())
+    lock_a2 = bus_a2.locks.get_lock_for_event(bus_a2, BaseEvent())
+    lock_b1 = bus_b1.locks.get_lock_for_event(bus_b1, BaseEvent())
+
+    assert lock_a1 is not None
+    assert lock_a2 is not None
+    assert lock_b1 is not None
+    assert lock_a1 is lock_a2
+    assert lock_a1 is not lock_b1
+
+
+# Folded from test_optional_dependencies.py to keep test layout class-based.
+import ast
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _ast_import_roots(path: Path) -> set[str]:
+    parsed = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+    roots: set[str] = set()
+    for node in ast.walk(parsed):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                roots.add(alias.name.split('.')[0])
+        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            roots.add(node.module.split('.')[0])
+    return roots
+
+
+def test_bridge_modules_do_not_eager_import_optional_packages() -> None:
+    bridge_modules = {
+        _ROOT / 'abxbus' / 'bridge_postgres.py': {'asyncpg'},
+        _ROOT / 'abxbus' / 'bridge_nats.py': {'nats'},
+        _ROOT / 'abxbus' / 'bridge_redis.py': {'redis'},
+        _ROOT / 'abxbus' / 'bridge_tachyon.py': {'tachyon'},
+    }
+
+    for path, forbidden_roots in bridge_modules.items():
+        imported_roots = _ast_import_roots(path)
+        assert forbidden_roots.isdisjoint(imported_roots), f'{path} eagerly imports {forbidden_roots & imported_roots}'
+
+
+def test_root_import_excludes_optional_integrations_while_namespaced_imports_resolve() -> None:
+    code = """
+import sys
+
+import abxbus
+
+assert hasattr(abxbus, 'EventBus')
+assert hasattr(abxbus, 'EventBusMiddleware')
+assert hasattr(abxbus, 'EventBridge')
+assert hasattr(abxbus, 'HTTPEventBridge')
+assert hasattr(abxbus, 'JSONLEventBridge')
+assert hasattr(abxbus, 'SQLiteEventBridge')
+
+assert not hasattr(abxbus, 'PostgresEventBridge')
+assert not hasattr(abxbus, 'RedisEventBridge')
+assert not hasattr(abxbus, 'NATSEventBridge')
+assert not hasattr(abxbus, 'TachyonEventBridge')
+assert not hasattr(abxbus, 'OtelTracingMiddleware')
+
+assert 'asyncpg' not in sys.modules
+assert 'redis' not in sys.modules
+assert 'nats' not in sys.modules
+assert 'tachyon' not in sys.modules
+assert not any(name == 'opentelemetry' or name.startswith('opentelemetry.') for name in sys.modules)
+
+from abxbus.bridges import PostgresEventBridge, TachyonEventBridge
+from abxbus.middlewares import OtelTracingMiddleware
+
+assert PostgresEventBridge.__name__ == 'PostgresEventBridge'
+assert TachyonEventBridge.__name__ == 'TachyonEventBridge'
+assert OtelTracingMiddleware.__name__ == 'OtelTracingMiddleware'
+"""
+
+    result = subprocess.run(
+        [sys.executable, '-c', code],
+        cwd=_ROOT,
+        env={**os.environ, 'PYDANTIC_DISABLE_PLUGINS': '__all__'},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout

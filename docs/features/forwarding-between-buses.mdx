@@ -223,7 +223,7 @@ let event = auth.emit(UserCreatedEvent {
     user_id: "u-a8d1".to_string(),
     ..Default::default()
 });
-let result = block_on(event.event_result(Default::default()))?;
+let result = block_on(event.event_result())?;
 block_on(event.now());
 println!("{result}");
 println!("{:?}", event.inner.lock().event_path);

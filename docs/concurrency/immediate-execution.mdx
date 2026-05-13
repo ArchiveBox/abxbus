@@ -88,7 +88,7 @@ bus.on(ParentEvent, |event: ParentEvent| async move {
     let current_bus = event.event_bus().expect("handler bus");
     let child = current_bus.emit_child(ChildEvent { ..Default::default() });
     child.now().await; // queue-jump while still inside this handler
-    let value = child.event_result(Default::default()).await?;
+    let value = child.event_result().await?;
     Ok(json!(format!("parent got: {value}")))
 });
 

@@ -90,7 +90,7 @@ async def test_await_event_queue_jumps_inside_handler():
     await bus.destroy()
 
 
-async def test_now_queue_jumps_inside_handler():
+async def test_base_event_now_inside_handler_no_args():
     class ParentEvent(BaseEvent[None]):
         pass
 
@@ -131,7 +131,7 @@ async def test_now_queue_jumps_inside_handler():
     await bus.destroy()
 
 
-async def test_now_preserves_handler_errors_inside_handler():
+async def test_base_event_now_inside_handler_with_args():
     class ParentEvent(BaseEvent[None]):
         pass
 
@@ -154,7 +154,7 @@ async def test_now_preserves_handler_errors_inside_handler():
         order.append('parent_start')
         event.bus.emit(SiblingEvent())
         child_ref = event.emit(ChildEvent())
-        await child_ref.now()
+        await child_ref.now(timeout=1.0)
         order.append('parent_end')
 
     async def on_child(_: ChildEvent) -> None:
@@ -698,81 +698,7 @@ async def test_event_result_raises_processing_error_group_after_completion():
     await bus.destroy()
 
 
-async def test_event_result_error_shapes_use_single_exception_or_group():
-    class SingleErrorEvent(BaseEvent[None]):
-        pass
-
-    class MultiErrorEvent(BaseEvent[None]):
-        pass
-
-    bus = EventBus(name='BaseEventErrorShapeContractBus', event_handler_concurrency='parallel')
-
-    async def single_fail(_: SingleErrorEvent) -> None:
-        raise ValueError('single shape failure')
-
-    async def first_fail(_: MultiErrorEvent) -> None:
-        raise ValueError('first shape failure')
-
-    async def second_fail(_: MultiErrorEvent) -> None:
-        raise RuntimeError('second shape failure')
-
-    bus.on(SingleErrorEvent, single_fail)
-    bus.on(MultiErrorEvent, first_fail)
-    bus.on(MultiErrorEvent, second_fail)
-
-    try:
-        single_event = await bus.emit(SingleErrorEvent()).now()
-        with pytest.raises(ValueError, match='single shape failure'):
-            await single_event.event_result()
-
-        multi_event = await bus.emit(MultiErrorEvent()).now()
-        with pytest.raises(ExceptionGroup, match='had 2 handler error') as exc_info:
-            await multi_event.event_result()
-        assert {type(error) for error in exc_info.value.exceptions} == {ValueError, RuntimeError}
-    finally:
-        await bus.destroy()
-
-
-async def test_event_result_all_error_options_contract():
-    class ErrorEvent(BaseEvent[None]):
-        pass
-
-    bus = EventBus(name='BaseEventAllErrorOptionsContractBus', event_handler_concurrency='parallel')
-
-    async def first_fail(_: ErrorEvent) -> None:
-        raise ValueError('first all-error failure')
-
-    async def second_fail(_: ErrorEvent) -> None:
-        raise RuntimeError('second all-error failure')
-
-    bus.on(ErrorEvent, first_fail)
-    bus.on(ErrorEvent, second_fail)
-
-    try:
-        event = await bus.emit(ErrorEvent()).now()
-
-        assert await event.event_result(raise_if_any=False, raise_if_none=False) is None
-        assert await event.event_results_list(raise_if_any=False, raise_if_none=False) == []
-
-        with pytest.raises(ValueError, match='Expected at least one handler'):
-            await event.event_result(raise_if_any=False, raise_if_none=True)
-        with pytest.raises(ValueError, match='Expected at least one handler'):
-            await event.event_results_list(raise_if_any=False, raise_if_none=True)
-
-        with pytest.raises(ExceptionGroup, match='had 2 handler error'):
-            await event.event_result(raise_if_any=True, raise_if_none=False)
-        with pytest.raises(ExceptionGroup, match='had 2 handler error'):
-            await event.event_results_list(raise_if_any=True, raise_if_none=False)
-
-        with pytest.raises(ExceptionGroup, match='had 2 handler error'):
-            await event.event_result(raise_if_any=True, raise_if_none=True)
-        with pytest.raises(ExceptionGroup, match='had 2 handler error'):
-            await event.event_results_list(raise_if_any=True, raise_if_none=True)
-    finally:
-        await bus.destroy()
-
-
-async def test_event_result_accepts_error_options_outside_handler():
+async def test_base_event_now_outside_handler_no_args():
     class ErrorEvent(BaseEvent[None]):
         pass
 
@@ -784,6 +710,24 @@ async def test_event_result_accepts_error_options_outside_handler():
     bus.on(ErrorEvent, handler)
 
     event = await bus.emit(ErrorEvent()).now()
+
+    assert event.event_status == 'completed'
+    assert any(result.status == 'error' for result in event.event_results.values())
+    await bus.destroy()
+
+
+async def test_base_event_now_outside_handler_with_args():
+    class ErrorEvent(BaseEvent[None]):
+        pass
+
+    bus = EventBus(name='BaseEventNowArgsOutsideBus')
+
+    async def handler(_: ErrorEvent) -> None:
+        raise ValueError('outside suppressed failure')
+
+    bus.on(ErrorEvent, handler)
+
+    event = await bus.emit(ErrorEvent()).now(timeout=1.0)
 
     assert event.event_status == 'completed'
     assert any(result.status == 'error' for result in event.event_results.values())
@@ -1651,3 +1595,351 @@ async def test_event_bus_property_multi_bus_child_dispatch():
 
     await bus1.destroy()
     await bus2.destroy()
+
+
+# Folded from test_base_event_runtime_state.py to keep test layout class-based.
+"""Test that the AttributeError bug related to 'event_completed_at' is fixed"""
+
+from contextlib import suppress
+
+from abxbus import BaseEvent
+from abxbus.helpers import monotonic_datetime
+
+
+class SampleEvent(BaseEvent[str]):
+    data: str = 'test'
+
+
+def _noop_handler(_event: SampleEvent) -> None:
+    return
+
+
+def test_event_started_at_with_deserialized_event():
+    """Test that event_started_at works even with events created through deserialization"""
+    # Create an event and convert to dict (simulating serialization)
+    event = SampleEvent(data='original')
+    event_dict = event.model_dump()
+
+    # Create a new event from the dict (simulating deserialization)
+    deserialized_event = SampleEvent.model_validate(event_dict)
+
+    # This should not raise AttributeError
+    assert deserialized_event.event_started_at is None
+    assert deserialized_event.event_completed_at is None
+
+
+def test_event_started_at_with_json_deserialization():
+    """Test that event_started_at works with JSON deserialization"""
+    # Create an event and convert to JSON
+    event = SampleEvent(data='json_test')
+    json_str = event.model_dump_json()
+
+    # Create a new event from JSON
+    deserialized_event = SampleEvent.model_validate_json(json_str)
+
+    # This should not raise AttributeError
+    assert deserialized_event.event_started_at is None
+    assert deserialized_event.event_completed_at is None
+
+
+async def test_event_started_at_after_processing():
+    """Test that event_started_at works correctly after event processing"""
+    bus = EventBus(name='TestBus')
+
+    # Handler that does nothing
+    async def test_handler(event: SampleEvent) -> str:
+        await asyncio.sleep(0.01)
+        return 'done'
+
+    bus.on('SampleEvent', test_handler)
+
+    # Dispatch event
+    event = await bus.emit(SampleEvent(data='processing_test'))
+
+    # Check timestamps - should not raise AttributeError
+    assert event.event_started_at is not None
+    assert event.event_completed_at is not None
+    assert isinstance(event.event_started_at, str)
+    assert isinstance(event.event_completed_at, str)
+
+    await bus.destroy()
+
+
+async def test_event_without_handlers():
+    """Test that events without handlers still work with timestamp properties"""
+    event = SampleEvent(data='no_handlers')
+    bus = EventBus(name='TestBusNoHandlers')
+
+    # Should not raise AttributeError when accessing these properties
+    assert event.event_started_at is None  # No handlers started
+    assert event.event_completed_at is None  # Not complete yet
+
+    processed_event = await bus.emit(event)
+    await bus.destroy()
+
+    # After marking complete, it should be set
+    # When no handlers but event is completed, event_started_at returns event_completed_at
+    assert processed_event.event_started_at is not None  # Uses event_completed_at
+    assert processed_event.event_completed_at is not None  # Now it's complete
+    assert processed_event.event_status == 'completed'
+    assert processed_event.event_started_at == processed_event.event_completed_at
+
+
+async def test_event_with_manually_set_completed_at():
+    """Test events where event_completed_at is manually set (like in test_eventbus_log_tree.py)"""
+    event = SampleEvent(data='manual')
+    bus = EventBus(name='TestBusManualCompletedAt')
+
+    # Initialize the completion signal
+    _ = event.event_completed_signal
+
+    # Manually set the completed timestamp (as done in tests)
+    if hasattr(event, 'event_completed_at'):
+        event.event_completed_at = monotonic_datetime()
+
+    # Stateful runtime fields are no longer derived from event_results/event_completed_at on read.
+    # Manually assigning event_completed_at alone does not mutate status/started_at.
+    assert event.event_started_at is None
+    assert event.event_status == 'pending'
+    assert event.event_completed_at is not None
+
+    # Reconcile state through public lifecycle processing.
+    processed_event = await bus.emit(event)
+    assert processed_event.event_status == 'completed'
+    assert processed_event.event_started_at is not None
+    assert processed_event.event_completed_at is not None
+
+    # Also exercise the "existing completed handler results" completion path.
+    seeded_event = SampleEvent(data='manual-seeded-result')
+    seeded_result = seeded_event.event_result_update(handler=_noop_handler, status='started')
+    assert seeded_event.event_status == 'started'
+    assert seeded_event.event_completed_at is None
+    seeded_result.update(status='completed', result='done')
+    assert seeded_event.event_completed_at is None
+
+    reconciled_seeded_event = await bus.emit(seeded_event)
+    await bus.destroy()
+    assert reconciled_seeded_event.event_status == 'completed'
+    assert reconciled_seeded_event.event_started_at is not None
+    assert reconciled_seeded_event.event_completed_at is not None
+
+
+def test_event_copy_preserves_private_attrs():
+    """Test that copying events preserves private attributes"""
+    event = SampleEvent(data='copy_test')
+
+    # Access properties to ensure private attrs are initialized
+    _ = event.event_started_at
+    _ = event.event_completed_at
+
+    # Create a copy using model_copy
+    copied_event = event.model_copy()
+
+    # Should not raise AttributeError
+    assert copied_event.event_started_at is None
+    assert copied_event.event_completed_at is None
+
+
+def test_event_started_at_is_serialized_and_stateful():
+    """event_started_at should be included in JSON dumps and remain stable once set."""
+    event = SampleEvent(data='serialize-started-at')
+
+    pending_payload = event.model_dump(mode='json')
+    assert 'event_started_at' in pending_payload
+    assert pending_payload['event_started_at'] is None
+
+    event.event_result_update(handler=_noop_handler, status='started')
+    first_started_at = event.model_dump(mode='json')['event_started_at']
+    assert isinstance(first_started_at, str)
+
+    forced_started_at = '2020-01-01T00:00:00.000000000Z'
+    result = next(iter(event.event_results.values()))
+    result.started_at = forced_started_at
+
+    second_started_at = event.model_dump(mode='json')['event_started_at']
+    assert isinstance(second_started_at, str)
+    assert second_started_at == first_started_at
+    assert second_started_at != forced_started_at
+
+
+async def test_event_status_is_serialized_and_stateful():
+    """event_status should be included in JSON dumps and track lifecycle transitions via runtime updates."""
+    event = SampleEvent(data='serialize-status')
+
+    pending_payload = event.model_dump(mode='json')
+    assert pending_payload['event_status'] == 'pending'
+
+    bus = EventBus(name='TestBusSerializeStatus')
+    handler_entered = asyncio.Event()
+    release_handler = asyncio.Event()
+
+    async def slow_handler(_event: SampleEvent) -> str:
+        handler_entered.set()
+        await release_handler.wait()
+        return 'ok'
+
+    bus.on('SampleEvent', slow_handler)
+
+    processing_task = asyncio.create_task(bus.emit(event).wait())
+    try:
+        await asyncio.wait_for(handler_entered.wait(), timeout=1.0)
+        started_payload = event.model_dump(mode='json')
+        assert started_payload['event_status'] == 'started'
+
+        release_handler.set()
+        completed_event = await asyncio.wait_for(processing_task, timeout=1.0)
+        completed_payload = completed_event.model_dump(mode='json')
+        assert completed_payload['event_status'] == 'completed'
+    finally:
+        release_handler.set()
+        if not processing_task.done():
+            processing_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await processing_task
+        await bus.destroy()
+
+
+# Folded from test_events_suck.py to keep test layout class-based.
+import inspect
+from typing import Any
+
+from abxbus import BaseEvent, events_suck
+
+
+class CreateUserEvent(BaseEvent[str]):
+    id: str | None = None
+    name: str
+    age: int
+    nickname: str | None = None
+
+
+class UpdateUserEvent(BaseEvent[bool]):
+    id: str
+    name: str | None = None
+    age: int | None = None
+    source: str | None = None
+
+
+class SomeLegacyImperativeClass:
+    def __init__(self):
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def create(self, id: str | None, name: str, age: int) -> str:
+        self.calls.append(('create', {'id': id, 'name': name, 'age': age}))
+        return f'{name}-{age}'
+
+    def update(self, id: str, name: str | None = None, age: int | None = None, **extra: Any) -> bool:
+        self.calls.append(('update', {'id': id, 'name': name, 'age': age, **extra}))
+        return bool(id)
+
+
+def ping_user(user_id: str) -> str:
+    return f'pong:{user_id}'
+
+
+async def test_events_suck_wrap_emits_and_returns_first_result():
+    bus = EventBus('EventsSuckBus')
+    seen_payloads: list[dict[str, Any]] = []
+
+    async def on_create(event: CreateUserEvent) -> str:
+        seen_payloads.append(
+            {
+                'id': event.id,
+                'name': event.name,
+                'age': event.age,
+                'nickname': event.nickname,
+            }
+        )
+        return 'user-123'
+
+    async def on_update(event: UpdateUserEvent) -> bool:
+        seen_payloads.append(
+            {
+                'id': event.id,
+                'name': event.name,
+                'age': event.age,
+                'source': event.source,
+            }
+        )
+        return event.age == 46
+
+    bus.on(CreateUserEvent, on_create)
+    bus.on(UpdateUserEvent, on_update)
+
+    MySDKClient = events_suck.wrap(
+        'MySDKClient',
+        {
+            'create': CreateUserEvent,
+            'update': UpdateUserEvent,
+        },
+    )
+    client = MySDKClient(bus=bus)
+
+    created_id = await client.create(name='bob', age=45, nickname='bobby')
+    updated = await client.update(id=created_id, age=46, source='sync')
+
+    assert created_id == 'user-123'
+    assert updated is True
+    assert seen_payloads == [
+        {'id': None, 'name': 'bob', 'age': 45, 'nickname': 'bobby'},
+        {'id': created_id, 'name': None, 'age': 46, 'source': 'sync'},
+    ]
+
+    await bus.destroy(clear=True)
+
+
+def test_events_suck_wrap_builds_typed_method_signature():
+    TestClient = events_suck.wrap('TestClient', {'create': CreateUserEvent})
+    signature = inspect.signature(TestClient.create)
+    params = signature.parameters
+
+    assert list(params) == ['self', 'id', 'name', 'age', 'nickname', 'extra']
+    assert params['id'].annotation == str | None
+    assert params['id'].default is None
+    assert params['name'].annotation is str
+    assert params['name'].default is inspect.Parameter.empty
+    assert params['age'].annotation is int
+    assert params['nickname'].annotation == str | None
+    assert params['nickname'].default is None
+    assert params['extra'].kind == inspect.Parameter.VAR_KEYWORD
+    assert signature.return_annotation is str
+
+
+async def test_events_suck_make_events_and_make_handler_runtime_binding():
+    events = events_suck.make_events(
+        {
+            'FooBarAPICreateEvent': SomeLegacyImperativeClass.create,
+            'FooBarAPIUpdateEvent': SomeLegacyImperativeClass.update,
+            'FooBarAPIPingEvent': ping_user,
+        }
+    )
+    FooBarAPICreateEvent = events.FooBarAPICreateEvent
+    FooBarAPIUpdateEvent = events.FooBarAPIUpdateEvent
+    FooBarAPIPingEvent = events.FooBarAPIPingEvent
+
+    assert FooBarAPICreateEvent.model_fields['id'].annotation == str | None
+    assert FooBarAPICreateEvent.model_fields['name'].annotation is str
+    assert FooBarAPICreateEvent.model_fields['age'].annotation is int
+    assert FooBarAPICreateEvent.model_fields['event_result_type'].default is str
+
+    bus = EventBus('LegacyBus')
+    impl = SomeLegacyImperativeClass()
+    bus.on(FooBarAPICreateEvent, events_suck.make_handler(impl.create))
+    bus.on(FooBarAPIUpdateEvent, events_suck.make_handler(impl.update))
+    bus.on(FooBarAPIPingEvent, events_suck.make_handler(ping_user))
+
+    create_result = await bus.emit(FooBarAPICreateEvent(name='bob', age=45)).event_result()
+    update_result = await bus.emit(
+        FooBarAPIUpdateEvent(id='4ddee2b7-782f-7bbf-84ff-6aad2693982e', age=46, source='sync')
+    ).event_result()
+    ping_result = await bus.emit(FooBarAPIPingEvent(user_id='e692b6cb-ae63-773b-8557-3218f7ce5ced')).event_result()
+
+    assert create_result == 'bob-45'
+    assert update_result is True
+    assert ping_result == 'pong:e692b6cb-ae63-773b-8557-3218f7ce5ced'
+    assert impl.calls == [
+        ('create', {'id': None, 'name': 'bob', 'age': 45}),
+        ('update', {'id': '4ddee2b7-782f-7bbf-84ff-6aad2693982e', 'name': None, 'age': 46, 'source': 'sync'}),
+    ]
+
+    await bus.destroy(clear=True)

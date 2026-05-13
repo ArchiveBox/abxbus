@@ -610,7 +610,7 @@ class EventBus:
         bus.event_history.clear()
 
         raw_handlers = cls._normalize_json_object_required(
-            payload.get('handlers'),
+            payload.get('handlers', {}),
             'EventBus.validate() expects handlers to be an id-keyed object',
         )
         for raw_handler_id, raw_handler_payload in raw_handlers.items():
@@ -624,7 +624,7 @@ class EventBus:
             bus.handlers[handler_entry.id] = handler_entry
 
         raw_handlers_by_key = cls._normalize_json_object_required(
-            payload.get('handlers_by_key'),
+            payload.get('handlers_by_key', {}),
             'EventBus.validate() expects handlers_by_key to be an object',
         )
         for raw_key, raw_ids in raw_handlers_by_key.items():

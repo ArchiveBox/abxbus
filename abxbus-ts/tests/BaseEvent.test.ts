@@ -3,7 +3,7 @@ import { test } from 'node:test'
 
 import { z } from 'zod'
 
-import { BaseEvent, EventBus, monotonicDatetime } from '../src/index.js'
+import { BaseEvent, EventBus, EventResult, events_suck, monotonicDatetime } from '../src/index.js'
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -54,9 +54,9 @@ test('eventResult({ raise_if_any: true }) re-raises processing exceptions after 
   )
 })
 
-test('now() waits outside handlers without re-raising', async () => {
-  const ErrorEvent = BaseEvent.extend('BaseEventNowArgsOutsideEvent', {})
-  const bus = new EventBus('BaseEventNowArgsOutsideBus', {
+test('BaseEvent.now() outside handler no args', async () => {
+  const ErrorEvent = BaseEvent.extend('BaseEventNowNoArgsOutsideEvent', {})
+  const bus = new EventBus('BaseEventNowNoArgsOutsideBus', {
     event_timeout: 0,
   })
 
@@ -71,6 +71,27 @@ test('now() waits outside handlers without re-raising', async () => {
     Array.from(event.event_results.values()).some((result) => result.status === 'error'),
     true
   )
+  bus.destroy()
+})
+
+test('BaseEvent.now() outside handler with args', async () => {
+  const ErrorEvent = BaseEvent.extend('BaseEventNowArgsOutsideEvent', {})
+  const bus = new EventBus('BaseEventNowArgsOutsideBus', {
+    event_timeout: 0,
+  })
+
+  bus.on(ErrorEvent, async () => {
+    throw new Error('outside suppressed failure')
+  })
+
+  const event = await bus.emit(ErrorEvent({})).now({ timeout: 1 })
+
+  assert.equal(event.event_status, 'completed')
+  assert.equal(
+    Array.from(event.event_results.values()).some((result) => result.status === 'error'),
+    true
+  )
+  assert.equal(await event.eventResult({ raise_if_any: false, raise_if_none: false }), undefined)
   bus.destroy()
 })
 
@@ -110,7 +131,7 @@ test('BaseEvent.eventResultUpdate status-only update does not implicitly pass un
   bus.destroy()
 })
 
-test('await event.now() queue-jumps child processing inside handlers', async () => {
+test('BaseEvent.now() inside handler no args', async () => {
   const ParentEvent = BaseEvent.extend('BaseEventImmediateParentEvent', {})
   const ChildEvent = BaseEvent.extend('BaseEventImmediateChildEvent', {})
   const SiblingEvent = BaseEvent.extend('BaseEventImmediateSiblingEvent', {})
@@ -145,7 +166,7 @@ test('await event.now() queue-jumps child processing inside handlers', async () 
   bus.destroy()
 })
 
-test('await event.now() queue-jumps child processing inside handlers without re-raising', async () => {
+test('BaseEvent.now() inside handler with args', async () => {
   const ParentEvent = BaseEvent.extend('BaseEventImmediateArgsParentEvent', {})
   const ChildEvent = BaseEvent.extend('BaseEventImmediateArgsChildEvent', {})
   const SiblingEvent = BaseEvent.extend('BaseEventImmediateArgsSiblingEvent', {})
@@ -162,7 +183,7 @@ test('await event.now() queue-jumps child processing inside handlers without re-
     event.emit(SiblingEvent({}))
     child_ref = event.emit(ChildEvent({}))
     assert.ok(child_ref)
-    await child_ref.now()
+    await child_ref.now({ timeout: 1 })
     order.push('parent_end')
   })
 
@@ -1184,4 +1205,506 @@ test('BaseEvent status hooks capture bus reference before event gc', async () =>
   assert.deepEqual(bus.seen_statuses, ['started', 'completed'])
 
   bus.destroy()
+})
+
+// Folded from BaseEvent_EventBus_proxy.test.ts to keep test layout class-based.
+const MainEvent = BaseEvent.extend('MainEvent', {})
+const ChildEvent = BaseEvent.extend('ChildEvent', {})
+const GrandchildEvent = BaseEvent.extend('GrandchildEvent', {})
+
+test('event.event_bus inside handler returns the dispatching bus', async () => {
+  const bus = new EventBus('TestBus')
+
+  let handler_called = false
+  let handler_bus_name: string | undefined
+  let child_event: BaseEvent | undefined
+
+  bus.on(MainEvent, (event) => {
+    handler_called = true
+    handler_bus_name = event.event_bus?.name
+    assert.equal(Reflect.get(event, 'bus'), undefined)
+    assert.equal('bus' in event, false)
+
+    // Should be able to dispatch child events from the current event.
+    child_event = event.emit(ChildEvent({}))
+  })
+
+  bus.on(ChildEvent, () => {})
+
+  bus.emit(MainEvent({}))
+  await bus.waitUntilIdle()
+
+  assert.equal(handler_called, true)
+  assert.equal(handler_bus_name, 'TestBus')
+  assert.ok(child_event, 'child event should have been dispatched via event.emit')
+  assert.equal(child_event!.event_type, 'ChildEvent')
+})
+
+test('legacy bus property is not exposed inside handlers', async () => {
+  const bus = new EventBus('NoLegacyEventBusPropertyBus')
+  let legacy_bus_value: unknown = 'unset'
+  let has_legacy_bus = true
+
+  bus.on(MainEvent, (event) => {
+    legacy_bus_value = Reflect.get(event, 'bus')
+    has_legacy_bus = 'bus' in event
+  })
+
+  await bus.emit(MainEvent({})).now()
+  assert.equal(legacy_bus_value, undefined)
+  assert.equal(has_legacy_bus, false)
+})
+
+test('event.event_bus is set for child events emitted in handler', async () => {
+  const bus = new EventBus('EventBusPropertyFallbackBus')
+  let child_bus_name: string | undefined
+  let child_legacy_bus_value: unknown = 'unset'
+
+  bus.on(MainEvent, (event) => {
+    const child = event.emit(ChildEvent({}))
+    child_bus_name = child.event_bus!.name
+    child_legacy_bus_value = Reflect.get(child, 'bus')
+  })
+  bus.on(ChildEvent, () => {})
+
+  await bus.emit(MainEvent({})).now()
+  assert.equal(child_bus_name, 'EventBusPropertyFallbackBus')
+  assert.equal(child_legacy_bus_value, undefined)
+})
+
+test('event.event_bus is absent on detached events', async () => {
+  const bus = new EventBus('EventBusPropertyDetachedBus')
+  bus.on(MainEvent, () => {})
+
+  const original = bus.emit(MainEvent({}))
+  await original.now()
+
+  const detached = BaseEvent.fromJSON(original.toJSON())
+  assert.equal(detached.event_bus, undefined)
+  assert.equal(Reflect.get(detached, 'bus'), undefined)
+  assert.equal('bus' in detached, false)
+  assert.deepEqual(detached.event_path, [bus.label])
+})
+
+test('event.event_bus is available outside handler context', async () => {
+  const bus = new EventBus('EventBusPropertyOutsideHandlerBus')
+  const event = bus.emit(MainEvent({}))
+  await event.now()
+
+  assert.equal(event.event_bus!.name, 'EventBusPropertyOutsideHandlerBus')
+  assert.equal(Reflect.get(event, 'bus'), undefined)
+})
+
+test('event.event_bus returns correct bus when multiple buses exist', async () => {
+  const bus1 = new EventBus('Bus1')
+  const bus2 = new EventBus('Bus2')
+
+  let handler1_bus_name: string | undefined
+  let handler2_bus_name: string | undefined
+
+  bus1.on(MainEvent, (event) => {
+    handler1_bus_name = event.event_bus?.name
+  })
+
+  bus2.on(MainEvent, (event) => {
+    handler2_bus_name = event.event_bus?.name
+  })
+
+  bus1.emit(MainEvent({}))
+  await bus1.waitUntilIdle()
+
+  bus2.emit(MainEvent({}))
+  await bus2.waitUntilIdle()
+
+  assert.equal(handler1_bus_name, 'Bus1')
+  assert.equal(handler2_bus_name, 'Bus2')
+})
+
+test('event.event_bus reflects the currently-processing bus when forwarded', async () => {
+  const bus1 = new EventBus('Bus1')
+  const bus2 = new EventBus('Bus2')
+
+  // Forward all events from bus1 to bus2
+  bus1.on('*', bus2.emit)
+
+  let bus2_handler_bus_name: string | undefined
+
+  bus2.on(MainEvent, (event) => {
+    bus2_handler_bus_name = event.event_bus?.name
+  })
+
+  const event = bus1.emit(MainEvent({}))
+  await bus1.waitUntilIdle()
+  await bus2.waitUntilIdle()
+
+  // The handler on bus2 should see bus2 as event.event_bus, not bus1
+  assert.equal(bus2_handler_bus_name, 'Bus2')
+  assert.deepEqual(event.event_path, [bus1.label, bus2.label])
+})
+
+test('event.event_bus in nested handlers sees the same bus', async () => {
+  const bus = new EventBus('MainBus')
+
+  let outer_bus_name: string | undefined
+  let inner_bus_name: string | undefined
+
+  bus.on(MainEvent, async (event) => {
+    outer_bus_name = event.event_bus?.name
+
+    // Dispatch child using event.emit.
+    const child = event.emit(ChildEvent({}))
+    await child.now()
+  })
+
+  bus.on(ChildEvent, (event) => {
+    inner_bus_name = event.event_bus?.name
+  })
+
+  const parent = bus.emit(MainEvent({}))
+  await parent.now()
+
+  assert.equal(outer_bus_name, 'MainBus')
+  assert.equal(inner_bus_name, 'MainBus')
+})
+
+test('event.emit awaited children pass explicit handler context to immediate processing', async () => {
+  const bus = new EventBus('ExplicitEventEmitHandlerContextBus', {
+    event_concurrency: 'bus-serial',
+    event_handler_concurrency: 'serial',
+  })
+  const child_process_handler_contexts: boolean[] = []
+  const original_process_event_immediately = EventBus.prototype._processEventImmediately
+
+  EventBus.prototype._processEventImmediately = function <T extends BaseEvent>(event: T, handler_result?: EventResult): Promise<T> {
+    if (event.event_type === 'ChildEvent') {
+      child_process_handler_contexts.push(handler_result?.status === 'started')
+    }
+    return original_process_event_immediately.call(this, event, handler_result) as Promise<T>
+  }
+
+  try {
+    bus.on(MainEvent, async (event) => {
+      const child = event.emit(ChildEvent({}))
+      await child.now()
+    })
+    bus.on(ChildEvent, () => 'child-ok')
+
+    await bus.emit(MainEvent({})).now()
+  } finally {
+    EventBus.prototype._processEventImmediately = original_process_event_immediately
+  }
+
+  assert.deepEqual(child_process_handler_contexts, [true])
+})
+
+test('event.emit sets parent-child relationships through 3 levels', async () => {
+  const bus = new EventBus('MainBus')
+
+  const execution_order: string[] = []
+  let child_ref: BaseEvent | undefined
+  let grandchild_ref: BaseEvent | undefined
+
+  bus.on(MainEvent, async (event) => {
+    execution_order.push('parent_start')
+    assert.equal(event.event_bus?.name, 'MainBus')
+
+    child_ref = event.emit(ChildEvent({}))
+    await child_ref.now()
+
+    execution_order.push('parent_end')
+  })
+
+  bus.on(ChildEvent, async (event) => {
+    execution_order.push('child_start')
+    assert.equal(event.event_bus?.name, 'MainBus')
+
+    grandchild_ref = event.emit(GrandchildEvent({}))
+    await grandchild_ref.now()
+
+    execution_order.push('child_end')
+  })
+
+  bus.on(GrandchildEvent, (event) => {
+    execution_order.push('grandchild_start')
+    assert.equal(event.event_bus?.name, 'MainBus')
+    execution_order.push('grandchild_end')
+  })
+
+  const parent_event = bus.emit(MainEvent({}))
+  await parent_event.now()
+
+  // Child events should queue-jump and complete before their parents return
+  assert.deepEqual(execution_order, ['parent_start', 'child_start', 'grandchild_start', 'grandchild_end', 'child_end', 'parent_end'])
+
+  // All events completed
+  assert.equal(parent_event.event_status, 'completed')
+  assert.ok(child_ref)
+  assert.equal(child_ref!.event_status, 'completed')
+  assert.ok(grandchild_ref)
+  assert.equal(grandchild_ref!.event_status, 'completed')
+
+  // Parent-child relationships are set correctly
+  assert.equal(child_ref!.event_parent_id, parent_event.event_id)
+  assert.equal(grandchild_ref!.event_parent_id, child_ref!.event_id)
+  assert.equal(child_ref!.event_parent?.event_id, parent_event.event_id)
+  assert.equal(grandchild_ref!.event_parent?.event_id, child_ref!.event_id)
+})
+
+test('event.emit with forwarding: child dispatch goes to the correct bus', async () => {
+  const bus1 = new EventBus('Bus1')
+  const bus2 = new EventBus('Bus2')
+
+  // Forward all events from bus1 to bus2
+  bus1.on('*', bus2.emit)
+
+  let child_handler_bus_name: string | undefined
+
+  // Handlers only on bus2
+  bus2.on(MainEvent, async (event) => {
+    // Handler runs on bus2 (forwarded from bus1)
+    assert.equal(event.event_bus?.name, 'Bus2')
+
+    // Child dispatched via event.emit should go to bus2.
+    const child = event.emit(ChildEvent({}))
+    await child.now()
+  })
+
+  bus2.on(ChildEvent, (event) => {
+    child_handler_bus_name = event.event_bus?.name
+  })
+
+  bus1.emit(MainEvent({}))
+  await bus1.waitUntilIdle()
+  await bus2.waitUntilIdle()
+
+  // Child handler should have seen bus2
+  assert.equal(child_handler_bus_name, 'Bus2')
+})
+
+test('event.event_bus is set on the event after dispatch (outside handler)', async () => {
+  const bus = new EventBus('TestBus')
+
+  // Before dispatch, bus is not set
+  const raw_event = MainEvent({})
+  assert.equal(raw_event.event_bus, undefined)
+
+  // After dispatch, bus is set on the original event
+  const dispatched = bus.emit(raw_event)
+  assert.ok(dispatched.event_bus, 'event.event_bus should be set after dispatch')
+
+  await bus.waitUntilIdle()
+})
+
+test('event.emit from handler correctly attributes event_emitted_by_handler_id', async () => {
+  const bus = new EventBus('TestBus')
+
+  bus.on(MainEvent, (event) => {
+    event.emit(ChildEvent({}))
+  })
+
+  bus.on(ChildEvent, () => {})
+
+  const parent = bus.emit(MainEvent({}))
+  await bus.waitUntilIdle()
+
+  // Find the child event in history
+  const child = Array.from(bus.event_history.values()).find((e) => e.event_type === 'ChildEvent')
+  assert.ok(child, 'child event should be in history')
+  assert.equal(child!.event_parent_id, parent.event_id)
+  assert.equal(child!.event_parent?.event_id, parent.event_id)
+
+  // The child should have event_emitted_by_handler_id set to the handler that emitted it
+  assert.ok(child!.event_emitted_by_handler_id, 'event_emitted_by_handler_id should be set on child events dispatched via event.emit')
+
+  // The handler id should correspond to a handler result on the parent event
+  const parent_from_history = Array.from(bus.event_history.values()).find((e) => e.event_type === 'MainEvent')
+  assert.ok(parent_from_history)
+  const handler_result = parent_from_history!.event_results.get(child!.event_emitted_by_handler_id!)
+  assert.ok(handler_result, 'handler_id on child should match a handler result on the parent')
+})
+
+test('dispatch preserves explicit event_parent_id and does not override it', async () => {
+  const bus = new EventBus('ExplicitParentBus')
+  const explicit_parent_id = '018f8e40-1234-7000-8000-000000001234'
+
+  bus.on(MainEvent, (event) => {
+    const child = ChildEvent({
+      event_parent_id: explicit_parent_id,
+    })
+    event.emit(child)
+  })
+
+  const parent = bus.emit(MainEvent({}))
+  await bus.waitUntilIdle()
+
+  const child = Array.from(bus.event_history.values()).find((event) => event.event_type === 'ChildEvent')
+  assert.ok(child, 'child event should be in history')
+  assert.equal(child.event_parent_id, explicit_parent_id)
+  assert.notEqual(child.event_parent_id, parent.event_id)
+})
+
+// Consolidated from tests/parent_child.test.ts
+
+const LineageParentEvent = BaseEvent.extend('LineageParentEvent', {})
+const LineageChildEvent = BaseEvent.extend('LineageChildEvent', {})
+const LineageGrandchildEvent = BaseEvent.extend('LineageGrandchildEvent', {})
+const LineageUnrelatedEvent = BaseEvent.extend('LineageUnrelatedEvent', {})
+
+test('eventIsChildOf and eventIsParentOf work for direct children', async () => {
+  const bus = new EventBus('ParentChildBus')
+
+  bus.on(LineageParentEvent, (event) => {
+    event.emit(LineageChildEvent({}))
+  })
+
+  const parent_event = bus.emit(LineageParentEvent({}))
+  await bus.waitUntilIdle()
+
+  const child_event = Array.from(bus.event_history.values()).find((event) => event.event_type === 'LineageChildEvent')
+  assert.ok(child_event)
+
+  assert.equal(child_event.event_parent_id, parent_event.event_id)
+  assert.equal(child_event.event_parent?.event_id, parent_event.event_id)
+  assert.equal(bus.eventIsChildOf(child_event, parent_event), true)
+  assert.equal(bus.eventIsParentOf(parent_event, child_event), true)
+})
+
+test('eventIsChildOf works for grandchildren', async () => {
+  const bus = new EventBus('GrandchildBus')
+
+  bus.on(LineageParentEvent, (event) => {
+    event.emit(LineageChildEvent({}))
+  })
+
+  bus.on(LineageChildEvent, (event) => {
+    event.emit(LineageGrandchildEvent({}))
+  })
+
+  const parent_event = bus.emit(LineageParentEvent({}))
+  await bus.waitUntilIdle()
+
+  const child_event = Array.from(bus.event_history.values()).find((event) => event.event_type === 'LineageChildEvent')
+  const grandchild_event = Array.from(bus.event_history.values()).find((event) => event.event_type === 'LineageGrandchildEvent')
+
+  assert.ok(child_event)
+  assert.ok(grandchild_event)
+
+  assert.equal(bus.eventIsChildOf(child_event, parent_event), true)
+  assert.equal(bus.eventIsChildOf(grandchild_event, parent_event), true)
+  assert.equal(child_event.event_parent?.event_id, parent_event.event_id)
+  assert.equal(grandchild_event.event_parent?.event_id, child_event.event_id)
+  assert.equal(bus.eventIsParentOf(parent_event, grandchild_event), true)
+})
+
+test('eventIsChildOf returns false for unrelated events', async () => {
+  const bus = new EventBus('UnrelatedBus')
+
+  const parent_event = bus.emit(LineageParentEvent({}))
+  const unrelated_event = bus.emit(LineageUnrelatedEvent({}))
+  await parent_event.now()
+  await unrelated_event.now()
+
+  assert.equal(bus.eventIsChildOf(unrelated_event, parent_event), false)
+  assert.equal(bus.eventIsParentOf(parent_event, unrelated_event), false)
+})
+
+// Folded from events_suck.test.ts to keep test layout class-based.
+test('events_suck.wrap builds imperative methods for emitting events', async () => {
+  const bus = new EventBus('EventsSuckBus')
+  const CreateEvent = BaseEvent.extend('EventsSuckCreateEvent', {
+    name: z.string(),
+    age: z.number(),
+    nickname: z.string().nullable().optional(),
+    event_result_type: z.string(),
+  })
+  const UpdateEvent = BaseEvent.extend('EventsSuckUpdateEvent', {
+    id: z.string(),
+    age: z.number().nullable().optional(),
+    source: z.string().nullable().optional(),
+    event_result_type: z.boolean(),
+  })
+
+  bus.on(CreateEvent, async (event) => {
+    assert.equal(event.nickname, 'bobby')
+    return `user-${event.age}`
+  })
+
+  bus.on(UpdateEvent, async (event) => {
+    assert.equal(event.source, 'sync')
+    return event.age === 46
+  })
+
+  const SDKClient = events_suck.wrap('SDKClient', {
+    create: CreateEvent,
+    update: UpdateEvent,
+  })
+  const client = new SDKClient(bus)
+
+  const user_id = await client.create({ name: 'bob', age: 45 }, { nickname: 'bobby' })
+  const updated = await client.update({ id: user_id ?? 'fallback-id', age: 46 }, { source: 'sync' })
+
+  assert.equal(user_id, 'user-45')
+  assert.equal(updated, true)
+})
+
+test('events_suck.make_events works with inline handlers', async () => {
+  class LegacyService {
+    calls: Array<[string, Record<string, unknown>]> = []
+
+    create(id: string | null, name: string, age: number): string {
+      this.calls.push(['create', { id, name, age }])
+      return `${name}-${age}`
+    }
+
+    update(id: string, name?: string | null, age?: number | null, extra?: Record<string, unknown>): boolean {
+      this.calls.push(['update', { id, name, age, ...(extra ?? {}) }])
+      return true
+    }
+  }
+
+  const ping_user = (user_id: string): string => `pong:${user_id}`
+  const service = new LegacyService()
+
+  const create_from_payload = (payload: { id: string | null; name: string; age: number }): string => {
+    return service.create(payload.id, payload.name, payload.age)
+  }
+
+  const update_from_payload = (payload: { id: string; name?: string | null; age?: number | null } & Record<string, unknown>): boolean => {
+    const { id, name, age, ...extra } = payload
+    return service.update(id, name, age, extra)
+  }
+
+  const ping_from_payload = (payload: { user_id: string }): string => ping_user(payload.user_id)
+
+  const events = events_suck.make_events({
+    FooBarAPICreateEvent: create_from_payload,
+    FooBarAPIUpdateEvent: update_from_payload,
+    FooBarAPIPingEvent: ping_from_payload,
+  })
+
+  const bus = new EventBus('LegacyBus')
+  bus.on(events.FooBarAPICreateEvent, (event) => create_from_payload(event))
+  bus.on(events.FooBarAPIUpdateEvent, (event) => update_from_payload(event))
+  bus.on(events.FooBarAPIPingEvent, (event) => ping_from_payload(event))
+
+  const created = await bus
+    .emit(events.FooBarAPICreateEvent({ id: null, name: 'bob', age: 45 }))
+    .now({ first_result: true })
+    .eventResult()
+  assert.ok(created !== undefined)
+  const updated = await bus
+    .emit(events.FooBarAPIUpdateEvent({ id: created, age: 46, source: 'sync' }))
+    .now({ first_result: true })
+    .eventResult()
+  const user_id = 'e692b6cb-ae63-773b-8557-3218f7ce5ced'
+  const pong = await bus.emit(events.FooBarAPIPingEvent({ user_id })).now({ first_result: true }).eventResult()
+
+  assert.equal(created, 'bob-45')
+  assert.equal(updated, true)
+  assert.equal(pong, `pong:${user_id}`)
+  assert.deepEqual(service.calls[0], ['create', { id: null, name: 'bob', age: 45 }])
+  assert.equal(service.calls[1]?.[0], 'update')
+  assert.equal(service.calls[1]?.[1].id, 'bob-45')
+  assert.equal(service.calls[1]?.[1].age, 46)
+  assert.equal(service.calls[1]?.[1].source, 'sync')
 })

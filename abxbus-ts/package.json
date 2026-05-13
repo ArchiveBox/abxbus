@@ -52,7 +52,7 @@
     "prettier": "prettier --write .",
     "eslint": "eslint .",
     "lint": "pnpm run prettier && pnpm run eslint && pnpm run typecheck",
-    "test": "NODE_OPTIONS='--expose-gc' node --expose-gc --test --import tsx \"tests/**/*.test.ts\"",
+    "test": "NODE_OPTIONS='--expose-gc' node --expose-gc --test --import tsx $(find tests -type f -name '*.test.ts' ! -name 'EventBus_performance.test.ts' | sort)",
     "perf": "pnpm run perf:test && pnpm run perf:node && pnpm run perf:bun && pnpm run perf:deno && pnpm run perf:browser",
     "perf:test": "NODE_OPTIONS='--expose-gc' node --expose-gc --test --import tsx tests/EventBus_performance.test.ts",
     "debug:node": "NODE_OPTIONS='--expose-gc' node --expose-gc --import tsx",

@@ -273,6 +273,89 @@ func TestEventBusSerializationPreservesHandlerRegistrationOrderThroughJSONAndRes
 	}
 }
 
+func TestEventBusFromJSONRecreatesMissingHandlerEntriesFromEventResultMetadata(t *testing.T) {
+	bus := abxbus.NewEventBus("MissingHandlerHydrationBus", nil)
+	bus.On("SerializableEvent", "handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		return "ok", nil
+	}, nil)
+	event := bus.Emit(abxbus.NewBaseEvent("SerializableEvent", nil))
+	if _, err := event.Now(); err != nil {
+		t.Fatal(err)
+	}
+
+	handlerID := ""
+	for _, result := range event.EventResults {
+		handlerID = result.HandlerID
+		break
+	}
+	data, err := bus.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	payload["handlers"] = map[string]any{}
+	payload["handlers_by_key"] = map[string]any{}
+	data, err = json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restored, err := abxbus.EventBusFromJSON(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredEvent := restored.EventHistory.GetEvent(event.EventID)
+	if restoredEvent == nil {
+		t.Fatalf("restored event missing")
+	}
+	restoredData, err := restored.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restoredPayload abxbus.EventBusJSON
+	if err := json.Unmarshal(restoredData, &restoredPayload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := restoredPayload.Handlers[handlerID]; !ok {
+		t.Fatalf("restored handlers missing hydrated handler %s", handlerID)
+	}
+	restoredResult := restoredEvent.EventResults[handlerID]
+	if restoredResult == nil || restoredResult.Handler == nil || restoredResult.Handler.ID != handlerID {
+		t.Fatalf("restored result handler linkage mismatch: %#v", restoredResult)
+	}
+}
+
+func TestBaseEventFromJSONRoundtripsRuntimeJSONShape(t *testing.T) {
+	bus := abxbus.NewEventBus("SerializableBaseEventBus", nil)
+	defer bus.Destroy()
+	bus.On("SerializableBaseEvent", "handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		return "ok", nil
+	}, nil)
+
+	event := bus.Emit(abxbus.NewBaseEvent("SerializableBaseEvent", nil))
+	if _, err := event.Now(); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := event.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := abxbus.BaseEventFromJSON(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredPayload, err := restored.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(restoredPayload, payload) {
+		t.Fatalf("BaseEvent JSON roundtrip mismatch:\nrestored=%s\noriginal=%s", restoredPayload, payload)
+	}
+}
+
 func TestEventBusSerializationPreservesPendingQueueIDs(t *testing.T) {
 	bus := abxbus.NewEventBus("PendingSerBus", &abxbus.EventBusOptions{EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial})
 	started := make(chan struct{}, 1)

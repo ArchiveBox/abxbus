@@ -248,14 +248,14 @@ bus.on(CheckoutEvent, |event: CheckoutEvent| async move {
         ..Default::default()
     });
     reserve.now().await;
-    let reserve_id = reserve.event_result(Default::default()).await?;
+    let reserve_id = reserve.event_result().await?;
 
     let receipt = current_bus.emit_child(SendReceiptEvent {
         order_id,
         ..Default::default()
     });
     receipt.now().await;
-    let receipt_id = receipt.event_result(Default::default()).await?;
+    let receipt_id = receipt.event_result().await?;
 
     Ok(json!(format!("{reserve_id}|{receipt_id}")))
 });
@@ -271,7 +271,7 @@ let root = bus.emit(CheckoutEvent {
     order_id: "ord-123".to_string(),
     ..Default::default()
 });
-let result = block_on(root.event_result(Default::default()))?;
+let result = block_on(root.event_result())?;
 block_on(bus.wait_until_idle(None));
 
 println!("{result}");

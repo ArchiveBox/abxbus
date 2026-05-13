@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from abxbus import BaseEvent, EventBus, EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventResult, EventStatus
+from abxbus import BaseEvent, EventBus, EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventResult
 
 
 class CompletionEvent(BaseEvent[str]):
@@ -731,31 +731,3 @@ async def test_event_result_raise_if_any_includes_first_mode_control_errors() ->
         assert await event.event_result(raise_if_any=False, raise_if_none=True) == 'fast'
     finally:
         await bus.destroy()
-
-
-async def test_result_shortcuts_reject_unattached_pending_event() -> None:
-    wait_event = CompletionEvent()
-    with pytest.raises(RuntimeError, match='no bus attached'):
-        await wait_event.wait()
-    assert wait_event.event_handler_completion is None
-
-    result_event = CompletionEvent()
-    with pytest.raises(RuntimeError, match='no bus attached'):
-        await result_event.event_result()
-    assert result_event.event_handler_completion is None
-
-    now_event = CompletionEvent()
-    with pytest.raises(RuntimeError, match='no bus attached'):
-        await now_event.now()
-    assert now_event.event_handler_completion is None
-
-
-async def test_result_shortcuts_allow_completed_unattached_event() -> None:
-    wait_event = CompletionEvent(event_status=EventStatus.COMPLETED)
-    assert await wait_event.wait() is wait_event
-
-    result_event = CompletionEvent(event_status=EventStatus.COMPLETED)
-    assert await result_event.event_result(raise_if_none=False) is None
-
-    now_event = CompletionEvent(event_status=EventStatus.COMPLETED)
-    assert await now_event.now() is now_event

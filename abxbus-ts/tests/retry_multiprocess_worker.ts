@@ -1,4 +1,4 @@
-import { retry } from '../../src/index.js'
+import { retry } from '../src/index.js'
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 

@@ -66,6 +66,52 @@ test('EventBus toJSON/fromJSON roundtrip uses id-keyed structures', async () => 
   await pending_event.now()
 })
 
+test('EventBus serialization preserves unbounded history null', () => {
+  const bus = new EventBus('UnlimitedSerBus', {
+    max_history_size: null,
+    max_history_drop: false,
+  })
+  try {
+    const json = bus.toJSON()
+    assert.equal(json.max_history_size, null)
+
+    const restored = EventBus.fromJSON(json)
+    assert.equal(restored.event_history.max_history_size, null)
+  } finally {
+    bus.destroy()
+  }
+})
+
+test('EventBus.fromJSON null event_timeout uses default', () => {
+  const bus = new EventBus('TimeoutNullBus')
+  try {
+    const json = bus.toJSON()
+    json.event_timeout = null
+
+    const restored = EventBus.fromJSON(json)
+    assert.equal(restored.event_timeout, 60)
+    assert.equal(restored.toJSON().event_timeout, 60)
+  } finally {
+    bus.destroy()
+  }
+})
+
+test('EventBus.fromJSON defaults missing handler maps', async () => {
+  const json = new EventBus('MissingHandlerMaps').toJSON()
+  delete (json as Partial<typeof json>).handlers
+  delete (json as Partial<typeof json>).handlers_by_key
+
+  const restored = EventBus.fromJSON(json)
+  const SerializableEvent = BaseEvent.extend('SerializableEvent', {})
+  try {
+    restored.on(SerializableEvent, () => 'ok')
+    const result = await restored.emit(SerializableEvent({})).eventResult()
+    assert.equal(result, 'ok')
+  } finally {
+    await restored.destroy()
+  }
+})
+
 test('EventBus preserves handler registration order through JSON and restore', async () => {
   const HandlerOrderEvent = BaseEvent.extend('HandlerOrderEvent', {})
   const bus = new EventBus('HandlerOrderSourceBus', {
@@ -142,6 +188,24 @@ test('EventBus.fromJSON recreates missing handler entries from event_result meta
   assert.equal(await restored_result!.handler.handler(restored_event as BaseEvent), undefined)
 })
 
+test('BaseEvent.fromJSON roundtrips runtime JSON shape', async () => {
+  const bus = new EventBus('SerializableBaseEventBus', {
+    event_handler_detect_file_paths: false,
+  })
+  const SerializableEvent = BaseEvent.extend('SerializableBaseEvent', {})
+  try {
+    bus.on(SerializableEvent, () => 'ok')
+    const event = bus.emit(SerializableEvent({}))
+    await event.now()
+
+    const payload = event.toJSON()
+    const restored_payload = BaseEvent.fromJSON(payload).toJSON()
+    assert.deepEqual(restored_payload, payload)
+  } finally {
+    await bus.destroy()
+  }
+})
+
 test('EventBus toJSON promotes pending events into event_history snapshot', async () => {
   const bus = new EventBus('ModelDumpPendingBus')
   const PendingEvent = BaseEvent.extend('ModelDumpPendingEvent', {})
@@ -161,4 +225,23 @@ test('EventBus toJSON promotes pending events into event_history snapshot', asyn
 
   release_pause()
   await pending.now()
+})
+
+test('EventBus.fromJSON preserves event_history object order', () => {
+  const bus = new EventBus('HistoryOrderBus')
+  const HistoryOrderEvent = BaseEvent.extend('HistoryOrderEvent', {})
+  try {
+    const first = HistoryOrderEvent({})
+    const second = HistoryOrderEvent({})
+    bus.event_history.set(first.event_id, first)
+    bus.event_history.set(second.event_id, second)
+
+    const json = bus.toJSON()
+    assert.deepEqual(Object.keys(json.event_history), [first.event_id, second.event_id])
+
+    const restored = EventBus.fromJSON(json)
+    assert.deepEqual(Object.keys(restored.toJSON().event_history), [first.event_id, second.event_id])
+  } finally {
+    bus.destroy()
+  }
 })

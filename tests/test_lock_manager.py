@@ -7,6 +7,33 @@ from abxbus import BaseEvent, EventBus, EventConcurrencyMode, EventHandlerConcur
 from abxbus.lock_manager import ReentrantLock
 
 
+async def test_wait_until_idle_behaves_correctly() -> None:
+    class LockManagerIdleEvent(BaseEvent[str]):
+        pass
+
+    bus = EventBus(name='IdleBus')
+    calls = 0
+
+    async def handler(_event: LockManagerIdleEvent) -> str:
+        nonlocal calls
+        calls += 1
+        return 'ok'
+
+    bus.on(LockManagerIdleEvent, handler)
+
+    event = bus.emit(LockManagerIdleEvent())
+    await bus.wait_until_idle(timeout=1)
+
+    assert calls == 1
+    assert event.event_status == 'completed'
+    assert len(event.event_results) == 1
+    for result in event.event_results.values():
+        assert result.status == 'completed'
+        assert result.result == 'ok'
+
+    await bus.destroy()
+
+
 async def test_reentrant_lock_nested_context_reuses_single_permit() -> None:
     lock = ReentrantLock()
 

@@ -57,8 +57,8 @@ type EventWaitOptions struct {
 
 type EventResultOptions struct {
 	Include     func(result any, event_result *EventResult) bool
-	RaiseIfAny  *bool
-	RaiseIfNone *bool
+	RaiseIfAny  any
+	RaiseIfNone any
 }
 
 type resolvedEventResultOptions struct {
@@ -750,14 +750,21 @@ func defaultEventResultOptions(options ...*EventResultOptions) *resolvedEventRes
 	if len(options) > 0 && options[0] != nil {
 		provided := options[0]
 		opts.Include = provided.Include
-		if provided.RaiseIfAny != nil {
-			opts.RaiseIfAny = *provided.RaiseIfAny
-		}
-		if provided.RaiseIfNone != nil {
-			opts.RaiseIfNone = *provided.RaiseIfNone
-		}
+		opts.RaiseIfAny = optionalBoolOption(provided.RaiseIfAny, "RaiseIfAny", opts.RaiseIfAny)
+		opts.RaiseIfNone = optionalBoolOption(provided.RaiseIfNone, "RaiseIfNone", opts.RaiseIfNone)
 	}
 	return opts
+}
+
+func optionalBoolOption(value any, name string, defaultValue bool) bool {
+	switch typed := value.(type) {
+	case nil:
+		return defaultValue
+	case bool:
+		return typed
+	default:
+		panic(fmt.Errorf("%s must be a bool when provided, got %T", name, value))
+	}
 }
 
 func (e *BaseEvent) ensureResultsReady(ctx context.Context, firstResult bool) error {

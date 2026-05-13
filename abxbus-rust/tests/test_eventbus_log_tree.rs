@@ -67,16 +67,6 @@ fn test_log_tree_single_event() {
 }
 
 #[test]
-fn test_log_history_tree_single_event() {
-    test_log_tree_single_event();
-}
-
-#[test]
-fn test_logtree_single_event() {
-    test_log_tree_single_event();
-}
-
-#[test]
 fn test_log_tree_with_handler_results() {
     let bus = EventBus::new(Some("HandlerBus".to_string()));
     bus.on_raw("RootEvent", "test_handler", |_event| async move {
@@ -97,16 +87,6 @@ fn test_log_tree_with_handler_results() {
 }
 
 #[test]
-fn test_log_history_tree_with_handlers() {
-    test_log_tree_with_handler_results();
-}
-
-#[test]
-fn test_logtree_with_handler_results() {
-    test_log_tree_with_handler_results();
-}
-
-#[test]
 fn test_log_tree_with_handler_errors() {
     let bus = EventBus::new(Some("ErrorBus".to_string()));
     bus.on_raw("RootEvent", "error_handler", |_event| async move {
@@ -123,16 +103,6 @@ fn test_log_tree_with_handler_errors() {
     assert!(output.contains(&format!("{}.error_handler#", bus.label())));
     assert!(output.contains("ValueError: Test error message"));
     bus.destroy();
-}
-
-#[test]
-fn test_log_history_tree_with_errors() {
-    test_log_tree_with_handler_errors();
-}
-
-#[test]
-fn test_logtree_with_handler_errors() {
-    test_log_tree_with_handler_errors();
 }
 
 #[test]
@@ -175,11 +145,6 @@ fn test_log_tree_first_mode_control_cancellations_use_cancelled_icon() {
     assert!(!output.contains(&format!("❌ {}.slow_handler#", bus.label())));
     assert!(output.contains("Aborted: Aborted: first result resolved"));
     bus.destroy();
-}
-
-#[test]
-fn test_logtree_first_mode_control_cancellations_use_cancelled_icon() {
-    test_log_tree_first_mode_control_cancellations_use_cancelled_icon();
 }
 
 #[test]
@@ -236,16 +201,6 @@ fn test_log_tree_complex_nested() {
 }
 
 #[test]
-fn test_log_history_tree_complex_nested() {
-    test_log_tree_complex_nested();
-}
-
-#[test]
-fn test_logtree_complex_nested() {
-    test_log_tree_complex_nested();
-}
-
-#[test]
 fn test_log_tree_multiple_roots() {
     let bus = EventBus::new(Some("MultiBus".to_string()));
 
@@ -267,16 +222,6 @@ fn test_log_tree_multiple_roots() {
 }
 
 #[test]
-fn test_log_history_tree_multiple_roots() {
-    test_log_tree_multiple_roots();
-}
-
-#[test]
-fn test_logtree_multiple_roots() {
-    test_log_tree_multiple_roots();
-}
-
-#[test]
 fn test_log_tree_timing_info() {
     let bus = EventBus::new(Some("TimingBus".to_string()));
     bus.on_raw("RootEvent", "timed_handler", |_event| async move {
@@ -294,16 +239,6 @@ fn test_log_tree_timing_info() {
     assert!(output.contains('('));
     assert!(output.contains("s)"));
     bus.destroy();
-}
-
-#[test]
-fn test_log_history_tree_timing_info() {
-    test_log_tree_timing_info();
-}
-
-#[test]
-fn test_logtree_timing_info() {
-    test_log_tree_timing_info();
 }
 
 #[test]
@@ -339,14 +274,4 @@ fn test_log_tree_running_handler() {
     release_handler.store(true, Ordering::SeqCst);
     let _ = block_on(event.now());
     bus.destroy();
-}
-
-#[test]
-fn test_log_history_tree_running_handler() {
-    test_log_tree_running_handler();
-}
-
-#[test]
-fn test_logtree_running_handler() {
-    test_log_tree_running_handler();
 }
