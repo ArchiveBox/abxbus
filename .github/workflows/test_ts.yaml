@@ -127,7 +127,7 @@ jobs:
           cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
       - name: Install bridge service binaries
-        if: matrix.task.kind == 'test' && matrix.task.name == 'bridges'
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')
         run: |
           sudo apt-get update
           sudo apt-get install -y redis-server nats-server postgresql sqlite3 gcc-14 g++-14
@@ -181,19 +181,19 @@ jobs:
           node -e "const m = require('@tachyon-ipc/core'); console.log('tachyon-ipc loaded:', typeof m.Bus)"
 
       - uses: astral-sh/setup-uv@v6
-        if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'retry_multiprocess')
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'EventBus_locking')
         with:
           enable-cache: true
           activate-environment: true
 
       - name: Install Python deps for cross-runtime tests
-        if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'retry_multiprocess')
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'EventBus_locking')
         run: |
           cd ..
           uv sync --dev --all-extras --no-extra tachyon
 
       - name: Verify bridge optional Node deps
-        if: matrix.task.kind == 'test' && matrix.task.name == 'bridges'
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')
         run: |
           node - <<'NODE'
           const required = ['ioredis', 'nats', 'pg']

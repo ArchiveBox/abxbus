@@ -83,6 +83,7 @@ jobs:
     env:
       IN_DOCKER: 'True'
     strategy:
+      fail-fast: false
       matrix:
         task: ${{ fromJson(needs.find_py_tests.outputs.PY_TASKS || '[{"kind":"error","name":"FAILED_TO_DISCOVER_TASKS"}]') }}
         # autodiscovers files in tests/test_*.py and examples/*.py
@@ -132,7 +133,7 @@ jobs:
           gcc-14 --version
 
       - name: Install bridge service binaries
-        if: matrix.task.kind == 'test' && matrix.task.name == 'test_bridges'
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
         run: |
           sudo apt-get update
           sudo apt-get install -y redis-server nats-server postgresql sqlite3 gcc-14 g++-14
@@ -169,7 +170,7 @@ jobs:
           pnpm --dir abxbus-ts run build
 
       - name: Verify bridge optional Python deps
-        if: matrix.task.kind == 'test' && matrix.task.name == 'test_bridges'
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
         run: |
           uv run python - <<'PY'
           import importlib
@@ -181,7 +182,7 @@ jobs:
 
       - name: Run test with coverage
         if: matrix.task.kind == 'test'
-        run: uv run coverage run --parallel-mode --source=abxbus -m pytest -x tests/${{ matrix.task.name }}.py
+        run: uv run coverage run --parallel-mode --source=abxbus -m pytest tests/${{ matrix.task.name }}.py
 
       - name: Run example
         if: matrix.task.kind == 'example'
@@ -282,7 +283,7 @@ jobs:
           activate-environment: true
 
       - run: uv sync --dev --all-extras --no-extra tachyon
-      - run: uv run pytest -x tests/test_eventbus_performance.py
+      - run: uv run pytest tests/test_eventbus_performance.py
       - name: Run Python runtime perf
         run: uv run python tests/performance_runtime.py | tee python_perf.log
       - name: Export Python perf stats
