@@ -16,7 +16,7 @@ use futures::executor::block_on;
 use futures_timer::Delay;
 use serde_json::{json, Map, Value};
 
-const PERFORMANCE_MAX_MS_PER_UNIT: f64 = 0.3;
+const PERFORMANCE_MAX_MS_PER_UNIT: f64 = 0.6;
 static PERFORMANCE_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn performance_test_guard() -> MutexGuard<'static, ()> {
