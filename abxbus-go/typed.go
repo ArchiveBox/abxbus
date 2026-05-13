@@ -205,15 +205,26 @@ func MustNewTypedEventWithResult[TPayload any, TResult any](eventType string, pa
 	return event
 }
 
-func OnTyped[TPayload any, TResult any](
+type TypedEventHandler[TPayload any, TResult any] interface {
+	~func(TPayload) (TResult, error) |
+		~func(TPayload, context.Context) (TResult, error) |
+		~func(TPayload) TResult |
+		~func(TPayload, context.Context) TResult |
+		~func(TPayload) error |
+		~func(TPayload, context.Context) error |
+		~func(TPayload) |
+		~func(TPayload, context.Context)
+}
+
+func OnTyped[TPayload any, TResult any, THandler TypedEventHandler[TPayload, TResult]](
 	bus *EventBus,
 	eventPattern string,
 	handlerName string,
-	handler func(context.Context, TPayload) (TResult, error),
+	handler THandler,
 	options *EventHandler,
 ) *EventHandler {
 	payloadSchema := JSONSchemaFor[TPayload]()
-	return bus.On(eventPattern, handlerName, func(ctx context.Context, event *BaseEvent) (any, error) {
+	return bus.On(eventPattern, handlerName, func(event *BaseEvent, ctx context.Context) (any, error) {
 		if err := jsonschema.Validate(payloadSchema, event.Payload); err != nil {
 			var zero TResult
 			return zero, fmt.Errorf("EventHandlerPayloadSchemaError: Event payload did not match declared handler payload type: %w", err)
@@ -223,7 +234,33 @@ func OnTyped[TPayload any, TResult any](
 			var zero TResult
 			return zero, err
 		}
-		return handler(ctx, payload)
+		switch typed := any(handler).(type) {
+		case func(TPayload) (TResult, error):
+			return typed(payload)
+		case func(TPayload, context.Context) (TResult, error):
+			return typed(payload, ctx)
+		case func(TPayload) TResult:
+			return typed(payload), nil
+		case func(TPayload, context.Context) TResult:
+			return typed(payload, ctx), nil
+		case func(TPayload) error:
+			var zero TResult
+			return zero, typed(payload)
+		case func(TPayload, context.Context) error:
+			var zero TResult
+			return zero, typed(payload, ctx)
+		case func(TPayload):
+			typed(payload)
+			var zero TResult
+			return zero, nil
+		case func(TPayload, context.Context):
+			typed(payload, ctx)
+			var zero TResult
+			return zero, nil
+		default:
+			var zero TResult
+			return zero, fmt.Errorf("unsupported typed handler signature: %T", handler)
+		}
 	}, options)
 }
 

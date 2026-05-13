@@ -39,7 +39,7 @@ func TestEventBusSerializationRoundtripPreservesConfigHandlersHistory(t *testing
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
 		EventHandlerSlowTimeout: &handlerSlowTimeout,
 	})
-	h := bus.On("Evt", "h", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) { return "ok", nil }, nil)
+	h := bus.On("Evt", "h", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) { return "ok", nil }, nil)
 	e := bus.Emit(abxbus.NewBaseEvent("Evt", map[string]any{"k": "v"}))
 	if _, err := e.Now(); err != nil {
 		t.Fatal(err)
@@ -113,7 +113,7 @@ func TestEventBusSerializationRoundtripPreservesConfigHandlersHistory(t *testing
 		t.Fatalf("restored idle bus should start with clean runtime state")
 	}
 
-	restored.On("Evt2", "h2", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) { return "ok2", nil }, nil)
+	restored.On("Evt2", "h2", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) { return "ok2", nil }, nil)
 	v, err := restored.Emit(abxbus.NewBaseEvent("Evt2", nil)).EventResult()
 	if err != nil || v != "ok2" {
 		t.Fatalf("restored bus should remain functional, result=%#v err=%v", v, err)
@@ -175,7 +175,7 @@ func TestEventBusFromJSONDefaultsMissingHandlerMaps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored.On("Evt", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	restored.On("Evt", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
 	result, err := restored.Emit(abxbus.NewBaseEvent("Evt", nil)).EventResult()
@@ -196,11 +196,11 @@ func TestEventBusSerializationPreservesHandlerRegistrationOrderThroughJSONAndRes
 	})
 	originalOrder := []string{}
 
-	first := bus.On("HandlerOrderEvent", "first", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	first := bus.On("HandlerOrderEvent", "first", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		originalOrder = append(originalOrder, "first")
 		return "first", nil
 	}, nil)
-	second := bus.On("HandlerOrderEvent", "second", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	second := bus.On("HandlerOrderEvent", "second", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		originalOrder = append(originalOrder, "second")
 		return "second", nil
 	}, nil)
@@ -244,11 +244,11 @@ func TestEventBusSerializationPreservesHandlerRegistrationOrderThroughJSONAndRes
 	}
 
 	restoredOrder := []string{}
-	restored.On("HandlerOrderEvent", "first", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	restored.On("HandlerOrderEvent", "first", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		restoredOrder = append(restoredOrder, "first")
 		return "first", nil
 	}, payload.Handlers[first.ID])
-	restored.On("HandlerOrderEvent", "second", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	restored.On("HandlerOrderEvent", "second", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		restoredOrder = append(restoredOrder, "second")
 		return "second", nil
 	}, payload.Handlers[second.ID])
@@ -275,7 +275,7 @@ func TestEventBusSerializationPreservesHandlerRegistrationOrderThroughJSONAndRes
 
 func TestEventBusFromJSONRecreatesMissingHandlerEntriesFromEventResultMetadata(t *testing.T) {
 	bus := abxbus.NewEventBus("MissingHandlerHydrationBus", nil)
-	bus.On("SerializableEvent", "handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("SerializableEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
 	event := bus.Emit(abxbus.NewBaseEvent("SerializableEvent", nil))
@@ -331,7 +331,7 @@ func TestEventBusFromJSONRecreatesMissingHandlerEntriesFromEventResultMetadata(t
 func TestBaseEventFromJSONRoundtripsRuntimeJSONShape(t *testing.T) {
 	bus := abxbus.NewEventBus("SerializableBaseEventBus", nil)
 	defer bus.Destroy()
-	bus.On("SerializableBaseEvent", "handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("SerializableBaseEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
 
@@ -360,7 +360,7 @@ func TestEventBusSerializationPreservesPendingQueueIDs(t *testing.T) {
 	bus := abxbus.NewEventBus("PendingSerBus", &abxbus.EventBusOptions{EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial})
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
-	bus.On("BlockedEvt", "block", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("BlockedEvt", "block", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		started <- struct{}{}
 		<-release
 		return "done", nil

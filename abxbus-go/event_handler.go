@@ -3,9 +3,10 @@ package abxbus
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 )
 
-type EventHandlerCallable func(ctx context.Context, event *BaseEvent) (any, error)
+type EventHandlerCallable func(event *BaseEvent, ctx context.Context) (any, error)
 
 type EventHandler struct {
 	ID                  string   `json:"id"`
@@ -74,7 +75,42 @@ func (h *EventHandler) Handle(ctx context.Context, event *BaseEvent) (any, error
 	if h.handler == nil {
 		return nil, nil
 	}
-	return h.handler(ctx, event)
+	return h.handler(event, ctx)
 }
 
 func (h *EventHandler) ToJSON() ([]byte, error) { return json.Marshal(h) }
+
+func normalizeEventHandlerCallable(handler any) (EventHandlerCallable, error) {
+	switch typed := handler.(type) {
+	case nil:
+		return nil, nil
+	case EventHandlerCallable:
+		return typed, nil
+	case func(*BaseEvent, context.Context) (any, error):
+		return typed, nil
+	case func(*BaseEvent) (any, error):
+		return func(event *BaseEvent, ctx context.Context) (any, error) {
+			return typed(event)
+		}, nil
+	case func(*BaseEvent, context.Context) error:
+		return func(event *BaseEvent, ctx context.Context) (any, error) {
+			return nil, typed(event, ctx)
+		}, nil
+	case func(*BaseEvent) error:
+		return func(event *BaseEvent, ctx context.Context) (any, error) {
+			return nil, typed(event)
+		}, nil
+	case func(*BaseEvent, context.Context):
+		return func(event *BaseEvent, ctx context.Context) (any, error) {
+			typed(event, ctx)
+			return nil, nil
+		}, nil
+	case func(*BaseEvent):
+		return func(event *BaseEvent, ctx context.Context) (any, error) {
+			typed(event)
+			return nil, nil
+		}, nil
+	default:
+		return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
+	}
+}

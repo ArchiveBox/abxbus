@@ -118,7 +118,7 @@ func main() {
 	maxInFlight := 0
 	release := make(chan struct{})
 
-	bus.On("ParallelEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ParallelEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		mu.Lock()
 		inFlight++
 		if inFlight > maxInFlight {

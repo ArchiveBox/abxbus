@@ -118,14 +118,14 @@ func main() {
 	slowStarted := make(chan struct{}, 1)
 	slowCompleted := make(chan struct{}, 1)
 
-	bus.On("CompletionEvent", "slow_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("CompletionEvent", "slow_handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		slowStarted <- struct{}{}
 		time.Sleep(500 * time.Millisecond)
 		slowCompleted <- struct{}{}
 		return "slow", nil
 	}, nil)
 
-	bus.On("CompletionEvent", "fast_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("CompletionEvent", "fast_handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(10 * time.Millisecond)
 		return "winner", nil
 	}, nil)

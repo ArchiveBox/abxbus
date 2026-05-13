@@ -275,17 +275,17 @@ func main() {
 		MaxHistorySize:          &maxHistory,
 	})}
 
-	auth.bus.On("UserCreatedEvent", "on_user_created", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	auth.bus.On("UserCreatedEvent", "on_user_created", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return fmt.Sprintf("auth-ok:%s", event.Payload["user_id"]), nil
 	}, nil)
-	billing.bus.On("UserCreatedEvent", "on_user_created", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	billing.bus.On("UserCreatedEvent", "on_user_created", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return fmt.Sprintf("billing-ok:%s", event.Payload["user_id"]), nil
 	}, nil)
 
-	auth.bus.On("*", "forward_to_relay", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	auth.bus.On("*", "forward_to_relay", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return relay.bus.Emit(event), nil
 	}, nil)
-	relay.bus.On("*", "forward_to_billing", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	relay.bus.On("*", "forward_to_billing", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return billing.bus.Emit(event), nil
 	}, nil)
 
@@ -379,12 +379,12 @@ left := abxbus.NewEventBus("LeftBus", nil)
 right := abxbus.NewEventBus("RightBus", nil)
 
 // uni-directional
-left.On("*", "forward_to_right", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+left.On("*", "forward_to_right", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 	return right.Emit(event), nil
 }, nil)
 
 // bi-directional (add reverse path)
-right.On("*", "forward_to_left", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+right.On("*", "forward_to_left", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 	return left.Emit(event), nil
 }, nil)
 ```
@@ -510,13 +510,13 @@ busB := abxbus.NewEventBus("BusB", nil)
 busC := abxbus.NewEventBus("BusC", nil)
 
 // cycle: A -> B -> C -> A
-busA.On("*", "forward_to_b", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+busA.On("*", "forward_to_b", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 	return busB.Emit(event), nil
 }, nil)
-busB.On("*", "forward_to_c", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+busB.On("*", "forward_to_c", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 	return busC.Emit(event), nil
 }, nil)
-busC.On("*", "forward_to_a", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+busC.On("*", "forward_to_a", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 	return busA.Emit(event), nil
 }, nil)
 

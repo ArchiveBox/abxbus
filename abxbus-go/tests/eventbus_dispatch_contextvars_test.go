@@ -13,7 +13,7 @@ func TestAwaitedDispatchPropagatesContextIntoHandlers(t *testing.T) {
 	bus := abxbus.NewEventBus("ContextDispatchBus", nil)
 	key := contextKey("request_id")
 	seen := ""
-	bus.On("ContextEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ContextEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		seen, _ = ctx.Value(key).(string)
 		return "ok", nil
 	}, nil)
@@ -31,14 +31,14 @@ func TestAwaitedChildDispatchPropagatesHandlerContext(t *testing.T) {
 	bus := abxbus.NewEventBus("ContextChildBus", nil)
 	key := contextKey("trace_id")
 	childSeen := ""
-	bus.On("ParentContextEvent", "parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ParentContextEvent", "parent", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		child := event.Emit(abxbus.NewBaseEvent("ChildContextEvent", nil))
 		if _, err := child.Now(); err != nil {
 			return nil, err
 		}
 		return "parent", nil
 	}, nil)
-	bus.On("ChildContextEvent", "child", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ChildContextEvent", "child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		childSeen, _ = ctx.Value(key).(string)
 		return "child", nil
 	}, nil)
@@ -59,14 +59,14 @@ func TestWaitChildDispatchPreservesHandlerContext(t *testing.T) {
 	})
 	key := contextKey("event_completed_trace_id")
 	childSeen := ""
-	bus.On("EventCompletedParentContextEvent", "parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("EventCompletedParentContextEvent", "parent", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		child := event.Emit(abxbus.NewBaseEvent("EventCompletedChildContextEvent", nil))
 		if _, err := child.Wait(); err != nil {
 			return nil, err
 		}
 		return "parent", nil
 	}, nil)
-	bus.On("EventCompletedChildContextEvent", "child", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("EventCompletedChildContextEvent", "child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		childSeen, _ = ctx.Value(key).(string)
 		return "child", nil
 	}, nil)

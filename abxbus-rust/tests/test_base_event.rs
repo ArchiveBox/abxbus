@@ -495,6 +495,97 @@ fn test_base_event_now_inside_handler_no_args() {
 }
 
 #[test]
+fn test_typed_event_emit_inside_handler_no_args() {
+    let _guard = test_guard();
+    let bus = EventBus::new_with_options(
+        Some("BaseEventTypedImmediateQueueJumpBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let child_ref = Arc::new(Mutex::new(None::<String>));
+
+    let bus_for_parent = bus.clone();
+    let order_for_parent = order.clone();
+    let child_ref_for_parent = child_ref.clone();
+    bus.on(
+        BaseEventImmediateParentEvent,
+        move |event: BaseEventImmediateParentEvent| {
+            let bus = bus_for_parent.clone();
+            let order = order_for_parent.clone();
+            let child_ref = child_ref_for_parent.clone();
+            async move {
+                push(&order, "parent_start");
+                bus.emit(BaseEventImmediateSiblingEvent {
+                    ..Default::default()
+                });
+                let child = event.emit(BaseEventImmediateChildEvent {
+                    ..Default::default()
+                });
+                *child_ref.lock().expect("child ref lock") =
+                    Some(child.inner.inner.lock().event_id.clone());
+                let _ = child.now().await;
+                push(&order, "parent_end");
+                Ok("parent".to_string())
+            }
+        },
+    );
+
+    let order_for_child = order.clone();
+    bus.on(
+        BaseEventImmediateChildEvent,
+        move |_event: BaseEventImmediateChildEvent| {
+            let order = order_for_child.clone();
+            async move {
+                push(&order, "child");
+                Ok("child".to_string())
+            }
+        },
+    );
+
+    let order_for_sibling = order.clone();
+    bus.on(
+        BaseEventImmediateSiblingEvent,
+        move |_event: BaseEventImmediateSiblingEvent| {
+            let order = order_for_sibling.clone();
+            async move {
+                push(&order, "sibling");
+                Ok("sibling".to_string())
+            }
+        },
+    );
+
+    let parent = bus.emit(BaseEventImmediateParentEvent {
+        ..Default::default()
+    });
+    let _ = block_on(parent.now());
+    block_on(bus.wait_until_idle(Some(2.0)));
+
+    assert_eq!(
+        order.lock().expect("order lock").as_slice(),
+        ["parent_start", "child", "parent_end", "sibling"]
+    );
+    let child_id = child_ref
+        .lock()
+        .expect("child ref lock")
+        .clone()
+        .expect("child id");
+    let parent_children = parent
+        .inner
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .flat_map(|result| result.event_children.clone())
+        .collect::<Vec<_>>();
+    assert!(parent_children.contains(&child_id));
+    bus.destroy();
+}
+
+#[test]
 fn test_base_event_now_inside_handler_with_args() {
     let _guard = test_guard();
     let bus = EventBus::new_with_options(

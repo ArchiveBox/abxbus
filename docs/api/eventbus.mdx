@@ -97,6 +97,27 @@ let bus = EventBus::new_with_options(
 ```
 
 </Tab>
+<Tab title="Rust">
+
+```rust
+// EventBus::process_queued_event(...)
+event.mark_started();
+let handlers = self.handlers_for_event(&event);
+let pending_entries = self.create_pending_results(&event, &handlers);
+
+// EventBus::run_handler(...)
+result.mark_started();
+let handler_result = self
+    .run_handler_with_timeout(event.clone(), handler.clone(), result.clone())
+    .await;
+
+// BaseEvent::now(...)
+EventBus::queue_jump_if_waited(event.clone());
+event.event_completed_with_timeout(options.timeout).await;
+EventBus::wait_until_event_idle(event.clone(), options.timeout).await;
+```
+
+</Tab>
 </Tabs>
 
 ### Shared configuration semantics
@@ -677,7 +698,7 @@ bus.emit(ResumeTickEvent({}))
 await bus.waitUntilIdle()
 
 // 5) Teardown when done
-await bus.destroy({ timeout: 1, clear: true })
+await bus.destroy({ clear: true })
 ```
 
 </Tab>
@@ -715,7 +736,48 @@ timeout := 1.0
 bus.WaitUntilIdle(&timeout)
 
 // 5) Teardown when done
-bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Timeout: 1.0, Clear: true})
+bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Clear: true})
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::{base_event::BaseEvent, event_bus::EventBus};
+use futures::executor::block_on;
+use serde_json::json;
+
+let resume_tick = BaseEvent::new("ResumeTickEvent", Default::default());
+
+// 1) Serialize full bus state
+let payload = bus.to_json_value();
+println!("{}", serde_json::to_string_pretty(&payload).unwrap());
+// {
+//   "id": "018f...",
+//   "name": "SerializableBus",
+//   "handlers": {
+//     "018f...": {"id": "018f...", "handler_name": "on_user_created", "event_pattern": "UserCreatedEvent"}
+//   },
+//   "event_history": {
+//     "0190...": {"event_id": "0190...", "event_type": "UserCreatedEvent", "...": "..."}
+//   },
+//   "pending_event_queue": ["0190..."]
+// }
+
+// 2) Rehydrate state
+let bus = EventBus::from_json_value(payload);
+
+// 3) Re-link runtime callables by handler id/name
+bus.on_raw("UserCreatedEvent", "on_user_created", |_event| async move { Ok(json!("created")) });
+bus.on_raw("UserDeletedEvent", "on_user_deleted", |_event| async move { Ok(json!("deleted")) });
+bus.on_raw("UserUpdatedEvent", "on_user_updated", |_event| async move { Ok(json!("updated")) });
+
+// 4) Resume processing
+bus.emit_base(resume_tick);
+assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+// 5) Teardown when done
+bus.destroy();
 ```
 
 </Tab>

@@ -251,7 +251,7 @@ bus.on(ChargeCardEvent, async (event) => `receipt-${event.order_id}`)
 <Tab title="Go">
 
 ```go
-bus.On("CheckoutEvent", "on_checkout", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+bus.On("CheckoutEvent", "on_checkout", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 	orderID, _ := event.Payload["order_id"].(string)
 	child := event.Emit(abxbus.NewBaseEvent("ChargeCardEvent", map[string]any{"order_id": orderID}))
 	if _, err := child.Now(); err != nil {
@@ -260,7 +260,7 @@ bus.On("CheckoutEvent", "on_checkout", func(ctx context.Context, event *abxbus.B
 	return child.EventResult()
 }, nil)
 
-bus.On("ChargeCardEvent", "on_charge", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+bus.On("ChargeCardEvent", "on_charge", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 	orderID, _ := event.Payload["order_id"].(string)
 	return "receipt-" + orderID, nil
 }, nil)

@@ -34,7 +34,7 @@ func TestEventConcurrencyRemainsUnsetOnDispatchAndResolvesDuringProcessing(t *te
 		EventConcurrency: abxbus.EventConcurrencyParallel,
 	})
 	defer bus.Destroy()
-	bus.On("PropagationEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("PropagationEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
 
@@ -65,7 +65,7 @@ func TestEventConcurrencyClassOverrideBeatsBusDefault(t *testing.T) {
 		EventConcurrency: abxbus.EventConcurrencyParallel,
 	})
 	defer bus.Destroy()
-	bus.On("ConcurrencyOverrideEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ConcurrencyOverrideEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
 
@@ -108,7 +108,7 @@ func TestHandlerDefaultsRemainUnsetOnDispatchAndResolveDuringProcessing(t *testi
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionFirst,
 	})
 	defer bus.Destroy()
-	bus.On("PropagationEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("PropagationEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
 
@@ -142,7 +142,7 @@ func TestHandlerClassOverrideBeatsBusDefault(t *testing.T) {
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionFirst,
 	})
 	defer bus.Destroy()
-	bus.On("HandlerOverrideEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("HandlerOverrideEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
 

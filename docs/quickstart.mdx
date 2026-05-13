@@ -130,7 +130,7 @@ block_on(event.now());
 
 ```go
 bus := abxbus.NewEventBus("MyAuthEventBus", nil)
-bus.On("CreateUserEvent", "on_create_user", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+bus.On("CreateUserEvent", "on_create_user", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 	return map[string]any{"user_id": "some-user-uuid"}, nil
 }, nil)
 

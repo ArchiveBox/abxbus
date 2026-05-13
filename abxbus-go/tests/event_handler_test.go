@@ -9,7 +9,7 @@ import (
 )
 
 func TestEventHandlerJSONRoundtrip(t *testing.T) {
-	h := abxbus.NewEventHandler("Bus", "bus-id", "Evt", "h", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) { return "ok", nil })
+	h := abxbus.NewEventHandler("Bus", "bus-id", "Evt", "h", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) { return "ok", nil })
 	data, err := h.ToJSON()
 	if err != nil {
 		t.Fatal(err)
@@ -43,6 +43,57 @@ func TestEventHandlerJSONRoundtrip(t *testing.T) {
 	}
 	if round.HandlerRegisteredAt != h.HandlerRegisteredAt {
 		t.Fatalf("registered_at mismatch: %s vs %s", round.HandlerRegisteredAt, h.HandlerRegisteredAt)
+	}
+}
+
+func TestEventBusOnSupportsEventFirstOptionalContextHandlerSignatures(t *testing.T) {
+	bus := abxbus.NewEventBus("HandlerSignatureBus", nil)
+	seen := []string{}
+
+	bus.On("HandlerSignatureEvent", "value_error", func(event *abxbus.BaseEvent) (any, error) {
+		seen = append(seen, event.EventType+":value_error")
+		return "value_error", nil
+	}, nil)
+	bus.On("HandlerSignatureEvent", "value_error_ctx", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		if ctx == nil {
+			t.Fatal("context should be available when requested")
+		}
+		seen = append(seen, event.EventType+":value_error_ctx")
+		return "value_error_ctx", nil
+	}, nil)
+	bus.On("HandlerSignatureEvent", "error_only", func(event *abxbus.BaseEvent) error {
+		seen = append(seen, event.EventType+":error_only")
+		return nil
+	}, nil)
+	bus.On("HandlerSignatureEvent", "error_only_ctx", func(event *abxbus.BaseEvent, ctx context.Context) error {
+		if ctx == nil {
+			t.Fatal("context should be available when requested")
+		}
+		seen = append(seen, event.EventType+":error_only_ctx")
+		return nil
+	}, nil)
+	bus.On("HandlerSignatureEvent", "void", func(event *abxbus.BaseEvent) {
+		seen = append(seen, event.EventType+":void")
+	}, nil)
+	bus.On("HandlerSignatureEvent", "void_ctx", func(event *abxbus.BaseEvent, ctx context.Context) {
+		if ctx == nil {
+			t.Fatal("context should be available when requested")
+		}
+		seen = append(seen, event.EventType+":void_ctx")
+	}, nil)
+
+	values, err := bus.Emit(abxbus.NewBaseEvent("HandlerSignatureEvent", nil)).EventResultsList(&abxbus.EventResultOptions{
+		RaiseIfAny:  false,
+		RaiseIfNone: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 2 || values[0] != "value_error" || values[1] != "value_error_ctx" {
+		t.Fatalf("expected only non-null handler values, got %#v", values)
+	}
+	if len(seen) != 6 {
+		t.Fatalf("expected every handler signature to run, got %#v", seen)
 	}
 }
 
@@ -97,7 +148,7 @@ func TestOnRecomputesHandlerIDAfterMetadataOverrides(t *testing.T) {
 	expectedID := "19ea9fe8-cfbe-541e-8a35-2579e4e9efff"
 
 	bus := abxbus.NewEventBus("StandaloneBus", &abxbus.EventBusOptions{ID: eventbusID})
-	entry := bus.On(eventPattern, "original_name", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	entry := bus.On(eventPattern, "original_name", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, &abxbus.EventHandler{
 		HandlerName:         handlerName,

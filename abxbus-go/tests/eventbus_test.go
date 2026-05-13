@@ -38,11 +38,11 @@ func TestEmitAndDispatchUseDefaultBehavior(t *testing.T) {
 	}
 
 	calls := []string{}
-	bus.On("CreateUserEvent", "first", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("CreateUserEvent", "first", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		calls = append(calls, "first")
 		return "first", nil
 	}, nil)
-	bus.On("CreateUserEvent", "second", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("CreateUserEvent", "second", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		calls = append(calls, "second")
 		return map[string]any{"user_id": "abc"}, nil
 	}, nil)
@@ -96,7 +96,7 @@ func TestUnboundedHistoryDisablesHistoryRejection(t *testing.T) {
 func TestMaxHistoryDropFalseRejectsNewDispatchWhenHistoryIsFull(t *testing.T) {
 	maxHistorySize := 2
 	bus := abxbus.NewEventBus("NoDropHistBus", &abxbus.EventBusOptions{MaxHistorySize: &maxHistorySize})
-	bus.On("NoDropEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("NoDropEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
 
@@ -130,7 +130,7 @@ func TestZeroHistorySizeKeepsInflightAndDropsOnCompletion(t *testing.T) {
 	bus := abxbus.NewEventBus("ZeroHistoryBus", &abxbus.EventBusOptions{MaxHistorySize: &zeroHistorySize})
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
-	bus.On("SlowEvent", "slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("SlowEvent", "slow", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		select {
 		case started <- struct{}{}:
 		default:
@@ -171,7 +171,7 @@ func TestZeroHistoryNoDropAllowsBurstQueueingAndDropsCompletedEvents(t *testing.
 	zeroHistorySize := 0
 	bus := abxbus.NewEventBus("ZeroHistNoDropBus", &abxbus.EventBusOptions{MaxHistorySize: &zeroHistorySize, MaxHistoryDrop: false})
 	release := make(chan struct{})
-	bus.On("BurstEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("BurstEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		<-release
 		return "ok", nil
 	}, nil)
@@ -202,7 +202,7 @@ func TestZeroHistoryNoDropAllowsBurstQueueingAndDropsCompletedEvents(t *testing.
 
 func TestEventResultReturnsFirstCompletedResult(t *testing.T) {
 	bus := abxbus.NewEventBus("SimpleBus", nil)
-	bus.On("ResultEvent", "on_create", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ResultEvent", "on_create", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return map[string]any{"user_id": "abc"}, nil
 	}, nil)
 	e := bus.Emit(abxbus.NewBaseEvent("ResultEvent", map[string]any{"email": "a@b.com"}))
@@ -223,13 +223,13 @@ func TestEventResultsListDefaultsFilterEmptyValuesRaiseErrorsAndOptionsOverride(
 	bus := abxbus.NewEventBus("EventResultsOptionsBus", nil)
 	defer bus.Destroy()
 
-	bus.On("ResultOptionsDefaultEvent", "ok", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ResultOptionsDefaultEvent", "ok", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
-	bus.On("ResultOptionsDefaultEvent", "nil", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ResultOptionsDefaultEvent", "nil", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, nil
 	}, nil)
-	bus.On("ResultOptionsDefaultEvent", "forwarded", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ResultOptionsDefaultEvent", "forwarded", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return abxbus.NewBaseEvent("ForwardedResultEvent", nil), nil
 	}, nil)
 	defaultEvent := bus.Emit(abxbus.NewBaseEvent("ResultOptionsDefaultEvent", nil))
@@ -244,10 +244,10 @@ func TestEventResultsListDefaultsFilterEmptyValuesRaiseErrorsAndOptionsOverride(
 		t.Fatalf("default result filtering mismatch: %#v", defaultValues)
 	}
 
-	bus.On("ResultOptionsErrorEvent", "ok", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ResultOptionsErrorEvent", "ok", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
-	bus.On("ResultOptionsErrorEvent", "boom", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ResultOptionsErrorEvent", "boom", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, errors.New("boom")
 	}, nil)
 	errorEvent := bus.Emit(abxbus.NewBaseEvent("ResultOptionsErrorEvent", nil))
@@ -265,7 +265,7 @@ func TestEventResultsListDefaultsFilterEmptyValuesRaiseErrorsAndOptionsOverride(
 		t.Fatalf("raise_if_any=false values mismatch: %#v", valuesWithoutErrors)
 	}
 
-	bus.On("ResultOptionsEmptyEvent", "nil", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ResultOptionsEmptyEvent", "nil", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, nil
 	}, nil)
 	emptyEvent := bus.Emit(abxbus.NewBaseEvent("ResultOptionsEmptyEvent", nil))
@@ -283,10 +283,10 @@ func TestEventResultsListDefaultsFilterEmptyValuesRaiseErrorsAndOptionsOverride(
 		t.Fatalf("raise_if_none=false should allow empty result list, got %#v", emptyValues)
 	}
 
-	bus.On("ResultOptionsIncludeEvent", "keep", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ResultOptionsIncludeEvent", "keep", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "keep", nil
 	}, nil)
-	bus.On("ResultOptionsIncludeEvent", "drop", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ResultOptionsIncludeEvent", "drop", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "drop", nil
 	}, nil)
 	seenHandlerNames := []string{}
@@ -413,8 +413,8 @@ func TestCompletionModeAllWaitsForAllHandlers(t *testing.T) {
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
 	})
 	slowDone := false
-	bus.On("Evt", "fast", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) { return "fast", nil }, nil)
-	bus.On("Evt", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("Evt", "fast", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) { return "fast", nil }, nil)
+	bus.On("Evt", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(30 * time.Millisecond)
 		slowDone = true
 		return "slow", nil
@@ -434,8 +434,8 @@ func TestCompletionModeFirstSerialStopsAfterFirstNonNil(t *testing.T) {
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
 	})
 	secondCalled := false
-	bus.On("Evt", "first", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) { return "first", nil }, nil)
-	bus.On("Evt", "second", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("Evt", "first", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) { return "first", nil }, nil)
+	bus.On("Evt", "second", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		secondCalled = true
 		return "second", nil
 	}, nil)
@@ -467,7 +467,7 @@ func TestCompletionModeFirstParallelReturnsFastAndCancelsSlow(t *testing.T) {
 	})
 	slowStarted := make(chan struct{}, 1)
 	slowExited := make(chan struct{}, 1)
-	bus.On("Evt", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("Evt", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		slowStarted <- struct{}{}
 		select {
 		case <-time.After(500 * time.Millisecond):
@@ -478,7 +478,7 @@ func TestCompletionModeFirstParallelReturnsFastAndCancelsSlow(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}, nil)
-	bus.On("Evt", "fast", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) { return "fast", nil }, nil)
+	bus.On("Evt", "fast", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) { return "fast", nil }, nil)
 
 	event := abxbus.NewBaseEvent("Evt", nil)
 	event.EventHandlerCompletion = abxbus.EventHandlerCompletionFirst
@@ -509,7 +509,7 @@ func TestCompletionModeFirstParallelReturnsFastAndCancelsSlow(t *testing.T) {
 func TestWaitUntilIdleTimeoutAndRecovery(t *testing.T) {
 	bus := abxbus.NewEventBus("IdleTimeoutBus", nil)
 	release := make(chan struct{})
-	bus.On("Evt", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("Evt", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		<-release
 		return nil, nil
 	}, nil)
@@ -533,13 +533,13 @@ func TestEventResetCreatesFreshPendingEventForCrossBusDispatch(t *testing.T) {
 	seenA := []string{}
 	seenB := []string{}
 
-	busA.On("ResetCoverageEvent", "record_a", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	busA.On("ResetCoverageEvent", "record_a", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		if label, ok := event.Payload["label"].(string); ok {
 			seenA = append(seenA, label)
 		}
 		return "a:" + event.Payload["label"].(string), nil
 	}, nil)
-	busB.On("ResetCoverageEvent", "record_b", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	busB.On("ResetCoverageEvent", "record_b", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		if label, ok := event.Payload["label"].(string); ok {
 			seenB = append(seenB, label)
 		}
@@ -601,7 +601,7 @@ func TestIsIdleAndQueueEmptyStates(t *testing.T) {
 
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
-	bus.On("Evt", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("Evt", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		started <- struct{}{}
 		<-release
 		return nil, nil
@@ -755,11 +755,11 @@ func assertRecordStatuses(t *testing.T, records []middlewareRecord, expected []s
 func TestEventBusMiddlewareReceivesPendingStartedCompletedLifecycleHooks(t *testing.T) {
 	middleware := newRecordingMiddleware("single", nil)
 	bus := abxbus.NewEventBus("MiddlewareBus", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
-	handler := bus.On("MiddlewareEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	handler := bus.On("MiddlewareEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
 	bus.Off("MiddlewareEvent", handler)
-	handler = bus.On("MiddlewareEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	handler = bus.On("MiddlewareEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, &abxbus.EventHandler{
 		ID:                  handler.ID,
@@ -805,7 +805,7 @@ func TestEventBusMiddlewareHooksExecuteInRegistrationOrder(t *testing.T) {
 	bus := abxbus.NewEventBus("MiddlewareOrderBus", &abxbus.EventBusOptions{
 		Middlewares: []abxbus.EventBusMiddleware{first, second},
 	})
-	bus.On("MiddlewareOrderEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("MiddlewareOrderEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
 
@@ -852,7 +852,7 @@ func TestEventBusMiddlewareEventLifecycleOrderingIsDeterministicPerEvent(t *test
 		Middlewares:    []abxbus.EventBusMiddleware{middleware},
 		MaxHistorySize: &historySize,
 	})
-	bus.On("MiddlewareDeterministicEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("MiddlewareDeterministicEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(time.Millisecond)
 		return "ok", nil
 	}, nil)
@@ -891,7 +891,7 @@ func TestEventBusMiddlewareEventLifecycleOrderingIsDeterministicPerEvent(t *test
 func TestEventBusMiddlewareHooksObserveHandlerErrorsWithoutErrorHookStatus(t *testing.T) {
 	middleware := newRecordingMiddleware("errors", nil)
 	bus := abxbus.NewEventBus("MiddlewareErrorBus", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
-	bus.On("MiddlewareErrorEvent", "failing", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("MiddlewareErrorEvent", "failing", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, errors.New("boom")
 	}, nil)
 
@@ -919,7 +919,7 @@ func TestEventBusMiddlewareHooksRemainMonotonicOnEventTimeout(t *testing.T) {
 		Middlewares:             []abxbus.EventBusMiddleware{middleware},
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
 	})
-	bus.On("MiddlewareTimeoutEvent", "slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("MiddlewareTimeoutEvent", "slow", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		select {
 		case <-time.After(100 * time.Millisecond):
 			return "late", nil
@@ -927,7 +927,7 @@ func TestEventBusMiddlewareHooksRemainMonotonicOnEventTimeout(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}, nil)
-	bus.On("MiddlewareTimeoutEvent", "pending", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("MiddlewareTimeoutEvent", "pending", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "pending", nil
 	}, nil)
 	timeout := 0.02
@@ -960,7 +960,7 @@ func TestEventBusMiddlewareHardEventTimeoutFinalizesImmediatelyWithoutWaitingFor
 	started := make(chan struct{}, 2)
 	for _, handlerName := range []string{"slow_1", "slow_2"} {
 		handlerName := handlerName
-		bus.On("MiddlewareHardTimeoutEvent", handlerName, func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		bus.On("MiddlewareHardTimeoutEvent", handlerName, func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			started <- struct{}{}
 			time.Sleep(200 * time.Millisecond)
 			return "late:" + handlerName, nil
@@ -1015,7 +1015,7 @@ func TestEventBusMiddlewareTimeoutCancelAbortAndResultSchemaTaxonomyRemainsExpli
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
 	})
 
-	serialBus.On("MiddlewareSchemaEvent", "bad_schema", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	serialBus.On("MiddlewareSchemaEvent", "bad_schema", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "not-a-number", nil
 	}, nil)
 	schemaEvent := abxbus.NewBaseEvent("MiddlewareSchemaEvent", nil)
@@ -1034,7 +1034,7 @@ func TestEventBusMiddlewareTimeoutCancelAbortAndResultSchemaTaxonomyRemainsExpli
 		}
 	}
 
-	serialBus.On("MiddlewareSerialTimeoutEvent", "slow_1", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	serialBus.On("MiddlewareSerialTimeoutEvent", "slow_1", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		select {
 		case <-time.After(100 * time.Millisecond):
 			return "slow", nil
@@ -1042,7 +1042,7 @@ func TestEventBusMiddlewareTimeoutCancelAbortAndResultSchemaTaxonomyRemainsExpli
 			return nil, ctx.Err()
 		}
 	}, nil)
-	serialBus.On("MiddlewareSerialTimeoutEvent", "slow_2", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	serialBus.On("MiddlewareSerialTimeoutEvent", "slow_2", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		select {
 		case <-time.After(100 * time.Millisecond):
 			return "slow-2", nil
@@ -1065,7 +1065,7 @@ func TestEventBusMiddlewareTimeoutCancelAbortAndResultSchemaTaxonomyRemainsExpli
 		t.Fatalf("serial event timeout should abort or time out a running handler explicitly, got %#v", serialErrors)
 	}
 
-	parallelBus.On("MiddlewareParallelTimeoutEvent", "slow_1", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	parallelBus.On("MiddlewareParallelTimeoutEvent", "slow_1", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		select {
 		case <-time.After(100 * time.Millisecond):
 			return "slow", nil
@@ -1073,7 +1073,7 @@ func TestEventBusMiddlewareTimeoutCancelAbortAndResultSchemaTaxonomyRemainsExpli
 			return nil, ctx.Err()
 		}
 	}, nil)
-	parallelBus.On("MiddlewareParallelTimeoutEvent", "slow_2", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	parallelBus.On("MiddlewareParallelTimeoutEvent", "slow_2", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		select {
 		case <-time.After(100 * time.Millisecond):
 			return "slow-2", nil
@@ -1121,11 +1121,11 @@ func TestEventBusMiddlewareHooksArePerBusOnForwardedEvents(t *testing.T) {
 	middlewareB := newRecordingMiddleware("b", nil)
 	busA := abxbus.NewEventBus("MiddlewareForwardA", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middlewareA}})
 	busB := abxbus.NewEventBus("MiddlewareForwardB", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middlewareB}})
-	handlerA := busA.On("MiddlewareForwardEvent", "forward", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	handlerA := busA.On("MiddlewareForwardEvent", "forward", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		busB.Emit(event)
 		return "forwarded", nil
 	}, nil)
-	handlerB := busB.On("MiddlewareForwardEvent", "target", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	handlerB := busB.On("MiddlewareForwardEvent", "target", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "target", nil
 	}, nil)
 
@@ -1146,10 +1146,10 @@ func TestEventBusMiddlewareHooksArePerBusOnForwardedEvents(t *testing.T) {
 func TestEventBusMiddlewareHooksCoverStringAndWildcardPatterns(t *testing.T) {
 	middleware := newRecordingMiddleware("patterns", nil)
 	bus := abxbus.NewEventBus("MiddlewarePatternBus", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
-	stringHandler := bus.On("MiddlewarePatternEvent", "string", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	stringHandler := bus.On("MiddlewarePatternEvent", "string", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "string:" + event.EventType, nil
 	}, nil)
-	wildcardHandler := bus.On("*", "wildcard", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	wildcardHandler := bus.On("*", "wildcard", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "wildcard:" + event.EventType, nil
 	}, nil)
 
@@ -1228,10 +1228,10 @@ func TestSameNameEventBusesKeepIndependentIDsHandlersAndHistory(t *testing.T) {
 		t.Fatal("same-name buses should still have distinct ids")
 	}
 
-	first.On("NameConflictEvent", "first", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	first.On("NameConflictEvent", "first", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "first", nil
 	}, nil)
-	second.On("NameConflictEvent", "second", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	second.On("NameConflictEvent", "second", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "second", nil
 	}, nil)
 
@@ -1255,7 +1255,7 @@ func TestSameNameEventBusesKeepIndependentIDsHandlersAndHistory(t *testing.T) {
 func TestDestroyClearFalsePreservesHandlersAndHistoryResolvesWaitersAndIsTerminal(t *testing.T) {
 	bus := abxbus.NewEventBus("DestroyClearFalseTerminalBus", nil)
 	var calls atomic.Int32
-	bus.On("Evt", "h", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("Evt", "h", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		calls.Add(1)
 		return "ok", nil
 	}, nil)
@@ -1328,7 +1328,7 @@ func TestDestroyClearFalsePreservesHandlersAndHistoryResolvesWaitersAndIsTermina
 	}
 	assertDestroyedPanic("Emit", func() { bus.Emit(abxbus.NewBaseEvent("Evt", nil)) })
 	assertDestroyedPanic("On", func() {
-		bus.On("Evt", "again", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		bus.On("Evt", "again", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			return nil, nil
 		}, nil)
 	})
@@ -1344,7 +1344,7 @@ func TestDestroyIsImmediateAndRejectsLateHandlerEmits(t *testing.T) {
 	lateEmitRejected := make(chan bool, 1)
 	var startOnce sync.Once
 
-	bus.On("SlowEvt", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("SlowEvt", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		startOnce.Do(func() { close(started) })
 		<-release
 		rejected := false
@@ -1405,7 +1405,7 @@ func TestDestroyIsImmediateAndRejectsLateHandlerEmits(t *testing.T) {
 func TestDestroyDefaultClearIsTerminalAndFreesBusState(t *testing.T) {
 	bus := abxbus.NewEventBus("TerminalDestroyBus", nil)
 
-	bus.On("Evt", "h", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("Evt", "h", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
 	event := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
@@ -1477,7 +1477,7 @@ func TestDestroyDefaultClearIsTerminalAndFreesBusState(t *testing.T) {
 	}
 	assertDestroyedPanic("Emit", func() { bus.Emit(abxbus.NewBaseEvent("Evt", nil)) })
 	assertDestroyedPanic("On", func() {
-		bus.On("Evt", "new", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) { return nil, nil }, nil)
+		bus.On("Evt", "new", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) { return nil, nil }, nil)
 	})
 
 	if _, err := bus.Find("Evt", nil, nil); !errors.Is(err, abxbus.ErrEventBusDestroyed) {
@@ -1494,12 +1494,12 @@ func TestDestroyingOneBusDoesNotBreakSharedHandlersOrForwardTargets(t *testing.T
 	defer target.Destroy()
 
 	var seen atomic.Int32
-	shared := func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	shared := func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		seen.Add(1)
 		return "shared", nil
 	}
 	source.On("SharedDestroyEvent", "shared_source", shared, nil)
-	source.On("*", "forward", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	source.On("*", "forward", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return target.Emit(event), nil
 	}, nil)
 	target.On("SharedDestroyEvent", "shared_target", shared, nil)
@@ -1623,7 +1623,7 @@ func TestOtelTracingMiddlewareCreatesEventAndHandlerSpans(t *testing.T) {
 		},
 	})
 	bus := abxbus.NewEventBus("OtelBus", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
-	bus.On("OtelEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("OtelEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok", nil
 	}, nil)
 
@@ -1675,7 +1675,7 @@ func TestOtelTracingMiddlewareNamesEventAndHandlerSpansForDisplay(t *testing.T) 
 	})
 	bus := abxbus.NewEventBus("StagehandExtensionBackground", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
 	t.Cleanup(bus.Destroy)
-	bus.On("CDPConnect", "DebuggerClient.on_CDPConnect", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("CDPConnect", "DebuggerClient.on_CDPConnect", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "connected", nil
 	}, nil)
 
@@ -1699,14 +1699,14 @@ func TestOtelTracingMiddlewareParentsChildEventToEmittingHandlerSpan(t *testing.
 		Tracer: provider.Tracer("abxbus-test"),
 	})
 	bus := abxbus.NewEventBus("OtelParentBus", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
-	bus.On("ParentOtelEvent", "parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ParentOtelEvent", "parent", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		child := event.Emit(abxbus.NewBaseEvent("ChildOtelEvent", nil))
 		if _, err := child.Now(); err != nil {
 			return nil, err
 		}
 		return "parent", nil
 	}, nil)
-	bus.On("ChildOtelEvent", "child", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ChildOtelEvent", "child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "child", nil
 	}, nil)
 
@@ -1752,7 +1752,7 @@ func TestOtelTracingMiddlewareWaitsUntilTopLevelEventCompletionBeforeEndingSpans
 
 	started := make(chan struct{})
 	release := make(chan struct{})
-	bus.On("OtelRootStartEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("OtelRootStartEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		close(started)
 		select {
 		case <-release:
@@ -1803,7 +1803,7 @@ func TestOtelTracingMiddlewareRecordsHandlerErrors(t *testing.T) {
 	})
 	bus := abxbus.NewEventBus("OtelErrorBus", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
 	handlerErr := errors.New("handler failed")
-	bus.On("OtelErrorEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("OtelErrorEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, handlerErr
 	}, nil)
 

@@ -17,8 +17,8 @@ func TestGlobalSerialAcrossBuses(t *testing.T) {
 	inFlight := 0
 	maxInFlight := 0
 	order := []string{}
-	h := func(busLabel string) func(context.Context, *abxbus.BaseEvent) (any, error) {
-		return func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	h := func(busLabel string) func(*abxbus.BaseEvent, context.Context) (any, error) {
+		return func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			seq := int(e.Payload["n"].(int))
 			mu.Lock()
 			inFlight++
@@ -96,19 +96,19 @@ func TestGlobalSerialAwaitedChildJumpsAheadOfQueuedEventsAcrossBuses(t *testing.
 		order = append(order, value)
 	}
 
-	busB.On("ChildEvent", "child", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	busB.On("ChildEvent", "child", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		record("child_start")
 		time.Sleep(5 * time.Millisecond)
 		record("child_end")
 		return "child", nil
 	}, nil)
-	busB.On("QueuedEvent", "queued", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	busB.On("QueuedEvent", "queued", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		record("queued_start")
 		time.Sleep(time.Millisecond)
 		record("queued_end")
 		return "queued", nil
 	}, nil)
-	busA.On("ParentEvent", "parent", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	busA.On("ParentEvent", "parent", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		record("parent_start")
 		busB.Emit(abxbus.NewBaseEvent("QueuedEvent", nil))
 		child := e.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
@@ -160,8 +160,8 @@ func TestEventConcurrencyBusSerialSerializesPerBusButOverlapsAcrossBuses(t *test
 	globalInFlight := 0
 	maxGlobalInFlight := 0
 
-	handler := func(label string, started chan struct{}, release chan struct{}) func(context.Context, *abxbus.BaseEvent) (any, error) {
-		return func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	handler := func(label string, started chan struct{}, release chan struct{}) func(*abxbus.BaseEvent, context.Context) (any, error) {
+		return func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			mu.Lock()
 			inFlightByBus[label]++
 			if inFlightByBus[label] > maxByBus[label] {
@@ -236,7 +236,7 @@ func TestEventConcurrencyParallelAllowsSameBusEventsToOverlap(t *testing.T) {
 	var mu sync.Mutex
 	inFlight := 0
 	maxInFlight := 0
-	bus.On("Evt", "handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("Evt", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		mu.Lock()
 		inFlight++
 		if inFlight > maxInFlight {
@@ -290,7 +290,7 @@ func TestEventConcurrencyOverrideParallelBeatsBusSerialDefault(t *testing.T) {
 	var mu sync.Mutex
 	inFlight := 0
 	maxInFlight := 0
-	bus.On("Evt", "handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("Evt", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		mu.Lock()
 		inFlight++
 		if inFlight > maxInFlight {
@@ -349,7 +349,7 @@ func TestEventConcurrencyOverrideBusSerialBeatsBusParallelDefault(t *testing.T) 
 	var mu sync.Mutex
 	inFlight := 0
 	maxInFlight := 0
-	bus.On("Evt", "handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("Evt", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		mu.Lock()
 		inFlight++
 		if inFlight > maxInFlight {
@@ -418,7 +418,7 @@ func TestHandlerConcurrencyParallelStartsBoth(t *testing.T) {
 	started := make(chan struct{}, 2)
 
 	for i := 0; i < 2; i++ {
-		bus.On("Evt", "h", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		bus.On("Evt", "h", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			mu.Lock()
 			count++
 			mu.Unlock()
@@ -463,7 +463,7 @@ func TestEventHandlerConcurrencyPerEventOverrideControlsExecutionMode(t *testing
 	release := make(chan struct{})
 	started := make(chan string, 4)
 
-	handler := func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	handler := func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		mode := e.Payload["mode"].(string)
 		mu.Lock()
 		inFlight++

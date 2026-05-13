@@ -46,7 +46,7 @@ func NewJSONLEventBridge(path string, pollIntervalSeconds float64, name string) 
 	}
 }
 
-func (b *JSONLEventBridge) On(eventPattern string, handlerName string, handler EventHandlerCallable, options *EventHandler) *EventHandler {
+func (b *JSONLEventBridge) On(eventPattern string, handlerName string, handler any, options *EventHandler) *EventHandler {
 	_ = b.Start()
 	return b.inboundBus.On(eventPattern, handlerName, handler, options)
 }

@@ -110,7 +110,7 @@ func main() {
 	started := make(chan struct{}, 2)
 	release := make(chan struct{})
 
-	tracked := func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	tracked := func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		mu.Lock()
 		inFlight++
 		if inFlight > maxInFlight {

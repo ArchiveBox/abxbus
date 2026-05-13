@@ -422,6 +422,27 @@ impl EventBus {
             .and_then(|eventbus_id| Self::live_instance_by_id(&eventbus_id))
     }
 
+    pub fn event_bus_for_event_id(event_id: &str) -> Option<Arc<EventBus>> {
+        if event_id.is_empty() {
+            return None;
+        }
+        if let Some(current_bus_id) = CURRENT_EVENT_ID.with(|current_event_id| {
+            CURRENT_BUS_ID.with(|current_bus_id| {
+                (current_event_id.borrow().as_deref() == Some(event_id))
+                    .then(|| current_bus_id.borrow().clone())
+                    .flatten()
+            })
+        }) {
+            if let Some(bus) = Self::live_instance_by_id(&current_bus_id) {
+                return Some(bus);
+            }
+        }
+
+        Self::live_instances()
+            .into_iter()
+            .find(|bus| bus.runtime.events.lock().contains_key(event_id))
+    }
+
     pub fn new(name: Option<String>) -> Arc<Self> {
         Self::new_with_options(name, EventBusOptions::default())
     }

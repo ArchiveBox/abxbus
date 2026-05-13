@@ -107,7 +107,7 @@ abxbus.OnTyped[OrderCreatedPayload, OrderResult](
 	bus,
 	"OrderCreatedEvent",
 	"handle_order",
-	func(ctx context.Context, payload OrderCreatedPayload) (OrderResult, error) {
+	func(payload OrderCreatedPayload, ctx context.Context) (OrderResult, error) {
 		return OrderResult{OK: payload.TotalAmount > 0}, nil
 	},
 	nil,

@@ -38,7 +38,7 @@ func TestQueueJumpPreservesParentChildLineageAndFindVisibility(t *testing.T) {
 		executionOrder = append(executionOrder, value)
 	}
 
-	bus.On("QueueJumpRootEvent", "on_root", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("QueueJumpRootEvent", "on_root", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		appendOrder("root:start")
 		child := event.Emit(abxbus.NewBaseEvent("QueueJumpChildEvent", nil))
 		if _, err := child.Now(); err != nil {
@@ -47,7 +47,7 @@ func TestQueueJumpPreservesParentChildLineageAndFindVisibility(t *testing.T) {
 		appendOrder("root:end")
 		return "root-ok", nil
 	}, nil)
-	bus.On("QueueJumpChildEvent", "on_child", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("QueueJumpChildEvent", "on_child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		mu.Lock()
 		childEventID = event.EventID
 		mu.Unlock()
@@ -59,7 +59,7 @@ func TestQueueJumpPreservesParentChildLineageAndFindVisibility(t *testing.T) {
 		}
 		return "child-ok", nil
 	}, nil)
-	bus.On("QueueJumpSiblingEvent", "on_sibling", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("QueueJumpSiblingEvent", "on_sibling", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		appendOrder("sibling")
 		return "sibling-ok", nil
 	}, nil)
@@ -140,7 +140,7 @@ func TestConcurrencyIntersectionParallelEventsWithSerialHandlers(t *testing.T) {
 	maxByEvent := map[string]int{}
 	globalCurrent := 0
 	globalMax := 0
-	trackedHandler := func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	trackedHandler := func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		mu.Lock()
 		currentByEvent[event.EventID]++
 		if currentByEvent[event.EventID] > maxByEvent[event.EventID] {
@@ -202,15 +202,15 @@ func TestTimeoutEnforcementDoesNotBreakFollowupProcessingOrQueueState(t *testing
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
 	})
 	t.Cleanup(bus.Destroy)
-	bus.On("TimeoutEnforcementEvent", "slow_handler_a", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutEnforcementEvent", "slow_handler_a", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}, nil)
-	bus.On("TimeoutEnforcementEvent", "slow_handler_b", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutEnforcementEvent", "slow_handler_b", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}, nil)
-	bus.On("TimeoutFollowupEvent", "followup_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("TimeoutFollowupEvent", "followup_handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "followup-ok", nil
 	}, nil)
 
@@ -259,7 +259,7 @@ func TestZeroHistoryBackpressureWithFindFutureStillResolvesNewEvents(t *testing.
 		MaxHistoryDrop: false,
 	})
 	t.Cleanup(bus.Destroy)
-	bus.On("ZeroHistoryEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("ZeroHistoryEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok:" + event.Payload["value"].(string), nil
 	}, nil)
 
@@ -316,10 +316,10 @@ func TestContextPropagatesThroughForwardingAndChildDispatchWithLineageIntact(t *
 	parentEventID := ""
 	childParentID := ""
 
-	busA.On("*", "forward_to_b", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	busA.On("*", "forward_to_b", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return busB.Emit(event), nil
 	}, nil)
-	busB.On("ContextParentEvent", "on_parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	busB.On("ContextParentEvent", "on_parent", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		capturedParentRequestID, _ = ctx.Value(key).(string)
 		parentEventID = event.EventID
 		child := event.Emit(abxbus.NewBaseEvent("ContextChildEvent", nil))
@@ -328,7 +328,7 @@ func TestContextPropagatesThroughForwardingAndChildDispatchWithLineageIntact(t *
 		}
 		return "parent-ok", nil
 	}, nil)
-	busB.On("ContextChildEvent", "on_child", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	busB.On("ContextChildEvent", "on_child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		capturedChildRequestID, _ = ctx.Value(key).(string)
 		if event.EventParentID != nil {
 			childParentID = *event.EventParentID
@@ -388,7 +388,7 @@ func TestPendingQueueFindVisibilityTransitionsToCompletedAfterRelease(t *testing
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
-	bus.On("PendingVisibilityEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("PendingVisibilityEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		if event.Payload["tag"] == "blocking" {
 			once.Do(func() { close(started) })
 			select {
@@ -436,7 +436,7 @@ func TestHistoryBackpressureRejectsOverflowAndPreservesFindableHistory(t *testin
 		MaxHistoryDrop: false,
 	})
 	t.Cleanup(bus.Destroy)
-	bus.On("BackpressureEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("BackpressureEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok:" + event.Payload["value"].(string), nil
 	}, nil)
 
@@ -476,7 +476,7 @@ func TestEventBusCrossRuntimeJSONFeaturesUseCanonicalShapes(t *testing.T) {
 	bus := abxbus.NewEventBus("CrossRuntimeFeatureBus", &abxbus.EventBusOptions{
 		EventHandlerDetectFilePaths: &detectPaths,
 	})
-	handler := bus.On("CrossRuntimeFeatureEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	handler := bus.On("CrossRuntimeFeatureEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return map[string]any{"ok": true}, nil
 	}, nil)
 	event := abxbus.NewBaseEvent("CrossRuntimeFeatureEvent", map[string]any{"label": "go"})

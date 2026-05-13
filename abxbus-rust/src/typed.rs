@@ -1117,6 +1117,35 @@ macro_rules! __abxbus_event_parse {
             }
         }
 
+        impl $name {
+            pub fn event_bus(&self) -> Option<std::sync::Arc<$crate::event_bus::EventBus>> {
+                $crate::event_bus::EventBus::event_bus_for_event_id(&self.event_id)
+            }
+
+            pub fn bus(&self) -> Option<std::sync::Arc<$crate::event_bus::EventBus>> {
+                self.event_bus()
+            }
+
+            pub fn emit<I: $crate::typed::IntoBaseEventHandle>(
+                &self,
+                event: I,
+            ) -> $crate::typed::BaseEventHandle<I::Event> {
+                self.event_bus()
+                    .expect("event.emit(...) requires an event attached to a running EventBus")
+                    .emit_child(event)
+            }
+
+            pub fn emit_with_options<I: $crate::typed::IntoBaseEventHandle>(
+                &self,
+                event: I,
+                queue_jump: bool,
+            ) -> $crate::typed::BaseEventHandle<I::Event> {
+                self.event_bus()
+                    .expect("event.emit_with_options(...) requires an event attached to a running EventBus")
+                    .emit_child_with_options(event, queue_jump)
+            }
+        }
+
         #[allow(non_camel_case_types, non_upper_case_globals)]
         impl $crate::typed::EventSpec for $name {
             type payload = $name;

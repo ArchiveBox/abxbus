@@ -101,7 +101,7 @@ import (
 
 func main() {
 	bus := abxbus.NewEventBus("MyBus", nil)
-	bus.On("SomeEvent", "on_some_event", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("SomeEvent", "on_some_event", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		fmt.Println(event.Payload["some_data"])
 		return nil, nil
 	}, nil)

@@ -137,8 +137,8 @@ func main() {
 	inFlightGlobal := 0
 	maxInFlightGlobal := 0
 
-	handler := func(starts *[]int) func(context.Context, *abxbus.BaseEvent) (any, error) {
-		return func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	handler := func(starts *[]int) func(*abxbus.BaseEvent, context.Context) (any, error) {
+		return func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			mu.Lock()
 			inFlightGlobal++
 			if inFlightGlobal > maxInFlightGlobal {

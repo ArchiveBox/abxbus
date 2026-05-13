@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -297,14 +298,18 @@ func (b *EventBus) notifyBusHandlersChange(handler *EventHandler, registered boo
 	}
 }
 
-func (b *EventBus) On(event_pattern string, handler_name string, handler EventHandlerCallable, options *EventHandler) *EventHandler {
+func (b *EventBus) On(event_pattern string, handler_name string, handler any, options *EventHandler) *EventHandler {
 	if err := b.rejectIfDestroyed("On"); err != nil {
 		panic(err)
 	}
 	if event_pattern == "" {
 		event_pattern = "*"
 	}
-	h := NewEventHandler(b.Name, b.ID, event_pattern, handler_name, handler)
+	normalizedHandler, err := normalizeEventHandlerCallable(handler)
+	if err != nil {
+		panic(err)
+	}
+	h := NewEventHandler(b.Name, b.ID, event_pattern, handler_name, normalizedHandler)
 	explicitID := false
 	if options != nil {
 		if options.ID != "" {
@@ -626,6 +631,7 @@ func completeEventAcrossBuses(event *BaseEvent) {
 		bus.notifyEventChange(event, "completed")
 		bus.EventHistory.TrimEventHistory(nil)
 	}
+	event.signalCompleted()
 }
 
 func completeIdleEventAcrossBuses(event *BaseEvent) bool {
@@ -856,6 +862,7 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 		event.markCompleted()
 		b.notifyEventChange(event, "completed")
 		b.EventHistory.TrimEventHistory(nil)
+		event.signalCompleted()
 	}
 	b.startRunloop()
 	return nil
@@ -1110,7 +1117,8 @@ func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, hand
 func (b *EventBus) processEventImmediately(ctx context.Context, event *BaseEvent, handler_result *EventResult) (*BaseEvent, error) {
 	original_event := event
 	if original_event.status() == "completed" {
-		return original_event, nil
+		_, err := original_event.waitWithContext(ctx)
+		return original_event, err
 	}
 	b.mu.Lock()
 	for i, queued := range b.pendingEventQueue {
@@ -1143,7 +1151,8 @@ func (b *EventBus) processEventImmediately(ctx context.Context, event *BaseEvent
 func (b *EventBus) processEventImmediatelyAcrossBuses(ctx context.Context, event *BaseEvent) (*BaseEvent, error) {
 	originalEvent := event
 	if originalEvent.status() == "completed" {
-		return originalEvent, nil
+		_, err := originalEvent.waitWithContext(ctx)
+		return originalEvent, err
 	}
 
 	for {
@@ -1264,7 +1273,10 @@ func (b *EventBus) startRunloop() {
 	}
 	b.runloopRunning = true
 	b.mu.Unlock()
-	go b.runloop(context.Background())
+	go func() {
+		runtime.Gosched()
+		b.runloop(context.Background())
+	}()
 }
 
 func (b *EventBus) runloop(ctx context.Context) {

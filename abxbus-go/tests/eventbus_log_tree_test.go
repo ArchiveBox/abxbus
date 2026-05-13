@@ -11,14 +11,14 @@ import (
 
 func TestLogTreeShowsParentChildAndHandlerResults(t *testing.T) {
 	bus := abxbus.NewEventBus("TreeBus", nil)
-	bus.On("RootEvent", "root", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("RootEvent", "root", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		child := e.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
 		if _, err := child.Now(); err != nil {
 			return nil, err
 		}
 		return "root-ok", nil
 	}, nil)
-	bus.On("ChildEvent", "child", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("ChildEvent", "child", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "child-ok", nil
 	}, nil)
 
@@ -39,7 +39,7 @@ func TestLogTreeShowsParentChildAndHandlerResults(t *testing.T) {
 func TestLogTreeIncludesTimedOutResultErrors(t *testing.T) {
 	short := 0.01
 	bus := abxbus.NewEventBus("TimeoutTreeBus", &abxbus.EventBusOptions{EventTimeout: &short})
-	bus.On("SlowEvent", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+	bus.On("SlowEvent", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		select {
 		case <-time.After(30 * time.Millisecond):
 			return "too-late", nil

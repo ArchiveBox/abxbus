@@ -166,19 +166,19 @@ func main() {
 		bus,
 		"UserActionEvent",
 		"on",
-		func(ctx context.Context, payload UserActionPayload) (string, error) {
+		func(payload UserActionPayload, ctx context.Context) (string, error) {
 			return fmt.Sprintf("action:%s", payload.Action), nil
 		},
 		nil,
 	)
 
-	bus.On("UserActionEvent", "on_by_name", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("UserActionEvent", "on_by_name", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		fmt.Println("by-name", event.EventType, event.Payload["action"])
 		// by-name UserActionEvent click
 		return nil, nil
 	}, nil)
 
-	bus.On("*", "on_any", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	bus.On("*", "on_any", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		fmt.Println("wildcard", event.EventType)
 		// wildcard UserActionEvent
 		return nil, nil

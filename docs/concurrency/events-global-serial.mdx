@@ -126,7 +126,7 @@ func main() {
 	maxInFlight := 0
 	starts := []string{}
 
-	handler := func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+	handler := func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		mu.Lock()
 		inFlight++
 		if inFlight > maxInFlight {
