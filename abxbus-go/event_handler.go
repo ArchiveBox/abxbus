@@ -4,9 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 )
 
 type EventHandlerCallable func(event *BaseEvent, ctx context.Context) (any, error)
+
+var (
+	baseEventPointerType = reflect.TypeOf((*BaseEvent)(nil))
+	contextInterfaceType = reflect.TypeOf((*context.Context)(nil)).Elem()
+	errorInterfaceType   = reflect.TypeOf((*error)(nil)).Elem()
+)
+
+func reflectValueIsNil(value reflect.Value) bool {
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
+}
 
 type EventHandler struct {
 	ID                  string   `json:"id"`
@@ -111,6 +127,51 @@ func normalizeEventHandlerCallable(handler any) (EventHandlerCallable, error) {
 			return nil, nil
 		}, nil
 	default:
-		return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
+		value := reflect.ValueOf(handler)
+		if !value.IsValid() || value.Kind() != reflect.Func || value.IsNil() {
+			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
+		}
+		handlerType := value.Type()
+		if handlerType.NumIn() != 1 && handlerType.NumIn() != 2 {
+			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
+		}
+		if handlerType.In(0) != baseEventPointerType {
+			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
+		}
+		withContext := handlerType.NumIn() == 2
+		if withContext && handlerType.In(1) != contextInterfaceType {
+			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
+		}
+		if handlerType.NumOut() > 2 {
+			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
+		}
+		if handlerType.NumOut() == 1 && !handlerType.Out(0).Implements(errorInterfaceType) {
+			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
+		}
+		if handlerType.NumOut() == 2 && !handlerType.Out(1).Implements(errorInterfaceType) {
+			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
+		}
+		return func(event *BaseEvent, ctx context.Context) (any, error) {
+			args := []reflect.Value{reflect.ValueOf(event)}
+			if withContext {
+				args = append(args, reflect.ValueOf(ctx))
+			}
+			results := value.Call(args)
+			switch len(results) {
+			case 0:
+				return nil, nil
+			case 1:
+				if reflectValueIsNil(results[0]) {
+					return nil, nil
+				}
+				return nil, results[0].Interface().(error)
+			default:
+				var err error
+				if !reflectValueIsNil(results[1]) {
+					err = results[1].Interface().(error)
+				}
+				return results[0].Interface(), err
+			}
+		}, nil
 	}
 }

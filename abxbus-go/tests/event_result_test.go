@@ -962,6 +962,11 @@ type DerivedNameEvent struct {
 	Url string
 }
 
+type namedBaseNoContextHandler func(*abxbus.BaseEvent) error
+type namedBaseWithContextHandler func(*abxbus.BaseEvent, context.Context) (any, error)
+type namedTypedNoContextHandler func(addPayload) addResult
+type namedTypedWithContextHandler func(addPayload, context.Context) (addResult, error)
+
 func TestEmitAcceptsTypedStructAndDerivesPayloadAndConfig(t *testing.T) {
 	bus := abxbus.NewEventBus("StructEmitBus", nil)
 	event := bus.Emit(getConfigEvent{
@@ -1071,6 +1076,86 @@ func TestOnTypedSupportsOptionalContextHandlerSignatures(t *testing.T) {
 	}
 	if ctxTypedResult.Sum != 10 || !gotCtx {
 		t.Fatalf("expected typed context result sum=10 and ctx=true, got result=%#v ctx=%v", ctxTypedResult, gotCtx)
+	}
+}
+
+func TestEventBusOnSupportsNamedHandlerFunctionTypes(t *testing.T) {
+	bus := abxbus.NewEventBus("NamedHandlerFunctionTypesBus", nil)
+	gotNoContext := false
+	gotContext := false
+
+	bus.On("NamedNoContextHandlerEvent", "named_no_context", namedBaseNoContextHandler(func(event *abxbus.BaseEvent) error {
+		gotNoContext = event.EventType == "NamedNoContextHandlerEvent"
+		return nil
+	}), nil)
+	bus.On("NamedWithContextHandlerEvent", "named_with_context", namedBaseWithContextHandler(func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		gotContext = event.EventType == "NamedWithContextHandlerEvent" && ctx != nil
+		return "named-ok", nil
+	}), nil)
+
+	noContextEvent := bus.Emit(abxbus.NewBaseEvent("NamedNoContextHandlerEvent", nil))
+	if _, err := noContextEvent.Now(); err != nil {
+		t.Fatal(err)
+	}
+	if !gotNoContext {
+		t.Fatal("expected named no-context handler to run")
+	}
+
+	contextEvent := bus.Emit(abxbus.NewBaseEvent("NamedWithContextHandlerEvent", nil))
+	if _, err := contextEvent.Now(); err != nil {
+		t.Fatal(err)
+	}
+	contextResult, err := contextEvent.EventResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contextResult != "named-ok" || !gotContext {
+		t.Fatalf("expected named context handler result and ctx=true, got result=%#v ctx=%v", contextResult, gotContext)
+	}
+}
+
+func TestOnTypedSupportsNamedHandlerFunctionTypes(t *testing.T) {
+	bus := abxbus.NewEventBus("TypedNamedHandlerFunctionTypesBus", nil)
+	gotCtx := false
+
+	abxbus.OnTyped[addPayload, addResult](bus, "TypedNamedNoContextEvent", "typed", namedTypedNoContextHandler(func(payload addPayload) addResult {
+		return addResult{Sum: payload.A + payload.B}
+	}), nil)
+	abxbus.OnTyped[addPayload, addResult](bus, "TypedNamedWithContextEvent", "typed", namedTypedWithContextHandler(func(payload addPayload, ctx context.Context) (addResult, error) {
+		gotCtx = ctx != nil
+		return addResult{Sum: payload.A + payload.B}, nil
+	}), nil)
+
+	noContextEvent := bus.Emit(abxbus.MustNewTypedEventWithResult[addPayload, addResult]("TypedNamedNoContextEvent", addPayload{A: 3, B: 4}))
+	if _, err := noContextEvent.Now(); err != nil {
+		t.Fatal(err)
+	}
+	noContextResult, err := noContextEvent.EventResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	noContextTypedResult, err := abxbus.EventResultAs[addResult](noContextResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noContextTypedResult.Sum != 7 {
+		t.Fatalf("expected named typed no-context result sum=7, got %#v", noContextTypedResult)
+	}
+
+	contextEvent := bus.Emit(abxbus.MustNewTypedEventWithResult[addPayload, addResult]("TypedNamedWithContextEvent", addPayload{A: 5, B: 8}))
+	if _, err := contextEvent.Now(); err != nil {
+		t.Fatal(err)
+	}
+	contextResult, err := contextEvent.EventResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	contextTypedResult, err := abxbus.EventResultAs[addResult](contextResult)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contextTypedResult.Sum != 13 || !gotCtx {
+		t.Fatalf("expected named typed context result sum=13 and ctx=true, got result=%#v ctx=%v", contextTypedResult, gotCtx)
 	}
 }
 
