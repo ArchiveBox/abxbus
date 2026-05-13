@@ -232,7 +232,11 @@ func TestEventResultsListDefaultsFilterEmptyValuesRaiseErrorsAndOptionsOverride(
 	bus.On("ResultOptionsDefaultEvent", "forwarded", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		return abxbus.NewBaseEvent("ForwardedResultEvent", nil), nil
 	}, nil)
-	defaultValues, err := bus.Emit(abxbus.NewBaseEvent("ResultOptionsDefaultEvent", nil)).EventResultsList()
+	defaultEvent := bus.Emit(abxbus.NewBaseEvent("ResultOptionsDefaultEvent", nil))
+	if _, err := defaultEvent.Now(); err != nil {
+		t.Fatal(err)
+	}
+	defaultValues, err := defaultEvent.EventResultsList()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,6 +251,9 @@ func TestEventResultsListDefaultsFilterEmptyValuesRaiseErrorsAndOptionsOverride(
 		return nil, errors.New("boom")
 	}, nil)
 	errorEvent := bus.Emit(abxbus.NewBaseEvent("ResultOptionsErrorEvent", nil))
+	if _, err := errorEvent.Now(); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := errorEvent.EventResultsList(); err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("default raise_if_any should surface handler error, got %v", err)
 	}
@@ -262,6 +269,9 @@ func TestEventResultsListDefaultsFilterEmptyValuesRaiseErrorsAndOptionsOverride(
 		return nil, nil
 	}, nil)
 	emptyEvent := bus.Emit(abxbus.NewBaseEvent("ResultOptionsEmptyEvent", nil))
+	if _, err := emptyEvent.Now(); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := emptyEvent.EventResultsList(&abxbus.EventResultOptions{RaiseIfNone: true}); err == nil {
 		t.Fatal("raise_if_none=true should fail when every handler result is filtered out")
 	}
@@ -1338,6 +1348,72 @@ func TestDestroyWithTimeoutWaitsBeforeClearingRuntime(t *testing.T) {
 	}
 	if bus.IsDestroyed() {
 		t.Fatal("clear=false destroy should not terminally destroy the bus")
+	}
+}
+
+func TestDestroyClearFalseWaitsForPriorRunloopBeforeReuse(t *testing.T) {
+	bus := abxbus.NewEventBus("DestroyReuseWaitBus", nil)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	destroyed := make(chan struct{})
+	var startOnce sync.Once
+	var orderMu sync.Mutex
+	order := []string{}
+
+	record := func(value string) {
+		orderMu.Lock()
+		order = append(order, value)
+		orderMu.Unlock()
+	}
+
+	bus.On("SlowEvt", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		record("slow-start")
+		startOnce.Do(func() { close(started) })
+		<-release
+		record("slow-end")
+		return "slow", nil
+	}, nil)
+	bus.On("NextEvt", "next", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		record("next")
+		return "next", nil
+	}, nil)
+
+	bus.Emit(abxbus.NewBaseEvent("SlowEvt", nil))
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for slow handler to start")
+	}
+
+	go func() {
+		bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Timeout: 0.001, Clear: false})
+		close(destroyed)
+	}()
+	select {
+	case <-destroyed:
+		t.Fatal("clear=false destroy returned before the prior runloop stopped")
+	case <-time.After(30 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case <-destroyed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for clear=false destroy")
+	}
+	if bus.IsDestroyed() {
+		t.Fatal("clear=false destroy should leave the bus reusable")
+	}
+
+	next := bus.Emit(abxbus.NewBaseEvent("NextEvt", nil))
+	if _, err := next.Now(); err != nil {
+		t.Fatal(err)
+	}
+	orderMu.Lock()
+	defer orderMu.Unlock()
+	expected := []string{"slow-start", "slow-end", "next"}
+	if !reflect.DeepEqual(order, expected) {
+		t.Fatalf("handlers ran out of order after clear=false reuse: got %#v want %#v", order, expected)
 	}
 }
 

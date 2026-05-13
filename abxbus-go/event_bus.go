@@ -1925,8 +1925,12 @@ func (b *EventBus) Destroy() {
 
 func (b *EventBus) DestroyWithOptions(options *EventBusDestroyOptions) {
 	timeout, clear := resolveEventBusDestroyOptions(options)
-	if timeout != nil {
-		b.WaitUntilIdle(timeout)
+	if clear {
+		if timeout != nil {
+			b.WaitUntilIdle(timeout)
+		}
+	} else if !b.WaitUntilIdle(timeout) {
+		b.WaitUntilIdle(nil)
 	}
 	alreadyDestroyed := b.IsDestroyed()
 	if clear {

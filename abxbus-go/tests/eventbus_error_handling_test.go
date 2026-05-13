@@ -14,6 +14,9 @@ func TestEventResultPropagatesHandlerError(t *testing.T) {
 		return nil, errors.New("boom")
 	}, nil)
 	e := bus.Emit(abxbus.NewBaseEvent("ErrEvent", nil))
+	if _, err := e.Now(); err != nil {
+		t.Fatal(err)
+	}
 	_, err := e.EventResult()
 	if err == nil || err.Error() != "boom" {
 		t.Fatalf("expected boom error, got %v", err)
