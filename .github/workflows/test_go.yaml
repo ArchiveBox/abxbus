@@ -124,14 +124,15 @@ jobs:
 
       - name: Install native TypeScript build tools
         if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: cmake gcc-14 g++-14
+          version: native-typescript-build-tools-v1
+          execute_install_scripts: true
+
+      - name: Configure native TypeScript build tools
+        if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
         run: |
-          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null \
-            | gpg --dearmor \
-            | sudo tee /usr/share/keyrings/kitware-archive-keyring.gpg > /dev/null
-          echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ noble main" \
-            | sudo tee /etc/apt/sources.list.d/kitware.list
-          sudo apt-get update
-          sudo apt-get install -y cmake gcc-14 g++-14
           echo "CC=gcc-14" >> "$GITHUB_ENV"
           echo "CXX=g++-14" >> "$GITHUB_ENV"
           cmake --version
