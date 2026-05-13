@@ -11,7 +11,7 @@ const mb = (bytes) => (bytes / 1024 / 1024).toFixed(1)
 const kb = (bytes) => bytes / 1024
 const clampNonNegative = (value) => (value < 0 ? 0 : value)
 const formatMsPerEvent = (value, unit = 'event') => `${value.toFixed(3)}ms/${unit}`
-const formatKbPerEvent = (value) => `${value.toFixed(3)}kb/event`
+const formatKbPerEvent = (value, unit = 'event') => `${value.toFixed(3)}kb/${unit}`
 const formatMs = (value) => `${value.toFixed(3)}ms`
 const formatMb = (value) => `${value.toFixed(3)}mb`
 
@@ -189,16 +189,18 @@ const record = (hooks, name, metrics) => {
     if (!perEventOnly && typeof metrics.totalMs === 'number') parts.push(`total=${formatMs(metrics.totalMs)}`)
     if (typeof metrics.msPerEvent === 'number')
       parts.push(`latency=${formatMsPerEvent(metrics.msPerEvent, metrics.msPerEventUnit ?? 'event')}`)
-    if (typeof metrics.peakHeapKbPerEvent === 'number') parts.push(`peak_heap=${formatKbPerEvent(metrics.peakHeapKbPerEvent)}`)
-    if (typeof metrics.peakRssKbPerEvent === 'number') parts.push(`peak_rss=${formatKbPerEvent(metrics.peakRssKbPerEvent)}`)
+    if (typeof metrics.peakHeapKbPerEvent === 'number')
+      parts.push(`peak_heap=${formatKbPerEvent(metrics.peakHeapKbPerEvent, metrics.peakHeapUnit ?? 'event')}`)
+    if (typeof metrics.peakRssKbPerEvent === 'number')
+      parts.push(`peak_rss=${formatKbPerEvent(metrics.peakRssKbPerEvent, metrics.peakRssUnit ?? 'event')}`)
     if (
       typeof metrics.ramKbPerEvent === 'number' &&
       typeof metrics.peakHeapKbPerEvent !== 'number' &&
       typeof metrics.peakRssKbPerEvent !== 'number'
     ) {
-      parts.push(`ram=${formatKbPerEvent(metrics.ramKbPerEvent)}`)
+      parts.push(`ram=${formatKbPerEvent(metrics.ramKbPerEvent, metrics.ramUnit ?? 'event')}`)
     }
-    if (typeof metrics.throughput === 'number') parts.push(`throughput=${metrics.throughput}/s`)
+    if (typeof metrics.throughput === 'number') parts.push(`throughput=${metrics.throughput}/${metrics.throughputUnit ?? 's'}`)
     if (typeof metrics.equivalent === 'boolean') parts.push(`equivalent=${metrics.equivalent ? 'yes' : 'no'}`)
     if (typeof metrics.timeoutCount === 'number') parts.push(`timeouts=${metrics.timeoutCount}`)
     if (typeof metrics.cancelCount === 'number') parts.push(`cancels=${metrics.cancelCount}`)
@@ -454,8 +456,8 @@ export const runPerfSingleEventManyFixedHandlers = async (input) => {
   await waitForRuntimeSettle(hooks)
   memory.sample()
   const msPerEvent = totalMs / (totalEvents * totalHandlers)
-  const peakHeapKbPerEvent = memory.peakHeapKbPerEvent(totalEvents)
-  const peakRssKbPerEvent = memory.peakRssKbPerEvent(totalEvents)
+  const peakHeapKbPerEvent = memory.peakHeapKbPerEvent(totalHandlers)
+  const peakRssKbPerEvent = memory.peakRssKbPerEvent(totalHandlers)
 
   assert(processedCount === totalHandlers, `fixed-handlers processed ${processedCount}/${totalHandlers}`)
   assert(totalMs < hooks.limits.singleRunMs, `fixed-handlers took ${Math.round(totalMs)}ms (limit ${hooks.limits.singleRunMs}ms)`)
@@ -472,12 +474,16 @@ export const runPerfSingleEventManyFixedHandlers = async (input) => {
     msPerEventLabel: formatMsPerEvent(msPerEvent, 'event/handler'),
     msPerEventUnit: 'event/handler',
     ramKbPerEvent: peakHeapKbPerEvent,
-    ramKbPerEventLabel: peakHeapKbPerEvent === null ? null : formatKbPerEvent(peakHeapKbPerEvent),
+    ramKbPerEventLabel: peakHeapKbPerEvent === null ? null : formatKbPerEvent(peakHeapKbPerEvent, 'handler'),
+    ramUnit: 'handler',
     peakHeapKbPerEvent,
-    peakHeapKbPerEventLabel: peakHeapKbPerEvent === null ? null : formatKbPerEvent(peakHeapKbPerEvent),
+    peakHeapKbPerEventLabel: peakHeapKbPerEvent === null ? null : formatKbPerEvent(peakHeapKbPerEvent, 'handler'),
+    peakHeapUnit: 'handler',
     peakRssKbPerEvent,
-    peakRssKbPerEventLabel: peakRssKbPerEvent === null ? null : formatKbPerEvent(peakRssKbPerEvent),
-    throughput: Math.round(totalEvents / (totalMs / 1000)),
+    peakRssKbPerEventLabel: peakRssKbPerEvent === null ? null : formatKbPerEvent(peakRssKbPerEvent, 'handler'),
+    peakRssUnit: 'handler',
+    throughput: Math.round(totalHandlers / (totalMs / 1000)),
+    throughputUnit: 'handlers/s',
     processedCount,
     totalHandlers,
   }

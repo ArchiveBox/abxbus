@@ -46,9 +46,10 @@ The shorthand is only a convenience. Internally it should be converted into a re
 11. JSON roundtrips should continue carrying `event_result_type` as best-effort portable handler-result schema metadata.
 12. JSON does not need to preserve non-portable Zod logic across languages, but known TS rehydration must recover it by using the known event class schema.
 13. `event_result_type` keeps its existing special behavior. It is handler result schema metadata, not a normal event payload field, and it should accept any Zod schema/type or `null`.
-14. The existing non-Zod shortcut behavior remains exactly as it works today for backwards compatibility.
-15. `toJSON()` should use Zod encode and throw if the user's schema cannot be encoded. That failure is user-authored schema behavior, not something to silently recover from.
-16. Python/Go/Rust should not receive or depend on TS event payload schema metadata. They should continue preserving and enforcing `event_result_type` JSON Schema where supported, plus their own runtime-local typed payload mechanisms.
+14. `event_schema` is reserved TS-only internal metadata and must always point at the generated canonical Zod event schema. Users cannot define or override an `event_schema` event field.
+15. The existing non-Zod shortcut behavior remains exactly as it works today for backwards compatibility.
+16. `toJSON()` should use Zod encode and throw if the user's schema cannot be encoded. That failure is user-authored schema behavior, not something to silently recover from.
+17. Python/Go/Rust should not receive or depend on TS event payload schema metadata. They should continue preserving and enforcing `event_result_type` JSON Schema where supported, plus their own runtime-local typed payload mechanisms.
 
 ## Current Code To Replace
 
@@ -91,6 +92,7 @@ type EventFactory<TSchema extends AnyEventSchema, TResult = unknown> = {
   (data: EventInputFromSchema<TSchema>): BaseEvent & EventPayloadFromSchema<TSchema> & { __event_result_type__?: TResult }
   new (data: EventInputFromSchema<TSchema>): BaseEvent & EventPayloadFromSchema<TSchema> & { __event_result_type__?: TResult }
   schema: TSchema
+  event_schema: TSchema
   class?: new (data: EventInputFromSchema<TSchema>) => BaseEvent & EventPayloadFromSchema<TSchema>
   event_type?: string
   event_version?: string
@@ -100,6 +102,18 @@ type EventFactory<TSchema extends AnyEventSchema, TResult = unknown> = {
 ```
 
 This will need refinement to keep builtin fields optional at construction when BaseEvent hydrates them. A helper like `EventInitFromSchema<TSchema>` may still need to make known builtin fields partial for ergonomic construction, but it should be derived from `z.input<TSchema>`, not from a raw shape.
+
+### Internal Event Schema Metadata
+
+`event_schema` is a TS-only internal metadata property. It should be populated from the generated full Zod schema and should not be accepted from user payload/schema input.
+
+Implementation rules:
+
+- `BaseEvent.schema`, `BaseEvent.event_schema`, `EventFactory.schema`, and `EventFactory.event_schema` should all point at the generated canonical full schema for the event type.
+- Instances may expose `event_schema` for local introspection, but it must be non-enumerable or explicitly excluded from materialized wire objects.
+- `event_schema` must not appear in `baseEventDefaultShape()`, encoded event data, `toJSON()` output, `BaseEventJSON`, or cross-runtime payloads.
+- `BaseEvent.extend()` should reject `event_schema` in both full Zod object schema shapes and raw shortcut shapes.
+- Event construction should reject `event_schema` in user data, even when the user schema is loose/passthrough.
 
 ### Base Event Extension Shape
 
@@ -319,8 +333,8 @@ Complexities:
 - `z.encode()` can fail when a codec's encode function returns a value that does not satisfy the encoded-side schema. Throw.
 - `z.encode()` can fail if the runtime event was mutated into a value that no longer satisfies the schema. Throw.
 - `event_results` is currently stored as `Map` in memory and serialized manually. Encoding must not accidentally expose the raw Map.
-- Runtime-only fields (`bus`, `event_bus`, `_event_*`, functions) must still be excluded.
-- Do not synthesize `event_schema` from `ctor.schema` in `toJSON()`. If users define their own ordinary payload field with that name, it is just user data; it is not the internal schema projection.
+- Runtime-only fields (`bus`, `event_bus`, `event_schema`, `_event_*`, functions) must still be excluded.
+- Do not synthesize `event_schema` from `ctor.schema` in `toJSON()`. `event_schema` is reserved for the local generated Zod schema and must never be serialized.
 
 Specific encode failure cases to test:
 
@@ -392,6 +406,7 @@ New desired behavior from the current design discussion:
 - If they break the bus, let it hard fail normally.
 - Do not add special guards beyond the basic Zod constraints on default fields.
 - Keep method/runtime collisions reserved: `bus`, `done`, `emit`, `first`, `now`, `toJSON`, `fromJSON`, etc.
+- Keep `event_schema` reserved for TS-only generated schema metadata. It must be rejected in `extend()` schemas/shapes and construction payloads.
 
 Test updates will need to delete or rewrite tests expecting unknown `event_*`/`model_*` rejection for schema fields and possibly construction data.
 
@@ -626,6 +641,8 @@ const unknown = BaseEvent.fromJSON(json)
    - `toJSON()` does not include generated `event_schema`.
    - `BaseEvent.fromJSON(json)` cannot enforce payload constraints for unknown event types.
    - Known TS rehydrate still gets the original custom logic via registry/class schema.
+   - Local `event_schema` / `schema` metadata points at the generated canonical Zod event schema.
+   - User schemas/shapes/payloads that define `event_schema` are rejected.
 
 9. **Non-portable Zod logic is not required in JSON**
    - Custom refine/codec does not need to survive in wire JSON.
@@ -675,11 +692,12 @@ Potential breaking areas:
 5. Full event schemas are TS-local.
    - This avoids adding a new wire field and avoids cross-language metadata churn.
    - Unknown event rehydration cannot recover TS payload schema constraints without a registered known event type.
+   - `event_schema` becomes reserved TS-only metadata instead of an allowed event payload field.
 
 ## Implementation Order
 
 1. Add schema normalization helpers in TS.
-2. Keep full event schema metadata TS-only; do not add generated `event_schema` to the wire/base field list.
+2. Keep full event schema metadata TS-only; add generated `event_schema` as local class/factory/instance metadata without adding it to the wire/base field list.
 3. Refactor `EventFactory` and related type helpers to schema input/output generics.
 4. Refactor `BaseEvent.extend()` to call `buildFullEventSchema()`.
 5. Remove or deprecate `extractZodShape()` and `EVENT_CLASS_DEFAULTS` usage.
@@ -695,5 +713,4 @@ Potential breaking areas:
 
 1. Are async Zod transforms/codecs explicitly out of scope because event construction is sync?
 2. How should duplicate `event_type` registrations behave: overwrite, throw, or last registration wins?
-3. If a user explicitly defines an ordinary payload field named `event_schema`, should it be allowed as user data or reserved to avoid confusion with the TS-only internal schema?
-4. Should `EventResult.update()` keep result validation as `safeParse()` or use a Zod 4 decode API for `event_result_type` codecs?
+3. Should `EventResult.update()` keep result validation as `safeParse()` or use a Zod 4 decode API for `event_result_type` codecs?
