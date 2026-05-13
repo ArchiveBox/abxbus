@@ -37,8 +37,7 @@ type EventBusOptions struct {
 }
 
 type EventBusDestroyOptions struct {
-	Timeout float64
-	Clear   any
+	Clear any
 }
 
 type FindOptions struct {
@@ -1907,16 +1906,13 @@ func (b *EventBus) logEventTree(event *BaseEvent, prefix string, isLast bool) []
 	return out
 }
 
-func resolveEventBusDestroyOptions(options *EventBusDestroyOptions) (timeout *float64, clear bool) {
+func resolveEventBusDestroyOptions(options *EventBusDestroyOptions) (clear bool) {
 	clear = true
 	if options == nil {
-		return nil, clear
-	}
-	if options.Timeout > 0 {
-		timeout = &options.Timeout
+		return clear
 	}
 	clear = optionalBoolOption(options.Clear, "Clear", clear)
-	return timeout, clear
+	return clear
 }
 
 func (b *EventBus) Destroy() {
@@ -1924,35 +1920,34 @@ func (b *EventBus) Destroy() {
 }
 
 func (b *EventBus) DestroyWithOptions(options *EventBusDestroyOptions) {
-	timeout, clear := resolveEventBusDestroyOptions(options)
-	if clear {
-		if timeout != nil {
-			b.WaitUntilIdle(timeout)
-		}
-	} else if !b.WaitUntilIdle(timeout) {
-		b.WaitUntilIdle(nil)
-	}
-	alreadyDestroyed := b.IsDestroyed()
-	if clear {
-		eventBusRegistry.Lock()
-		delete(eventBusRegistry.instances, b)
-		eventBusRegistry.Unlock()
-	} else if !alreadyDestroyed {
-		eventBusRegistry.Lock()
-		eventBusRegistry.instances[b] = struct{}{}
-		eventBusRegistry.Unlock()
-	}
+	clear := resolveEventBusDestroyOptions(options)
+	eventBusRegistry.Lock()
+	delete(eventBusRegistry.instances, b)
+	eventBusRegistry.Unlock()
 
 	b.mu.Lock()
+	if b.destroyed {
+		waiters := append([]*findWaiter{}, b.findWaiters...)
+		b.findWaiters = []*findWaiter{}
+		if clear {
+			b.handlers = map[string]*EventHandler{}
+			b.handlersByKey = map[string][]string{}
+			b.EventHistory.Clear()
+		}
+		b.mu.Unlock()
+		for _, waiter := range waiters {
+			waiter.Resolve(nil)
+		}
+		return
+	}
+
 	waiters := append([]*findWaiter{}, b.findWaiters...)
 	b.findWaiters = []*findWaiter{}
+	b.destroyed = true
 	if clear {
-		b.destroyed = true
 		b.handlers = map[string]*EventHandler{}
 		b.handlersByKey = map[string][]string{}
 		b.EventHistory.Clear()
-	} else if !b.destroyed {
-		b.destroyed = false
 	}
 	b.pendingEventQueue = []*BaseEvent{}
 	b.inFlightEventIDs = map[string]bool{}

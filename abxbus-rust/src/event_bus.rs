@@ -228,7 +228,6 @@ pub struct EventBusOptions {
 
 #[derive(Debug, Clone)]
 pub struct DestroyOptions {
-    pub timeout: Option<f64>,
     pub clear: bool,
 }
 
@@ -289,10 +288,7 @@ impl Default for EventBusOptions {
 
 impl Default for DestroyOptions {
     fn default() -> Self {
-        Self {
-            timeout: None,
-            clear: true,
-        }
+        Self { clear: true }
     }
 }
 
@@ -695,19 +691,10 @@ impl EventBus {
     }
 
     pub fn destroy_with_options(&self, options: DestroyOptions) {
-        if let Some(timeout) = options.timeout {
-            assert!(timeout >= 0.0, "destroy timeout must be >= 0 or None");
-            if timeout > 0.0 {
-                block_on(self.wait_until_idle(Some(timeout)));
-            }
-        }
-
         *self.runtime.destroyed.lock() = true;
+        *self.runtime.terminal_destroyed.lock() = true;
         *self.runtime.loop_started.lock() = false;
-        if options.clear {
-            *self.runtime.terminal_destroyed.lock() = true;
-            self.unregister_instance();
-        }
+        self.unregister_instance();
         self.clear_runtime_state(options.clear);
         self.runtime.queue_notify.notify(usize::MAX);
     }

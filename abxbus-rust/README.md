@@ -70,6 +70,5 @@ Destroy clears bus-owned state by default:
 use abxbus_rust::event_bus::DestroyOptions;
 
 bus.destroy();
-bus.destroy_with_options(DestroyOptions { timeout: Some(1.0), ..Default::default() });
 bus.destroy_with_options(DestroyOptions { clear: false, ..Default::default() });
 ```

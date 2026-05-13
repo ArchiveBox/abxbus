@@ -133,8 +133,8 @@ async def main() -> None:
         print('\n=== bus_b.log_tree() ===')
         print(bus_b.log_tree())
     finally:
-        await bus_a.destroy(clear=True, timeout=0)
-        await bus_b.destroy(clear=True, timeout=0)
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
 
 
 if __name__ == '__main__':

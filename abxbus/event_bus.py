@@ -1570,25 +1570,20 @@ class EventBus:
                 # No event loop - will start when one becomes available
                 pass
 
-    async def destroy(self, timeout: float | None = None, clear: bool = True) -> None:
-        """Destroy the event bus, optionally waiting for events to complete
+    async def destroy(self, clear: bool = True) -> None:
+        """Destroy the event bus immediately and prevent further use
 
         Args:
-            timeout: Maximum time to wait for pending events to complete
-            clear: If True, permanently clear bus-owned state and remove from global tracking.
-                If False, stop runtime work but keep event history and handler registration so
-                the bus can be used again.
+            clear: If True, clear handlers/history for memory cleanup. If False, preserve
+                handlers/history for inspection. Destroy is terminal either way.
         """
         if self._destroyed:
+            if clear:
+                self.event_history.clear()
+                self.handlers.clear()
+                self.handlers_by_key.clear()
+                self.middlewares.clear()
             return
-
-        # Wait for completion if timeout specified and > 0
-        # timeout=0 means "don't wait", so skip the wait entirely
-        if timeout is not None and timeout > 0:
-            try:
-                await self.wait_until_idle(timeout=timeout)
-            except TimeoutError:
-                pass
 
         queue_size = self.pending_event_queue.qsize() if self.pending_event_queue else 0
         has_inflight = self._has_inflight_events_fast()
@@ -1603,6 +1598,7 @@ class EventBus:
 
         # Signal shutdown
         self._is_running = False
+        self._destroyed = True
 
         # Shutdown the queue to unblock any pending get() operations
         if self.pending_event_queue:
@@ -1611,11 +1607,10 @@ class EventBus:
 
         # print('DESTROYING', self.event_history)
 
-        # Wait for the run loop task to finish / force-cancel it if it's hanging
         if self._runloop_task and not self._runloop_task.done():
-            await asyncio.wait({self._runloop_task}, timeout=0.1)
             try:
                 self._runloop_task.cancel()
+                self._runloop_task.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
             except Exception:
                 pass
 
@@ -1623,7 +1618,6 @@ class EventBus:
             for task in list(self._parallel_event_tasks):
                 if not task.done():
                     task.cancel()
-            await asyncio.gather(*list(self._parallel_event_tasks), return_exceptions=True)
             self._parallel_event_tasks.clear()
 
         # Clear references
@@ -1642,13 +1636,6 @@ class EventBus:
 
         # Clear event history and handlers if requested (for memory cleanup)
         if clear:
-            self._destroyed = True
-
-            # Rename the bus to release the name. This ensures destroyed buses don't
-            # cause name conflicts with new buses using the same name. This makes
-            # name conflict detection deterministic (not dependent on GC timing).
-            self.name = f'_destroyed_{self.id[-8:]}'
-
             self.event_history.clear()
             self.handlers.clear()
             self.handlers_by_key.clear()
@@ -1662,20 +1649,6 @@ class EventBus:
             self._lock_for_event_bus_serial = ReentrantLock()
             self.locks = LockManager()
 
-            # Remove from global instance tracking
-            if self in type(self).all_instances:
-                type(self).all_instances.discard(self)
-
-            # Remove from event loop's tracking if present
-            try:
-                loop = asyncio.get_running_loop()
-                registered_eventbuses = type(self)._loop_eventbus_instances.get(loop)
-                if registered_eventbuses is not None:
-                    registered_eventbuses.discard(self)
-            except RuntimeError:
-                # No running loop, that's fine
-                pass
-
             logger.debug('🧹 %s cleared event history and removed from global tracking', self)
         else:
             self.pending_event_queue = None
@@ -1683,7 +1656,20 @@ class EventBus:
             self._lock_for_event_bus_serial = ReentrantLock()
             self.locks = LockManager()
 
-        logger.debug('🛑 %s shut down %s', self, 'gracefully' if timeout is not None else 'immediately')
+        # Rename and remove from tracking even when clear=False. clear=False preserves
+        # inspectable handlers/history, but destroy is terminal and non-resumable.
+        self.name = f'_destroyed_{self.id[-8:]}'
+        if self in type(self).all_instances:
+            type(self).all_instances.discard(self)
+        try:
+            loop = asyncio.get_running_loop()
+            registered_eventbuses = type(self)._loop_eventbus_instances.get(loop)
+            if registered_eventbuses is not None:
+                registered_eventbuses.discard(self)
+        except RuntimeError:
+            pass
+
+        logger.debug('🛑 %s shut down immediately', self)
 
         # Check total memory usage across all instances
         try:

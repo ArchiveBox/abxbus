@@ -360,14 +360,13 @@ logTree(): string
 #### `destroy()`
 
 ```ts
-destroy(timeout?: number | null, clear?: boolean): Promise<void>
-destroy(options?: { timeout?: number | null; clear?: boolean }): Promise<void>
+destroy(clear?: boolean): Promise<void>
+destroy(options?: { clear?: boolean }): Promise<void>
 ```
 
 - `clear` defaults to `true`.
 - `await bus.destroy()` clears handlers/history/pending events/in-flight state/find waiters/locks and removes this bus from global tracking.
-- `await bus.destroy({ timeout: 1 })` waits up to 1 second for pending and in-flight work before destroying.
-- `await bus.destroy({ clear: false })` stops runtime work and resolves waiters but keeps handlers/history so the bus can be used again.
+- `await bus.destroy({ clear: false })` stops runtime work and resolves waiters but keeps handlers/history for inspection. The bus is still destroyed and cannot be used again.
 - Destroy/GC behavior is exercised in `abxbus-ts/tests/EventBus.test.ts` and `abxbus-ts/tests/EventBus_performance.test.ts`.
 
 </details>

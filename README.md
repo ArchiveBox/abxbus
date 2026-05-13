@@ -894,14 +894,13 @@ await bus.wait_until_idle()             # wait indefinitely until EventBus has f
 await bus.wait_until_idle(timeout=5.0)  # wait up to 5 seconds
 ```
 
-##### `destroy(timeout: float | None=None, clear: bool=True)`
+##### `destroy(clear: bool=True)`
 
-Destroy the event bus, optionally waiting for pending events first.
+Destroy the event bus immediately. In-flight work is cancelled best-effort, future waiters are resolved, and the bus cannot be used again.
 
 ```python
-await bus.destroy(timeout=1.0)       # wait up to 1sec, then destroy and clear by default
 await bus.destroy()                  # destroy immediately and clear handlers/history/runtime state
-await bus.destroy(clear=False)       # stop runtime work but keep handlers/history so the bus can resume
+await bus.destroy(clear=False)       # destroy immediately but keep handlers/history for inspection
 ```
 
 ---

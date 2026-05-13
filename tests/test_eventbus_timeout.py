@@ -183,7 +183,7 @@ async def test_nested_timeout_scenario_from_issue():
     # print(f"Exception caught: {type(exc_info.value).__name__}: {exc_info.value}")
     # # assert 'ChildEvent' in str(exc_info.value) or 'ChildEvent' in str(exc_info.value)
 
-    await bus.destroy(clear=True, timeout=0)
+    await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -226,7 +226,7 @@ async def test_handler_timeout_marks_error_and_other_handlers_still_complete():
         assert fast_result.result == 'fast'
         assert 'fast_start' in execution_order
     finally:
-        await bus.destroy(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -273,7 +273,7 @@ async def test_handler_timeout_ignores_late_handler_result_and_late_emits() -> N
         assert await bus.find(LateAfterTimeoutEvent, past=True, future=False) is None
         assert late_handler_ran is False
     finally:
-        await bus.destroy(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -320,7 +320,7 @@ async def test_event_timeout_ignores_late_handler_result_and_late_emits() -> Non
         assert await bus.find(LateAfterTimeoutEvent, past=True, future=False) is None
         assert late_handler_ran is False
     finally:
-        await bus.destroy(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -362,7 +362,7 @@ async def test_event_timeout_is_hard_cap_across_serial_handlers():
         assert pending_result.status == 'error'
         assert isinstance(pending_result.error, EventHandlerCancelledError)
     finally:
-        await bus.destroy(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -398,7 +398,7 @@ async def test_event_timeout_is_hard_cap_in_parallel_mode() -> None:
             for result in event.event_results.values()
         )
     finally:
-        await bus.destroy(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -446,7 +446,7 @@ async def test_event_level_timeout_marks_started_parallel_handlers_as_aborted_or
         )
         assert not any(isinstance(result.error, EventHandlerCancelledError) for result in event.event_results.values())
     finally:
-        await bus.destroy(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -478,7 +478,7 @@ async def test_event_timeout_does_not_relabel_preexisting_handler_timeout() -> N
         assert any(isinstance(result.error, EventHandlerTimeoutError) for result in results)
         assert any(isinstance(result.error, EventHandlerAbortedError) for result in results)
     finally:
-        await bus.destroy(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -508,8 +508,8 @@ async def test_multi_bus_timeout_is_recorded_on_target_bus():
         assert isinstance(bus_b_result.error, EventHandlerAbortedError)
         assert event.event_path == [bus_a.label, bus_b.label]
     finally:
-        await bus_a.destroy(clear=True, timeout=0)
-        await bus_b.destroy(clear=True, timeout=0)
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -563,7 +563,7 @@ async def test_followup_event_runs_after_parent_timeout_in_queue_jump_path():
         assert completed_tail.event_status == 'completed'
         assert tail_runs == 1
     finally:
-        await bus.destroy(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -641,8 +641,8 @@ async def test_forwarded_timeout_path_does_not_stall_followup_events():
         assert bus_a_tail_runs == 1
         assert bus_b_tail_runs == 1
     finally:
-        await bus_a.destroy(clear=True, timeout=0)
-        await bus_b.destroy(clear=True, timeout=0)
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
 
 
 # Consolidated from tests/test_event_timeout_defaults.py

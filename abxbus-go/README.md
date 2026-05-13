@@ -48,8 +48,7 @@ Destroy clears bus-owned state by default:
 
 ```go
 bus.Destroy()
-bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Timeout: 1.0})
-bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Clear: false}) // preserve handlers/history for resume
+bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Clear: false}) // preserve handlers/history for inspection
 ```
 
 Cross-runtime parity tests live in the Python and TypeScript test suites. From the repo root:

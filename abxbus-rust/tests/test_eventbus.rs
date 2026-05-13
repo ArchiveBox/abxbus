@@ -459,8 +459,8 @@ fn test_destroy_with_pending_events() {
 }
 
 #[test]
-fn test_destroy_clear_false_preserves_handlers_and_history_resolves_waiters_and_resumes() {
-    let bus = EventBus::new(Some("DestroyClearFalseReuseBus".to_string()));
+fn test_destroy_clear_false_preserves_handlers_and_history_resolves_waiters_and_is_terminal() {
+    let bus = EventBus::new(Some("DestroyClearFalseTerminalBus".to_string()));
     let calls = Arc::new(AtomicUsize::new(0));
     let calls_for_handler = calls.clone();
     bus.on_raw("UserActionEvent", "handler", move |_event| {
@@ -486,47 +486,64 @@ fn test_destroy_clear_false_preserves_handlers_and_history_resolves_waiters_and_
     });
     thread::sleep(Duration::from_millis(20));
 
-    bus.destroy_with_options(DestroyOptions {
-        timeout: Some(0.1),
-        clear: false,
-    });
+    bus.destroy_with_options(DestroyOptions { clear: false });
 
     assert!(waiter_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("destroy should resolve future waiter"));
-    assert!(!bus.is_destroyed_for_test());
+    assert!(bus.is_destroyed_for_test());
     assert_eq!(bus.event_history_size(), 1);
     assert!(bus
         .to_json_value()
         .get("handlers")
         .and_then(Value::as_object)
         .is_some_and(|handlers| !handlers.is_empty()));
-    assert!(block_on(bus.find("UserActionEvent", true, None, None)).is_some());
 
-    let second = bus.emit(UserActionEvent {
-        ..Default::default()
-    });
-    block_on(second.inner.now()).expect("reused bus event should complete");
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
-    assert_eq!(bus.event_history_size(), 2);
+    let emit_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        bus.emit(UserActionEvent {
+            ..Default::default()
+        });
+    }));
+    assert!(panic_message(emit_result).contains("has been destroyed"));
 
-    bus.destroy();
+    let on_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        bus.on_raw("UserActionEvent", "after_destroy", |_event| async move {
+            Ok(json!(null))
+        });
+    }));
+    assert!(panic_message(on_result).contains("has been destroyed"));
+
+    let find_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = block_on(bus.find("UserActionEvent", true, None, None));
+    }));
+    assert!(panic_message(find_result).contains("has been destroyed"));
 }
 
 #[test]
-fn test_destroy_with_timeout_waits_before_clearing_runtime() {
-    let bus = EventBus::new(Some("DestroyTimeoutBus".to_string()));
-    let calls = Arc::new(AtomicUsize::new(0));
-    let calls_for_handler = calls.clone();
+fn test_destroy_is_immediate_and_rejects_late_handler_emits() {
+    let bus = EventBus::new(Some("DestroyImmediateBus".to_string()));
     let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (late_tx, late_rx) = std::sync::mpsc::channel();
+    let release_handler = Arc::new(AtomicBool::new(false));
+    let release_for_handler = release_handler.clone();
+    let bus_for_handler = bus.clone();
     bus.on_raw("UserActionEvent", "slow_handler", move |_event| {
-        let calls = calls_for_handler.clone();
         let started_tx = started_tx.clone();
+        let late_tx = late_tx.clone();
+        let release_handler = release_for_handler.clone();
+        let bus = bus_for_handler.clone();
         async move {
             let _ = started_tx.send(());
-            thread::sleep(Duration::from_millis(50));
-            calls.fetch_add(1, Ordering::SeqCst);
-            Ok(json!("ok"))
+            while !release_handler.load(Ordering::SeqCst) {
+                thread::sleep(Duration::from_millis(1));
+            }
+            let late_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                bus.emit(UserActionEvent {
+                    ..Default::default()
+                });
+            }));
+            let _ = late_tx.send(late_result.is_err());
+            Ok(json!(null))
         }
     });
 
@@ -538,21 +555,27 @@ fn test_destroy_with_timeout_waits_before_clearing_runtime() {
         .expect("handler should start");
 
     let start = Instant::now();
-    bus.destroy_with_options(DestroyOptions {
-        timeout: Some(1.0),
-        clear: false,
-    });
+    bus.destroy_with_options(DestroyOptions { clear: false });
 
     assert!(
-        start.elapsed() >= Duration::from_millis(30),
-        "Destroy(timeout) should wait for in-flight work, elapsed={:?}",
+        start.elapsed() < Duration::from_millis(50),
+        "Destroy should be immediate, elapsed={:?}",
         start.elapsed()
     );
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(bus.event_history_size(), 1);
-    assert!(!bus.is_destroyed_for_test());
+    assert!(bus.is_destroyed_for_test());
 
-    bus.destroy();
+    let outside_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        bus.emit(UserActionEvent {
+            ..Default::default()
+        });
+    }));
+    assert!(panic_message(outside_result).contains("has been destroyed"));
+
+    release_handler.store(true, Ordering::SeqCst);
+    assert!(late_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("late handler emit should report rejection"));
 }
 
 #[test]
@@ -3966,7 +3989,7 @@ mod folded_test_eventbus_edge_cases {
     }
 
     #[test]
-    fn test_destroy_timeout_zero_clears_running_bus_and_releases_name() {
+    fn test_destroy_clears_running_bus_and_releases_name() {
         let bus_name = "DestroyCoverageBus".to_string();
         let bus = EventBus::new(Some(bus_name.clone()));
         let (started_tx, started_rx) = mpsc::channel();

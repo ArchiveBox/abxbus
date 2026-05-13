@@ -45,7 +45,6 @@ export type EventBusOptions = {
 }
 
 export type EventBusDestroyOptions = {
-  timeout?: number | null
   clear?: boolean
 }
 
@@ -649,16 +648,22 @@ export class EventBus {
   }
 
   // destroy the event bus and all its state to allow for garbage collection
-  destroy(timeout?: number | null, clear?: boolean): Promise<void>
+  destroy(clear?: boolean): Promise<void>
   destroy(options?: EventBusDestroyOptions): Promise<void>
-  destroy(timeout_or_options: number | null | EventBusDestroyOptions = null, clear_arg: boolean = true): Promise<void> {
-    const timeout =
-      typeof timeout_or_options === 'object' && timeout_or_options !== null ? (timeout_or_options.timeout ?? null) : timeout_or_options
-    const clear = typeof timeout_or_options === 'object' && timeout_or_options !== null ? (timeout_or_options.clear ?? true) : clear_arg
+  destroy(clear_or_options: boolean | EventBusDestroyOptions = true): Promise<void> {
+    const clear = typeof clear_or_options === 'object' && clear_or_options !== null ? (clear_or_options.clear ?? true) : clear_or_options
     if (this.destroyed) {
+      if (clear) {
+        this.handlers.clear()
+        this.handlers_by_key.clear()
+        this.event_history.clear()
+        this.middlewares.length = 0
+      }
       return Promise.resolve()
     }
     const finish = (): void => {
+      this.destroyed = true
+      this.all_instances.discard(this)
       this.runloop_running = false
       for (const waiter of Array.from(this.find_waiters)) {
         if (waiter.timeout_id) {
@@ -673,19 +678,10 @@ export class EventBus {
       if (!clear) {
         return
       }
-      this.destroyed = true
-      this.all_instances.discard(this)
       this.handlers.clear()
       this.handlers_by_key.clear()
       this.event_history.clear()
       this.middlewares.length = 0
-    }
-    if (timeout !== null && timeout !== undefined && timeout > 0) {
-      return this.waitUntilIdle(timeout)
-        .catch(() => false)
-        .then(() => {
-          finish()
-        })
     }
     finish()
     return Promise.resolve()

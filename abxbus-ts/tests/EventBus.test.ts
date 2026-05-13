@@ -821,7 +821,7 @@ test('destroy default clear is terminal and frees bus state', async () => {
   const event = await bus.emit(DestroyEvent({})).now()
   assert.equal(await event.eventResult(), 'done')
 
-  await bus.destroy(0)
+  await bus.destroy()
 
   assert.equal(bus.runloop_running, false)
   assert.equal(bus.pending_event_queue.length, 0)
@@ -837,67 +837,80 @@ test('destroy default clear is terminal and frees bus state', async () => {
   await assert.rejects(() => bus.find(DestroyEvent, { future: false }), /destroyed/)
 })
 
-test('destroy clear false preserves handlers and history, resolves waiters, and resumes', async () => {
-  const ReusableEvent = BaseEvent.extend('DestroyClearFalseReusableEvent', {})
-  const bus = new EventBus('DestroyClearFalseReusableBus')
+test('destroy clear false preserves handlers and history, resolves waiters, and is terminal', async () => {
+  const TerminalEvent = BaseEvent.extend('DestroyClearFalseTerminalEvent', {})
+  const bus = new EventBus('DestroyClearFalseTerminalBus')
   let calls = 0
 
-  bus.on(ReusableEvent, () => {
+  bus.on(TerminalEvent, () => {
     calls += 1
     return `handled:${calls}`
   })
 
-  const first = await bus.emit(ReusableEvent({})).now()
+  const first = await bus.emit(TerminalEvent({})).now()
   assert.equal(await first.eventResult(), 'handled:1')
 
   const waiter = bus.find('NeverHappens', { past: false, future: true })
   await Promise.resolve()
 
-  await bus.destroy({ timeout: 0, clear: false })
+  await bus.destroy({ clear: false })
 
   assert.equal(await Promise.race([waiter, delay(1000).then(() => 'timeout')]), null)
   assert.equal(bus.runloop_running, false)
   assert.equal(bus.pending_event_queue.length, 0)
   assert.equal(bus.handlers.size, 1)
   assert.equal(bus.event_history.size, 1)
-  assert.equal(bus.all_instances.has(bus), true)
+  assert.equal(bus.all_instances.has(bus), false)
 
-  const second = await bus.emit(ReusableEvent({})).now()
-  assert.equal(await second.eventResult(), 'handled:2')
-  assert.equal(bus.event_history.size, 2)
-
+  assert.throws(() => bus.on(TerminalEvent, () => 'again'), /destroyed/)
+  assert.throws(() => bus.emit(TerminalEvent({})), /destroyed/)
+  await assert.rejects(() => bus.find(TerminalEvent, { future: false }), /destroyed/)
   await bus.destroy()
 })
 
-test('destroy with timeout waits before clearing runtime', async () => {
-  const TimeoutDestroyEvent = BaseEvent.extend('TimeoutDestroyEvent', {})
-  const bus = new EventBus('DestroyTimeoutBus')
-  let handler_finished = false
+test('destroy is immediate and rejects late handler emits', async () => {
+  const ImmediateDestroyEvent = BaseEvent.extend('ImmediateDestroyEvent', {})
+  const bus = new EventBus('DestroyImmediateBus')
   let mark_started!: () => void
   const handler_started = new Promise<void>((resolve) => {
     mark_started = resolve
   })
-
-  bus.on(TimeoutDestroyEvent, async () => {
-    mark_started()
-    await delay(50)
-    handler_finished = true
-    return 'done'
+  let release_handler!: () => void
+  const handler_released = new Promise<void>((resolve) => {
+    release_handler = resolve
+  })
+  let mark_late_emit_rejected!: (value: boolean) => void
+  const late_emit_rejected = new Promise<boolean>((resolve) => {
+    mark_late_emit_rejected = resolve
   })
 
-  bus.emit(TimeoutDestroyEvent({}))
+  bus.on(ImmediateDestroyEvent, async () => {
+    mark_started()
+    await handler_released
+    try {
+      bus.emit(ImmediateDestroyEvent({}))
+    } catch {
+      mark_late_emit_rejected(true)
+      return
+    }
+    mark_late_emit_rejected(false)
+  })
+
+  bus.emit(ImmediateDestroyEvent({}))
   await handler_started
 
   const start_ms = performance.now()
-  await bus.destroy({ timeout: 1, clear: false })
+  await bus.destroy({ clear: false })
   const elapsed_ms = performance.now() - start_ms
 
-  assert.ok(elapsed_ms >= 30, `Destroy(timeout) should wait for in-flight work, elapsed=${elapsed_ms}ms`)
-  assert.equal(handler_finished, true)
+  assert.ok(elapsed_ms < 50, `Destroy should be immediate, elapsed=${elapsed_ms}ms`)
   assert.equal(bus.runloop_running, false)
   assert.equal(bus.event_history.size, 1)
-  assert.equal(bus.all_instances.has(bus), true)
+  assert.equal(bus.all_instances.has(bus), false)
+  assert.throws(() => bus.emit(ImmediateDestroyEvent({})), /destroyed/)
 
+  release_handler()
+  assert.equal(await Promise.race([late_emit_rejected, delay(1000).then(() => false)]), true)
   await bus.destroy()
 })
 

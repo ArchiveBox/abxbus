@@ -174,7 +174,7 @@ class TestEventBusBasics:
         event = await bus.emit(DestroyEvent())
         assert await event.event_result() == 'done'
 
-        await bus.destroy(timeout=0)
+        await bus.destroy()
 
         assert bus._is_running is False
         assert bus.pending_event_queue is None
@@ -194,39 +194,43 @@ class TestEventBusBasics:
         with pytest.raises(RuntimeError, match='destroyed'):
             await bus.find(DestroyEvent, future=False)
 
-    async def test_destroy_clear_false_preserves_handlers_and_history_resolves_waiters_and_resumes(self):
-        """destroy(clear=False) stops runtime work, resolves waiters, and keeps enough state to resume."""
+    async def test_destroy_clear_false_preserves_handlers_and_history_resolves_waiters_and_is_terminal(self):
+        """destroy(clear=False) stops runtime work, resolves waiters, preserves inspectable state, and is terminal."""
 
-        class ReusableEvent(BaseEvent[str]):
+        class TerminalEvent(BaseEvent[str]):
             pass
 
-        bus = EventBus(name='DestroyClearFalseReusableBus')
+        bus = EventBus(name='DestroyClearFalseTerminalBus')
         calls: list[str] = []
 
-        async def handler(event: ReusableEvent) -> str:
+        async def handler(event: TerminalEvent) -> str:
             calls.append(event.event_id)
             return f'handled:{len(calls)}'
 
-        bus.on(ReusableEvent, handler)
+        bus.on(TerminalEvent, handler)
 
-        first = await bus.emit(ReusableEvent())
+        first = await bus.emit(TerminalEvent())
         assert await first.event_result() == 'handled:1'
 
         waiter_task = asyncio.create_task(bus.find('NeverHappens', past=False, future=True))
         await asyncio.sleep(0)
 
-        await bus.destroy(timeout=0, clear=False)
+        await bus.destroy(clear=False)
 
         assert await asyncio.wait_for(waiter_task, timeout=1.0) is None
         assert bus._is_running is False
         assert bus.pending_event_queue is None
         assert len(bus.handlers) == 1
         assert len(bus.event_history) == 1
-        assert bus in type(bus).all_instances
+        assert bus not in type(bus).all_instances
+        assert bus._destroyed is True
 
-        second = await bus.emit(ReusableEvent())
-        assert await second.event_result() == 'handled:2'
-        assert len(bus.event_history) == 2
+        with pytest.raises(RuntimeError, match='destroyed'):
+            bus.on(TerminalEvent, handler)
+        with pytest.raises(RuntimeError, match='destroyed'):
+            bus.emit(TerminalEvent())
+        with pytest.raises(RuntimeError, match='destroyed'):
+            await bus.find(TerminalEvent, future=False)
 
         await bus.destroy(clear=True)
 
@@ -2279,9 +2283,9 @@ class TestComplexIntegration:
             assert any('log' in str(item) for item in list_result)
 
         finally:
-            await app_bus.destroy(timeout=0, clear=True)
-            await auth_bus.destroy(timeout=0, clear=True)
-            await data_bus.destroy(timeout=0, clear=True)
+            await app_bus.destroy(clear=True)
+            await auth_bus.destroy(clear=True)
+            await data_bus.destroy(clear=True)
 
     async def test_event_result_type_enforcement_with_dict(self):
         """Test that handlers returning wrong types get errors when event expects dict result."""
@@ -2350,7 +2354,7 @@ class TestComplexIntegration:
             assert len(dict_result) == 2  # Only the two dict results
 
         finally:
-            await bus.destroy(timeout=0, clear=True)
+            await bus.destroy(clear=True)
 
     async def test_event_result_type_enforcement_with_list(self):
         """Test that handlers returning wrong types get errors when event expects list result."""
@@ -2420,7 +2424,7 @@ class TestComplexIntegration:
             assert list_result == [1, 2, 3, 'a', 'b', 'c']  # Flattened from both list handlers
 
         finally:
-            await bus.destroy(timeout=0, clear=True)
+            await bus.destroy(clear=True)
 
 
 # Folded from test_eventbus_edge_cases.py to keep test layout class-based.
@@ -2469,8 +2473,8 @@ async def test_event_reset_creates_fresh_pending_event_for_cross_bus_dispatch():
     assert any(path.startswith('ResetCoverageBusA#') for path in forwarded.event_path)
     assert any(path.startswith('ResetCoverageBusB#') for path in forwarded.event_path)
 
-    await bus_a.destroy(timeout=0, clear=True)
-    await bus_b.destroy(timeout=0, clear=True)
+    await bus_a.destroy(clear=True)
+    await bus_b.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -2498,35 +2502,50 @@ async def test_wait_until_idle_timeout_path_recovers_after_inflight_handler_fini
     await bus.wait_until_idle(timeout=1.0)
     assert pending.event_status == EventStatus.COMPLETED
 
-    await bus.destroy(timeout=0, clear=True)
+    await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
-async def test_destroy_with_timeout_waits_before_clearing_runtime():
-    bus = EventBus(name='DestroyTimeoutBus')
+async def test_destroy_is_immediate_and_rejects_late_handler_emits():
+    bus = EventBus(name='DestroyImmediateBus')
     handler_started = asyncio.Event()
-    handler_finished = asyncio.Event()
+    release_handler = asyncio.Event()
+    late_emit_rejected = asyncio.get_running_loop().create_future()
 
     async def slow_handler(event: DestroyCoverageEvent) -> None:
         handler_started.set()
-        await asyncio.sleep(0.05)
-        handler_finished.set()
+        try:
+            await release_handler.wait()
+        except asyncio.CancelledError:
+            pass
+        try:
+            bus.emit(DestroyCoverageEvent())
+        except RuntimeError:
+            if not late_emit_rejected.done():
+                late_emit_rejected.set_result(True)
+        else:
+            if not late_emit_rejected.done():
+                late_emit_rejected.set_result(False)
 
     bus.on(DestroyCoverageEvent, slow_handler)
     _pending = bus.emit(DestroyCoverageEvent())
     await handler_started.wait()
 
     start = time.perf_counter()
-    await bus.destroy(timeout=1.0, clear=False)
+    await bus.destroy(clear=False)
     elapsed = time.perf_counter() - start
 
-    assert elapsed >= 0.03
-    assert handler_finished.is_set()
+    assert elapsed < 0.05
     assert bus._is_running is False
     assert len(bus.event_history) == 1
-    assert not bus._destroyed
+    assert bus._destroyed is True
 
-    await bus.destroy(timeout=0, clear=True)
+    with pytest.raises(RuntimeError, match='destroyed'):
+        bus.emit(DestroyCoverageEvent())
+
+    release_handler.set()
+    assert await asyncio.wait_for(late_emit_rejected, timeout=1.0) is True
+    await bus.destroy(clear=True)
 
 
 # Folded from test_eventbus_middleware.py to keep test layout class-based.
@@ -3723,7 +3742,7 @@ class TestNameConflictGC:
 
         # Deterministically clean up anything still alive.
         for bus in still_live:
-            await bus.destroy(clear=True, timeout=0)
+            await bus.destroy(clear=True)
         # Loop variable keeps a strong ref to the last bus in CPython.
         if still_live:
             del bus

@@ -1252,8 +1252,8 @@ func TestSameNameEventBusesKeepIndependentIDsHandlersAndHistory(t *testing.T) {
 }
 
 // Folded from eventbus_teardown_test.go to keep test layout class-based.
-func TestDestroyClearFalsePreservesHandlersAndHistoryResolvesWaitersAndResumes(t *testing.T) {
-	bus := abxbus.NewEventBus("DestroyBus", nil)
+func TestDestroyClearFalsePreservesHandlersAndHistoryResolvesWaitersAndIsTerminal(t *testing.T) {
+	bus := abxbus.NewEventBus("DestroyClearFalseTerminalBus", nil)
 	var calls atomic.Int32
 	bus.On("Evt", "h", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
 		calls.Add(1)
@@ -1292,8 +1292,8 @@ func TestDestroyClearFalsePreservesHandlersAndHistoryResolvesWaitersAndResumes(t
 		t.Fatal("timed out waiting for destroy")
 	}
 
-	if bus.IsDestroyed() {
-		t.Fatal("clear=false destroy should leave the bus reusable")
+	if !bus.IsDestroyed() {
+		t.Fatal("clear=false destroy should mark the bus destroyed")
 	}
 	if bus.EventHistory.Size() != 1 {
 		t.Fatalf("clear=false destroy should preserve history, got %d events", bus.EventHistory.Size())
@@ -1313,69 +1313,53 @@ func TestDestroyClearFalsePreservesHandlersAndHistoryResolvesWaitersAndResumes(t
 		t.Fatalf("clear=false should preserve handlers and history payload: %#v", payload)
 	}
 
-	e2 := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
-	if _, err := e2.Now(); err != nil {
-		t.Fatal(err)
+	assertDestroyedPanic := func(name string, fn func()) {
+		t.Helper()
+		defer func() {
+			recovered := recover()
+			if recovered == nil {
+				t.Fatalf("%s should panic after clear=false destroy", name)
+			}
+			if !errors.Is(recovered.(error), abxbus.ErrEventBusDestroyed) {
+				t.Fatalf("expected destroyed error panic, got %#v", recovered)
+			}
+		}()
+		fn()
 	}
-	if calls.Load() != 2 {
-		t.Fatalf("clear=false destroy should preserve handlers, calls=%d", calls.Load())
-	}
-	if len(e2.EventResults) != 1 {
-		t.Fatalf("expected preserved handler after clear=false destroy, got %d results", len(e2.EventResults))
-	}
-}
-
-func TestDestroyWithTimeoutWaitsBeforeClearingRuntime(t *testing.T) {
-	bus := abxbus.NewEventBus("DestroyTimeoutBus", nil)
-	var calls atomic.Int32
-	bus.On("SlowEvt", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
-		time.Sleep(30 * time.Millisecond)
-		calls.Add(1)
-		return "ok", nil
-	}, nil)
-
-	bus.Emit(abxbus.NewBaseEvent("SlowEvt", nil))
-	start := time.Now()
-	bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Timeout: 1.0, Clear: false})
-	if elapsed := time.Since(start); elapsed < 20*time.Millisecond {
-		t.Fatalf("Destroy(timeout) should wait for in-flight work, elapsed=%s", elapsed)
-	}
-	if calls.Load() != 1 {
-		t.Fatalf("expected slow handler to finish before destroy returns, calls=%d", calls.Load())
-	}
-	if bus.EventHistory.Size() != 1 {
-		t.Fatalf("clear=false destroy should preserve history after waiting, got %d events", bus.EventHistory.Size())
-	}
-	if bus.IsDestroyed() {
-		t.Fatal("clear=false destroy should not terminally destroy the bus")
+	assertDestroyedPanic("Emit", func() { bus.Emit(abxbus.NewBaseEvent("Evt", nil)) })
+	assertDestroyedPanic("On", func() {
+		bus.On("Evt", "again", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+			return nil, nil
+		}, nil)
+	})
+	if _, err := bus.Find("Evt", nil, nil); !errors.Is(err, abxbus.ErrEventBusDestroyed) {
+		t.Fatalf("Find should reject with ErrEventBusDestroyed, got %v", err)
 	}
 }
 
-func TestDestroyClearFalseWaitsForPriorRunloopBeforeReuse(t *testing.T) {
-	bus := abxbus.NewEventBus("DestroyReuseWaitBus", nil)
+func TestDestroyIsImmediateAndRejectsLateHandlerEmits(t *testing.T) {
+	bus := abxbus.NewEventBus("DestroyImmediateBus", nil)
 	started := make(chan struct{})
 	release := make(chan struct{})
-	destroyed := make(chan struct{})
+	lateEmitRejected := make(chan bool, 1)
 	var startOnce sync.Once
-	var orderMu sync.Mutex
-	order := []string{}
-
-	record := func(value string) {
-		orderMu.Lock()
-		order = append(order, value)
-		orderMu.Unlock()
-	}
 
 	bus.On("SlowEvt", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
-		record("slow-start")
 		startOnce.Do(func() { close(started) })
 		<-release
-		record("slow-end")
+		rejected := false
+		func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					if err, ok := recovered.(error); ok && errors.Is(err, abxbus.ErrEventBusDestroyed) {
+						rejected = true
+					}
+				}
+			}()
+			bus.Emit(abxbus.NewBaseEvent("LateEvt", nil))
+		}()
+		lateEmitRejected <- rejected
 		return "slow", nil
-	}, nil)
-	bus.On("NextEvt", "next", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
-		record("next")
-		return "next", nil
 	}, nil)
 
 	bus.Emit(abxbus.NewBaseEvent("SlowEvt", nil))
@@ -1385,35 +1369,36 @@ func TestDestroyClearFalseWaitsForPriorRunloopBeforeReuse(t *testing.T) {
 		t.Fatal("timed out waiting for slow handler to start")
 	}
 
-	go func() {
-		bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Timeout: 0.001, Clear: false})
-		close(destroyed)
-	}()
-	select {
-	case <-destroyed:
-		t.Fatal("clear=false destroy returned before the prior runloop stopped")
-	case <-time.After(30 * time.Millisecond):
+	start := time.Now()
+	bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Clear: false})
+	if elapsed := time.Since(start); elapsed >= 50*time.Millisecond {
+		t.Fatalf("Destroy should be immediate, elapsed=%s", elapsed)
 	}
+	if !bus.IsDestroyed() {
+		t.Fatal("destroy should mark bus destroyed")
+	}
+
+	func() {
+		defer func() {
+			recovered := recover()
+			if recovered == nil {
+				t.Fatal("outside Emit should panic after destroy")
+			}
+			if !errors.Is(recovered.(error), abxbus.ErrEventBusDestroyed) {
+				t.Fatalf("expected destroyed error panic, got %#v", recovered)
+			}
+		}()
+		bus.Emit(abxbus.NewBaseEvent("OutsideEvt", nil))
+	}()
 
 	close(release)
 	select {
-	case <-destroyed:
+	case rejected := <-lateEmitRejected:
+		if !rejected {
+			t.Fatal("late handler emit should reject after destroy")
+		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for clear=false destroy")
-	}
-	if bus.IsDestroyed() {
-		t.Fatal("clear=false destroy should leave the bus reusable")
-	}
-
-	next := bus.Emit(abxbus.NewBaseEvent("NextEvt", nil))
-	if _, err := next.Now(); err != nil {
-		t.Fatal(err)
-	}
-	orderMu.Lock()
-	defer orderMu.Unlock()
-	expected := []string{"slow-start", "slow-end", "next"}
-	if !reflect.DeepEqual(order, expected) {
-		t.Fatalf("handlers ran out of order after clear=false reuse: got %#v want %#v", order, expected)
+		t.Fatal("timed out waiting for late handler emit")
 	}
 }
 

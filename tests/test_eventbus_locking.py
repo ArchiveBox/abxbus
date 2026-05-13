@@ -83,8 +83,8 @@ async def test_event_concurrency_global_serial_allows_only_one_inflight_across_b
         assert starts_a == [0, 1, 2]
         assert starts_b == [0, 1, 2]
     finally:
-        await bus_a.destroy(clear=True, timeout=0)
-        await bus_b.destroy(clear=True, timeout=0)
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -134,8 +134,8 @@ async def test_event_concurrency_bus_serial_serializes_per_bus_but_overlaps_acro
         assert max_in_flight_b == 1
         assert max_in_flight_global >= 2
     finally:
-        await bus_a.destroy(clear=True, timeout=0)
-        await bus_b.destroy(clear=True, timeout=0)
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -169,7 +169,7 @@ async def test_event_concurrency_parallel_allows_same_bus_events_to_overlap() ->
 
         assert max_in_flight >= 2
     finally:
-        await bus.destroy(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -210,7 +210,7 @@ async def test_event_handler_concurrency_parallel_runs_handlers_for_same_event_c
 
         assert max_in_flight >= 2
     finally:
-        await bus.destroy(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -242,7 +242,7 @@ async def test_event_concurrency_override_parallel_beats_bus_serial_default() ->
 
         assert max_in_flight >= 2
     finally:
-        await bus.destroy(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -271,7 +271,7 @@ async def test_event_concurrency_override_bus_serial_beats_bus_parallel_default(
         await asyncio.gather(first, second)
         await bus.wait_until_idle()
     finally:
-        await bus.destroy(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -313,7 +313,7 @@ async def test_queue_jump_awaited_child_preempts_queued_sibling_on_same_bus() ->
         assert order.index('child_start') < order.index('child_end') < order.index('sibling')
         assert order.index('child_end') < order.index('parent_end')
     finally:
-        await bus.destroy(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -343,8 +343,8 @@ async def test_retry_global_handler_lock_serializes_handlers_across_buses() -> N
         await asyncio.gather(bus_a.wait_until_idle(), bus_b.wait_until_idle())
         assert max_in_flight == 1
     finally:
-        await bus_a.destroy(clear=True, timeout=0)
-        await bus_b.destroy(clear=True, timeout=0)
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
 
 
 # Folded from test_retry.py to keep test layout class-based.
