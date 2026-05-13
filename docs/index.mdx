@@ -99,13 +99,16 @@ import (
 )
 
 func main() {
-	bus := abxbus.NewEventBus("MyBus", nil)
-	bus.OnEventName("SomeEvent", "on_some_event", func(event *abxbus.BaseEvent) (any, error) {
-		fmt.Println(event.Payload["some_data"])
-		return nil, nil
-	}, nil)
+	type SomeEvent struct {
+		SomeData int `json:"some_data"`
+	}
 
-	event := bus.EmitEventName("SomeEvent", map[string]any{"some_data": 132})
+	bus := abxbus.NewEventBus("MyBus", nil)
+	bus.On(func(event SomeEvent) {
+		fmt.Println(event.SomeData)
+	})
+
+	event := bus.Emit(SomeEvent{SomeData: 132})
 	_, _ = event.Now()
 }
 ```

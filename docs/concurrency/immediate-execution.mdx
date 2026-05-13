@@ -102,8 +102,8 @@ bus.on(ChildEvent, |_event: ChildEvent| async move {
 ```go
 bus := abxbus.NewEventBus("RpcBus", nil)
 
-bus.OnEventName("ParentEvent", "on_parent", func(event *abxbus.BaseEvent) (any, error) {
-	child := event.EmitEventName("ChildEvent", nil)
+bus.On("ParentEvent", "on_parent", func(event *abxbus.BaseEvent) (any, error) {
+	child := event.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
 	if _, err := child.Now(); err != nil {
 		return nil, err
 	}
@@ -114,7 +114,7 @@ bus.OnEventName("ParentEvent", "on_parent", func(event *abxbus.BaseEvent) (any, 
 	return fmt.Sprintf("parent got: %v", value), nil
 }, nil)
 
-bus.OnEventName("ChildEvent", "on_child", func(event *abxbus.BaseEvent) (any, error) {
+bus.On("ChildEvent", "on_child", func(event *abxbus.BaseEvent) (any, error) {
 	return "child response", nil
 }, nil)
 ```
@@ -202,11 +202,11 @@ bus := abxbus.NewEventBus("ParallelRpcBus", &abxbus.EventBusOptions{
 	EventConcurrency: abxbus.EventConcurrencyParallel,
 })
 
-bus.OnEventName("ParentEvent", "on_parent", func(event *abxbus.BaseEvent) (any, error) {
+bus.On("ParentEvent", "on_parent", func(event *abxbus.BaseEvent) (any, error) {
 	children := []*abxbus.BaseEvent{
-		event.EmitEventName("SomeChildEvent1", nil),
-		event.EmitEventName("SomeChildEvent2", nil),
-		event.EmitEventName("SomeChildEvent3", nil),
+		event.Emit(abxbus.NewBaseEvent("SomeChildEvent1", nil)),
+		event.Emit(abxbus.NewBaseEvent("SomeChildEvent2", nil)),
+		event.Emit(abxbus.NewBaseEvent("SomeChildEvent3", nil)),
 	}
 
 	for _, child := range children {
@@ -363,11 +363,11 @@ bus := abxbus.NewEventBus("OrderBus", &abxbus.EventBusOptions{
 })
 order := []string{}
 
-bus.OnEventName("ParentEvent", "on_parent", func(event *abxbus.BaseEvent) (any, error) {
+bus.On("ParentEvent", "on_parent", func(event *abxbus.BaseEvent) (any, error) {
 	order = append(order, "parent_start")
 	// Detached top-level work: no parent link is recorded for the sibling.
-	bus.EmitEventName("SiblingEvent", nil)
-	child := event.EmitEventName("ChildEvent", nil)
+	bus.Emit(abxbus.NewBaseEvent("SiblingEvent", nil))
+	child := event.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
 	if _, err := child.Now(); err != nil {
 		return nil, err
 	}
@@ -375,17 +375,17 @@ bus.OnEventName("ParentEvent", "on_parent", func(event *abxbus.BaseEvent) (any, 
 	return nil, nil
 }, nil)
 
-bus.OnEventName("ChildEvent", "on_child", func(event *abxbus.BaseEvent) (any, error) {
+bus.On("ChildEvent", "on_child", func(event *abxbus.BaseEvent) (any, error) {
 	order = append(order, "child")
 	return nil, nil
 }, nil)
 
-bus.OnEventName("SiblingEvent", "on_sibling", func(event *abxbus.BaseEvent) (any, error) {
+bus.On("SiblingEvent", "on_sibling", func(event *abxbus.BaseEvent) (any, error) {
 	order = append(order, "sibling")
 	return nil, nil
 }, nil)
 
-parent := bus.EmitEventName("ParentEvent", nil)
+parent := bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
 if _, err := parent.Now(); err != nil {
 	panic(err)
 }

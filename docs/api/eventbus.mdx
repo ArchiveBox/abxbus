@@ -154,10 +154,10 @@ bus.on('*', wildcardHandler)
 <Tab title="Go">
 
 ```go
-bus.OnEventName("UserEvent", "handler", handler, nil)
+bus.On("UserEvent", "handler", handler, nil)
 bus.OnEventName("*", "wildcard_handler", wildcardHandler, nil)
 timeout := 5.0
-bus.OnEventName("UserEvent", "custom", handler, &abxbus.EventHandler{
+bus.On("UserEvent", "custom", handler, &abxbus.EventHandler{
 	HandlerTimeout: &timeout,
 })
 ```
@@ -220,7 +220,7 @@ bus.off('*')
 <Tab title="Go">
 
 ```go
-handler := bus.OnEventName("UserEvent", "handler", onUserEvent, nil)
+handler := bus.On("UserEvent", "handler", onUserEvent, nil)
 bus.Off("UserEvent", handler)
 bus.Off("UserEvent", handler.ID)
 bus.Off("*", nil)
@@ -266,7 +266,11 @@ const result = await event.now({ first_result: true }).eventResult()
 <Tab title="Go">
 
 ```go
-event := bus.EmitEventName("MyEvent", map[string]any{"data": "x"})
+type MyEvent struct {
+	Data string `json:"data"`
+}
+
+event := bus.Emit(MyEvent{Data: "x"})
 result, err := event.EventResult()
 if err != nil {
 	return err
@@ -597,7 +601,10 @@ await bus.destroy({ clear: true })
 ```go
 type ResumeTickEvent struct{}
 
-resumeTick := abxbus.MustNewEvent("ResumeTickEvent", ResumeTickEvent{})
+resumeTick, err := abxbus.Event(ResumeTickEvent{})
+if err != nil {
+	panic(err)
+}
 
 // 1) Serialize full bus state
 payload, err := bus.ToJSON()
@@ -618,9 +625,9 @@ fmt.Println(string(payload))
 bus, err = abxbus.EventBusFromJSON(payload)
 
 // 3) Re-link runtime callables by handler id
-bus.OnEventName("UserCreatedEvent", "onUserCreated", onUserCreated, bus.Handlers["018f..."])
-bus.OnEventName("UserDeletedEvent", "onUserDeleted", onUserDeleted, bus.Handlers["018g..."])
-bus.OnEventName("UserUpdatedEvent", "onUserUpdated", onUserUpdated, bus.Handlers["018h..."])
+bus.On("UserCreatedEvent", "onUserCreated", onUserCreated, bus.Handlers["018f..."])
+bus.On("UserDeletedEvent", "onUserDeleted", onUserDeleted, bus.Handlers["018g..."])
+bus.On("UserUpdatedEvent", "onUserUpdated", onUserUpdated, bus.Handlers["018h..."])
 
 // 4) Resume processing
 bus.Emit(resumeTick)

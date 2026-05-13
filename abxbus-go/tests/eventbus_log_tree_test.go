@@ -11,18 +11,18 @@ import (
 
 func TestLogTreeShowsParentChildAndHandlerResults(t *testing.T) {
 	bus := abxbus.NewEventBus("TreeBus", nil)
-	bus.OnEventName("RootEvent", "root", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		child := e.EmitEventName("ChildEvent", nil)
+	bus.On("RootEvent", "root", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		child := e.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
 		if _, err := child.Now(); err != nil {
 			return nil, err
 		}
 		return "root-ok", nil
 	}, nil)
-	bus.OnEventName("ChildEvent", "child", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("ChildEvent", "child", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "child-ok", nil
 	}, nil)
 
-	e := bus.EmitEventName("RootEvent", nil)
+	e := bus.Emit(abxbus.NewBaseEvent("RootEvent", nil))
 	if _, err := e.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestLogTreeShowsParentChildAndHandlerResults(t *testing.T) {
 func TestLogTreeIncludesTimedOutResultErrors(t *testing.T) {
 	short := 0.01
 	bus := abxbus.NewEventBus("TimeoutTreeBus", &abxbus.EventBusOptions{EventTimeout: &short})
-	bus.OnEventName("SlowEvent", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("SlowEvent", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		select {
 		case <-time.After(30 * time.Millisecond):
 			return "too-late", nil
@@ -47,7 +47,7 @@ func TestLogTreeIncludesTimedOutResultErrors(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	}, nil)
-	e := bus.EmitEventName("SlowEvent", nil)
+	e := bus.Emit(abxbus.NewBaseEvent("SlowEvent", nil))
 	if _, err := e.EventResult(); err == nil {
 		t.Fatal("expected timeout error from event result")
 	}

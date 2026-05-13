@@ -198,9 +198,9 @@ func main() {
 	bus := abxbus.NewEventBus("AppBus", nil)
 	handlers := &HandlerSet{Prefix: "svc"}
 
-	bus.OnEventName("WorkEvent", "bare_handler", bareHandler, nil)
-	bus.OnEventName("WorkEvent", "static_style_handler", StaticStyleHandler, nil)
-	bus.OnEventName("WorkEvent", "instance_handler", handlers.InstanceHandler, nil)
+	bus.On("WorkEvent", "bare_handler", bareHandler, nil)
+	bus.On("WorkEvent", "static_style_handler", StaticStyleHandler, nil)
+	bus.On("WorkEvent", "instance_handler", handlers.InstanceHandler, nil)
 }
 ```
 

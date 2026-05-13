@@ -274,10 +274,10 @@ func main() {
 		MaxHistorySize:          &maxHistory,
 	})}
 
-	auth.bus.OnEventName("UserCreatedEvent", "on_user_created", func(event *abxbus.BaseEvent) (any, error) {
+	auth.bus.On("UserCreatedEvent", "on_user_created", func(event *abxbus.BaseEvent) (any, error) {
 		return fmt.Sprintf("auth-ok:%s", event.Payload["user_id"]), nil
 	}, nil)
-	billing.bus.OnEventName("UserCreatedEvent", "on_user_created", func(event *abxbus.BaseEvent) (any, error) {
+	billing.bus.On("UserCreatedEvent", "on_user_created", func(event *abxbus.BaseEvent) (any, error) {
 		return fmt.Sprintf("billing-ok:%s", event.Payload["user_id"]), nil
 	}, nil)
 
@@ -288,7 +288,7 @@ func main() {
 		return billing.bus.Emit(event), nil
 	}, nil)
 
-	event := auth.bus.EmitEventName("UserCreatedEvent", map[string]any{"user_id": "u-a8d1"})
+	event := auth.bus.Emit(abxbus.NewBaseEvent("UserCreatedEvent", map[string]any{"user_id": "u-a8d1"}))
 	result, err := event.EventResult()
 	if err != nil {
 		panic(err)
@@ -519,7 +519,7 @@ busC.OnEventName("*", "forward_to_a", func(event *abxbus.BaseEvent) (any, error)
 	return busA.Emit(event), nil
 }, nil)
 
-event := busA.EmitEventName("PingEvent", map[string]any{"message": "hello"})
+event := busA.Emit(abxbus.NewBaseEvent("PingEvent", map[string]any{"message": "hello"}))
 if _, err := event.Now(); err != nil {
 	panic(err)
 }

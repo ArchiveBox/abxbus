@@ -92,7 +92,7 @@ let typed_result = block_on(event.event_result())?
 <Tab title="Go">
 
 ```go
-type OrderCreatedPayload struct {
+type OrderCreatedEvent struct {
 	OrderID     string  `json:"order_id"`
 	CustomerID  string  `json:"customer_id"`
 	TotalAmount float64 `json:"total_amount"`
@@ -103,25 +103,15 @@ type OrderResult struct {
 }
 
 bus := abxbus.NewEventBus("OrdersBus", nil)
-bus.On(
-	"OrderCreatedEvent",
-	"handle_order",
-	func(payload OrderCreatedPayload) (OrderResult, error) {
-		return OrderResult{OK: payload.TotalAmount > 0}, nil
-	},
-	nil,
-)
+bus.On(func(event OrderCreatedEvent) (OrderResult, error) {
+	return OrderResult{OK: event.TotalAmount > 0}, nil
+})
 
-event, err := abxbus.NewEvent[OrderCreatedPayload]("OrderCreatedEvent", OrderCreatedPayload{
+result, err := bus.Emit(OrderCreatedEvent{
 	OrderID:     "order-123",
 	CustomerID:  "customer-456",
 	TotalAmount: 42.50,
-}, abxbus.ResultType[OrderResult]())
-if err != nil {
-	panic(err)
-}
-
-result, err := bus.Emit(event).EventResult()
+}).EventResult()
 if err != nil {
 	panic(err)
 }

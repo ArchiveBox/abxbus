@@ -113,7 +113,7 @@ if err != nil {
 
 event := existing
 if event == nil {
-	event = bus.EmitEventName("ScreenshotEvent", map[string]any{"url": url})
+	event = bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"url": url}))
 }
 if _, err := event.Now(); err != nil {
 	panic(err)
@@ -198,7 +198,7 @@ if err != nil {
 
 event := inFlight
 if event == nil {
-	event = bus.EmitEventName("ScreenshotEvent", map[string]any{"url": url})
+	event = bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"url": url}))
 }
 if _, err := event.Now(); err != nil {
 	panic(err)
@@ -296,7 +296,7 @@ if event == nil {
 	}
 }
 if event == nil {
-	event = bus.EmitEventName("ScreenshotEvent", map[string]any{"url": url})
+	event = bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"url": url}))
 }
 
 if _, err := event.Now(); err != nil {
@@ -396,7 +396,7 @@ func emitDebouncedScreenshot(ctx context.Context, bus *abxbus.EventBus, url stri
 		}
 	}
 	if event == nil {
-		event = bus.EmitEventName("ScreenshotEvent", map[string]any{"url": url})
+		event = bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"url": url}))
 	}
 
 	if _, err := event.Now(); err != nil {

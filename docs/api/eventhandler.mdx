@@ -40,7 +40,10 @@ bus.off(MyEvent, entry)
 <Tab title="Go">
 
 ```go
-entry := bus.OnEventName("MyEvent", "handler", handler, nil)
+type MyEvent struct{}
+
+handler := func(event MyEvent) {}
+entry := bus.On(handler)
 bus.Off("MyEvent", entry)
 ```
 

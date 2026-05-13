@@ -657,14 +657,6 @@ func (e *BaseEvent) Emit(input any) *BaseEvent {
 	return e.EmitWithContext(nil, input)
 }
 
-func (e *BaseEvent) EmitEventName(event_name string, payload map[string]any) *BaseEvent {
-	return e.Emit(NewBaseEvent(event_name, payload))
-}
-
-func (e *BaseEvent) EmitEventNameWithContext(ctx context.Context, event_name string, payload map[string]any) *BaseEvent {
-	return e.EmitWithContext(ctx, NewBaseEvent(event_name, payload))
-}
-
 func (e *BaseEvent) EmitWithContext(ctx context.Context, input any) *BaseEvent {
 	event, err := baseEventFromAny(input)
 	if err != nil {

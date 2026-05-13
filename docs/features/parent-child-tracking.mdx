@@ -44,9 +44,9 @@ In Rust, the same split is explicit:
 
 In Go, the same split is explicit:
 
-- `child := event.EmitEventName(...)` creates linked child work.
+- `child := event.Emit(ChildEvent{...})` creates linked child work.
 - `child.Now()` queue-jumps and waits for that linked child.
-- `bus.EmitEventName(...)` creates detached top-level work.
+- `bus.Emit(ParentEvent{...})` creates detached top-level work.
 - calling `Now()` on a bus-emitted event waits for it without adding parent-child lineage.
 
 ## Works across forwarded buses too
@@ -293,10 +293,10 @@ import (
 func main() {
 	bus := abxbus.NewEventBus("TreeBus", nil)
 
-	bus.OnEventName("CheckoutEvent", "on_checkout", func(event *abxbus.BaseEvent) (any, error) {
+	bus.On("CheckoutEvent", "on_checkout", func(event *abxbus.BaseEvent) (any, error) {
 		orderID := event.Payload["order_id"].(string)
 
-		reserve := event.EmitEventName("ReserveInventoryEvent", map[string]any{"order_id": orderID})
+		reserve := event.Emit(abxbus.NewBaseEvent("ReserveInventoryEvent", map[string]any{"order_id": orderID}))
 		if _, err := reserve.Now(); err != nil {
 			return nil, err
 		}
@@ -305,7 +305,7 @@ func main() {
 			return nil, err
 		}
 
-		charge := event.EmitEventName("ChargeCardEvent", map[string]any{"order_id": orderID})
+		charge := event.Emit(abxbus.NewBaseEvent("ChargeCardEvent", map[string]any{"order_id": orderID}))
 		if _, err := charge.Now(); err != nil {
 			return nil, err
 		}
@@ -314,7 +314,7 @@ func main() {
 			return nil, err
 		}
 
-		receipt := event.EmitEventName("SendReceiptEvent", map[string]any{"order_id": orderID})
+		receipt := event.Emit(abxbus.NewBaseEvent("SendReceiptEvent", map[string]any{"order_id": orderID}))
 		if _, err := receipt.Now(); err != nil {
 			return nil, err
 		}
@@ -326,13 +326,13 @@ func main() {
 		return fmt.Sprintf("%v|%v|%v", reserveID, chargeID, receiptID), nil
 	}, nil)
 
-	bus.OnEventName("ReserveInventoryEvent", "on_reserve", func(event *abxbus.BaseEvent) (any, error) {
+	bus.On("ReserveInventoryEvent", "on_reserve", func(event *abxbus.BaseEvent) (any, error) {
 		return fmt.Sprintf("reserve:%s", event.Payload["order_id"]), nil
 	}, nil)
 
-	bus.OnEventName("ChargeCardEvent", "on_charge", func(event *abxbus.BaseEvent) (any, error) {
+	bus.On("ChargeCardEvent", "on_charge", func(event *abxbus.BaseEvent) (any, error) {
 		orderID := event.Payload["order_id"].(string)
-		fraud := event.EmitEventName("FraudCheckEvent", map[string]any{"order_id": orderID})
+		fraud := event.Emit(abxbus.NewBaseEvent("FraudCheckEvent", map[string]any{"order_id": orderID}))
 		if _, err := fraud.Now(); err != nil {
 			return nil, err
 		}
@@ -343,14 +343,14 @@ func main() {
 		return fmt.Sprintf("charge:%s:%v", orderID, fraudStatus), nil
 	}, nil)
 
-	bus.OnEventName("FraudCheckEvent", "on_fraud", func(event *abxbus.BaseEvent) (any, error) {
+	bus.On("FraudCheckEvent", "on_fraud", func(event *abxbus.BaseEvent) (any, error) {
 		return fmt.Sprintf("fraud-ok:%s", event.Payload["order_id"]), nil
 	}, nil)
-	bus.OnEventName("SendReceiptEvent", "on_receipt", func(event *abxbus.BaseEvent) (any, error) {
+	bus.On("SendReceiptEvent", "on_receipt", func(event *abxbus.BaseEvent) (any, error) {
 		return fmt.Sprintf("receipt:%s", event.Payload["order_id"]), nil
 	}, nil)
 
-	root := bus.EmitEventName("CheckoutEvent", map[string]any{"order_id": "ord-123"})
+	root := bus.Emit(abxbus.NewBaseEvent("CheckoutEvent", map[string]any{"order_id": "ord-123"}))
 	result, err := root.EventResult()
 	if err != nil {
 		panic(err)

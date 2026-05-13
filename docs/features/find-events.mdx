@@ -373,9 +373,9 @@ const child = await bus.find(TabCreatedEvent, { child_of: parentEvent, past: 5 }
 <Tab title="Go">
 
 ```go
-parentEvent := bus.EmitEventName("NavigateToUrlEvent", map[string]any{
+parentEvent := bus.Emit(abxbus.NewBaseEvent("NavigateToUrlEvent", map[string]any{
 	"url": "https://example.com",
-})
+}))
 if _, err := parentEvent.Now(); err != nil {
 	panic(err)
 }
@@ -463,7 +463,7 @@ if event == nil {
 	}
 }
 if event == nil {
-	event = bus.EmitEventName("ScreenshotEvent", nil)
+	event = bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", nil))
 }
 if _, err := event.Now(); err != nil {
 	panic(err)

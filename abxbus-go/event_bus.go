@@ -298,15 +298,117 @@ func (b *EventBus) notifyBusHandlersChange(handler *EventHandler, registered boo
 	}
 }
 
-func (b *EventBus) On(event_name string, handler_name string, handler any, options *EventHandler) *EventHandler {
-	if event_name == "" || event_name == "*" {
-		panic(`EventBus.On registers typed handlers for one concrete event name; use EventBus.OnEventName for wildcard or raw event-name handlers`)
+func (b *EventBus) On(args ...any) *EventHandler {
+	if err := b.rejectIfDestroyed("On"); err != nil {
+		panic(err)
 	}
-	normalizedHandler, err := normalizeTypedEventHandlerCallable(handler)
+	event_name, handler_name, handler, options, err := parseOnArgs(args)
+	if err != nil {
+		panic(err)
+	}
+	if event_name == "" || event_name == "*" {
+		panic(`EventBus.On registers handlers for one concrete event name; use EventBus.OnEventName for wildcard event-name handlers`)
+	}
+	normalizedHandler, err := normalizeEventHandlerCallable(handler)
 	if err != nil {
 		panic(err)
 	}
 	return b.registerHandler(event_name, handler_name, normalizedHandler, options)
+}
+
+func parseOnArgs(args []any) (string, string, any, *EventHandler, error) {
+	if len(args) == 0 || len(args) > 4 {
+		return "", "", nil, nil, fmt.Errorf("EventBus.On expects handler, event name + handler, or event name + handler name + handler")
+	}
+	handlerName := "handler"
+	var eventName string
+	var handler any
+	var options *EventHandler
+	if first, ok := args[0].(string); ok {
+		eventName = first
+		if len(args) >= 2 {
+			if second, ok := args[1].(string); ok {
+				handlerName = second
+				if len(args) < 3 {
+					return "", "", nil, nil, fmt.Errorf("EventBus.On missing handler callback")
+				}
+				handler = args[2]
+				if len(args) == 4 {
+					parsedOptions, err := parseEventHandlerOptions(args[3])
+					if err != nil {
+						return "", "", nil, nil, err
+					}
+					options = parsedOptions
+				}
+			} else {
+				if len(args) > 3 {
+					return "", "", nil, nil, fmt.Errorf("EventBus.On exact-name form expects event name, handler, and optional *EventHandler")
+				}
+				handler = args[1]
+				if len(args) == 3 {
+					parsedOptions, err := parseEventHandlerOptions(args[2])
+					if err != nil {
+						return "", "", nil, nil, err
+					}
+					options = parsedOptions
+				}
+			}
+		}
+	} else {
+		if len(args) > 2 {
+			return "", "", nil, nil, fmt.Errorf("EventBus.On inferred form expects handler and optional *EventHandler")
+		}
+		handler = args[0]
+		inferred, err := inferEventTypeFromHandler(handler)
+		if err != nil {
+			return "", "", nil, nil, err
+		}
+		eventName = inferred
+		if len(args) >= 2 {
+			parsedOptions, err := parseEventHandlerOptions(args[1])
+			if err != nil {
+				return "", "", nil, nil, err
+			}
+			options = parsedOptions
+		}
+	}
+	if handler == nil {
+		return "", "", nil, nil, fmt.Errorf("EventBus.On missing handler callback")
+	}
+	return eventName, handlerName, handler, options, nil
+}
+
+func parseEventHandlerOptions(value any) (*EventHandler, error) {
+	if value == nil {
+		return nil, nil
+	}
+	options, ok := value.(*EventHandler)
+	if !ok {
+		return nil, fmt.Errorf("EventBus.On options must be *EventHandler, got %T", value)
+	}
+	return options, nil
+}
+
+func inferEventTypeFromHandler(handler any) (string, error) {
+	value := reflect.ValueOf(handler)
+	if !value.IsValid() || value.Kind() != reflect.Func || value.IsNil() {
+		return "", unsupportedHandlerSignatureError(handler)
+	}
+	handlerType := value.Type()
+	if handlerType.NumIn() == 0 {
+		return "", unsupportedHandlerSignatureError(handler)
+	}
+	payloadType := handlerType.In(0)
+	if payloadType == baseEventPointerType {
+		return "", fmt.Errorf("EventBus.On cannot infer an event type from *BaseEvent handlers; pass an exact event name or use a typed payload handler")
+	}
+	for payloadType.Kind() == reflect.Pointer {
+		payloadType = payloadType.Elem()
+	}
+	if payloadType.Kind() != reflect.Struct || payloadType.Name() == "" {
+		return "", fmt.Errorf("EventBus.On cannot infer an event type from handler payload %s; pass an exact event name", payloadType)
+	}
+	return payloadType.Name(), nil
 }
 
 func (b *EventBus) OnEventName(event_pattern string, handler_name string, handler any, options *EventHandler) *EventHandler {
@@ -419,14 +521,6 @@ func (b *EventBus) Off(event_pattern string, handler any) {
 
 func (b *EventBus) Emit(input any) *BaseEvent {
 	return b.EmitWithContext(nil, input)
-}
-
-func (b *EventBus) EmitEventName(event_name string, payload map[string]any) *BaseEvent {
-	return b.Emit(NewBaseEvent(event_name, payload))
-}
-
-func (b *EventBus) EmitEventNameWithContext(ctx context.Context, event_name string, payload map[string]any) *BaseEvent {
-	return b.EmitWithContext(ctx, NewBaseEvent(event_name, payload))
 }
 
 func (b *EventBus) EmitWithContext(ctx context.Context, input any) *BaseEvent {

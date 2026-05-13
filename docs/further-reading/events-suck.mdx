@@ -59,10 +59,10 @@ const updated = await client.update({ id: id ?? 'fallback-id', age: 46 }, { sour
 // events_suck is not implemented in abxbus-go yet.
 //
 // Use the core EventBus APIs directly:
-event := bus.EmitEventName("CreateUserEvent", map[string]any{
+event := bus.Emit(abxbus.NewBaseEvent("CreateUserEvent", map[string]any{
 	"name": "bob",
 	"age": 45,
-})
+}))
 userID, err := event.EventResult()
 ```
 
@@ -179,7 +179,7 @@ const updated = await client.update({ id: user_id ?? 'fallback-id', age: 46 }, {
 
 ```go
 // events_suck.wrap/make_events/make_handler are not implemented in Go yet.
-// For typed event APIs, use bus.On(...) and NewEvent(..., ResultType[T]()).
+// For typed event APIs, use bus.On(func(MyEvent) ...) and bus.Emit(MyEvent{...}).
 ```
 
 </Tab>
@@ -259,16 +259,16 @@ bus.on(ChargeCardEvent, async (event) => `receipt-${event.order_id}`)
 <Tab title="Go">
 
 ```go
-bus.OnEventName("CheckoutEvent", "on_checkout", func(event *abxbus.BaseEvent) (any, error) {
+bus.On("CheckoutEvent", "on_checkout", func(event *abxbus.BaseEvent) (any, error) {
 	orderID, _ := event.Payload["order_id"].(string)
-	child := event.EmitEventName("ChargeCardEvent", map[string]any{"order_id": orderID})
+	child := event.Emit(abxbus.NewBaseEvent("ChargeCardEvent", map[string]any{"order_id": orderID}))
 	if _, err := child.Now(); err != nil {
 		return nil, err
 	}
 	return child.EventResult()
 }, nil)
 
-bus.OnEventName("ChargeCardEvent", "on_charge", func(event *abxbus.BaseEvent) (any, error) {
+bus.On("ChargeCardEvent", "on_charge", func(event *abxbus.BaseEvent) (any, error) {
 	orderID, _ := event.Payload["order_id"].(string)
 	return "receipt-" + orderID, nil
 }, nil)

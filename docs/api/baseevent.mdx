@@ -40,18 +40,16 @@ const FooCreateEvent = BaseEvent.extend('FooCreateEvent', {
 <Tab title="Go">
 
 ```go
-type FooPayload struct {
+type FooCreateEvent struct {
 	ID   *string `json:"id,omitempty"`
 	Name string  `json:"name"`
 	Age  int     `json:"age"`
 }
 
-type FooResult string
-
-event, err := abxbus.NewEvent[FooPayload]("FooCreateEvent", FooPayload{
+event, err := abxbus.Event(FooCreateEvent{
 	Name: "Ada",
 	Age:  37,
-}, abxbus.ResultType[FooResult]())
+})
 ```
 
 </Tab>
@@ -149,7 +147,7 @@ const value = await completed.eventResult()
 ```go
 type MyEvent struct{}
 
-pending := bus.Emit(abxbus.MustNewEvent("MyEvent", MyEvent{}))
+pending := bus.Emit(MyEvent{})
 completed, err := pending.Now()
 if err != nil {
 	return err

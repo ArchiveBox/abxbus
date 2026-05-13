@@ -161,7 +161,7 @@ console.log('after completion -> pending_event_queue=', bus.pending_event_queue.
 <Tab title="Go">
 
 ```go
-event := bus.EmitEventName("MyEvent", nil)
+event := bus.Emit(abxbus.NewBaseEvent("MyEvent", nil))
 
 var before struct {
 	PendingEventQueue []string       `json:"pending_event_queue"`

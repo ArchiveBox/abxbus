@@ -19,7 +19,7 @@ func lockManagerUpdateMax(maxActive *atomic.Int32, value int32) {
 }
 
 func registerActiveLockManagerHandler(bus *abxbus.EventBus, eventType string, handlerName string, active *atomic.Int32, maxActive *atomic.Int32) {
-	bus.OnEventName(eventType, handlerName, func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On(eventType, handlerName, func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		nowActive := active.Add(1)
 		lockManagerUpdateMax(maxActive, nowActive)
 		time.Sleep(20 * time.Millisecond)
@@ -120,7 +120,7 @@ func TestWaitUntilIdleBehavesCorrectly(t *testing.T) {
 	bus := abxbus.NewEventBus("IdleBus", nil)
 	defer bus.Destroy()
 	var calls atomic.Int32
-	bus.OnEventName("Evt", "h", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("Evt", "h", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		calls.Add(1)
 		return "ok", nil
 	}, nil)
@@ -130,7 +130,7 @@ func TestWaitUntilIdleBehavesCorrectly(t *testing.T) {
 		t.Fatal("bus should be idle before any events")
 	}
 
-	e := bus.EmitEventName("Evt", nil)
+	e := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
 	if !bus.WaitUntilIdle(&short) {
 		t.Fatal("bus should become idle after event completion")
 	}
@@ -163,8 +163,8 @@ func TestLockManagerGetLockForEventModes(t *testing.T) {
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
 	})
 	registerActiveLockManagerHandler(busSerial, "LockModesEvent", "handler", &active, &maxActive)
-	busSerial.EmitEventName("LockModesEvent", nil)
-	busSerial.EmitEventName("LockModesEvent", nil)
+	busSerial.Emit(abxbus.NewBaseEvent("LockModesEvent", nil))
+	busSerial.Emit(abxbus.NewBaseEvent("LockModesEvent", nil))
 	if !busSerial.WaitUntilIdle(&timeout) {
 		t.Fatal("bus-serial bus did not become idle")
 	}
@@ -235,7 +235,7 @@ func TestLockManagerGetLockForEventHandlerModes(t *testing.T) {
 	})
 	registerActiveLockManagerHandler(serialBus, "LockHandlerModesEvent", "handler_a", &active, &maxActive)
 	registerActiveLockManagerHandler(serialBus, "LockHandlerModesEvent", "handler_b", &active, &maxActive)
-	serialBus.EmitEventName("LockHandlerModesEvent", nil)
+	serialBus.Emit(abxbus.NewBaseEvent("LockHandlerModesEvent", nil))
 	if !serialBus.WaitUntilIdle(&timeout) {
 		t.Fatal("serial handler bus did not become idle")
 	}
@@ -298,8 +298,8 @@ func TestRunWithEventLockAndHandlerLockRespectParallelBypass(t *testing.T) {
 	})
 	registerActiveLockManagerHandler(serialBus, "SerialAcquireEvent", "handler_a", &active, &maxActive)
 	registerActiveLockManagerHandler(serialBus, "SerialAcquireEvent", "handler_b", &active, &maxActive)
-	serialBus.EmitEventName("SerialAcquireEvent", nil)
-	serialBus.EmitEventName("SerialAcquireEvent", nil)
+	serialBus.Emit(abxbus.NewBaseEvent("SerialAcquireEvent", nil))
+	serialBus.Emit(abxbus.NewBaseEvent("SerialAcquireEvent", nil))
 	if !serialBus.WaitUntilIdle(&timeout) {
 		t.Fatal("serial acquire bus did not become idle")
 	}

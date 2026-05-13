@@ -13,11 +13,11 @@ func TestOnOffByEntryByIDAndRemoveAll(t *testing.T) {
 	var eventCalls atomic.Int32
 	var wildcardCalls atomic.Int32
 
-	h1 := bus.OnEventName("Evt", "h1", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	h1 := bus.On("Evt", "h1", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		eventCalls.Add(1)
 		return "h1", nil
 	}, nil)
-	h2 := bus.OnEventName("Evt", "h2", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	h2 := bus.On("Evt", "h2", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		eventCalls.Add(1)
 		return "h2", nil
 	}, nil)
@@ -26,7 +26,7 @@ func TestOnOffByEntryByIDAndRemoveAll(t *testing.T) {
 		return "all", nil
 	}, nil)
 
-	e1 := bus.EmitEventName("Evt", nil)
+	e1 := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
 	if _, err := e1.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestOnOffByEntryByIDAndRemoveAll(t *testing.T) {
 	}
 
 	bus.Off("Evt", h1)
-	e2 := bus.EmitEventName("Evt", nil)
+	e2 := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
 	if _, err := e2.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestOnOffByEntryByIDAndRemoveAll(t *testing.T) {
 	}
 
 	bus.Off("Evt", h2.ID)
-	e3 := bus.EmitEventName("Evt", nil)
+	e3 := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
 	if _, err := e3.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestOnOffByEntryByIDAndRemoveAll(t *testing.T) {
 	}
 
 	bus.Off("Evt", nil)
-	e4 := bus.EmitEventName("Evt", nil)
+	e4 := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
 	if _, err := e4.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestOnOffByEntryByIDAndRemoveAll(t *testing.T) {
 	}
 
 	bus.Off("*", nil)
-	e5 := bus.EmitEventName("Evt", nil)
+	e5 := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
 	if _, err := e5.Now(); err != nil {
 		t.Fatal(err)
 	}

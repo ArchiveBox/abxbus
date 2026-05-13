@@ -142,12 +142,12 @@ func main() {
 		return nil, nil
 	}
 
-	busA.OnEventName("SerialEvent", "handler", handler, nil)
-	busB.OnEventName("SerialEvent", "handler", handler, nil)
+	busA.On("SerialEvent", "handler", handler, nil)
+	busB.On("SerialEvent", "handler", handler, nil)
 
 	for i := 0; i < 3; i++ {
-		busA.EmitEventName("SerialEvent", map[string]any{"order": i, "source": "a"})
-		busB.EmitEventName("SerialEvent", map[string]any{"order": i, "source": "b"})
+		busA.Emit(abxbus.NewBaseEvent("SerialEvent", map[string]any{"order": i, "source": "a"}))
+		busB.Emit(abxbus.NewBaseEvent("SerialEvent", map[string]any{"order": i, "source": "b"}))
 	}
 
 	busA.WaitUntilIdle(nil)

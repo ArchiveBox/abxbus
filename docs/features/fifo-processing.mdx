@@ -132,7 +132,7 @@ func main() {
 	startedOrder := []int{}
 	completedOrder := []int{}
 
-	bus.OnEventName("JobEvent", "on_job", func(event *abxbus.BaseEvent) (any, error) {
+	bus.On("JobEvent", "on_job", func(event *abxbus.BaseEvent) (any, error) {
 		order := event.Payload["order"].(int)
 		delayMS := event.Payload["delay_ms"].(int)
 		startedOrder = append(startedOrder, order)
@@ -142,9 +142,9 @@ func main() {
 	}, nil)
 
 	emitted := []*abxbus.BaseEvent{
-		bus.EmitEventName("JobEvent", map[string]any{"order": 0, "delay_ms": 30}),
-		bus.EmitEventName("JobEvent", map[string]any{"order": 1, "delay_ms": 1}),
-		bus.EmitEventName("JobEvent", map[string]any{"order": 2, "delay_ms": 20}),
+		bus.Emit(abxbus.NewBaseEvent("JobEvent", map[string]any{"order": 0, "delay_ms": 30})),
+		bus.Emit(abxbus.NewBaseEvent("JobEvent", map[string]any{"order": 1, "delay_ms": 1})),
+		bus.Emit(abxbus.NewBaseEvent("JobEvent", map[string]any{"order": 2, "delay_ms": 20})),
 	}
 
 	bus.WaitUntilIdle(nil)
@@ -306,22 +306,22 @@ console.log(treeLines)
 bus := abxbus.NewEventBus("FifoBus", nil)
 trace := []string{}
 
-bus.OnEventName("SlowEvent", "on_slow", func(event *abxbus.BaseEvent) (any, error) {
+bus.On("SlowEvent", "on_slow", func(event *abxbus.BaseEvent) (any, error) {
 	trace = append(trace, fmt.Sprintf("start:%s:%s", event.EventType, event.Payload["name"]))
 	time.Sleep(40 * time.Millisecond)
 	trace = append(trace, fmt.Sprintf("end:%s:%s", event.EventType, event.Payload["name"]))
 	return nil, nil
 }, nil)
 
-bus.OnEventName("FastEvent", "on_fast", func(event *abxbus.BaseEvent) (any, error) {
+bus.On("FastEvent", "on_fast", func(event *abxbus.BaseEvent) (any, error) {
 	trace = append(trace, fmt.Sprintf("start:%s:%s", event.EventType, event.Payload["name"]))
 	time.Sleep(1 * time.Millisecond)
 	trace = append(trace, fmt.Sprintf("end:%s:%s", event.EventType, event.Payload["name"]))
 	return nil, nil
 }, nil)
 
-slow := bus.EmitEventName("SlowEvent", map[string]any{"name": "slow-a"})
-fast := bus.EmitEventName("FastEvent", map[string]any{"name": "fast-b"})
+slow := bus.Emit(abxbus.NewBaseEvent("SlowEvent", map[string]any{"name": "slow-a"}))
+fast := bus.Emit(abxbus.NewBaseEvent("FastEvent", map[string]any{"name": "fast-b"}))
 bus.WaitUntilIdle(nil)
 
 fmt.Println(trace)

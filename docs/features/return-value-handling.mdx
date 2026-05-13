@@ -87,30 +87,17 @@ let result = block_on(event.event_result())?;
 <Tab title="Go">
 
 ```go
-type DoMathPayload struct {
+type DoMathEvent struct {
 	A int `json:"a"`
 	B int `json:"b"`
 }
 
 bus := abxbus.NewEventBus("AppBus", nil)
-bus.On(
-	"DoMathEvent",
-	"add",
-	func(payload DoMathPayload) (int, error) {
-		return payload.A + payload.B, nil
-	},
-	nil,
-)
+bus.On(func(event DoMathEvent) (int, error) {
+	return event.A + event.B, nil
+})
 
-event, err := abxbus.NewEvent[DoMathPayload](
-	"DoMathEvent",
-	DoMathPayload{A: 2, B: 3},
-	abxbus.ResultType[int](),
-)
-if err != nil {
-	panic(err)
-}
-emitted := bus.Emit(event)
+emitted := bus.Emit(DoMathEvent{A: 2, B: 3})
 result, err := emitted.EventResult()
 ```
 
@@ -177,7 +164,9 @@ let values = block_on(event.event_results_list_with_options(EventResultOptions {
 <Tab title="Go">
 
 ```go
-event := bus.EmitEventName("GetConfigEvent", nil)
+type GetConfigEvent struct{}
+
+event := bus.Emit(GetConfigEvent{})
 values, err := event.EventResultsList(
 	&abxbus.EventResultOptions{RaiseIfAny: false, RaiseIfNone: false},
 )

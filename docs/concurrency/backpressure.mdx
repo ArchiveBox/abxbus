@@ -216,7 +216,7 @@ println!("pending_event_queue={pending_count} event_history={history_count}");
 <Tab title="Go">
 
 ```go
-event := bus.EmitEventName("MyEvent", nil)
+event := bus.Emit(abxbus.NewBaseEvent("MyEvent", nil))
 
 var state struct {
 	PendingEventQueue []string       `json:"pending_event_queue"`

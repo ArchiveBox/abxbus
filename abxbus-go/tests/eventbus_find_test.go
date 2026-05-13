@@ -15,7 +15,7 @@ type TypedFindEvent struct {
 
 func TestFindHistoryAndFuture(t *testing.T) {
 	bus := abxbus.NewEventBus("FindBus", nil)
-	seed := bus.EmitEventName("ResponseEvent", map[string]any{"request_id": "abc"})
+	seed := bus.Emit(abxbus.NewBaseEvent("ResponseEvent", map[string]any{"request_id": "abc"}))
 	if _, err := seed.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestFindHistoryAndFuture(t *testing.T) {
 
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		bus.EmitEventName("FutureEvent", map[string]any{"request_id": "future"})
+		bus.Emit(abxbus.NewBaseEvent("FutureEvent", map[string]any{"request_id": "future"}))
 	}()
 	future, err := bus.FindEventName("FutureEvent", nil, &abxbus.FindOptions{Past: false, Future: 1.0})
 	if err != nil {
@@ -75,9 +75,9 @@ func TestFindAndFilterDefaultToTypedEvents(t *testing.T) {
 	}
 }
 
-func TestEmitEventNameCoversRawStringEmission(t *testing.T) {
-	bus := abxbus.NewEventBus("EmitEventNameBus", nil)
-	event := bus.EmitEventName("RawStringEvent", map[string]any{"ok": true})
+func TestEmitRequiresEventObject(t *testing.T) {
+	bus := abxbus.NewEventBus("EmitRequiresEventObjectBus", nil)
+	event := bus.Emit(abxbus.NewBaseEvent("RawStringEvent", map[string]any{"ok": true}))
 	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestFindReturnsNilWhenNoMatch(t *testing.T) {
 
 func TestFindDefaultPastOnlyNoFutureWait(t *testing.T) {
 	bus := abxbus.NewEventBus("FindDefaultBus", nil)
-	seed := bus.EmitEventName("DefaultEvent", nil)
+	seed := bus.Emit(abxbus.NewBaseEvent("DefaultEvent", nil))
 	if _, err := seed.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestFindDefaultPastOnlyNoFutureWait(t *testing.T) {
 
 func TestFindFutureIgnoresPastEvents(t *testing.T) {
 	bus := abxbus.NewEventBus("FindFutureIgnoresPastBus", nil)
-	prior := bus.EmitEventName("ParentEvent", nil)
+	prior := bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
 	if _, err := prior.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestFindPastFalseFutureFalseReturnsNilImmediately(t *testing.T) {
 
 func TestFindPastAndFutureWindowsAreIndependent(t *testing.T) {
 	bus := abxbus.NewEventBus("FindWindowIndependentBus", nil)
-	oldEvent := bus.EmitEventName("ParentEvent", nil)
+	oldEvent := bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
 	if _, err := oldEvent.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -261,8 +261,8 @@ func TestFindSupportsMetadataAndPayloadEqualityFilters(t *testing.T) {
 func TestFindWherePredicateAndBusScopedHistory(t *testing.T) {
 	busA := abxbus.NewEventBus("FindBusA", nil)
 	busB := abxbus.NewEventBus("FindBusB", nil)
-	matchA := busA.EmitEventName("ScopedEvent", map[string]any{"source": "A", "value": 1})
-	matchB := busB.EmitEventName("ScopedEvent", map[string]any{"source": "B", "value": 2})
+	matchA := busA.Emit(abxbus.NewBaseEvent("ScopedEvent", map[string]any{"source": "A", "value": 1}))
+	matchB := busB.Emit(abxbus.NewBaseEvent("ScopedEvent", map[string]any{"source": "B", "value": 2}))
 	if _, err := matchA.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func TestFindWherePredicateAndBusScopedHistory(t *testing.T) {
 func TestFindChildOfFilteringAndLineageTraversal(t *testing.T) {
 	bus := abxbus.NewEventBus("FindChildBus", nil)
 
-	parent := bus.EmitEventName("Parent", nil)
+	parent := bus.Emit(abxbus.NewBaseEvent("Parent", nil))
 	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -342,13 +342,13 @@ func TestFindCanSeeInProgressEventInHistory(t *testing.T) {
 	bus := abxbus.NewEventBus("FindInProgressBus", nil)
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
-	bus.OnEventName("SlowFindEvent", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("SlowFindEvent", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		started <- struct{}{}
 		<-release
 		return "ok", nil
 	}, nil)
 
-	e := bus.EmitEventName("SlowFindEvent", nil)
+	e := bus.Emit(abxbus.NewBaseEvent("SlowFindEvent", nil))
 	select {
 	case <-started:
 	case <-time.After(2 * time.Second):
@@ -377,7 +377,7 @@ func TestFindFutureIgnoresAlreadyDispatchedInFlightEventsWhenPastFalse(t *testin
 	t.Cleanup(bus.Destroy)
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
-	bus.OnEventName("FutureInflightEvent", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("FutureInflightEvent", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		started <- struct{}{}
 		select {
 		case <-release:
@@ -387,7 +387,7 @@ func TestFindFutureIgnoresAlreadyDispatchedInFlightEventsWhenPastFalse(t *testin
 		return "ok", nil
 	}, nil)
 
-	event := bus.EmitEventName("FutureInflightEvent", nil)
+	event := bus.Emit(abxbus.NewBaseEvent("FutureInflightEvent", nil))
 	select {
 	case <-started:
 	case <-time.After(2 * time.Second):
@@ -413,7 +413,7 @@ func TestFindFutureResolvesOnDispatchBeforeHandlersComplete(t *testing.T) {
 	t.Cleanup(bus.Destroy)
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
-	bus.OnEventName("DispatchVisibleEvent", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("DispatchVisibleEvent", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		started <- struct{}{}
 		select {
 		case <-release:
@@ -425,7 +425,7 @@ func TestFindFutureResolvesOnDispatchBeforeHandlersComplete(t *testing.T) {
 
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		bus.EmitEventName("DispatchVisibleEvent", nil)
+		bus.Emit(abxbus.NewBaseEvent("DispatchVisibleEvent", nil))
 	}()
 	match, err := bus.FindEventName("DispatchVisibleEvent", nil, &abxbus.FindOptions{Past: false, Future: 1.0})
 	if err != nil {
@@ -477,8 +477,8 @@ func TestMultipleConcurrentFutureFindWaitersResolveCorrectEvents(t *testing.T) {
 	}()
 
 	time.Sleep(20 * time.Millisecond)
-	eventB := bus.EmitEventName("ConcurrentFindB", nil)
-	eventA := bus.EmitEventName("ConcurrentFindA", nil)
+	eventB := bus.Emit(abxbus.NewBaseEvent("ConcurrentFindB", nil))
+	eventA := bus.Emit(abxbus.NewBaseEvent("ConcurrentFindA", nil))
 
 	select {
 	case err := <-errs:
@@ -512,11 +512,11 @@ func TestMultipleConcurrentFutureFindWaitersResolveCorrectEvents(t *testing.T) {
 func TestMaxHistorySizeZeroDisablesPastSearchButFutureFindStillResolves(t *testing.T) {
 	zeroHistorySize := 0
 	bus := abxbus.NewEventBus("FindZeroHistoryBus", &abxbus.EventBusOptions{MaxHistorySize: &zeroHistorySize})
-	bus.OnEventName("ZeroHistoryEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("ZeroHistoryEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "ok:" + event.Payload["value"].(string), nil
 	}, nil)
 
-	first := bus.EmitEventName("ZeroHistoryEvent", map[string]any{"value": "first"})
+	first := bus.Emit(abxbus.NewBaseEvent("ZeroHistoryEvent", map[string]any{"value": "first"}))
 	if _, err := first.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -533,7 +533,7 @@ func TestMaxHistorySizeZeroDisablesPastSearchButFutureFindStillResolves(t *testi
 
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		bus.EmitEventName("ZeroHistoryEvent", map[string]any{"value": "future"})
+		bus.Emit(abxbus.NewBaseEvent("ZeroHistoryEvent", map[string]any{"value": "future"}))
 	}()
 	future, err := bus.FindEventName("ZeroHistoryEvent", func(event *abxbus.BaseEvent) bool {
 		return event.Payload["value"] == "future"
@@ -554,8 +554,8 @@ func TestMaxHistorySizeZeroDisablesPastSearchButFutureFindStillResolves(t *testi
 
 func TestFindReturnsFirstFilterResult(t *testing.T) {
 	bus := abxbus.NewEventBus("FindFilterFirstBus", nil)
-	first := bus.EmitEventName("ParentEvent", nil)
-	second := bus.EmitEventName("ParentEvent", nil)
+	first := bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
+	second := bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
 	if _, err := first.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -582,8 +582,8 @@ func TestFindReturnsFirstFilterResult(t *testing.T) {
 
 func TestFindSupportsPayloadFieldNamedLimitViaEquals(t *testing.T) {
 	bus := abxbus.NewEventBus("FindLimitFieldBus", nil)
-	noMatch := bus.EmitEventName("LimitFieldEvent", map[string]any{"limit": 3})
-	target := bus.EmitEventName("LimitFieldEvent", map[string]any{"limit": 5})
+	noMatch := bus.Emit(abxbus.NewBaseEvent("LimitFieldEvent", map[string]any{"limit": 3}))
+	target := bus.Emit(abxbus.NewBaseEvent("LimitFieldEvent", map[string]any{"limit": 5}))
 	if _, err := noMatch.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -655,9 +655,9 @@ func TestFilterReturnsEmptyArrayWhenNoMatches(t *testing.T) {
 
 func TestFilterReturnsPastMatchesNewestFirstAndRespectsLimit(t *testing.T) {
 	bus := abxbus.NewEventBus("FilterPastBus", nil)
-	first := bus.EmitEventName("Work", map[string]any{"n": 1})
-	second := bus.EmitEventName("Work", map[string]any{"n": 2})
-	third := bus.EmitEventName("Work", map[string]any{"n": 3})
+	first := bus.Emit(abxbus.NewBaseEvent("Work", map[string]any{"n": 1}))
+	second := bus.Emit(abxbus.NewBaseEvent("Work", map[string]any{"n": 2}))
+	third := bus.Emit(abxbus.NewBaseEvent("Work", map[string]any{"n": 3}))
 	for _, event := range []*abxbus.BaseEvent{first, second, third} {
 		if _, err := event.Now(); err != nil {
 			t.Fatal(err)
@@ -676,9 +676,9 @@ func TestFilterReturnsPastMatchesNewestFirstAndRespectsLimit(t *testing.T) {
 
 func TestFilterRespectsWherePredicateNewestFirst(t *testing.T) {
 	bus := abxbus.NewEventBus("FilterWhereBus", nil)
-	first := bus.EmitEventName("ScreenshotEvent", map[string]any{"target_id": "same"})
-	other := bus.EmitEventName("ScreenshotEvent", map[string]any{"target_id": "other"})
-	second := bus.EmitEventName("ScreenshotEvent", map[string]any{"target_id": "same"})
+	first := bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"target_id": "same"}))
+	other := bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"target_id": "other"}))
+	second := bus.Emit(abxbus.NewBaseEvent("ScreenshotEvent", map[string]any{"target_id": "same"}))
 	for _, event := range []*abxbus.BaseEvent{first, other, second} {
 		if _, err := event.Now(); err != nil {
 			t.Fatal(err)
@@ -698,8 +698,8 @@ func TestFilterRespectsWherePredicateNewestFirst(t *testing.T) {
 
 func TestFilterWildcardMatchesAllEventTypesNewestFirst(t *testing.T) {
 	bus := abxbus.NewEventBus("FilterWildcardBus", nil)
-	userEvent := bus.EmitEventName("UserActionEvent", map[string]any{"action": "login"})
-	systemEvent := bus.EmitEventName("SystemEvent", nil)
+	userEvent := bus.Emit(abxbus.NewBaseEvent("UserActionEvent", map[string]any{"action": "login"}))
+	systemEvent := bus.Emit(abxbus.NewBaseEvent("SystemEvent", nil))
 	if _, err := userEvent.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -718,12 +718,12 @@ func TestFilterWildcardMatchesAllEventTypesNewestFirst(t *testing.T) {
 
 func TestFilterPastWindowFiltersByAge(t *testing.T) {
 	bus := abxbus.NewEventBus("FilterPastWindowBus", nil)
-	oldEvent := bus.EmitEventName("ParentEvent", nil)
+	oldEvent := bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
 	if _, err := oldEvent.Now(); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(120 * time.Millisecond)
-	newEvent := bus.EmitEventName("ParentEvent", nil)
+	newEvent := bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
 	if _, err := newEvent.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -739,14 +739,14 @@ func TestFilterPastWindowFiltersByAge(t *testing.T) {
 
 func TestFilterFutureAppendsMatchAfterPastResults(t *testing.T) {
 	bus := abxbus.NewEventBus("FilterFutureAppendBus", nil)
-	pastEvent := bus.EmitEventName("ParentEvent", nil)
+	pastEvent := bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
 	if _, err := pastEvent.Now(); err != nil {
 		t.Fatal(err)
 	}
 
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		bus.EmitEventName("ParentEvent", nil)
+		bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
 	}()
 	matches, err := bus.FilterEventName("ParentEvent", nil, &abxbus.FilterOptions{Past: true, Future: 0.5})
 	if err != nil {
@@ -762,7 +762,7 @@ func TestFilterFutureAppendsMatchAfterPastResults(t *testing.T) {
 
 func TestFilterSupportsWhereEqualsWildcardChildAndFuture(t *testing.T) {
 	bus := abxbus.NewEventBus("FilterOptionsBus", nil)
-	parent := bus.EmitEventName("Parent", nil)
+	parent := bus.Emit(abxbus.NewBaseEvent("Parent", nil))
 	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -772,7 +772,7 @@ func TestFilterSupportsWhereEqualsWildcardChildAndFuture(t *testing.T) {
 	if _, err := child.Now(); err != nil {
 		t.Fatal(err)
 	}
-	bus.EmitEventName("Other", map[string]any{"kind": "target"})
+	bus.Emit(abxbus.NewBaseEvent("Other", map[string]any{"kind": "target"}))
 
 	childMatches, err := bus.FilterEventName("*", func(event *abxbus.BaseEvent) bool {
 		return event.Payload["kind"] == "target"
@@ -786,7 +786,7 @@ func TestFilterSupportsWhereEqualsWildcardChildAndFuture(t *testing.T) {
 
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		bus.EmitEventName("FutureWork", map[string]any{"kind": "future"})
+		bus.Emit(abxbus.NewBaseEvent("FutureWork", map[string]any{"kind": "future"}))
 	}()
 	futureMatches, err := bus.FilterEventName("FutureWork", nil, &abxbus.FilterOptions{
 		Past:   false,

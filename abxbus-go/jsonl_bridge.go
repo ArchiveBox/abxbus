@@ -51,6 +51,11 @@ func (b *JSONLEventBridge) OnEventName(eventPattern string, handlerName string, 
 	return b.inboundBus.OnEventName(eventPattern, handlerName, handler, options)
 }
 
+func (b *JSONLEventBridge) On(eventName string, handlerName string, handler any, options *EventHandler) *EventHandler {
+	_ = b.Start()
+	return b.inboundBus.On(eventName, handlerName, handler, options)
+}
+
 func (b *JSONLEventBridge) Emit(event *BaseEvent) (*BaseEvent, error) {
 	if err := b.Start(); err != nil {
 		return nil, err
@@ -71,10 +76,6 @@ func (b *JSONLEventBridge) Emit(event *BaseEvent) (*BaseEvent, error) {
 		return nil, err
 	}
 	return event, nil
-}
-
-func (b *JSONLEventBridge) EmitEventName(eventName string, payload map[string]any) (*BaseEvent, error) {
-	return b.Emit(NewBaseEvent(eventName, payload))
 }
 
 func (b *JSONLEventBridge) Dispatch(event *BaseEvent) (*BaseEvent, error) {

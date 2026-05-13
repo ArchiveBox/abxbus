@@ -117,7 +117,7 @@ func main() {
 	maxInFlight := 0
 	release := make(chan struct{})
 
-	bus.OnEventName("ParallelEvent", "handler", func(event *abxbus.BaseEvent) (any, error) {
+	bus.On("ParallelEvent", "handler", func(event *abxbus.BaseEvent) (any, error) {
 		mu.Lock()
 		inFlight++
 		if inFlight > maxInFlight {
@@ -134,8 +134,8 @@ func main() {
 		return nil, nil
 	}, nil)
 
-	bus.EmitEventName("ParallelEvent", map[string]any{"order": 0})
-	bus.EmitEventName("ParallelEvent", map[string]any{"order": 1})
+	bus.Emit(abxbus.NewBaseEvent("ParallelEvent", map[string]any{"order": 0}))
+	bus.Emit(abxbus.NewBaseEvent("ParallelEvent", map[string]any{"order": 1}))
 
 	time.Sleep(10 * time.Millisecond)
 	close(release)

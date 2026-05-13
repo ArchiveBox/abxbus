@@ -96,15 +96,15 @@ func TestComprehensivePatternsForwardingDispatchAndParentTracking(t *testing.T) 
 
 	var asyncChild *abxbus.BaseEvent
 	var syncChild *abxbus.BaseEvent
-	bus1.OnEventName("ParentEvent", "parent_bus1_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus1.On("ParentEvent", "parent_bus1_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		next("parent_start")
 
-		asyncChild = e.EmitEventName("QueuedChildEvent", nil)
+		asyncChild = e.Emit(abxbus.NewBaseEvent("QueuedChildEvent", nil))
 		if asyncChild.EventStatus == "completed" {
 			t.Fatalf("unawaited child should not be completed inside parent handler")
 		}
 
-		syncChild = e.EmitEventName("ImmediateChildEvent", nil)
+		syncChild = e.Emit(abxbus.NewBaseEvent("ImmediateChildEvent", nil))
 		if _, err := syncChild.Now(); err != nil {
 			return nil, err
 		}
@@ -122,7 +122,7 @@ func TestComprehensivePatternsForwardingDispatchAndParentTracking(t *testing.T) 
 		return "parent_done", nil
 	}, nil)
 
-	parent := bus1.EmitEventName("ParentEvent", nil)
+	parent := bus1.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
 	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestComprehensiveRaceConditionStress(t *testing.T) {
 		bus := bus
 		for _, pattern := range []string{"QueuedChildEvent", "ImmediateChildEvent"} {
 			pattern := pattern
-			bus.OnEventName(pattern, pattern+"_child_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+			bus.On(pattern, pattern+"_child_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 				appendLocked(&mu, &results, "child_"+bus.Label())
 				time.Sleep(time.Millisecond)
 				return "child_done_" + bus.Label(), nil
@@ -192,13 +192,13 @@ func TestComprehensiveRaceConditionStress(t *testing.T) {
 		}
 	}
 
-	bus1.OnEventName("RootEvent", "parent_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus1.On("RootEvent", "parent_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		children := []*abxbus.BaseEvent{}
 		for i := 0; i < 3; i++ {
-			children = append(children, e.EmitEventName("QueuedChildEvent", nil))
+			children = append(children, e.Emit(abxbus.NewBaseEvent("QueuedChildEvent", nil)))
 		}
 		for i := 0; i < 3; i++ {
-			child := e.EmitEventName("ImmediateChildEvent", nil)
+			child := e.Emit(abxbus.NewBaseEvent("ImmediateChildEvent", nil))
 			if _, err := child.Now(); err != nil {
 				return nil, err
 			}
@@ -214,7 +214,7 @@ func TestComprehensiveRaceConditionStress(t *testing.T) {
 		}
 		return "parent_done", nil
 	}, nil)
-	bus1.OnEventName("RootEvent", "bad_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus1.On("RootEvent", "bad_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return nil, nil
 	}, nil)
 
@@ -223,7 +223,7 @@ func TestComprehensiveRaceConditionStress(t *testing.T) {
 		results = []string{}
 		mu.Unlock()
 
-		event := bus1.EmitEventName("RootEvent", nil)
+		event := bus1.Emit(abxbus.NewBaseEvent("RootEvent", nil))
 		if _, err := event.Now(); err != nil {
 			t.Fatal(err)
 		}
@@ -245,9 +245,9 @@ func TestComprehensiveAwaitedChildJumpsQueueWithoutOvershoot(t *testing.T) {
 	var mu sync.Mutex
 	order := []string{}
 
-	bus.OnEventName("Event1", "event1_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("Event1", "event1_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		appendLocked(&mu, &order, "Event1_start")
-		child := e.EmitEventName("ChildEvent", nil)
+		child := e.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
 		appendLocked(&mu, &order, "Child_dispatched")
 		if _, err := child.Now(); err != nil {
 			return nil, err
@@ -256,25 +256,25 @@ func TestComprehensiveAwaitedChildJumpsQueueWithoutOvershoot(t *testing.T) {
 		appendLocked(&mu, &order, "Event1_end")
 		return "event1_done", nil
 	}, nil)
-	bus.OnEventName("Event2", "event2_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("Event2", "event2_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		appendLocked(&mu, &order, "Event2_start")
 		appendLocked(&mu, &order, "Event2_end")
 		return "event2_done", nil
 	}, nil)
-	bus.OnEventName("Event3", "event3_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("Event3", "event3_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		appendLocked(&mu, &order, "Event3_start")
 		appendLocked(&mu, &order, "Event3_end")
 		return "event3_done", nil
 	}, nil)
-	bus.OnEventName("ChildEvent", "child_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("ChildEvent", "child_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		appendLocked(&mu, &order, "Child_start")
 		appendLocked(&mu, &order, "Child_end")
 		return "child_done", nil
 	}, nil)
 
-	event1 := bus.EmitEventName("Event1", nil)
-	event2 := bus.EmitEventName("Event2", nil)
-	event3 := bus.EmitEventName("Event3", nil)
+	event1 := bus.Emit(abxbus.NewBaseEvent("Event1", nil))
+	event2 := bus.Emit(abxbus.NewBaseEvent("Event2", nil))
+	event3 := bus.Emit(abxbus.NewBaseEvent("Event3", nil))
 
 	if _, err := event1.Now(); err != nil {
 		t.Fatal(err)
@@ -306,13 +306,13 @@ func TestComprehensiveDispatchMultipleAwaitOneSkipsOthersUntilAfterHandler(t *te
 	var mu sync.Mutex
 	order := []string{}
 
-	bus.OnEventName("Event1", "event1_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("Event1", "event1_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		appendLocked(&mu, &order, "Event1_start")
-		e.EmitEventName("ChildA", nil)
+		e.Emit(abxbus.NewBaseEvent("ChildA", nil))
 		appendLocked(&mu, &order, "ChildA_dispatched")
-		childB := e.EmitEventName("ChildB", nil)
+		childB := e.Emit(abxbus.NewBaseEvent("ChildB", nil))
 		appendLocked(&mu, &order, "ChildB_dispatched")
-		e.EmitEventName("ChildC", nil)
+		e.Emit(abxbus.NewBaseEvent("ChildC", nil))
 		appendLocked(&mu, &order, "ChildC_dispatched")
 		if _, err := childB.Now(); err != nil {
 			return nil, err
@@ -323,16 +323,16 @@ func TestComprehensiveDispatchMultipleAwaitOneSkipsOthersUntilAfterHandler(t *te
 	}, nil)
 	for _, eventType := range []string{"Event2", "Event3", "ChildA", "ChildB", "ChildC"} {
 		eventType := eventType
-		bus.OnEventName(eventType, eventType+"_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		bus.On(eventType, eventType+"_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			appendLocked(&mu, &order, eventType+"_start")
 			appendLocked(&mu, &order, eventType+"_end")
 			return strings.ToLower(eventType) + "_done", nil
 		}, nil)
 	}
 
-	event1 := bus.EmitEventName("Event1", nil)
-	bus.EmitEventName("Event2", nil)
-	bus.EmitEventName("Event3", nil)
+	event1 := bus.Emit(abxbus.NewBaseEvent("Event1", nil))
+	bus.Emit(abxbus.NewBaseEvent("Event2", nil))
+	bus.Emit(abxbus.NewBaseEvent("Event3", nil))
 
 	if _, err := event1.Now(); err != nil {
 		t.Fatal(err)
@@ -365,9 +365,9 @@ func TestComprehensiveMultiBusQueuesIndependentWhenAwaitingChild(t *testing.T) {
 	bus2Started := make(chan struct{})
 	closeBus2Started := sync.Once{}
 
-	bus1.OnEventName("Event1", "event1_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus1.On("Event1", "event1_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		appendLocked(&mu, &order, "Bus1_Event1_start")
-		child := e.EmitEventName("ChildEvent", nil)
+		child := e.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
 		appendLocked(&mu, &order, "Child_dispatched_to_Bus1")
 		if _, err := child.Now(); err != nil {
 			return nil, err
@@ -376,12 +376,12 @@ func TestComprehensiveMultiBusQueuesIndependentWhenAwaitingChild(t *testing.T) {
 		appendLocked(&mu, &order, "Bus1_Event1_end")
 		return "event1_done", nil
 	}, nil)
-	bus1.OnEventName("Event2", "event2_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus1.On("Event2", "event2_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		appendLocked(&mu, &order, "Bus1_Event2_start")
 		appendLocked(&mu, &order, "Bus1_Event2_end")
 		return "event2_done", nil
 	}, nil)
-	bus1.OnEventName("ChildEvent", "child_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus1.On("ChildEvent", "child_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		appendLocked(&mu, &order, "Child_start")
 		select {
 		case <-bus2Started:
@@ -393,7 +393,7 @@ func TestComprehensiveMultiBusQueuesIndependentWhenAwaitingChild(t *testing.T) {
 	}, nil)
 	for _, eventType := range []string{"Event3", "Event4"} {
 		eventType := eventType
-		bus2.OnEventName(eventType, eventType+"_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		bus2.On(eventType, eventType+"_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			appendLocked(&mu, &order, "Bus2_"+eventType+"_start")
 			if eventType == "Event3" {
 				closeBus2Started.Do(func() { close(bus2Started) })
@@ -403,10 +403,10 @@ func TestComprehensiveMultiBusQueuesIndependentWhenAwaitingChild(t *testing.T) {
 		}, nil)
 	}
 
-	event1 := bus1.EmitEventName("Event1", nil)
-	bus1.EmitEventName("Event2", nil)
-	bus2.EmitEventName("Event3", nil)
-	bus2.EmitEventName("Event4", nil)
+	event1 := bus1.Emit(abxbus.NewBaseEvent("Event1", nil))
+	bus1.Emit(abxbus.NewBaseEvent("Event2", nil))
+	bus2.Emit(abxbus.NewBaseEvent("Event3", nil))
+	bus2.Emit(abxbus.NewBaseEvent("Event4", nil))
 
 	waitForEntry(t, &mu, &order, "Bus2_Event3_start")
 	if _, err := event1.Now(); err != nil {

@@ -120,14 +120,14 @@ func main() {
 	requestIDKey := contextKey("request_id")
 	bus := abxbus.NewEventBus("AppBus", nil)
 
-	bus.OnEventName("RequestEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("RequestEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		fmt.Println(ctx.Value(requestIDKey))
 		// req-123
 		return nil, nil
 	}, nil)
 
 	ctx := context.WithValue(context.Background(), requestIDKey, "req-123")
-	if _, err := bus.EmitEventNameWithContext(ctx, "RequestEvent", nil).Now(); err != nil {
+	if _, err := bus.EmitWithContext(ctx, abxbus.NewBaseEvent("RequestEvent", nil)).Now(); err != nil {
 		panic(err)
 	}
 }
@@ -179,7 +179,7 @@ block_on(event.now());
 ```go
 // net/http-style shape (conceptual)
 ctx := context.WithValue(req.Context(), requestIDKey, req.Header.Get("x-request-id"))
-if _, err := bus.EmitEventNameWithContext(ctx, "RequestEvent", nil).Now(); err != nil {
+if _, err := bus.EmitWithContext(ctx, abxbus.NewBaseEvent("RequestEvent", nil)).Now(); err != nil {
 	panic(err)
 }
 // handlers can still read ctx.Value(requestIDKey)

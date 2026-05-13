@@ -44,7 +44,7 @@ func TestPerformance50kEvents(t *testing.T) {
 	var processed int64
 	var checksum int64
 	var expectedChecksum int64
-	bus.OnEventName("PerfSimpleEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("PerfSimpleEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		atomic.AddInt64(&processed, 1)
 		value, _ := event.Payload["value"].(int)
 		batchID, _ := event.Payload["batch_id"].(int)
@@ -57,7 +57,7 @@ func TestPerformance50kEvents(t *testing.T) {
 	for i := 0; i < totalEvents; i++ {
 		payload := map[string]any{"value": i, "batch_id": i % 17}
 		expectedChecksum += int64(i + i%17)
-		pending = append(pending, bus.EmitEventName("PerfSimpleEvent", payload))
+		pending = append(pending, bus.Emit(abxbus.NewBaseEvent("PerfSimpleEvent", payload)))
 		if len(pending) >= batchSize {
 			waitForPerformanceBatch(t, pending)
 			pending = pending[:0]
@@ -96,13 +96,13 @@ func TestPerformanceEphemeralBuses(t *testing.T) {
 			MaxHistorySize: &historySize,
 			MaxHistoryDrop: true,
 		})
-		bus.OnEventName("PerfEphemeralEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		bus.On("PerfEphemeralEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			atomic.AddInt64(&processed, 1)
 			return nil, nil
 		}, nil)
 		pending := make([]*abxbus.BaseEvent, 0, eventsPerBus)
 		for eventIndex := 0; eventIndex < eventsPerBus; eventIndex++ {
-			pending = append(pending, bus.EmitEventName("PerfEphemeralEvent", nil))
+			pending = append(pending, bus.Emit(abxbus.NewBaseEvent("PerfEphemeralEvent", nil)))
 		}
 		waitForPerformanceBatch(t, pending)
 		timeout := 2.0
@@ -134,14 +134,14 @@ func TestPerformanceSingleEventManyParallelHandlers(t *testing.T) {
 	var handled int64
 	for index := 0; index < totalHandlers; index++ {
 		handlerID := fmt.Sprintf("perf-fixed-handler-%05d", index)
-		bus.OnEventName("PerfFixedHandlersEvent", handlerID, func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		bus.On("PerfFixedHandlersEvent", handlerID, func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			atomic.AddInt64(&handled, 1)
 			return nil, nil
 		}, &abxbus.EventHandler{ID: handlerID})
 	}
 
 	started := time.Now()
-	event := bus.EmitEventName("PerfFixedHandlersEvent", nil)
+	event := bus.Emit(abxbus.NewBaseEvent("PerfFixedHandlersEvent", nil))
 	waitForPerformanceBatch(t, []*abxbus.BaseEvent{event})
 	timeout := 10.0
 	if !bus.WaitUntilIdle(&timeout) {
@@ -168,11 +168,11 @@ func TestPerformanceOnOffChurn(t *testing.T) {
 	started := time.Now()
 	for index := 0; index < totalEvents; index++ {
 		handlerID := fmt.Sprintf("perf-one-off-handler-%05d", index)
-		handler := bus.OnEventName("PerfOneOffEvent", handlerID, func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		handler := bus.On("PerfOneOffEvent", handlerID, func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			atomic.AddInt64(&handled, 1)
 			return nil, nil
 		}, &abxbus.EventHandler{ID: handlerID})
-		event := bus.EmitEventName("PerfOneOffEvent", nil)
+		event := bus.Emit(abxbus.NewBaseEvent("PerfOneOffEvent", nil))
 		waitForPerformanceBatch(t, []*abxbus.BaseEvent{event})
 		bus.Off("PerfOneOffEvent", handler)
 	}
@@ -207,13 +207,13 @@ func TestPerformanceWorstCaseForwardingQueueJumpTimeouts(t *testing.T) {
 	var parents int64
 	var children int64
 	var timedOut int64
-	parentBus.OnEventName("WCParent", "forward", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	parentBus.On("WCParent", "forward", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		atomic.AddInt64(&parents, 1)
-		child := childBus.EmitEventName("WCChild", map[string]any{"parent": event.EventID, "iteration": event.Payload["iteration"]})
+		child := childBus.Emit(abxbus.NewBaseEvent("WCChild", map[string]any{"parent": event.EventID, "iteration": event.Payload["iteration"]}))
 		_, _ = child.Now()
 		return nil, nil
 	}, nil)
-	childBus.OnEventName("WCChild", "child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	childBus.On("WCChild", "child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		atomic.AddInt64(&children, 1)
 		iteration, _ := event.Payload["iteration"].(int)
 		if iteration%10 != 0 {
@@ -231,7 +231,7 @@ func TestPerformanceWorstCaseForwardingQueueJumpTimeouts(t *testing.T) {
 	pending := make([]*abxbus.BaseEvent, 0, 128)
 	started := time.Now()
 	for index := 0; index < totalEvents; index++ {
-		pending = append(pending, parentBus.EmitEventName("WCParent", map[string]any{"iteration": index}))
+		pending = append(pending, parentBus.Emit(abxbus.NewBaseEvent("WCParent", map[string]any{"iteration": index})))
 		if len(pending) >= cap(pending) {
 			waitForPerformanceBatchAllowErrors(t, pending)
 			pending = pending[:0]
@@ -272,19 +272,19 @@ func TestPerformanceCleanupDestroyKeepsStateBounded(t *testing.T) {
 			MaxHistorySize: &historySize,
 			MaxHistoryDrop: true,
 		})
-		bus.OnEventName("CleanupEqEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		bus.On("CleanupEqEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			return nil, nil
 		}, nil)
 
 		pending := make([]*abxbus.BaseEvent, 0, eventsPerBus)
 		for eventIndex := 0; eventIndex < eventsPerBus; eventIndex++ {
-			pending = append(pending, bus.EmitEventName("CleanupEqEvent", nil))
+			pending = append(pending, bus.Emit(abxbus.NewBaseEvent("CleanupEqEvent", nil)))
 		}
 		waitForPerformanceBatch(t, pending)
 
 		bus.EventHistory.MaxHistorySize = &trimTarget
 		bus.EventHistory.MaxHistoryDrop = true
-		trimEvent := bus.EmitEventName("CleanupEqTrimEvent", nil)
+		trimEvent := bus.Emit(abxbus.NewBaseEvent("CleanupEqTrimEvent", nil))
 		waitForPerformanceBatch(t, []*abxbus.BaseEvent{trimEvent})
 		timeout := 2.0
 		if !bus.WaitUntilIdle(&timeout) {
@@ -346,7 +346,7 @@ func runFanoutBenchmark(t *testing.T, mode abxbus.EventHandlerConcurrencyMode) (
 	var handled int64
 	for index := 0; index < handlersPerEvent; index++ {
 		handlerID := fmt.Sprintf("fanout-handler-%d", index)
-		bus.OnEventName("PerfFanoutEvent", handlerID, func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		bus.On("PerfFanoutEvent", handlerID, func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 			time.Sleep(sleepDuration)
 			atomic.AddInt64(&handled, 1)
 			return nil, nil
@@ -356,7 +356,7 @@ func runFanoutBenchmark(t *testing.T, mode abxbus.EventHandlerConcurrencyMode) (
 	pending := make([]*abxbus.BaseEvent, 0, 40)
 	started := time.Now()
 	for index := 0; index < totalEvents; index++ {
-		pending = append(pending, bus.EmitEventName("PerfFanoutEvent", nil))
+		pending = append(pending, bus.Emit(abxbus.NewBaseEvent("PerfFanoutEvent", nil)))
 		if len(pending) >= cap(pending) {
 			waitForPerformanceBatch(t, pending)
 			pending = pending[:0]
