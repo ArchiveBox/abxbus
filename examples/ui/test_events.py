@@ -159,7 +159,7 @@ async def run_generator(args: argparse.Namespace) -> None:
         await asyncio.gather(*producers)
         await bus.wait_until_idle()
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 def main() -> None:

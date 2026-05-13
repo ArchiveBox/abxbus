@@ -48,7 +48,7 @@ async def test_lock_manager_get_lock_for_event_modes() -> None:
     event.event_concurrency = EventConcurrencyMode.PARALLEL
     assert bus.locks.get_lock_for_event(bus, event) is None
 
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_lock_manager_get_lock_for_event_handler_modes() -> None:
@@ -65,7 +65,7 @@ async def test_lock_manager_get_lock_for_event_handler_modes() -> None:
     handler_result = event.event_result_update(handler=lambda _event: None)
     assert bus.locks.get_lock_for_event_handler(bus, event, handler_result) is None
 
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_run_with_event_lock_and_handler_lock_respect_parallel_bypass() -> None:
@@ -102,7 +102,7 @@ async def test_run_with_event_lock_and_handler_lock_respect_parallel_bypass() ->
     assert lock is not None
     assert lock.locked() is False
 
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_handler_dispatch_context_marks_and_restores_lock_depth() -> None:
@@ -120,7 +120,7 @@ async def test_handler_dispatch_context_marks_and_restores_lock_depth() -> None:
         assert lock._depth() == 1  # pyright: ignore[reportPrivateUsage]
 
     assert lock._depth() == 0  # pyright: ignore[reportPrivateUsage]
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_reentrant_lock_releases_and_reraises_on_exception() -> None:
@@ -148,7 +148,7 @@ async def test_run_with_event_lock_releases_and_reraises_on_exception() -> None:
             raise RuntimeError('event-lock-error')
 
     assert lock.locked() is False
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_run_with_handler_lock_releases_and_reraises_on_exception() -> None:
@@ -166,7 +166,7 @@ async def test_run_with_handler_lock_releases_and_reraises_on_exception() -> Non
     lock = event._get_handler_lock()  # pyright: ignore[reportPrivateUsage]
     assert lock is not None
     assert lock.locked() is False
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_handler_dispatch_context_restores_depth_and_reraises_on_exception() -> None:
@@ -183,4 +183,4 @@ async def test_handler_dispatch_context_restores_depth_and_reraises_on_exception
             raise RuntimeError('dispatch-context-error')
 
     assert lock._depth() == 0  # pyright: ignore[reportPrivateUsage]
-    await bus.stop()
+    await bus.destroy()

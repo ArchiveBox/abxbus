@@ -62,7 +62,7 @@ fn test_typed_result_schema_validates_and_parses_handler_result() {
         abxbus_rust::event_result::EventResultStatus::Completed
     );
     assert_eq!(result.result, Some(json!({"value": "hello", "count": 42})));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -88,7 +88,7 @@ fn test_result_type_stored_in_event_result() {
             .contains_key("result_type"),
         "EventResult JSON must not duplicate the parent event result schema"
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -136,7 +136,7 @@ fn test_simple_typed_result_model_roundtrip_and_status() {
             count: 42
         }
     );
-    bus.stop();
+    bus.destroy();
 }
 
 event! {
@@ -285,7 +285,7 @@ fn test_builtin_types_auto_extraction() {
         float_event.inner.inner.lock().event_result_type,
         Some(json!({"type": "number"}))
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -296,7 +296,7 @@ fn test_no_generic_parameter() {
     });
 
     assert_eq!(plain_event.inner.inner.lock().event_result_type, None);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -307,7 +307,7 @@ fn test_none_generic_parameter() {
     });
 
     assert_eq!(none_event.inner.inner.lock().event_result_type, None);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -356,7 +356,7 @@ fn test_eventspec_result_schema_runtime_enforcement() {
         .as_deref()
         .unwrap_or_default()
         .contains("EventHandlerResultSchemaError"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -488,7 +488,7 @@ fn test_built_in_result_schemas_validate_handler_results() {
         abxbus_rust::event_result::EventResultStatus::Completed
     );
     assert_eq!(number_result.result, Some(json!(123)));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -545,7 +545,7 @@ fn test_event_result_type_supports_constructor_shorthands_and_enforces_them() {
         .unwrap_or_default()
         .contains("EventHandlerResultSchemaError"));
     assert_eq!(invalid.event_errors().len(), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -573,7 +573,7 @@ fn test_invalid_handler_result_marks_error_when_schema_is_defined() {
         .unwrap_or_default()
         .contains("EventHandlerResultSchemaError"));
     assert!(!event.event_errors().is_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -593,7 +593,7 @@ fn test_no_schema_leaves_raw_handler_result_untouched() {
         abxbus_rust::event_result::EventResultStatus::Completed
     );
     assert_eq!(result.result, Some(json!({"raw": true})));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -624,7 +624,7 @@ fn test_complex_result_schema_validates_nested_data() {
         result.result,
         Some(json!({"items": ["a", "b"], "metadata": {"a": 1, "b": 2}}))
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -659,7 +659,7 @@ fn test_from_json_converts_event_result_type_into_schema() {
         result.result,
         Some(json!({"value": "from-json", "count": 7}))
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -704,7 +704,7 @@ fn test_from_json_reconstructs_primitive_json_schema() {
         abxbus_rust::event_result::EventResultStatus::Completed
     );
     assert_eq!(result.result, Some(json!(true)));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -748,7 +748,7 @@ fn test_fromjson_reconstructs_integer_and_null_schemas_for_runtime_validation() 
         first_event_result_record(&null_event).status,
         EventResultStatus::Completed
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -782,7 +782,7 @@ fn test_custom_pydantic_models_auto_extraction() {
                 .expect("runtime schema")
         )
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -837,7 +837,7 @@ fn test_json_schema_list_of_models_deserialization() {
         first_event_result_record(&invalid_event).status,
         EventResultStatus::Error
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -887,7 +887,7 @@ fn test_json_schema_nested_object_collection_deserialization() {
         first_event_result_record(&invalid_event).status,
         EventResultStatus::Error
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -921,7 +921,7 @@ fn test_type_adapter_validation() {
         .as_deref()
         .unwrap_or_default()
         .contains("integer"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -963,7 +963,7 @@ fn test_json_schema_typed_dict_rehydrates_to_pydantic_model() {
         first_event_result_record(&event).status,
         EventResultStatus::Completed
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -992,7 +992,7 @@ fn test_json_schema_optional_typed_dict_is_lax_on_missing_fields() {
             EventResultStatus::Completed
         );
     }
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1017,7 +1017,7 @@ fn test_json_schema_dataclass_rehydrates_to_pydantic_model() {
         first_event_result_record(&event).status,
         EventResultStatus::Completed
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1045,7 +1045,7 @@ fn test_json_schema_list_of_dataclass_rehydrates_to_list_of_models() {
         first_event_result_record(&event).status,
         EventResultStatus::Completed
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1092,7 +1092,7 @@ fn test_json_schema_nested_object_and_array_runtime_enforcement() {
         .as_deref()
         .unwrap_or_default()
         .contains("EventHandlerResultSchemaError"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1149,7 +1149,7 @@ fn test_module_level_runtime_enforcement() {
         .as_deref()
         .unwrap_or_default()
         .contains("required"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1209,5 +1209,5 @@ fn test_roundtrip_preserves_complex_result_schema_types() {
             "meta": {"tags": ["a", "b"], "rating": 4}
         }))
     );
-    bus.stop();
+    bus.destroy();
 }

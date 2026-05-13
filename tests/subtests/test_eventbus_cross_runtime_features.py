@@ -106,7 +106,7 @@ async def test_queue_jump_preserves_parent_child_lineage_and_find_visibility() -
         root_result = next(result for result in root.event_results.values() if result.handler_name.endswith('on_root'))
         assert any(child.event_id == found_child.event_id for child in root_result.event_children)
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_concurrency_intersection_parallel_events_with_serial_handlers() -> None:
@@ -161,7 +161,7 @@ async def test_concurrency_intersection_parallel_events_with_serial_handlers() -
 
         assert global_max >= 2
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_timeout_enforcement_does_not_break_followup_processing_or_queue_state() -> None:
@@ -202,7 +202,7 @@ async def test_timeout_enforcement_does_not_break_followup_processing_or_queue_s
         assert bus.pending_event_queue.qsize() == 0
         assert not bus.in_flight_event_ids
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_zero_history_backpressure_with_find_future_still_resolves_new_events() -> None:
@@ -240,7 +240,7 @@ async def test_zero_history_backpressure_with_find_future_still_resolves_new_eve
         await bus.wait_until_idle()
         assert len(bus.event_history) == 0
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_context_propagates_through_forwarding_and_child_dispatch_with_lineage_intact() -> None:
@@ -289,8 +289,8 @@ async def test_context_propagates_through_forwarding_and_child_dispatch_with_lin
         assert found_child.event_parent_id == parent.event_id
     finally:
         request_id_var.reset(token)
-        await bus_a.stop()
-        await bus_b.stop()
+        await bus_a.destroy()
+        await bus_b.destroy()
 
 
 async def test_pending_queue_find_visibility_transitions_to_completed_after_release() -> None:
@@ -346,7 +346,7 @@ async def test_pending_queue_find_visibility_transitions_to_completed_after_rele
         assert bus.pending_event_queue.qsize() == 0
         assert not bus.in_flight_event_ids
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_history_backpressure_rejects_overflow_and_preserves_findable_history() -> None:
@@ -375,4 +375,4 @@ async def test_history_backpressure_rejects_overflow_and_preserves_findable_hist
         assert bus.pending_event_queue.qsize() == 0
         assert not bus.in_flight_event_ids
     finally:
-        await bus.stop()
+        await bus.destroy()

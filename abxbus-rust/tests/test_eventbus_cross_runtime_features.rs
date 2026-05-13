@@ -182,7 +182,7 @@ fn test_queue_jump_preserves_parent_child_lineage_and_find_visibility() {
         .cloned()
         .expect("root result");
     assert!(root_result.event_children.contains(&expected_child_id));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -270,7 +270,7 @@ fn test_concurrency_intersection_parallel_events_with_serial_handlers_stays_seri
         );
     }
     assert!(*global_max.lock().expect("global max lock") >= 2);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -346,7 +346,7 @@ fn test_timeout_enforcement_preserves_follow_up_processing_and_queue_state() {
 
     block_on(bus.wait_until_idle(Some(2.0)));
     assert!(bus.is_idle_and_queue_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -418,7 +418,7 @@ fn test_zero_history_backpressure_with_find_future_still_resolves_new_events() {
     assert_eq!(future_match.inner.lock().event_id, captured_future_id);
     block_on(bus.wait_until_idle(Some(2.0)));
     assert_eq!(bus.event_history_size(), 0);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -503,8 +503,8 @@ fn test_context_propagates_through_forwarding_and_child_dispatch_with_lineage_in
         found_child.inner.lock().event_parent_id.as_deref(),
         Some(parent.inner.inner.lock().event_id.as_str())
     );
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -588,7 +588,7 @@ fn test_pending_queue_find_visibility_transitions_to_completed_after_release() {
     let queued_id = queued.inner.inner.lock().event_id.clone();
     assert_eq!(completed_id, queued_id);
     assert!(bus.is_idle_and_queue_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -636,7 +636,7 @@ fn test_history_backpressure_rejects_overflow_and_preserves_findable_history() {
     assert_eq!(bus.event_history_size(), 1);
     assert!(bus.event_history_ids().contains(&first_id));
     assert!(bus.is_idle_and_queue_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]

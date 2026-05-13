@@ -486,7 +486,7 @@ fn test_lock_manager_get_lock_for_event_modes() {
     let _ = block_on(first.wait());
     let _ = block_on(second.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 1);
-    bus_serial.stop();
+    bus_serial.destroy();
 
     active.store(0, Ordering::SeqCst);
     max_active.store(0, Ordering::SeqCst);
@@ -514,7 +514,7 @@ fn test_lock_manager_get_lock_for_event_modes() {
     let _ = block_on(first.wait());
     let _ = block_on(second.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 2);
-    parallel_override_bus.stop();
+    parallel_override_bus.destroy();
 
     active.store(0, Ordering::SeqCst);
     max_active.store(0, Ordering::SeqCst);
@@ -557,8 +557,8 @@ fn test_lock_manager_get_lock_for_event_modes() {
     let _ = block_on(first.wait());
     let _ = block_on(second.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 1);
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -589,7 +589,7 @@ fn test_lock_manager_get_lock_for_event_handler_modes() {
     let event = serial_bus.emit_base(empty_event("LockHandlerModesEvent"));
     let _ = block_on(event.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 1);
-    serial_bus.stop();
+    serial_bus.destroy();
 
     active.store(0, Ordering::SeqCst);
     max_active.store(0, Ordering::SeqCst);
@@ -619,7 +619,7 @@ fn test_lock_manager_get_lock_for_event_handler_modes() {
     let event = parallel_override_bus.emit_base(event);
     let _ = block_on(event.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 2);
-    parallel_override_bus.stop();
+    parallel_override_bus.destroy();
 }
 
 #[test]
@@ -665,7 +665,7 @@ fn test_run_with_event_lock_and_handler_lock_respect_parallel_bypass() {
     let _ = block_on(first.wait());
     let _ = block_on(second.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 4);
-    parallel_override_bus.stop();
+    parallel_override_bus.destroy();
 
     active.store(0, Ordering::SeqCst);
     max_active.store(0, Ordering::SeqCst);
@@ -696,7 +696,7 @@ fn test_run_with_event_lock_and_handler_lock_respect_parallel_bypass() {
     let _ = block_on(first.wait());
     let _ = block_on(second.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 1);
-    serial_bus.stop();
+    serial_bus.destroy();
 }
 
 #[test]

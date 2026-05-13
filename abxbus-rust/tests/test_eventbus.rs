@@ -71,7 +71,7 @@ fn test_eventbus_exposes_locks_api_surface() {
 
     let event = BaseEvent::new("GateSurfaceEvent", serde_json::Map::new());
     assert!(bus.locks.get_lock_for_event(&bus, &event).is_some());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -169,7 +169,7 @@ fn test_eventbus_locks_methods_are_callable_and_preserve_lock_resolution_behavio
     let _ = block_on(emitted.now());
     assert!(bus.locks.wait_for_idle(Some(Duration::from_secs(1)), || bus
         .is_idle_and_queue_empty()));
-    bus.stop();
+    bus.destroy();
 }
 
 event! {
@@ -324,7 +324,7 @@ fn test_event_bus_initializes_with_correct_defaults() {
     assert_eq!(bus.event_history_size(), 0);
     assert!(EventBus::all_instances_contains(&bus));
     assert!(block_on(bus.wait_until_idle(None)));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -342,7 +342,7 @@ fn test_dispatch_returns_pending_event_with_correct_initial_state() {
     }
 
     assert!(block_on(bus.wait_until_idle(None)));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -372,7 +372,7 @@ fn test_event_transitions_through_pending_started_completed() {
     assert!(inner.event_started_at.is_some());
     assert!(inner.event_completed_at.is_some());
     drop(inner);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -385,12 +385,12 @@ fn test_event_with_no_handlers_completes_immediately() {
     assert_eq!(inner.event_status, EventStatus::Completed);
     assert_eq!(inner.event_results.len(), 0);
     drop(inner);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
-fn test_auto_start_and_stop() {
-    let bus = EventBus::new(Some("AutoStartStopBus".to_string()));
+fn test_auto_start_and_destroy() {
+    let bus = EventBus::new(Some("AutoStartDestroyBus".to_string()));
     assert!(!bus.is_running_for_test());
 
     let event = bus.emit(UserActionEvent {
@@ -401,9 +401,9 @@ fn test_auto_start_and_stop() {
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
     assert!(bus.is_running_for_test());
 
-    bus.stop();
+    bus.destroy();
     assert!(!bus.is_running_for_test());
-    assert!(bus.is_stopped_for_test());
+    assert!(bus.is_destroyed_for_test());
 }
 
 #[test]
@@ -422,14 +422,14 @@ fn test_wait_until_idle_recovers_when_idle_flag_was_cleared() {
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
 
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
-    bus.stop();
-    bus.stop();
-    assert!(bus.is_stopped_for_test());
+    bus.destroy();
+    bus.destroy();
+    assert!(bus.is_destroyed_for_test());
 }
 
 #[test]
-fn test_stop_with_pending_events() {
-    let bus = EventBus::new(Some("StopPendingBus".to_string()));
+fn test_destroy_with_pending_events() {
+    let bus = EventBus::new(Some("DestroyPendingBus".to_string()));
     bus.on_raw("*", "slow_handler", |_event| async move {
         thread::sleep(Duration::from_millis(100));
         Ok(json!("done"))
@@ -442,9 +442,9 @@ fn test_stop_with_pending_events() {
         ));
     }
 
-    bus.stop();
+    bus.destroy();
     assert!(!bus.is_running_for_test());
-    assert!(bus.is_stopped_for_test());
+    assert!(bus.is_destroyed_for_test());
 }
 
 #[test]
@@ -514,7 +514,7 @@ fn test_emit_and_result() {
     assert_eq!(inner.event_results.len(), 1);
     drop(inner);
     assert_eq!(bus.event_history_size(), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -534,7 +534,7 @@ fn test_dispatched_events_appear_in_event_history() {
     let runtime = bus.runtime_payload_for_test();
     assert_eq!(runtime[&history_ids[0]].inner.lock().event_type, "EventA");
     assert_eq!(runtime[&history_ids[1]].inner.lock().event_type, "EventB");
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -576,7 +576,7 @@ fn test_write_ahead_log_captures_all_events() {
     assert_eq!(completed, 5);
     assert_eq!(pending, 0);
     assert_eq!(started, 0);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -614,7 +614,7 @@ fn test_history_is_trimmed_to_max_history_size_completed_events_removed_first() 
         .collect();
     assert!(seqs.windows(2).all(|pair| pair[1] > pair[0]));
     assert_eq!(seqs.last().copied(), Some(9));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -643,7 +643,7 @@ fn test_unlimited_history_max_history_size_null_keeps_all_events() {
         .runtime_payload_for_test()
         .values()
         .all(|event| event.inner.lock().event_status == EventStatus::Completed));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -687,7 +687,7 @@ fn test_max_history_drop_false_rejects_new_dispatch_when_history_is_full() {
         json!([]),
         "rejected dispatch must not enqueue a pending event"
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -740,7 +740,7 @@ fn test_max_history_size_0_keeps_in_flight_events_and_drops_them_on_completion()
 
     assert_eq!(bus.event_history_size(), 0);
     assert!(bus.runtime_payload_for_test().is_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -800,7 +800,7 @@ fn test_max_history_size_0_with_max_history_drop_false_still_allows_unbounded_qu
 
     assert_eq!(bus.event_history_size(), 0);
     assert_eq!(bus.to_json_value()["pending_event_queue"], json!([]));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -827,7 +827,7 @@ fn test_handler_registration_by_string_matches_extend_name() {
         received.lock().expect("received lock").as_slice(),
         &["string_handler".to_string()]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -877,7 +877,7 @@ fn test_class_matcher_matches_generic_base_event_by_event_type() {
             .len(),
         2
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -906,7 +906,7 @@ fn test_wildcard_handler_receives_all_events() {
         types.lock().expect("types lock").as_slice(),
         &["EventA".to_string(), "EventB".to_string()]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -953,7 +953,7 @@ fn test_wait_for_result() {
         ]
     );
     assert!(event.inner.inner.lock().event_completed_at.is_some());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1004,7 +1004,7 @@ fn test_error_handling() {
         results.lock().expect("results lock").as_slice(),
         &["success".to_string()]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1032,7 +1032,7 @@ fn test_event_result_raises_exception_group_when_multiple_handlers_fail() {
     assert!(error.contains("2 handler error(s)"), "{error}");
     assert!(error.contains("ValueError: first failure"), "{error}");
     assert!(error.contains("RuntimeError: second failure"), "{error}");
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1051,7 +1051,7 @@ fn test_event_result_single_handler_error_raises_original_exception() {
     let error = block_on(event.inner.event_result(EventResultOptions::default()))
         .expect_err("single handler error should be raised");
     assert_eq!(error, "ValueError: single failure");
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1080,7 +1080,7 @@ fn test_event_result_raise_if_any_options() {
         include: None,
     }))
     .expect("raise_if_any=false should only inspect results");
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1117,7 +1117,7 @@ fn test_event_results_access() {
     let empty_event = bus.emit_base(base_event("EmptyEvent", json!({})));
     let _ = block_on(empty_event.wait());
     assert_eq!(empty_event.inner.lock().event_results.len(), 0);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1152,7 +1152,7 @@ fn test_by_handler_name() {
             .and_then(|result| result.result.clone()),
         Some(json!("unique"))
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1182,7 +1182,7 @@ fn test_by_handler_id() {
     assert_eq!(event_results.len(), 2);
     assert!(values.contains(&json!("v1")));
     assert!(values.contains(&json!("v2")));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1207,7 +1207,7 @@ fn test_string_indexing() {
         .values()
         .find(|result| result.handler.handler_name == "missing");
     assert!(missing_result.is_none());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1245,7 +1245,7 @@ fn test_emit_alias_dispatches_event() {
         EventStatus::Completed
     );
     assert!(event.inner.inner.lock().event_path.contains(&bus.label()));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1315,7 +1315,7 @@ fn test_handler_registration() {
     let universal_values = universal.lock().expect("universal lock").clone();
     assert!(universal_values.contains(&"UserActionEvent".to_string()));
     assert!(universal_values.contains(&"RuntimeSerializationEvent".to_string()));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1332,7 +1332,7 @@ fn test_event_subclass_type() {
     let result = bus.emit(event);
     assert_eq!(result.inner.inner.lock().event_type, "CreateAgentTaskEvent");
     let _ = block_on(result.now());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1357,7 +1357,7 @@ fn test_event_type_and_version_identity_fields() {
     );
     assert_eq!(emitted.inner.inner.lock().event_version, "0.0.1");
     let _ = block_on(emitted.now());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1392,7 +1392,7 @@ fn test_event_version_defaults_and_overrides() {
     assert_eq!(restored.inner.lock().event_version, "1.2.3");
     assert_eq!(restored.inner.lock().event_type, "VersionedEvent");
     assert_eq!(restored.inner.lock().payload["data"], json!("queued"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1462,7 +1462,7 @@ fn test_automatic_event_type_derivation() {
             "RuntimeSerializationEvent".to_string(),
         ]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1510,7 +1510,7 @@ fn test_explicit_event_type_override() {
         received.lock().expect("received lock").as_slice(),
         &["CustomEventType".to_string()]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1572,7 +1572,7 @@ fn test_multiple_handlers_parallel() {
         result.handler.handler_name == "slow_handler_2"
             && result.result == Some(json!("slow_handler_2"))
     }));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1603,7 +1603,7 @@ fn test_handler_can_be_sync_or_async() {
         .collect();
     assert!(results.contains(&json!("sync")));
     assert!(results.contains(&json!("async")));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1763,7 +1763,7 @@ fn test_class_and_instance_method_handlers() {
     }));
     assert!(results.contains(&json!("Handled by EventProcessor")));
     assert!(results.contains(&json!("Handled by static method")));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1784,7 +1784,7 @@ fn test_batch_emit_with_gather() {
     assert!(events
         .iter()
         .all(|event| event.inner.lock().event_completed_at.is_some()));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1804,7 +1804,7 @@ fn test_concurrent_emit_calls() {
     }
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
     assert_eq!(bus.event_history_size(), 100);
-    bus.stop();
+    bus.destroy();
 }
 
 fn assert_mixed_delay_handlers_maintain_order() {
@@ -1858,7 +1858,7 @@ fn assert_mixed_delay_handlers_maintain_order() {
             .as_slice(),
         expected.as_slice()
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1892,7 +1892,7 @@ fn test_event_with_complex_data() {
         event.inner.lock().payload["details"]["nested"]["list"][2]["inner"],
         json!("value")
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1924,7 +1924,7 @@ fn test_dispatch_returns_event_results() {
     let result_no_handlers = bus.emit_base(base_event("NoHandlersEvent", json!({})));
     let _ = block_on(result_no_handlers.wait());
     assert_eq!(result_no_handlers.inner.lock().event_results.len(), 0);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1945,7 +1945,7 @@ fn test_handler() {
     let no_handlers = bus.emit_base(base_event("NoHandlersEvent", json!({})));
     let _ = block_on(no_handlers.wait());
     assert_eq!(no_handlers.inner.lock().event_results.len(), 0);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1994,7 +1994,7 @@ fn test_event_results_indexing() {
         Some(json!("third"))
     );
     assert_eq!(order.lock().expect("order lock").as_slice(), &[1, 2, 3]);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2041,7 +2041,7 @@ fn test_manual_dict_merge() {
     }))
     .expect("empty dict results");
     assert!(merged_bad.is_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2073,7 +2073,7 @@ fn test_manual_dict_merge_conflicts_last_write_wins() {
     assert_eq!(merged.get("shared"), Some(&json!(2)));
     assert_eq!(merged.get("unique1"), Some(&json!("a")));
     assert_eq!(merged.get("unique2"), Some(&json!("b")));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2129,7 +2129,7 @@ fn test_manual_list_flatten() {
     }))
     .expect("empty list results");
     assert!(single_lists.is_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2161,7 +2161,7 @@ fn test_by_handler_name_access() {
             .and_then(|result| result.result.clone()),
         Some(json!("result_b"))
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2240,9 +2240,9 @@ fn test_forwarding_flattens_results() {
         event.inner.lock().event_path,
         vec![bus1.label(), bus2.label(), bus3.label()]
     );
-    bus1.stop();
-    bus2.stop();
-    bus3.stop();
+    bus1.destroy();
+    bus2.destroy();
+    bus3.destroy();
 }
 
 #[test]
@@ -2303,8 +2303,8 @@ fn test_by_eventbus_id_and_path() {
         event.inner.lock().event_path,
         vec![bus1.label(), bus2.label()]
     );
-    bus1.stop();
-    bus2.stop();
+    bus1.destroy();
+    bus2.destroy();
 }
 
 #[test]
@@ -2406,9 +2406,9 @@ fn test_complex_multi_bus_scenario() {
             json!("data_log_3")
         ]
     );
-    app_bus.stop();
-    auth_bus.stop();
-    data_bus.stop();
+    app_bus.destroy();
+    auth_bus.destroy();
+    data_bus.destroy();
 }
 
 #[test]
@@ -2452,7 +2452,7 @@ fn test_event_result_type_enforcement_with_dict() {
         assert!(error.contains("did not match event_result_type"), "{error}");
         assert!(error.contains("expected object"), "{error}");
     }
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2520,7 +2520,7 @@ fn test_event_result_type_enforcement_with_list() {
             json!("c")
         ]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2550,7 +2550,7 @@ fn test_handler_error_is_captured_without_crashing_the_bus() {
         .as_deref()
         .unwrap_or_default()
         .contains("handler blew up"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2582,7 +2582,7 @@ fn test_one_handler_error_does_not_prevent_other_handlers_from_running() {
     assert!(results
         .values()
         .any(|result| result.status == EventResultStatus::Completed));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2620,7 +2620,7 @@ fn test_many_events_dispatched_concurrently_all_complete() {
         assert_eq!(event.inner.lock().event_status, EventStatus::Completed);
     }
     assert_eq!(count.load(Ordering::SeqCst), 25);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2650,7 +2650,7 @@ fn test_dispatch_leaves_event_timeout_unset_and_processing_uses_bus_timeout_defa
         .cloned()
         .expect("result");
     assert_eq!(result.timeout, Some(10.0));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2680,7 +2680,7 @@ fn test_event_with_explicit_timeout_is_not_overridden_by_bus_default() {
         .expect("result");
     assert_eq!(event.inner.lock().event_timeout, Some(2.0));
     assert_eq!(result.timeout, Some(2.0));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2690,8 +2690,8 @@ fn test_eventbus_all_instances_tracks_all_created_buses() {
 
     assert!(EventBus::all_instances_contains(&bus_a));
     assert!(EventBus::all_instances_contains(&bus_b));
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -2716,7 +2716,7 @@ fn test_unreferenced_eventbus_can_be_garbage_collected_not_retained_by_all_insta
 }
 
 #[test]
-fn test_unreferenced_buses_with_event_history_are_garbage_collected_without_stop() {
+fn test_unreferenced_buses_with_event_history_are_garbage_collected_without_destroy() {
     let mut refs = Vec::new();
     let mut bus_ids = Vec::new();
 
@@ -2789,8 +2789,8 @@ fn test_reset_creates_a_fresh_pending_event_for_cross_bus_dispatch() {
     let event_path = forwarded.inner.lock().event_path.clone();
     assert!(event_path.iter().any(|path| path.starts_with("ResetBusA#")));
     assert!(event_path.iter().any(|path| path.starts_with("ResetBusB#")));
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -2814,7 +2814,7 @@ fn test_max_history_size_0_prunes_previously_completed_events_on_later_dispatch(
     let _ = block_on(second.wait());
     assert_eq!(bus.event_history_size(), 0);
     assert!(bus.runtime_payload_for_test().is_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2882,7 +2882,7 @@ fn test_base_event_to_json_from_json_roundtrips_runtime_fields_and_event_results
     assert_eq!(restored_result.status, EventResultStatus::Completed);
     assert_eq!(restored_result.result, Some(json!("ok")));
     assert_eq!(restored_result.handler.handler_name, "returns_ok");
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2916,7 +2916,7 @@ fn test_event_handler_json_matches_python_typescript_shape() {
     assert_eq!(restored.event_pattern, handler.event_pattern);
     assert_eq!(restored.eventbus_id, handler.eventbus_id);
     assert!(restored.callable.is_none());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2993,8 +2993,8 @@ fn test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() {
     let restored = EventBus::from_json_value(payload.clone());
     let restored_payload = restored.to_json_value();
     assert_eq!(restored_payload, payload);
-    restored.stop();
-    bus.stop();
+    restored.destroy();
+    bus.destroy();
 }
 
 #[test]
@@ -3030,8 +3030,8 @@ fn test_eventbus_validate_creates_missing_handler_entries_from_event_results() {
         restored_payload["handlers_by_key"]["RuntimeSerializationEvent"],
         json!([handler.id])
     );
-    restored.stop();
-    bus.stop();
+    restored.destroy();
+    bus.destroy();
 }
 
 #[test]
@@ -3077,7 +3077,7 @@ fn test_eventbus_model_dump_promotes_pending_events_into_event_history() {
 
     let _ = block_on(first.now());
     let _ = block_on(second.now());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -3088,7 +3088,7 @@ fn test_eventbus_initialization() {
     assert!(!bus.max_history_drop());
     assert_eq!(bus.event_history_ids().len(), 0);
     assert!(EventBus::all_instances_contains(&bus));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -3113,7 +3113,7 @@ fn test_wait_until_idle_timeout_returns_after_timeout_when_work_is_still_in_flig
 
     let _ = block_on(event.now());
     assert!(block_on(bus.wait_until_idle(None)));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -3143,7 +3143,7 @@ fn test_event_bus_applies_custom_options() {
         EventHandlerCompletionMode::First
     );
     assert_eq!(bus.event_timeout, Some(30.0));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -3157,7 +3157,7 @@ fn test_event_bus_with_null_max_history_size_means_unlimited() {
     );
 
     assert_eq!(bus.max_history_size(), None);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -3178,7 +3178,7 @@ fn test_unbounded_history_disables_history_rejection() {
     }
 
     assert_eq!(bus.event_history_size(), 150);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -3192,7 +3192,7 @@ fn test_event_bus_with_zero_event_timeout_disables_timeouts() {
     );
 
     assert_eq!(bus.event_timeout, Some(0.0));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -3203,7 +3203,7 @@ fn test_event_bus_auto_generates_name_when_not_provided() {
         bus.name,
         format!("EventBus_{}", &bus.id[bus.id.len() - 8..])
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -3259,7 +3259,7 @@ fn test_eventbus_accepts_custom_id() {
 
     assert_eq!(bus.id, custom_id);
     assert!(bus.label().ends_with("#1234"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -3273,7 +3273,7 @@ fn test_eventbus_accepts_custom_handler_recursion_depth() {
     );
 
     assert_eq!(bus.max_handler_recursion_depth, 5);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -3339,7 +3339,7 @@ fn test_custom_handler_recursion_depth_allows_deeper_nested_handlers() {
         seen_levels.lock().expect("seen levels lock").as_slice(),
         &[0, 1, 2, 3, 4, 5]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -3390,7 +3390,7 @@ fn test_default_handler_recursion_depth_still_catches_runaway_loops() {
                     .is_some_and(|error| error.contains("Infinite loop detected"))
         });
     assert!(has_recursion_error);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -3412,5 +3412,5 @@ fn test_base_event_lifecycle_methods_are_callable_and_preserve_lifecycle_behavio
         dispatched.inner.inner.lock().event_status,
         EventStatus::Completed
     );
-    bus.stop();
+    bus.destroy();
 }

@@ -46,9 +46,9 @@ event! {
     }
 }
 event! {
-    struct StopCoverageEvent {
+    struct DestroyCoverageEvent {
         event_result_type: EmptyResult,
-        event_type: "StopCoverageEvent",
+        event_type: "DestroyCoverageEvent",
     }
 }
 #[test]
@@ -131,8 +131,8 @@ fn test_event_reset_creates_fresh_pending_event_for_cross_bus_dispatch() {
     assert!(event_path
         .iter()
         .any(|path| path.starts_with("ResetCoverageBusB#")));
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -180,18 +180,18 @@ fn test_wait_until_idle_timeout_path_recovers_after_inflight_handler_finishes() 
         pending.inner.inner.lock().event_status,
         EventStatus::Completed
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
-fn test_stop_timeout_zero_clears_running_bus_and_releases_name() {
-    let bus_name = "StopCoverageBus".to_string();
+fn test_destroy_timeout_zero_clears_running_bus_and_releases_name() {
+    let bus_name = "DestroyCoverageBus".to_string();
     let bus = EventBus::new(Some(bus_name.clone()));
     let (started_tx, started_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
     let release_rx = Arc::new(Mutex::new(release_rx));
 
-    bus.on_raw("StopCoverageEvent", "slow_handler", move |_event| {
+    bus.on_raw("DestroyCoverageEvent", "slow_handler", move |_event| {
         let started_tx = started_tx.clone();
         let release_rx = release_rx.clone();
         async move {
@@ -204,7 +204,7 @@ fn test_stop_timeout_zero_clears_running_bus_and_releases_name() {
         }
     });
 
-    let _pending = bus.emit(StopCoverageEvent {
+    let _pending = bus.emit(DestroyCoverageEvent {
         ..Default::default()
     });
     started_rx
@@ -212,19 +212,19 @@ fn test_stop_timeout_zero_clears_running_bus_and_releases_name() {
         .expect("handler should start");
 
     let start = Instant::now();
-    bus.stop();
+    bus.destroy();
     let elapsed = start.elapsed();
     assert!(elapsed < Duration::from_millis(500));
-    assert!(bus.is_stopped_for_test());
+    assert!(bus.is_destroyed_for_test());
     assert!(!EventBus::all_instances_contains(&bus));
 
     release_tx.send(()).expect("release handler");
 
     let replacement = EventBus::new(Some(bus_name));
-    replacement.on_raw("StopCoverageEvent", "handler", |_event| async move {
+    replacement.on_raw("DestroyCoverageEvent", "handler", |_event| async move {
         Ok(json!(null))
     });
-    let event = replacement.emit(StopCoverageEvent {
+    let event = replacement.emit(DestroyCoverageEvent {
         ..Default::default()
     });
     let _ = block_on(event.now());
@@ -232,7 +232,7 @@ fn test_stop_timeout_zero_clears_running_bus_and_releases_name() {
         event.inner.inner.lock().event_status,
         EventStatus::Completed
     );
-    replacement.stop();
+    replacement.destroy();
 }
 
 #[test]
@@ -250,7 +250,7 @@ fn test_emit_with_no_handlers_completes_event() {
     assert!(inner.event_started_at.is_some());
     assert!(inner.event_completed_at.is_some());
     drop(inner);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -267,7 +267,7 @@ fn test_wildcard_handler_runs_for_any_event_type() {
     assert_eq!(results.len(), 1);
     let only = results.values().next().expect("missing result");
     assert_eq!(only.result, Some(json!("all")));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -289,5 +289,5 @@ fn test_handler_error_populates_error_status() {
     let only = results.values().next().expect("missing result");
     assert_eq!(only.status, EventResultStatus::Error);
     assert_eq!(only.error.as_deref(), Some("boom"));
-    bus.stop();
+    bus.destroy();
 }

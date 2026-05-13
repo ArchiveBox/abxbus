@@ -83,7 +83,7 @@ async def test_events_suck_wrap_emits_and_returns_first_result():
         {'id': created_id, 'name': None, 'age': 46, 'source': 'sync'},
     ]
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 def test_events_suck_wrap_builds_typed_method_signature():
@@ -140,4 +140,4 @@ async def test_events_suck_make_events_and_make_handler_runtime_binding():
         ('update', {'id': '4ddee2b7-782f-7bbf-84ff-6aad2693982e', 'name': None, 'age': 46, 'source': 'sync'}),
     ]
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)

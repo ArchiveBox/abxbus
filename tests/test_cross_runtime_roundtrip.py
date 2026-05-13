@@ -864,7 +864,7 @@ async def _assert_python_schema_enforcement_after_runtime_reload(
     wrong_result = next(iter(wrong_event.event_results.values()))
     assert wrong_result.status == 'error'
     assert wrong_result.error is not None
-    await wrong_bus.stop()
+    await wrong_bus.destroy()
 
     right_bus = EventBus(name=right_bus_name)
 
@@ -892,7 +892,7 @@ async def _assert_python_schema_enforcement_after_runtime_reload(
     assert right_result.status == 'completed'
     assert right_result.error is None
     assert right_result.result is not None
-    await right_bus.stop()
+    await right_bus.destroy()
 
 
 class PyTsBusResumeEvent(BaseEvent[str]):
@@ -976,7 +976,7 @@ async def _assert_bus_roundtrip_rehydrates_and_resumes(
     assert done_one.event_results[case.handler_one_id].result == 'seeded'
     assert done_one.event_results[case.handler_two_id].result is None
 
-    await restored.stop(clear=True)
+    await restored.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -1046,8 +1046,8 @@ async def test_python_to_ts_to_python_bus_roundtrip_rehydrates_and_resumes(tmp_p
     assert done_one.event_results[handler_one_id].result == 'seeded'
     assert done_one.event_results[handler_two_id].result is None
 
-    await source_bus.stop(clear=True)
-    await restored.stop(clear=True)
+    await source_bus.destroy(clear=True)
+    await restored.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -1063,7 +1063,7 @@ async def test_python_to_rust_to_go_to_python_bus_roundtrip_rehydrates_and_resum
         go_roundtripped,
         'python -> rust -> go bus roundtrip',
     )
-    await case.source_bus.stop(clear=True)
+    await case.source_bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -1079,7 +1079,7 @@ async def test_python_to_go_to_rust_to_python_bus_roundtrip_rehydrates_and_resum
         rust_roundtripped,
         'python -> go -> rust bus roundtrip',
     )
-    await case.source_bus.stop(clear=True)
+    await case.source_bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -1149,8 +1149,8 @@ async def test_python_to_rust_to_python_bus_roundtrip_rehydrates_and_resumes(tmp
     assert done_one.event_results[handler_one_id].result == 'seeded'
     assert done_one.event_results[handler_two_id].result is None
 
-    await source_bus.stop(clear=True)
-    await restored.stop(clear=True)
+    await source_bus.destroy(clear=True)
+    await restored.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -1220,5 +1220,5 @@ async def test_python_to_go_to_python_bus_roundtrip_rehydrates_and_resumes(tmp_p
     assert done_one.event_results[handler_one_id].result == 'seeded'
     assert done_one.event_results[handler_two_id].result is None
 
-    await source_bus.stop(clear=True)
-    await restored.stop(clear=True)
+    await source_bus.destroy(clear=True)
+    await restored.destroy(clear=True)

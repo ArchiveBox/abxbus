@@ -137,7 +137,7 @@ fn test_queue_jump() {
         .clone()
         .unwrap_or_default();
     assert!(jumped_started <= sibling_started);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -193,7 +193,7 @@ fn test_emit_with_queue_jump_preempts_queued_sibling_on_same_bus() {
     });
 
     assert_eq!(order.lock().expect("order lock").as_slice(), &[0, 2, 1]);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -236,7 +236,7 @@ fn test_bus_serial_processes_in_order() {
         .clone()
         .unwrap_or_default();
     assert!(event1_started <= event2_started);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -317,8 +317,8 @@ fn test_bus_serial_fifo_order_preserved_per_bus_with_interleaving() {
         starts_b.lock().expect("starts_b lock").as_slice(),
         &[0, 1, 2, 3]
     );
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -404,8 +404,8 @@ fn test_event_concurrency_global_serial_allows_only_one_inflight_across_buses() 
         .collect();
     assert_eq!(starts_a, vec![0, 1, 2]);
     assert_eq!(starts_b, vec![0, 1, 2]);
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -511,8 +511,8 @@ fn test_global_serial_awaited_child_jumps_ahead_of_queued_events_across_buses() 
         .expect("queued start");
     assert!(child_start_idx < queued_start_idx);
     assert!(child_end_idx < queued_start_idx);
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -632,7 +632,7 @@ fn test_wait_waits_in_queue_order_inside_handler_without_queue_jump() {
         .clone()
         .expect("child ref");
     assert!(!child.inner.lock().event_blocks_parent_completion);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -686,8 +686,8 @@ fn test_event_concurrency_bus_serial_serializes_per_bus_but_overlaps_across_buse
     });
 
     assert!(*max_in_flight_global.lock().expect("max lock") >= 2);
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -788,8 +788,8 @@ fn test_bus_serial_awaiting_child_on_one_bus_does_not_block_other_bus_queue() {
         .position(|entry| entry == "parent_end")
         .expect("parent_end");
     assert!(other_start_idx < parent_end_idx);
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -832,7 +832,7 @@ fn test_event_concurrency_parallel_allows_same_bus_events_to_overlap() {
         assert!(bus.wait_until_idle(Some(2.0)).await);
     });
     assert!(*max_in_flight.lock().expect("max lock") >= 2);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -868,7 +868,7 @@ fn test_event_handler_concurrency_parallel_runs_handlers_for_same_event_concurre
     });
     let _ = block_on(event.now());
     assert!(*max_in_flight.lock().expect("max lock") >= 2);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -910,7 +910,7 @@ fn test_event_concurrency_override_parallel_beats_bus_serial_default() {
         assert!(bus.wait_until_idle(Some(2.0)).await);
     });
     assert!(*max_in_flight.lock().expect("max lock") >= 2);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -952,7 +952,7 @@ fn test_event_concurrency_override_bus_serial_beats_bus_parallel_default() {
         assert!(bus.wait_until_idle(Some(2.0)).await);
     });
     assert_eq!(*max_in_flight.lock().expect("max lock"), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1059,7 +1059,7 @@ fn test_queue_jump_awaited_child_preempts_queued_sibling_on_same_bus() {
     );
     assert!(child_inner.event_blocks_parent_completion);
     assert!(child_inner.event_emitted_by_handler_id.is_some());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1113,8 +1113,8 @@ fn test_global_serial_with_handler_parallel_allows_handlers_but_not_events_to_ov
     });
 
     assert_eq!(*max_in_flight.lock().expect("max lock"), 2);
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -1189,7 +1189,7 @@ fn test_event_parallel_with_handler_serial_serializes_handlers_within_each_event
         .expect("per_event_max lock")
         .values()
         .all(|max_seen| *max_seen == 1));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1245,8 +1245,8 @@ fn test_event_parallel_with_handler_serial_handlers_overlap_across_buses() {
     });
 
     assert!(*max_in_flight.lock().expect("max lock") >= 2);
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -1287,7 +1287,7 @@ fn test_event_concurrency_null_resolves_to_bus_defaults() {
         assert!(bus.wait_until_idle(Some(2.0)).await);
     });
     assert_eq!(*max_in_flight.lock().expect("max lock"), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1325,7 +1325,7 @@ fn test_event_handler_concurrency_null_resolves_to_bus_defaults() {
     let _ = block_on(event.now());
 
     assert_eq!(*max_in_flight.lock().expect("max lock"), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1444,8 +1444,8 @@ fn test_queue_jump_same_event_handlers_on_separate_buses_stay_isolated_without_f
         .position(|entry| entry == "bus_a_sibling_start")
         .expect("bus_a sibling start");
     assert!(bus_a_shared_end_idx < bus_a_sibling_start_idx);
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -1495,7 +1495,7 @@ fn test_awaited_bus_emit_inside_handler_queue_jumps_but_stays_untracked_root_eve
     assert_eq!(child.inner.lock().event_parent_id, None);
     assert_eq!(child.inner.lock().event_emitted_by_handler_id, None);
     assert!(!child.inner.lock().event_blocks_parent_completion);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1592,7 +1592,7 @@ fn test_awaited_bus_emit_inside_handler_preempts_queued_sibling_without_parentag
     assert_eq!(child.inner.lock().event_parent_id, None);
     assert_eq!(child.inner.lock().event_emitted_by_handler_id, None);
     assert!(!child.inner.lock().event_blocks_parent_completion);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1649,7 +1649,7 @@ fn test_awaiting_in_flight_event_does_not_double_run_handlers() {
         .expect("done should resolve");
     block_on(bus.wait_until_idle(Some(2.0)));
     assert_eq!(*handler_runs.lock().expect("runs lock"), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1668,7 +1668,7 @@ fn test_edge_case_event_with_no_handlers_completes_immediately() {
     assert_eq!(inner.event_status, EventStatus::Completed);
     assert_eq!(inner.event_pending_bus_count, 0);
     assert_eq!(inner.event_results.len(), 0);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1846,8 +1846,8 @@ fn test_fifo_forwarded_events_preserve_order_on_target_bus_bus_serial() {
     assert_eq!(bus_b_result_counts, vec![1, 1, 1, 1, 1]);
     assert_eq!(processed_flags, vec![true, true, true, true, true]);
     assert_eq!(pending_counts, vec![0, 0, 0, 0, 0]);
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -1932,9 +1932,9 @@ fn test_fifo_forwarded_events_preserve_order_across_chained_buses_bus_serial() {
         order_c.lock().expect("order_c lock").as_slice(),
         &[0, 1, 2, 3, 4, 5]
     );
-    bus_a.stop();
-    bus_b.stop();
-    bus_c.stop();
+    bus_a.destroy();
+    bus_b.destroy();
+    bus_c.destroy();
 }
 
 #[test]

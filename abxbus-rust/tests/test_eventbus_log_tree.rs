@@ -63,7 +63,7 @@ fn test_log_tree_single_event() {
     let output = bus.log_tree();
     assert!(output.contains("└── ✅ RootEvent#"));
     assert!(output.contains('[') && output.contains(']'));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -93,7 +93,7 @@ fn test_log_tree_with_handler_results() {
     assert!(output.contains("└── ✅ RootEvent#"));
     assert!(output.contains(&format!("{}.test_handler#", bus.label())));
     assert!(output.contains("\"status: success\""));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn test_log_tree_with_handler_errors() {
     let output = bus.log_tree();
     assert!(output.contains(&format!("{}.error_handler#", bus.label())));
     assert!(output.contains("ValueError: Test error message"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -174,7 +174,7 @@ fn test_log_tree_first_mode_control_cancellations_use_cancelled_icon() {
     assert!(output.contains(&format!("🚫 {}.slow_handler#", bus.label())));
     assert!(!output.contains(&format!("❌ {}.slow_handler#", bus.label())));
     assert!(output.contains("Aborted: Aborted: first result resolved"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -232,7 +232,7 @@ fn test_log_tree_complex_nested() {
     assert!(output.contains("\"Root processed\""));
     assert!(output.contains("list(3 items)"));
     assert!(output.contains("None"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -263,7 +263,7 @@ fn test_log_tree_multiple_roots() {
     let output = bus.log_tree();
     assert_eq!(output.matches("├── ✅ RootEvent#").count(), 1);
     assert_eq!(output.matches("└── ✅ RootEvent#").count(), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -293,7 +293,7 @@ fn test_log_tree_timing_info() {
     let output = bus.log_tree();
     assert!(output.contains('('));
     assert!(output.contains("s)"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -338,7 +338,7 @@ fn test_log_tree_running_handler() {
     assert!(output.contains("🏃 RootEvent#"));
     release_handler.store(true, Ordering::SeqCst);
     let _ = block_on(event.now());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]

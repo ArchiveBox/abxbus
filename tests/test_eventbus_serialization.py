@@ -159,8 +159,8 @@ async def test_eventbus_preserves_handler_registration_order_through_json_and_re
     await asyncio.wait_for(restored.emit(HandlerOrderEvent()), timeout=5)
     assert restored_order == ['first', 'second']
 
-    await bus.stop(clear=True)
-    await restored.stop(clear=True)
+    await bus.destroy(clear=True)
+    await restored.destroy(clear=True)
 
 
 def test_baseevent_model_validate_roundtrips_runtime_json_shape() -> None:

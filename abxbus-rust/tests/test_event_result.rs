@@ -141,7 +141,7 @@ fn test_pydantic_model_result_casting() {
             error: None,
         }
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -174,7 +174,7 @@ fn test_builtin_type_casting() {
         .expect("int result")
         .expect("int handler result");
     assert_eq!(int_result, 123);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -212,7 +212,7 @@ fn test_casting_failure_handling() {
         .unwrap_or_default()
         .contains("EventHandlerResultSchemaError"));
     assert_eq!(stored_result.result, None);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -233,7 +233,7 @@ fn test_no_casting_when_no_result_type() {
 
     assert_eq!(result, json!({"raw": "data"}));
     assert_eq!(event.inner.inner.lock().event_result_type, None);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -275,7 +275,7 @@ fn test_typed_accessors_normalize_forwarded_event_results_to_none() {
                 && value.get("event_id").is_some()
         })
     }));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -358,7 +358,7 @@ fn test_event_results_capture_handler_return_values() {
     let result = results.values().next().expect("result");
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("ok")));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -383,7 +383,7 @@ fn test_event_result_type_validates_handler_results() {
     let result = first_event_result_record(&event);
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!({"value": "hello", "count": 2})));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -408,7 +408,7 @@ fn test_event_result_type_allows_undefined_handler_return_values() {
     let result = first_event_result_record(&event);
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(Value::Null));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -438,7 +438,7 @@ fn test_invalid_result_marks_handler_error() {
         .unwrap_or_default()
         .contains("EventHandlerResultSchemaError"));
     assert!(!event.event_errors().is_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -455,7 +455,7 @@ fn test_event_with_no_result_schema_stores_raw_values() {
     let result = first_event_result_record(&event);
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!({"raw": true})));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -496,7 +496,7 @@ fn test_event_result_json_omits_result_type_and_derives_from_parent_event() {
         event.inner.inner.lock().event_result_type,
         Some(json!({"type": "string"}))
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -741,7 +741,7 @@ fn test_handler_result_stays_pending_while_waiting_for_handler_lock_entry() {
             .status,
         EventResultStatus::Completed
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -815,7 +815,7 @@ fn test_slow_handler_warning_is_based_on_handler_runtime_after_lock_wait() {
     release_tx.send(()).expect("release send");
     let _ = block_on(event.wait());
     assert_eq!(second_status(), EventResultStatus::Completed);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -903,7 +903,7 @@ fn test_eventresultslist_returns_filtered_values_by_default_and_can_return_raw_v
         vec![json!("first"), Value::Null, json!("second")]
     );
 
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1004,7 +1004,7 @@ fn test_event_result_returns_first_filtered_value_in_handler_registration_order(
         vec![json!("late"), Value::Null, json!("winner")]
     );
     assert_eq!(completed_order.lock().unwrap().len(), 3);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1140,7 +1140,7 @@ fn test_eventresultslist_supports_include_raise_if_any_raise_if_none_arguments()
     )
     .expect("raise_if_any false should return successful values");
     assert_eq!(suppressed, vec![json!("ok")]);
-    error_bus.stop();
+    error_bus.destroy();
 
     let none_bus = EventBus::new(Some("EventResultsListNoneBus".to_string()));
     none_bus.on_raw("AccessorEvent", "null_handler", |_event| async move {
@@ -1166,7 +1166,95 @@ fn test_eventresultslist_supports_include_raise_if_any_raise_if_none_arguments()
     }))
     .expect("raise_if_none false should allow empty filtered results");
     assert!(empty_values.is_empty());
-    none_bus.stop();
+    none_bus.destroy();
+}
+
+#[test]
+fn test_all_error_result_options_match_cross_language_matrix() {
+    let bus = EventBus::new(Some("AllErrorResultOptionsBus".to_string()));
+    bus.on_raw("AccessorEvent", "first_handler", |_event| async move {
+        Err("first failure".to_string())
+    });
+    bus.on_raw("AccessorEvent", "second_handler", |_event| async move {
+        Err("second failure".to_string())
+    });
+
+    let event = bus.emit(AccessorEvent {
+        ..Default::default()
+    });
+    block_on(event.inner.now()).expect("event completed");
+
+    let default_error = block_on(event.inner.event_result(EventResultOptions::default()))
+        .expect_err("default event_result should surface handler errors");
+    assert!(default_error.contains("first failure"), "{default_error}");
+    let default_list_error = block_on(
+        event
+            .inner
+            .event_results_list(EventResultOptions::default()),
+    )
+    .expect_err("default event_results_list should surface handler errors");
+    assert!(
+        default_list_error.contains("first failure"),
+        "{default_list_error}"
+    );
+
+    let value = block_on(event.inner.event_result(EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: false,
+        include: None,
+    }))
+    .expect("false/false event_result should not raise");
+    assert_eq!(value, None);
+    let values = block_on(event.inner.event_results_list(EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: false,
+        include: None,
+    }))
+    .expect("false/false event_results_list should not raise");
+    assert!(values.is_empty());
+
+    let none_error = block_on(event.inner.event_result(EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: true,
+        include: None,
+    }))
+    .expect_err("false/true event_result should raise no-result error");
+    assert!(
+        none_error.contains("Expected at least one handler"),
+        "{none_error}"
+    );
+    let none_list_error = block_on(event.inner.event_results_list(EventResultOptions {
+        raise_if_any: false,
+        raise_if_none: true,
+        include: None,
+    }))
+    .expect_err("false/true event_results_list should raise no-result error");
+    assert!(
+        none_list_error.contains("Expected at least one handler"),
+        "{none_list_error}"
+    );
+
+    for options in [
+        EventResultOptions {
+            raise_if_any: true,
+            raise_if_none: false,
+            include: None,
+        },
+        EventResultOptions {
+            raise_if_any: true,
+            raise_if_none: true,
+            include: None,
+        },
+    ] {
+        let error = block_on(event.inner.event_result(options.clone()))
+            .expect_err("raise_if_any=true event_result should surface handler errors");
+        assert!(error.contains("first failure"), "{error}");
+        let list_error = block_on(event.inner.event_results_list(options))
+            .expect_err("raise_if_any=true event_results_list should surface handler errors");
+        assert!(list_error.contains("first failure"), "{list_error}");
+    }
+
+    bus.destroy();
 }
 
 #[test]
@@ -1191,7 +1279,7 @@ fn test_eventresultslist_supports_timeout_include_raise_if_any_raise_if_none_arg
     }))
     .expect("filtered values");
     assert_eq!(filtered_values, vec![json!("keep")]);
-    include_bus.stop();
+    include_bus.destroy();
 
     let timeout_bus = EventBus::new(Some("EventResultsListTimeoutBus".to_string()));
     timeout_bus.on_raw("TimeoutEvent", "slow_handler", |_event| async move {
@@ -1213,5 +1301,5 @@ fn test_eventresultslist_supports_timeout_include_raise_if_any_raise_if_none_arg
         "{timeout_error}"
     );
     let _ = block_on(timeout_event.wait());
-    timeout_bus.stop();
+    timeout_bus.destroy();
 }

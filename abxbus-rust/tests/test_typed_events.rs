@@ -47,7 +47,7 @@ fn test_on_and_emit_typed_roundtrip() {
 
     let first = block_on(event.event_result(EventResultOptions::default())).expect("first result");
     assert_eq!(first, Some(AddResult { sum: 13 }));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn test_find_returns_typed_payload() {
         .expect("expected typed event");
     assert_eq!(found.a, 7);
     assert_eq!(found.b, 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn test_find_type_inference() {
     .expect("expected filtered typed event");
     assert_eq!(filtered.a, 51);
     assert_eq!(filtered.b, 96);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -148,7 +148,7 @@ fn test_find_past_type_inference() {
     assert_eq!(found.a, 10);
     assert_eq!(found.b, 20);
     assert_eq!(found.event_type, "AddEvent");
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -170,11 +170,12 @@ fn test_dispatch_type_inference() {
     assert_eq!(dispatched_event.b, 6);
     assert_eq!(dispatched_event.event_type, "AddEvent");
 
+    let _ = block_on(dispatched_event.now());
     let result = block_on(dispatched_event.event_result(EventResultOptions::default()))
         .expect("typed event result")
         .expect("handler result");
     assert_eq!(result, AddResult { sum: 10 });
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -197,6 +198,7 @@ fn test_typed_event_result_accessors_decode_handler_values() {
         b: 5,
         ..Default::default()
     });
+    let _ = block_on(event.now());
 
     let first = block_on(event.event_result(EventResultOptions {
         raise_if_any: false,
@@ -213,7 +215,7 @@ fn test_typed_event_result_accessors_decode_handler_values() {
     }))
     .expect("typed results list");
     assert_eq!(values, vec![AddResult { sum: 8 }, AddResult { sum: 15 }]);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -232,5 +234,5 @@ fn test_builtin_event_fields_in_payload_become_runtime_overrides() {
     assert!(!inner.payload.contains_key("event_timeout"));
     assert!(!inner.payload.contains_key("event_handler_timeout"));
     drop(inner);
-    bus.stop();
+    bus.destroy();
 }

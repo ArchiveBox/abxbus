@@ -46,7 +46,7 @@ async def test_on_stores_eventhandler_entry_and_index() -> None:
     assert entry.id in completed.event_results
     assert completed.event_results[entry.id].handler.id == entry.id
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -87,7 +87,7 @@ async def test_off_removes_by_callable_id_entry_or_all() -> None:
     assert 'RegistryEvent' not in bus.handlers_by_key
     assert all(entry.event_pattern != 'RegistryEvent' for entry in bus.handlers.values())
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -121,7 +121,7 @@ async def test_on_normalizes_sync_handler_to_async_callable() -> None:
     assert result.result == 'normalized'
     assert len(calls) == 2
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -154,7 +154,7 @@ async def test_on_keeps_async_handlers_normalized_through_handler_async() -> Non
     assert result.result == 'async_normalized'
     assert len(calls) == 2
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -174,7 +174,7 @@ async def test_handler_async_preserves_typed_arg_return_contracts_for_sync_handl
     assert isinstance(result, str)
     assert result == 'sync'
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -194,7 +194,7 @@ async def test_handler_async_preserves_typed_arg_return_contracts_for_async_hand
     assert isinstance(result, str)
     assert result == 'async'
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -227,7 +227,7 @@ async def test_on_names_bound_handlers_by_the_class_that_defined_the_method() ->
     assert f'{bus.name}#' in output
     assert f'{service.entry.handler_name}#' in output
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -261,4 +261,4 @@ async def test_on_names_retry_decorated_bound_handlers_by_the_class_that_defined
     assert f'{bus.name}#' in output
     assert f'{service.entry.handler_name}#' in output
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)

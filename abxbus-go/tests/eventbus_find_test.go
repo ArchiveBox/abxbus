@@ -326,7 +326,7 @@ func TestFindCanSeeInProgressEventInHistory(t *testing.T) {
 
 func TestFindFutureIgnoresAlreadyDispatchedInFlightEventsWhenPastFalse(t *testing.T) {
 	bus := abxbus.NewEventBus("FindFutureIgnoresInflightBus", nil)
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
 	bus.On("FutureInflightEvent", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
@@ -362,7 +362,7 @@ func TestFindFutureIgnoresAlreadyDispatchedInFlightEventsWhenPastFalse(t *testin
 
 func TestFindFutureResolvesOnDispatchBeforeHandlersComplete(t *testing.T) {
 	bus := abxbus.NewEventBus("FindFutureDispatchVisibilityBus", nil)
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
 	bus.On("DispatchVisibleEvent", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
@@ -406,7 +406,7 @@ func TestFindFutureResolvesOnDispatchBeforeHandlersComplete(t *testing.T) {
 
 func TestMultipleConcurrentFutureFindWaitersResolveCorrectEvents(t *testing.T) {
 	bus := abxbus.NewEventBus("FindConcurrentWaitersBus", nil)
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 	resultA := make(chan *abxbus.BaseEvent, 1)
 	resultB := make(chan *abxbus.BaseEvent, 1)
 	errs := make(chan error, 2)
@@ -561,7 +561,7 @@ func TestFindSupportsPayloadFieldNamedLimitViaEquals(t *testing.T) {
 
 func TestFilterLimitZeroAndNegativeReturnImmediatelyWithoutFutureWait(t *testing.T) {
 	bus := abxbus.NewEventBus("FilterLimitImmediateBus", nil)
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 	for _, limit := range []int{0, -1} {
 		start := time.Now()
 		matches, err := bus.Filter("NeverDispatched", nil, &abxbus.FilterOptions{Past: false, Future: 1.0, Limit: &limit})
@@ -579,7 +579,7 @@ func TestFilterLimitZeroAndNegativeReturnImmediatelyWithoutFutureWait(t *testing
 
 func TestFilterFutureOnlyTimesOutToEmptyList(t *testing.T) {
 	bus := abxbus.NewEventBus("FilterFutureTimeoutBus", nil)
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 	start := time.Now()
 	matches, err := bus.Filter("MissingFutureFilterEvent", nil, &abxbus.FilterOptions{Past: false, Future: 0.03})
 	if err != nil {

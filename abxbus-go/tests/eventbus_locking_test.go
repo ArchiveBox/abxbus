@@ -79,15 +79,15 @@ func TestGlobalSerialAcrossBuses(t *testing.T) {
 		t.Fatalf("expected per-bus FIFO order for b2, got %v", seenB2)
 	}
 
-	b1.Stop()
-	b2.Stop()
+	b1.Destroy()
+	b2.Destroy()
 }
 
 func TestGlobalSerialAwaitedChildJumpsAheadOfQueuedEventsAcrossBuses(t *testing.T) {
 	busA := abxbus.NewEventBus("GlobalSerialParent", &abxbus.EventBusOptions{EventConcurrency: abxbus.EventConcurrencyGlobalSerial})
 	busB := abxbus.NewEventBus("GlobalSerialChild", &abxbus.EventBusOptions{EventConcurrency: abxbus.EventConcurrencyGlobalSerial})
-	defer busA.Stop()
-	defer busB.Stop()
+	defer busA.Destroy()
+	defer busB.Destroy()
 
 	var mu sync.Mutex
 	order := []string{}
@@ -148,8 +148,8 @@ func TestGlobalSerialAwaitedChildJumpsAheadOfQueuedEventsAcrossBuses(t *testing.
 func TestEventConcurrencyBusSerialSerializesPerBusButOverlapsAcrossBuses(t *testing.T) {
 	busA := abxbus.NewEventBus("BusSerialA", &abxbus.EventBusOptions{EventConcurrency: abxbus.EventConcurrencyBusSerial})
 	busB := abxbus.NewEventBus("BusSerialB", &abxbus.EventBusOptions{EventConcurrency: abxbus.EventConcurrencyBusSerial})
-	defer busA.Stop()
-	defer busB.Stop()
+	defer busA.Destroy()
+	defer busB.Destroy()
 
 	startedA := make(chan struct{}, 2)
 	startedB := make(chan struct{}, 2)
@@ -230,7 +230,7 @@ func TestEventConcurrencyParallelAllowsSameBusEventsToOverlap(t *testing.T) {
 		EventConcurrency:        abxbus.EventConcurrencyParallel,
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
 	})
-	defer bus.Stop()
+	defer bus.Destroy()
 
 	started := make(chan int, 2)
 	release := make(chan struct{})
@@ -284,7 +284,7 @@ func TestEventConcurrencyOverrideParallelBeatsBusSerialDefault(t *testing.T) {
 		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
 	})
-	defer bus.Stop()
+	defer bus.Destroy()
 
 	started := make(chan struct{}, 2)
 	release := make(chan struct{})
@@ -343,7 +343,7 @@ func TestEventConcurrencyOverrideBusSerialBeatsBusParallelDefault(t *testing.T) 
 		EventConcurrency:        abxbus.EventConcurrencyParallel,
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
 	})
-	defer bus.Stop()
+	defer bus.Destroy()
 
 	started := make(chan struct{}, 2)
 	release := make(chan struct{})

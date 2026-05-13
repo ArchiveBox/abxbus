@@ -63,7 +63,7 @@ fn test_bus_default_handler_settings_are_applied() {
     let _ = block_on(event.now());
 
     assert_eq!(event.inner.inner.lock().event_results.len(), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn test_event_concurrency_remains_unset_on_dispatch_and_resolves_during_processi
     let _ = block_on(explicit_none.now());
     assert_eq!(implicit.inner.inner.lock().event_results.len(), 1);
     assert_eq!(explicit_none.inner.inner.lock().event_results.len(), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -124,7 +124,7 @@ fn test_event_concurrency_class_override_beats_bus_default() {
     );
     let _ = block_on(event.now());
     assert_eq!(event.inner.inner.lock().event_results.len(), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -168,7 +168,7 @@ fn test_handler_defaults_remain_unset_on_dispatch_and_resolve_during_processing(
     let _ = block_on(explicit_none.now());
     assert_eq!(implicit.inner.inner.lock().event_results.len(), 1);
     assert_eq!(explicit_none.inner.inner.lock().event_results.len(), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -201,7 +201,7 @@ fn test_handler_class_override_beats_bus_defaults() {
     );
     let _ = block_on(event.now());
     assert_eq!(event.inner.inner.lock().event_results.len(), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -230,7 +230,7 @@ fn test_event_instance_override_beats_typed_event_defaults() {
         event.inner.inner.lock().event_concurrency,
         Some(EventConcurrencyMode::Parallel)
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -248,7 +248,7 @@ fn test_typed_event_config_defaults_populate_base_event_fields() {
     assert_eq!(inner.event_handler_slow_timeout, Some(4.0));
     assert!(inner.event_blocks_parent_completion);
     drop(inner);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]

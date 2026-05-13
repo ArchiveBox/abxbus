@@ -61,7 +61,7 @@ jobs:
       - id: lsgrep
         run: |
           TS_TEST_TASKS="$(
-            find abxbus-ts/tests -maxdepth 1 -type f -name '*.test.ts' ! -name 'eventbus_performance.test.ts' \
+            find abxbus-ts/tests -maxdepth 1 -type f -name '*.test.ts' ! -name 'EventBus_performance.test.ts' \
               | sort \
               | sed 's|^abxbus-ts/tests/||' \
               | sed 's|\.test\.ts$||' \
@@ -95,6 +95,7 @@ jobs:
       - find_ts_tests
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         task: ${{ fromJson(needs.find_ts_tests.outputs.TS_TASKS || '[{"kind":"error","name":"FAILED_TO_DISCOVER_TASKS"}]') }}
         # autodiscovers all files in abxbus-ts/tests/*.test.ts and abxbus-ts/examples/*.ts
@@ -180,13 +181,13 @@ jobs:
           node -e "const m = require('@tachyon-ipc/core'); console.log('tachyon-ipc loaded:', typeof m.Bus)"
 
       - uses: astral-sh/setup-uv@v6
-        if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'retry_multiprocess')
         with:
           enable-cache: true
           activate-environment: true
 
-      - name: Install Python deps for cross-runtime roundtrip tests
-        if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
+      - name: Install Python deps for cross-runtime tests
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'retry_multiprocess')
         run: |
           cd ..
           uv sync --dev --all-extras --no-extra tachyon
@@ -393,6 +394,8 @@ jobs:
           gcc-14 --version
 
       - run: pnpm install --frozen-lockfile
+      - name: Run TypeScript performance test file
+        run: NODE_OPTIONS='--expose-gc' node --expose-gc --test --import tsx tests/EventBus_performance.test.ts
       - name: Run TypeScript runtime perf
         run: pnpm run perf | tee ts_perf.log
       - name: Export TypeScript perf stats

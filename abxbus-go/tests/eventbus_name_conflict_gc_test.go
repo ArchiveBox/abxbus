@@ -10,8 +10,8 @@ import (
 func TestSameNameEventBusesKeepIndependentIDsHandlersAndHistory(t *testing.T) {
 	first := abxbus.NewEventBus("DuplicateNameBus", nil)
 	second := abxbus.NewEventBus("DuplicateNameBus", nil)
-	defer first.Stop()
-	defer second.Stop()
+	defer first.Destroy()
+	defer second.Destroy()
 	if first.ID == second.ID {
 		t.Fatal("same-name buses should still have distinct ids")
 	}

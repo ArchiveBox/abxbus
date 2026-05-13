@@ -27,7 +27,7 @@ test("event_handler_completion='first': returns the first non-null result from p
     return 'fast handler'
   })
 
-  const result = await bus.emit(TestEvent({})).now({ first_result: true }).eventResult()
+  const result = await bus.emit(TestEvent({})).now({ first_result: true }).eventResult({ raise_if_any: false })
 
   assert.equal(result, 'fast handler')
 })
@@ -51,7 +51,7 @@ test("event_handler_completion='first': cancels remaining parallel handlers afte
   })
 
   const event = await bus.emit(TestEvent({})).now({ first_result: true })
-  const result = await event.eventResult()
+  const result = await event.eventResult({ raise_if_any: false })
 
   assert.equal(result, 'fast result')
   assert.equal(slow_handler_completed, false)
@@ -79,7 +79,7 @@ test("event_handler_completion='first': returns the first non-null result from s
 
   const event = await bus.emit(TestEvent({})).now()
 
-  assert.equal(await event.eventResult(), 'first handler result')
+  assert.equal(await event.eventResult({ raise_if_any: false }), 'first handler result')
   assert.equal(second_handler_called, false)
 })
 
@@ -100,7 +100,7 @@ test("event_handler_completion='first': serial mode skips null result and uses n
 
   const event = await bus.emit(TestEvent({})).now()
 
-  assert.equal(await event.eventResult(), 'winner')
+  assert.equal(await event.eventResult({ raise_if_any: false }), 'winner')
   assert.equal(third_handler_called, false)
 })
 
@@ -183,7 +183,7 @@ test('eventResult: raises by default when every handler fails', async () => {
   await assert.rejects(() => bus.emit(TestEvent({})).now().eventResult(), AggregateError)
 })
 
-test('eventResult: returns a valid result by default when another handler fails', async () => {
+test('eventResult: can return a valid result when handler errors are suppressed', async () => {
   const bus = new EventBus('EventResultMixBus', { event_timeout: 0, event_handler_concurrency: 'parallel' })
   const TestEvent = BaseEvent.extend('EventResultMixEvent', { event_result_type: z.string() })
 
@@ -197,7 +197,7 @@ test('eventResult: returns a valid result by default when another handler fails'
 
   const event = await bus.emit(TestEvent({})).now()
 
-  assert.equal(await event.eventResult(), 'slow but succeeds')
+  assert.equal(await event.eventResult({ raise_if_any: false }), 'slow but succeeds')
   await assert.rejects(() => event.eventResult({ raise_if_any: true }), AggregateError)
 })
 
@@ -230,6 +230,7 @@ test('eventResult: include callback receives result and event result', async () 
     .emit(TestEvent({}))
     .now()
     .eventResult({
+      raise_if_any: false,
       include: (result, event_result) => {
         assert.equal(result, event_result.result)
         seen_results.push(result)

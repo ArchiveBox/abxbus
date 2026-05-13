@@ -90,7 +90,7 @@ fn test_basic_parent_tracking_child_events_get_event_parent_id() {
     );
     assert!(bus.event_is_child_of(&child, &parent.inner));
     assert!(bus.event_is_parent_of(&parent.inner, &child));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -150,7 +150,7 @@ fn test_multi_level_parent_tracking_preserves_lineage() {
         Some(child_id.as_str())
     );
     assert!(bus.event_is_child_of(&grandchild, &parent.inner));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -192,7 +192,7 @@ fn test_multiple_children_from_same_parent_keep_same_event_parent_id() {
             Some(parent_id.as_str())
         );
     }
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -251,7 +251,7 @@ fn test_parallel_parent_handlers_preserve_parent_tracking() {
         );
         assert!(child.inner.lock().event_emitted_by_handler_id.is_some());
     }
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -320,7 +320,7 @@ fn test_sync_handler_parent_tracking() {
     let parent_errors = parent.inner.event_errors();
     assert_eq!(parent_errors.len(), 1);
     assert!(parent_errors[0].contains("expected parent-tracking error path"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -391,7 +391,7 @@ fn test_event_children_tracks_multiple_children_from_a_single_handler() {
     assert!(parent_event_children
         .iter()
         .all(|child| child.inner.lock().event_type == "ChildEvent"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -479,7 +479,7 @@ fn test_event_children_tracks_direct_and_nested_descendants() {
         child_event_children[0].inner.lock().event_type,
         "GrandchildEvent"
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -540,7 +540,7 @@ fn test_multiple_parent_handlers_contribute_to_one_event_children_list() {
     assert!(parent_event_children
         .iter()
         .all(|child| child.inner.lock().event_type == "ChildEvent"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -578,7 +578,7 @@ fn test_explicit_event_parent_id_is_not_overridden() {
         child.inner.lock().event_parent_id.as_deref(),
         Some(explicit_parent_id.as_str())
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -624,8 +624,8 @@ fn test_cross_eventbus_dispatch_preserves_parent_tracking() {
         received_child.inner.lock().event_parent_id.as_deref(),
         Some(parent_id.as_str())
     );
-    bus_1.stop();
-    bus_2.stop();
+    bus_1.destroy();
+    bus_2.destroy();
 }
 
 #[test]
@@ -675,8 +675,8 @@ fn test_cross_bus_bus_emit_inside_handler_does_not_link_parent_when_exactly_one_
         .next()
         .expect("parent result");
     assert!(result.event_children.is_empty());
-    bus_1.stop();
-    bus_2.stop();
+    bus_1.destroy();
+    bus_2.destroy();
 }
 
 #[test]
@@ -757,9 +757,9 @@ fn test_bus_emit_outside_handler_does_not_guess_a_parent_when_multiple_handlers_
             .event_emitted_by_handler_id,
         None
     );
-    bus_1.stop();
-    bus_2.stop();
-    bus_3.stop();
+    bus_1.destroy();
+    bus_2.destroy();
+    bus_3.destroy();
 }
 
 #[test]
@@ -818,7 +818,7 @@ fn test_erroring_parent_handlers_still_preserve_child_event_parent_id() {
         .filter(|result| result.error.is_some())
         .count();
     assert_eq!(parent_errors, 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -841,7 +841,7 @@ fn test_event_children_is_empty_when_handlers_do_not_emit_children() {
     assert!(result.event_children.is_empty());
     drop(parent_inner);
     assert!(event_children_for(&bus, &parent.inner).is_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -926,7 +926,7 @@ fn test_parent_completion_waits_for_awaited_children() {
         assert!(child.inner.lock().event_blocks_parent_completion);
         assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
     }
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -999,7 +999,7 @@ fn test_event_emit_without_await_sets_parentage_without_blocking_parent_completi
     release_child_tx.send(()).expect("release child send");
     block_on(bus.wait_until_idle(Some(2.0)));
     assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1070,7 +1070,7 @@ fn test_awaited_event_emit_child_blocks_parent_completion_and_queue_jumps() {
         EventStatus::Completed
     );
     assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1115,7 +1115,7 @@ fn test_bus_emit_inside_handler_dispatches_root_event_by_default() {
     assert!(result.event_children.is_empty());
     drop(parent_inner);
     assert!(event_children_for(&bus, &parent.inner).is_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1189,7 +1189,7 @@ fn test_bus_emit_inside_handler_does_not_link_parent_when_not_using_event_emit()
     release_child_tx.send(()).expect("release child send");
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
     assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1269,7 +1269,7 @@ fn test_outside_now_of_bus_emit_child_keeps_it_independent_of_active_handler() {
     wait_thread.join().expect("child wait thread");
     block_on(bus.wait_until_idle(Some(2.0)));
     assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1349,7 +1349,7 @@ fn test_outside_wait_of_bus_emit_child_keeps_it_independent_of_active_handler() 
     wait_thread.join().expect("child wait thread");
     block_on(bus.wait_until_idle(Some(2.0)));
     assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1399,7 +1399,7 @@ fn test_awaited_bus_emit_child_remains_independent_and_does_not_block_parent_com
     assert!(result.event_children.is_empty());
     drop(parent_inner);
     assert!(event_children_for(&bus, &parent.inner).is_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1433,8 +1433,8 @@ fn test_forwarded_events_are_not_counted_as_parent_event_children() {
     assert_eq!(parent_inner.event_parent_id, None);
     drop(parent_inner);
     assert!(event_children_for(&bus_1, &parent.inner).is_empty());
-    bus_1.stop();
-    bus_2.stop();
+    bus_1.destroy();
+    bus_2.destroy();
 }
 
 #[test]

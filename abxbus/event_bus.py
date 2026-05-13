@@ -253,7 +253,7 @@ class EventBus:
 
         for existing_bus in list(type(self).all_instances):  # Make a list copy to avoid modification during iteration
             if existing_bus is not self and existing_bus.name == self.name:
-                # Since stop() renames buses to _stopped_{id}, any bus with a matching
+                # Since destroy() renames buses to _destroyed_{id}, any bus with a matching
                 # user-specified name is either running or never-started - both should
                 # be considered conflicts. This makes name conflict detection deterministic.
                 conflicting_buses.append(existing_bus)
@@ -267,7 +267,7 @@ class EventBus:
             warnings.warn(
                 f'⚠️ EventBus with name "{original_name}" already exists. '
                 f'Auto-generated unique name: "{self.name}" to avoid conflicts. '
-                f'Consider using unique names or stop(clear=True) on unused buses.',
+                f'Consider using unique names or destroy(clear=True) on unused buses.',
                 UserWarning,
                 stacklevel=2,
             )
@@ -346,7 +346,7 @@ class EventBus:
         # Most cleanup should have been done by the event loop close hook
         # This is just a fallback for any remaining cleanup
 
-        # Signal the run loop to stop
+        # Signal the run loop to exit
         self._is_running = False
         if self.pending_event_queue:
             try:
@@ -1502,7 +1502,7 @@ class EventBus:
                         # Clean up all registered EventBuses before closing the loop
                         for eventbus in list(eventbus_class._loop_eventbus_instances.get(loop, empty_eventbuses)):
                             try:
-                                # Stop the eventbus while loop is still running
+                                # Exit the EventBus loop while the asyncio loop is still running
                                 if eventbus._is_running:
                                     eventbus._is_running = False
 
@@ -1538,7 +1538,7 @@ class EventBus:
 
                 # Create and start the run loop task.
                 # Use a weakref-based runner so an unreferenced EventBus can be GC'd
-                # without requiring explicit stop(clear=True) by callers.
+                # without requiring explicit destroy(clear=True) by callers.
                 # Run loops must start with a clean context. If emit() is called
                 # from inside a handler, lock-depth ContextVars would otherwise leak
                 # into the new task and bypass event lock acquisition.
@@ -1552,8 +1552,8 @@ class EventBus:
                 # No event loop - will start when one becomes available
                 pass
 
-    async def stop(self, timeout: float | None = None, clear: bool = False) -> None:
-        """Stop the event bus, optionally waiting for events to complete
+    async def destroy(self, timeout: float | None = None, clear: bool = False) -> None:
+        """Destroy the event bus, optionally waiting for events to complete
 
         Args:
             timeout: Maximum time to wait for pending events to complete
@@ -1580,7 +1580,7 @@ class EventBus:
         has_inflight = self._has_inflight_events_fast()
         if queue_size or has_inflight:
             logger.debug(
-                '⚠️ %s stopping with pending events: queue=%d inflight=%s history=%d',
+                '⚠️ %s destroying with pending events: queue=%d inflight=%s history=%d',
                 self,
                 queue_size,
                 has_inflight,
@@ -1594,7 +1594,7 @@ class EventBus:
         if self.pending_event_queue:
             self.pending_event_queue.shutdown()
 
-        # print('STOPPING', self.event_history)
+        # print('DESTROYING', self.event_history)
 
         # Wait for the run loop task to finish / force-cancel it if it's hanging
         if self._runloop_task and not self._runloop_task.done():
@@ -1624,10 +1624,10 @@ class EventBus:
         if self._on_idle:
             self._on_idle.set()
 
-        # Rename the bus to release the name. This ensures stopped buses don't
+        # Rename the bus to release the name. This ensures destroyed buses don't
         # cause name conflicts with new buses using the same name. This makes
         # name conflict detection deterministic (not dependent on GC timing).
-        self.name = f'_stopped_{self.id[-8:]}'
+        self.name = f'_destroyed_{self.id[-8:]}'
 
         # Clear event history and handlers if requested (for memory cleanup)
         if clear:
@@ -1707,7 +1707,7 @@ class EventBus:
 
         This runner avoids holding a strong EventBus reference while idle,
         allowing unreferenced buses to be garbage-collected naturally without
-        an explicit stop().
+        an explicit destroy().
         """
         try:
             while True:
@@ -2429,7 +2429,7 @@ class EventBus:
 
             warning_msg += '\nConsider:\n'
             warning_msg += '  - Reducing max_history_size\n'
-            warning_msg += '  - Clearing completed EventBus instances with stop(clear=True)\n'
+            warning_msg += '  - Clearing completed EventBus instances with destroy(clear=True)\n'
             warning_msg += '  - Reducing event payload sizes\n'
 
             logger.warning(warning_msg)

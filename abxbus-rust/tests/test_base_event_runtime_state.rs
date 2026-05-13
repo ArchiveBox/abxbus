@@ -77,7 +77,7 @@ fn test_event_started_at_after_processing() {
     assert!(event.event_started_at.is_some());
     assert!(event.event_completed_at.is_some());
     assert_eq!(event.event_status, EventStatus::Completed);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn test_event_without_handlers_completes_and_serializes_runtime_state() {
     assert!(processed.event_results.is_empty());
     assert!(processed.event_started_at.is_some());
     assert!(processed.event_completed_at.is_some());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -165,7 +165,7 @@ fn test_event_with_manually_set_completed_at_reconciles_through_dispatch() {
     assert_eq!(reconciled.event_status, EventStatus::Completed);
     assert!(reconciled.event_started_at.is_some());
     assert!(reconciled.event_completed_at.is_some());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -228,7 +228,7 @@ fn test_event_started_at_is_serialized_and_stateful() {
         .to_string();
     assert_eq!(second_started_at, first_started_at);
     assert_ne!(second_started_at, forced_started_at);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -253,7 +253,7 @@ fn test_event_result_update_started_marks_event_started_and_clears_completion() 
     assert_eq!(event.event_status, EventStatus::Started);
     assert!(event.event_started_at.is_some());
     assert_eq!(event.event_completed_at, None);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -291,5 +291,5 @@ fn test_event_status_is_serialized_and_stateful() {
         processing_event.to_json_value()["event_status"],
         "completed"
     );
-    bus.stop();
+    bus.destroy();
 }

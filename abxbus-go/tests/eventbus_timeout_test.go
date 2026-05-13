@@ -60,7 +60,7 @@ func TestProcessingTimeTimeoutDefaultsResolveAtExecutionTime(t *testing.T) {
 		EventSlowTimeout:        &eventSlowTimeout,
 		EventHandlerSlowTimeout: &eventHandlerSlowTimeout,
 	})
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 
 	bus.On("TimeoutEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		return "ok", nil
@@ -105,7 +105,7 @@ func TestProcessingTimeTimeoutDefaultsResolveAtExecutionTime(t *testing.T) {
 func TestEventTimeoutNilUsesBusDefaultTimeoutAtExecution(t *testing.T) {
 	busTimeout := 0.01
 	bus := abxbus.NewEventBus("TimeoutNilUsesBusDefault", &abxbus.EventBusOptions{EventTimeout: &busTimeout})
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 
 	bus.On("TimeoutDefaultsEvent", "slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		select {
@@ -211,7 +211,7 @@ func TestHandlerTimeoutIgnoresLateHandlerResultAndLateEmits(t *testing.T) {
 	bus := abxbus.NewEventBus("TimeoutIgnoresLateHandlerBus", &abxbus.EventBusOptions{
 		EventTimeout: &eventTimeout,
 	})
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 
 	lateAttempt := make(chan struct{}, 1)
 	lateHandlerRan := false
@@ -265,7 +265,7 @@ func TestHandlerTimeoutIgnoresLateHandlerResultAndLateEmits(t *testing.T) {
 func TestEventTimeoutIgnoresLateHandlerResultAndLateEmits(t *testing.T) {
 	eventTimeout := 0.01
 	bus := abxbus.NewEventBus("TimeoutIgnoresLateEventBus", nil)
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 
 	lateAttempt := make(chan struct{}, 1)
 	lateHandlerRan := false
@@ -335,7 +335,7 @@ func TestHandlerSlowWarningUsesEventHandlerSlowTimeout(t *testing.T) {
 		EventSlowTimeout:        &slowBusDefault,
 		EventHandlerSlowTimeout: &slowBusDefault,
 	})
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 
 	var mu sync.Mutex
 	messages := []string{}
@@ -384,7 +384,7 @@ func TestEventSlowWarningUsesEventSlowTimeout(t *testing.T) {
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
 		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
 	})
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 
 	var mu sync.Mutex
 	messages := []string{}
@@ -430,7 +430,7 @@ func TestSlowHandlerAndSlowEventWarningsCanBothFire(t *testing.T) {
 		EventSlowTimeout:        &slowBusDefault,
 		EventHandlerSlowTimeout: &slowBusDefault,
 	})
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 
 	var mu sync.Mutex
 	messages := []string{}
@@ -474,7 +474,7 @@ func TestZeroSlowWarningThresholdsDisableEventAndHandlerSlowWarnings(t *testing.
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
 		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
 	})
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 
 	var mu sync.Mutex
 	messages := []string{}
@@ -513,8 +513,8 @@ func TestZeroSlowWarningThresholdsDisableEventAndHandlerSlowWarnings(t *testing.
 func TestForwardedEventTimeoutAbortsTargetBusHandler(t *testing.T) {
 	busA := abxbus.NewEventBus("TimeoutForwardA", &abxbus.EventBusOptions{EventConcurrency: abxbus.EventConcurrencyBusSerial})
 	busB := abxbus.NewEventBus("TimeoutForwardB", &abxbus.EventBusOptions{EventConcurrency: abxbus.EventConcurrencyBusSerial})
-	t.Cleanup(busA.Stop)
-	t.Cleanup(busB.Stop)
+	t.Cleanup(busA.Destroy)
+	t.Cleanup(busB.Destroy)
 
 	busA.On("TimeoutForwardEvent", "forward", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		return busB.Emit(event), nil
@@ -560,8 +560,8 @@ func TestForwardedEventTimeoutAbortsTargetBusHandler(t *testing.T) {
 func TestQueueJumpAwaitedChildTimeoutAbortsAcrossBuses(t *testing.T) {
 	busA := abxbus.NewEventBus("TimeoutQueueJumpA", &abxbus.EventBusOptions{EventConcurrency: abxbus.EventConcurrencyGlobalSerial})
 	busB := abxbus.NewEventBus("TimeoutQueueJumpB", &abxbus.EventBusOptions{EventConcurrency: abxbus.EventConcurrencyGlobalSerial})
-	t.Cleanup(busA.Stop)
-	t.Cleanup(busB.Stop)
+	t.Cleanup(busA.Destroy)
+	t.Cleanup(busB.Destroy)
 
 	var childRef *abxbus.BaseEvent
 	busB.On("TimeoutChildEvent", "slow_child", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
@@ -615,8 +615,8 @@ func TestQueueJumpAwaitedChildTimeoutAbortsAcrossBuses(t *testing.T) {
 func TestForwardedTimeoutPathDoesNotStallFollowupEvents(t *testing.T) {
 	busA := abxbus.NewEventBus("TimeoutForwardRecoveryA", nil)
 	busB := abxbus.NewEventBus("TimeoutForwardRecoveryB", nil)
-	t.Cleanup(busA.Stop)
-	t.Cleanup(busB.Stop)
+	t.Cleanup(busA.Destroy)
+	t.Cleanup(busB.Destroy)
 
 	busATailRuns := 0
 	busBTailRuns := 0
@@ -702,7 +702,7 @@ func TestParentTimeoutDoesNotCancelUnawaitedChildHandlerResultsUnderSerialHandle
 		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
 	})
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 
 	childRuns := 0
 	bus.On("TimeoutCancelChildEvent", "child_first", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
@@ -762,7 +762,7 @@ func TestMultiLevelTimeoutCascadeWithMixedCancellations(t *testing.T) {
 		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
 	})
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 
 	var queuedChild *abxbus.BaseEvent
 	var awaitedChild *abxbus.BaseEvent
@@ -905,7 +905,7 @@ func TestUnawaitedDescendantPreservesLineageAndIsNotCancelledByAncestorTimeout(t
 		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
 	})
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 
 	var innerRef *abxbus.BaseEvent
 	var deepRef *abxbus.BaseEvent
@@ -986,7 +986,7 @@ func TestParentTimeoutDoesNotCancelUnawaitedChildrenThatHaveNoTimeoutOfTheirOwn(
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
 		EventTimeout:            &noTimeout,
 	})
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 
 	var childRef *abxbus.BaseEvent
 	childHandlerRan := false

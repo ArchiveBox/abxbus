@@ -345,7 +345,7 @@ Risks:
 
 2. Lifecycle cleanup:
 - hard trim policies required (`max_history_size`/`max_history_drop`)
-- backend-level TTL/archive for stopped buses
+- backend-level TTL/archive for destroyed buses
 
 3. Active set optimization:
 - maintain small active-bus index for schedulers

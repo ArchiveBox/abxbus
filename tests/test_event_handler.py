@@ -20,7 +20,7 @@ async def test_event_handler_concurrency_bus_default_remains_unset_on_dispatch()
         assert event.event_handler_concurrency is None
         await event
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_handler_concurrency_per_event_override_controls_execution_mode() -> None:
@@ -62,4 +62,4 @@ async def test_event_handler_concurrency_per_event_override_controls_execution_m
         assert max_inflight_by_event_id.get(serial_event.event_id) == 1
         assert max_inflight_by_event_id.get(parallel_event.event_id, 0) >= 2
     finally:
-        await bus.stop()
+        await bus.destroy()

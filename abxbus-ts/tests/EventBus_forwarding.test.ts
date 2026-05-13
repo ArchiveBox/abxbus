@@ -249,7 +249,7 @@ test('forwarded first-mode uses processing-bus handler defaults', async () => {
   const result = await bus_a
     .emit(ForwardedFirstDefaultsEvent({ event_timeout: 0 }))
     .now({ first_result: true })
-    .eventResult()
+    .eventResult({ raise_if_any: false })
   await Promise.all([bus_a.waitUntilIdle(), bus_b.waitUntilIdle()])
 
   assert.equal(result, 'fast', `expected first-mode on processing bus to pick fast handler, got ${String(result)} log=${log}`)

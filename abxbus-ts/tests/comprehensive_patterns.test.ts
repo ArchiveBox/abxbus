@@ -1175,7 +1175,7 @@ test('forwarded first-mode uses processing-bus handler concurrency defaults', as
   const result = await bus_a
     .emit(ForwardedFirstEvent({ event_timeout: 0 }))
     .now({ first_result: true })
-    .eventResult()
+    .eventResult({ raise_if_any: false })
   await bus_a.waitUntilIdle()
   await bus_b.waitUntilIdle()
 

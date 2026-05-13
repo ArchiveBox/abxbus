@@ -356,11 +356,15 @@ func assertGoHandlerResultAccepted(t *testing.T, eventPayload map[string]any, re
 	event = resetEventForSchemaAssertion(t, event)
 	isolateSchemaAssertionEvent(event)
 	bus := abxbus.NewEventBus("GoRoundtripSchemaAccepted", nil)
-	defer bus.Stop()
+	defer bus.Destroy()
 	bus.On(event.EventType, "valid", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		return result, nil
 	}, nil)
-	if _, err := bus.Emit(event).EventResult(); err != nil {
+	executed, err := bus.Emit(event).Now(&abxbus.EventWaitOptions{FirstResult: true})
+	if err != nil {
+		t.Fatalf("%s should accept handler result %#v: %v", contextLabel, result, err)
+	}
+	if _, err := executed.EventResult(); err != nil {
 		t.Fatalf("%s should accept handler result %#v: %v", contextLabel, result, err)
 	}
 }
@@ -371,11 +375,15 @@ func assertGoHandlerResultRejected(t *testing.T, eventPayload map[string]any, re
 	event = resetEventForSchemaAssertion(t, event)
 	isolateSchemaAssertionEvent(event)
 	bus := abxbus.NewEventBus("GoRoundtripSchemaRejected", nil)
-	defer bus.Stop()
+	defer bus.Destroy()
 	bus.On(event.EventType, "invalid", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		return result, nil
 	}, nil)
-	if _, err := bus.Emit(event).EventResult(); err == nil || !strings.Contains(err.Error(), "EventHandlerResultSchemaError") {
+	executed, err := bus.Emit(event).Now(&abxbus.EventWaitOptions{FirstResult: true})
+	if err == nil {
+		_, err = executed.EventResult()
+	}
+	if err == nil || !strings.Contains(err.Error(), "EventHandlerResultSchemaError") {
 		t.Fatalf("%s should reject handler result %#v with schema error, got %v", contextLabel, result, err)
 	}
 }

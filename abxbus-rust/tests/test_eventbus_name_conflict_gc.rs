@@ -54,8 +54,8 @@ fn test_name_conflict_with_live_reference() {
     assert!(bus2.name.starts_with(&format!("{requested_name}_")));
     assert_ne!(bus2.name, requested_name);
     assert_eq!(bus2.name.len(), requested_name.len() + 1 + 8);
-    bus1.stop();
-    bus2.stop();
+    bus1.destroy();
+    bus2.destroy();
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn test_name_no_conflict_after_deletion() {
 
     let bus2 = EventBus::new(Some(requested_name.clone()));
     assert_eq!(bus2.name, requested_name);
-    bus2.stop();
+    bus2.destroy();
 }
 
 #[test]
@@ -81,7 +81,7 @@ fn test_name_no_conflict_with_no_reference() {
 
     let bus2 = EventBus::new(Some(requested_name.clone()));
     assert_eq!(bus2.name, requested_name);
-    bus2.stop();
+    bus2.destroy();
 }
 
 #[test]
@@ -97,7 +97,7 @@ fn test_name_conflict_with_weak_reference_only() {
     assert_eventually_collected(&weak_ref);
     let bus2 = EventBus::new(Some(requested_name.clone()));
     assert_eq!(bus2.name, requested_name);
-    bus2.stop();
+    bus2.destroy();
 }
 
 #[test]
@@ -128,23 +128,23 @@ fn test_multiple_buses_with_gc() {
     assert!(bus3_conflict.name.starts_with(&format!("{name3}_")));
     assert_ne!(bus3_conflict.name, bus3.name);
 
-    bus1.stop();
-    bus2_new.stop();
-    bus3.stop();
-    bus4_new.stop();
-    bus1_conflict.stop();
-    bus3_conflict.stop();
+    bus1.destroy();
+    bus2_new.destroy();
+    bus3.destroy();
+    bus4_new.destroy();
+    bus1_conflict.destroy();
+    bus3_conflict.destroy();
 }
 
 #[test]
-fn test_name_conflict_after_stop_and_clear() {
-    let requested_name = unique_bus_name("GCStopClear");
+fn test_name_conflict_after_destroy_and_clear() {
+    let requested_name = unique_bus_name("GCDestroyClear");
     let bus1 = EventBus::new(Some(requested_name.clone()));
-    bus1.stop();
+    bus1.destroy();
 
     let bus2 = EventBus::new(Some(requested_name.clone()));
     assert_eq!(bus2.name, requested_name);
-    bus2.stop();
+    bus2.destroy();
 }
 
 #[test]
@@ -165,8 +165,8 @@ fn test_weakset_behavior() {
     assert!(EventBus::live_instance_by_id(&bus2_id).is_none());
     assert!(EventBus::all_instances_contains(&bus1));
     assert!(EventBus::all_instances_contains(&bus3));
-    bus1.stop();
-    bus3.stop();
+    bus1.destroy();
+    bus3.destroy();
 }
 
 #[test]
@@ -179,7 +179,7 @@ fn test_eventbus_removed_from_weakset() {
     let bus = EventBus::new(Some(requested_name.clone()));
     assert_eq!(bus.name, requested_name);
     assert!(EventBus::all_instances_contains(&bus));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -214,13 +214,13 @@ fn test_concurrent_name_creation() {
     }));
 
     for bus in buses {
-        bus.stop();
+        bus.destroy();
     }
 }
 
 #[test]
 fn test_unreferenced_buses_with_history_can_be_cleaned_without_instance_leak() {
-    let prefix = unique_bus_name("GCNoStopBus");
+    let prefix = unique_bus_name("GCNoDestroyBus");
     let mut refs = Vec::new();
     let mut ids = Vec::new();
 
@@ -244,7 +244,7 @@ fn test_unreferenced_buses_with_history_can_be_cleaned_without_instance_leak() {
         }
         block_on(bus.wait_until_idle(Some(1.0)));
         refs.push(Arc::downgrade(&bus));
-        bus.stop();
+        bus.destroy();
     }
 
     for weak_ref in &refs {
@@ -257,8 +257,8 @@ fn test_unreferenced_buses_with_history_can_be_cleaned_without_instance_leak() {
 }
 
 #[test]
-fn test_unreferenced_buses_with_history_are_collected_without_stop() {
-    let prefix = unique_bus_name("GCImplicitNoStop");
+fn test_unreferenced_buses_with_history_are_collected_without_destroy() {
+    let prefix = unique_bus_name("GCImplicitNoDestroy");
     let mut refs = Vec::new();
     let mut ids = Vec::new();
 

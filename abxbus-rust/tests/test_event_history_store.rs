@@ -26,7 +26,7 @@ fn test_max_history_drop_true_keeps_recent_entries() {
     let history = bus.event_history_ids();
     assert_eq!(history.len(), 2);
     assert!(history.iter().any(|id| id.contains('-')));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]

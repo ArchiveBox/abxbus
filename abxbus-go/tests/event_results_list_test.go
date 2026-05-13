@@ -79,6 +79,62 @@ func TestEventResultOptions(t *testing.T) {
 	}
 }
 
+func TestAllErrorResultOptionsMatchCrossLanguageMatrix(t *testing.T) {
+	bus := abxbus.NewEventBus("AllErrorResultOptionsBus", &abxbus.EventBusOptions{
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
+	})
+	defer bus.Destroy()
+
+	bus.On("AllErrorResultOptionsEvent", "first", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		return nil, errors.New("first failure")
+	}, nil)
+	bus.On("AllErrorResultOptionsEvent", "second", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		return nil, errors.New("second failure")
+	}, nil)
+
+	event := bus.Emit(abxbus.NewBaseEvent("AllErrorResultOptionsEvent", nil))
+	if _, err := event.Now(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := event.EventResult(); err == nil || !strings.Contains(err.Error(), "first failure") {
+		t.Fatalf("default EventResult should surface handler errors, got %v", err)
+	}
+	if _, err := event.EventResultsList(); err == nil || !strings.Contains(err.Error(), "first failure") {
+		t.Fatalf("default EventResultsList should surface handler errors, got %v", err)
+	}
+
+	value, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: false, RaiseIfNone: false})
+	if err != nil || value != nil {
+		t.Fatalf("false/false EventResult should return nil without error, got %#v err=%v", value, err)
+	}
+	values, err := event.EventResultsList(&abxbus.EventResultOptions{RaiseIfAny: false, RaiseIfNone: false})
+	if err != nil || len(values) != 0 {
+		t.Fatalf("false/false EventResultsList should return empty values without error, got %#v err=%v", values, err)
+	}
+
+	if _, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: false, RaiseIfNone: true}); err == nil || !strings.Contains(err.Error(), "no valid handler results") {
+		t.Fatalf("false/true EventResult should raise no-result error, got %v", err)
+	}
+	if _, err := event.EventResultsList(&abxbus.EventResultOptions{RaiseIfAny: false, RaiseIfNone: true}); err == nil || !strings.Contains(err.Error(), "no valid handler results") {
+		t.Fatalf("false/true EventResultsList should raise no-result error, got %v", err)
+	}
+
+	if _, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: true, RaiseIfNone: false}); err == nil || !strings.Contains(err.Error(), "first failure") {
+		t.Fatalf("true/false EventResult should surface handler errors, got %v", err)
+	}
+	if _, err := event.EventResultsList(&abxbus.EventResultOptions{RaiseIfAny: true, RaiseIfNone: false}); err == nil || !strings.Contains(err.Error(), "first failure") {
+		t.Fatalf("true/false EventResultsList should surface handler errors, got %v", err)
+	}
+
+	if _, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: true, RaiseIfNone: true}); err == nil || !strings.Contains(err.Error(), "first failure") {
+		t.Fatalf("true/true EventResult should surface handler errors, got %v", err)
+	}
+	if _, err := event.EventResultsList(&abxbus.EventResultOptions{RaiseIfAny: true, RaiseIfNone: true}); err == nil || !strings.Contains(err.Error(), "first failure") {
+		t.Fatalf("true/true EventResultsList should surface handler errors, got %v", err)
+	}
+}
+
 func TestEventResultsListAndFirstUseHandlerRegistrationOrder(t *testing.T) {
 	bus := abxbus.NewEventBus("ResultsListOrderBus", &abxbus.EventBusOptions{
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,

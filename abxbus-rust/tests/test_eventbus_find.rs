@@ -161,7 +161,7 @@ fn test_direct_child_returns_true() {
         .expect("child event");
 
     assert!(bus.event_is_child_of(&child, &parent.inner));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -209,7 +209,7 @@ fn test_grandchild_returns_true() {
         .expect("grandchild event");
 
     assert!(bus.event_is_child_of(&grandchild, &parent.inner));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -225,7 +225,7 @@ fn test_unrelated_events_returns_false() {
     block_on(bus.wait_until_idle(None));
 
     assert!(!bus.event_is_child_of(&unrelated.inner, &parent.inner));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -238,7 +238,7 @@ fn test_same_event_returns_false() {
     let _ = block_on(event.now());
 
     assert!(!bus.event_is_child_of(&event.inner, &event.inner));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -255,7 +255,7 @@ fn test_event_is_child_of_returns_false_when_parent_chain_cycles() {
     second.inner.lock().event_parent_id = Some(first_id);
 
     assert!(!bus.event_is_child_of(&first, &unrelated));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -292,7 +292,7 @@ fn test_reversed_relationship_returns_false() {
         .expect("child event");
 
     assert!(!bus.event_is_child_of(&parent.inner, &child));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -329,7 +329,7 @@ fn test_direct_parent_returns_true() {
         .expect("child event");
 
     assert!(bus.event_is_parent_of(&parent.inner, &child));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -377,7 +377,7 @@ fn test_grandparent_returns_true() {
         .expect("grandchild event");
 
     assert!(bus.event_is_parent_of(&parent.inner, &grandchild));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -394,7 +394,7 @@ fn test_find_past_match_returns_event() {
     assert!(found.is_some());
     assert_eq!(found.expect("missing").inner.lock().event_type, "work");
 
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -416,7 +416,7 @@ fn test_find_past_returns_most_recent_dispatched_event() {
     let found_id = found.inner.lock().event_id.clone();
     let second_id = second.inner.inner.lock().event_id.clone();
     assert_eq!(found_id, second_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -428,7 +428,7 @@ fn test_find_past_returns_null_when_no_matching_event_exists() {
 
     assert!(found.is_none());
     assert!(start.elapsed() < Duration::from_millis(100));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -457,8 +457,8 @@ fn test_find_past_history_lookup_is_bus_scoped() {
         .clone();
     let emitted_id = event_on_b.inner.inner.lock().event_id.clone();
     assert_eq!(found_id, emitted_id);
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -472,7 +472,7 @@ fn test_find_past_result_retains_origin_bus_label_in_event_path() {
 
     let found = block_on(bus.find("work", true, None, None)).expect("found event");
     assert_eq!(found.inner.lock().event_path.first(), Some(&bus.label()));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -513,7 +513,7 @@ fn test_find_past_respects_time_window() {
     let found_id = fresh.inner.lock().event_id.clone();
     let fresh_event_id = fresh_event.inner.inner.lock().event_id.clone();
     assert_eq!(found_id, fresh_event_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -536,7 +536,7 @@ fn test_find_past_returns_null_when_all_events_are_too_old() {
         },
     ));
     assert!(found.is_none());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -553,7 +553,7 @@ fn test_find_future_basic() {
 
     let found = block_on(bus.find("future_event", false, Some(0.5), None));
     assert!(found.is_some());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -570,7 +570,7 @@ fn test_find_future_works_with_string_event_keys() {
 
     let found = block_on(bus.find("work", false, Some(0.5), None)).expect("future event");
     assert_eq!(found.inner.lock().event_type, "work");
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -592,7 +592,7 @@ fn test_find_future_with_model_class() {
     let found =
         block_on(bus.find("DifferentNameFromClass", false, Some(0.5), None)).expect("future event");
     assert_eq!(found.inner.lock().event_type, "DifferentNameFromClass");
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -620,7 +620,7 @@ fn test_max_history_size_zero_disables_past_history_search_but_future_find_still
     let _ = block_on(dispatched.now());
     assert_eq!(bus.event_history_size(), 0);
     assert!(block_on(bus.find("work", true, None, None)).is_none());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -639,7 +639,7 @@ fn test_find_defaults_to_past_true_future_false_when_both_are_undefined() {
     let found_id = found.inner.lock().event_id.clone();
     let dispatched_id = dispatched.inner.inner.lock().event_id.clone();
     assert_eq!(found_id, dispatched_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -653,7 +653,7 @@ fn test_find_future_ignores_past_events() {
 
     let found = block_on(bus.find("work", false, Some(0.05), None));
     assert!(found.is_none());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -674,7 +674,7 @@ fn test_find_future_ignores_already_dispatched_in_flight_events_when_past_false(
     assert!(found.is_none());
 
     let _ = block_on(inflight.now());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -686,7 +686,7 @@ fn test_find_future_timeout() {
 
     assert!(found.is_none());
     assert!(start.elapsed() >= Duration::from_millis(30));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -718,7 +718,7 @@ fn test_find_waiter_cleanup() {
     assert_eq!(found_id, event.inner.inner.lock().event_id);
     assert_eq!(bus.find_waiter_count_for_test(), initial_waiters);
     let _ = block_on(event.now());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -730,7 +730,7 @@ fn test_find_past_false_future_false_returns_null_immediately() {
 
     assert!(found.is_none());
     assert!(start.elapsed() < Duration::from_millis(100));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -753,7 +753,7 @@ fn test_find_past_future_returns_past_event_immediately() {
     let dispatched_id = dispatched.inner.inner.lock().event_id.clone();
     assert_eq!(found_id, dispatched_id);
     assert!(start.elapsed() < Duration::from_millis(100));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -771,7 +771,7 @@ fn test_find_past_future_waits_for_future_when_no_past_match() {
     let found = block_on(bus.find("future_event", true, Some(0.5), None));
     assert!(found.is_some());
     assert_eq!(found.unwrap().inner.lock().event_type, "future_event");
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -806,7 +806,7 @@ fn test_find_past_future_windows_are_independent() {
     let found_id = found.inner.lock().event_id.clone();
     let old_id = old_event.inner.inner.lock().event_id.clone();
     assert_ne!(found_id, old_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -824,7 +824,7 @@ fn test_find_past_true_future_float_returns_old_event_immediately() {
     let dispatched_id = dispatched.inner.inner.lock().event_id.clone();
     assert_eq!(found_id, dispatched_id);
     assert!(start.elapsed() < Duration::from_millis(100));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -857,7 +857,7 @@ fn test_find_past_true_future_true_searches_all_and_waits_forever() {
     let dispatched_id = dispatched.inner.inner.lock().event_id.clone();
     assert_eq!(found_id, dispatched_id);
     assert!(start.elapsed() < Duration::from_millis(100));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -891,7 +891,7 @@ fn test_find_past_float_future_waits_for_new_event() {
     let found_id = found.inner.lock().event_id.clone();
     let old_id = old_event.inner.inner.lock().event_id.clone();
     assert_ne!(found_id, old_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -919,7 +919,7 @@ fn test_find_supports_metadata_filters_like_event_status() {
     let found_id = found.unwrap().inner.lock().event_id.clone();
     let event_id = event.inner.inner.lock().event_id.clone();
     assert_eq!(found_id, event_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -966,7 +966,7 @@ fn test_find_supports_metadata_equality_filters_like_event_id_and_event_timeout(
         },
     ));
     assert!(mismatch.is_none());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1000,7 +1000,7 @@ fn test_find_respects_where_filter() {
     let found_id = found.inner.lock().event_id.clone();
     let target_id = target.inner.inner.lock().event_id.clone();
     assert_eq!(found_id, target_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1034,7 +1034,7 @@ fn test_find_supports_non_event_data_field_equality_filters() {
     let found_id = found.inner.lock().event_id.clone();
     let target_id = target.inner.inner.lock().event_id.clone();
     assert_eq!(found_id, target_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1074,7 +1074,7 @@ fn test_find_where_filter_works_with_future_waiting() {
         found.inner.lock().payload.get("value"),
         Some(&json!("right"))
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1114,7 +1114,7 @@ fn test_find_future_with_predicate() {
         found.inner.lock().payload.get("value"),
         Some(&json!("included"))
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1162,7 +1162,7 @@ fn test_find_with_complex_predicate() {
         Some(&json!("final"))
     );
     assert_eq!(events_seen.lock().expect("seen lock").len(), 4);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1202,7 +1202,7 @@ fn test_find_with_exclude_style_filter() {
         found.inner.lock().payload.get("value"),
         Some(&json!("included"))
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1225,7 +1225,7 @@ fn test_find_wildcard() {
     let first_id = first.inner.inner.lock().event_id.clone();
     assert_eq!(found_id, second_id);
     assert_ne!(found_id, first_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1258,7 +1258,7 @@ fn test_find_wildcard_with_where_filter_matches_across_event_types_in_history() 
     let found_id = found.inner.lock().event_id.clone();
     let target_id = target.inner.inner.lock().event_id.clone();
     assert_eq!(found_id, target_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1291,7 +1291,7 @@ fn test_find_with_past_float_and_where_filter() {
     let found_id = found.inner.lock().event_id.clone();
     let fresh_id = fresh.inner.inner.lock().event_id.clone();
     assert_eq!(found_id, fresh_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1332,7 +1332,7 @@ fn test_find_wildcard_with_where_filter_works_for_future_waiting() {
         found.inner.lock().payload.get("value"),
         Some(&json!("special"))
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1421,7 +1421,7 @@ fn test_multiple_concurrent_future_finds() {
         resolved.get("special"),
         Some(&special.inner.inner.lock().event_id.clone())
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1453,7 +1453,7 @@ fn test_find_returns_coroutine_that_can_be_awaited_later() {
         .expect("find waiter should resolve")
         .expect("found event");
     assert_eq!(found_id, dispatched.inner.inner.lock().event_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1492,7 +1492,7 @@ fn test_find_child_of_returns_child_event() {
         child.inner.lock().event_parent_id.as_deref(),
         Some(parent.inner.inner.lock().event_id.as_str())
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1513,7 +1513,7 @@ fn test_find_child_of_returns_null_for_non_child() {
         unrelated.inner.inner.lock().event_parent_id.as_deref(),
         Some(parent.inner.inner.lock().event_id.as_str())
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1562,7 +1562,7 @@ fn test_find_child_of_returns_grandchild_event() {
         grandchild.inner.lock().event_parent_id,
         child_id.lock().expect("child id lock").clone()
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1625,8 +1625,8 @@ fn test_child_of_works_across_forwarded_buses() {
     .expect("child on forwarded bus");
 
     assert_eq!(found.inner.lock().event_id, expected_child_id);
-    main_bus.stop();
-    auth_bus.stop();
+    main_bus.destroy();
+    auth_bus.destroy();
 }
 
 #[test]
@@ -1679,7 +1679,7 @@ fn test_find_with_child_of_and_past_float() {
         },
     ));
     assert!(stale.is_none());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1734,7 +1734,7 @@ fn test_find_child_of_filters_to_correct_parent_among_siblings() {
         tab_2.inner.lock().payload.get("tab_id"),
         Some(&json!("tab_for_site2"))
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1768,7 +1768,7 @@ fn test_find_future_with_child_of_waits_for_matching_child() {
         Some(parent.inner.inner.lock().event_id.as_str())
     );
     let _ = block_on(parent.now());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1807,7 +1807,7 @@ fn test_find_catches_child_event_that_fired_during_parent_handler() {
         block_on(bus.find("tab_created", true, None, Some(nav.inner.clone()))).expect("found tab");
     let found_tab_id = found_tab.inner.lock().event_id.clone();
     assert_eq!(found_tab_id, emitted_tab_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1832,7 +1832,7 @@ fn test_find_past_can_match_incomplete_events() {
     assert_ne!(found_status, abxbus_rust::types::EventStatus::Completed);
 
     let _ = block_on(dispatched.now());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1893,7 +1893,7 @@ fn test_most_recent_wins_across_completed_and_inflight() {
     );
 
     let _ = block_on(second.now());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1926,7 +1926,7 @@ fn test_find_future_receives_dispatched_event_before_completion() {
         found.inner.lock().event_status,
         abxbus_rust::types::EventStatus::Completed
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1982,7 +1982,7 @@ fn test_find_with_all_parameters_combined() {
     .expect("combined find match");
 
     assert_eq!(found.inner.lock().event_id, expected_child_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2007,7 +2007,7 @@ fn test_max_history_zero_disables_past_but_future_still_works() {
 
     let found_past = block_on(bus.find("parent", true, None, None));
     assert!(found_past.is_none());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2054,7 +2054,7 @@ fn test_past_float_filters_by_time_window() {
         newest_from_longer_window.inner.lock().event_id,
         old_event.inner.inner.lock().event_id
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2092,7 +2092,7 @@ fn test_respects_where_filter() {
     let found_id = found.inner.lock().event_id.clone();
     let second_id = second.inner.inner.lock().event_id.clone();
     assert_eq!(found_id, second_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2123,7 +2123,7 @@ fn test_past_includes_in_progress_events() {
     let completed_id = completed.inner.lock().event_id.clone();
     let in_flight_id = in_flight.inner.inner.lock().event_id.clone();
     assert_eq!(completed_id, in_flight_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2144,7 +2144,7 @@ fn test_find_waits_for_future_event() {
     let found = block_on(bus.find("parent", false, Some(1.0), None)).expect("future event");
     assert_eq!(found.inner.lock().event_type, "parent");
     let _ = block_on(found.wait());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2163,7 +2163,7 @@ fn test_find_with_past_true_and_future_timeout() {
     let found = block_on(bus.find("parent", true, Some(5.0), None)).expect("past event");
     assert!(start.elapsed() < Duration::from_millis(100));
     assert_eq!(found.inner.lock().event_id, dispatched_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2189,7 +2189,7 @@ fn test_find_with_past_float_and_future_timeout() {
     ))
     .expect("recent past event");
     assert_eq!(found.inner.lock().event_id, dispatched_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2223,7 +2223,7 @@ fn test_find_with_child_of_and_future_timeout() {
     let found = block_on(bus.find("child", true, Some(5.0), Some(parent.inner.clone())))
         .expect("child event");
     assert_eq!(found.inner.lock().event_id, expected_child_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2252,7 +2252,7 @@ fn test_past_true_future_true_searches_all_and_waits_forever() {
 
     assert!(start.elapsed() < Duration::from_millis(100));
     assert_eq!(found.inner.lock().event_id, dispatched_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2549,7 +2549,7 @@ fn test_filter_past_returns_all_matches_newest_first() {
             first.inner.inner.lock().event_id.clone(),
         ]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2557,7 +2557,7 @@ fn test_filter_returns_empty_list_when_no_matches() {
     let bus = EventBus::new(Some("FilterEmptyBus".to_string()));
     let matches = block_on(bus.filter("missing", true, None, None, None));
     assert!(matches.is_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2582,7 +2582,7 @@ fn test_filter_respects_limit() {
             second.inner.inner.lock().event_id.clone(),
         ]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2621,7 +2621,7 @@ fn test_filter_respects_where_predicate() {
             first.inner.inner.lock().event_id.clone(),
         ]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2650,7 +2650,7 @@ fn test_filter_supports_field_equality_filters() {
         event_ids(&matches),
         vec![target.inner.inner.lock().event_id.clone()]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2674,7 +2674,7 @@ fn test_filter_wildcard_matches_all_event_types_newest_first() {
             first.inner.inner.lock().event_id.clone(),
         ]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2701,7 +2701,7 @@ fn test_filter_child_of_returns_matching_descendants() {
         event_ids(&matches),
         vec![child.inner.inner.lock().event_id.clone()]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2727,7 +2727,7 @@ fn test_filter_past_time_window_filters_by_age() {
         event_ids(&matches),
         vec![fresh.inner.inner.lock().event_id.clone()]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2739,7 +2739,7 @@ fn test_filter_past_false_future_false_returns_empty_list() {
 
     let matches = block_on(bus.filter("work", false, None, None, None));
     assert!(matches.is_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2765,7 +2765,7 @@ fn test_filter_future_appends_match_after_past_results() {
     let matched_future_id = matches[1].inner.lock().event_id.clone();
     assert_eq!(matched_past_id, past_id);
     assert_ne!(matched_future_id, matched_past_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2783,7 +2783,7 @@ fn test_filter_limit_short_circuits_future_wait() {
         event_ids(&matches),
         vec![past.inner.inner.lock().event_id.clone()]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2801,7 +2801,7 @@ fn test_filter_future_only_returns_dispatched_event() {
     let matches = block_on(bus.filter("work", false, Some(0.5), None, None));
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].inner.lock().event_type, "work");
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2809,7 +2809,7 @@ fn test_filter_future_only_times_out_to_empty_list() {
     let bus = EventBus::new(Some("FilterFutureTimeoutBus".to_string()));
     let matches = block_on(bus.filter("missing", false, Some(0.05), None, None));
     assert!(matches.is_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2831,7 +2831,7 @@ fn test_find_returns_first_filter_result() {
     let filtered_id = filtered[0].inner.lock().event_id.clone();
     assert_eq!(found_id, latest_id);
     assert_eq!(found_id, filtered_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2845,5 +2845,5 @@ fn test_filter_zero_limit_returns_empty_without_future_wait() {
     let matches = block_on(bus.filter("work", true, Some(2.0), None, Some(0)));
     assert!(matches.is_empty());
     assert!(start.elapsed() < Duration::from_millis(200));
-    bus.stop();
+    bus.destroy();
 }

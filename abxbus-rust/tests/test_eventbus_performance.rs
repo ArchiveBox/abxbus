@@ -23,7 +23,7 @@ fn performance_test_guard() -> MutexGuard<'static, ()> {
     PERFORMANCE_TEST_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .expect("performance test lock poisoned")
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn payload(entries: impl IntoIterator<Item = (&'static str, Value)>) -> Map<String, Value> {
@@ -129,7 +129,7 @@ fn test_performance_50k_events() {
     assert_eq!(checksum.load(Ordering::SeqCst), expected_checksum);
     assert!(bus.event_history_size() <= history_size);
     assert_performance_budget("50k events", total_events, elapsed, "event");
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -167,7 +167,7 @@ fn test_performance_ephemeral_buses() {
             .collect();
         wait_for_performance_batch(&pending);
         assert!(block_on(bus.wait_until_idle(Some(2.0))));
-        bus.stop();
+        bus.destroy();
     }
     let elapsed = started.elapsed();
     let total_events = total_buses * events_per_bus;
@@ -219,7 +219,7 @@ fn test_performance_single_event_many_parallel_handlers() {
         elapsed,
         "handler",
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -264,7 +264,7 @@ fn test_performance_on_off_churn() {
         elapsed,
         "event",
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -375,6 +375,6 @@ fn test_performance_worst_case_forwarding_queue_jump_timeouts() {
         elapsed,
         "event",
     );
-    parent_bus.stop();
-    child_bus.stop();
+    parent_bus.destroy();
+    child_bus.destroy();
 }

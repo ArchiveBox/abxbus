@@ -80,9 +80,9 @@ async def main() -> None:
         print('\n=== BusC log_tree() ===')
         print(bus_c.log_tree())
     finally:
-        await bus_a.stop(clear=True, timeout=0)
-        await bus_b.stop(clear=True, timeout=0)
-        await bus_c.stop(clear=True, timeout=0)
+        await bus_a.destroy(clear=True, timeout=0)
+        await bus_b.destroy(clear=True, timeout=0)
+        await bus_c.destroy(clear=True, timeout=0)
 
 
 if __name__ == '__main__':

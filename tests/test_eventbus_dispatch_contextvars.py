@@ -71,7 +71,7 @@ class TestContextPropagation:
             assert captured_values['user_id'] == 'user-abc', f"Expected 'user-abc', got '{captured_values['user_id']}'"
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_contextvar_propagates_through_nested_handlers(self):
         """
@@ -114,7 +114,7 @@ class TestContextPropagation:
             assert captured_child['trace_id'] == 'trace-xyz'
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_context_isolation_between_dispatches(self):
         """
@@ -156,7 +156,7 @@ class TestContextPropagation:
             assert 'req-B' in captured_values, f"Expected 'req-B' in {captured_values}"
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_context_propagates_to_parallel_handler_concurrency(self):
         """
@@ -187,7 +187,7 @@ class TestContextPropagation:
             assert 'h2:req-parallel' in captured_values, f"Handler2 didn't see context: {captured_values}"
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_context_propagates_through_event_forwarding(self):
         """
@@ -219,8 +219,8 @@ class TestContextPropagation:
             assert captured_bus2['request_id'] == 'req-forwarded', f"Bus2 handler didn't see context: {captured_bus2}"
 
         finally:
-            await bus1.stop(clear=True)
-            await bus2.stop(clear=True)
+            await bus1.destroy(clear=True)
+            await bus2.destroy(clear=True)
 
     async def test_handler_can_modify_context_without_affecting_parent(self):
         """
@@ -260,7 +260,7 @@ class TestContextPropagation:
             )
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_event_parent_id_tracking_still_works(self):
         """
@@ -303,7 +303,7 @@ class TestContextPropagation:
             )
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_dispatch_context_and_parent_id_both_work(self):
         """
@@ -350,7 +350,7 @@ class TestContextPropagation:
             )
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_deeply_nested_context_and_parent_tracking(self):
         """
@@ -424,7 +424,7 @@ class TestContextPropagation:
             )
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
 
 if __name__ == '__main__':

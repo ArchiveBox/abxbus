@@ -1793,7 +1793,7 @@ func (b *EventBus) logEventTree(event *BaseEvent, prefix string, isLast bool) []
 	return out
 }
 
-func (b *EventBus) Stop() {
+func (b *EventBus) Destroy() {
 	eventBusRegistry.Lock()
 	delete(eventBusRegistry.instances, b)
 	eventBusRegistry.Unlock()

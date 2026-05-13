@@ -489,5 +489,5 @@ fn assert_bus_roundtrip_rehydrates_and_resumes_pending_queue(payload: Value) {
         vec!["h2:e1", "h1:e2", "h2:e2", "h1:e3", "h2:e3"]
     );
 
-    bus.stop();
+    bus.destroy();
 }

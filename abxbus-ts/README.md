@@ -486,7 +486,7 @@ eventResultsList(
 - Returns handler result values in `event_results` order.
 - Default filter includes completed non-`null`/non-`undefined` non-error, non-forwarded (`BaseEvent`) values.
 - `raise_if_any` defaults to `true` and throws when any handler result has an error.
-- `raise_if_none` defaults to `true` and throws when no results match `include`.
+- `raise_if_none` defaults to `false` and throws when no results match `include`.
 - Examples:
   - `await event.eventResultsList({ raise_if_any: false, raise_if_none: false })`
   - `await event.eventResultsList({ include: (result) => typeof result === 'object', raise_if_any: false })`

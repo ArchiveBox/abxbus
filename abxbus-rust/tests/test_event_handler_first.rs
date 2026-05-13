@@ -31,8 +31,8 @@ fn test_guard() -> MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn stop_and_settle(bus: &std::sync::Arc<EventBus>) {
-    bus.stop();
+fn destroy_and_settle(bus: &std::sync::Arc<EventBus>) {
+    bus.destroy();
     thread::sleep(Duration::from_millis(10));
 }
 
@@ -72,7 +72,7 @@ fn test_event_handler_completion_first_stops_after_first_valid_result() {
     assert!(!results.values().any(|result| {
         result.handler.handler_name == "late" && result.status == EventResultStatus::Completed
     }));
-    stop_and_settle(&bus);
+    destroy_and_settle(&bus);
 }
 
 #[test]
@@ -105,7 +105,7 @@ fn test_now_runs_all_handlers_and_event_result_returns_first_valid_result() {
         Some(EventHandlerCompletionMode::All)
     );
     assert_eq!(completed.inner.inner.lock().event_results.len(), 4);
-    stop_and_settle(&bus);
+    destroy_and_settle(&bus);
 }
 
 #[test]
@@ -135,7 +135,7 @@ fn test_event_result_default_error_policy_raises_handler_errors() {
     }))
     .expect("suppressed result");
     assert_eq!(result, Some(json!("winner")));
-    stop_and_settle(&bus);
+    destroy_and_settle(&bus);
 }
 
 #[test]
@@ -179,7 +179,7 @@ fn test_event_result_options_can_raise_and_filter_results() {
     }))
     .expect("filtered result");
     assert_eq!(result, Some(json!("second")));
-    stop_and_settle(&bus);
+    destroy_and_settle(&bus);
 }
 
 #[test]
@@ -225,7 +225,7 @@ fn test_event_result_include_callback_receives_result_and_event_result() {
         seen.lock().unwrap().join(","),
         "none_handler,second_handler"
     );
-    stop_and_settle(&bus);
+    destroy_and_settle(&bus);
 }
 
 #[test]
@@ -281,5 +281,5 @@ fn test_event_result_returns_first_valid_result_by_registration_order() {
     let result = block_on(emitted.event_result(EventResultOptions::default())).expect("result");
 
     assert_eq!(result, Some(json!("slow")));
-    stop_and_settle(&bus);
+    destroy_and_settle(&bus);
 }

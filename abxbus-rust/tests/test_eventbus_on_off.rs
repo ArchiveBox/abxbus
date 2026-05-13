@@ -52,7 +52,7 @@ fn test_on_stores_eventhandler_entry_and_index() {
     let results = dispatched.inner.inner.lock().event_results.clone();
     assert!(results.contains_key(&entry.id));
     assert_eq!(results[&entry.id].handler.id, entry.id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn test_on_returns_handler_and_off_removes_handler() {
     let _ = block_on(event_2.now());
     assert_eq!(event_2.inner.inner.lock().event_results.len(), 0);
 
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn test_off_removes_handler_id_or_all_and_prunes_empty_index() {
     });
     let _ = block_on(dispatched.now());
     assert_eq!(dispatched.inner.inner.lock().event_results.len(), 0);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -177,7 +177,7 @@ fn test_on_with_options_supports_id_override_and_handler_file_path() {
         handler_payload["handler_registered_at"],
         "2025-01-02T03:04:05.678901000Z"
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -203,7 +203,7 @@ fn test_on_accepts_handlers_and_dispatch_captures_return_values() {
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("normalized")));
     assert_eq!(calls.lock().expect("calls lock").len(), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -236,7 +236,7 @@ fn test_on_normalizes_sync_handler_to_async_callable() {
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("normalized")));
     assert_eq!(calls.lock().expect("calls lock").len(), 2);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -270,7 +270,7 @@ fn test_on_keeps_async_handlers_normalized_through_handler_async() {
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("async_normalized")));
     assert_eq!(calls.lock().expect("calls lock").len(), 2);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -297,7 +297,7 @@ fn test_handler_async_preserves_typed_arg_return_contracts_for_sync_handlers() {
             .as_deref(),
         Some("sync")
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -324,7 +324,7 @@ fn test_handler_async_preserves_typed_arg_return_contracts_for_async_handlers() 
             .as_deref(),
         Some("sync")
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -368,7 +368,7 @@ fn test_off_removing_all_for_one_event_key_preserves_other_event_keys() {
         other.inner.inner.lock().event_results[&other_entry.id].result,
         Some(json!("other"))
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -394,7 +394,7 @@ fn test_on_uses_explicit_handler_name_in_json_and_log_tree() {
     );
     assert!(output.contains(&format!("{}#", bus.name)));
     assert!(output.contains(&format!("{handler_name}#")));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]

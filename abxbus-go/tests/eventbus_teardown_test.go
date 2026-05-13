@@ -9,8 +9,8 @@ import (
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 )
 
-func TestStopClearsRuntimeStateAndCancelsPendingFinds(t *testing.T) {
-	bus := abxbus.NewEventBus("StopBus", nil)
+func TestDestroyClearsRuntimeStateAndCancelsPendingFinds(t *testing.T) {
+	bus := abxbus.NewEventBus("DestroyBus", nil)
 	var calls atomic.Int32
 	bus.On("Evt", "h", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
 		calls.Add(1)
@@ -24,33 +24,33 @@ func TestStopClearsRuntimeStateAndCancelsPendingFinds(t *testing.T) {
 
 	timeout := 1.0
 	if !bus.WaitUntilIdle(&timeout) {
-		t.Fatal("expected bus to become idle before stop")
+		t.Fatal("expected bus to become idle before destroy")
 	}
 
-	stopped := make(chan struct{})
+	destroyed := make(chan struct{})
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		bus.Stop()
-		close(stopped)
+		bus.Destroy()
+		close(destroyed)
 	}()
 	match, err := bus.Find("NeverHappens", nil, &abxbus.FindOptions{Past: false, Future: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if match != nil {
-		t.Fatalf("stop should resolve pending find with nil, got %#v", match)
+		t.Fatalf("destroy should resolve pending find with nil, got %#v", match)
 	}
 	select {
-	case <-stopped:
+	case <-destroyed:
 	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for stop")
+		t.Fatal("timed out waiting for destroy")
 	}
 
 	if bus.EventHistory.Size() != 0 {
-		t.Fatal("expected empty history after stop")
+		t.Fatal("expected empty history after destroy")
 	}
 	if !bus.IsIdleAndQueueEmpty() {
-		t.Fatal("expected idle after stop")
+		t.Fatal("expected idle after destroy")
 	}
 
 	e2 := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
@@ -58,10 +58,10 @@ func TestStopClearsRuntimeStateAndCancelsPendingFinds(t *testing.T) {
 		t.Fatal(err)
 	}
 	if calls.Load() != 1 {
-		t.Fatalf("stopped handlers should not fire after stop, calls=%d", calls.Load())
+		t.Fatalf("destroyed handlers should not fire after destroy, calls=%d", calls.Load())
 	}
 	if len(e2.EventResults) != 0 {
-		t.Fatalf("expected no old handlers after stop, got %d results", len(e2.EventResults))
+		t.Fatalf("expected no old handlers after destroy, got %d results", len(e2.EventResults))
 	}
 
 	bus.On("Evt", "new", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
@@ -73,6 +73,6 @@ func TestStopClearsRuntimeStateAndCancelsPendingFinds(t *testing.T) {
 		t.Fatal(err)
 	}
 	if calls.Load() != 2 {
-		t.Fatalf("bus should accept new handlers after stop, calls=%d", calls.Load())
+		t.Fatalf("bus should accept new handlers after destroy, calls=%d", calls.Load())
 	}
 }

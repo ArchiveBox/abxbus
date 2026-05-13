@@ -110,7 +110,7 @@ fn test_handler_error_is_captured_and_does_not_prevent_other_handlers_from_runni
         results.lock().expect("results lock").as_slice(),
         &["success"]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -139,7 +139,7 @@ fn test_event_event_errors_collects_handler_errors() {
     assert_eq!(errors.len(), 2);
     assert!(errors.iter().any(|error| error.contains("error_a")));
     assert!(errors.iter().any(|error| error.contains("error_b")));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -161,7 +161,7 @@ fn test_handler_error_does_not_prevent_event_completion() {
     );
     assert!(event.inner.inner.lock().event_completed_at.is_some());
     assert_eq!(event.inner.event_errors().len(), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -204,7 +204,7 @@ fn test_error_in_one_event_does_not_affect_subsequent_queued_events() {
         .expect("event2 result");
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("event2 ok")));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -239,7 +239,7 @@ fn test_async_handler_rejection_is_captured_as_error() {
         .cloned()
         .expect("handler result");
     assert_eq!(result.status, EventResultStatus::Error);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -291,8 +291,8 @@ fn test_error_in_forwarded_event_handler_does_not_block_source_bus() {
         .expect("bus_b result should exist");
     assert_eq!(bus_b_result.status, EventResultStatus::Error);
     assert!(!event.inner.event_errors().is_empty());
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -310,7 +310,7 @@ fn test_event_with_no_handlers_completes_without_errors() {
     );
     assert_eq!(event.inner.inner.lock().event_results.len(), 0);
     assert_eq!(event.inner.event_errors().len(), 0);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -348,7 +348,7 @@ fn test_error_handler_result_fields_are_populated_correctly() {
     assert_eq!(payload["error"]["message"], "RangeError: out of range");
     assert!(result.started_at.is_some());
     assert!(result.completed_at.is_some());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -385,7 +385,7 @@ fn test_result_schema_mismatch_uses_event_handler_result_schema_error() {
         result.to_flat_json_value()["error"]["type"],
         "EventHandlerResultSchemaError"
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -428,7 +428,7 @@ fn test_handler_timeout_uses_event_handler_timeout_error() {
             "message": "timeout",
         })
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -471,7 +471,7 @@ fn test_first_mode_pending_non_winner_uses_cancelled_error_class() {
         loser_result.to_flat_json_value()["error"]["type"],
         "EventHandlerCancelledError"
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -528,5 +528,5 @@ fn test_parallel_first_started_loser_uses_aborted_error_class() {
         slow_result.to_flat_json_value()["error"]["type"],
         "EventHandlerAbortedError"
     );
-    bus.stop();
+    bus.destroy();
 }

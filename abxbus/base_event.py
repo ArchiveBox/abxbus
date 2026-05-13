@@ -1035,7 +1035,6 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         self,
         include: EventResultFilter,
         *,
-        ignore_first_mode_control_errors: bool = False,
         order: Literal['completion', 'registration'] = 'completion',
     ) -> tuple[list['EventResult[T_EventResultType]'], list['EventResult[Any]']]:
         valid_results: list[EventResult[T_EventResultType]] = [
@@ -1063,14 +1062,6 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             for event_result in self.event_results.values()
             if event_result.error or isinstance(event_result.result, BaseException)
         ]
-        if ignore_first_mode_control_errors:
-            error_results = [
-                event_result
-                for event_result in error_results
-                if not self._is_first_mode_control_error(
-                    event_result.error if event_result.error is not None else cast(BaseException | None, event_result.result)
-                )
-            ]
         return valid_results, error_results
 
     def _has_included_event_result(self, include: EventResultFilter | None = None) -> bool:
@@ -1473,15 +1464,6 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             and not isinstance(result, BaseEvent)
         )
 
-    @staticmethod
-    def _is_first_mode_control_error(error: BaseException | None) -> bool:
-        if error is None:
-            return False
-        if 'first result resolved' in str(error):
-            return True
-        cause = getattr(error, '__cause__', None)
-        return isinstance(cause, BaseException) and 'first result resolved' in str(cause)
-
     def _is_unattached_pending_event(self) -> bool:
         return (
             self.event_status != EventStatus.COMPLETED
@@ -1494,8 +1476,6 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     def _collect_handler_errors(
         self,
         include_cancelled: bool,
-        *,
-        ignore_first_mode_control_errors: bool = False,
     ) -> list[Exception]:
         """Collect handler errors as Exception instances for aggregation."""
         collected_errors: list[Exception] = []
@@ -1505,9 +1485,6 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                 original_error = event_result.result
 
             if original_error is None:
-                continue
-
-            if ignore_first_mode_control_errors and self._is_first_mode_control_error(original_error):
                 continue
 
             if isinstance(original_error, asyncio.CancelledError) and not include_cancelled:
@@ -1529,8 +1506,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         self,
         include: EventResultFilter | None = None,
         raise_if_any: bool = True,
-        raise_if_none: bool = True,
-        ignore_first_mode_control_errors: bool = False,
+        raise_if_none: bool = False,
     ) -> T_EventResultType | None:
         """Get the first non-None result from the event handlers"""
         include = include or self._event_result_is_truthy
@@ -1540,7 +1516,6 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
         valid_results, error_results = self._sorted_included_event_results(
             include,
-            ignore_first_mode_control_errors=ignore_first_mode_control_errors,
             order='registration',
         )
 
@@ -1552,10 +1527,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                     raise single_error
                 raise Exception(str(single_error))
 
-            collected_errors = self._collect_handler_errors(
-                include_cancelled=True,
-                ignore_first_mode_control_errors=ignore_first_mode_control_errors,
-            )
+            collected_errors = self._collect_handler_errors(include_cancelled=True)
             raise ExceptionGroup(
                 f'Event {self.event_type}#{self.event_id[-4:]} had {len(collected_errors)} handler error(s)',
                 collected_errors,
@@ -1577,7 +1549,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         self,
         include: EventResultFilter | None = None,
         raise_if_any: bool = True,
-        raise_if_none: bool = True,
+        raise_if_none: bool = False,
     ) -> list[T_EventResultType | None]:
         """Get all result values in a list [handler1_result, handler2_result, ...]"""
         include = include or self._event_result_is_truthy

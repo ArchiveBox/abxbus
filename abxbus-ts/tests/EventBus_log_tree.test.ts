@@ -102,7 +102,7 @@ test('logTree: first-mode control cancellations use cancelled icon', async () =>
     bus.on(TestEvent, slow_handler)
 
     const event = bus.emit(TestEvent({}))
-    await event.now({ first_result: true }).eventResult()
+    await event.now({ first_result: true }).eventResult({ raise_if_any: false })
     const output = bus.logTree()
 
     assert.ok(output.includes(`🚫 ${bus.label}.slow_handler#`))

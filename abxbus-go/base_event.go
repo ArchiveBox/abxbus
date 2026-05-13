@@ -535,12 +535,8 @@ func (e *BaseEvent) nowWithContext(ctx context.Context, options ...*EventWaitOpt
 		if e.hasValidResult(nil) {
 			return e, nil
 		}
-		select {
-		case err := <-errCh:
-			if err != nil {
-				return nil, err
-			}
-		default:
+		if err := <-errCh; err != nil {
+			return nil, err
 		}
 		return e, nil
 	}

@@ -780,6 +780,37 @@ test('eventResultsList supports include/raise_if_any/raise_if_none arguments', a
   await assert.rejects(async () => bus.emit(TimeoutEvent({})).now({ timeout: 0.01 }).eventResultsList(), /Timed out waiting/)
 })
 
+test('eventResult and eventResultsList handle all-error results with shared defaults', async () => {
+  const bus = new EventBus('AllErrorResultOptionsBus', { event_handler_concurrency: 'parallel' })
+  const AllErrorEvent = BaseEvent.extend('AllErrorResultOptionsEvent', {})
+
+  bus.on(AllErrorEvent, () => {
+    throw new Error('first failure')
+  })
+  bus.on(AllErrorEvent, () => {
+    throw new Error('second failure')
+  })
+
+  const event = await bus.emit(AllErrorEvent({})).now()
+
+  await assert.rejects(() => event.eventResult(), AggregateError)
+  await assert.rejects(() => event.eventResultsList(), AggregateError)
+
+  assert.equal(await event.eventResult({ raise_if_any: false, raise_if_none: false }), undefined)
+  assert.deepEqual(await event.eventResultsList({ raise_if_any: false, raise_if_none: false }), [])
+
+  await assert.rejects(() => event.eventResult({ raise_if_any: false, raise_if_none: true }), /Expected at least one handler/)
+  await assert.rejects(() => event.eventResultsList({ raise_if_any: false, raise_if_none: true }), /Expected at least one handler/)
+
+  await assert.rejects(() => event.eventResult({ raise_if_any: true, raise_if_none: false }), AggregateError)
+  await assert.rejects(() => event.eventResultsList({ raise_if_any: true, raise_if_none: false }), AggregateError)
+
+  await assert.rejects(() => event.eventResult({ raise_if_any: true, raise_if_none: true }), AggregateError)
+  await assert.rejects(() => event.eventResultsList({ raise_if_any: true, raise_if_none: true }), AggregateError)
+
+  bus.destroy()
+})
+
 // ─── Concurrent dispatch ─────────────────────────────────────────────────────
 
 test('many events dispatched concurrently all complete', async () => {

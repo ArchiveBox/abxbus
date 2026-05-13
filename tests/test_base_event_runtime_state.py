@@ -63,7 +63,7 @@ async def test_event_started_at_after_processing():
     assert isinstance(event.event_started_at, str)
     assert isinstance(event.event_completed_at, str)
 
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_event_without_handlers():
@@ -76,7 +76,7 @@ async def test_event_without_handlers():
     assert event.event_completed_at is None  # Not complete yet
 
     processed_event = await bus.emit(event)
-    await bus.stop()
+    await bus.destroy()
 
     # After marking complete, it should be set
     # When no handlers but event is completed, event_started_at returns event_completed_at
@@ -119,7 +119,7 @@ async def test_event_with_manually_set_completed_at():
     assert seeded_event.event_completed_at is None
 
     reconciled_seeded_event = await bus.emit(seeded_event)
-    await bus.stop()
+    await bus.destroy()
     assert reconciled_seeded_event.event_status == 'completed'
     assert reconciled_seeded_event.event_started_at is not None
     assert reconciled_seeded_event.event_completed_at is not None
@@ -197,4 +197,4 @@ async def test_event_status_is_serialized_and_stateful():
             processing_task.cancel()
             with suppress(asyncio.CancelledError):
                 await processing_task
-        await bus.stop()
+        await bus.destroy()

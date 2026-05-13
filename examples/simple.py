@@ -95,7 +95,7 @@ async def main() -> None:
         print('\n=== bus.log_tree() ===')
         print(bus.log_tree())
     finally:
-        await bus.stop(clear=True, timeout=0)
+        await bus.destroy(clear=True, timeout=0)
 
 
 if __name__ == '__main__':

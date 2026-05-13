@@ -27,7 +27,7 @@ func TestQueueJumpPreservesParentChildLineageAndFindVisibility(t *testing.T) {
 		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
 	})
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 
 	var mu sync.Mutex
 	executionOrder := []string{}
@@ -133,7 +133,7 @@ func TestConcurrencyIntersectionParallelEventsWithSerialHandlers(t *testing.T) {
 		MaxHistorySize:          nil,
 	})
 	bus.EventHistory.MaxHistorySize = nil
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 
 	var mu sync.Mutex
 	currentByEvent := map[string]int{}
@@ -201,7 +201,7 @@ func TestTimeoutEnforcementDoesNotBreakFollowupProcessingOrQueueState(t *testing
 	bus := abxbus.NewEventBus("ParityTimeoutEnforcementBus", &abxbus.EventBusOptions{
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
 	})
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 	bus.On("TimeoutEnforcementEvent", "slow_handler_a", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -258,7 +258,7 @@ func TestZeroHistoryBackpressureWithFindFutureStillResolvesNewEvents(t *testing.
 		MaxHistorySize: &maxHistorySize,
 		MaxHistoryDrop: false,
 	})
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 	bus.On("ZeroHistoryEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		return "ok:" + event.Payload["value"].(string), nil
 	}, nil)
@@ -307,8 +307,8 @@ type crossRuntimeContextKey string
 func TestContextPropagatesThroughForwardingAndChildDispatchWithLineageIntact(t *testing.T) {
 	busA := abxbus.NewEventBus("ParityContextForwardA", nil)
 	busB := abxbus.NewEventBus("ParityContextForwardB", nil)
-	t.Cleanup(busA.Stop)
-	t.Cleanup(busB.Stop)
+	t.Cleanup(busA.Destroy)
+	t.Cleanup(busB.Destroy)
 
 	key := crossRuntimeContextKey("request_id")
 	capturedParentRequestID := ""
@@ -384,7 +384,7 @@ func TestPendingQueueFindVisibilityTransitionsToCompletedAfterRelease(t *testing
 		MaxHistorySize:          nil,
 	})
 	bus.EventHistory.MaxHistorySize = nil
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
@@ -435,7 +435,7 @@ func TestHistoryBackpressureRejectsOverflowAndPreservesFindableHistory(t *testin
 		MaxHistorySize: &maxHistorySize,
 		MaxHistoryDrop: false,
 	})
-	t.Cleanup(bus.Stop)
+	t.Cleanup(bus.Destroy)
 	bus.On("BackpressureEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		return "ok:" + event.Payload["value"].(string), nil
 	}, nil)

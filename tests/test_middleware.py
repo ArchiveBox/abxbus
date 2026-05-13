@@ -75,7 +75,7 @@ class TestWALPersistence:
                 datetime.fromisoformat(data['event_created_at'])
 
         finally:
-            await bus.stop()
+            await bus.destroy()
 
     async def test_wal_persistence_creates_parent_dir(self, tmp_path):
         """Test that WAL persistence creates parent directories"""
@@ -100,7 +100,7 @@ class TestWALPersistence:
             # Check file was created
             assert wal_path.exists()
         finally:
-            await bus.stop()
+            await bus.destroy()
 
     async def test_wal_persistence_skips_incomplete_events(self, tmp_path):
         """Test that WAL persistence only writes completed events"""
@@ -136,7 +136,7 @@ class TestWALPersistence:
             assert data['user_id'] == 'e692b6cb-ae63-773b-8557-3218f7ce5ced'
 
         finally:
-            await bus.stop()
+            await bus.destroy()
 
 
 class TestHandlerMiddleware:
@@ -181,7 +181,7 @@ class TestHandlerMiddleware:
                 'instance:completed',
             ]
         finally:
-            await bus.stop()
+            await bus.destroy()
 
     async def test_middleware_wraps_successful_handler(self):
         calls: list[tuple[str, str]] = []
@@ -209,7 +209,7 @@ class TestHandlerMiddleware:
             assert result.result == 'ok'
             assert calls == [('before', 'started'), ('after', 'completed')]
         finally:
-            await bus.stop()
+            await bus.destroy()
 
     async def test_middleware_observes_handler_errors(self):
         observations: list[tuple[str, str]] = []
@@ -239,7 +239,7 @@ class TestHandlerMiddleware:
             assert isinstance(result.error, ValueError)
             assert observations == [('before', 'started'), ('error', 'ValueError')]
         finally:
-            await bus.stop()
+            await bus.destroy()
 
     async def test_middleware_hook_statuses_never_emit_error(self):
         observed_event_statuses: list[str] = []
@@ -274,7 +274,7 @@ class TestHandlerMiddleware:
             assert 'error' not in observed_event_statuses
             assert 'error' not in observed_result_hook_statuses
         finally:
-            await bus.stop()
+            await bus.destroy()
 
     async def test_middleware_event_status_order_is_deterministic_for_each_event(self):
         event_statuses_by_id: dict[str, list[str]] = {}
@@ -311,7 +311,7 @@ class TestHandlerMiddleware:
 
             assert len(event_statuses_by_id) == batch_count * events_per_batch
         finally:
-            await bus.stop()
+            await bus.destroy()
 
     async def test_middleware_event_and_result_lifecycle_remains_monotonic_on_timeout(self):
         observed_event_statuses: list[str] = []
@@ -353,7 +353,7 @@ class TestHandlerMiddleware:
             assert [status for _, status, _ in pending_transitions] == ['pending', 'completed']
             assert [result_status for _, _, result_status in pending_transitions] == ['pending', 'error']
         finally:
-            await bus.stop()
+            await bus.destroy()
 
     async def test_auto_error_event_middleware_emits_and_guards_recursion(self):
         seen: list[tuple[str, str]] = []
@@ -381,7 +381,7 @@ class TestHandlerMiddleware:
             assert seen == [('UserActionEventErrorEvent', 'ValueError')]
             assert await bus.find('UserActionEventErrorEventErrorEvent', past=True, future=False) is None
         finally:
-            await bus.stop()
+            await bus.destroy()
 
     async def test_auto_return_event_middleware_emits_and_guards_recursion(self):
         seen: list[tuple[str, Any]] = []
@@ -409,7 +409,7 @@ class TestHandlerMiddleware:
             assert seen == [('UserActionEventResultEvent', 123)]
             assert await bus.find('UserActionEventResultEventResultEvent', past=True, future=False) is None
         finally:
-            await bus.stop()
+            await bus.destroy()
 
     async def test_auto_return_event_middleware_skips_baseevent_returns(self):
         seen: list[tuple[str, Any]] = []
@@ -439,7 +439,7 @@ class TestHandlerMiddleware:
             assert seen == []
             assert await bus.find('UserActionEventResultEvent', past=True, future=False) is None
         finally:
-            await bus.stop()
+            await bus.destroy()
 
     async def test_auto_handler_change_event_middleware_emits_registered_and_unregistered(self):
         registered: list[BusHandlerRegisteredEvent] = []
@@ -474,7 +474,7 @@ class TestHandlerMiddleware:
             assert matching_registered[-1].handler.event_pattern == 'UserActionEvent'
             assert matching_unregistered[-1].handler.event_pattern == 'UserActionEvent'
         finally:
-            await bus.stop()
+            await bus.destroy()
 
     async def test_otel_tracing_middleware_tracks_parent_event_and_handler_spans(self):
         class RootEvent(BaseEvent):
@@ -567,7 +567,7 @@ class TestHandlerMiddleware:
             assert all(span.end_time is not None for span in tracer.spans)
             assert all(span.end_time > span.start_time for span in tracer.spans if span.end_time and span.start_time)
         finally:
-            await bus.stop()
+            await bus.destroy()
 
 
 class TestSQLiteHistoryMirror:
@@ -600,7 +600,7 @@ class TestSQLiteHistoryMirror:
             assert result_rows[-1][2] == "'ok'"
             assert result_rows[-1][3] is None
         finally:
-            await bus.stop()
+            await bus.destroy()
 
     def test_sqlite_history_close_is_idempotent(self, tmp_path):
         db_path = tmp_path / 'events.sqlite'
@@ -632,7 +632,7 @@ class TestLoggerMiddleware:
             assert contents
             assert 'UserActionEvent' in contents[-1]
         finally:
-            await bus.stop()
+            await bus.destroy()
 
     async def test_logger_middleware_stdout_only(self, capsys):
         bus = EventBus(middlewares=[LoggerEventBusMiddleware()])
@@ -650,7 +650,7 @@ class TestLoggerMiddleware:
             assert 'UserActionEvent' in captured.out
             assert 'stdout' not in captured.err
         finally:
-            await bus.stop()
+            await bus.destroy()
 
     async def test_sqlite_history_records_errors(self, tmp_path):
         db_path = tmp_path / 'events.sqlite'
@@ -677,7 +677,7 @@ class TestLoggerMiddleware:
             assert [phase for phase, _ in events] == ['pending', 'started', 'completed']
             assert [status for _, status in events] == ['pending', 'started', 'completed']
         finally:
-            await bus.stop()
+            await bus.destroy()
 
 
 class MiddlewarePatternEvent(BaseEvent[str]):
@@ -772,7 +772,7 @@ async def test_middleware_hooks_cover_class_string_and_wildcard_patterns() -> No
         for record in unregistered_records:
             assert record['event_pattern'] == expected_patterns[record['handler_id']]
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_middleware_hooks_cover_string_and_wildcard_patterns_for_ad_hoc_baseevent() -> None:
@@ -852,7 +852,7 @@ async def test_middleware_hooks_cover_string_and_wildcard_patterns_for_ad_hoc_ba
         for record in unregistered_records:
             assert record['event_pattern'] == expected_patterns[record['handler_id']]
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 class HistoryTestEvent(BaseEvent):
@@ -911,7 +911,7 @@ async def _run_scenario(
         await bus.wait_until_idle()
     finally:
         summary = _summarize_history(bus.event_history)
-        await bus.stop()
+        await bus.destroy()
 
     return summary
 
@@ -960,7 +960,7 @@ def _worker_dispatch(db_path: str, worker_id: int) -> None:
             await bus.emit(HistoryTestEvent(payload=f'worker-{worker_id}'))
             await bus.wait_until_idle()
         finally:
-            await bus.stop()
+            await bus.destroy()
 
     asyncio.run(run())
 

@@ -116,7 +116,7 @@ fn test_simple_debounce_with_child_of_reuses_recent_event() {
         reused.inner.lock().event_parent_id.as_deref(),
         Some(parent.inner.inner.lock().event_id.as_str())
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -156,7 +156,7 @@ fn test_debounce_uses_future_match_before_dispatch_fallback() {
     let _ = block_on(resolved.wait());
 
     assert_eq!(resolved.inner.lock().event_type, "SyncEvent");
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -203,7 +203,7 @@ fn test_debounce_prefers_recent_history() {
     let found_id = found.inner.lock().event_id.clone();
     let original_id = original.inner.inner.lock().event_id.clone();
     assert_eq!(found_id, original_id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -245,7 +245,7 @@ fn test_debounce_dispatches_when_recent_missing() {
         Some(&json!(TARGET_ID_1))
     );
     assert_eq!(result.inner.lock().event_status, EventStatus::Completed);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -294,7 +294,7 @@ fn test_dispatches_new_when_stale() {
         .filter(|event| event.inner.lock().event_type == "ScreenshotEvent")
         .count();
     assert_eq!(screenshots, 2);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -312,7 +312,7 @@ fn test_find_past_only_returns_immediately_without_waiting() {
 
     assert!(result.is_none());
     assert!(elapsed < Duration::from_millis(50));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -339,7 +339,7 @@ fn test_find_past_float_returns_immediately_without_waiting() {
 
     assert!(result.is_none());
     assert!(elapsed < Duration::from_millis(50));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -379,7 +379,7 @@ fn test_or_chain_without_waiting_finds_existing() {
     let original_id = original.inner.inner.lock().event_id.clone();
     assert_eq!(result_id, original_id);
     assert!(elapsed < Duration::from_millis(100));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -414,7 +414,7 @@ fn test_or_chain_without_waiting_dispatches_when_no_match() {
         Some(&json!(TARGET_ID_1))
     );
     assert!(elapsed < Duration::from_millis(100));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -485,7 +485,7 @@ fn test_or_chain_multiple_sequential_lookups() {
         result_3.inner.lock().payload.get("target_id"),
         Some(&json!(TARGET_ID_2))
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]

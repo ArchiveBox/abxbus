@@ -46,7 +46,7 @@ async def test_event_bus_aliases_bus_property():
     assert seen_bus is bus
     assert seen_event_bus is bus
     assert seen_bus is seen_event_bus
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_await_event_queue_jumps_inside_handler():
@@ -87,7 +87,7 @@ async def test_await_event_queue_jumps_inside_handler():
     await bus.emit(ParentEvent())
     await bus.wait_until_idle()
     assert order == ['parent_start', 'child', 'parent_end', 'sibling']
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_now_queue_jumps_inside_handler():
@@ -128,7 +128,7 @@ async def test_now_queue_jumps_inside_handler():
     await bus.emit(ParentEvent()).now()
     await bus.wait_until_idle()
     assert order == ['parent_start', 'child', 'parent_end', 'sibling']
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_now_preserves_handler_errors_inside_handler():
@@ -174,7 +174,7 @@ async def test_now_preserves_handler_errors_inside_handler():
     assert child_ref is not None
     assert child_ref.event_status == 'completed'
     assert any(result.status == 'error' for result in child_ref.event_results.values())
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_wait_outside_handler_preserves_normal_queue_order():
@@ -218,7 +218,7 @@ async def test_wait_outside_handler_preserves_normal_queue_order():
         assert order == ['blocker_start', 'blocker_end', 'target']
     finally:
         release_blocker.set()
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_wait_outside_handler_allows_normal_parallel_processing():
@@ -262,7 +262,7 @@ async def test_wait_outside_handler_allows_normal_parallel_processing():
         assert order == ['blocker_start', 'target', 'blocker_end']
     finally:
         release_blocker.set()
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_wait_returns_event_without_forcing_queued_execution():
@@ -302,7 +302,7 @@ async def test_wait_returns_event_without_forcing_queued_execution():
         assert order == ['blocker_start', 'blocker_end', 'target']
     finally:
         release_blocker.set()
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_now_returns_event_and_queue_jumps_queued_execution():
@@ -343,7 +343,7 @@ async def test_now_returns_event_and_queue_jumps_queued_execution():
         assert order == ['blocker_start', 'target', 'blocker_end']
     finally:
         release_blocker.set()
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_await_event_is_python_shortcut_for_now():
@@ -383,7 +383,7 @@ async def test_await_event_is_python_shortcut_for_now():
         assert order == ['blocker_start', 'target', 'blocker_end']
     finally:
         release_blocker.set()
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_wait_first_result_returns_before_event_completion():
@@ -427,7 +427,7 @@ async def test_wait_first_result_returns_before_event_completion():
         await bus.wait_until_idle(timeout=1.0)
         assert event.event_status == EventStatus.COMPLETED
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_now_first_result_returns_before_event_completion():
@@ -465,7 +465,7 @@ async def test_now_first_result_returns_before_event_completion():
         await asyncio.wait_for(slow_finished.wait(), timeout=1.0)
         await bus.wait_until_idle(timeout=1.0)
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_result_starts_never_started_event_and_returns_first_result():
@@ -505,7 +505,7 @@ async def test_event_result_starts_never_started_event_and_returns_first_result(
         await bus.wait_until_idle(timeout=1.0)
     finally:
         release_blocker.set()
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_results_list_starts_never_started_event_and_returns_all_results():
@@ -553,7 +553,7 @@ async def test_event_results_list_starts_never_started_event_and_returns_all_res
         await bus.wait_until_idle(timeout=1.0)
     finally:
         release_blocker.set()
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_result_helpers_do_not_wait_for_started_event():
@@ -589,7 +589,7 @@ async def test_event_result_helpers_do_not_wait_for_started_event():
         await bus.wait_until_idle(timeout=1.0)
     finally:
         release_handler.set()
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_now_on_already_executing_event_waits_without_duplicate_execution():
@@ -622,7 +622,7 @@ async def test_now_on_already_executing_event_waits_without_duplicate_execution(
         assert run_count == 1
     finally:
         release.set()
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_result_options_apply_to_current_results():
@@ -662,7 +662,7 @@ async def test_event_result_options_apply_to_current_results():
         )
     finally:
         release_slow.set()
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_result_raises_processing_error_group_after_completion():
@@ -695,7 +695,7 @@ async def test_event_result_raises_processing_error_group_after_completion():
     assert len(event.event_results) == 2
     assert all(result.status == 'error' for result in event.event_results.values())
     assert await event.event_result(raise_if_any=False, raise_if_none=False) is None
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_event_result_accepts_error_options_outside_handler():
@@ -714,7 +714,7 @@ async def test_event_result_accepts_error_options_outside_handler():
     assert event.event_status == 'completed'
     assert any(result.status == 'error' for result in event.event_results.values())
     assert await event.event_result(raise_if_any=False, raise_if_none=False) is None
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_parallel_event_concurrency_plus_immediate_execution_races_child_events_inside_handlers():
@@ -793,7 +793,7 @@ async def test_parallel_event_concurrency_plus_immediate_execution_races_child_e
         assert order.index(f'{label}_start') < parent_end_index
         assert order.index(f'{label}_end') < parent_end_index
 
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_awaited_parallel_queue_jump_child_does_not_pause_later_parallel_child_events():
@@ -850,7 +850,7 @@ async def test_awaited_parallel_queue_jump_child_does_not_pause_later_parallel_c
     await bus.wait_until_idle()
 
     assert log.index('child_start_bg') < log.index('parent_found_True'), log
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_wait_waits_in_queue_order_inside_handler():
@@ -896,7 +896,7 @@ async def test_wait_waits_in_queue_order_inside_handler():
     await bus.wait_until_idle()
     assert order.index('sibling_start') < order.index('child_start')
     assert order.index('child_end') < order.index('parent_end')
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_wait_is_passive_inside_handlers_and_times_out_for_serial_events():
@@ -945,7 +945,7 @@ async def test_wait_is_passive_inside_handlers_and_times_out_for_serial_events()
     await bus.emit(ParentEvent()).now()
     await bus.wait_until_idle()
     assert order == ['parent_start', 'emitted_timeout', 'found_timeout', 'parent_end', 'emitted_start', 'found_start']
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_wait_serial_wait_inside_handler_times_out_and_warns_about_slow_handler(
@@ -989,7 +989,7 @@ async def test_wait_serial_wait_inside_handler_times_out_and_warns_about_slow_ha
     await bus.wait_until_idle()
     assert order == ['parent_start', 'child_timeout', 'parent_end', 'child_start']
     assert any('Slow event handler:' in record.message for record in caplog.records)
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_wait_waits_for_normal_parallel_processing_inside_handlers():
@@ -1040,7 +1040,7 @@ async def test_wait_waits_for_normal_parallel_processing_inside_handlers():
     assert order.index('emitted_end') < order.index('emitted_completed')
     assert order.index('found_end') < order.index('found_completed')
     assert order[-1] == 'parent_end'
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_wait_waits_for_future_parallel_event_found_after_handler_starts():
@@ -1083,7 +1083,7 @@ async def test_wait_waits_for_future_parallel_event_found_after_handler_starts()
     await other.now()
     await bus.wait_until_idle()
     assert waited_for and waited_for[0] >= 0.15
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_wait_returns_event_accepts_timeout_and_rejects_unattached_pending_event():
@@ -1111,7 +1111,7 @@ async def test_wait_returns_event_accepts_timeout_and_rejects_unattached_pending
         assert await event.wait(timeout=1.0) is event
     finally:
         release_handler.set()
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_reserved_runtime_fields_are_rejected():
@@ -1185,7 +1185,7 @@ async def test_event_result_update_creates_and_updates_typed_handler_results():
     assert completed.status == 'completed'
     assert completed.result == 'seeded'
 
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_event_result_update_status_only_preserves_existing_error_and_result():
@@ -1209,7 +1209,7 @@ async def test_event_result_update_status_only_preserves_existing_error_and_resu
     assert isinstance(status_only.error, RuntimeError)
     assert status_only.result is None
 
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_python_serialized_at_fields_are_strings():
@@ -1234,7 +1234,7 @@ async def test_python_serialized_at_fields_are_strings():
     assert isinstance(result_payload['handler_registered_at'], str)
     assert result_payload['handler_registered_at'].endswith('Z')
 
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_builtin_model_prefixed_override_is_allowed():
@@ -1273,7 +1273,7 @@ async def test_event_bus_property_single_bus():
     assert dispatched_child is not None
     assert isinstance(dispatched_child, ChildEvent)
 
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_event_bus_property_multiple_buses():
@@ -1309,8 +1309,8 @@ async def test_event_bus_property_multiple_buses():
     await bus2.emit(MainEvent(message='bus2'))
     assert handler2_called
 
-    await bus1.stop()
-    await bus2.stop()
+    await bus1.destroy()
+    await bus2.destroy()
 
 
 async def test_event_bus_property_with_forwarding():
@@ -1347,8 +1347,8 @@ async def test_event_bus_property_with_forwarding():
     # Also wait for the event to fully complete
     await event
 
-    await bus1.stop()
-    await bus2.stop()
+    await bus1.destroy()
+    await bus2.destroy()
 
 
 async def test_event_bus_property_outside_handler():
@@ -1367,7 +1367,7 @@ async def test_event_bus_property_outside_handler():
     with pytest.raises(AttributeError, match='bus property can only be accessed from within an event handler'):
         _ = dispatched_event.bus
 
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_event_bus_property_nested_handlers():
@@ -1395,7 +1395,7 @@ async def test_event_bus_property_nested_handlers():
 
     assert inner_bus_name == 'MainBus'
 
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_event_bus_property_no_active_bus():
@@ -1415,7 +1415,7 @@ async def test_event_bus_property_no_active_bus():
 
         bus.on(MainEvent, handler)
         await bus.emit(MainEvent())
-        await bus.stop()
+        await bus.destroy()
         # Bus goes out of scope here and may be garbage collected
 
     await create_and_dispatch()
@@ -1448,7 +1448,7 @@ async def test_event_bus_property_no_active_bus():
     # Should have raised an error since the original bus is gone
     assert error_raised
 
-    await new_bus.stop()
+    await new_bus.destroy()
 
 
 async def test_event_bus_property_child_dispatch():
@@ -1525,7 +1525,7 @@ async def test_event_bus_property_child_dispatch():
     assert child_event_ref.event_parent_id == parent_event.event_id
     assert grandchild_event_ref.event_parent_id == child_event_ref.event_id
 
-    await bus.stop()
+    await bus.destroy()
 
 
 async def test_event_bus_property_multi_bus_child_dispatch():
@@ -1575,5 +1575,5 @@ async def test_event_bus_property_multi_bus_child_dispatch():
     assert id(child_dispatch_bus) == id(bus2)
     assert id(child_handler_bus) == id(bus2)
 
-    await bus1.stop()
-    await bus2.stop()
+    await bus1.destroy()
+    await bus2.destroy()

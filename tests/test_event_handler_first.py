@@ -62,7 +62,7 @@ async def test_event_handler_completion_bus_default_first_serial() -> None:
         assert second_result.status == 'error'
         assert isinstance(second_result.error, asyncio.CancelledError)
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_handler_completion_explicit_override_beats_bus_default() -> None:
@@ -90,7 +90,7 @@ async def test_event_handler_completion_explicit_override_beats_bus_default() ->
         await event
         assert second_handler_called is True
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_parallel_first_races_and_cancels_non_winners() -> None:
@@ -148,7 +148,7 @@ async def test_event_parallel_first_races_and_cancels_non_winners() -> None:
         resolved = await event.event_result(raise_if_any=False, raise_if_none=True)
         assert resolved == 'winner'
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_handler_completion_explicit_first_cancels_parallel_losers() -> None:
@@ -188,7 +188,7 @@ async def test_event_handler_completion_explicit_first_cancels_parallel_losers()
         assert error_results
         assert any(isinstance(result.error, asyncio.CancelledError) for result in error_results)
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_handler_completion_first_preserves_falsy_results() -> None:
@@ -216,7 +216,7 @@ async def test_event_handler_completion_first_preserves_falsy_results() -> None:
         assert result == 0
         assert second_handler_called is False
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_handler_completion_first_preserves_false_and_empty_string_results() -> None:
@@ -244,7 +244,7 @@ async def test_event_handler_completion_first_preserves_false_and_empty_string_r
         assert bool_result is False
         assert bool_second_handler_called is False
     finally:
-        await bool_bus.stop()
+        await bool_bus.destroy()
 
     str_bus = EventBus(
         name='CompletionFalsyEmptyStringBus',
@@ -270,7 +270,7 @@ async def test_event_handler_completion_first_preserves_false_and_empty_string_r
         assert str_result == ''
         assert str_second_handler_called is False
     finally:
-        await str_bus.stop()
+        await str_bus.destroy()
 
 
 async def test_event_handler_completion_first_skips_none_result_and_uses_next_winner() -> None:
@@ -309,7 +309,7 @@ async def test_event_handler_completion_first_skips_none_result_and_uses_next_wi
         assert winner_result.status == 'completed'
         assert winner_result.result == 'winner'
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_handler_completion_first_skips_baseevent_result_and_uses_next_winner() -> None:
@@ -388,7 +388,7 @@ async def test_event_handler_completion_first_skips_baseevent_result_and_uses_ne
         )
         assert isinstance(baseevent_result.result, ChildCompletionEvent)
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_now_runs_all_handlers_and_event_result_returns_first_valid_result() -> None:
@@ -426,7 +426,7 @@ async def test_now_runs_all_handlers_and_event_result_returns_first_valid_result
         assert event.event_handler_completion == EventHandlerCompletionMode.ALL
         assert late_handler_called is True
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_now_default_error_policy() -> None:
@@ -435,7 +435,7 @@ async def test_event_now_default_error_policy() -> None:
         event = await no_handler_bus.emit(CompletionEvent()).now()
         assert await event.event_result(raise_if_any=False, raise_if_none=False) is None
     finally:
-        await no_handler_bus.stop()
+        await no_handler_bus.destroy()
 
     none_bus = EventBus(name='CompletionNowNoneBus')
 
@@ -447,7 +447,7 @@ async def test_event_now_default_error_policy() -> None:
         event = await none_bus.emit(CompletionEvent()).now()
         assert await event.event_result(raise_if_any=False, raise_if_none=False) is None
     finally:
-        await none_bus.stop()
+        await none_bus.destroy()
 
     all_error_bus = EventBus(name='CompletionNowAllErrorBus')
 
@@ -464,7 +464,7 @@ async def test_event_now_default_error_policy() -> None:
             event = await all_error_bus.emit(CompletionEvent()).now()
             await event.event_result()
     finally:
-        await all_error_bus.stop()
+        await all_error_bus.destroy()
 
     mixed_valid_bus = EventBus(name='CompletionNowMixedValidBus')
     mixed_valid_bus.on(CompletionEvent, fail_one)
@@ -477,7 +477,7 @@ async def test_event_now_default_error_policy() -> None:
         event = await mixed_valid_bus.emit(CompletionEvent()).now()
         assert await event.event_result(raise_if_any=False) == 'winner'
     finally:
-        await mixed_valid_bus.stop()
+        await mixed_valid_bus.destroy()
 
     mixed_none_bus = EventBus(name='CompletionNowMixedNoneBus')
     mixed_none_bus.on(CompletionEvent, fail_one)
@@ -486,7 +486,7 @@ async def test_event_now_default_error_policy() -> None:
         event = await mixed_none_bus.emit(CompletionEvent()).now()
         assert await event.event_result(raise_if_any=False, raise_if_none=False) is None
     finally:
-        await mixed_none_bus.stop()
+        await mixed_none_bus.destroy()
 
 
 async def test_event_result_options_match_event_results_shape() -> None:
@@ -517,7 +517,7 @@ async def test_event_result_options_match_event_results_shape() -> None:
         event = await bus.emit(CompletionEvent()).now()
         assert await event.event_result(include=include_second, raise_if_any=False) == 'second'
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_result_returns_first_valid_result_by_registration_order_after_now() -> None:
@@ -538,7 +538,7 @@ async def test_event_result_returns_first_valid_result_by_registration_order_aft
         event = await bus.emit(CompletionEvent()).now()
         assert await event.event_result() == 'slow'
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_handler_completion_first_returns_none_when_all_handlers_fail() -> None:
@@ -559,7 +559,7 @@ async def test_event_handler_completion_first_returns_none_when_all_handlers_fai
         result = await event.event_result(raise_if_any=False, raise_if_none=False)
         assert result is None
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_handler_completion_first_result_options_match_event_result_options() -> None:
@@ -582,9 +582,9 @@ async def test_event_handler_completion_first_result_options_match_event_result_
             event = await bus.emit(CompletionEvent(event_handler_completion=EventHandlerCompletionMode.FIRST)).now(
                 first_result=True
             )
-            await event.event_result(raise_if_any=True, ignore_first_mode_control_errors=True)
+            await event.event_result(raise_if_any=True)
     finally:
-        await bus.stop()
+        await bus.destroy()
 
     none_bus = EventBus(name='CompletionFirstRaiseNoneBus')
 
@@ -599,7 +599,7 @@ async def test_event_handler_completion_first_result_options_match_event_result_
             )
             await event.event_result(raise_if_none=True)
     finally:
-        await none_bus.stop()
+        await none_bus.destroy()
 
 
 async def test_now_first_result_timeout_limits_processing_wait() -> None:
@@ -618,7 +618,7 @@ async def test_now_first_result_timeout_limits_processing_wait() -> None:
                 first_result=True,
             )
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_result_include_callback_receives_result_and_event_result() -> None:
@@ -650,7 +650,7 @@ async def test_event_result_include_callback_receives_result_and_event_result() 
             'second_handler',
         ]
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_results_include_callback_receives_result_and_event_result() -> None:
@@ -680,7 +680,7 @@ async def test_event_results_include_callback_receives_result_and_event_result()
         ) == ['keep']
         assert seen_pairs == [('keep', 'keep_handler'), ('drop', 'drop_handler')]
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_result_returns_first_current_result_with_first_result_wait() -> None:
@@ -701,10 +701,10 @@ async def test_event_result_returns_first_current_result_with_first_result_wait(
         event = await bus.emit(CompletionEvent()).now(first_result=True)
         assert await event.event_result() == 'fast'
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
-async def test_event_result_raise_if_any_ignores_first_mode_control_errors() -> None:
+async def test_event_result_raise_if_any_includes_first_mode_control_errors() -> None:
     bus = EventBus(
         name='CompletionFirstControlErrorBus',
         event_handler_concurrency=EventHandlerConcurrencyMode.PARALLEL,
@@ -724,9 +724,13 @@ async def test_event_result_raise_if_any_ignores_first_mode_control_errors() -> 
 
     try:
         event = await bus.emit(CompletionEvent(event_handler_completion=EventHandlerCompletionMode.FIRST)).now(first_result=True)
-        assert await event.event_result(raise_if_any=True, ignore_first_mode_control_errors=True) == 'fast'
+        assert await event.event_result(raise_if_any=True) == 'fast'
+        await event.wait(timeout=1.0)
+        with pytest.raises(asyncio.CancelledError, match='first result resolved'):
+            await event.event_result(raise_if_any=True)
+        assert await event.event_result(raise_if_any=False, raise_if_none=True) == 'fast'
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_result_shortcuts_reject_unattached_pending_event() -> None:

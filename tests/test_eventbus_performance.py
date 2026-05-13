@@ -132,7 +132,7 @@ async def run_mode_throughput_benchmark(
 
         await bus.wait_until_idle()
     finally:
-        await bus.stop(timeout=0, clear=True)
+        await bus.destroy(timeout=0, clear=True)
 
     duration = time.time() - start
     throughput = total_events / max(duration, 1e-9)
@@ -182,7 +182,7 @@ async def run_io_fanout_benchmark(
 
         await bus.wait_until_idle()
     finally:
-        await bus.stop(timeout=0, clear=True)
+        await bus.destroy(timeout=0, clear=True)
 
     duration = time.time() - start
     return handled, duration
@@ -342,7 +342,7 @@ async def run_contention_round(
     try:
         await asyncio.gather(*(producer(bus) for bus in buses))
     finally:
-        await asyncio.gather(*(bus.stop(timeout=0, clear=True) for bus in buses))
+        await asyncio.gather(*(bus.destroy(timeout=0, clear=True) for bus in buses))
 
     duration = time.perf_counter() - start
     return {
@@ -473,12 +473,12 @@ async def test_20k_events_with_memory_control():
 
     # Explicitly clean up the bus to prevent hanging
     print('\nCleaning up EventBus...')
-    queue_size_before_stop = bus.pending_event_queue.qsize() if bus.pending_event_queue else 0
-    print(f'Before stop - Queue size: {queue_size_before_stop}')
-    print(f'Before stop - In-flight event ids: {len(bus.in_flight_event_ids)}')
+    queue_size_before_destroy = bus.pending_event_queue.qsize() if bus.pending_event_queue else 0
+    print(f'Before destroy - Queue size: {queue_size_before_destroy}')
+    print(f'Before destroy - In-flight event ids: {len(bus.in_flight_event_ids)}')
 
-    await bus.stop(timeout=0, clear=True)
-    print('EventBus stopped successfully')
+    await bus.destroy(timeout=0, clear=True)
+    print('EventBus destroyed successfully')
 
 
 @pytest.mark.asyncio
@@ -521,8 +521,8 @@ async def test_hard_limit_enforcement():
         assert errors > 0
 
     finally:
-        # Properly stop the bus to clean up pending tasks
-        await bus.stop(timeout=0, clear=True)  # Don't wait, just force cleanup
+        # Properly destroy the bus to clean up pending tasks
+        await bus.destroy(timeout=0, clear=True)  # Don't wait, just force cleanup
 
 
 @pytest.mark.asyncio
@@ -572,8 +572,8 @@ async def test_cleanup_prioritizes_pending():
         assert history_types.get('pending', 0) + history_types.get('started', 0) >= 5
 
     finally:
-        # Properly stop the bus to clean up pending tasks
-        await bus.stop(timeout=0, clear=True)  # Don't wait, just force cleanup
+        # Properly destroy the bus to clean up pending tasks
+        await bus.destroy(timeout=0, clear=True)  # Don't wait, just force cleanup
 
 
 @pytest.mark.asyncio
@@ -621,8 +621,8 @@ async def test_ephemeral_buses_with_forwarding_churn():
                 bus_b.event_history.max_history_size is None or len(bus_b.event_history) <= bus_b.event_history.max_history_size
             )
         finally:
-            await bus_a.stop(timeout=0, clear=True)
-            await bus_b.stop(timeout=0, clear=True)
+            await bus_a.destroy(timeout=0, clear=True)
+            await bus_b.destroy(timeout=0, clear=True)
 
     duration = time.time() - start
     gc.collect()
@@ -689,8 +689,8 @@ async def test_forwarding_queue_jump_timeout_mix_stays_stable():
             await bus_a.wait_until_idle()
             await bus_b.wait_until_idle()
     finally:
-        await bus_a.stop(timeout=0, clear=True)
-        await bus_b.stop(timeout=0, clear=True)
+        await bus_a.destroy(timeout=0, clear=True)
+        await bus_b.destroy(timeout=0, clear=True)
 
     duration = time.time() - start
 
@@ -730,7 +730,7 @@ async def test_history_bound_is_strict_after_idle():
         await bus.wait_until_idle()
         assert len(bus.event_history) <= 25
     finally:
-        await bus.stop(timeout=0, clear=True)
+        await bus.destroy(timeout=0, clear=True)
 
 
 @pytest.mark.asyncio
@@ -819,8 +819,8 @@ async def test_forwarding_throughput_floor_across_modes(event_handler_concurrenc
         await source_bus.wait_until_idle()
         await target_bus.wait_until_idle()
     finally:
-        await source_bus.stop(timeout=0, clear=True)
-        await target_bus.stop(timeout=0, clear=True)
+        await source_bus.destroy(timeout=0, clear=True)
+        await target_bus.destroy(timeout=0, clear=True)
 
     duration = time.time() - start
     throughput = total_events / max(duration, 1e-9)
@@ -964,7 +964,7 @@ async def test_queue_jump_perf_matrix_by_mode(event_handler_concurrency: Literal
         phase1 = await dispatch_and_measure(bus, parent_factory, total_events=500, batch_size=20)
         phase2 = await dispatch_and_measure(bus, parent_factory, total_events=500, batch_size=20)
     finally:
-        await bus.stop(timeout=0, clear=True)
+        await bus.destroy(timeout=0, clear=True)
 
     hard_floor = 60.0
     regression_floor = throughput_regression_floor(phase1[0], min_fraction=0.50, hard_floor=50.0)
@@ -1052,9 +1052,9 @@ async def test_forwarding_chain_perf_matrix_by_mode(event_handler_concurrency: L
         await middle_bus.wait_until_idle()
         await sink_bus.wait_until_idle()
     finally:
-        await source_bus.stop(timeout=0, clear=True)
-        await middle_bus.stop(timeout=0, clear=True)
-        await sink_bus.stop(timeout=0, clear=True)
+        await source_bus.destroy(timeout=0, clear=True)
+        await middle_bus.destroy(timeout=0, clear=True)
+        await sink_bus.destroy(timeout=0, clear=True)
 
     hard_floor = 35.0
     regression_floor = throughput_regression_floor(phase1[0], min_fraction=0.45, hard_floor=20.0)
@@ -1132,7 +1132,7 @@ async def test_timeout_churn_perf_matrix_by_mode(event_handler_concurrency: Lite
             timeout_phase = await dispatch_and_measure(bus, timeout_factory, total_events=180, batch_size=20)
             recovery_phase = await dispatch_and_measure(bus, recovery_factory, total_events=500, batch_size=25)
     finally:
-        await bus.stop(timeout=0, clear=True)
+        await bus.destroy(timeout=0, clear=True)
 
     timeout_count = sum(
         1
@@ -1197,7 +1197,7 @@ async def test_memory_envelope_by_mode_for_capped_history(event_handler_concurre
         gc_mb = get_memory_usage_mb()
         retained = len(bus.event_history)
     finally:
-        await bus.stop(timeout=0, clear=True)
+        await bus.destroy(timeout=0, clear=True)
 
     done_delta = done_mb - before_mb
     gc_delta = gc_mb - before_mb
@@ -1251,7 +1251,7 @@ async def test_max_history_none_single_bus_stress_matrix(event_handler_concurren
         gc_mb = get_memory_usage_mb()
         history_size = len(bus.event_history)
     finally:
-        await bus.stop(timeout=0, clear=True)
+        await bus.destroy(timeout=0, clear=True)
 
     done_delta = done_mb - before_mb
     gc_delta = gc_mb - before_mb
@@ -1324,9 +1324,9 @@ async def test_max_history_none_forwarding_chain_stress_matrix(event_handler_con
         middle_hist = len(middle_bus.event_history)
         sink_hist = len(sink_bus.event_history)
     finally:
-        await source_bus.stop(timeout=0, clear=True)
-        await middle_bus.stop(timeout=0, clear=True)
-        await sink_bus.stop(timeout=0, clear=True)
+        await source_bus.destroy(timeout=0, clear=True)
+        await middle_bus.destroy(timeout=0, clear=True)
+        await sink_bus.destroy(timeout=0, clear=True)
 
     gc_delta = gc_mb - before_mb
     done_delta = done_mb - before_mb
@@ -1413,8 +1413,8 @@ async def test_perf_debug_hot_path_breakdown() -> None:
         await bus_a.wait_until_idle()
         await bus_b.wait_until_idle()
     finally:
-        await bus_a.stop(timeout=0, clear=True)
-        await bus_b.stop(timeout=0, clear=True)
+        await bus_a.destroy(timeout=0, clear=True)
+        await bus_b.destroy(timeout=0, clear=True)
         profiler.restore()
     elapsed = time.perf_counter() - start
     done_mb = get_memory_usage_mb()

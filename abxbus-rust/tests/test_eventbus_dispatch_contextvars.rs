@@ -117,7 +117,7 @@ fn test_contextvar_propagates_to_handler() {
         captured.get("user_id").map(String::as_str),
         Some("user-abc")
     );
-    bus.stop();
+    bus.destroy();
     reset_contextvars();
 }
 
@@ -191,7 +191,7 @@ fn test_contextvar_propagates_through_nested_handlers() {
         Some("req-nested-123")
     );
     assert_eq!(child.get("trace_id").map(String::as_str), Some("trace-xyz"));
-    bus.stop();
+    bus.destroy();
     reset_contextvars();
 }
 
@@ -233,7 +233,7 @@ fn test_context_isolation_between_dispatches() {
     let captured = captured_values.lock().expect("captured lock").clone();
     assert!(captured.contains(&"req-A".to_string()), "{captured:?}");
     assert!(captured.contains(&"req-B".to_string()), "{captured:?}");
-    bus.stop();
+    bus.destroy();
     reset_contextvars();
 }
 
@@ -278,7 +278,7 @@ fn test_context_propagates_to_parallel_handler_concurrency() {
     let captured = captured_values.lock().expect("captured lock").clone();
     assert!(captured.contains(&"h1:req-parallel".to_string()));
     assert!(captured.contains(&"h2:req-parallel".to_string()));
-    bus.stop();
+    bus.destroy();
     reset_contextvars();
 }
 
@@ -349,8 +349,8 @@ fn test_context_propagates_through_event_forwarding() {
             .map(String::as_str),
         Some("req-forwarded")
     );
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
     reset_contextvars();
 }
 
@@ -426,8 +426,8 @@ fn test_forwarded_dispatch_context_does_not_leak_back_to_source_bus_handlers() {
         captured.get("forwarded").map(String::as_str),
         Some("forwarded-context")
     );
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
     reset_contextvars();
 }
 
@@ -470,7 +470,7 @@ fn test_handler_can_modify_context_without_affecting_parent() {
             .as_str(),
         "parent-value"
     );
-    bus.stop();
+    bus.destroy();
     reset_contextvars();
 }
 
@@ -524,7 +524,7 @@ fn test_event_parent_id_tracking_still_works() {
         .clone()
         .expect("child event parent id");
     assert_eq!(child_parent_id, parent_id);
-    bus.stop();
+    bus.destroy();
     reset_contextvars();
 }
 
@@ -593,7 +593,7 @@ fn test_dispatch_context_and_parent_id_both_work() {
         results.get("child_event_parent_id"),
         results.get("parent_event_id")
     );
-    bus.stop();
+    bus.destroy();
     reset_contextvars();
 }
 
@@ -688,7 +688,7 @@ fn test_deeply_nested_context_and_parent_tracking() {
         results[1].get("event_id"),
         "{results:?}"
     );
-    bus.stop();
+    bus.destroy();
     reset_contextvars();
 }
 

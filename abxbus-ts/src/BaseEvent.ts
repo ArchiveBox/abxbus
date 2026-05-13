@@ -936,13 +936,13 @@ export class BaseEvent {
     order: 'completion' | 'registration' = 'completion'
   ): Array<EventResultType<this> | undefined> {
     const include: EventResultInclude<this> = options.include ?? BaseEvent._defaultResultInclude
-    const raise_if_any = options.raise_if_any ?? false
+    const raise_if_any = options.raise_if_any ?? true
     const raise_if_none = options.raise_if_none ?? false
     const all_results = order === 'registration' ? this._orderedEventResultsByRegistration() : this._orderedEventResults()
     const error_results = all_results.filter((event_result) => event_result.error !== undefined || event_result.result instanceof Error)
     const included_results = all_results.filter((event_result) => BaseEvent._includeEventResult(include, event_result))
 
-    if (error_results.length > 0 && (raise_if_any || (included_results.length === 0 && error_results.length === all_results.length))) {
+    if (error_results.length > 0 && raise_if_any) {
       const errors = error_results.map((event_result) => {
         if (event_result.error instanceof Error) {
           return event_result.error
@@ -1174,21 +1174,9 @@ export class BaseEvent {
     )
   }
 
-  private _isFirstModeControlError(error: unknown): boolean {
-    if (!(error instanceof EventHandlerCancelledError || error instanceof EventHandlerAbortedError)) {
-      return false
-    }
-    if (error.message.includes("event_handler_completion='first' resolved")) {
-      return true
-    }
-    return error.cause instanceof Error && error.cause.message.includes("event_handler_completion='first' resolved")
-  }
-
-  _firstProcessingError(options: { ignore_first_mode_control_errors?: boolean } = {}): unknown | undefined {
-    const ignore_first_mode_control_errors = options.ignore_first_mode_control_errors ?? false
+  _firstProcessingError(): unknown | undefined {
     return Array.from(this.event_results.values())
       .filter((event_result) => event_result.error !== undefined && event_result.completed_at !== null)
-      .filter((event_result) => (ignore_first_mode_control_errors ? !this._isFirstModeControlError(event_result.error) : true))
       .sort((event_result_a, event_result_b) => compareIsoDatetime(event_result_a.completed_at, event_result_b.completed_at))
       .map((event_result) => event_result.error)
       .at(0)

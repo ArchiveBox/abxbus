@@ -314,7 +314,7 @@ fn test_event_result_re_raises_first_processing_exception_after_completion() {
     assert!(results
         .values()
         .all(|result| result.status == EventResultStatus::Error));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -358,7 +358,7 @@ fn test_event_result_update_creates_and_updates_typed_handler_results() {
     assert_eq!(completed.result, Some(json!("seeded")));
     assert!(completed.started_at.is_some());
     assert!(completed.completed_at.is_some());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -394,7 +394,7 @@ fn test_event_result_update_status_only_preserves_existing_error_and_result() {
         Some("RuntimeError: seeded error")
     );
     assert_eq!(status_only.result, None);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -456,7 +456,7 @@ fn test_await_event_queue_jumps_inside_handler() {
         order.lock().expect("order lock").as_slice(),
         ["parent_start", "child", "parent_end", "sibling"]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -531,7 +531,7 @@ fn test_now_options_queue_jumps_child_processing_inside_handlers() {
         ["parent_start", "child", "parent_end", "sibling"]
     );
     assert!(child_failed.load(Ordering::SeqCst));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -554,7 +554,7 @@ fn test_now_outside_handler_completes_without_raising_processing_error() {
         event.inner.inner.lock().event_status,
         EventStatus::Completed
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -575,7 +575,7 @@ fn test_event_result_options_outside_handler_suppresses_processing_error() {
         event.inner.inner.lock().event_status,
         EventStatus::Completed
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -649,7 +649,7 @@ fn test_now_outside_handler_queue_jumps_queued_execution() {
         order.lock().expect("order lock").as_slice(),
         ["blocker_start", "target", "blocker_end"]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -732,7 +732,7 @@ fn test_now_outside_handler_allows_normal_parallel_processing() {
         order.lock().expect("order lock").as_slice(),
         ["blocker_start", "target", "blocker_end"]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -800,7 +800,7 @@ fn test_wait_returns_event_without_forcing_queued_execution() {
         order.lock().expect("order lock").as_slice(),
         ["blocker_start", "blocker_end", "target"]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -869,7 +869,7 @@ fn test_now_returns_event_and_queue_jumps_queued_execution() {
         order.lock().expect("order lock").as_slice(),
         ["blocker_start", "target", "blocker_end"]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -931,7 +931,7 @@ fn test_wait_first_result_returns_before_event_completion() {
     assert!(!slow_finished.load(Ordering::SeqCst));
     assert_ne!(event.inner.lock().event_status, EventStatus::Completed);
     wait_until_bool(&slow_finished);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1000,7 +1000,7 @@ fn test_now_first_result_returns_before_event_completion() {
     wait_until_bool(&slow_finished);
     block_on(event.wait()).expect("event completed after slow handler release");
     assert_eq!(event.inner.lock().event_status, EventStatus::Completed);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1069,7 +1069,7 @@ fn test_event_result_starts_never_started_event_and_returns_first_result() {
         Some(json!("target"))
     );
     release_blocker.store(true, Ordering::SeqCst);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1158,7 +1158,7 @@ fn test_event_results_list_starts_never_started_event_and_returns_all_results() 
     mapped_values.sort_by_key(|value| value.as_str().unwrap_or_default().to_string());
     assert_eq!(mapped_values, vec![json!("first"), json!("second")]);
     release_blocker.store(true, Ordering::SeqCst);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1233,7 +1233,7 @@ fn test_event_result_helpers_do_not_wait_for_started_event() {
 
     release_handler.store(true, Ordering::SeqCst);
     assert!(block_on(bus.wait_until_idle(Some(1.0))));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1288,7 +1288,7 @@ fn test_now_on_already_executing_event_waits_without_duplicate_execution() {
         Some(json!("done"))
     );
     assert_eq!(run_count.load(Ordering::SeqCst), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1367,7 +1367,7 @@ fn test_event_result_options_apply_to_current_results() {
         Vec::<Value>::new()
     );
     release_slow.store(true, Ordering::SeqCst);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1478,7 +1478,7 @@ fn test_parallel_event_concurrency_plus_immediate_execution_races_child_events_i
         assert!(index_of(&order, &format!("{label}_start")) < parent_end_index);
         assert!(index_of(&order, &format!("{label}_end")) < parent_end_index);
     }
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1553,7 +1553,7 @@ fn test_wait_waits_in_queue_order_inside_handler() {
     let order = order.lock().expect("order lock").clone();
     assert!(index_of(&order, "sibling_start") < index_of(&order, "child_start"));
     assert!(index_of(&order, "child_end") < index_of(&order, "parent_end"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1655,7 +1655,7 @@ fn test_wait_is_passive_inside_handlers_and_times_out_for_serial_events() {
             "found_start"
         ]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1765,7 +1765,7 @@ fn __abxbus_event_completed_serial_wait_deadlock_warning_child() {
         order.lock().expect("order lock").as_slice(),
         ["parent_start", "child_timeout", "parent_end", "child_start"]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1854,7 +1854,7 @@ fn test_wait_waits_for_normal_parallel_processing_inside_handlers() {
     assert!(index_of(&order, "emitted_end") < index_of(&order, "emitted_completed"));
     assert!(index_of(&order, "found_end") < index_of(&order, "found_completed"));
     assert_eq!(order.last().map(String::as_str), Some("parent_end"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1934,7 +1934,7 @@ fn test_wait_waits_for_future_parallel_event_found_after_handler_starts() {
         .expect("waited_for lock")
         .expect("waited duration");
     assert!(waited >= Duration::from_millis(150));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2002,7 +2002,7 @@ fn test_wait_returns_event_accepts_timeout_and_rejects_unattached_pending_event(
     }))
     .expect("event should complete after release");
     assert!(Arc::ptr_eq(&returned.inner, &event.inner));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2191,7 +2191,7 @@ fn test_builtin_event_prefixed_override_is_allowed() {
     assert_eq!(inner.event_slow_timeout, Some(9.0));
     assert_eq!(inner.event_handler_timeout, Some(45.0));
     drop(inner);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]

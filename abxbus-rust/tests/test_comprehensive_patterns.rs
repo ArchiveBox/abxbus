@@ -376,8 +376,8 @@ fn test_comprehensive_patterns_forwarding_async_sync_dispatch_parent_tracking() 
         assert!(index_of(&execution_order, "parent_end") > 1);
     }
 
-    bus1.stop();
-    bus2.stop();
+    bus1.destroy();
+    bus2.destroy();
 }
 
 #[test]
@@ -476,8 +476,8 @@ fn test_race_condition_stress() {
         );
     }
 
-    bus1.stop();
-    bus2.stop();
+    bus1.destroy();
+    bus2.destroy();
 }
 
 #[test]
@@ -577,8 +577,8 @@ fn test_multi_bus_queues_are_independent_when_awaiting_child() {
     assert!(order.contains(&"Bus1_Event2_start".to_string()));
     assert!(order.contains(&"Bus2_Event3_start".to_string()));
     assert!(order.contains(&"Bus2_Event4_start".to_string()));
-    bus1.stop();
-    bus2.stop();
+    bus1.destroy();
+    bus2.destroy();
 }
 
 #[test]
@@ -668,7 +668,7 @@ fn test_awaited_child_jumps_queue_without_overshoot() {
         event3.inner.inner.lock().event_status,
         EventStatus::Completed
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -741,7 +741,7 @@ fn test_now_on_non_proxied_event_keeps_bus_paused_during_queue_jump() {
         .expect("raw child");
     assert_eq!(child.inner.lock().event_parent_id, None);
     assert!(!child.inner.lock().event_blocks_parent_completion);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -814,7 +814,7 @@ fn test_bus_pause_state_clears_after_queue_jump_completes() {
     assert!(index_of(&order, "ChildA_end") < index_of(&order, "ChildA_await_returned"));
     assert!(index_of(&order, "ChildB_end") < index_of(&order, "ChildB_await_returned"));
     assert!(index_of(&order, "Event2_start") > index_of(&order, "Event1_end"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -872,8 +872,8 @@ fn test_isinsidehandler_is_per_bus_not_global() {
     let order = execution_order.lock().expect("order lock").clone();
     assert!(index_of(&order, "bus_b_start") < index_of(&order, "bus_a_end"));
     assert!(index_of(&order, "bus_b_end") < index_of(&order, "bus_a_end"));
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -974,7 +974,7 @@ fn test_dispatch_multiple_await_one_skips_others_until_after_handler_completes()
     assert!(event2_start_idx < event3_start_idx);
     assert!(event3_start_idx < child_a_start_idx);
     assert!(child_a_start_idx < child_c_start_idx);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1025,7 +1025,7 @@ fn test_awaiting_an_already_completed_event_is_a_no_op() {
     release_tx.send(()).expect("release blocker");
     let _ = block_on(blocker.now());
     let _ = block_on(event2.now());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1108,7 +1108,7 @@ fn test_multiple_awaits_on_same_event() {
     assert!(!order.contains(&"Event2_start".to_string()));
 
     block_on(bus.wait_until_idle(Some(2.0)));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1186,7 +1186,7 @@ fn test_deeply_nested_awaited_children() {
     block_on(bus.wait_until_idle(Some(2.0)));
     let order = execution_order.lock().expect("order lock").clone();
     assert!(index_of(&order, "Event2_start") > index_of(&order, "Event1_end"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1257,8 +1257,8 @@ fn test_bug_queue_jump_two_bus_serial_handlers_should_serialize_on_each_bus() {
     let log = log.lock().expect("log lock").clone();
     assert!(index_of(&log, "a1_end") < index_of(&log, "a2_start"));
     assert!(index_of(&log, "b1_end") < index_of(&log, "b2_start"));
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -1350,8 +1350,8 @@ fn test_bug_queue_jump_two_bus_global_handler_lock_should_serialize_across_both_
             "global lock: handler start/end pair mismatch. Got: {log:?}"
         );
     }
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -1422,8 +1422,8 @@ fn test_bug_queue_jump_two_bus_mixed_bus_a_serial_bus_b_parallel() {
     let log = log.lock().expect("log lock").clone();
     assert!(index_of(&log, "a1_end") < index_of(&log, "a2_start"));
     assert!(index_of(&log, "b2_start") < index_of(&log, "b1_end"));
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -1494,8 +1494,8 @@ fn test_bug_queue_jump_two_bus_mixed_bus_a_parallel_bus_b_serial() {
     let log = log.lock().expect("log lock").clone();
     assert!(index_of(&log, "a2_start") < index_of(&log, "a1_end"));
     assert!(index_of(&log, "b1_end") < index_of(&log, "b2_start"));
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -1587,8 +1587,8 @@ fn test_forwarded_event_uses_processing_bus_defaults_unless_explicit_overrides_a
     let log = log.lock().expect("log lock").clone();
     assert!(index_of(&log, "inherited:b2_start") < index_of(&log, "inherited:b1_end"));
     assert!(index_of(&log, "override:b1_end") < index_of(&log, "override:b2_start"));
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -1650,8 +1650,8 @@ fn test_forwarded_first_mode_uses_processing_bus_handler_concurrency_defaults() 
     let log = log.lock().expect("log lock").clone();
     assert!(log.contains(&"slow_start".to_string()));
     assert!(log.contains(&"fast_start".to_string()));
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -1732,8 +1732,8 @@ fn test_bug_queue_jump_should_respect_bus_serial_event_concurrency_on_forward_bu
     assert!(index_of(&log, "slow_end") < index_of(&log, "child_b_start"));
     assert!(log.contains(&"child_a_start".to_string()));
     assert!(log.contains(&"child_a_end".to_string()));
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -1802,8 +1802,8 @@ fn test_queue_jump_with_fully_parallel_forward_bus_starts_immediately() {
 
     let log = log.lock().expect("log lock").clone();
     assert!(index_of(&log, "child_b_start") < index_of(&log, "slow_end"));
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -1873,8 +1873,8 @@ fn test_queue_jump_with_parallel_events_and_serial_handlers_on_forward_bus_still
 
     let log = log.lock().expect("log lock").clone();
     assert!(index_of(&log, "child_b_start") < index_of(&log, "slow_end"));
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]

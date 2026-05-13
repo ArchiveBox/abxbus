@@ -89,9 +89,9 @@ async def test_forwarded_event_does_not_leave_stale_active_ids():
             assert second.event_id not in bus.processing_event_ids
 
     finally:
-        await peer1.stop(clear=True)
-        await peer2.stop(clear=True)
-        await peer3.stop(clear=True)
+        await peer1.destroy(clear=True)
+        await peer2.destroy(clear=True)
+        await peer3.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -117,8 +117,8 @@ async def test_forwarding_same_event_does_not_set_self_parent_id():
         assert event.event_parent_id is None
         assert event.event_path == [origin.label, target.label]
     finally:
-        await origin.stop(clear=True)
-        await target.stop(clear=True)
+        await origin.destroy(clear=True)
+        await target.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -176,8 +176,8 @@ async def test_forwarded_event_uses_processing_bus_defaults_unless_overridden():
             f'explicit event override should force serial handler concurrency; got log: {log}'
         )
     finally:
-        await bus_a.stop(clear=True)
-        await bus_b.stop(clear=True)
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -219,5 +219,5 @@ async def test_forwarded_first_mode_uses_processing_bus_handler_concurrency_defa
         assert 'slow_start' in log, f'slow handler should start under parallel first-mode; log={log}'
         assert 'fast_start' in log, f'fast handler should start under parallel first-mode; log={log}'
     finally:
-        await bus_a.stop(clear=True)
-        await bus_b.stop(clear=True)
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)

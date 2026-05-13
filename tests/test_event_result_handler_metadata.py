@@ -42,7 +42,7 @@ async def test_event_result_run_handler_with_base_event() -> None:
     assert result_value == 'ok'
     assert event_result.status == 'completed'
     assert event_result.result == 'ok'
-    await test_bus.stop()
+    await test_bus.destroy()
 
 
 @pytest.mark.asyncio
@@ -77,7 +77,7 @@ async def test_event_and_result_without_eventbus() -> None:
 
     await test_bus.emit(event).wait()
     assert event.event_completed_at is not None
-    await test_bus.stop()
+    await test_bus.destroy()
 
 
 def test_event_handler_model_is_serializable() -> None:

@@ -311,7 +311,7 @@ async def run_main():
     print(parent_event.event_children)           # show all the child events emitted during handling of an event
     await parent_event.now()
     print(bus.log_tree())
-    await bus.stop()
+    await bus.destroy()
 
 if __name__ == '__main__':
     asyncio.run(run_main())
@@ -626,14 +626,14 @@ try:
     await event_service.process_request()
 finally:
     # Clear all event history and remove from global tracking
-    await event_service.eventbus.stop(clear=True)
+    await event_service.eventbus.destroy(clear=True)
 ```
 
 **Memory Monitoring:**
 
 - EventBus automatically monitors total memory usage across all instances
 - Warnings are logged when total memory exceeds 50MB
-- Use `bus.stop(clear=True)` to completely free memory for unused buses
+- Use `bus.destroy(clear=True)` to completely free memory for unused buses
 - To avoid memory leaks from big events, the default limits are intentionally kept low. events are normally processed as they come in, and there is rarely a need to keep every event in memory longer after its complete. long-term storage should be accomplished using other mechanisms, like the WAL
 
 <br/>
@@ -891,14 +891,14 @@ await bus.wait_until_idle()             # wait indefinitely until EventBus has f
 await bus.wait_until_idle(timeout=5.0)  # wait up to 5 seconds
 ```
 
-##### `stop(timeout: float | None=None, clear: bool=False)`
+##### `destroy(timeout: float | None=None, clear: bool=False)`
 
-Stop the event bus, optionally waiting for pending events and clearing memory.
+Destroy the event bus, optionally waiting for pending events and clearing memory.
 
 ```python
-await bus.stop(timeout=1.0)  # Graceful stop, wait up to 1sec for pending and active events to finish processing
-await bus.stop()             # Immediate shutdown, aborts all pending and actively processing events
-await bus.stop(clear=True)   # Stop and clear all event history and handlers to free memory
+await bus.destroy(timeout=1.0)  # Graceful destroy, wait up to 1sec for pending and active events to finish processing
+await bus.destroy()             # Immediate destroy, aborts all pending and actively processing events
+await bus.destroy(clear=True)   # Destroy and clear all event history and handlers to free memory
 ```
 
 ---
@@ -1004,7 +1004,7 @@ seeded = event.event_result_update(handler=handler_entry, eventbus=bus, status='
 seeded.update(status='completed', result='seeded')
 ```
 
-##### `event_result(include: EventResultFilter=None, raise_if_any: bool=True, raise_if_none: bool=True) -> Any`
+##### `event_result(include: EventResultFilter=None, raise_if_any: bool=True, raise_if_none: bool=False) -> Any`
 
 Utility method helper to execute all the handlers and return the first handler's raw result value.
 
@@ -1012,7 +1012,7 @@ Utility method helper to execute all the handlers and return the first handler's
 
 - `include`: Filter function `(result, event_result) -> bool` to include only specific results (default: only non-None, non-exception results)
 - `raise_if_any`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
-- `raise_if_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: True`)
+- `raise_if_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: False`)
 
 ```python
 # by default it returns the first successful non-None result value
@@ -1025,7 +1025,7 @@ valid_result = await event.event_result(include=lambda result, _: isinstance(res
 result_or_none = await event.event_result(raise_if_any=False, raise_if_none=False)
 ```
 
-##### `event_results_list(include: EventResultFilter=None, raise_if_any: bool=True, raise_if_none: bool=True) -> list[Any]`
+##### `event_results_list(include: EventResultFilter=None, raise_if_any: bool=True, raise_if_none: bool=False) -> list[Any]`
 
 Utility method helper to get all raw result values in a list.
 
@@ -1033,7 +1033,7 @@ Utility method helper to get all raw result values in a list.
 
 - `include`: Filter function `(result, event_result) -> bool` to include only specific results (default: only non-None, non-exception results)
 - `raise_if_any`: If `True`, raise exception if any handler raises any `Exception` (`default: True`)
-- `raise_if_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: True`)
+- `raise_if_none`: If `True`, raise exception if results are empty / all results are `None` or `Exception` (`default: False`)
 
 ```python
 # by default it returns all successful non-None result values

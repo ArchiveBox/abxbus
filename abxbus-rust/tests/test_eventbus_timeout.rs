@@ -183,7 +183,7 @@ fn run_slow_warning_event(
         ..Default::default()
     });
     let _ = block_on(event.now());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -226,7 +226,7 @@ fn test_event_timeout_aborts_in_flight_handler_result() {
             "message": "timeout",
         })
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -258,7 +258,7 @@ fn test_handler_completes_within_timeout() {
         .expect("missing result");
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("fast")));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -319,7 +319,7 @@ fn test_event_timeouts_abort_handlers_across_concurrency_modes() {
                 }),
                 "expected aborted error for event={event_mode:?} handler={handler_mode:?}"
             );
-            bus.stop();
+            bus.destroy();
         }
     }
 }
@@ -509,7 +509,7 @@ fn test_event_handler_errors_expose_event_result_cause_and_timeout_metadata() {
         .error_metadata_json(&unawaited_child)
         .is_none());
 
-    bus.stop();
+    bus.destroy();
 }
 
 fn assert_event_timeout_does_not_relabel_preexisting_handler_timeout() {
@@ -562,7 +562,7 @@ fn assert_event_timeout_does_not_relabel_preexisting_handler_timeout() {
     assert!(results
         .iter()
         .any(|result| error_type(result) == "EventHandlerAbortedError"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -627,7 +627,7 @@ fn test_timeout_still_marks_event_failed_when_other_handlers_finish() {
         completed.lock().expect("completed lock").as_slice(),
         &["fast"]
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -677,7 +677,7 @@ fn test_event_timeout_is_hard_cap_in_parallel_mode() {
     assert!(results
         .iter()
         .all(|result| error_type(result) == "EventHandlerAbortedError"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -743,7 +743,7 @@ fn test_event_level_timeout_marks_started_parallel_handlers_as_aborted_or_timed_
     assert!(!results
         .iter()
         .any(|result| error_type(result) == "EventHandlerCancelledError"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -783,7 +783,7 @@ fn test_event_level_concurrency_overrides_do_not_bypass_timeout_aborts() {
         .expect("result");
     assert_eq!(result.status, EventResultStatus::Error);
     assert_eq!(error_type(&result), "EventHandlerAbortedError");
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -844,7 +844,7 @@ fn test_event_timeout_is_hard_cap_across_serial_handlers() {
         .as_deref()
         .unwrap_or_default()
         .contains("EventHandlerCancelledError"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -951,8 +951,8 @@ fn test_forwarded_timeout_path_does_not_stall_followup_events() {
     );
     assert_eq!(*bus_a_tail_runs.lock().expect("bus a tail runs lock"), 1);
     assert_eq!(*bus_b_tail_runs.lock().expect("bus b tail runs lock"), 1);
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -1000,7 +1000,7 @@ fn test_handler_timeout_marks_error_and_other_handlers_still_complete() {
         .contains("EventHandlerTimeoutError"));
     assert_eq!(fast_result.status, EventResultStatus::Completed);
     assert_eq!(fast_result.result, Some(json!("fast")));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1067,7 +1067,7 @@ fn test_handler_timeout_ignores_late_handler_result_and_late_emits() {
         !*late_handler_ran.lock().expect("late handler lock"),
         "late handler should not run after source handler timed out"
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1133,7 +1133,7 @@ fn test_event_timeout_ignores_late_handler_result_and_late_emits() {
         !*late_handler_ran.lock().expect("late handler lock"),
         "late handler should not run after source handler timed out"
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1196,7 +1196,7 @@ fn test_processing_time_timeout_defaults_resolve_at_execution_time() {
         .cloned()
         .expect("handler result");
     assert_eq!(result.timeout, Some(12.0));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1258,7 +1258,7 @@ fn test_parent_timeout_does_not_cancel_unawaited_child_with_own_timeout() {
         .values()
         .any(|r| r.status == EventResultStatus::Completed);
     assert!(is_completed);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1336,7 +1336,7 @@ fn test_parent_timeout_does_not_cancel_unawaited_children_that_have_no_timeout_o
     assert_eq!(child_results.len(), 1);
     assert_eq!(child_results[0].status, EventResultStatus::Completed);
     assert_eq!(child_results[0].result, Some(json!("child_done")));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1414,7 +1414,7 @@ fn test_parent_timeout_does_not_cancel_unawaited_child_handler_results_under_ser
     assert!(child_results
         .iter()
         .all(|status| *status == EventResultStatus::Completed));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1486,7 +1486,7 @@ fn test_parent_timeout_cancels_awaited_child_handler_results() {
         .as_deref()
         .unwrap_or_default()
         .contains("EventHandlerAbortedError"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1524,8 +1524,8 @@ fn test_multi_bus_timeout_is_recorded_on_target_bus() {
         event.inner.inner.lock().event_path,
         vec![bus_a.label(), bus_b.label()]
     );
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -1574,8 +1574,8 @@ fn test_forwarded_event_timeout_aborts_apply_across_buses() {
         .expect("bus_b result");
     assert_eq!(bus_b_result.status, EventResultStatus::Error);
     assert_eq!(error_type(bus_b_result), "EventHandlerAbortedError");
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -1653,8 +1653,8 @@ fn test_queue_jump_awaited_child_timeout_aborts_still_fire_across_buses() {
             .collect::<Vec<_>>(),
         child.to_json_value()
     );
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -1721,7 +1721,7 @@ fn test_followup_event_runs_after_parent_timeout_in_queue_jump_path() {
         abxbus_rust::types::EventStatus::Completed
     );
     assert_eq!(*tail_runs.lock().expect("tail runs lock"), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1800,7 +1800,7 @@ fn test_regression_parent_timeout_while_reacquire_waits_behind_third_serial_hand
     let _ = block_on(tail.now());
     assert_eq!(tail.inner.inner.lock().event_status, EventStatus::Completed);
     assert_eq!(*tail_runs.lock().expect("tail runs lock"), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1933,7 +1933,7 @@ fn test_regression_nested_queue_jump_with_timeout_cancellation_remains_lock_safe
     let _ = block_on(tail.now());
     assert_eq!(tail.inner.inner.lock().event_status, EventStatus::Completed);
     assert_eq!(*tail_runs.lock().expect("tail runs lock"), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1969,7 +1969,7 @@ fn test_absent_event_timeout_falls_back_to_bus_default() {
         .expect("result");
     assert_eq!(result.status, EventResultStatus::Error);
     assert_eq!(error_type(&result), "EventHandlerAbortedError");
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2006,7 +2006,7 @@ fn test_event_timeout_none_uses_bus_default_timeout_at_execution() {
     assert_eq!(event.inner.inner.lock().event_timeout, None);
     assert_eq!(result.status, EventResultStatus::Error);
     assert_eq!(error_type(&result), "EventHandlerAbortedError");
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2250,7 +2250,7 @@ fn test_multi_level_timeout_cascade_with_mixed_cancellations() {
         .iter()
         .all(|result| result.status == EventResultStatus::Completed));
 
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2356,7 +2356,7 @@ fn test_unawaited_descendant_preserves_lineage_and_is_not_cancelled_by_ancestor_
     assert_eq!(deep_result.status, EventResultStatus::Completed);
     assert_eq!(deep_result.result, Some(json!("deep_done")));
 
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2689,7 +2689,7 @@ fn test_three_level_timeout_cascade_with_per_level_timeouts_and_cascading_cancel
         assert!(result.completed_at.is_some());
     }
 
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2751,7 +2751,7 @@ fn test_handler_timeout_resolution_matches_ts_precedence() {
         .values()
         .all(|result| result.timeout == Some(0.08)));
 
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -2768,7 +2768,7 @@ fn test_event_handler_detect_file_paths_toggle() {
         Ok(json!("ok"))
     });
     assert_eq!(entry.handler_file_path, None);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]

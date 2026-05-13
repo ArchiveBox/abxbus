@@ -160,7 +160,7 @@ async def test_comprehensive_patterns():
 
     print('\n✅ All comprehensive patterns work correctly!')
 
-    # Print event history tree before stopping buses
+    # Print event history tree before destroyping buses
     print('\nEvent History Trees:')
     print(f'bus1 has {len(bus1.event_history)} events in history')
     print(f'bus2 has {len(bus2.event_history)} events in history')
@@ -176,8 +176,8 @@ async def test_comprehensive_patterns():
     log_eventbus_tree(bus1)
     log_eventbus_tree(bus2)
 
-    await bus1.stop(clear=True)
-    await bus2.stop(clear=True)
+    await bus1.destroy(clear=True)
+    await bus2.destroy(clear=True)
 
 
 async def test_await_forwarded_event_waits_for_target_bus_handlers():
@@ -217,8 +217,8 @@ async def test_await_forwarded_event_waits_for_target_bus_handlers():
         ), event.event_results
         assert all(result.status in ('completed', 'error') for result in event.event_results.values())
     finally:
-        await bus_src.stop(clear=True)
-        await bus_dst.stop(clear=True)
+        await bus_src.destroy(clear=True)
+        await bus_dst.destroy(clear=True)
 
 
 async def test_race_condition_stress():
@@ -290,8 +290,8 @@ async def test_race_condition_stress():
     log_eventbus_tree(bus1)
     log_eventbus_tree(bus2)
 
-    await bus1.stop(clear=True)
-    await bus2.stop(clear=True)
+    await bus1.destroy(clear=True)
+    await bus2.destroy(clear=True)
 
 
 async def test_awaited_child_jumps_queue_no_overshoot():
@@ -427,7 +427,7 @@ async def test_awaited_child_jumps_queue_no_overshoot():
         print('✅ Awaited child jumps queue, no overshoot, FIFO maintained!')
 
     finally:
-        await bus.stop(clear=True)
+        await bus.destroy(clear=True)
 
 
 async def test_dispatch_multiple_await_one_skips_others():
@@ -574,7 +574,7 @@ async def test_dispatch_multiple_await_one_skips_others():
         print('✅ Dispatch multiple, await one works correctly!')
 
     finally:
-        await bus.stop(clear=True)
+        await bus.destroy(clear=True)
 
 
 async def test_multi_bus_forwarding_with_queued_events():
@@ -695,8 +695,8 @@ async def test_multi_bus_forwarding_with_queued_events():
         print('✅ Multi-bus forwarding with queued events works correctly!')
 
     finally:
-        await bus1.stop(clear=True)
-        await bus2.stop(clear=True)
+        await bus1.destroy(clear=True)
+        await bus2.destroy(clear=True)
 
 
 async def test_await_already_completed_event():
@@ -752,7 +752,7 @@ async def test_await_already_completed_event():
         print('✅ Await already completed event works correctly!')
 
     finally:
-        await bus.stop(clear=True)
+        await bus.destroy(clear=True)
 
 
 async def test_multiple_awaits_same_event():
@@ -852,7 +852,7 @@ async def test_multiple_awaits_same_event():
         print('✅ Multiple awaits same event works correctly!')
 
     finally:
-        await bus.stop(clear=True)
+        await bus.destroy(clear=True)
 
 
 async def test_deeply_nested_awaited_children():
@@ -940,7 +940,7 @@ async def test_deeply_nested_awaited_children():
         print('✅ Deeply nested awaited children works correctly!')
 
     finally:
-        await bus.stop(clear=True)
+        await bus.destroy(clear=True)
 
 
 async def main():

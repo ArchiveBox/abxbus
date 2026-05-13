@@ -50,7 +50,7 @@ struct FindWaiter {
 struct BusRuntime {
     queue: Mutex<VecDeque<Arc<BaseEvent>>>,
     queue_notify: Event,
-    stop: Mutex<bool>,
+    destroyed: Mutex<bool>,
     loop_started: Mutex<bool>,
     processing_event_ids: Mutex<HashSet<String>>,
     events: Mutex<HashMap<String, Arc<BaseEvent>>>,
@@ -479,7 +479,7 @@ impl EventBus {
             runtime: Arc::new(BusRuntime {
                 queue: Mutex::new(VecDeque::new()),
                 queue_notify: Event::new(),
-                stop: Mutex::new(false),
+                destroyed: Mutex::new(false),
                 loop_started: Mutex::new(false),
                 processing_event_ids: Mutex::new(HashSet::new()),
                 events: Mutex::new(HashMap::new()),
@@ -595,7 +595,7 @@ impl EventBus {
                         continue;
                     }
 
-                    if *bus.runtime.stop.lock() {
+                    if *bus.runtime.destroyed.lock() {
                         break;
                     }
                     listener.await;
@@ -628,8 +628,8 @@ impl EventBus {
         });
     }
 
-    pub fn stop(&self) {
-        *self.runtime.stop.lock() = true;
+    pub fn destroy(&self) {
+        *self.runtime.destroyed.lock() = true;
         self.unregister_instance();
         self.runtime.queue_notify.notify(usize::MAX);
     }
@@ -664,11 +664,11 @@ impl EventBus {
     }
 
     pub fn is_running_for_test(&self) -> bool {
-        *self.runtime.loop_started.lock() && !*self.runtime.stop.lock()
+        *self.runtime.loop_started.lock() && !*self.runtime.destroyed.lock()
     }
 
-    pub fn is_stopped_for_test(&self) -> bool {
-        *self.runtime.stop.lock()
+    pub fn is_destroyed_for_test(&self) -> bool {
+        *self.runtime.destroyed.lock()
     }
 
     pub fn runtime_payload_for_test(&self) -> HashMap<String, Arc<BaseEvent>> {
@@ -2864,7 +2864,7 @@ impl EventBus {
         call_timeout: Option<f64>,
         handler_timeout_won_on_timeout: bool,
         context_snapshot: Option<dcontext::ContextSnapshot>,
-        _inline_call: bool,
+        inline_call: bool,
     ) -> bool {
         let call = handler
             .callable
@@ -2875,7 +2875,12 @@ impl EventBus {
         let event_id_for_call = event.inner.lock().event_id.clone();
         let handler_id_for_call = handler.id.clone();
         let runloop_pause = self.locks.request_runloop_pause();
-        let call_result = {
+        let call_result = if inline_call && call_timeout.is_none() {
+            let _context_guard = context_snapshot.map(dcontext::attach);
+            let response = call(event_clone).await;
+            Self::clear_handler_context_stale(&event_id_for_call, &handler_id_for_call);
+            Ok(response)
+        } else {
             let (tx, rx) = std_mpsc::channel();
             let context_bus_id = self.id.clone();
             let context_event_id = event_id_for_call.clone();

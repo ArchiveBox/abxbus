@@ -7,6 +7,7 @@ import asyncio
 import logging
 from typing import Any, Literal, assert_type
 
+import pytest
 from pydantic import BaseModel
 
 from abxbus import BaseEvent, EventBus, EventResult
@@ -51,7 +52,7 @@ async def test_pydantic_model_result_casting():
     assert result.screenshot_base64 == b'fake_screenshot_data'
     assert result.error is None
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 async def test_builtin_type_casting():
@@ -80,7 +81,7 @@ async def test_builtin_type_casting():
     int_result = await int_event.event_result()
     assert isinstance(int_result, int)
     assert int_result == 123
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 async def test_casting_failure_handling():
@@ -104,7 +105,50 @@ async def test_casting_failure_handling():
     assert isinstance(event_result.error, ValueError)
     assert 'expected event_result_type' in str(event_result.error)
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
+
+
+async def test_all_error_result_options_match_cross_language_matrix():
+    bus = EventBus(name='all_error_result_options_bus', event_handler_concurrency='parallel')
+
+    class AllErrorEvent(BaseEvent[str]):
+        pass
+
+    async def fail_one(event: AllErrorEvent) -> str:
+        raise RuntimeError('first failure')
+
+    async def fail_two(event: AllErrorEvent) -> str:
+        raise ValueError('second failure')
+
+    bus.on(AllErrorEvent, fail_one)
+    bus.on(AllErrorEvent, fail_two)
+
+    event = await bus.emit(AllErrorEvent()).now()
+
+    with pytest.raises(ExceptionGroup):
+        await event.event_result()
+    with pytest.raises(ExceptionGroup):
+        await event.event_results_list()
+
+    assert await event.event_result(raise_if_any=False, raise_if_none=False) is None
+    assert await event.event_results_list(raise_if_any=False, raise_if_none=False) == []
+
+    with pytest.raises(ValueError, match='Expected at least one handler'):
+        await event.event_result(raise_if_any=False, raise_if_none=True)
+    with pytest.raises(ValueError, match='Expected at least one handler'):
+        await event.event_results_list(raise_if_any=False, raise_if_none=True)
+
+    with pytest.raises(ExceptionGroup):
+        await event.event_result(raise_if_any=True, raise_if_none=False)
+    with pytest.raises(ExceptionGroup):
+        await event.event_results_list(raise_if_any=True, raise_if_none=False)
+
+    with pytest.raises(ExceptionGroup):
+        await event.event_result(raise_if_any=True, raise_if_none=True)
+    with pytest.raises(ExceptionGroup):
+        await event.event_results_list(raise_if_any=True, raise_if_none=True)
+
+    await bus.destroy(clear=True)
 
 
 async def test_no_casting_when_no_result_type():
@@ -128,7 +172,7 @@ async def test_no_casting_when_no_result_type():
     assert isinstance(result, dict)
     assert result == {'raw': 'data'}
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 async def test_result_type_stored_in_event_result():
@@ -151,7 +195,7 @@ async def test_result_type_stored_in_event_result():
     assert isinstance(event_result.result, str)
     assert event_result.result == '123'
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 async def test_typed_accessors_normalize_forwarded_event_results_to_none():
@@ -176,7 +220,7 @@ async def test_typed_accessors_normalize_forwarded_event_results_to_none():
     assert result is None
     assert results_list == [None]
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 async def test_event_result_and_results_list_use_registration_order_for_current_result_subset():
@@ -216,7 +260,7 @@ async def test_event_result_and_results_list_use_registration_order_for_current_
     assert list(event.event_results) == [handler.id for handler in handlers]
     assert completed_order == ['late', 'winner', 'null']
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 async def test_run_handler_marks_started_after_handler_lock_entry():
@@ -255,7 +299,7 @@ async def test_run_handler_marks_started_after_handler_lock_entry():
     assert event.event_results[first_entry.id].result == 'first'
     assert event.event_results[second_entry.id].result == 'second'
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 async def test_run_handler_starts_slow_monitor_after_lock_wait(caplog: Any):
@@ -304,7 +348,7 @@ async def test_run_handler_starts_slow_monitor_after_lock_wait(caplog: Any):
     try:
         await pending_event.wait()
     finally:
-        await bus.stop(clear=True)
+        await bus.destroy(clear=True)
 
     slow_handler_messages_after_release = [
         record.message
@@ -411,7 +455,7 @@ async def test_find_type_inference():
     await dispatch_task2
     await dispatch_task3
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 async def test_find_past_type_inference():
@@ -435,7 +479,7 @@ async def test_find_past_type_inference():
     assert_type(queried, QueryEvent)
     assert queried.event_id == event.event_id
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 async def test_dispatch_type_inference():
@@ -505,7 +549,7 @@ async def test_dispatch_type_inference():
     await isinstance_type_event.now()
     await isinstance_type_event.event_result()
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 # Consolidated from tests/test_auto_event_result_schema.py
@@ -514,7 +558,6 @@ async def test_dispatch_type_inference():
 
 from dataclasses import dataclass
 
-import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_jsonable_python
 from typing_extensions import TypedDict
@@ -821,7 +864,7 @@ async def test_json_schema_nested_object_and_array_runtime_enforcement():
     assert invalid_result.status == 'error'
     assert invalid_result.error is not None
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 def test_no_generic_parameter():
@@ -945,7 +988,7 @@ async def test_module_level_runtime_enforcement():
     assert event_result.status == 'error'
     assert isinstance(event_result.error, Exception)
 
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 def test_extract_basemodel_generic_arg_basic():
@@ -1068,4 +1111,4 @@ async def test_simple_typed_result_model_roundtrip_and_status() -> None:
         assert isinstance(event_result.result, SimpleResult)
         assert event_result.result == SimpleResult(value='hello', count=42)
     finally:
-        await bus.stop(clear=True)
+        await bus.destroy(clear=True)

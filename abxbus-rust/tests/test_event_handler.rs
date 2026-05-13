@@ -115,7 +115,7 @@ fn test_event_handler_completion_bus_default_first_serial() {
         .as_deref()
         .unwrap_or_default()
         .contains("Cancelled: first result resolved"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -158,7 +158,7 @@ fn test_event_handler_completion_explicit_override_beats_bus_default() {
     assert!(results
         .values()
         .all(|result| result.status == EventResultStatus::Completed));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -232,7 +232,7 @@ fn test_event_parallel_first_races_and_cancels_non_winners() {
         .as_deref()
         .unwrap_or_default()
         .contains("first result resolved")));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -316,7 +316,7 @@ fn test_event_handler_completion_first_cancels_parallel_losers() {
                 .as_deref()
                 .unwrap_or_default()
                 .contains("first result resolved")));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -347,7 +347,7 @@ fn test_event_first_preserves_falsy_results() {
     let result = block_on(event.event_result(non_raising_result_options())).expect("first result");
     assert_eq!(result, Some(json!(0)));
     assert!(!*second_handler_called.lock().expect("called lock"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -377,7 +377,7 @@ fn test_event_first_preserves_false_and_empty_string_results() {
         block_on(false_event.event_result(non_raising_result_options())).expect("first result");
     assert_eq!(false_result, Some(json!(false)));
     assert!(!*false_second_called.lock().expect("called lock"));
-    false_bus.stop();
+    false_bus.destroy();
 
     let str_bus = EventBus::new_with_options(
         Some("CompletionFalsyEmptyStringBus".to_string()),
@@ -404,7 +404,7 @@ fn test_event_first_preserves_false_and_empty_string_results() {
         block_on(str_event.event_result(non_raising_result_options())).expect("first result");
     assert_eq!(str_result, Some(json!("")));
     assert!(!*str_second_called.lock().expect("called lock"));
-    str_bus.stop();
+    str_bus.destroy();
 }
 
 #[test]
@@ -452,7 +452,7 @@ fn test_event_first_skips_none_result_and_uses_next_winner() {
     assert_eq!(none_result.result, Some(Value::Null));
     assert_eq!(winner_result.status, EventResultStatus::Completed);
     assert_eq!(winner_result.result, Some(json!("winner")));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -507,7 +507,7 @@ fn test_event_first_skips_baseevent_result_and_uses_next_winner() {
                 .unwrap_or_default()
                 .contains("first result resolved")
     }));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -528,7 +528,7 @@ fn test_event_handler_concurrency_bus_default_remains_unset_on_dispatch() {
     });
     assert_eq!(event.inner.inner.lock().event_handler_concurrency, None);
     let _ = block_on(event.now());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -575,5 +575,5 @@ fn test_event_handler_concurrency_per_event_override_controls_execution_mode() {
     let parallel_event = bus.emit(parallel_event);
     let _ = block_on(parallel_event.now());
     assert!(*max_in_flight.lock().expect("max lock") >= 2);
-    bus.stop();
+    bus.destroy();
 }

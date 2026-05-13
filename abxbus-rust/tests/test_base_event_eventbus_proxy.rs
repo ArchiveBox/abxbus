@@ -78,7 +78,7 @@ fn test_event_event_bus_inside_handler_returns_the_dispatching_bus() {
         child.event_bus().map(|bus| bus.name.clone()).as_deref(),
         Some(bus_name.as_str())
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn test_legacy_bus_property_is_not_exposed_inside_handlers() {
         .to_json_value()
         .get("bus")
         .is_none());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -144,7 +144,7 @@ fn test_event_bus_aliases_bus_property() {
         .as_object()
         .unwrap()
         .contains_key("bus"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -175,7 +175,7 @@ fn test_event_event_bus_is_set_for_child_events_emitted_in_handler() {
         child_bus_name.lock().expect("child bus lock").as_deref(),
         Some(bus_name.as_str())
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -198,7 +198,7 @@ fn test_event_event_bus_is_absent_on_detached_events() {
     let detached = BaseEvent::from_json_value(original.to_json_value());
     assert!(detached.event_bus().is_none());
     assert_eq!(detached.inner.lock().event_path, vec![bus.label()]);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -212,7 +212,7 @@ fn test_event_event_bus_is_available_outside_handler_context() {
         event.event_bus().map(|bus| bus.name.clone()).as_deref(),
         Some(bus_name.as_str())
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -262,8 +262,8 @@ fn test_event_event_bus_returns_correct_bus_when_multiple_buses_exist() {
             .as_deref(),
         Some(bus2_name.as_str())
     );
-    bus1.stop();
-    bus2.stop();
+    bus1.destroy();
+    bus2.destroy();
 }
 
 #[test]
@@ -309,8 +309,8 @@ fn test_event_event_bus_reflects_the_currently_processing_bus_when_forwarded() {
         event.inner.lock().event_path,
         vec![bus1.label(), bus2.label()]
     );
-    bus1.stop();
-    bus2.stop();
+    bus1.destroy();
+    bus2.destroy();
 }
 
 #[test]
@@ -353,7 +353,7 @@ fn test_event_event_bus_in_nested_handlers_sees_the_same_bus() {
         inner_bus_name.lock().expect("inner bus lock").as_deref(),
         Some(bus_name.as_str())
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -398,7 +398,7 @@ fn test_event_emit_awaited_children_pass_explicit_handler_context_to_immediate_p
             .map(|result| result.handler.id.as_str())
     );
     assert!(child_inner.event_blocks_parent_completion);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -511,7 +511,7 @@ fn test_event_emit_sets_parent_child_relationships_through_3_levels() {
     );
     assert!(bus.event_is_child_of(&child, &parent));
     assert!(bus.event_is_child_of(&grandchild, &parent));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -579,8 +579,8 @@ fn test_event_emit_with_forwarding_child_dispatch_goes_to_the_correct_bus() {
         Some(parent.inner.lock().event_id.as_str())
     );
     assert_eq!(child.inner.lock().event_path, vec![bus2.label()]);
-    bus1.stop();
-    bus2.stop();
+    bus1.destroy();
+    bus2.destroy();
 }
 
 #[test]
@@ -599,7 +599,7 @@ fn test_event_event_bus_is_set_on_the_event_after_dispatch_outside_handler() {
         Some(bus_name.as_str())
     );
     let _ = block_on(dispatched.wait());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -630,7 +630,7 @@ fn test_event_emit_from_handler_correctly_attributes_event_emitted_by_handler_id
         .clone()
         .expect("event_emitted_by_handler_id");
     assert!(parent.inner.lock().event_results.contains_key(&emitted_by));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -661,7 +661,7 @@ fn test_dispatch_preserves_explicit_event_parent_id_and_does_not_override_it() {
         child.inner.lock().event_parent_id.as_deref(),
         Some(parent.inner.lock().event_id.as_str())
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -689,7 +689,7 @@ fn test_event_is_child_of_and_event_is_parent_of_work_for_direct_children() {
     );
     assert!(bus.event_is_child_of(&child, &parent));
     assert!(bus.event_is_parent_of(&parent, &child));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -730,7 +730,7 @@ fn test_event_is_child_of_works_for_grandchildren() {
         Some(child.inner.lock().event_id.as_str())
     );
     assert!(bus.event_is_parent_of(&parent, &grandchild));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -744,7 +744,7 @@ fn test_event_is_child_of_returns_false_for_unrelated_events() {
 
     assert!(!bus.event_is_child_of(&unrelated, &parent));
     assert!(!bus.event_is_parent_of(&parent, &unrelated));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]

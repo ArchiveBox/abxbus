@@ -64,7 +64,7 @@ async def eventbus():
     """Create an event bus for testing"""
     bus = EventBus(max_history_size=10000)  # Increase history limit for tests
     yield bus
-    await bus.stop()
+    await bus.destroy()
 
 
 @pytest.fixture
@@ -72,7 +72,7 @@ async def parallel_eventbus():
     """Create an event bus with parallel handler execution"""
     bus = EventBus(event_handler_concurrency='parallel')
     yield bus
-    await bus.stop()
+    await bus.destroy()
 
 
 class TestEventBusBasics:
@@ -119,7 +119,7 @@ class TestEventBusBasics:
             await bus.emit(RecursiveEvent(level=0, max_level=5))
             assert seen_levels == [0, 1, 2, 3, 4, 5]
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     @pytest.mark.anyio
     async def test_default_handler_recursion_depth_still_catches_runaway_loops(self):
@@ -140,10 +140,10 @@ class TestEventBusBasics:
                 for result in historical_event.event_results.values()
             )
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
-    async def test_auto_start_and_stop(self):
-        """Test auto-start functionality and stopping the event bus"""
+    async def test_auto_start_and_destroy(self):
+        """Test auto-start functionality and destroying the event bus"""
         bus = EventBus()
 
         # Should not be running initially
@@ -158,8 +158,8 @@ class TestEventBusBasics:
         assert bus._is_running is True
         assert bus._runloop_task is not None
 
-        # Stop the bus
-        await bus.stop()
+        # Destroy the bus
+        await bus.destroy()
         assert bus._is_running is False
 
     async def test_wait_until_idle_recovers_when_idle_flag_was_cleared(self):
@@ -180,10 +180,10 @@ class TestEventBusBasics:
 
             await asyncio.wait_for(bus.wait_until_idle(), timeout=1.0)
         finally:
-            await bus.stop()
+            await bus.destroy()
 
-        # Stop again should be idempotent
-        await bus.stop()
+        # Destroy again should be idempotent
+        await bus.destroy()
         assert bus._is_running is False
 
 
@@ -271,7 +271,7 @@ class TestEventEnqueueing:
             await bus.wait_until_idle()
             assert processed == 150
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_zero_history_size_keeps_inflight_and_drops_on_completion(self):
         """max_history_size=0 keeps in-flight events but removes them as soon as they complete."""
@@ -300,7 +300,7 @@ class TestEventEnqueueing:
 
             assert len(bus.event_history) == 0
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
 
 class TestHandlerRegistration:
@@ -557,9 +557,9 @@ class TestEventForwarding:
             assert seen == {'A': 1, 'B': 1, 'C': 1}
             assert event.event_path == [bus_a.label, bus_b.label, bus_c.label]
         finally:
-            await bus_a.stop(clear=True)
-            await bus_b.stop(clear=True)
-            await bus_c.stop(clear=True)
+            await bus_a.destroy(clear=True)
+            await bus_b.destroy(clear=True)
+            await bus_c.destroy(clear=True)
 
 
 class TestFIFOOrdering:
@@ -744,8 +744,8 @@ class TestEventCompletion:
 class TestEdgeCases:
     """Test edge cases and special scenarios"""
 
-    async def test_stop_with_pending_events(self):
-        """Test stopping event bus with events still in queue"""
+    async def test_destroy_with_pending_events(self):
+        """Test destroying event bus with events still in queue"""
         bus = EventBus()
 
         # Add a slow handler
@@ -759,10 +759,10 @@ class TestEdgeCases:
         for i in range(5):
             bus.emit(UserActionEvent(action=f'action_{i}', user_id='e692b6cb-ae63-773b-8557-3218f7ce5ced'))
 
-        # Stop immediately
-        await bus.stop()
+        # Destroy immediately
+        await bus.destroy()
 
-        # Bus should stop even with pending events
+        # Bus should destroy even with pending events
         assert not bus._is_running
 
     async def test_event_with_complex_data(self, eventbus):
@@ -1051,9 +1051,9 @@ class TestEventBusHierarchy:
             assert events_at_parent[0].event_path == [child_bus.label, parent_bus.label]
 
         finally:
-            await parent_bus.stop()
-            await child_bus.stop()
-            await subchild_bus.stop()
+            await parent_bus.destroy()
+            await child_bus.destroy()
+            await subchild_bus.destroy()
 
     async def test_circular_subscription_prevention(self):
         """Test that circular EventBus subscriptions don't create infinite loops"""
@@ -1161,9 +1161,9 @@ class TestEventBusHierarchy:
             assert events_at_peer1[0].event_path == [peer2.label, peer3.label, peer1.label]
 
         finally:
-            await peer1.stop()
-            await peer2.stop()
-            await peer3.stop()
+            await peer1.destroy()
+            await peer2.destroy()
+            await peer3.destroy()
 
 
 class TestFindMethod:
@@ -1973,9 +1973,9 @@ class TestEventBusForwarding:
             assert results == ['bus1', 'bus2', 'bus3']
 
         finally:
-            await bus1.stop()
-            await bus2.stop()
-            await bus3.stop()
+            await bus1.destroy()
+            await bus2.destroy()
+            await bus3.destroy()
 
     async def test_by_eventbus_id_and_path(self):
         """Test by_eventbus_id() and by_path() with forwarding"""
@@ -2019,8 +2019,8 @@ class TestEventBusForwarding:
             assert event.event_path == [bus1.label, bus2.label]
 
         finally:
-            await bus1.stop()
-            await bus2.stop()
+            await bus1.destroy()
+            await bus2.destroy()
 
 
 class TestComplexIntegration:
@@ -2118,9 +2118,9 @@ class TestComplexIntegration:
             assert any('log' in str(item) for item in list_result)
 
         finally:
-            await app_bus.stop(timeout=0, clear=True)
-            await auth_bus.stop(timeout=0, clear=True)
-            await data_bus.stop(timeout=0, clear=True)
+            await app_bus.destroy(timeout=0, clear=True)
+            await auth_bus.destroy(timeout=0, clear=True)
+            await data_bus.destroy(timeout=0, clear=True)
 
     async def test_event_result_type_enforcement_with_dict(self):
         """Test that handlers returning wrong types get errors when event expects dict result."""
@@ -2189,7 +2189,7 @@ class TestComplexIntegration:
             assert len(dict_result) == 2  # Only the two dict results
 
         finally:
-            await bus.stop(timeout=0, clear=True)
+            await bus.destroy(timeout=0, clear=True)
 
     async def test_event_result_type_enforcement_with_list(self):
         """Test that handlers returning wrong types get errors when event expects list result."""
@@ -2259,4 +2259,4 @@ class TestComplexIntegration:
             assert list_result == [1, 2, 3, 'a', 'b', 'c']  # Flattened from both list handlers
 
         finally:
-            await bus.stop(timeout=0, clear=True)
+            await bus.destroy(timeout=0, clear=True)

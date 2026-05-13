@@ -96,8 +96,8 @@ fn assert_eventbus_json_roundtrip_uses_id_keyed_structures(bus_name: &str, bus_i
     assert_eq!(restored.id, bus_id);
     assert_eq!(restored.name, bus_name);
     assert_eq!(restored.to_json_value(), payload);
-    restored.stop();
-    bus.stop();
+    restored.destroy();
+    bus.destroy();
 }
 
 #[test]
@@ -227,8 +227,8 @@ fn test_eventbus_preserves_handler_registration_order_through_json_and_restore()
         vec!["first".to_string(), "second".to_string()]
     );
 
-    restored.stop();
-    bus.stop();
+    restored.destroy();
+    bus.destroy();
 }
 
 #[test]
@@ -252,7 +252,7 @@ fn test_baseevent_model_validate_roundtrips_runtime_json_shape() {
     let payload = event.inner.to_json_value();
     let restored_payload = BaseEvent::from_json_value(payload.clone()).to_json_value();
     assert_eq!(restored_payload, payload);
-    bus.stop();
+    bus.destroy();
 }
 
 fn assert_eventbus_recreates_missing_handler_entries_from_event_result_metadata() {
@@ -286,8 +286,8 @@ fn assert_eventbus_recreates_missing_handler_entries_from_event_result_metadata(
         restored_payload["handlers_by_key"]["SerializableEvent"],
         json!([handler.id])
     );
-    restored.stop();
-    bus.stop();
+    restored.destroy();
+    bus.destroy();
 }
 
 #[test]
@@ -338,7 +338,7 @@ fn assert_eventbus_promotes_pending_events_into_event_history() {
 
     let _ = block_on(first.now());
     let _ = block_on(pending.now());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]

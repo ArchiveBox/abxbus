@@ -37,7 +37,7 @@ async def test_event_concurrency_remains_unset_on_dispatch_and_resolves_during_p
         await implicit
         await explicit_none
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_event_concurrency_class_override_beats_bus_default() -> None:
@@ -52,7 +52,7 @@ async def test_event_concurrency_class_override_beats_bus_default() -> None:
         assert event.event_concurrency == 'global-serial'
         await event
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_handler_defaults_remain_unset_on_dispatch_and_resolve_during_processing() -> None:
@@ -83,7 +83,7 @@ async def test_handler_defaults_remain_unset_on_dispatch_and_resolve_during_proc
         await implicit
         await explicit_none
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_handler_class_override_beats_bus_default() -> None:
@@ -103,4 +103,4 @@ async def test_handler_class_override_beats_bus_default() -> None:
         assert event.event_handler_completion == 'all'
         await event
     finally:
-        await bus.stop()
+        await bus.destroy()

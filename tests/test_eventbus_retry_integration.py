@@ -50,7 +50,7 @@ class TestRetryWithEventBus:
         handler_result = await completed_event.event_result()
         assert handler_result == 'Success: Hello retry!'
 
-        await bus.stop()
+        await bus.destroy()
 
     async def test_retry_with_semaphore_on_multiple_handlers(self):
         """Test @retry decorator with semaphore limiting concurrent handler executions."""
@@ -101,7 +101,7 @@ class TestRetryWithEventBus:
         for handler_id in range(1, 5):
             assert len(handler_results[handler_id]) == 2, f'Handler {handler_id} should have started and completed'
 
-        await bus.stop()
+        await bus.destroy()
 
     async def test_retry_timeout_with_eventbus_handler(self):
         """Test that retry timeout works correctly with EventBus handlers."""
@@ -138,7 +138,7 @@ class TestRetryWithEventBus:
         assert result.error is not None
         assert isinstance(result.error, TimeoutError)
 
-        await bus.stop()
+        await bus.destroy()
 
     async def test_retry_with_event_type_filter(self):
         """Test retry decorator with specific exception types."""
@@ -183,7 +183,7 @@ class TestRetryWithEventBus:
         assert isinstance(result.error, TypeError)
         assert 'This should NOT be retried' in str(result.error)
 
-        await bus.stop()
+        await bus.destroy()
 
     async def test_retry_decorated_method_class_scope_serializes_across_instances(self):
         """Class scope semaphore should serialize bound method handlers across instances."""
@@ -219,7 +219,7 @@ class TestRetryWithEventBus:
         await event.wait()
 
         assert max_active == 1, f'class scope should serialize across instances, got max_active={max_active}'
-        await bus.stop()
+        await bus.destroy()
 
     async def test_retry_decorated_method_instance_scope_allows_parallel_across_instances(self):
         """Instance scope semaphore should allow bound handlers from different instances to overlap."""
@@ -258,7 +258,7 @@ class TestRetryWithEventBus:
 
         assert calls == 2, f'expected both handlers to run, got calls={calls}'
         assert max_active == 2, f'instance scope should allow overlap across instances, got max_active={max_active}'
-        await bus.stop()
+        await bus.destroy()
 
     async def test_retry_decorated_method_global_scope_serializes_all_bound_handlers(self):
         """Global scope semaphore should serialize bound method handlers across all instances."""
@@ -294,7 +294,7 @@ class TestRetryWithEventBus:
         await event.wait()
 
         assert max_active == 1, f'global scope should serialize all handlers, got max_active={max_active}'
-        await bus.stop()
+        await bus.destroy()
 
     async def test_retry_hof_bind_after_wrap_instance_scope_preserves_instance_isolation(self):
         """HOF pattern retry(...)(fn) then bind to instances should keep instance-scope isolation."""
@@ -332,7 +332,7 @@ class TestRetryWithEventBus:
         await event.wait()
 
         assert max_active == 2, f'bind-after-wrap instance scope should allow overlap, got max_active={max_active}'
-        await bus.stop()
+        await bus.destroy()
 
     async def test_retry_wrapping_emit_retries_full_dispatch_cycle(self):
         """Retry wrapper around emit+wait should retry full event dispatch when handler errors."""
@@ -401,4 +401,4 @@ class TestRetryWithEventBus:
         assert screenshot_calls == 1
         assert dom_event.event_status == 'completed'
         assert screenshot_event.event_status == 'completed'
-        await bus.stop()
+        await bus.destroy()

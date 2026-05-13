@@ -35,7 +35,7 @@ fn test_emit_and_handler_result() {
     assert_eq!(results.len(), 1);
     let first = results.values().next().expect("missing first result");
     assert_eq!(first.result, Some(json!("ok")));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -60,5 +60,5 @@ fn test_parallel_handler_concurrency() {
     let emitted = bus.emit(event);
     let _ = block_on(emitted.now());
     assert_eq!(emitted.inner.inner.lock().event_results.len(), 2);
-    bus.stop();
+    bus.destroy();
 }

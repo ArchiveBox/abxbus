@@ -124,9 +124,9 @@ fn test_events_forward_between_buses_without_duplication() {
         vec![bus_a.label(), bus_b.label(), bus_c.label()]
     );
     assert_eq!(event.inner.inner.lock().event_pending_bus_count, 0);
-    bus_a.stop();
-    bus_b.stop();
-    bus_c.stop();
+    bus_a.destroy();
+    bus_b.destroy();
+    bus_c.destroy();
 }
 
 #[test]
@@ -230,9 +230,9 @@ fn test_tresultsee_level_hierarchy_bubbling() {
         vec![child_bus.label(), parent_bus.label()]
     );
 
-    parent_bus.stop();
-    child_bus.stop();
-    subchild_bus.stop();
+    parent_bus.destroy();
+    child_bus.destroy();
+    subchild_bus.destroy();
 }
 
 #[test]
@@ -295,8 +295,8 @@ fn test_forwarding_disambiguates_buses_that_share_the_same_name() {
         event.inner.inner.lock().event_path,
         vec![bus_a.label(), bus_b.label()]
     );
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -407,9 +407,9 @@ fn test_circular_subscription_prevention() {
         event2.inner.inner.lock().event_path,
         vec![peer2.label(), peer3.label(), peer1.label()]
     );
-    peer1.stop();
-    peer2.stop();
-    peer3.stop();
+    peer1.destroy();
+    peer2.destroy();
+    peer3.destroy();
 }
 
 #[test]
@@ -487,9 +487,9 @@ fn test_forwarding_loop_prevention() {
         event.inner.inner.lock().event_path,
         vec![bus_a.label(), bus_b.label(), bus_c.label()]
     );
-    bus_a.stop();
-    bus_b.stop();
-    bus_c.stop();
+    bus_a.destroy();
+    bus_b.destroy();
+    bus_c.destroy();
 }
 
 #[test]
@@ -541,8 +541,8 @@ fn test_await_forwarded_event_waits_for_target_bus_handlers() {
         event.inner.inner.lock().event_path,
         vec![bus_a.label(), bus_b.label()]
     );
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -596,8 +596,8 @@ fn test_await_forwarded_event_waits_when_forwarding_handler_is_async_delayed() {
         event.inner.inner.lock().event_path,
         vec![bus_a.label(), bus_b.label()]
     );
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -649,8 +649,8 @@ fn test_forwarding_same_event_does_not_set_self_parent_id() {
         event.inner.inner.lock().event_path,
         vec![origin.label(), target.label()]
     );
-    origin.stop();
-    target.stop();
+    origin.destroy();
+    target.destroy();
 }
 
 #[test]
@@ -696,7 +696,7 @@ fn test_proxy_dispatch_auto_links_child_events_like_emit() {
         Some(root_id.as_str())
     );
     assert_eq!(child.inner.lock().event_id, child_ids[0]);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -727,7 +727,7 @@ fn test_proxy_dispatch_of_same_event_does_not_self_parent_or_self_link_child() {
     assert_eq!(inner.event_parent_id, None);
     assert!(child_ids.is_empty());
     drop(inner);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -768,5 +768,5 @@ fn test_events_are_processed_in_fifo_order() {
         processed_orders.lock().expect("orders lock").as_slice(),
         &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     );
-    bus.stop();
+    bus.destroy();
 }

@@ -167,7 +167,7 @@ class TachyonEventBridge:
                     await socket_path.unlink()
                 except OSError:
                     pass
-        await self._inbound_bus.stop(clear=clear)
+        await self._inbound_bus.destroy(clear=clear)
 
     def _ensure_listener_started(self) -> None:
         # If a previous attempt's thread already exited (init error, listen() failure,

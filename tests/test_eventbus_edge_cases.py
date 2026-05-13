@@ -14,8 +14,8 @@ class IdleTimeoutCoverageEvent(BaseEvent[None]):
     label: str = 'slow'
 
 
-class StopCoverageEvent(BaseEvent[None]):
-    label: str = 'stop'
+class DestroyCoverageEvent(BaseEvent[None]):
+    label: str = 'destroy'
 
 
 @pytest.mark.asyncio
@@ -45,8 +45,8 @@ async def test_event_reset_creates_fresh_pending_event_for_cross_bus_dispatch():
     assert any(path.startswith('ResetCoverageBusA#') for path in forwarded.event_path)
     assert any(path.startswith('ResetCoverageBusB#') for path in forwarded.event_path)
 
-    await bus_a.stop(timeout=0, clear=True)
-    await bus_b.stop(timeout=0, clear=True)
+    await bus_a.destroy(timeout=0, clear=True)
+    await bus_b.destroy(timeout=0, clear=True)
 
 
 @pytest.mark.asyncio
@@ -74,30 +74,30 @@ async def test_wait_until_idle_timeout_path_recovers_after_inflight_handler_fini
     await bus.wait_until_idle(timeout=1.0)
     assert pending.event_status == EventStatus.COMPLETED
 
-    await bus.stop(timeout=0, clear=True)
+    await bus.destroy(timeout=0, clear=True)
 
 
 @pytest.mark.asyncio
-async def test_stop_timeout_zero_clears_running_bus_and_releases_name():
-    bus_name = 'StopCoverageBus'
+async def test_destroy_timeout_zero_clears_running_bus_and_releases_name():
+    bus_name = 'DestroyCoverageBus'
     bus = EventBus(name=bus_name)
 
-    async def slow_handler(event: StopCoverageEvent) -> None:
+    async def slow_handler(event: DestroyCoverageEvent) -> None:
         await asyncio.sleep(0.2)
 
-    bus.on(StopCoverageEvent, slow_handler)
-    _pending = bus.emit(StopCoverageEvent())
+    bus.on(DestroyCoverageEvent, slow_handler)
+    _pending = bus.emit(DestroyCoverageEvent())
     await asyncio.sleep(0)
 
     start = time.perf_counter()
-    await bus.stop(timeout=0, clear=True)
+    await bus.destroy(timeout=0, clear=True)
     elapsed = time.perf_counter() - start
 
     assert elapsed < 0.5
-    assert bus.name.startswith('_stopped_')
+    assert bus.name.startswith('_destroyed_')
     assert all(instance is not bus for instance in list(EventBus.all_instances))
 
     replacement = EventBus(name=bus_name)
-    replacement.on(StopCoverageEvent, lambda event: None)
-    await replacement.emit(StopCoverageEvent())
-    await replacement.stop(timeout=0, clear=True)
+    replacement.on(DestroyCoverageEvent, lambda event: None)
+    await replacement.emit(DestroyCoverageEvent())
+    await replacement.destroy(timeout=0, clear=True)

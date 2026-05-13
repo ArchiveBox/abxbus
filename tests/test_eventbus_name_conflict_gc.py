@@ -108,23 +108,23 @@ class TestNameConflictGC:
         assert bus3_conflict.name.startswith('GCMulti3_')
 
     @pytest.mark.asyncio
-    async def test_name_conflict_after_stop_and_clear(self):
+    async def test_name_conflict_after_destroy_and_clear(self):
         """Test that clearing an EventBus allows reusing its name"""
         import gc
 
         # Create an EventBus
-        bus1 = EventBus(name='GCStopClear')
+        bus1 = EventBus(name='GCDestroyClear')
 
-        # Stop and clear it (this renames the bus to _stopped_* and removes from all_instances)
-        await bus1.stop(clear=True)
+        # Destroy and clear it (this renames the bus to _destroyed_* and removes from all_instances)
+        await bus1.destroy(clear=True)
 
         # Delete the reference and force GC
         del bus1
         gc.collect()
 
         # Now we should be able to create a new one with the same name
-        bus2 = EventBus(name='GCStopClear')
-        assert bus2.name == 'GCStopClear'
+        bus2 = EventBus(name='GCDestroyClear')
+        assert bus2.name == 'GCDestroyClear'
 
     def test_weakset_behavior(self):
         """Test that the WeakSet properly tracks EventBus instances"""
@@ -192,7 +192,7 @@ class TestNameConflictGC:
         refs: list[weakref.ReferenceType[EventBus]] = []
 
         async def create_and_fill_bus(index: int) -> weakref.ReferenceType[EventBus]:
-            bus = EventBus(name=f'GCNoStopBus_{index}')
+            bus = EventBus(name=f'GCNoDestroyBus_{index}')
             bus.on(GcHistoryEvent, lambda e: 'ok')
             for _ in range(40):
                 await bus.emit(GcHistoryEvent())
@@ -202,7 +202,7 @@ class TestNameConflictGC:
         for i in range(30):
             refs.append(await create_and_fill_bus(i))
 
-        # Encourage GC/finalization first (best effort without explicit stop()).
+        # Encourage GC/finalization first (best effort without explicit destroy()).
         for _ in range(20):
             gc.collect()
             await asyncio.sleep(0.02)
@@ -212,7 +212,7 @@ class TestNameConflictGC:
 
         # Deterministically clean up anything still alive.
         for bus in still_live:
-            await bus.stop(clear=True, timeout=0)
+            await bus.destroy(clear=True, timeout=0)
         # Loop variable keeps a strong ref to the last bus in CPython.
         if still_live:
             del bus
@@ -229,9 +229,9 @@ class TestNameConflictGC:
         assert len(EventBus.all_instances) <= baseline_instances
 
     @pytest.mark.asyncio
-    async def test_unreferenced_buses_with_history_are_collected_without_stop(self):
+    async def test_unreferenced_buses_with_history_are_collected_without_destroy(self):
         """
-        Unreferenced buses should be collectable without explicit stop(clear=True),
+        Unreferenced buses should be collectable without explicit destroy(clear=True),
         even after processing events and populating history.
         """
         import gc
@@ -243,7 +243,7 @@ class TestNameConflictGC:
         refs: list[weakref.ReferenceType[EventBus]] = []
 
         async def create_and_fill_bus(index: int) -> weakref.ReferenceType[EventBus]:
-            bus = EventBus(name=f'GCImplicitNoStop_{index}')
+            bus = EventBus(name=f'GCImplicitNoDestroy_{index}')
             bus.on(GcImplicitEvent, lambda e: 'ok')
             for _ in range(30):
                 await bus.emit(GcImplicitEvent())
@@ -262,7 +262,7 @@ class TestNameConflictGC:
         # Force WeakSet iteration to purge any dead refs.
         _ = list(EventBus.all_instances)
 
-        assert all(ref() is None for ref in refs), 'all unreferenced buses should be collected without stop()'
+        assert all(ref() is None for ref in refs), 'all unreferenced buses should be collected without destroy()'
         assert len(EventBus.all_instances) <= baseline_instances
 
     def test_subclass_registry_and_global_lock_are_collected_with_subclass(self):

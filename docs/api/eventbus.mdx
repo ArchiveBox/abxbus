@@ -638,8 +638,8 @@ bus.emit(ResumeTickEvent())
 await bus.wait_until_idle()
 
 # 5) Teardown when done
-await bus.stop(timeout=1.0)
-await bus.stop(clear=True)
+await bus.destroy(timeout=1.0)
+await bus.destroy(clear=True)
 ```
 
 </Tab>
@@ -715,7 +715,7 @@ timeout := 1.0
 bus.WaitUntilIdle(&timeout)
 
 // 5) Teardown when done
-bus.Stop()
+bus.Destroy()
 ```
 
 </Tab>

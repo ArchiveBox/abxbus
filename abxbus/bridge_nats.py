@@ -107,7 +107,7 @@ class NATSEventBridge:
             except Exception:
                 pass
             self._nc = None
-        await self._inbound_bus.stop(clear=clear)
+        await self._inbound_bus.destroy(clear=clear)
 
     def _ensure_started(self) -> None:
         if self._running:
