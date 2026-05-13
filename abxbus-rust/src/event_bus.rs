@@ -10,6 +10,7 @@ use std::{
 
 use event_listener::Event;
 use futures::executor::block_on;
+use futures_timer::Delay;
 use parking_lot::Mutex;
 use serde::{Serialize, Serializer};
 use serde_json::{json, Map, Value};
@@ -1610,6 +1611,18 @@ impl EventBus {
         Self::queue_jump_if_waited_async_with_context(event, initiating_context).await;
     }
 
+    pub(crate) fn spawn_queue_jump_if_waited_with_context(
+        event: Arc<BaseEvent>,
+        initiating_context: Option<(String, String, String)>,
+    ) {
+        Self::queue_jump_executor().spawn(move || {
+            block_on(Self::queue_jump_if_waited_async_with_context(
+                event,
+                initiating_context,
+            ));
+        });
+    }
+
     pub async fn queue_jump_if_waited_async_with_context(
         event: Arc<BaseEvent>,
         initiating_context: Option<(String, String, String)>,
@@ -2269,7 +2282,50 @@ impl EventBus {
                     return false;
                 }
             }
-            thread::sleep(Duration::from_millis(5));
+            Delay::new(Duration::from_millis(5)).await;
+        }
+    }
+
+    pub(crate) async fn wait_until_event_idle(event: Arc<BaseEvent>, timeout: Option<f64>) -> bool {
+        let event_id = event.inner.lock().event_id.clone();
+        let start = Instant::now();
+        loop {
+            let event_path = event.inner.lock().event_path.clone();
+            let live_buses = Self::live_instances();
+            let mut attached_buses = Vec::new();
+            for label in &event_path {
+                for bus in &live_buses {
+                    if bus.label() == *label
+                        && !attached_buses
+                            .iter()
+                            .any(|entry: &Arc<EventBus>| Arc::ptr_eq(entry, bus))
+                    {
+                        attached_buses.push(bus.clone());
+                    }
+                }
+            }
+
+            let event_is_idle = attached_buses.iter().all(|bus| {
+                let queued = bus
+                    .runtime
+                    .queue
+                    .lock()
+                    .iter()
+                    .any(|queued| queued.inner.lock().event_id == event_id);
+                let active = bus.runtime.active_event_ids.lock().contains(&event_id);
+                let processing = bus.runtime.processing_event_ids.lock().contains(&event_id);
+                !queued && !active && !processing
+            });
+            if event_is_idle {
+                return true;
+            }
+
+            if let Some(timeout) = timeout {
+                if start.elapsed() > Duration::from_secs_f64(timeout) {
+                    return false;
+                }
+            }
+            Delay::new(Duration::from_millis(1)).await;
         }
     }
 

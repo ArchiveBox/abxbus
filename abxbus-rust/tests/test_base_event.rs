@@ -1342,6 +1342,48 @@ fn test_now_on_already_executing_event_waits_without_duplicate_execution() {
 }
 
 #[test]
+fn test_now_with_rapid_handler_churn_does_not_duplicate_execution() {
+    let _guard = test_guard();
+    let total_events = 200usize;
+    let bus = EventBus::new_with_options(
+        Some("NowRapidHandlerChurnBus".to_string()),
+        EventBusOptions {
+            event_timeout: Some(0.0),
+            max_history_size: Some(512),
+            max_history_drop: true,
+            ..EventBusOptions::default()
+        },
+    );
+    let run_count = Arc::new(AtomicUsize::new(0));
+
+    for index in 0..total_events {
+        let run_count_for_handler = run_count.clone();
+        let handler_id = format!("now-rapid-handler-churn-{index}");
+        let handler = bus.on_raw("NowRapidHandlerChurnEvent", &handler_id, move |_event| {
+            let run_count = run_count_for_handler.clone();
+            async move {
+                run_count.fetch_add(1, Ordering::SeqCst);
+                thread::sleep(Duration::from_millis(1));
+                Ok(json!("done"))
+            }
+        });
+        let event = bus.emit_base(BaseEvent::new("NowRapidHandlerChurnEvent", Map::new()));
+        let completed = block_on(event.now_with_options(EventWaitOptions {
+            timeout: Some(1.0),
+            first_result: false,
+        }))
+        .expect("now");
+        assert!(Arc::ptr_eq(&completed, &event));
+        thread::sleep(Duration::from_millis(1));
+        assert!(block_on(bus.wait_until_idle(Some(1.0))));
+        bus.off("NowRapidHandlerChurnEvent", Some(&handler.id));
+    }
+
+    assert_eq!(run_count.load(Ordering::SeqCst), total_events);
+    bus.destroy();
+}
+
+#[test]
 fn test_event_result_options_apply_to_current_results() {
     let _guard = test_guard();
     let bus = EventBus::new_with_options(

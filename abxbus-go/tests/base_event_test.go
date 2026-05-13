@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -702,6 +703,44 @@ func TestNowOnAlreadyExecutingEventWaitsWithoutDuplicateExecution(t *testing.T) 
 	}
 	if runCount != 1 {
 		t.Fatalf("already executing event should not be duplicated, ran %d times", runCount)
+	}
+}
+
+func TestNowWithRapidHandlerChurnDoesNotDuplicateExecution(t *testing.T) {
+	noTimeout := 0.0
+	totalEvents := 200
+	maxHistorySize := 512
+	bus := abxbus.NewEventBus("NowRapidHandlerChurnBus", &abxbus.EventBusOptions{
+		EventTimeout:    &noTimeout,
+		MaxHistorySize:  &maxHistorySize,
+		MaxHistoryDrop:  true,
+	})
+	var runCount atomic.Int64
+
+	for index := 0; index < totalEvents; index++ {
+		handler := bus.On("NowRapidHandlerChurnEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+			runCount.Add(1)
+			time.Sleep(time.Millisecond)
+			return "done", nil
+		}, nil)
+		event := bus.Emit(abxbus.NewBaseEvent("NowRapidHandlerChurnEvent", nil))
+		timeout := 1.0
+		completed, err := event.Now(&abxbus.EventWaitOptions{Timeout: &timeout})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if completed != event {
+			t.Fatal("Now should return the event")
+		}
+		time.Sleep(time.Millisecond)
+		if !bus.WaitUntilIdle(&timeout) {
+			t.Fatal("bus did not become idle")
+		}
+		bus.Off("NowRapidHandlerChurnEvent", handler)
+	}
+
+	if runCount.Load() != int64(totalEvents) {
+		t.Fatalf("rapid handler churn should not duplicate execution, ran %d times", runCount.Load())
 	}
 }
 

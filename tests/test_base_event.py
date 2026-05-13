@@ -625,6 +625,35 @@ async def test_now_on_already_executing_event_waits_without_duplicate_execution(
         await bus.destroy()
 
 
+async def test_now_with_rapid_handler_churn_does_not_duplicate_execution():
+    class ChurnEvent(BaseEvent[str]):
+        pass
+
+    total_events = 200
+    bus = EventBus(name='NowRapidHandlerChurnBus', event_timeout=0, max_history_size=512, max_history_drop=True)
+    run_count = 0
+
+    try:
+        for _ in range(total_events):
+
+            async def handler(_: ChurnEvent) -> str:
+                nonlocal run_count
+                run_count += 1
+                await asyncio.sleep(0)
+                return 'done'
+
+            registered_handler = bus.on(ChurnEvent, handler)
+            event = bus.emit(ChurnEvent())
+            assert await event.now(timeout=1.0) is event
+            await asyncio.sleep(0)
+            await bus.wait_until_idle(timeout=1.0)
+            bus.off(ChurnEvent, registered_handler)
+
+        assert run_count == total_events
+    finally:
+        await bus.destroy()
+
+
 async def test_event_result_options_apply_to_current_results():
     class ResultOptionsEvent(BaseEvent[str]):
         pass

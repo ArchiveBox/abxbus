@@ -604,6 +604,33 @@ test('now: already executing event waits without duplicate execution', async () 
   bus.destroy()
 })
 
+test('now: rapid handler churn does not duplicate execution', async () => {
+  const ChurnEvent = BaseEvent.extend('NowRapidHandlerChurnEvent', { event_result_type: z.string() })
+  const totalEvents = 200
+  const bus = new EventBus('NowRapidHandlerChurnBus', {
+    event_timeout: 0,
+    max_history_size: 512,
+    max_history_drop: true,
+  })
+  let runCount = 0
+
+  for (let index = 0; index < totalEvents; index += 1) {
+    const handler = bus.on(ChurnEvent, async () => {
+      runCount += 1
+      await delay(0)
+      return 'done'
+    })
+    const event = bus.emit(ChurnEvent({}))
+    assert.equal(await event.now({ timeout: 1 }), event)
+    await delay(0)
+    await bus.waitUntilIdle()
+    bus.off(ChurnEvent, handler)
+  }
+
+  assert.equal(runCount, totalEvents)
+  bus.destroy()
+})
+
 test('eventResult: options apply to current results', async () => {
   const ResultOptionsEvent = BaseEvent.extend('EventResultOptionsCurrentResultsEvent', { event_result_type: z.string() })
   const bus = new EventBus('EventResultOptionsCurrentResultsBus', {

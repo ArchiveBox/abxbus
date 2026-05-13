@@ -1,6 +1,7 @@
-use std::{collections::HashMap, fmt, sync::Arc, thread, time::Duration};
+use std::{collections::HashMap, fmt, sync::Arc, time::Duration};
 
 use event_listener::Event;
+use futures_timer::Delay;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Map, Value};
@@ -331,14 +332,10 @@ impl BaseEvent {
             let event_for_queue_jump = self.clone();
             let initiating_context =
                 crate::event_bus::EventBus::mark_blocks_parent_completion_if_awaited(self.clone());
-            thread::spawn(move || {
-                futures::executor::block_on(
-                    crate::event_bus::EventBus::queue_jump_if_waited_async_with_context(
-                        event_for_queue_jump,
-                        initiating_context,
-                    ),
-                );
-            });
+            crate::event_bus::EventBus::spawn_queue_jump_if_waited_with_context(
+                event_for_queue_jump,
+                initiating_context,
+            );
             if !self
                 .first_result_or_completion_with_timeout(options.timeout)
                 .await
@@ -352,12 +349,40 @@ impl BaseEvent {
             }
             return Ok(self.clone());
         }
+        let deadline = options.timeout.and_then(|timeout| {
+            if timeout > 0.0 {
+                Some(std::time::Instant::now() + Duration::from_secs_f64(timeout))
+            } else {
+                None
+            }
+        });
         if crate::event_bus::EventBus::is_inside_handler_context() {
             crate::event_bus::EventBus::queue_jump_if_waited_from_handler(self.clone());
         } else {
             crate::event_bus::EventBus::queue_jump_if_waited(self.clone());
         }
-        if self.event_completed_with_timeout(options.timeout).await {
+
+        if !self.event_completed_with_timeout(options.timeout).await {
+            let event = self.inner.lock();
+            return Err(format!(
+                "Timed out waiting for {} completion after {:.3}s",
+                event.event_type,
+                options.timeout.unwrap_or_default()
+            ));
+        }
+
+        let remaining_timeout = if let Some(deadline) = deadline {
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                Some(0.000_001)
+            } else {
+                Some(deadline.saturating_duration_since(now).as_secs_f64())
+            }
+        } else {
+            None
+        };
+        if crate::event_bus::EventBus::wait_until_event_idle(self.clone(), remaining_timeout).await
+        {
             Ok(self.clone())
         } else {
             let event = self.inner.lock();
@@ -455,7 +480,7 @@ impl BaseEvent {
             }
 
             let remaining = deadline.saturating_duration_since(now);
-            thread::sleep(remaining.min(Duration::from_millis(1)));
+            Delay::new(remaining.min(Duration::from_millis(1))).await;
         }
     }
 
@@ -477,7 +502,7 @@ impl BaseEvent {
             if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
                 return false;
             }
-            thread::sleep(Duration::from_millis(1));
+            Delay::new(Duration::from_millis(1)).await;
         }
     }
 
