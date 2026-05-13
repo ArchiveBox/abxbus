@@ -706,14 +706,75 @@ func TestNowOnAlreadyExecutingEventWaitsWithoutDuplicateExecution(t *testing.T) 
 	}
 }
 
+func TestNowTimeoutLimitsCallerWaitAndBackgroundProcessingContinues(t *testing.T) {
+	noTimeout := 0.0
+	bus := abxbus.NewEventBus("NowTimeoutCallerWaitBus", &abxbus.EventBusOptions{
+		EventTimeout: &noTimeout,
+	})
+	started := make(chan struct{})
+	release := make(chan struct{})
+	handlerDone := make(chan struct{}, 1)
+	handlerSawContextCancel := make(chan struct{}, 1)
+	var startOnce sync.Once
+
+	bus.On("NowTimeoutCallerWaitEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		startOnce.Do(func() { close(started) })
+		select {
+		case <-ctx.Done():
+			handlerSawContextCancel <- struct{}{}
+			return nil, ctx.Err()
+		case <-release:
+			handlerDone <- struct{}{}
+			return "done", nil
+		}
+	}, nil)
+
+	event := bus.Emit(abxbus.NewBaseEvent("NowTimeoutCallerWaitEvent", nil))
+	timeout := 0.01
+	if _, err := event.Now(&abxbus.EventWaitOptions{Timeout: &timeout}); err == nil {
+		t.Fatal("expected Now(timeout) to time out")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not start")
+	}
+	select {
+	case <-handlerSawContextCancel:
+		t.Fatal("Now(timeout) should not cancel background processing")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if event.EventStatus == "completed" {
+		t.Fatal("event should still be in progress after caller timeout")
+	}
+
+	close(release)
+	waitTimeout := 1.0
+	if !bus.WaitUntilIdle(&waitTimeout) {
+		t.Fatal("timed out waiting for background processing")
+	}
+	select {
+	case <-handlerDone:
+	default:
+		t.Fatal("handler should finish after release")
+	}
+	if event.EventStatus != "completed" {
+		t.Fatalf("expected completed event, got %s", event.EventStatus)
+	}
+	result, err := event.EventResult()
+	if err != nil || result != "done" {
+		t.Fatalf("unexpected result %#v err=%v", result, err)
+	}
+}
+
 func TestNowWithRapidHandlerChurnDoesNotDuplicateExecution(t *testing.T) {
 	noTimeout := 0.0
 	totalEvents := 200
 	maxHistorySize := 512
 	bus := abxbus.NewEventBus("NowRapidHandlerChurnBus", &abxbus.EventBusOptions{
-		EventTimeout:    &noTimeout,
-		MaxHistorySize:  &maxHistorySize,
-		MaxHistoryDrop:  true,
+		EventTimeout:   &noTimeout,
+		MaxHistorySize: &maxHistorySize,
+		MaxHistoryDrop: true,
 	})
 	var runCount atomic.Int64
 

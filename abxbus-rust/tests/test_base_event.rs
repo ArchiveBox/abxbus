@@ -216,6 +216,12 @@ event! {
         event_type: "EventCompletedTimeoutEvent",
     }
 }
+event! {
+    struct NowTimeoutCallerWaitEvent {
+        event_result_type: String,
+        event_type: "NowTimeoutCallerWaitEvent",
+    }
+}
 fn mk_event(event_type: &str) -> Arc<BaseEvent> {
     let mut payload = Map::new();
     payload.insert("value".to_string(), json!(1));
@@ -1338,6 +1344,78 @@ fn test_now_on_already_executing_event_waits_without_duplicate_execution() {
         Some(json!("done"))
     );
     assert_eq!(run_count.load(Ordering::SeqCst), 1);
+    bus.destroy();
+}
+
+#[test]
+fn test_now_timeout_limits_caller_wait_and_background_processing_continues() {
+    let _guard = test_guard();
+    let bus = EventBus::new_with_options(
+        Some("NowTimeoutCallerWaitBus".to_string()),
+        EventBusOptions {
+            event_timeout: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let started = Arc::new(AtomicBool::new(false));
+    let release = Arc::new(AtomicBool::new(false));
+    let handler_done = Arc::new(AtomicBool::new(false));
+    let started_for_handler = started.clone();
+    let release_for_handler = release.clone();
+    let handler_done_for_handler = handler_done.clone();
+    bus.on_raw("NowTimeoutCallerWaitEvent", "handler", move |_event| {
+        let started = started_for_handler.clone();
+        let release = release_for_handler.clone();
+        let handler_done = handler_done_for_handler.clone();
+        async move {
+            started.store(true, Ordering::SeqCst);
+            while !release.load(Ordering::SeqCst) {
+                thread::sleep(Duration::from_millis(1));
+            }
+            handler_done.store(true, Ordering::SeqCst);
+            Ok(json!("done"))
+        }
+    });
+
+    let event = bus.emit(NowTimeoutCallerWaitEvent {
+        ..Default::default()
+    });
+    let error = match block_on(event.inner.now_with_options(EventWaitOptions {
+        timeout: Some(0.01),
+        first_result: false,
+    })) {
+        Ok(_) => panic!("now timeout should time out the caller"),
+        Err(error) => error,
+    };
+    assert!(error.contains("Timed out waiting"));
+    wait_until_bool(&started);
+    assert_ne!(
+        event.inner.inner.lock().event_status,
+        EventStatus::Completed
+    );
+    assert!(!handler_done.load(Ordering::SeqCst));
+
+    release.store(true, Ordering::SeqCst);
+    assert!(block_on(event.inner.wait_with_options(EventWaitOptions {
+        timeout: Some(1.0),
+        first_result: false,
+    }))
+    .map(|completed| Arc::ptr_eq(&completed, &event.inner))
+    .unwrap_or(false));
+    assert_eq!(
+        event.inner.inner.lock().event_status,
+        EventStatus::Completed
+    );
+    assert_eq!(
+        block_on(
+            event
+                .inner
+                .event_result_with_options(EventResultOptions::default())
+        )
+        .expect("event result"),
+        Some(json!("done"))
+    );
+    assert!(handler_done.load(Ordering::SeqCst));
     bus.destroy();
 }
 

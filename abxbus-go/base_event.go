@@ -588,7 +588,23 @@ func (e *BaseEvent) nowWithContext(ctx context.Context, options ...*EventWaitOpt
 		}
 		return e, nil
 	}
-	if _, err := bus.processEventImmediatelyAcrossBuses(ctx, e); err != nil {
+	if opts.Timeout != nil && *opts.Timeout > 0 {
+		errCh := make(chan error, 1)
+		go func() {
+			_, err := bus.processEventImmediatelyAcrossBuses(processCtx, e)
+			errCh <- err
+		}()
+		select {
+		case err := <-errCh:
+			if err != nil {
+				return nil, err
+			}
+			return e, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if _, err := bus.processEventImmediatelyAcrossBuses(processCtx, e); err != nil {
 		return nil, err
 	}
 	return e, nil

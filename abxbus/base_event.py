@@ -1112,7 +1112,11 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             if resolved_timeout is None:
                 await processing_task
             else:
-                await asyncio.wait_for(processing_task, timeout=resolved_timeout)
+                try:
+                    await asyncio.wait_for(asyncio.shield(processing_task), timeout=resolved_timeout)
+                finally:
+                    if not processing_task.done():
+                        processing_task.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
         return self
 
     @classmethod

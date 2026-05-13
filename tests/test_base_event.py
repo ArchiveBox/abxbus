@@ -468,6 +468,38 @@ async def test_now_first_result_returns_before_event_completion():
         await bus.destroy()
 
 
+async def test_now_timeout_limits_caller_wait_and_background_processing_continues():
+    class TimeoutEvent(BaseEvent[str]):
+        pass
+
+    bus = EventBus(name='NowTimeoutCallerWaitBus', event_timeout=0)
+    handler_started = asyncio.Event()
+    release_handler = asyncio.Event()
+
+    async def handler(_: TimeoutEvent) -> str:
+        handler_started.set()
+        await release_handler.wait()
+        return 'done'
+
+    bus.on(TimeoutEvent, handler)
+
+    try:
+        event = bus.emit(TimeoutEvent())
+        with pytest.raises(asyncio.TimeoutError):
+            await event.now(timeout=0.01)
+
+        assert event.event_status != EventStatus.COMPLETED
+        await asyncio.wait_for(handler_started.wait(), timeout=1.0)
+
+        release_handler.set()
+        assert await asyncio.wait_for(event.wait(timeout=1.0), timeout=1.0) is event
+        assert event.event_status == EventStatus.COMPLETED
+        assert await event.event_result() == 'done'
+    finally:
+        release_handler.set()
+        await bus.destroy()
+
+
 async def test_event_result_starts_never_started_event_and_returns_first_result():
     class BlockerEvent(BaseEvent[None]):
         pass

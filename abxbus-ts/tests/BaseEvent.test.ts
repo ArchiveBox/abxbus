@@ -444,6 +444,37 @@ test('now: first_result returns before event completion', async () => {
   bus.destroy()
 })
 
+test('now: timeout limits caller wait and background processing continues', async () => {
+  const TimeoutEvent = BaseEvent.extend('NowTimeoutCallerWaitEvent', { event_result_type: z.string() })
+  const bus = new EventBus('NowTimeoutCallerWaitBus', { event_timeout: 0 })
+  let releaseHandler: (() => void) | undefined
+  const release = new Promise<void>((resolve) => {
+    releaseHandler = resolve
+  })
+  let markStarted!: () => void
+  const handlerStarted = new Promise<void>((resolve) => {
+    markStarted = resolve
+  })
+
+  bus.on(TimeoutEvent, async () => {
+    markStarted()
+    await release
+    return 'done'
+  })
+
+  const event = bus.emit(TimeoutEvent({}))
+  await assert.rejects(() => event.now({ timeout: 0.01 }), /Timed out waiting/)
+
+  assert.notEqual(event.event_status, 'completed')
+  assert.equal(await Promise.race([handlerStarted.then(() => true), delay(1000).then(() => false)]), true)
+
+  releaseHandler?.()
+  assert.equal(await event.wait({ timeout: 1 }), event)
+  assert.equal(event.event_status, 'completed')
+  assert.equal(await event.eventResult(), 'done')
+  bus.destroy()
+})
+
 test('eventResult: starts never-started event and returns first result', async () => {
   const BlockerEvent = BaseEvent.extend('EventResultShortcutBlockerEvent', {})
   const TargetEvent = BaseEvent.extend('EventResultShortcutTargetEvent', { event_result_type: z.string() })
