@@ -755,7 +755,14 @@ export class EventBus {
     this._raiseIfDestroyed()
     const original_event = event._event_original ?? event // if event is a bus-scoped proxy already, get the original underlying event object
     const current_result = this.locks._getRawActiveHandlerResultForCurrentAsyncContext()
-    if (current_result && current_result.status !== 'pending' && current_result.status !== 'started') {
+    if (
+      current_result &&
+      current_result.status !== 'pending' &&
+      current_result.status !== 'started' &&
+      (current_result.error instanceof EventHandlerTimeoutError ||
+        current_result.error instanceof EventHandlerCancelledError ||
+        current_result.error instanceof EventHandlerAbortedError)
+    ) {
       return original_event as T
     }
     if (!original_event.event_bus) {
@@ -1264,10 +1271,16 @@ export class EventBus {
         if (prop === 'dispatch' || prop === 'emit') {
           const emit_child_event = <TChild extends BaseEvent>(child_event: TChild): TChild => {
             const original_child = child_event._event_original ?? child_event
-            if (handler_result && handler_result.status !== 'pending' && handler_result.status !== 'started') {
+            const handler_result_is_terminal = handler_result && handler_result.status !== 'pending' && handler_result.status !== 'started'
+            if (
+              handler_result_is_terminal &&
+              (handler_result.error instanceof EventHandlerTimeoutError ||
+                handler_result.error instanceof EventHandlerCancelledError ||
+                handler_result.error instanceof EventHandlerAbortedError)
+            ) {
               return original_child as TChild
             }
-            if (handler_result) {
+            if (handler_result && !handler_result_is_terminal) {
               handler_result._linkEmittedChildEvent(original_child)
             } else if (!original_child.event_parent_id && original_child.event_id !== parent_event_id) {
               // fallback for non-handler scoped emit/dispatch

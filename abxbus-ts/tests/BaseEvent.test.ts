@@ -847,6 +847,38 @@ test('wait: serial wait inside handler times out and warns about slow handler', 
   }
 })
 
+test('deferred emit after handler completion is accepted', async () => {
+  const ParentEvent = BaseEvent.extend('DeferredEmitAfterCompletionParentEvent', {})
+  const DeferredChildEvent = BaseEvent.extend('DeferredEmitAfterCompletionChildEvent', {})
+  const bus = new EventBus('DeferredEmitAfterCompletionBus', { event_concurrency: 'bus-serial' })
+  const order: string[] = []
+  let resolveEmitted!: () => void
+  const emitted = new Promise<void>((resolve) => {
+    resolveEmitted = resolve
+  })
+
+  bus.on(ParentEvent, async (event) => {
+    order.push('parent_start')
+    void (async () => {
+      await delay(20)
+      order.push('deferred_emit')
+      event.emit(DeferredChildEvent({}))
+      resolveEmitted()
+    })()
+    order.push('parent_end')
+  })
+
+  bus.on(DeferredChildEvent, async () => {
+    order.push('child_start')
+  })
+
+  await bus.emit(ParentEvent({})).now()
+  await emitted
+  await bus.waitUntilIdle(1)
+  assert.deepEqual(order, ['parent_start', 'parent_end', 'deferred_emit', 'child_start'])
+  await bus.destroy()
+})
+
 test('wait: waits for normal parallel processing inside handlers', async () => {
   const ParentEvent = BaseEvent.extend('PassiveParallelParentEvent', {})
   const ParallelEmittedEvent = BaseEvent.extend('PassiveParallelEmittedEvent', {})

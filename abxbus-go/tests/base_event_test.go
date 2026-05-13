@@ -1123,6 +1123,59 @@ func TestWaitSerialWaitInsideHandlerTimesOutAndWarnsAboutSlowHandler(t *testing.
 	}
 }
 
+func TestDeferredEmitAfterHandlerCompletionIsAccepted(t *testing.T) {
+	bus := abxbus.NewEventBus("DeferredEmitAfterCompletionBus", &abxbus.EventBusOptions{
+		EventConcurrency: abxbus.EventConcurrencyBusSerial,
+	})
+	order := []string{}
+	var orderMu sync.Mutex
+	record := func(label string) {
+		orderMu.Lock()
+		defer orderMu.Unlock()
+		order = append(order, label)
+	}
+	snapshot := func() []string {
+		orderMu.Lock()
+		defer orderMu.Unlock()
+		return append([]string{}, order...)
+	}
+	emitted := make(chan struct{})
+
+	bus.On("DeferredEmitAfterCompletionParentEvent", "parent", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		record("parent_start")
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			record("deferred_emit")
+			e.Emit(abxbus.NewBaseEvent("DeferredEmitAfterCompletionChildEvent", nil))
+			close(emitted)
+		}()
+		record("parent_end")
+		return "parent", nil
+	}, nil)
+	bus.On("DeferredEmitAfterCompletionChildEvent", "child", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		record("child_start")
+		return "child", nil
+	}, nil)
+
+	if _, err := bus.Emit(abxbus.NewBaseEvent("DeferredEmitAfterCompletionParentEvent", nil)).Now(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-emitted:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for deferred emit")
+	}
+	waitTimeout := 1.0
+	if !bus.WaitUntilIdle(&waitTimeout) {
+		t.Fatal("timed out waiting for bus to become idle")
+	}
+	expected := []string{"parent_start", "parent_end", "deferred_emit", "child_start"}
+	if got := snapshot(); strings.Join(got, ",") != strings.Join(expected, ",") {
+		t.Fatalf("unexpected order: got %#v want %#v", got, expected)
+	}
+	bus.Destroy()
+}
+
 func TestWaitWaitsForNormalParallelProcessingInsideHandlers(t *testing.T) {
 	bus := abxbus.NewEventBus("PassiveParallelEventCompletedBus", &abxbus.EventBusOptions{
 		EventConcurrency: abxbus.EventConcurrencyBusSerial,

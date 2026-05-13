@@ -648,10 +648,6 @@ func (e *BaseEvent) EmitWithContext(ctx context.Context, input any) *BaseEvent {
 			if activeCtx := bus.locks.getActiveHandlerContext(); activeCtx != nil && activeCtx.Err() != nil {
 				return event
 			}
-			status, _, _, _ := active.snapshot()
-			if status != EventResultPending && status != EventResultStarted {
-				return event
-			}
 			if bus.locks.getLockForEvent(event) != nil {
 				active.ensureQueueJumpPause(bus)
 			}

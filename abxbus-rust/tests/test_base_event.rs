@@ -34,6 +34,18 @@ event! {
     }
 }
 event! {
+    struct DeferredEmitAfterCompletionParentEvent {
+        event_result_type: String,
+        event_type: "DeferredEmitAfterCompletionParentEvent",
+    }
+}
+event! {
+    struct DeferredEmitAfterCompletionChildEvent {
+        event_result_type: String,
+        event_type: "DeferredEmitAfterCompletionChildEvent",
+    }
+}
+event! {
     struct BaseEventEventResultUpdateEvent {
         event_result_type: String,
         event_type: "BaseEventEventResultUpdateEvent",
@@ -1809,6 +1821,72 @@ fn __abxbus_event_completed_serial_wait_deadlock_warning_child() {
     assert_eq!(
         order.lock().expect("order lock").as_slice(),
         ["parent_start", "child_timeout", "parent_end", "child_start"]
+    );
+    bus.destroy();
+}
+
+#[test]
+fn test_deferred_emit_after_handler_completion_is_accepted() {
+    let _guard = test_guard();
+    let bus = EventBus::new_with_options(
+        Some("DeferredEmitAfterCompletionBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::BusSerial,
+            ..EventBusOptions::default()
+        },
+    );
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let (emitted_tx, emitted_rx) = mpsc::channel();
+
+    let bus_for_parent = bus.clone();
+    let order_for_parent = order.clone();
+    bus.on_raw(
+        "DeferredEmitAfterCompletionParentEvent",
+        "parent",
+        move |_event| {
+            let bus = bus_for_parent.clone();
+            let order = order_for_parent.clone();
+            let emitted_tx = emitted_tx.clone();
+            async move {
+                push(&order, "parent_start");
+                let order_for_thread = order.clone();
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_millis(20));
+                    push(&order_for_thread, "deferred_emit");
+                    bus.emit_child(DeferredEmitAfterCompletionChildEvent {
+                        ..Default::default()
+                    });
+                    emitted_tx.send(()).expect("send deferred emit signal");
+                });
+                push(&order, "parent_end");
+                Ok(json!("parent"))
+            }
+        },
+    );
+    let order_for_child = order.clone();
+    bus.on_raw(
+        "DeferredEmitAfterCompletionChildEvent",
+        "child",
+        move |_event| {
+            let order = order_for_child.clone();
+            async move {
+                push(&order, "child_start");
+                Ok(json!("child"))
+            }
+        },
+    );
+
+    let parent = bus.emit(DeferredEmitAfterCompletionParentEvent {
+        ..Default::default()
+    });
+    let _ = block_on(parent.now());
+    emitted_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("timed out waiting for deferred emit");
+    block_on(bus.wait_until_idle(Some(1.0)));
+    assert_eq!(
+        order.lock().expect("order lock").as_slice(),
+        ["parent_start", "parent_end", "deferred_emit", "child_start"]
     );
     bus.destroy();
 }

@@ -1893,11 +1893,12 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             and current_handler_id is not None
             and current_event.event_id == self.event_id
             and event.event_id != self.event_id
-            and current_handler_id in current_event.event_results
         ):
-            if event.event_emitted_by_handler_id is None:
-                event.event_emitted_by_handler_id = current_handler_id
-            current_event.event_results[current_handler_id].event_children.append(event)
+            current_result = current_event.event_results.get(current_handler_id)
+            if current_result is not None and current_result.status in ('pending', 'started'):
+                if event.event_emitted_by_handler_id is None:
+                    event.event_emitted_by_handler_id = current_handler_id
+                current_result.event_children.append(event)
 
         return self.bus.emit(event)
 

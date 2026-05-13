@@ -369,14 +369,17 @@ impl EventBus {
         let Some(current_inner) = current_event.inner.try_lock() else {
             return false;
         };
-        let status = current_inner
-            .event_results
-            .get(&current_handler_id)
-            .map(|result| result.status);
-        !matches!(
-            status,
-            Some(EventResultStatus::Pending | EventResultStatus::Started)
-        )
+        let Some(result) = current_inner.event_results.get(&current_handler_id) else {
+            return false;
+        };
+        if result.status != EventResultStatus::Error {
+            return false;
+        }
+        result.error.as_ref().is_some_and(|error| {
+            error.starts_with("EventHandlerTimeoutError:")
+                || error.starts_with("EventHandlerCancelledError:")
+                || error.starts_with("EventHandlerAbortedError:")
+        })
     }
 
     pub fn is_inside_handler_context() -> bool {
@@ -1461,9 +1464,35 @@ impl EventBus {
         if Self::current_handler_context_is_stale() {
             return event;
         }
-        let emitted_from_active_handler = CURRENT_EVENT_ID
-            .with(|event_id| event_id.borrow().is_some())
-            && CURRENT_HANDLER_ID.with(|handler_id| handler_id.borrow().is_some());
+        let emitted_from_active_handler = CURRENT_EVENT_ID.with(|event_id| {
+            CURRENT_HANDLER_ID.with(|handler_id| {
+                let Some(parent_id) = event_id.borrow().clone() else {
+                    return false;
+                };
+                let Some(handler_id) = handler_id.borrow().clone() else {
+                    return false;
+                };
+                self.runtime
+                    .events
+                    .lock()
+                    .get(&parent_id)
+                    .cloned()
+                    .and_then(|parent| {
+                        parent
+                            .inner
+                            .lock()
+                            .event_results
+                            .get(&handler_id)
+                            .map(|result| result.status)
+                    })
+                    .is_some_and(|status| {
+                        matches!(
+                            status,
+                            EventResultStatus::Pending | EventResultStatus::Started
+                        )
+                    })
+            })
+        });
 
         let bus_label = self.label();
         if event.inner.lock().event_path.contains(&bus_label) {
@@ -1491,14 +1520,17 @@ impl EventBus {
                     }
                 });
             }
-            if track_child && inner.event_emitted_by_handler_id.is_none() {
+            if track_child
+                && emitted_from_active_handler
+                && inner.event_emitted_by_handler_id.is_none()
+            {
                 CURRENT_HANDLER_ID.with(|id| {
                     inner.event_emitted_by_handler_id = id.borrow().clone();
                 });
             }
         }
 
-        if track_child {
+        if track_child && emitted_from_active_handler {
             let emitted_child_id = event.inner.lock().event_id.clone();
             CURRENT_EVENT_ID.with(|current_event_id| {
                 CURRENT_HANDLER_ID.with(|current_handler_id| {

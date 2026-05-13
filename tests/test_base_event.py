@@ -1010,6 +1010,42 @@ async def test_wait_serial_wait_inside_handler_times_out_and_warns_about_slow_ha
     await bus.destroy()
 
 
+async def test_deferred_emit_after_handler_completion_is_accepted():
+    class ParentEvent(BaseEvent[None]):
+        pass
+
+    class DeferredChildEvent(BaseEvent[None]):
+        pass
+
+    bus = EventBus(name='DeferredEmitAfterCompletionBus', event_concurrency='bus-serial')
+    order: list[str] = []
+    emitted = asyncio.Event()
+
+    async def on_parent(event: ParentEvent) -> None:
+        order.append('parent_start')
+
+        async def emit_after_completion() -> None:
+            await asyncio.sleep(0.02)
+            order.append('deferred_emit')
+            event.emit(DeferredChildEvent())
+            emitted.set()
+
+        asyncio.create_task(emit_after_completion())
+        order.append('parent_end')
+
+    async def on_child(_: DeferredChildEvent) -> None:
+        order.append('child_start')
+
+    bus.on(ParentEvent, on_parent)
+    bus.on(DeferredChildEvent, on_child)
+
+    await bus.emit(ParentEvent()).now()
+    await asyncio.wait_for(emitted.wait(), timeout=1)
+    await bus.wait_until_idle(timeout=1)
+    assert order == ['parent_start', 'parent_end', 'deferred_emit', 'child_start']
+    await bus.destroy()
+
+
 async def test_wait_waits_for_normal_parallel_processing_inside_handlers():
     class ParentEvent(BaseEvent[None]):
         pass

@@ -40,6 +40,7 @@ from abxbus.event_handler import (
     EventHandlerAbortedError,
     EventHandlerCallable,
     EventHandlerCancelledError,
+    EventHandlerTimeoutError,
 )
 from abxbus.event_history import EventHistory
 from abxbus.helpers import (
@@ -124,7 +125,7 @@ def in_handler_context() -> bool:
 
 
 def current_handler_context_is_stale() -> bool:
-    """Return True when this async context belongs to a handler that already settled."""
+    """Return True when this async context belongs to a cancelled/aborted handler."""
     current_event = get_current_event()
     current_handler_id = get_current_handler_id()
     if current_event is None or current_handler_id is None:
@@ -135,7 +136,13 @@ def current_handler_context_is_stale() -> bool:
     current_result = current_event.event_results.get(current_handler_id)
     if current_result is None:
         return False
-    return current_result.status not in ('pending', 'started')
+    current_error = current_result.error
+    if current_error is None and isinstance(current_result.result, BaseException):
+        current_error = current_result.result
+    return isinstance(
+        current_error,
+        (EventHandlerTimeoutError, EventHandlerCancelledError, EventHandlerAbortedError),
+    )
 
 
 class EventBus:
