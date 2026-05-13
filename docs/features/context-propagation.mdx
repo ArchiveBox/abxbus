@@ -16,9 +16,9 @@ This is commonly used in:
 - Python uses `ContextVars` (`contextvars.ContextVar`).
 - TypeScript (Node/Bun) uses `AsyncLocalStorage`.
 - Rust uses normal Rust context propagation (`dcontext` snapshots are captured at emit time and restored for handlers).
-- Go uses `context.Context` values passed through `Done(ctx)`, `EventCompleted(ctx)`, `EventResult(ctx)`, and handler execution.
+- Go uses `context.Context` values captured with `EmitWithContext(...)` and restored during handler execution.
 
-Python/TypeScript/Rust AbxBus captures ambient context at `emit(...)` time and restores it when handlers execute. Go propagates the explicit `context.Context` passed to the event wait call. In both cases, handler code sees the same request-local values.
+Python/TypeScript/Rust AbxBus captures ambient context at `emit(...)` time and restores it when handlers execute. Go propagates the explicit `context.Context` passed to `EmitWithContext(...)`. In both cases, handler code sees the same request-local values.
 
 ## Why this matters
 
@@ -45,7 +45,7 @@ async def handler(_: RequestEvent) -> None:
 
 bus.on(RequestEvent, handler)
 request_id.set('req-123')
-await bus.emit(RequestEvent())
+await bus.emit(RequestEvent()).now()
 ```
 
 </Tab>
@@ -64,7 +64,7 @@ bus.on(RequestEvent, () => {
 })
 
 await requestContext.run({ requestId: 'req-123' }, async () => {
-  await bus.emit(RequestEvent({})).done()
+  await bus.emit(RequestEvent({})).now()
 })
 ```
 
@@ -98,7 +98,7 @@ let _scope = enter_named_scope("request");
 set_context("request_id", "req-123".to_string());
 
 let event = bus.emit(RequestEvent { ..Default::default() });
-block_on(event.done());
+block_on(event.now());
 ```
 
 </Tab>
@@ -127,7 +127,7 @@ func main() {
 	}, nil)
 
 	ctx := context.WithValue(context.Background(), requestIDKey, "req-123")
-	if _, err := bus.Emit(abxbus.NewBaseEvent("RequestEvent", nil)).Done(ctx); err != nil {
+	if _, err := bus.EmitWithContext(ctx, abxbus.NewBaseEvent("RequestEvent", nil)).Now(); err != nil {
 		panic(err)
 	}
 }
@@ -146,7 +146,7 @@ These patterns are typical in frameworks where each incoming request gets a requ
 ```python
 # FastAPI-style shape (conceptual)
 request_id.set(incoming_request.headers.get('x-request-id', 'generated-id'))
-await bus.emit(RequestEvent())
+await bus.emit(RequestEvent()).now()
 # handlers can still read request_id.get()
 ```
 
@@ -156,7 +156,7 @@ await bus.emit(RequestEvent())
 ```ts
 // Fastify-style shape (conceptual)
 await requestContext.run({ requestId: req.id }, async () => {
-  await bus.emit(RequestEvent({})).done()
+  await bus.emit(RequestEvent({})).now()
 })
 // handlers can still read requestContext.getStore()
 ```
@@ -169,7 +169,7 @@ let _scope = enter_named_scope("request");
 set_context("request_id", incoming_request_id.to_string());
 
 let event = bus.emit(RequestEvent { ..Default::default() });
-block_on(event.done());
+block_on(event.now());
 // handlers can still read get_context::<String>("request_id")
 ```
 
@@ -179,7 +179,7 @@ block_on(event.done());
 ```go
 // net/http-style shape (conceptual)
 ctx := context.WithValue(req.Context(), requestIDKey, req.Header.Get("x-request-id"))
-if _, err := bus.Emit(abxbus.NewBaseEvent("RequestEvent", nil)).Done(ctx); err != nil {
+if _, err := bus.EmitWithContext(ctx, abxbus.NewBaseEvent("RequestEvent", nil)).Now(); err != nil {
 	panic(err)
 }
 // handlers can still read ctx.Value(requestIDKey)
@@ -200,4 +200,4 @@ In browsers:
 
 See [Supported Runtimes](../operations/supported-runtimes) for runtime compatibility details.
 
-Go does not have ambient `AsyncLocalStorage`/`ContextVar` state; pass the request context into the event wait method (`Done`, `EventCompleted`, `EventResult`, or `EventResultsList`) and AbxBus propagates that `context.Context` into handlers and awaited child events.
+Go does not have ambient `AsyncLocalStorage`/`ContextVar` state; pass the request context at emit time with `bus.EmitWithContext(...)` or `event.EmitWithContext(...)` and AbxBus propagates that `context.Context` into handlers and awaited child events.

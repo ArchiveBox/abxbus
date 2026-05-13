@@ -35,7 +35,7 @@ test('basic parent tracking: child events get event_parent_id', async () => {
 
   const parent = bus.emit(ParentEvent({ message: 'test_parent' }))
   await bus.waitUntilIdle()
-  await parent.done()
+  await parent.now()
 
   assert.equal(child_events.length, 1)
   assert.equal(child_events[0].event_parent_id, parent.event_id)
@@ -58,7 +58,7 @@ test('multi-level parent tracking preserves lineage', async () => {
 
   const parent = bus.emit(ParentEvent({ message: 'root' }))
   await bus.waitUntilIdle()
-  await parent.done()
+  await parent.now()
 
   const seen_parent = Array.from(bus.event_history.values()).find((event) => event.event_id === parent.event_id)
   const seen_child = Array.from(bus.event_history.values()).find((event) => event.event_type === 'ChildEvent')
@@ -88,7 +88,7 @@ test('multiple children from same parent keep same event_parent_id', async () =>
 
   const parent = bus.emit(ParentEvent({ message: 'multi_child_parent' }))
   await bus.waitUntilIdle()
-  await parent.done()
+  await parent.now()
 
   assert.equal(child_events.length, 3)
   for (const child of child_events) {
@@ -109,7 +109,7 @@ test('bus.emit inside handler does not link parent when not using event.emit', a
 
   const parent = bus.emit(ParentEvent({ message: 'root_parent' }))
   await bus.waitUntilIdle()
-  await parent.done()
+  await parent.now()
 
   assert.equal(child_events.length, 1)
   const child = child_events[0]
@@ -132,7 +132,7 @@ test('cross-bus bus.emit inside handler does not link parent when exactly one ha
 
   const parent = bus1.emit(ParentEvent({ message: 'cross_root_parent' }))
   await Promise.all([bus1.waitUntilIdle(), bus2.waitUntilIdle()])
-  await parent.done()
+  await parent.now()
 
   assert.equal(emitted_children.length, 1)
   const child = emitted_children[0]
@@ -183,7 +183,7 @@ test('bus.emit outside handler does not guess a parent when multiple handlers ar
 
   release_a()
   release_b()
-  await Promise.all([parent_a.done(), parent_b.done(), unrelated_child.done()])
+  await Promise.all([parent_a.now(), parent_b.now(), unrelated_child.now()])
   await Promise.all([bus1.waitUntilIdle(), bus2.waitUntilIdle(), bus3.waitUntilIdle()])
 
   assert.equal(unrelated_child.event_parent_id, null)
@@ -217,7 +217,7 @@ test('parallel parent handlers preserve parent tracking', async () => {
 
   const parent = bus.emit(ParentEvent({ message: 'parallel_test' }))
   await bus.waitUntilIdle()
-  await parent.done()
+  await parent.now()
 
   assert.equal(child_events_h1.length, 1)
   assert.equal(child_events_h2.length, 1)
@@ -237,7 +237,7 @@ test('explicit event_parent_id is not overridden', async () => {
 
   const parent = bus.emit(ParentEvent({ message: 'test' }))
   await bus.waitUntilIdle()
-  await parent.done()
+  await parent.now()
 
   const captured_child = Array.from(bus.event_history.values()).find((event) => event.event_type === 'ChildEvent')
   assert.ok(captured_child)
@@ -260,7 +260,7 @@ test('cross-eventbus dispatch preserves parent tracking', async () => {
 
   const parent = bus1.emit(ParentEvent({ message: 'cross_bus_test' }))
   await Promise.all([bus1.waitUntilIdle(), bus2.waitUntilIdle()])
-  await parent.done()
+  await parent.now()
 
   const received_child = Array.from(bus2.event_history.values()).find((event) => event.event_type === 'ChildEvent')
   assert.ok(received_child)
@@ -305,7 +305,7 @@ test('parent tracking works with sync handlers and handler errors', async () => 
 
   const parent = bus.emit(ParentEvent({ message: 'mixed_test' }))
   await bus.waitUntilIdle()
-  await parent.done({ raise_if_any: false })
+  await parent.now()
 
   assert.equal(child_events.length, 3)
   for (const child of child_events) {
@@ -339,7 +339,7 @@ test('erroring parent handlers still preserve child event_parent_id', async () =
 
   const parent = bus.emit(ParentEvent({ message: 'error_only' }))
   await bus.waitUntilIdle()
-  await parent.done({ raise_if_any: false })
+  await parent.now()
 
   assert.equal(child_events.length, 2)
   for (const child of child_events) {
@@ -366,7 +366,7 @@ test('event_children tracks direct and nested descendants', async () => {
 
   const parent = bus.emit(ParentEvent({ message: 'nested_test' }))
   await bus.waitUntilIdle()
-  await parent.done()
+  await parent.now()
 
   assert.equal(parent.event_children.length, 1)
   const child = parent.event_children[0]
@@ -389,7 +389,7 @@ test('event_children tracks multiple children from a single handler', async () =
 
   const parent = bus.emit(ParentEvent({ message: 'children_tracking' }))
   await bus.waitUntilIdle()
-  await parent.done()
+  await parent.now()
 
   assert.equal(parent.event_children.length, 3)
   const child_data = parent.event_children.map((child) => Reflect.get(child, 'data') as string | undefined).sort()
@@ -415,7 +415,7 @@ test('multiple parent handlers contribute to one event_children list', async () 
 
   const parent = bus.emit(ParentEvent({ message: 'multi_handler_children' }))
   await bus.waitUntilIdle()
-  await parent.done()
+  await parent.now()
 
   assert.equal(parent.event_children.length, 3)
   const child_data = parent.event_children.map((child) => Reflect.get(child, 'data') as string | undefined).sort()
@@ -429,7 +429,7 @@ test('event_children is empty when handlers do not emit children', async () => {
 
   const parent = bus.emit(ParentEvent({ message: 'no_children' }))
   await bus.waitUntilIdle()
-  await parent.done()
+  await parent.now()
 
   assert.equal(parent.event_children.length, 0)
 })
@@ -455,8 +455,8 @@ test('parent completion waits for awaited children', async () => {
     assert.equal(child_a.event_blocks_parent_completion, false)
     assert.equal(child_b.event_blocks_parent_completion, false)
     completion_order.push('parent_handler')
-    await child_a.done()
-    await child_b.done()
+    await child_a.now()
+    await child_b.now()
     return 'parent'
   })
   bus.on(ChildEvent, async (event) => {
@@ -477,7 +477,7 @@ test('parent completion waits for awaited children', async () => {
     assert.notEqual(parent.event_status, 'completed')
 
     release_children()
-    await parent.done()
+    await parent.now()
     await bus.waitUntilIdle()
 
     assert.equal(parent.event_children.length, 2)
@@ -527,7 +527,7 @@ test('event.emit without await sets parentage without blocking parent completion
       true
     )
 
-    await parent.eventCompleted()
+    await parent.wait()
     assert.equal(parent.event_status, 'completed')
     assert.notEqual(child_ref.event_status, 'completed')
 
@@ -573,7 +573,7 @@ test('bus.emit inside a handler dispatches a root event by default', async () =>
       false
     )
 
-    await parent.eventCompleted()
+    await parent.wait()
     assert.equal(parent.event_status, 'completed')
     assert.notEqual(child_ref.event_status, 'completed')
 
@@ -585,7 +585,7 @@ test('bus.emit inside a handler dispatches a root event by default', async () =>
   }
 })
 
-test('outside await of bus.emit child.done() keeps it independent of the active handler', async () => {
+test('outside await of bus.emit child.now() keeps it independent of the active handler', async () => {
   const bus = new EventBus('RootChildExternalDoneBus')
   let parent_holding_resolve: (() => void) | null = null
   const parent_holding = new Promise<void>((resolve) => {
@@ -620,11 +620,11 @@ test('outside await of bus.emit child.done() keeps it independent of the active 
     assert.equal(child_ref.event_emitted_by_handler_id, null)
     assert.equal(child_ref.event_blocks_parent_completion, false)
 
-    const child_done = child_ref.done()
+    const child_done = child_ref.now()
     assert.equal(child_ref.event_blocks_parent_completion, false)
 
     release_parent()
-    await parent.eventCompleted()
+    await parent.wait()
     assert.equal(parent.event_status, 'completed')
     assert.notEqual(child_ref.event_status, 'completed')
 
@@ -637,8 +637,8 @@ test('outside await of bus.emit child.done() keeps it independent of the active 
   }
 })
 
-test('outside eventCompleted wait of bus.emit child keeps it independent of the active handler', async () => {
-  const bus = new EventBus('RootChildExternalEventCompletedBus')
+test('outside wait of bus.emit child keeps it independent of the active handler', async () => {
+  const bus = new EventBus('RootChildExternalWaitBus')
   let parent_holding_resolve: (() => void) | null = null
   const parent_holding = new Promise<void>((resolve) => {
     parent_holding_resolve = resolve
@@ -654,7 +654,7 @@ test('outside eventCompleted wait of bus.emit child keeps it independent of the 
   let child_ref: BaseEvent | undefined
 
   bus.on(ParentEvent, async () => {
-    child_ref = bus.emit(ChildEvent({ data: 'external_event_completed' }))
+    child_ref = bus.emit(ChildEvent({ data: 'external_wait' }))
     parent_holding_resolve?.()
     await parent_released
     return 'parent'
@@ -664,7 +664,7 @@ test('outside eventCompleted wait of bus.emit child keeps it independent of the 
     return 'child'
   })
 
-  const parent = bus.emit(ParentEvent({ message: 'external_event_completed' }))
+  const parent = bus.emit(ParentEvent({ message: 'external_wait' }))
   try {
     await parent_holding
     assert.ok(child_ref)
@@ -672,11 +672,11 @@ test('outside eventCompleted wait of bus.emit child keeps it independent of the 
     assert.equal(child_ref.event_emitted_by_handler_id, null)
     assert.equal(child_ref.event_blocks_parent_completion, false)
 
-    const child_completed = child_ref.eventCompleted()
+    const child_completed = child_ref.wait()
     assert.equal(child_ref.event_blocks_parent_completion, false)
 
     release_parent()
-    await parent.eventCompleted()
+    await parent.wait()
     assert.equal(parent.event_status, 'completed')
     assert.notEqual(child_ref.event_status, 'completed')
 
@@ -698,13 +698,13 @@ test('awaited bus.emit child remains independent and does not block parent compl
     assert.equal(child_ref.event_parent_id, null)
     assert.equal(child_ref.event_emitted_by_handler_id, null)
     assert.equal(child_ref.event_blocks_parent_completion, false)
-    await child_ref.done()
+    await child_ref.now()
     assert.equal(child_ref.event_blocks_parent_completion, false)
     return 'parent'
   })
   bus.on(ChildEvent, () => 'child')
 
-  await bus.emit(ParentEvent({ message: 'awaited' })).done()
+  await bus.emit(ParentEvent({ message: 'awaited' })).now()
   assert.ok(child_ref)
   assert.equal(child_ref.event_parent_id, null)
   assert.equal(child_ref.event_blocks_parent_completion, false)
@@ -718,7 +718,7 @@ test('forwarded events are not counted as parent event_children', async () => {
 
   const parent = bus1.emit(ParentEvent({ message: 'forward_test' }))
   await Promise.all([bus1.waitUntilIdle(), bus2.waitUntilIdle()])
-  await parent.done()
+  await parent.now()
 
   assert.equal(parent.event_children.length, 0)
   assert.equal(parent._areAllChildrenComplete(), true)

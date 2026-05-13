@@ -340,7 +340,7 @@ async def run_perf_50k_events(input: PerfInput) -> dict[str, Any]:
         },
     )
 
-    await bus.stop(timeout=0, clear=True)
+    await bus.destroy(clear=True)
     _record(hooks, result)
     return result
 
@@ -393,7 +393,7 @@ async def run_perf_ephemeral_buses(input: PerfInput) -> dict[str, Any]:
 
         memory.sample()
         await _trim_bus_history_to_one_event(bus, PerfTrimEphemeralEvent)
-        await bus.stop(timeout=0, clear=True)
+        await bus.destroy(clear=True)
 
         if bus_index % 10 == 0:
             memory.sample()
@@ -521,7 +521,7 @@ async def run_perf_single_event_many_fixed_handlers(input: PerfInput) -> dict[st
     )
 
     await _trim_bus_history_to_one_event(bus, PerfTrimFixedHandlersEvent)
-    await bus.stop(timeout=0, clear=True)
+    await bus.destroy(clear=True)
     _record(hooks, result)
     return result
 
@@ -612,7 +612,7 @@ async def run_perf_on_off_churn(input: PerfInput) -> dict[str, Any]:
     )
 
     await _trim_bus_history_to_one_event(bus, PerfTrimOnOffEvent)
-    await bus.stop(timeout=0, clear=True)
+    await bus.destroy(clear=True)
     _record(hooks, result)
     return result
 
@@ -753,9 +753,9 @@ async def run_perf_worst_case(input: PerfInput) -> dict[str, Any]:
     await _trim_bus_history_to_one_event(bus_c, WCTrimEvent)
     await _wait_for_runtime_settle(hooks)
 
-    await bus_a.stop(timeout=0, clear=True)
-    await bus_b.stop(timeout=0, clear=True)
-    await bus_c.stop(timeout=0, clear=True)
+    await bus_a.destroy(clear=True)
+    await bus_b.destroy(clear=True)
+    await bus_c.destroy(clear=True)
 
     _record(hooks, result)
     return result

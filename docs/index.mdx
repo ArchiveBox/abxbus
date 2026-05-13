@@ -41,7 +41,7 @@ async def on_some_event(event: SomeEvent) -> None:
 bus = EventBus('MyBus')
 bus.on(SomeEvent, on_some_event)
 
-await bus.emit(SomeEvent(some_data=132))
+await bus.emit(SomeEvent(some_data=132)).now()
 ```
 
 </Tab>
@@ -60,7 +60,7 @@ bus.on(SomeEvent, async (event) => {
   console.log(event.some_data);
 });
 
-await bus.emit(SomeEvent({ some_data: 132 })).done();
+await bus.emit(SomeEvent({ some_data: 132 })).now();
 ```
 
 </Tab>
@@ -83,7 +83,7 @@ bus.on(SomeEvent, |event: SomeEvent| async move {
 });
 
 let event = bus.emit(SomeEvent { some_data: 132, ..Default::default() });
-block_on(event.done());
+block_on(event.now());
 ```
 
 </Tab>
@@ -107,7 +107,7 @@ func main() {
 	}, nil)
 
 	event := bus.Emit(abxbus.NewBaseEvent("SomeEvent", map[string]any{"some_data": 132}))
-	_, _ = event.Done(context.Background())
+	_, _ = event.Now()
 }
 ```
 

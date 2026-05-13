@@ -1,4 +1,5 @@
 export { BaseEvent, BaseEventSchema } from './BaseEvent.js'
+export type { EventResultInclude, EventResultOptions, EventWaitOptions, EventWaitPromise } from './BaseEvent.js'
 export { EventHistory } from './EventHistory.js'
 export type { EventHistoryFilterOptions, EventHistoryFindOptions, EventHistoryTrimOptions } from './EventHistory.js'
 export { EventResult } from './EventResult.js'

@@ -75,7 +75,7 @@ fn test_simple_debounce_with_child_of_reuses_recent_event() {
             });
             *child_id.lock().expect("child id lock") =
                 Some(child.inner.inner.lock().event_id.clone());
-            child.done().await;
+            let _ = child.now().await;
             Ok(json!("parent_done"))
         }
     });
@@ -88,7 +88,7 @@ fn test_simple_debounce_with_child_of_reuses_recent_event() {
     let parent = bus.emit(ParentEvent {
         ..Default::default()
     });
-    block_on(parent.done());
+    let _ = block_on(parent.now());
     let emitted_child_id = wait_for_string(&child_id);
 
     let reused = block_on(bus.find_with_options(
@@ -109,23 +109,67 @@ fn test_simple_debounce_with_child_of_reuses_recent_event() {
         })
         .inner
     });
-    block_on(reused.event_completed());
+    let _ = block_on(reused.wait());
 
     assert_eq!(reused.inner.lock().event_id, emitted_child_id);
     assert_eq!(
         reused.inner.lock().event_parent_id.as_deref(),
         Some(parent.inner.inner.lock().event_id.as_str())
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
-fn test_simple_debounce_uses_recent_history_or_dispatches_new() {
-    test_simple_debounce_with_child_of_reuses_recent_event();
+fn test_returns_existing_fresh_event() {
+    let bus = EventBus::new(Some("DebounceFreshBus".to_string()));
+    bus.on_raw("ScreenshotEvent", "complete", |_event| async move {
+        Ok(json!("done"))
+    });
+
+    let original = bus.emit(ScreenshotEvent {
+        target_id: TARGET_ID_1.to_string(),
+        ..Default::default()
+    });
+    let _ = block_on(original.now());
+
+    let found = block_on(bus.find_with_options(
+        "ScreenshotEvent",
+        FindOptions {
+            past: true,
+            where_predicate: Some(Arc::new(|event| {
+                let event = event.inner.lock();
+                let Some(completed_at) = &event.event_completed_at else {
+                    return false;
+                };
+                let Ok(completed_at) = chrono::DateTime::parse_from_rfc3339(completed_at) else {
+                    return false;
+                };
+                event.payload.get("target_id") == Some(&json!(TARGET_ID_1))
+                    && chrono::Utc::now()
+                        .signed_duration_since(completed_at.with_timezone(&chrono::Utc))
+                        .num_seconds()
+                        < 5
+            })),
+            ..FindOptions::default()
+        },
+    ))
+    .unwrap_or_else(|| {
+        bus.emit(ScreenshotEvent {
+            target_id: TARGET_ID_1.to_string(),
+            ..Default::default()
+        })
+        .inner
+    });
+    let _ = block_on(found.wait());
+
+    let found_id = found.inner.lock().event_id.clone();
+    let original_id = original.inner.inner.lock().event_id.clone();
+    assert_eq!(found_id, original_id);
+    bus.destroy();
 }
 
 #[test]
-fn test_debounce_uses_future_match_before_dispatch_fallback() {
+fn test_advanced_debounce_prefers_history_then_waits_future_then_dispatches() {
     let bus = EventBus::new(Some("AdvancedDebounceBus".to_string()));
     let bus_for_find = bus.clone();
     let bus_for_emit = bus.clone();
@@ -153,71 +197,14 @@ fn test_debounce_uses_future_match_before_dispatch_fallback() {
         })
         .inner
     });
-    block_on(resolved.event_completed());
+    let _ = block_on(resolved.wait());
 
     assert_eq!(resolved.inner.lock().event_type, "SyncEvent");
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
-fn test_advanced_debounce_prefers_history_then_waits_future_then_dispatches() {
-    test_debounce_uses_future_match_before_dispatch_fallback();
-}
-
-#[test]
-fn test_advanced_debounce_prefers_history_then_waits_for_future_then_dispatches() {
-    test_debounce_uses_future_match_before_dispatch_fallback();
-}
-
-#[test]
-fn test_debounce_prefers_recent_history() {
-    let bus = EventBus::new(Some("DebounceFreshBus".to_string()));
-    bus.on_raw("ScreenshotEvent", "complete", |_event| async move {
-        Ok(json!("done"))
-    });
-
-    let original = bus.emit(ScreenshotEvent {
-        target_id: TARGET_ID_1.to_string(),
-        ..Default::default()
-    });
-    block_on(original.done());
-
-    let found = block_on(bus.find_with_options(
-        "ScreenshotEvent",
-        FindOptions {
-            past: true,
-            past_window: Some(5.0),
-            where_filter: Some(target_filter(TARGET_ID_1)),
-            ..FindOptions::default()
-        },
-    ))
-    .unwrap_or_else(|| {
-        bus.emit(ScreenshotEvent {
-            target_id: TARGET_ID_1.to_string(),
-            ..Default::default()
-        })
-        .inner
-    });
-    block_on(found.event_completed());
-
-    let found_id = found.inner.lock().event_id.clone();
-    let original_id = original.inner.inner.lock().event_id.clone();
-    assert_eq!(found_id, original_id);
-    bus.stop();
-}
-
-#[test]
-fn test_returns_existing_fresh_event() {
-    test_debounce_prefers_recent_history();
-}
-
-#[test]
-fn test_debounce_returns_existing_fresh_event() {
-    test_debounce_prefers_recent_history();
-}
-
-#[test]
-fn test_debounce_dispatches_when_recent_missing() {
+fn test_dispatches_new_when_no_match() {
     let bus = EventBus::new(Some("DebounceNoMatchBus".to_string()));
     bus.on_raw("ScreenshotEvent", "complete", |_event| async move {
         Ok(json!("done"))
@@ -238,24 +225,14 @@ fn test_debounce_dispatches_when_recent_missing() {
         })
         .inner
     });
-    block_on(result.event_completed());
+    let _ = block_on(result.wait());
 
     assert_eq!(
         result.inner.lock().payload.get("target_id"),
         Some(&json!(TARGET_ID_1))
     );
     assert_eq!(result.inner.lock().event_status, EventStatus::Completed);
-    bus.stop();
-}
-
-#[test]
-fn test_dispatches_new_when_no_match() {
-    test_debounce_dispatches_when_recent_missing();
-}
-
-#[test]
-fn test_debounce_dispatches_new_when_no_match() {
-    test_debounce_dispatches_when_recent_missing();
+    bus.destroy();
 }
 
 #[test]
@@ -269,13 +246,15 @@ fn test_dispatches_new_when_stale() {
         target_id: TARGET_ID_1.to_string(),
         ..Default::default()
     });
-    block_on(original.done());
+    let _ = block_on(original.now());
 
     let result = block_on(bus.find_with_options(
         "ScreenshotEvent",
         FindOptions {
             past: true,
-            where_filter: Some(target_filter(TARGET_ID_2)),
+            where_predicate: Some(Arc::new(|event| {
+                event.inner.lock().payload.get("target_id") == Some(&json!(TARGET_ID_1)) && false
+            })),
             ..FindOptions::default()
         },
     ))
@@ -286,7 +265,7 @@ fn test_dispatches_new_when_stale() {
         })
         .inner
     });
-    block_on(result.event_completed());
+    let _ = block_on(result.wait());
 
     let screenshots = bus
         .runtime_payload_for_test()
@@ -294,12 +273,7 @@ fn test_dispatches_new_when_stale() {
         .filter(|event| event.inner.lock().event_type == "ScreenshotEvent")
         .count();
     assert_eq!(screenshots, 2);
-    bus.stop();
-}
-
-#[test]
-fn test_debounce_dispatches_new_when_existing_is_stale() {
-    test_dispatches_new_when_stale();
+    bus.destroy();
 }
 
 #[test]
@@ -312,13 +286,7 @@ fn test_find_past_only_returns_immediately_without_waiting() {
 
     assert!(result.is_none());
     assert!(elapsed < Duration::from_millis(50));
-    bus.stop();
-}
-
-#[test]
-fn test_debounce_past_only_and_past_window_lookups_return_immediately_when_empty() {
-    test_find_past_only_returns_immediately_without_waiting();
-    test_find_past_float_returns_immediately_without_waiting();
+    bus.destroy();
 }
 
 #[test]
@@ -339,7 +307,7 @@ fn test_find_past_float_returns_immediately_without_waiting() {
 
     assert!(result.is_none());
     assert!(elapsed < Duration::from_millis(50));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -353,7 +321,7 @@ fn test_or_chain_without_waiting_finds_existing() {
         target_id: TARGET_ID_1.to_string(),
         ..Default::default()
     });
-    block_on(original.done());
+    let _ = block_on(original.now());
 
     let start = Instant::now();
     let result = block_on(bus.find_with_options(
@@ -372,14 +340,14 @@ fn test_or_chain_without_waiting_finds_existing() {
         })
         .inner
     });
-    block_on(result.event_completed());
+    let _ = block_on(result.wait());
     let elapsed = start.elapsed();
 
     let result_id = result.inner.lock().event_id.clone();
     let original_id = original.inner.inner.lock().event_id.clone();
     assert_eq!(result_id, original_id);
     assert!(elapsed < Duration::from_millis(100));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -406,7 +374,7 @@ fn test_or_chain_without_waiting_dispatches_when_no_match() {
         })
         .inner
     });
-    block_on(result.event_completed());
+    let _ = block_on(result.wait());
     let elapsed = start.elapsed();
 
     assert_eq!(
@@ -414,7 +382,7 @@ fn test_or_chain_without_waiting_dispatches_when_no_match() {
         Some(&json!(TARGET_ID_1))
     );
     assert!(elapsed < Duration::from_millis(100));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -471,9 +439,9 @@ fn test_or_chain_multiple_sequential_lookups() {
         .inner
     });
 
-    block_on(result_1.event_completed());
-    block_on(result_2.event_completed());
-    block_on(result_3.event_completed());
+    let _ = block_on(result_1.wait());
+    let _ = block_on(result_2.wait());
+    let _ = block_on(result_3.wait());
 
     assert!(start.elapsed() < Duration::from_millis(200));
     let result_1_id = result_1.inner.lock().event_id.clone();
@@ -485,10 +453,5 @@ fn test_or_chain_multiple_sequential_lookups() {
         result_3.inner.lock().payload.get("target_id"),
         Some(&json!(TARGET_ID_2))
     );
-    bus.stop();
-}
-
-#[test]
-fn test_debounce_or_chain_handles_sequential_lookups_without_blocking() {
-    test_or_chain_multiple_sequential_lookups();
+    bus.destroy();
 }

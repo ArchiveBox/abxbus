@@ -86,11 +86,17 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: abxbus-rust -> target
+
       - name: Set up Go for cross-runtime roundtrip tests
         if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
         uses: actions/setup-go@v5
         with:
           go-version-file: abxbus-go/go.mod
+          cache: true
           cache-dependency-path: abxbus-go/go.sum
 
       - name: Run Rust library tests

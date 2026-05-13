@@ -206,4 +206,4 @@ block_on(bus_b.wait_until_idle(None));
 ## Notes
 
 - This mode is strongest for determinism across distributed in-process bus topologies.
-- Queue-jump behavior (`await event` inside handlers) still applies, but it does so under the same global lock.
+- Queue-jump behavior (`await event.now()` inside handlers) still applies, but it does so under the same global lock.

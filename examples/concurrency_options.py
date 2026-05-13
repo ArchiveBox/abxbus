@@ -75,8 +75,8 @@ async def event_concurrency_demo() -> None:
         print('\n=== global_b.log_tree() ===')
         print(global_b.log_tree())
     finally:
-        await global_a.stop(clear=True, timeout=0)
-        await global_b.stop(clear=True, timeout=0)
+        await global_a.destroy(clear=True)
+        await global_b.destroy(clear=True)
 
     bus_log = make_logger('event:bus-serial')
     bus_a = EventBus('BusSerialA', event_concurrency='bus-serial', event_handler_concurrency='serial')
@@ -119,8 +119,8 @@ async def event_concurrency_demo() -> None:
         print('\n=== bus_b.log_tree() ===')
         print(bus_b.log_tree())
     finally:
-        await bus_a.stop(clear=True, timeout=0)
-        await bus_b.stop(clear=True, timeout=0)
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
 
 
 async def handler_concurrency_demo() -> None:
@@ -148,13 +148,13 @@ async def handler_concurrency_demo() -> None:
             bus.on(HandlerEvent, make_handler('fast', 20))
 
             event = bus.emit(HandlerEvent(label=mode))
-            await event
+            await event.now()
             await bus.wait_until_idle()
             log(f'max handler overlap: {max_in_flight} (expect 1 for serial, >= 2 for parallel)')
             print(f'\n=== {bus.name}.log_tree() ===')
             print(bus.log_tree())
         finally:
-            await bus.stop(clear=True, timeout=0)
+            await bus.destroy(clear=True)
 
     await run_case('serial')
     await run_case('parallel')
@@ -247,7 +247,7 @@ async def event_override_demo() -> None:
         print('\n=== OverrideBus.log_tree() ===')
         print(bus.log_tree())
     finally:
-        await bus.stop(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 async def handler_timeout_demo() -> None:
@@ -280,7 +280,7 @@ async def handler_timeout_demo() -> None:
         fast_entry.handler_timeout = 0.1
 
         event = bus.emit(TimeoutEvent(ms=60, event_handler_timeout=0.5))
-        await event
+        await event.now()
 
         slow_result = event.event_results.get(slow_entry.id)
         handler_timed_out = slow_result is not None and isinstance(slow_result.error, TimeoutError)
@@ -292,7 +292,7 @@ async def handler_timeout_demo() -> None:
         print('\n=== TimeoutBus.log_tree() ===')
         print(bus.log_tree())
     finally:
-        await bus.stop(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 async def main() -> None:

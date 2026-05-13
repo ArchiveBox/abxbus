@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -49,10 +50,62 @@ type BaseEvent struct {
 	done_once          sync.Once
 }
 
-type EventResultsListOptions struct {
+type EventWaitOptions struct {
 	Timeout     *float64
+	FirstResult bool
+}
+
+type EventResultOptions struct {
+	Include     func(result any, event_result *EventResult) bool
+	RaiseIfAny  any
+	RaiseIfNone any
+}
+
+type resolvedEventResultOptions struct {
+	Include     func(result any, event_result *EventResult) bool
 	RaiseIfAny  bool
 	RaiseIfNone bool
+}
+
+type EventHandlerErrors struct {
+	EventType string
+	EventID   string
+	Errors    []error
+}
+
+func (e *EventHandlerErrors) Error() string {
+	if e == nil || len(e.Errors) == 0 {
+		return ""
+	}
+	if len(e.Errors) == 1 {
+		return e.Errors[0].Error()
+	}
+	parts := make([]string, 0, len(e.Errors))
+	for _, err := range e.Errors {
+		if err != nil {
+			parts = append(parts, err.Error())
+		}
+	}
+	return fmt.Sprintf("Event %s#%s had %d handler error(s): %s", e.EventType, suffix(e.EventID, 4), len(e.Errors), strings.Join(parts, "; "))
+}
+
+func (e *EventHandlerErrors) Unwrap() []error {
+	if e == nil {
+		return nil
+	}
+	return e.Errors
+}
+
+type EventResultNoneError struct {
+	EventType string
+	EventID   string
+}
+
+func (e *EventResultNoneError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("Expected at least one handler to return a non-null result, but none did: %s#%s", e.EventType, suffix(e.EventID, 4))
 }
 
 type BaseEventResultUpdateOptions struct {
@@ -429,46 +482,169 @@ func (e *BaseEvent) status() string {
 	return e.EventStatus
 }
 
-func (e *BaseEvent) EventCompleted(ctx context.Context) error {
+func (e *BaseEvent) isUnattachedPendingEvent() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.EventStatus != "completed" && e.Bus == nil
+}
+
+func (e *BaseEvent) activeOperationContext() context.Context {
 	e.mu.Lock()
 	bus := e.Bus
 	e.mu.Unlock()
 	if bus != nil {
-		if active := bus.locks.getActiveHandlerResult(); active != nil {
-			active.releaseQueueJumpPauseFor(bus)
+		if ctx := bus.locks.getActiveHandlerContext(); ctx != nil {
+			return ctx
 		}
-		bus.startRunloop()
+	}
+	return context.Background()
+}
+
+func (e *BaseEvent) Wait(options ...*EventWaitOptions) (*BaseEvent, error) {
+	return e.waitWithContext(e.activeOperationContext(), options...)
+}
+
+func (e *BaseEvent) waitWithContext(ctx context.Context, options ...*EventWaitOptions) (*BaseEvent, error) {
+	if e.isUnattachedPendingEvent() {
+		return nil, errors.New("event has no bus attached")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	opts := EventWaitOptions{}
+	if len(options) > 0 && options[0] != nil {
+		opts = *options[0]
+	}
+	if opts.Timeout != nil && *opts.Timeout < 0 {
+		return nil, errors.New("timeout must be >= 0 or nil")
+	}
+	if opts.Timeout != nil && *opts.Timeout > 0 {
+		ctx2, cancel := context.WithTimeout(ctx, time.Duration(*opts.Timeout*float64(time.Second)))
+		defer cancel()
+		ctx = ctx2
+	}
+	if opts.FirstResult {
+		if err := e.waitForFirstResultOrCompletion(ctx); err != nil {
+			return nil, err
+		}
+		return e, nil
+	}
+	if e.status() == "completed" {
+		return e, nil
 	}
 	select {
 	case <-e.done_ch:
-		return nil
+		return e, nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return nil, ctx.Err()
 	}
 }
 
-func (e *BaseEvent) Done(ctx context.Context) (*BaseEvent, error) {
+func (e *BaseEvent) Now(options ...*EventWaitOptions) (*BaseEvent, error) {
+	return e.nowWithContext(e.activeOperationContext(), options...)
+}
+
+func (e *BaseEvent) nowWithContext(ctx context.Context, options ...*EventWaitOptions) (*BaseEvent, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	processCtx := ctx
+	opts := EventWaitOptions{}
+	if len(options) > 0 && options[0] != nil {
+		opts = *options[0]
+	}
+	if opts.Timeout != nil && *opts.Timeout < 0 {
+		return nil, errors.New("timeout must be >= 0 or nil")
+	}
+	if opts.Timeout != nil && *opts.Timeout > 0 {
+		ctx2, cancel := context.WithTimeout(ctx, time.Duration(*opts.Timeout*float64(time.Second)))
+		defer cancel()
+		ctx = ctx2
+	}
 	if e.status() == "completed" {
 		return e, nil
 	}
 	e.mu.Lock()
 	bus := e.Bus
-	if ctx != nil {
-		e.dispatchCtx = ctx
-	}
 	e.mu.Unlock()
 	if bus == nil {
 		return nil, errors.New("event has no bus attached")
 	}
 	e.markBlocksParentCompletionIfAwaitedFromEmittingHandler()
-	_, err := bus.processEventImmediatelyAcrossBuses(ctx, e)
-	if err != nil {
+	if opts.FirstResult {
+		errCh := make(chan error, 1)
+		go func() {
+			_, err := bus.processEventImmediatelyAcrossBuses(processCtx, e)
+			errCh <- err
+		}()
+		if err := e.waitForFirstResultOrCompletion(ctx); err != nil {
+			return nil, err
+		}
+		if e.hasValidResult(nil) {
+			return e, nil
+		}
+		if err := <-errCh; err != nil {
+			return nil, err
+		}
+		return e, nil
+	}
+	if opts.Timeout != nil && *opts.Timeout > 0 {
+		errCh := make(chan error, 1)
+		go func() {
+			_, err := bus.processEventImmediatelyAcrossBuses(processCtx, e)
+			errCh <- err
+		}()
+		select {
+		case err := <-errCh:
+			if err != nil {
+				return nil, err
+			}
+			return e, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if _, err := bus.processEventImmediatelyAcrossBuses(processCtx, e); err != nil {
 		return nil, err
 	}
 	return e, nil
 }
 
+func (e *BaseEvent) firstProcessingError() error {
+	errorResults := []*EventResult{}
+	for _, result := range e.sortedEventResults() {
+		if result.Status == EventResultError {
+			errorResults = append(errorResults, result)
+		}
+	}
+	if len(errorResults) == 0 {
+		return nil
+	}
+	sort.SliceStable(errorResults, func(i, j int) bool {
+		left := errorResults[i].CompletedAt
+		right := errorResults[j].CompletedAt
+		if left == nil && right == nil {
+			return eventResultRegistrationLess(errorResults[i], errorResults[j])
+		}
+		if left == nil {
+			return false
+		}
+		if right == nil {
+			return true
+		}
+		if *left == *right {
+			return eventResultRegistrationLess(errorResults[i], errorResults[j])
+		}
+		return *left < *right
+	})
+	return errors.New(toErrorString(errorResults[0].Error))
+}
+
 func (e *BaseEvent) Emit(input any) *BaseEvent {
+	return e.EmitWithContext(nil, input)
+}
+
+func (e *BaseEvent) EmitWithContext(ctx context.Context, input any) *BaseEvent {
 	event, err := baseEventFromAny(input)
 	if err != nil {
 		panic(err)
@@ -485,6 +661,9 @@ func (e *BaseEvent) Emit(input any) *BaseEvent {
 			event.EventParentID = &parentID
 		}
 		if active := bus.locks.getActiveHandlerResult(); active != nil && active.EventID == e.EventID {
+			if activeCtx := bus.locks.getActiveHandlerContext(); activeCtx != nil && activeCtx.Err() != nil {
+				return event
+			}
 			if bus.locks.getLockForEvent(event) != nil {
 				active.ensureQueueJumpPause(bus)
 			}
@@ -495,7 +674,7 @@ func (e *BaseEvent) Emit(input any) *BaseEvent {
 			active.addChild(event)
 		}
 	}
-	return bus.Emit(event)
+	return bus.EmitWithContext(ctx, event)
 }
 
 func (e *BaseEvent) markBlocksParentCompletionIfAwaitedFromEmittingHandler() {
@@ -522,39 +701,151 @@ func (e *BaseEvent) markBlocksParentCompletionIfAwaitedFromEmittingHandler() {
 	}
 }
 
-func (e *BaseEvent) EventResult(ctx context.Context) (any, error) {
-	if _, err := e.Done(ctx); err != nil {
+func (e *BaseEvent) EventResult(options ...*EventResultOptions) (any, error) {
+	return e.eventResultWithContext(e.activeOperationContext(), options...)
+}
+
+func (e *BaseEvent) eventResultWithContext(ctx context.Context, options ...*EventResultOptions) (any, error) {
+	opts := defaultEventResultOptions(options...)
+	if err := e.ensureResultsReady(ctx, true); err != nil {
 		return nil, err
 	}
-	for _, result := range e.sortedEventResults() {
-		if result.Status == EventResultError {
-			return nil, errors.New(toErrorString(result.Error))
-		}
+	if err := e.raiseResultErrorsIfNeeded(opts); err != nil {
+		return nil, err
+	}
+	include := opts.Include
+	if include == nil {
+		include = defaultEventResultInclude
 	}
 	for _, result := range e.sortedEventResults() {
-		if result.Status == EventResultCompleted && result.Result != nil && !isBaseEventResult(result.Result) {
+		if include(result.Result, result) {
 			return result.Result, nil
 		}
+	}
+	if opts.RaiseIfNone {
+		return nil, &EventResultNoneError{EventType: e.EventType, EventID: e.EventID}
 	}
 	return nil, nil
 }
 
-func (e *BaseEvent) First(ctx context.Context) (any, error) {
-	e.EventHandlerCompletion = EventHandlerCompletionFirst
-	if _, err := e.Done(ctx); err != nil {
+func (e *BaseEvent) EventResultsList(options ...*EventResultOptions) ([]any, error) {
+	return e.eventResultsListWithContext(e.activeOperationContext(), options...)
+}
+
+func (e *BaseEvent) eventResultsListWithContext(ctx context.Context, options ...*EventResultOptions) ([]any, error) {
+	opts := defaultEventResultOptions(options...)
+	if err := e.ensureResultsReady(ctx, false); err != nil {
 		return nil, err
 	}
-	for _, result := range e.sortedEventResults() {
-		if result.Status == EventResultCompleted && result.Result != nil && !isBaseEventResult(result.Result) {
-			return result.Result, nil
+	if err := e.raiseResultErrorsIfNeeded(opts); err != nil {
+		return nil, err
+	}
+	include := opts.Include
+	if include == nil {
+		include = defaultEventResultInclude
+	}
+	results := e.sortedEventResults()
+	out := make([]any, 0, len(results))
+	for _, result := range results {
+		if include(result.Result, result) {
+			out = append(out, result.Result)
 		}
 	}
+	if opts.RaiseIfNone && len(out) == 0 {
+		return nil, &EventResultNoneError{EventType: e.EventType, EventID: e.EventID}
+	}
+	return out, nil
+}
+
+func defaultEventResultOptions(options ...*EventResultOptions) *resolvedEventResultOptions {
+	opts := &resolvedEventResultOptions{RaiseIfAny: true, RaiseIfNone: false}
+	if len(options) > 0 && options[0] != nil {
+		provided := options[0]
+		opts.Include = provided.Include
+		opts.RaiseIfAny = optionalBoolOption(provided.RaiseIfAny, "RaiseIfAny", opts.RaiseIfAny)
+		opts.RaiseIfNone = optionalBoolOption(provided.RaiseIfNone, "RaiseIfNone", opts.RaiseIfNone)
+	}
+	return opts
+}
+
+func optionalBoolOption(value any, name string, defaultValue bool) bool {
+	switch typed := value.(type) {
+	case nil:
+		return defaultValue
+	case bool:
+		return typed
+	default:
+		panic(fmt.Errorf("%s must be a bool when provided, got %T", name, value))
+	}
+}
+
+func (e *BaseEvent) ensureResultsReady(ctx context.Context, firstResult bool) error {
+	if e.status() != "pending" || e.hasAnySettledResult() {
+		return nil
+	}
+	if firstResult {
+		_, err := e.nowWithContext(ctx, &EventWaitOptions{FirstResult: true})
+		return err
+	}
+	_, err := e.nowWithContext(ctx)
+	return err
+}
+
+func (e *BaseEvent) raiseResultErrorsIfNeeded(options *resolvedEventResultOptions) error {
+	if !options.RaiseIfAny {
+		return nil
+	}
+	handlerErrs := make([]error, 0)
 	for _, result := range e.sortedEventResults() {
 		if result.Status == EventResultError {
-			return nil, errors.New(toErrorString(result.Error))
+			handlerErrs = append(handlerErrs, errors.New(toErrorString(result.Error)))
 		}
 	}
-	return nil, nil
+	if len(handlerErrs) > 0 {
+		if len(handlerErrs) == 1 {
+			return handlerErrs[0]
+		}
+		return &EventHandlerErrors{EventType: e.EventType, EventID: e.EventID, Errors: handlerErrs}
+	}
+	return nil
+}
+
+func (e *BaseEvent) hasAnySettledResult() bool {
+	for _, result := range e.sortedEventResults() {
+		if result.Status == EventResultCompleted || result.Status == EventResultError {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *BaseEvent) hasValidResult(include func(result any, event_result *EventResult) bool) bool {
+	if include == nil {
+		include = defaultEventResultInclude
+	}
+	for _, result := range e.sortedEventResults() {
+		if include(result.Result, result) {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *BaseEvent) waitForFirstResultOrCompletion(ctx context.Context) error {
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if e.hasValidResult(nil) || e.status() == "completed" {
+			return nil
+		}
+		select {
+		case <-e.done_ch:
+			return nil
+		case <-ticker.C:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 func isBaseEventResult(result any) bool {
@@ -569,42 +860,15 @@ func isBaseEventResult(result any) bool {
 	return false
 }
 
-func (e *BaseEvent) EventResultsList(ctx context.Context, include func(result any, event_result *EventResult) bool, options *EventResultsListOptions) ([]any, error) {
-	if options == nil {
-		options = &EventResultsListOptions{RaiseIfAny: true, RaiseIfNone: true}
+func defaultResultInclude(result any, event_result *EventResult) bool {
+	if event_result.Status != EventResultCompleted || result == nil {
+		return false
 	}
-	if !options.RaiseIfAny && !options.RaiseIfNone && options.Timeout == nil {
-		// keep defaults explicit for common non-raising mode
-	}
-	if options.Timeout != nil {
-		ctx2, cancel := context.WithTimeout(ctx, time.Duration(*options.Timeout*float64(time.Second)))
-		defer cancel()
-		ctx = ctx2
-	}
-	if _, err := e.Done(ctx); err != nil {
-		return nil, err
-	}
-	if include == nil {
-		include = func(result any, event_result *EventResult) bool {
-			if event_result.Status != EventResultCompleted || result == nil {
-				return false
-			}
-			return !isBaseEventResult(result)
-		}
-	}
-	out := make([]any, 0, len(e.EventResults))
-	for _, event_result := range e.sortedEventResults() {
-		if options.RaiseIfAny && event_result.Status == EventResultError {
-			return nil, errors.New(toErrorString(event_result.Error))
-		}
-		if include(event_result.Result, event_result) {
-			out = append(out, event_result.Result)
-		}
-	}
-	if options.RaiseIfNone && len(out) == 0 {
-		return nil, errors.New("no valid handler results")
-	}
-	return out, nil
+	return !isBaseEventResult(result)
+}
+
+func defaultEventResultInclude(result any, event_result *EventResult) bool {
+	return defaultResultInclude(result, event_result)
 }
 
 func (e *BaseEvent) validateResultValue(value any) error {
@@ -674,6 +938,26 @@ func (e *BaseEvent) sortedEventResults() []*EventResult {
 	})
 	results = append(results, remaining...)
 	return results
+}
+
+func sortEventResultsByCompletion(results []*EventResult) {
+	sort.SliceStable(results, func(i, j int) bool {
+		left := results[i].CompletedAt
+		right := results[j].CompletedAt
+		if left == nil && right == nil {
+			return eventResultRegistrationLess(results[i], results[j])
+		}
+		if left == nil {
+			return false
+		}
+		if right == nil {
+			return true
+		}
+		if *left == *right {
+			return eventResultRegistrationLess(results[i], results[j])
+		}
+		return *left < *right
+	})
 }
 
 func (e *BaseEvent) eventResultsSnapshot() []*EventResult {

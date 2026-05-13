@@ -47,7 +47,7 @@ async def main() -> None:
         print('Dispatching ForwardedEvent on BusA with cyclic forwarding A -> B -> C -> A')
 
         event = bus_a.emit(ForwardedEvent(message='hello across 3 buses'))
-        await event
+        await event.now()
         await asyncio.gather(bus_a.wait_until_idle(), bus_b.wait_until_idle(), bus_c.wait_until_idle())
 
         path = event.event_path
@@ -80,9 +80,9 @@ async def main() -> None:
         print('\n=== BusC log_tree() ===')
         print(bus_c.log_tree())
     finally:
-        await bus_a.stop(clear=True, timeout=0)
-        await bus_b.stop(clear=True, timeout=0)
-        await bus_c.stop(clear=True, timeout=0)
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
+        await bus_c.destroy(clear=True)
 
 
 if __name__ == '__main__':

@@ -8,7 +8,7 @@ Handler return values are captured in `EventResult` records and can be consumed 
 Repository example files:
 - [`examples/simple.py`](https://github.com/ArchiveBox/abxbus/blob/main/examples/simple.py)
 - [`abxbus-ts/examples/simple.ts`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-ts/examples/simple.ts)
-- [`abxbus-rust/tests/test_typed_events.rs`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-rust/tests/test_typed_events.rs)
+- [`abxbus-rust/tests/test_event_result.rs`](https://github.com/ArchiveBox/abxbus/blob/main/abxbus-rust/tests/test_event_result.rs)
 
 ## Typed return values
 
@@ -30,7 +30,7 @@ def add(event: DoMathEvent) -> int:
 bus = EventBus('AppBus')
 bus.on(DoMathEvent, add)
 
-event = await bus.emit(DoMathEvent(a=2, b=3))
+event = await bus.emit(DoMathEvent(a=2, b=3)).now()
 result = await event.event_result()
 ```
 
@@ -51,8 +51,8 @@ const bus = new EventBus('AppBus')
 bus.on(DoMathEvent, (event) => event.a + event.b)
 
 const event = bus.emit(DoMathEvent({ a: 2, b: 3 }))
-await event.done()
-const result = event.event_result
+await event.now()
+const result = await event.eventResult()
 ```
 
 </Tab>
@@ -80,7 +80,7 @@ bus.on(DoMathEvent, |event: DoMathEvent| async move {
 });
 
 let event = bus.emit(DoMathEvent { a: 2, b: 3, ..Default::default() });
-let result = block_on(event.event_result(Default::default()))?;
+let result = block_on(event.event_result())?;
 ```
 
 </Tab>
@@ -110,7 +110,8 @@ event, err := abxbus.NewBaseEventWithResult[DoMathPayload, int](
 if err != nil {
 	panic(err)
 }
-result, err := bus.Emit(event).EventResult(context.Background())
+emitted := bus.Emit(event)
+result, err := emitted.EventResult()
 ```
 
 </Tab>
@@ -124,7 +125,7 @@ When multiple handlers respond to the same event, collect all successful values 
 <Tab title="Python">
 
 ```python
-event = await bus.emit(GetConfigEvent())
+event = await bus.emit(GetConfigEvent()).now()
 values = await event.event_results_list(raise_if_any=False, raise_if_none=False)
 ```
 
@@ -141,7 +142,7 @@ const values = await event.eventResultsList({ raise_if_any: false, raise_if_none
 
 ```rust
 use abxbus_rust::{
-    base_event::EventResultsOptions,
+    base_event::EventResultOptions,
     event,
     event_bus::EventBus,
     BaseEvent,
@@ -165,10 +166,10 @@ bus.on(GetConfigEvent, |_event: GetConfigEvent| async move {
 });
 
 let event = bus.emit(GetConfigEvent { ..Default::default() });
-let values = block_on(event.event_results_list(EventResultsOptions {
+let values = block_on(event.event_results_list_with_options(EventResultOptions {
     raise_if_any: false,
     raise_if_none: false,
-    timeout: None,
+    ..EventResultOptions::default()
 }))?;
 ```
 
@@ -178,9 +179,7 @@ let values = block_on(event.event_results_list(EventResultsOptions {
 ```go
 event := bus.Emit(abxbus.NewBaseEvent("GetConfigEvent", nil))
 values, err := event.EventResultsList(
-	context.Background(),
-	nil,
-	&abxbus.EventResultsListOptions{RaiseIfAny: false, RaiseIfNone: false},
+	&abxbus.EventResultOptions{RaiseIfAny: false, RaiseIfNone: false},
 )
 ```
 
@@ -194,8 +193,9 @@ values, err := event.EventResultsList(
 
 ```python
 await event.event_results_list(raise_if_any=False, raise_if_none=False)
-await event.event_results_list(include=lambda event_result: isinstance(event_result.result, dict), raise_if_any=False)
-await event.event_results_list(timeout=0.25)
+await event.event_results_list(include=lambda result, _: isinstance(result, dict), raise_if_any=False)
+completed = await event.wait(timeout=0.25)
+await completed.event_results_list()
 ```
 
 </Tab>
@@ -203,45 +203,54 @@ await event.event_results_list(timeout=0.25)
 
 ```ts
 await event.eventResultsList({ raise_if_any: false, raise_if_none: false })
-await event.eventResultsList((result) => typeof result === 'object', { raise_if_any: false })
-await event.eventResultsList({ timeout: 0.25 })
+await event.eventResultsList({ include: (result) => typeof result === 'object', raise_if_any: false })
+await event.wait({ timeout: 0.25 }).eventResultsList()
 ```
 
 </Tab>
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::base_event::EventResultsOptions;
+use abxbus_rust::base_event::{EventResultOptions, EventWaitOptions};
 
-event.event_results_list(EventResultsOptions {
+event.event_results_list_with_options(EventResultOptions {
     raise_if_any: false,
     raise_if_none: false,
-    timeout: None,
+    ..EventResultOptions::default()
 }).await?;
-event.event_results_list(EventResultsOptions {
+let completed = event.wait_with_options(EventWaitOptions {
     timeout: Some(0.25),
-    ..EventResultsOptions::default()
+    ..EventWaitOptions::default()
 }).await?;
+completed.event_results_list().await?;
 ```
 
 </Tab>
 <Tab title="Go">
 
 ```go
-event.EventResultsList(ctx, nil, &abxbus.EventResultsListOptions{
+event.EventResultsList(&abxbus.EventResultOptions{
 	RaiseIfAny: false,
 	RaiseIfNone: false,
 })
 timeout := 0.25
-event.EventResultsList(ctx, nil, &abxbus.EventResultsListOptions{Timeout: &timeout})
+completed, err := event.Wait(&abxbus.EventWaitOptions{Timeout: &timeout})
+if err != nil {
+	return err
+}
+completed.EventResultsList()
 ```
 
 </Tab>
 </Tabs>
 
+- Default options are `raise_if_any=true` and `raise_if_none=false` in every runtime.
 - `raise_if_any`: raise if any handler ended with an error.
 - `raise_if_none`: raise only when no handlers returned a valid value after filtering; it does not raise just because one handler returned `None`/`null`/`undefined`.
+- If every handler errors, only `raise_if_any=false` plus `raise_if_none=false` suppresses the error and returns no value/empty list; every other option combination raises.
+- A single handler error is raised as that error; multiple handler errors are raised as an aggregate/exception-group shape.
 - Default filtering includes only completed, successful, non-empty scalar/object/list values and excludes forwarded `BaseEvent` returns.
+- Go accepts no args for defaults (`event.EventResult()` / `event.EventResultsList()`) and a single `nil` options value is equivalent to defaults.
 
 ## Per-handler inspection
 

@@ -85,7 +85,7 @@ class JSONLEventBridge:
             self._listener_task.cancel()
             await asyncio.gather(self._listener_task, return_exceptions=True)
             self._listener_task = None
-        await self._inbound_bus.stop(clear=clear)
+        await self._inbound_bus.destroy(clear=clear)
 
     def _ensure_started(self) -> None:
         if self._running:

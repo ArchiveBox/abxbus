@@ -106,7 +106,7 @@ fn test_contextvar_propagates_to_handler() {
             })
         },
     );
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let captured = captured_values.lock().expect("captured lock");
     assert_eq!(
@@ -117,7 +117,7 @@ fn test_contextvar_propagates_to_handler() {
         captured.get("user_id").map(String::as_str),
         Some("user-abc")
     );
-    bus.stop();
+    bus.destroy();
     reset_contextvars();
 }
 
@@ -145,7 +145,7 @@ fn test_contextvar_propagates_through_nested_handlers() {
             let child = bus.emit_child(ChildEvent {
                 ..Default::default()
             });
-            child.done().await;
+            let _ = child.now().await;
             Ok("parent_done".to_string())
         }
     });
@@ -174,7 +174,7 @@ fn test_contextvar_propagates_through_nested_handlers() {
             })
         },
     );
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let parent = captured_parent.lock().expect("parent capture lock");
     let child = captured_child.lock().expect("child capture lock");
@@ -191,7 +191,7 @@ fn test_contextvar_propagates_through_nested_handlers() {
         Some("req-nested-123")
     );
     assert_eq!(child.get("trace_id").map(String::as_str), Some("trace-xyz"));
-    bus.stop();
+    bus.destroy();
     reset_contextvars();
 }
 
@@ -226,14 +226,14 @@ fn test_context_isolation_between_dispatches() {
     });
 
     block_on(async {
-        event_a.done().await;
-        event_b.done().await;
+        let _ = event_a.now().await;
+        let _ = event_b.now().await;
     });
 
     let captured = captured_values.lock().expect("captured lock").clone();
     assert!(captured.contains(&"req-A".to_string()), "{captured:?}");
     assert!(captured.contains(&"req-B".to_string()), "{captured:?}");
-    bus.stop();
+    bus.destroy();
     reset_contextvars();
 }
 
@@ -273,12 +273,12 @@ fn test_context_propagates_to_parallel_handler_concurrency() {
             ..Default::default()
         })
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let captured = captured_values.lock().expect("captured lock").clone();
     assert!(captured.contains(&"h1:req-parallel".to_string()));
     assert!(captured.contains(&"h2:req-parallel".to_string()));
-    bus.stop();
+    bus.destroy();
     reset_contextvars();
 }
 
@@ -329,7 +329,7 @@ fn test_context_propagates_through_event_forwarding() {
         })
     });
     block_on(async {
-        event.done().await;
+        let _ = event.now().await;
         assert!(bus_b.wait_until_idle(Some(1.0)).await);
     });
 
@@ -349,8 +349,8 @@ fn test_context_propagates_through_event_forwarding() {
             .map(String::as_str),
         Some("req-forwarded")
     );
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
     reset_contextvars();
 }
 
@@ -409,7 +409,7 @@ fn test_forwarded_dispatch_context_does_not_leak_back_to_source_bus_handlers() {
         })
     });
     block_on(async {
-        event.done().await;
+        let _ = event.now().await;
         assert!(bus_b.wait_until_idle(Some(1.0)).await);
     });
 
@@ -426,8 +426,8 @@ fn test_forwarded_dispatch_context_does_not_leak_back_to_source_bus_handlers() {
         captured.get("forwarded").map(String::as_str),
         Some("forwarded-context")
     );
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
     reset_contextvars();
 }
 
@@ -447,7 +447,7 @@ fn test_handler_can_modify_context_without_affecting_parent() {
             let child = bus.emit_child(ChildEvent {
                 ..Default::default()
             });
-            child.done().await;
+            let _ = child.now().await;
             *parent_value.lock().expect("parent value lock") = context_str("request_id");
             Ok("parent_done".to_string())
         }
@@ -461,7 +461,7 @@ fn test_handler_can_modify_context_without_affecting_parent() {
     let event = bus.emit(SimpleEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     assert_eq!(
         parent_value_after_child
@@ -470,7 +470,7 @@ fn test_handler_can_modify_context_without_affecting_parent() {
             .as_str(),
         "parent-value"
     );
-    bus.stop();
+    bus.destroy();
     reset_contextvars();
 }
 
@@ -491,7 +491,7 @@ fn test_event_parent_id_tracking_still_works() {
             let child = bus.emit_child(ChildEvent {
                 ..Default::default()
             });
-            child.done().await;
+            let _ = child.now().await;
             Ok("parent_done".to_string())
         }
     });
@@ -511,7 +511,7 @@ fn test_event_parent_id_tracking_still_works() {
             ..Default::default()
         })
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let parent_id = parent_event_id
         .lock()
@@ -524,7 +524,7 @@ fn test_event_parent_id_tracking_still_works() {
         .clone()
         .expect("child event parent id");
     assert_eq!(child_parent_id, parent_id);
-    bus.stop();
+    bus.destroy();
     reset_contextvars();
 }
 
@@ -551,7 +551,7 @@ fn test_dispatch_context_and_parent_id_both_work() {
             let child = bus.emit_child(ChildEvent {
                 ..Default::default()
             });
-            child.done().await;
+            let _ = child.now().await;
             Ok("parent_done".to_string())
         }
     });
@@ -578,7 +578,7 @@ fn test_dispatch_context_and_parent_id_both_work() {
             ..Default::default()
         })
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let results = results.lock().expect("results lock");
     assert_eq!(
@@ -593,7 +593,7 @@ fn test_dispatch_context_and_parent_id_both_work() {
         results.get("child_event_parent_id"),
         results.get("parent_event_id")
     );
-    bus.stop();
+    bus.destroy();
     reset_contextvars();
 }
 
@@ -619,7 +619,7 @@ fn test_deeply_nested_context_and_parent_tracking() {
             let child = bus.emit_child(Level2Event {
                 ..Default::default()
             });
-            child.done().await;
+            let _ = child.now().await;
             Ok("level1_done".to_string())
         }
     });
@@ -641,7 +641,7 @@ fn test_deeply_nested_context_and_parent_tracking() {
             let child = bus.emit_child(Level3Event {
                 ..Default::default()
             });
-            child.done().await;
+            let _ = child.now().await;
             Ok("level2_done".to_string())
         }
     });
@@ -667,7 +667,7 @@ fn test_deeply_nested_context_and_parent_tracking() {
             ..Default::default()
         })
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let mut results = results.lock().expect("results lock").clone();
     results.sort_by_key(|row| row.get("level").cloned());
@@ -688,31 +688,6 @@ fn test_deeply_nested_context_and_parent_tracking() {
         results[1].get("event_id"),
         "{results:?}"
     );
-    bus.stop();
+    bus.destroy();
     reset_contextvars();
-}
-
-#[test]
-fn test_context_propagates_to_handler() {
-    test_contextvar_propagates_to_handler();
-}
-
-#[test]
-fn test_context_propagates_through_nested_handlers() {
-    test_contextvar_propagates_through_nested_handlers();
-}
-
-#[test]
-fn test_context_propagates_to_multiple_handlers() {
-    test_context_propagates_to_parallel_handler_concurrency();
-}
-
-#[test]
-fn test_event_parent_id_tracking_still_works_with_context_propagation() {
-    test_event_parent_id_tracking_still_works();
-}
-
-#[test]
-fn test_dispatch_context_and_parent_id_both_work_together() {
-    test_dispatch_context_and_parent_id_both_work();
 }

@@ -40,7 +40,7 @@ def _make_bus_with_pending_event() -> tuple[EventBus, SerializableEvent, str]:
         event_concurrency='parallel',
         event_handler_concurrency='parallel',
         event_handler_completion='first',
-        event_timeout=None,
+        event_timeout=0,
         event_slow_timeout=34.0,
         event_handler_slow_timeout=12.0,
         event_handler_detect_file_paths=False,
@@ -105,6 +105,43 @@ def test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() -> None:
     assert queue[0] is restored_event
 
 
+def test_eventbus_serialization_preserves_unbounded_history_null() -> None:
+    bus = EventBus(name='UnlimitedSerBus', max_history_size=None, max_history_drop=False)
+    payload = bus.model_dump()
+    assert payload['max_history_size'] is None
+
+    restored = EventBus.validate(payload)
+    assert restored.event_history.max_history_size is None
+
+
+def test_eventbus_validate_null_event_timeout_uses_default() -> None:
+    bus = EventBus(name='TimeoutNullBus')
+    payload = bus.model_dump()
+    payload['event_timeout'] = None
+
+    restored = EventBus.validate(payload)
+    assert restored.event_timeout == 60.0
+    assert restored.model_dump()['event_timeout'] == 60.0
+
+
+@pytest.mark.asyncio
+async def test_eventbus_validate_defaults_missing_handler_maps() -> None:
+    bus = EventBus(name='MissingHandlerMaps')
+    payload = bus.model_dump()
+    payload.pop('handlers')
+    payload.pop('handlers_by_key')
+
+    restored = EventBus.validate(payload)
+
+    async def handler(event: SerializableEvent) -> str:
+        return event.value
+
+    restored.on(SerializableEvent, handler)
+    result = await restored.emit(SerializableEvent(value='ok')).event_result()
+    assert result == 'ok'
+    await restored.destroy()
+
+
 @pytest.mark.asyncio
 async def test_eventbus_preserves_handler_registration_order_through_json_and_restore() -> None:
     bus = EventBus(
@@ -159,8 +196,8 @@ async def test_eventbus_preserves_handler_registration_order_through_json_and_re
     await asyncio.wait_for(restored.emit(HandlerOrderEvent()), timeout=5)
     assert restored_order == ['first', 'second']
 
-    await bus.stop(clear=True)
-    await restored.stop(clear=True)
+    await bus.destroy(clear=True)
+    await restored.destroy(clear=True)
 
 
 def test_baseevent_model_validate_roundtrips_runtime_json_shape() -> None:
@@ -201,3 +238,17 @@ def test_eventbus_model_dump_promotes_pending_events_into_event_history() -> Non
     payload = bus.model_dump()
     assert payload['pending_event_queue'] == [event.event_id]
     assert event.event_id in payload['event_history']
+
+
+def test_eventbus_validate_preserves_event_history_object_order() -> None:
+    bus = EventBus(name='HistoryOrderBus')
+    first = SerializableEvent(value='first')
+    second = SerializableEvent(value='second')
+    bus.event_history[first.event_id] = first
+    bus.event_history[second.event_id] = second
+
+    payload = bus.model_dump()
+    assert list(payload['event_history'].keys()) == [first.event_id, second.event_id]
+
+    restored = EventBus.validate(payload)
+    assert list(restored.model_dump()['event_history'].keys()) == [first.event_id, second.event_id]

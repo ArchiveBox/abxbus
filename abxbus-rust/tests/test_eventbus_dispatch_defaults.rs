@@ -49,24 +49,6 @@ event! {
     }
 }
 #[test]
-fn test_bus_default_handler_settings_are_applied() {
-    let bus = EventBus::new(Some("BusDefaults".to_string()));
-
-    bus.on_raw("work", "h1", |_event| async move { Ok(json!("ok")) });
-    let event = WorkEvent {
-        value: 1,
-        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Serial),
-        event_handler_completion: Some(EventHandlerCompletionMode::All),
-        ..Default::default()
-    };
-    let event = bus.emit(event);
-    block_on(event.done());
-
-    assert_eq!(event.inner.inner.lock().event_results.len(), 1);
-    bus.stop();
-}
-
-#[test]
 fn test_event_concurrency_remains_unset_on_dispatch_and_resolves_during_processing() {
     let bus = EventBus::new_with_options(
         Some("EventConcurrencyDefaultBus".to_string()),
@@ -92,11 +74,11 @@ fn test_event_concurrency_remains_unset_on_dispatch_and_resolves_during_processi
     assert_eq!(implicit.inner.inner.lock().event_concurrency, None);
     assert_eq!(explicit_none.inner.inner.lock().event_concurrency, None);
 
-    block_on(implicit.done());
-    block_on(explicit_none.done());
+    let _ = block_on(implicit.now());
+    let _ = block_on(explicit_none.now());
     assert_eq!(implicit.inner.inner.lock().event_results.len(), 1);
     assert_eq!(explicit_none.inner.inner.lock().event_results.len(), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -122,9 +104,9 @@ fn test_event_concurrency_class_override_beats_bus_default() {
         event.inner.inner.lock().event_concurrency,
         Some(EventConcurrencyMode::GlobalSerial)
     );
-    block_on(event.done());
+    let _ = block_on(event.now());
     assert_eq!(event.inner.inner.lock().event_results.len(), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -164,11 +146,11 @@ fn test_handler_defaults_remain_unset_on_dispatch_and_resolve_during_processing(
         None
     );
 
-    block_on(implicit.done());
-    block_on(explicit_none.done());
+    let _ = block_on(implicit.now());
+    let _ = block_on(explicit_none.now());
     assert_eq!(implicit.inner.inner.lock().event_results.len(), 1);
     assert_eq!(explicit_none.inner.inner.lock().event_results.len(), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -199,18 +181,13 @@ fn test_handler_class_override_beats_bus_defaults() {
         event.inner.inner.lock().event_handler_completion,
         Some(EventHandlerCompletionMode::All)
     );
-    block_on(event.done());
+    let _ = block_on(event.now());
     assert_eq!(event.inner.inner.lock().event_results.len(), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
-fn test_handler_class_override_beats_bus_default() {
-    test_handler_class_override_beats_bus_defaults();
-}
-
-#[test]
-fn test_event_instance_override_beats_typed_event_defaults() {
+fn test_event_instance_override_beats_event_class_defaults() {
     let bus = EventBus::new(Some("EventInstanceOverrideBus".to_string()));
     let class_default = bus.emit(ConcurrencyOverrideEvent {
         value: 1,
@@ -230,7 +207,40 @@ fn test_event_instance_override_beats_typed_event_defaults() {
         event.inner.inner.lock().event_concurrency,
         Some(EventConcurrencyMode::Parallel)
     );
-    bus.stop();
+    bus.destroy();
+}
+
+#[test]
+fn test_handler_instance_override_beats_event_class_defaults() {
+    let bus = EventBus::new(Some("HandlerInstanceOverrideBus".to_string()));
+    let class_default = bus.emit(HandlerOverrideEvent {
+        value: 1,
+        ..Default::default()
+    });
+    assert_eq!(
+        class_default.inner.inner.lock().event_handler_concurrency,
+        Some(EventHandlerConcurrencyMode::Serial)
+    );
+    assert_eq!(
+        class_default.inner.inner.lock().event_handler_completion,
+        Some(EventHandlerCompletionMode::All)
+    );
+
+    let event = bus.emit(HandlerOverrideEvent {
+        value: 1,
+        event_handler_concurrency: Some(EventHandlerConcurrencyMode::Parallel),
+        event_handler_completion: Some(EventHandlerCompletionMode::First),
+        ..Default::default()
+    });
+    assert_eq!(
+        event.inner.inner.lock().event_handler_concurrency,
+        Some(EventHandlerConcurrencyMode::Parallel)
+    );
+    assert_eq!(
+        event.inner.inner.lock().event_handler_completion,
+        Some(EventHandlerCompletionMode::First)
+    );
+    bus.destroy();
 }
 
 #[test]
@@ -248,15 +258,5 @@ fn test_typed_event_config_defaults_populate_base_event_fields() {
     assert_eq!(inner.event_handler_slow_timeout, Some(4.0));
     assert!(inner.event_blocks_parent_completion);
     drop(inner);
-    bus.stop();
-}
-
-#[test]
-fn test_null_event_concurrency_null_resolves_to_bus_defaults() {
-    test_event_concurrency_remains_unset_on_dispatch_and_resolves_during_processing();
-}
-
-#[test]
-fn test_null_event_handler_concurrency_null_resolves_to_bus_defaults() {
-    test_handler_defaults_remain_unset_on_dispatch_and_resolve_during_processing();
+    bus.destroy();
 }

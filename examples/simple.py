@@ -61,7 +61,7 @@ async def main() -> None:
         bus.on('RegisterUserEvent', on_register_user_invalid)
 
         # Dispatch a simple event handled by string registration.
-        await bus.emit(AuditEvent(message='Starting simple abxbus example'))
+        await bus.emit(AuditEvent(message='Starting simple abxbus example')).now()
 
         # Dispatch typed event; one handler is valid, one is invalid.
         register_event = bus.emit(
@@ -70,7 +70,7 @@ async def main() -> None:
                 plan='pro',
             )
         )
-        await register_event
+        await register_event.now()
 
         print('\nRegisterUserEvent handler outcomes:')
         for result in register_event.event_results.values():
@@ -95,7 +95,7 @@ async def main() -> None:
         print('\n=== bus.log_tree() ===')
         print(bus.log_tree())
     finally:
-        await bus.stop(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 if __name__ == '__main__':

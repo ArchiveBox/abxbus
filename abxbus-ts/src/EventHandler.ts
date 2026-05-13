@@ -24,7 +24,7 @@ export type EphemeralFindEventHandler = {
   // Resolved on dispatch, ephemeral, and never shows up in the processing tree.
   event_pattern: string | '*'
   matches: (event: BaseEvent) => boolean
-  resolve: (event: BaseEvent) => void
+  resolve: (event: BaseEvent | null) => void
   timeout_id?: ReturnType<typeof setTimeout>
 }
 
@@ -49,7 +49,7 @@ export class FindWaiter {
     data: unknown,
     overrides: {
       matches?: (event: BaseEvent) => boolean
-      resolve?: (event: BaseEvent) => void
+      resolve?: (event: BaseEvent | null) => void
     } = {}
   ): EphemeralFindEventHandler {
     const record = FindWaiterJSONSchema.parse(data)
@@ -70,7 +70,7 @@ export class FindWaiter {
     data: unknown,
     overrides: {
       matches?: (event: BaseEvent) => boolean
-      resolve?: (event: BaseEvent) => void
+      resolve?: (event: BaseEvent | null) => void
     } = {}
   ): EphemeralFindEventHandler[] {
     if (!Array.isArray(data)) {

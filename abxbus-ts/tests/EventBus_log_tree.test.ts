@@ -32,7 +32,7 @@ test('logTree: single event', async () => {
   const bus = new EventBus('SingleBus')
   try {
     const event = bus.emit(RootEvent({ data: 'test' }))
-    await event.done()
+    await event.now()
     const output = bus.logTree()
     assert.ok(output.includes('└── ✅ RootEvent#'))
     assert.ok(output.includes('[') && output.includes(']'))
@@ -50,7 +50,7 @@ test('logTree: with handler results', async () => {
 
     bus.on(RootEvent, test_handler)
     const event = bus.emit(RootEvent({ data: 'test' }))
-    await event.done()
+    await event.now()
     const output = bus.logTree()
     assert.ok(output.includes('└── ✅ RootEvent#'))
     assert.ok(output.includes(`${bus.label}.test_handler#`))
@@ -69,7 +69,7 @@ test('logTree: with handler errors', async () => {
 
     bus.on(RootEvent, error_handler)
     const event = bus.emit(RootEvent({ data: 'test' }))
-    await event.done({ raise_if_any: false })
+    await event.now()
     assert.equal(event.event_errors.length, 1)
     assert.equal((event.event_errors[0] as Error).message, 'Test error message')
     const output = bus.logTree()
@@ -81,8 +81,11 @@ test('logTree: with handler errors', async () => {
 })
 
 test('logTree: first-mode control cancellations use cancelled icon', async () => {
-  const bus = new EventBus('CancelledLogBus', { event_timeout: null, event_handler_concurrency: 'parallel' })
-  const TestEvent = BaseEvent.extend('CancelledLogEvent', { event_result_type: z.string() })
+  const bus = new EventBus('CancelledLogBus', { event_timeout: 0, event_handler_concurrency: 'parallel' })
+  const TestEvent = BaseEvent.extend('CancelledLogEvent', {
+    event_handler_completion: 'first',
+    event_result_type: z.string(),
+  })
   try {
     async function fast_handler(_event: InstanceType<typeof TestEvent>): Promise<string> {
       await delay(5)
@@ -99,12 +102,12 @@ test('logTree: first-mode control cancellations use cancelled icon', async () =>
     bus.on(TestEvent, slow_handler)
 
     const event = bus.emit(TestEvent({}))
-    await event.first()
+    await event.now({ first_result: true }).eventResult({ raise_if_any: false })
     const output = bus.logTree()
 
     assert.ok(output.includes(`🚫 ${bus.label}.slow_handler#`))
     assert.ok(!output.includes(`❌ ${bus.label}.slow_handler#`))
-    assert.ok(output.includes('Aborted: Aborted: first() resolved'))
+    assert.ok(output.includes("Aborted: event_handler_completion='first' resolved"))
   } finally {
     bus.destroy()
   }
@@ -115,13 +118,13 @@ test('logTree: complex nested', async () => {
   try {
     async function root_handler(_event: InstanceType<typeof RootEvent>): Promise<string> {
       const child = bus.emit(ChildEvent({ value: 100 }))
-      await child.done()
+      await child.now()
       return 'Root processed'
     }
 
     async function child_handler(_event: InstanceType<typeof ChildEvent>): Promise<number[]> {
       const grandchild = bus.emit(GrandchildEvent({}))
-      await grandchild.done()
+      await grandchild.now()
       return [1, 2, 3]
     }
 
@@ -134,7 +137,7 @@ test('logTree: complex nested', async () => {
     bus.on(GrandchildEvent, grandchild_handler)
 
     const root = bus.emit(RootEvent({ data: 'root_data' }))
-    await root.done()
+    await root.now()
     const output = bus.logTree()
     assert.ok(output.includes('✅ RootEvent#'))
     assert.ok(output.includes(`✅ ${bus.label}.root_handler#`))
@@ -155,7 +158,7 @@ test('logTree: multiple roots', async () => {
   try {
     const root1 = bus.emit(RootEvent({ data: 'first' }))
     const root2 = bus.emit(RootEvent({ data: 'second' }))
-    await Promise.all([root1.done(), root2.done()])
+    await Promise.all([root1.now(), root2.now()])
     const output = bus.logTree()
     assert.equal(output.split('├── ✅ RootEvent#').length - 1, 1)
     assert.equal(output.split('└── ✅ RootEvent#').length - 1, 1)
@@ -174,7 +177,7 @@ test('logTree: timing info', async () => {
 
     bus.on(RootEvent, timed_handler)
     const event = bus.emit(RootEvent({}))
-    await event.done()
+    await event.now()
     const output = bus.logTree()
     assert.ok(output.includes('('))
     assert.ok(output.includes('s)'))
@@ -202,7 +205,7 @@ test('logTree: running handler', async () => {
     assert.ok(output.includes(`${bus.label}.running_handler#`))
     assert.ok(output.includes('🏃 RootEvent#'))
     release_handler()
-    await event.done()
+    await event.now()
   } finally {
     release_handler()
     bus.destroy()

@@ -2,11 +2,11 @@ package abxbus_test
 
 import (
 	"context"
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 	"strings"
+	"sync"
 	"testing"
 	"time"
-
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 )
 
 func TestTimeoutPrecedenceEventOverBus(t *testing.T) {
@@ -21,7 +21,7 @@ func TestTimeoutPrecedenceEventOverBus(t *testing.T) {
 	e.EventTimeout = &eventTimeout
 
 	started := time.Now()
-	_, err := bus.Emit(e).EventResult(context.Background())
+	_, err := bus.Emit(e).EventResult()
 	elapsed := time.Since(started)
 	if err == nil {
 		t.Fatal("expected timeout")
@@ -34,16 +34,97 @@ func TestTimeoutPrecedenceEventOverBus(t *testing.T) {
 	}
 }
 
-func TestNilTimeoutAllowsSlowHandler(t *testing.T) {
-	bus := abxbus.NewEventBus("NoTimeoutBus", &abxbus.EventBusOptions{EventTimeout: nil})
-	bus.EventTimeout = nil
+func TestZeroTimeoutAllowsSlowHandler(t *testing.T) {
+	busTimeout := 0.01
+	bus := abxbus.NewEventBus("NoTimeoutBus", &abxbus.EventBusOptions{EventTimeout: &busTimeout})
 	bus.On("Evt", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
 		time.Sleep(20 * time.Millisecond)
 		return "ok", nil
 	}, nil)
-	result, err := bus.Emit(abxbus.NewBaseEvent("Evt", nil)).EventResult(context.Background())
+	event := abxbus.NewBaseEvent("Evt", nil)
+	noTimeout := 0.0
+	event.EventTimeout = &noTimeout
+	result, err := bus.Emit(event).EventResult()
 	if err != nil || result != "ok" {
 		t.Fatalf("expected ok, got %#v err=%v", result, err)
+	}
+}
+
+func TestProcessingTimeTimeoutDefaultsResolveAtExecutionTime(t *testing.T) {
+	eventTimeout := 12.0
+	eventSlowTimeout := 34.0
+	eventHandlerSlowTimeout := 56.0
+	bus := abxbus.NewEventBus("TimeoutDefaultsResolveBus", &abxbus.EventBusOptions{
+		EventTimeout:            &eventTimeout,
+		EventSlowTimeout:        &eventSlowTimeout,
+		EventHandlerSlowTimeout: &eventHandlerSlowTimeout,
+	})
+	t.Cleanup(bus.Destroy)
+
+	bus.On("TimeoutEvent", "handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return "ok", nil
+	}, nil)
+
+	event := bus.Emit(abxbus.NewBaseEvent("TimeoutEvent", nil))
+	if event.EventTimeout != nil {
+		t.Fatalf("expected nil event_timeout, got %#v", event.EventTimeout)
+	}
+	if event.EventHandlerTimeout != nil {
+		t.Fatalf("expected nil event_handler_timeout, got %#v", event.EventHandlerTimeout)
+	}
+	if event.EventHandlerSlowTimeout != nil {
+		t.Fatalf("expected nil event_handler_slow_timeout, got %#v", event.EventHandlerSlowTimeout)
+	}
+	if event.EventSlowTimeout != nil {
+		t.Fatalf("expected nil event_slow_timeout, got %#v", event.EventSlowTimeout)
+	}
+	if event.EventConcurrency != "" {
+		t.Fatalf("expected empty event_concurrency, got %s", event.EventConcurrency)
+	}
+	if event.EventHandlerConcurrency != "" {
+		t.Fatalf("expected empty event_handler_concurrency, got %s", event.EventHandlerConcurrency)
+	}
+	if event.EventHandlerCompletion != "" {
+		t.Fatalf("expected empty event_handler_completion, got %s", event.EventHandlerCompletion)
+	}
+
+	if _, err := event.Now(); err != nil {
+		t.Fatal(err)
+	}
+	if event.EventTimeout != nil || event.EventHandlerSlowTimeout != nil || event.EventSlowTimeout != nil ||
+		event.EventConcurrency != "" || event.EventHandlerConcurrency != "" || event.EventHandlerCompletion != "" {
+		t.Fatalf("bus defaults should not be written onto event after processing: %#v", event)
+	}
+	result := eventResultByHandlerName(event, "handler")
+	if result == nil || result.HandlerTimeout == nil || *result.HandlerTimeout != eventTimeout {
+		t.Fatalf("expected handler timeout %v, got %#v", eventTimeout, result)
+	}
+}
+
+func TestEventTimeoutNilUsesBusDefaultTimeoutAtExecution(t *testing.T) {
+	busTimeout := 0.01
+	bus := abxbus.NewEventBus("TimeoutNilUsesBusDefault", &abxbus.EventBusOptions{EventTimeout: &busTimeout})
+	t.Cleanup(bus.Destroy)
+
+	bus.On("TimeoutDefaultsEvent", "slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		select {
+		case <-time.After(20 * time.Millisecond):
+			return "slow", nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, nil)
+
+	event := bus.Emit(abxbus.NewBaseEvent("TimeoutDefaultsEvent", nil))
+	if _, err := event.Now(); err != nil {
+		t.Fatal(err)
+	}
+	result := eventResultByHandlerName(event, "slow")
+	if event.EventTimeout != nil {
+		t.Fatalf("expected nil event_timeout, got %#v", event.EventTimeout)
+	}
+	if result == nil || result.Status != abxbus.EventResultError {
+		t.Fatalf("expected timeout error result, got %#v", result)
 	}
 }
 
@@ -87,7 +168,7 @@ func TestHandlerTimeoutResolutionMatchesPrecedence(t *testing.T) {
 	event.EventTimeout = &busTimeout
 	event.EventHandlerTimeout = &eventHandlerTimeout
 	event = bus.Emit(event)
-	_, _ = event.Done(context.Background())
+	_, _ = event.Now()
 
 	var defaultResult *abxbus.EventResult
 	var overriddenResult *abxbus.EventResult
@@ -115,11 +196,121 @@ func TestHandlerTimeoutResolutionMatchesPrecedence(t *testing.T) {
 	tighter.EventTimeout = &tighterEventTimeout
 	tighter.EventHandlerTimeout = &longEventHandlerTimeout
 	tighter = bus.Emit(tighter)
-	_, _ = tighter.Done(context.Background())
+	_, _ = tighter.Now()
 	for _, result := range tighter.EventResults {
 		if result.Status != abxbus.EventResultError {
 			t.Fatalf("event timeout should cap every handler timeout, got %s for %s", result.Status, result.HandlerName)
 		}
+	}
+}
+
+func TestHandlerTimeoutIgnoresLateHandlerResultAndLateEmits(t *testing.T) {
+	eventTimeout := 0.2
+	handlerTimeout := 0.01
+	bus := abxbus.NewEventBus("TimeoutIgnoresLateHandlerBus", &abxbus.EventBusOptions{
+		EventTimeout: &eventTimeout,
+	})
+	t.Cleanup(bus.Destroy)
+
+	lateAttempt := make(chan struct{}, 1)
+	lateHandlerRan := false
+
+	bus.On("TimeoutIgnoresLateHandlerEvent", "slow_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		time.Sleep(40 * time.Millisecond)
+		lateAttempt <- struct{}{}
+		event.Emit(abxbus.NewBaseEvent("LateAfterTimeoutEvent", nil))
+		return "late success", nil
+	}, &abxbus.EventHandler{HandlerTimeout: &handlerTimeout})
+	bus.On("LateAfterTimeoutEvent", "late_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		lateHandlerRan = true
+		return "late child", nil
+	}, nil)
+
+	event := abxbus.NewBaseEvent("TimeoutIgnoresLateHandlerEvent", nil)
+	event.EventTimeout = &eventTimeout
+	event.EventHandlerTimeout = &handlerTimeout
+	event = bus.Emit(event)
+	if _, err := event.Now(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-lateAttempt:
+	case <-time.After(time.Second):
+		t.Fatal("timed-out handler should still reach late emit attempt")
+	}
+	time.Sleep(30 * time.Millisecond)
+	idleTimeout := 1.0
+	_ = bus.WaitUntilIdle(&idleTimeout)
+
+	slowResult := eventResultByHandlerName(event, "slow_handler")
+	if slowResult == nil || slowResult.Status != abxbus.EventResultError || !timeoutResultErrorContains(slowResult, "timed out") {
+		t.Fatalf("slow handler should keep timeout error and no late result, got %#v", slowResult)
+	}
+	if slowResult.Result != nil {
+		t.Fatalf("slow handler late result should be ignored, got %#v", slowResult.Result)
+	}
+	found, err := bus.Find("LateAfterTimeoutEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found != nil {
+		t.Fatalf("late emit from timed-out handler should not be queued or recorded, got %#v", found)
+	}
+	if lateHandlerRan {
+		t.Fatal("late handler should not run after source handler timed out")
+	}
+}
+
+func TestEventTimeoutIgnoresLateHandlerResultAndLateEmits(t *testing.T) {
+	eventTimeout := 0.01
+	bus := abxbus.NewEventBus("TimeoutIgnoresLateEventBus", nil)
+	t.Cleanup(bus.Destroy)
+
+	lateAttempt := make(chan struct{}, 1)
+	lateHandlerRan := false
+
+	bus.On("TimeoutIgnoresLateEvent", "slow_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		time.Sleep(40 * time.Millisecond)
+		lateAttempt <- struct{}{}
+		event.Emit(abxbus.NewBaseEvent("LateAfterEventTimeoutEvent", nil))
+		return "late success", nil
+	}, nil)
+	bus.On("LateAfterEventTimeoutEvent", "late_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		lateHandlerRan = true
+		return "late child", nil
+	}, nil)
+
+	event := abxbus.NewBaseEvent("TimeoutIgnoresLateEvent", nil)
+	event.EventTimeout = &eventTimeout
+	event = bus.Emit(event)
+	if _, err := event.Now(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-lateAttempt:
+	case <-time.After(time.Second):
+		t.Fatal("timed-out handler should still reach late emit attempt")
+	}
+	time.Sleep(30 * time.Millisecond)
+	idleTimeout := 1.0
+	_ = bus.WaitUntilIdle(&idleTimeout)
+
+	slowResult := eventResultByHandlerName(event, "slow_handler")
+	if slowResult == nil || slowResult.Status != abxbus.EventResultError || !timeoutResultErrorContains(slowResult, "Aborted running handler") {
+		t.Fatalf("slow handler should keep event timeout abort and no late result, got %#v", slowResult)
+	}
+	if slowResult.Result != nil {
+		t.Fatalf("slow handler late result should be ignored, got %#v", slowResult.Result)
+	}
+	found, err := bus.Find("LateAfterEventTimeoutEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found != nil {
+		t.Fatalf("late emit from event-timed-out handler should not be queued or recorded, got %#v", found)
+	}
+	if lateHandlerRan {
+		t.Fatal("late handler should not run after source handler timed out")
 	}
 }
 
@@ -131,6 +322,190 @@ func TestEventHandlerDetectFilePathsToggle(t *testing.T) {
 	}, nil)
 	if entry.HandlerFilePath != nil {
 		t.Fatalf("expected nil handler_file_path when detection disabled, got %s", *entry.HandlerFilePath)
+	}
+}
+
+func TestHandlerSlowWarningUsesEventHandlerSlowTimeout(t *testing.T) {
+	eventTimeout := 0.5
+	slowBusDefault := 0.5
+	handlerSlowTimeout := 0.01
+	bus := abxbus.NewEventBus("SlowHandlerWarnBus", &abxbus.EventBusOptions{
+		EventTimeout:            &eventTimeout,
+		EventSlowTimeout:        &slowBusDefault,
+		EventHandlerSlowTimeout: &slowBusDefault,
+	})
+	t.Cleanup(bus.Destroy)
+
+	var mu sync.Mutex
+	messages := []string{}
+	originalLogger := abxbus.SlowWarningLogger
+	abxbus.SlowWarningLogger = func(message string) {
+		mu.Lock()
+		defer mu.Unlock()
+		messages = append(messages, message)
+	}
+	defer func() { abxbus.SlowWarningLogger = originalLogger }()
+
+	bus.On("TimeoutDefaultsEvent", "slow_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		time.Sleep(30 * time.Millisecond)
+		mu.Lock()
+		messages = append(messages, "slow warning child handler finishing")
+		mu.Unlock()
+		return "ok", nil
+	}, nil)
+
+	event := abxbus.NewBaseEvent("TimeoutDefaultsEvent", nil)
+	event.EventHandlerSlowTimeout = &handlerSlowTimeout
+	if _, err := bus.Emit(event).Now(); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	slowIndex := indexContains(messages, "Slow event handler")
+	finishIndex := indexContains(messages, "slow warning child handler finishing")
+	if slowIndex < 0 || finishIndex < 0 || slowIndex > finishIndex {
+		t.Fatalf("slow handler warning should fire while handler is still running, got %#v", messages)
+	}
+	if indexContains(messages, "Slow event processing") >= 0 {
+		t.Fatalf("handler-only slow warning should not also emit event warning, got %#v", messages)
+	}
+}
+
+func TestEventSlowWarningUsesEventSlowTimeout(t *testing.T) {
+	eventTimeout := 0.5
+	slowBusDefault := 0.5
+	eventSlowTimeout := 0.01
+	bus := abxbus.NewEventBus("SlowEventWarnBus", &abxbus.EventBusOptions{
+		EventTimeout:            &eventTimeout,
+		EventSlowTimeout:        &slowBusDefault,
+		EventHandlerSlowTimeout: &slowBusDefault,
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
+		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
+	})
+	t.Cleanup(bus.Destroy)
+
+	var mu sync.Mutex
+	messages := []string{}
+	originalLogger := abxbus.SlowWarningLogger
+	abxbus.SlowWarningLogger = func(message string) {
+		mu.Lock()
+		defer mu.Unlock()
+		messages = append(messages, message)
+	}
+	defer func() { abxbus.SlowWarningLogger = originalLogger }()
+
+	bus.On("TimeoutDefaultsEvent", "slow_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		time.Sleep(30 * time.Millisecond)
+		mu.Lock()
+		messages = append(messages, "slow warning child handler finishing")
+		mu.Unlock()
+		return "ok", nil
+	}, nil)
+
+	event := abxbus.NewBaseEvent("TimeoutDefaultsEvent", nil)
+	event.EventSlowTimeout = &eventSlowTimeout
+	if _, err := bus.Emit(event).Now(); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	slowIndex := indexContains(messages, "Slow event processing")
+	finishIndex := indexContains(messages, "slow warning child handler finishing")
+	if slowIndex < 0 || finishIndex < 0 || slowIndex > finishIndex {
+		t.Fatalf("slow event warning should fire while event is still running, got %#v", messages)
+	}
+	if indexContains(messages, "Slow event handler") >= 0 {
+		t.Fatalf("event-only slow warning should not also emit handler warning, got %#v", messages)
+	}
+}
+
+func TestSlowHandlerAndSlowEventWarningsCanBothFire(t *testing.T) {
+	eventTimeout := 0.5
+	slowTimeout := 0.01
+	slowBusDefault := 0.5
+	bus := abxbus.NewEventBus("SlowComboWarnBus", &abxbus.EventBusOptions{
+		EventTimeout:            &eventTimeout,
+		EventSlowTimeout:        &slowBusDefault,
+		EventHandlerSlowTimeout: &slowBusDefault,
+	})
+	t.Cleanup(bus.Destroy)
+
+	var mu sync.Mutex
+	messages := []string{}
+	originalLogger := abxbus.SlowWarningLogger
+	abxbus.SlowWarningLogger = func(message string) {
+		mu.Lock()
+		defer mu.Unlock()
+		messages = append(messages, message)
+	}
+	defer func() { abxbus.SlowWarningLogger = originalLogger }()
+
+	bus.On("TimeoutDefaultsEvent", "slow_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		time.Sleep(30 * time.Millisecond)
+		return "ok", nil
+	}, nil)
+
+	event := abxbus.NewBaseEvent("TimeoutDefaultsEvent", nil)
+	event.EventSlowTimeout = &slowTimeout
+	event.EventHandlerSlowTimeout = &slowTimeout
+	if _, err := bus.Emit(event).Now(); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if indexContains(messages, "Slow event handler") < 0 {
+		t.Fatalf("expected slow handler warning, got %#v", messages)
+	}
+	if indexContains(messages, "Slow event processing") < 0 {
+		t.Fatalf("expected slow event warning, got %#v", messages)
+	}
+}
+
+func TestZeroSlowWarningThresholdsDisableEventAndHandlerSlowWarnings(t *testing.T) {
+	eventTimeout := 0.5
+	noSlowWarning := 0.0
+	bus := abxbus.NewEventBus("NoSlowWarnBus", &abxbus.EventBusOptions{
+		EventTimeout:            &eventTimeout,
+		EventSlowTimeout:        &noSlowWarning,
+		EventHandlerSlowTimeout: &noSlowWarning,
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
+		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
+	})
+	t.Cleanup(bus.Destroy)
+
+	var mu sync.Mutex
+	messages := []string{}
+	originalLogger := abxbus.SlowWarningLogger
+	abxbus.SlowWarningLogger = func(message string) {
+		mu.Lock()
+		defer mu.Unlock()
+		messages = append(messages, message)
+	}
+	defer func() { abxbus.SlowWarningLogger = originalLogger }()
+
+	bus.On("TimeoutDefaultsEvent", "slow_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		time.Sleep(30 * time.Millisecond)
+		mu.Lock()
+		messages = append(messages, "slow warning child handler finishing")
+		mu.Unlock()
+		return "ok", nil
+	}, nil)
+
+	if _, err := bus.Emit(abxbus.NewBaseEvent("TimeoutDefaultsEvent", nil)).Now(); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if indexContains(messages, "Slow event handler") >= 0 {
+		t.Fatalf("handler slow warning should be disabled, got %#v", messages)
+	}
+	if indexContains(messages, "Slow event processing") >= 0 {
+		t.Fatalf("event slow warning should be disabled, got %#v", messages)
+	}
+	if indexContains(messages, "slow warning child handler finishing") < 0 {
+		t.Fatalf("handler should still run to completion, got %#v", messages)
 	}
 }
 
@@ -155,7 +530,7 @@ func TestForwardedEventTimeoutAbortsTargetBusHandler(t *testing.T) {
 	eventTimeout := 0.01
 	event := abxbus.NewBaseEvent("TimeoutForwardEvent", nil)
 	event.EventTimeout = &eventTimeout
-	if _, err := busA.Emit(event).Done(context.Background()); err != nil {
+	if _, err := busA.Emit(event).Now(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -202,7 +577,7 @@ func TestQueueJumpAwaitedChildTimeoutAbortsAcrossBuses(t *testing.T) {
 		child.EventTimeout = &childTimeout
 		busB.Emit(child)
 		childRef = child
-		if _, err := child.Done(ctx); err != nil {
+		if _, err := child.Now(); err != nil {
 			return nil, err
 		}
 		return "parent", nil
@@ -211,11 +586,15 @@ func TestQueueJumpAwaitedChildTimeoutAbortsAcrossBuses(t *testing.T) {
 	parentTimeout := 0.5
 	parent := abxbus.NewBaseEvent("TimeoutParentEvent", nil)
 	parent.EventTimeout = &parentTimeout
-	if _, err := busA.Emit(parent).Done(context.Background()); err != nil {
+	if _, err := busA.Emit(parent).Now(); err != nil {
 		t.Fatal(err)
 	}
 	if childRef == nil {
 		t.Fatal("parent handler did not capture child event")
+	}
+	waitTimeout := 2.0
+	if !busB.WaitUntilIdle(&waitTimeout) {
+		t.Fatal("timed out waiting for child timeout result")
 	}
 	foundTimeoutError := false
 	for _, result := range childRef.EventResults {
@@ -244,10 +623,11 @@ func TestForwardedTimeoutPathDoesNotStallFollowupEvents(t *testing.T) {
 
 	busA.On("TimeoutRecoveryParentEvent", "parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		childTimeout := 0.01
-		child := event.Emit(abxbus.NewBaseEvent("TimeoutRecoveryChildEvent", nil))
-		child.EventTimeout = &childTimeout
+		childEvent := abxbus.NewBaseEvent("TimeoutRecoveryChildEvent", nil)
+		childEvent.EventTimeout = &childTimeout
+		child := event.Emit(childEvent)
 		childRef = child
-		if _, err := child.Done(ctx); err != nil {
+		if _, err := child.Now(); err != nil {
 			return nil, err
 		}
 		return "parent_done", nil
@@ -275,15 +655,16 @@ func TestForwardedTimeoutPathDoesNotStallFollowupEvents(t *testing.T) {
 	parentTimeout := 1.0
 	parent := abxbus.NewBaseEvent("TimeoutRecoveryParentEvent", nil)
 	parent.EventTimeout = &parentTimeout
-	if _, err := busA.Emit(parent).Done(context.Background()); err != nil {
+	parent = busA.Emit(parent)
+	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if childRef == nil {
 		t.Fatal("parent handler did not emit child")
 	}
-	parentResult := firstEventResult(parent)
+	parentResult := eventResultByHandlerName(parent, "parent")
 	if parentResult == nil || parentResult.Status != abxbus.EventResultCompleted {
-		t.Fatalf("parent should complete after awaited child event completion, got %#v", parentResult)
+		t.Fatalf("parent should complete after awaited child timeout is recorded on child, got %#v", parentResult)
 	}
 	foundChildTimeoutError := false
 	for _, result := range childRef.EventResults {
@@ -300,7 +681,7 @@ func TestForwardedTimeoutPathDoesNotStallFollowupEvents(t *testing.T) {
 	}
 
 	tail := busA.Emit(abxbus.NewBaseEvent("TimeoutRecoveryTailEvent", nil))
-	if _, err := tail.Done(context.Background()); err != nil {
+	if _, err := tail.Now(); err != nil {
 		t.Fatal(err)
 	}
 	to := 2.0
@@ -350,7 +731,7 @@ func TestParentTimeoutDoesNotCancelUnawaitedChildHandlerResultsUnderSerialHandle
 	parent := abxbus.NewBaseEvent("TimeoutCancelParentEvent", nil)
 	parent.EventTimeout = &parentTimeout
 	parent = bus.Emit(parent)
-	if _, err := parent.Done(context.Background()); err != nil {
+	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
 	idleTimeout := 2.0
@@ -414,7 +795,7 @@ func TestMultiLevelTimeoutCascadeWithMixedCancellations(t *testing.T) {
 		immediateGrandchild = abxbus.NewBaseEvent("TimeoutCascadeImmediateGrandchild", nil)
 		immediateGrandchild.EventTimeout = &immediateTimeout
 		immediateGrandchild = event.Emit(immediateGrandchild)
-		if _, err := immediateGrandchild.Done(ctx); err != nil {
+		if _, err := immediateGrandchild.Now(); err != nil {
 			return nil, err
 		}
 		select {
@@ -458,7 +839,7 @@ func TestMultiLevelTimeoutCascadeWithMixedCancellations(t *testing.T) {
 		awaitedChild = abxbus.NewBaseEvent("TimeoutCascadeAwaitedChild", nil)
 		awaitedChild.EventTimeout = &awaitedTimeout
 		awaitedChild = event.Emit(awaitedChild)
-		if _, err := awaitedChild.Done(ctx); err != nil {
+		if _, err := awaitedChild.Now(); err != nil {
 			return nil, err
 		}
 		select {
@@ -473,7 +854,7 @@ func TestMultiLevelTimeoutCascadeWithMixedCancellations(t *testing.T) {
 	top := abxbus.NewBaseEvent("TimeoutCascadeTop", nil)
 	top.EventTimeout = &topTimeout
 	top = bus.Emit(top)
-	if _, err := top.Done(context.Background()); err != nil {
+	if _, err := top.Now(); err != nil {
 		t.Fatal(err)
 	}
 	idleTimeout := 2.0
@@ -548,7 +929,7 @@ func TestUnawaitedDescendantPreservesLineageAndIsNotCancelledByAncestorTimeout(t
 		innerRef = abxbus.NewBaseEvent("ErrorChainInner", nil)
 		innerRef.EventTimeout = &innerTimeout
 		innerRef = event.Emit(innerRef)
-		if _, err := innerRef.Done(ctx); err != nil {
+		if _, err := innerRef.Now(); err != nil {
 			return nil, err
 		}
 		select {
@@ -563,7 +944,7 @@ func TestUnawaitedDescendantPreservesLineageAndIsNotCancelledByAncestorTimeout(t
 	outer := abxbus.NewBaseEvent("ErrorChainOuter", nil)
 	outer.EventTimeout = &outerTimeout
 	outer = bus.Emit(outer)
-	if _, err := outer.Done(context.Background()); err != nil {
+	if _, err := outer.Now(); err != nil {
 		t.Fatal(err)
 	}
 	idleTimeout := 2.0
@@ -598,12 +979,12 @@ func TestUnawaitedDescendantPreservesLineageAndIsNotCancelledByAncestorTimeout(t
 }
 
 func TestParentTimeoutDoesNotCancelUnawaitedChildrenThatHaveNoTimeoutOfTheirOwn(t *testing.T) {
+	noTimeout := 0.0
 	bus := abxbus.NewEventBus("TimeoutBoundaryBus", &abxbus.EventBusOptions{
 		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
-		EventTimeout:            nil,
+		EventTimeout:            &noTimeout,
 	})
-	bus.EventTimeout = nil
 	t.Cleanup(bus.Destroy)
 
 	var childRef *abxbus.BaseEvent
@@ -629,7 +1010,7 @@ func TestParentTimeoutDoesNotCancelUnawaitedChildrenThatHaveNoTimeoutOfTheirOwn(
 	parent := abxbus.NewBaseEvent("TimeoutBoundaryParent", nil)
 	parent.EventTimeout = &parentTimeout
 	parent = bus.Emit(parent)
-	if _, err := parent.Done(context.Background()); err != nil {
+	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
 	idleTimeout := 2.0
@@ -691,4 +1072,150 @@ func assertTimeoutTestAllResultsCompleted(t *testing.T, event *abxbus.BaseEvent)
 			t.Fatalf("%s handler %s should complete, got %s error=%#v", event.EventType, result.HandlerName, result.Status, result.Error)
 		}
 	}
+}
+
+func indexContains(messages []string, text string) int {
+	for index, message := range messages {
+		if strings.Contains(message, text) {
+			return index
+		}
+	}
+	return -1
+}
+
+// Folded from eventbus_slow_warning_test.go to keep test layout class-based.
+func TestSlowEventAndHandlerWarnings(t *testing.T) {
+	event_slow := 0.01
+	handler_slow := 0.005
+	bus := abxbus.NewEventBus("SlowWarnBus", &abxbus.EventBusOptions{
+		EventTimeout:            nil,
+		EventSlowTimeout:        &event_slow,
+		EventHandlerSlowTimeout: &handler_slow,
+	})
+
+	var mu sync.Mutex
+	logs := []string{}
+	original := abxbus.SlowWarningLogger
+	abxbus.SlowWarningLogger = func(message string) {
+		mu.Lock()
+		logs = append(logs, message)
+		mu.Unlock()
+	}
+	defer func() { abxbus.SlowWarningLogger = original }()
+
+	bus.On("Evt", "slow_handler", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		time.Sleep(30 * time.Millisecond)
+		return "ok", nil
+	}, nil)
+
+	e := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
+	_, err := e.Now()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(logs) == 0 {
+		t.Fatal("expected slow warning logs")
+	}
+	seen_event := false
+	seen_handler := false
+	for _, line := range logs {
+		if strings.Contains(line, "Slow event processing") {
+			seen_event = true
+		}
+		if strings.Contains(line, "Slow event handler") {
+			seen_handler = true
+		}
+	}
+	if !seen_event || !seen_handler {
+		t.Fatalf("expected both event and handler warnings, got event=%v handler=%v logs=%v", seen_event, seen_handler, logs)
+	}
+}
+
+// Folded from eventbus_timeout_reporting_test.go to keep test layout class-based.
+func TestEventTimeoutMarksAbortedAndCancelledHandlers(t *testing.T) {
+	event_timeout := 0.02
+	no_timeout := 0.0
+	bus := abxbus.NewEventBus("TimeoutReportingBus", &abxbus.EventBusOptions{
+		EventTimeout:            &no_timeout,
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
+		EventHandlerSlowTimeout: &no_timeout,
+		EventSlowTimeout:        &no_timeout,
+	})
+	bus.On("Evt", "slow_first", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		select {
+		case <-time.After(250 * time.Millisecond):
+			return "late", nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, nil)
+	bus.On("Evt", "pending_second", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		return "never", nil
+	}, nil)
+
+	e := abxbus.NewBaseEvent("Evt", nil)
+	e.EventTimeout = &event_timeout
+	e = bus.Emit(e)
+	_, _ = e.Now()
+	if len(e.EventResults) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(e.EventResults))
+	}
+	seen_aborted := false
+	seen_cancelled := false
+	errors_seen := []string{}
+	for _, r := range e.EventResults {
+		if r.Status != abxbus.EventResultError {
+			t.Fatalf("expected error status for all results, got %s", r.Status)
+		}
+		err_s := ""
+		if s, ok := r.Error.(string); ok {
+			err_s = s
+		}
+		errors_seen = append(errors_seen, err_s)
+		if strings.Contains(err_s, "Aborted running handler") {
+			seen_aborted = true
+		}
+		if strings.Contains(err_s, "Cancelled pending handler") {
+			seen_cancelled = true
+		}
+	}
+	if !seen_aborted || !seen_cancelled {
+		t.Fatalf("expected aborted+cancelled error reporting, got aborted=%v cancelled=%v errors=%v", seen_aborted, seen_cancelled, errors_seen)
+	}
+}
+
+func TestHandlerTimeoutUsesTimedOutErrorMessage(t *testing.T) {
+	handler_timeout := 0.01
+	bus_timeout := 5.0
+	bus := abxbus.NewEventBus("HandlerTimeoutMessageBus", &abxbus.EventBusOptions{EventTimeout: &bus_timeout})
+	overrides := &abxbus.EventHandler{HandlerTimeout: &handler_timeout}
+	bus.On("Evt", "slow", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		select {
+		case <-time.After(200 * time.Millisecond):
+			return "late", nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, overrides)
+	e := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
+	_, err := e.EventResult()
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected timeout message, got %v", err)
+	}
+}
+
+func eventResultByHandlerName(event *abxbus.BaseEvent, handlerName string) *abxbus.EventResult {
+	for _, result := range event.EventResults {
+		if result.HandlerName == handlerName {
+			return result
+		}
+	}
+	return nil
 }

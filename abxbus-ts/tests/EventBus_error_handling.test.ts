@@ -27,7 +27,7 @@ test('handler error is captured and does not prevent other handlers from running
   bus.on(TestEvent, working_handler)
 
   const event = bus.emit(TestEvent({}))
-  await event.done({ raise_if_any: false })
+  await event.now()
 
   // Both handlers should have run and produced results
   assert.equal(event.event_results.size, 2)
@@ -67,7 +67,7 @@ test('event.event_errors collects handler errors', async () => {
   bus.on(TestEvent, handler_c)
 
   const event = bus.emit(TestEvent({}))
-  await event.done({ raise_if_any: false })
+  await event.now()
 
   // Two errors should be collected
   assert.equal(event.event_errors.length, 2)
@@ -84,7 +84,7 @@ test('handler error does not prevent event completion', async () => {
   })
 
   const event = bus.emit(TestEvent({}))
-  await event.done({ raise_if_any: false })
+  await event.now()
 
   // Event should still complete even though handler errored
   assert.equal(event.event_status, 'completed')
@@ -133,7 +133,7 @@ test('async handler rejection is captured as error', async () => {
   bus.on(TestEvent, async_failing_handler)
 
   const event = bus.emit(TestEvent({}))
-  await event.done({ raise_if_any: false })
+  await event.now()
 
   assert.equal(event.event_status, 'completed')
   assert.equal(event.event_errors.length, 1)
@@ -163,7 +163,7 @@ test('error in forwarded event handler does not block source bus', async () => {
   })
 
   const event = bus_a.emit(ForwardEvent({}))
-  await event.done({ raise_if_any: false })
+  await event.now()
 
   assert.equal(event.event_status, 'completed')
 
@@ -187,7 +187,7 @@ test('event with no handlers completes without errors', async () => {
   const OrphanEvent = BaseEvent.extend('OrphanEvent', {})
 
   const event = bus.emit(OrphanEvent({}))
-  await event.done()
+  await event.now()
 
   assert.equal(event.event_status, 'completed')
   assert.equal(event.event_results.size, 0)
@@ -204,7 +204,7 @@ test('error handler result fields are populated correctly', async () => {
   bus.on(TestEvent, my_handler)
 
   const event = bus.emit(TestEvent({}))
-  await event.done({ raise_if_any: false })
+  await event.now()
 
   const result = Array.from(event.event_results.values())[0]
   assert.equal(result.status, 'error')

@@ -41,8 +41,8 @@ updated = await client.update(id=user_id, age=46, source='sync')
 ```ts
 // Without wrap: valid, but noisy at every call site
 const event = bus.emit(CreateUserEvent({ name: 'bob', age: 45 }))
-await event.done()
-const user_id = event.event_result
+await event.now()
+const user_id = await event.eventResult()
 const all_values = await event.eventResultsList({ raise_if_any: false, raise_if_none: false })
 
 // With wrap: looks like normal async function calls
@@ -63,7 +63,7 @@ event := bus.Emit(abxbus.NewBaseEvent("CreateUserEvent", map[string]any{
 	"name": "bob",
 	"age": 45,
 }))
-userID, err := event.EventResult(ctx)
+userID, err := event.EventResult()
 ```
 
 </Tab>
@@ -196,7 +196,7 @@ If your mental model is "I called something, I need a result now," pure fire-and
 
 Two patterns reduce that stress:
 
-- request/response on one bus with direct return values (`event_result` / `first()`)
+- request/response on one bus with direct return values (`event_result()` after `now({first_result: true})` / `wait({first_result: true})`)
 - immediate execution for nested calls inside handlers (RPC-style queue-jump)
 
 These patterns feel function-like for in-process flows. If you later move a step across process/network boundaries (bridges), treat that edge as eventually consistent again.
@@ -217,7 +217,7 @@ class ChargeCardEvent(BaseEvent[str]):
 
 async def on_checkout(event: CheckoutEvent) -> str:
     child = event.emit(ChargeCardEvent(order_id=event.order_id))
-    await child                       # immediate path while inside handler
+    await child.now()                       # immediate path while inside handler
     receipt_id = await child.event_result()
     return receipt_id
 
@@ -240,8 +240,8 @@ const ChargeCardEvent = BaseEvent.extend('ChargeCardEvent', {
 
 bus.on(CheckoutEvent, async (event) => {
   const child = event.emit(ChargeCardEvent({ order_id: event.order_id }))
-  await child.done()                  // immediate path while inside handler
-  return child.event_result ?? 'missing-receipt'
+  await child.now()                  // immediate path while inside handler
+  return (await child.eventResult()) ?? 'missing-receipt'
 })
 
 bus.on(ChargeCardEvent, async (event) => `receipt-${event.order_id}`)
@@ -254,10 +254,10 @@ bus.on(ChargeCardEvent, async (event) => `receipt-${event.order_id}`)
 bus.On("CheckoutEvent", "on_checkout", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 	orderID, _ := event.Payload["order_id"].(string)
 	child := event.Emit(abxbus.NewBaseEvent("ChargeCardEvent", map[string]any{"order_id": orderID}))
-	if _, err := child.Done(ctx); err != nil {
+	if _, err := child.Now(); err != nil {
 		return nil, err
 	}
-	return child.EventResult(ctx)
+	return child.EventResult()
 }, nil)
 
 bus.On("ChargeCardEvent", "on_charge", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {

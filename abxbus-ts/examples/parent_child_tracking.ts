@@ -40,8 +40,8 @@ async function main(): Promise<void> {
     )
 
     // Step 4: Await a nested event so ordering and linkage are explicit in output.
-    await grandchild.done()
-    console.log(`  child resumed after grandchild.done(): ${shortId(grandchild.event_id)}`)
+    await grandchild.now()
+    console.log(`  child resumed after grandchild.now(): ${shortId(grandchild.event_id)}`)
 
     return `child_completed:${event.stage}`
   })
@@ -53,7 +53,7 @@ async function main(): Promise<void> {
   })
 
   // Step 6: Parent handler emits/dispatches child events via event.emit.
-  // One child is awaited with .done() to clearly show queue-jump + linkage behavior.
+  // One child is awaited with .now() to clearly show queue-jump + linkage behavior.
   bus.on(ParentEvent, async (event: InstanceType<typeof ParentEvent>): Promise<string> => {
     console.log(`parent handler start: ${event.event_type}#${shortId(event.event_id)} workflow="${event.workflow}"`)
 
@@ -63,8 +63,8 @@ async function main(): Promise<void> {
     )
 
     // Required by this example: await at least one child so parent/child linkage is obvious.
-    await awaitedChild.done()
-    console.log(`  parent resumed after awaited child.done(): ${shortId(awaitedChild.event_id)}`)
+    await awaitedChild.now()
+    console.log(`  parent resumed after awaited child.now(): ${shortId(awaitedChild.event_id)}`)
 
     const backgroundChild = event.emit(ChildEvent({ stage: 'background-child' }))
     console.log(
@@ -77,14 +77,14 @@ async function main(): Promise<void> {
     console.log(
       `  parent dispatched grandchild type directly: ${directGrandchild.event_type}#${shortId(directGrandchild.event_id)} parent_id=${shortId(directGrandchild.event_parent_id)}`
     )
-    await directGrandchild.done()
+    await directGrandchild.now()
 
     return 'parent_completed'
   })
 
   // Step 7: Dispatch parent and wait for full bus idle so history is complete.
   const parent = bus.emit(ParentEvent({ workflow: 'demo-parent-child-tracking' }))
-  await parent.done()
+  await parent.now()
   await bus.waitUntilIdle()
 
   // Step 8: Print IDs + relationship checks from event history.

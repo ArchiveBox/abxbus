@@ -33,7 +33,7 @@ async def eventbus():
     """Create an event bus for testing"""
     bus = EventBus(name='TestBus')
     yield bus
-    await bus.stop(clear=True)
+    await bus.destroy(clear=True)
 
 
 class TestParentEventTracking:
@@ -236,8 +236,8 @@ class TestParentEventTracking:
             assert received_child.event_parent_id == parent.event_id
 
         finally:
-            await bus1.stop(clear=True)
-            await bus2.stop(clear=True)
+            await bus1.destroy(clear=True)
+            await bus2.destroy(clear=True)
 
     async def test_sync_handler_parent_tracking(self, eventbus: EventBus):
         """Test parent tracking works with sync handlers"""
@@ -434,7 +434,7 @@ class TestParentEventTracking:
             assert len(parent.event_children) == 0
 
         finally:
-            await bus2.stop(clear=True)
+            await bus2.destroy(clear=True)
 
     async def test_parent_completion_waits_for_awaited_children(self, eventbus: EventBus):
         """Parent event completion should wait until awaited children complete."""
@@ -511,7 +511,7 @@ class TestParentEventTracking:
         assert captured_child.event_blocks_parent_completion is False
         assert captured_child in parent.event_children
 
-        await asyncio.wait_for(parent_event.event_completed(), timeout=1.0)
+        await asyncio.wait_for(parent_event.wait(), timeout=1.0)
         assert parent.event_status == 'completed'
         assert captured_child.event_status != 'completed'
 
@@ -548,7 +548,7 @@ class TestParentEventTracking:
         assert captured_child.event_blocks_parent_completion is False
         assert captured_child not in parent.event_children
 
-        await asyncio.wait_for(parent_event.event_completed(), timeout=1.0)
+        await asyncio.wait_for(parent_event.wait(), timeout=1.0)
         assert parent.event_status == 'completed'
         assert captured_child.event_status != 'completed'
 

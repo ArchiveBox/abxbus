@@ -14,9 +14,30 @@ func TestEventResultPropagatesHandlerError(t *testing.T) {
 		return nil, errors.New("boom")
 	}, nil)
 	e := bus.Emit(abxbus.NewBaseEvent("ErrEvent", nil))
-	_, err := e.EventResult(context.Background())
+	if _, err := e.Now(); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.EventResult()
 	if err == nil || err.Error() != "boom" {
 		t.Fatalf("expected boom error, got %v", err)
+	}
+}
+
+func TestNowRaiseIfAnyOptions(t *testing.T) {
+	bus := abxbus.NewEventBus("NowRaiseIfAnyBus", nil)
+	bus.On("NowErrorEvent", "boom", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		return nil, errors.New("boom")
+	}, nil)
+
+	event := bus.Emit(abxbus.NewBaseEvent("NowErrorEvent", nil))
+	if _, err := event.Now(); err != nil {
+		t.Fatalf("Now should wait for completion without surfacing handler errors, got %v", err)
+	}
+	if event.EventStatus != "completed" {
+		t.Fatalf("event should be completed despite handler error, got %s", event.EventStatus)
+	}
+	if _, err := event.Now(); err != nil {
+		t.Fatalf("RaiseIfAny=false should only wait for completion, got %v", err)
 	}
 }
 
@@ -29,7 +50,7 @@ func TestEventCompletesWhenOneHandlerErrorsAndAnotherSucceeds(t *testing.T) {
 		return nil, errors.New("boom")
 	}, nil)
 	e := bus.Emit(abxbus.NewBaseEvent("MixedEvent", nil))
-	if _, err := e.Done(context.Background()); err != nil {
+	if _, err := e.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if e.EventStatus != "completed" {
@@ -82,7 +103,7 @@ func TestSerialHandlerErrorDoesNotPreventLaterHandlers(t *testing.T) {
 	}, nil)
 
 	event := bus.Emit(abxbus.NewBaseEvent("MixedEvent", nil))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
 	if event.EventStatus != "completed" {

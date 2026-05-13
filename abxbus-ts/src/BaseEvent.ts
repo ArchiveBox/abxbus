@@ -17,7 +17,17 @@ import { extractZodShape, normalizeEventResultType, toJsonSchema } from './types
 import type { EventHandlerCallable, EventResultType } from './types.js'
 import { monotonicDatetime } from './helpers.js'
 
-const RESERVED_USER_EVENT_FIELDS = new Set(['bus', 'emit', 'first', 'toString', 'toJSON', 'fromJSON'])
+const RESERVED_USER_EVENT_FIELDS = new Set([
+  'bus',
+  'emit',
+  'wait',
+  'now',
+  'eventResult',
+  'eventResultsList',
+  'toString',
+  'toJSON',
+  'fromJSON',
+])
 
 function assertNoReservedUserEventFields(data: Record<string, unknown>, context: string): void {
   for (const field_name of RESERVED_USER_EVENT_FIELDS) {
@@ -58,10 +68,10 @@ export const BaseEventSchema = z
     event_created_at: z.string().datetime(),
     event_type: z.string(),
     event_version: z.string().default('0.0.1'),
-    event_timeout: z.number().positive().nullable(),
-    event_slow_timeout: z.number().positive().nullable().optional(),
-    event_handler_timeout: z.number().positive().nullable().optional(),
-    event_handler_slow_timeout: z.number().positive().nullable().optional(),
+    event_timeout: z.number().nonnegative().nullable(),
+    event_slow_timeout: z.number().nonnegative().nullable().optional(),
+    event_handler_timeout: z.number().nonnegative().nullable().optional(),
+    event_handler_slow_timeout: z.number().nonnegative().nullable().optional(),
     event_blocks_parent_completion: z.boolean().optional(),
     event_parent_id: z.string().uuid().nullable().optional(),
     event_path: z.array(z.string()).optional(),
@@ -133,18 +143,22 @@ type ResultTypeFromEventResultTypeInput<TInput> = TInput extends z.ZodTypeAny
             : unknown
 
 type ResultSchemaFromShape<TShape> = TShape extends { event_result_type: infer S } ? ResultTypeFromEventResultTypeInput<S> : unknown
-type EventResultsListInclude<TEvent extends BaseEvent> = (
-  result: EventResultType<TEvent> | undefined,
+export type EventResultInclude<TEvent extends BaseEvent> = (
+  result: EventResult<TEvent>['result'],
   event_result: EventResult<TEvent>
 ) => boolean
-type EventResultsListOptions<TEvent extends BaseEvent> = {
-  timeout?: number | null
-  include?: EventResultsListInclude<TEvent>
+export type EventResultOptions<TEvent extends BaseEvent> = {
+  include?: EventResultInclude<TEvent>
   raise_if_any?: boolean
   raise_if_none?: boolean
 }
-type EventDoneOptions = {
-  raise_if_any?: boolean
+export type EventWaitOptions = {
+  timeout?: number | null
+  first_result?: boolean
+}
+export type EventWaitPromise<TEvent extends BaseEvent> = Promise<TEvent> & {
+  eventResult(options?: EventResultOptions<TEvent>): Promise<EventResultType<TEvent> | undefined>
+  eventResultsList(options?: EventResultOptions<TEvent>): Promise<Array<EventResultType<TEvent> | undefined>>
 }
 type EventResultUpdateOptions<TEvent extends BaseEvent> = {
   eventbus?: EventBus
@@ -184,7 +198,7 @@ export class BaseEvent {
   event_slow_timeout?: number | null // optional per-event slow warning threshold in seconds
   event_handler_timeout?: number | null // optional per-event handler timeout override in seconds
   event_handler_slow_timeout?: number | null // optional per-event slow handler warning threshold in seconds
-  event_blocks_parent_completion!: boolean // true only for children explicitly awaited via done()/eventCompleted()
+  event_blocks_parent_completion!: boolean // true only for children explicitly awaited via now()
   event_parent_id!: string | null // id of the parent event that triggered this event, if this event was emitted during handling of another event, else null
   event_path!: string[] // list of bus labels (name#id) that the event has been dispatched to, including the current bus
   event_result_type?: z.ZodTypeAny // optional zod schema to enforce the shape of return values from handlers
@@ -206,6 +220,7 @@ export class BaseEvent {
   event_bus?: EventBus // bus that dispatched this event, also used by event.emit(child)
   _event_original?: BaseEvent // underlying event object that was dispatched, if this is a bus-scoped proxy wrapping it
   _event_dispatch_context?: unknown | null // captured AsyncLocalStorage context at dispatch site, used to restore that context when running handlers
+  _event_fields_set?: Set<string>
 
   _event_completed_signal: Deferred<this> | null
   _lock_for_event_handler: AsyncLock | null
@@ -218,6 +233,7 @@ export class BaseEvent {
       event_result_type?: z.ZodTypeAny
     }
     const ctor_defaults = EVENT_CLASS_DEFAULTS.get(ctor) ?? {}
+    const explicit_event_fields = new Set([...Object.keys(ctor_defaults), ...Object.keys(data ?? {})])
     const merged_data = {
       ...ctor_defaults,
       ...data,
@@ -228,7 +244,7 @@ export class BaseEvent {
     const event_result_type = normalizeEventResultType(raw_event_result_type)
     const event_id = merged_data.event_id ?? uuidv7()
     const event_created_at = monotonicDatetime(merged_data.event_created_at)
-    const event_timeout = merged_data.event_timeout ?? null
+    const event_timeout = 'event_timeout' in merged_data ? (merged_data.event_timeout as number | null) : null
     const event_blocks_parent_completion = merged_data.event_blocks_parent_completion ?? false
 
     const base_data = {
@@ -246,6 +262,12 @@ export class BaseEvent {
     const parsed = schema.parse(base_data) as BaseEventData & Record<string, unknown>
 
     Object.assign(this, parsed)
+    Object.defineProperty(this, '_event_fields_set', {
+      value: explicit_event_fields,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    })
 
     const parsed_path = (parsed as { event_path?: string[] }).event_path
     this.event_path = Array.isArray(parsed_path) ? [...parsed_path] : []
@@ -416,13 +438,15 @@ export class BaseEvent {
     }
   }
 
-  _createSlowEventWarningTimer(): ReturnType<typeof setTimeout> | null {
-    const event_slow_timeout = this.event_slow_timeout ?? this.event_bus?.event_slow_timeout ?? null
-    const event_warn_ms = event_slow_timeout === null ? null : event_slow_timeout * 1000
+  _createSlowEventWarningTimer(
+    event_slow_timeout: number | null = this.event_slow_timeout ?? null,
+    bus_name?: string
+  ): ReturnType<typeof setTimeout> | null {
+    const event_warn_ms = event_slow_timeout === null || event_slow_timeout <= 0 ? null : event_slow_timeout * 1000
     if (event_warn_ms === null) {
       return null
     }
-    const name = this.event_bus?.name ?? 'EventBus'
+    const name = bus_name ?? this.event_bus?.name ?? 'EventBus'
     return setTimeout(() => {
       if (this.event_status === 'completed') {
         return
@@ -528,7 +552,28 @@ export class BaseEvent {
   }
 
   private _isFirstModeWinningResult(entry: EventResult): boolean {
-    return entry.status === 'completed' && entry.result !== undefined && entry.result !== null && !(entry.result instanceof BaseEvent)
+    return BaseEvent._defaultResultInclude(entry.result, entry)
+  }
+
+  private static _defaultResultInclude<TEvent extends BaseEvent>(
+    result: EventResult<TEvent>['result'],
+    event_result: EventResult<TEvent>
+  ): boolean {
+    return (
+      event_result.status === 'completed' &&
+      result !== undefined &&
+      result !== null &&
+      !(result instanceof Error) &&
+      !(result instanceof BaseEvent) &&
+      event_result.error === undefined
+    )
+  }
+
+  private static _includeEventResult<TEvent extends BaseEvent>(
+    include: EventResultInclude<TEvent>,
+    event_result: EventResult<TEvent>
+  ): boolean {
+    return include(event_result.result, event_result)
   }
 
   private _markFirstModeWinnerIfNeeded(original: BaseEvent, entry: EventResult, first_state: { found: boolean }): void {
@@ -543,9 +588,13 @@ export class BaseEvent {
     if (!this.event_bus) {
       throw new Error('event has no bus attached')
     }
-    await this.event_bus.locks._runWithHandlerLock(original, this.event_bus.event_handler_concurrency, async (handler_lock) => {
-      await entry.runHandler(handler_lock)
-    })
+    await this.event_bus.locks._runWithHandlerLock(
+      original,
+      original.event_handler_concurrency ?? this.event_bus.event_handler_concurrency,
+      async (handler_lock) => {
+        await entry.runHandler(handler_lock)
+      }
+    )
   }
 
   // Run all pending handler results for the current bus context.
@@ -562,7 +611,7 @@ export class BaseEvent {
     }
     const resolved_completion = original.event_handler_completion ?? this.event_bus?.event_handler_completion ?? 'all'
     if (resolved_completion === 'first') {
-      if (original._getHandlerLock(this.event_bus?.event_handler_concurrency) !== null) {
+      if (original._getHandlerLock(original.event_handler_concurrency ?? this.event_bus?.event_handler_concurrency ?? 'serial') !== null) {
         for (const entry of pending_results) {
           await this._runHandlerWithLock(original, entry)
           if (!this._isFirstModeWinningResult(entry)) {
@@ -590,7 +639,7 @@ export class BaseEvent {
 
   _getHandlerLock(default_concurrency?: EventHandlerConcurrencyMode): AsyncLock | null {
     const original = this._event_original ?? this
-    const resolved = original.event_handler_concurrency ?? default_concurrency ?? original.event_bus?.event_handler_concurrency ?? 'serial'
+    const resolved = original.event_handler_concurrency ?? default_concurrency ?? 'serial'
     if (resolved === 'parallel') {
       return null
     }
@@ -715,7 +764,7 @@ export class BaseEvent {
       original_child._markCancelled(cancellation_cause)
 
       // Force-complete the child event. In JS we can't stop running async
-      // handlers, but _markCompleted() resolves the done() promise so callers
+      // handlers, but _markCompleted() resolves active waiters so callers
       // aren't blocked waiting for background work to finish. The background
       // handler's eventual _markCompleted/_markError is a no-op (terminal guard).
       if (original_child.event_status !== 'completed') {
@@ -732,11 +781,11 @@ export class BaseEvent {
     }
   }
 
-  // Cancel all handler results for an event except the winner, used by first() mode.
+  // Cancel all handler results for an event except the winner, used by event_handler_completion='first'.
   // Cancels pending handlers immediately, aborts started handlers via _signalAbort(),
   // and cancels any child events emitted by the losing handlers.
   _markRemainingFirstModeResultCancelled(winner: EventResult): void {
-    const cause = new Error('first() resolved: another handler returned a result first')
+    const cause = new Error("event_handler_completion='first' resolved: another handler returned a result first")
     const bus_id = winner.eventbus_id
 
     for (const result of this.event_results.values()) {
@@ -745,7 +794,7 @@ export class BaseEvent {
 
       if (result.status === 'pending') {
         result._markError(
-          new EventHandlerCancelledError(`Cancelled: first() resolved`, {
+          new EventHandlerCancelledError(`Cancelled: event_handler_completion='first' resolved`, {
             event_result: result,
             cause,
           })
@@ -763,7 +812,7 @@ export class BaseEvent {
 
         // Abort the handler itself
         result._lock?.exitHandlerRun()
-        const aborted_error = new EventHandlerAbortedError(`Aborted: first() resolved`, {
+        const aborted_error = new EventHandlerAbortedError(`Aborted: event_handler_completion='first' resolved`, {
           event_result: result,
           cause,
         })
@@ -848,127 +897,52 @@ export class BaseEvent {
     }
   }
 
-  // awaitable that triggers immediate (queue-jump) processing of the event on all buses where it is queued
-  // use eventCompleted() to wait for normal queue-order completion without queue-jumping.
-  done(options: EventDoneOptions = {}): Promise<this> {
-    if (!this.event_bus) {
-      return Promise.reject(new Error('event has no bus attached'))
+  private _withEventResultMethods(promise: Promise<this>): EventWaitPromise<this> {
+    const chainable = promise as EventWaitPromise<this>
+    chainable.eventResult = async (options?: EventResultOptions<this>) => {
+      const event = await promise
+      return event.eventResult(options)
     }
-    const original = this._event_original ?? this
-    original._markBlocksParentCompletionIfAwaitedFromEmittingHandler()
-    const raise_if_any = options.raise_if_any ?? true
-    const completion_promise =
-      this.event_status === 'completed' ? Promise.resolve(original as this) : this.event_bus._processEventImmediately(this)
-
-    if (!raise_if_any) {
-      return completion_promise
+    chainable.eventResultsList = async (options?: EventResultOptions<this>) => {
+      const event = await promise
+      return event.eventResultsList(options)
     }
-
-    // Always delegate to _processEventImmediately — it walks up the parent event tree
-    // to determine whether we're inside a handler (works cross-bus). If no
-    // ancestor handler is in-flight, it falls back to eventCompleted().
-    return completion_promise.then((completed_event) => {
-      const first_error = completed_event._firstProcessingError()
-      if (first_error !== undefined) {
-        if (first_error instanceof Error) {
-          throw first_error
-        }
-        throw new Error(String(first_error))
-      }
-      return completed_event
-    })
+    return chainable
   }
 
-  // returns the first non-undefined handler result value, cancelling remaining handlers
-  // when any handler completes. Works with all event_handler_concurrency modes:
-  //   parallel: races all handlers, returns first non-undefined, aborts the rest
-  //   serial: runs handlers sequentially, returns first non-undefined, skips remaining
-  first(): Promise<EventResultType<this> | undefined> {
-    if (!this.event_bus) {
-      return Promise.reject(new Error('event has no bus attached'))
-    }
-    const original = this._event_original ?? this
-    original.event_handler_completion = 'first'
-    return this.done({ raise_if_any: false }).then((completed_event) => {
-      const first_error = completed_event._firstProcessingError({ ignore_first_mode_control_errors: true })
-      if (first_error !== undefined) {
-        if (first_error instanceof Error) {
-          throw first_error
-        }
-        throw new Error(String(first_error))
-      }
-      const orig = completed_event._event_original ?? completed_event
-      return Array.from(orig.event_results.values())
-        .filter(
-          (result) =>
-            result.status === 'completed' && result.result !== undefined && result.result !== null && !(result.result instanceof BaseEvent)
-        )
-        .sort((a, b) => compareIsoDatetime(a.completed_at, b.completed_at))
-        .map((result) => result.result as EventResultType<this>)
-        .at(0)
-    })
+  private _timeoutPromise<T>(timeout: number | null, message: () => string, fn: () => Promise<T>): Promise<T> {
+    return timeout === null || timeout <= 0 ? fn() : _runWithTimeout(timeout, () => new Error(message()), fn)
   }
 
-  // returns handler result values in event_results insertion order.
-  // equivalent to await event.done(); Array.from(event.event_results.values()).map((entry) => entry.result)
-  eventResultsList(
-    include: EventResultsListInclude<this>,
-    options?: EventResultsListOptions<this>
-  ): Promise<Array<EventResultType<this> | undefined>>
-  eventResultsList(options?: EventResultsListOptions<this>): Promise<Array<EventResultType<this> | undefined>>
-  async eventResultsList(
-    include_or_options?: EventResultsListInclude<this> | EventResultsListOptions<this>,
-    maybe_options?: EventResultsListOptions<this>
-  ): Promise<Array<EventResultType<this> | undefined>> {
-    const default_include: EventResultsListInclude<this> = (_result, event_result) =>
-      event_result.status === 'completed' &&
-      event_result.result !== undefined &&
-      event_result.result !== null &&
-      !(event_result.result instanceof Error) &&
-      !(event_result.result instanceof BaseEvent) &&
-      event_result.error === undefined
-
-    let options: EventResultsListOptions<this>
-    let include: EventResultsListInclude<this>
-    if (typeof include_or_options === 'function') {
-      options = maybe_options ?? {}
-      include = include_or_options
-    } else {
-      options = include_or_options ?? {}
-      include = options.include ?? default_include
-    }
-    const raise_if_any = options.raise_if_any ?? true
-    const raise_if_none = options.raise_if_none ?? true
-
+  private _orderedEventResults(): EventResult<this>[] {
     const original = this._event_original ?? this
-    const resolved_timeout_seconds = options.timeout ?? original.event_timeout ?? this.event_bus?.event_timeout ?? null
-    let completed_event: this
+    return (Array.from(original.event_results.values()) as EventResult<this>[]).sort((a, b) =>
+      compareIsoDatetime(a.completed_at, b.completed_at)
+    )
+  }
 
-    if (resolved_timeout_seconds === null) {
-      completed_event = await this.done({ raise_if_any: false })
-    } else {
-      completed_event = await _runWithTimeout(
-        resolved_timeout_seconds,
-        () => new Error(`Timed out waiting for ${original.event_type} results after ${resolved_timeout_seconds}s`),
-        () => this.done({ raise_if_any: false })
-      )
-    }
+  private _orderedEventResultsByRegistration(): EventResult<this>[] {
+    const original = this._event_original ?? this
+    return (Array.from(original.event_results.values()) as EventResult<this>[]).sort(
+      (a, b) =>
+        compareIsoDatetime(a.handler.handler_registered_at, b.handler.handler_registered_at) ||
+        compareIsoDatetime(a.started_at, b.started_at) ||
+        a.handler_id.localeCompare(b.handler_id)
+    )
+  }
 
-    const all_results: EventResult<this>[] = Array.from(completed_event.event_results.values())
+  private _collectResultValues(
+    options: EventResultOptions<this> = {},
+    order: 'completion' | 'registration' = 'completion'
+  ): Array<EventResultType<this> | undefined> {
+    const include: EventResultInclude<this> = options.include ?? BaseEvent._defaultResultInclude
+    const raise_if_any = options.raise_if_any ?? true
+    const raise_if_none = options.raise_if_none ?? false
+    const all_results = order === 'registration' ? this._orderedEventResultsByRegistration() : this._orderedEventResults()
     const error_results = all_results.filter((event_result) => event_result.error !== undefined || event_result.result instanceof Error)
+    const included_results = all_results.filter((event_result) => BaseEvent._includeEventResult(include, event_result))
 
-    if (raise_if_any && error_results.length > 0) {
-      if (error_results.length === 1) {
-        const first_error = error_results[0]
-        if (first_error.error instanceof Error) {
-          throw first_error.error
-        }
-        if (first_error.result instanceof Error) {
-          throw first_error.result
-        }
-        throw new Error(String(first_error.error ?? first_error.result))
-      }
-
+    if (error_results.length > 0 && raise_if_any) {
       const errors = error_results.map((event_result) => {
         if (event_result.error instanceof Error) {
           return event_result.error
@@ -978,31 +952,119 @@ export class BaseEvent {
         }
         return new Error(String(event_result.error ?? event_result.result))
       })
-      throw new AggregateError(
-        errors,
-        `Event ${completed_event.event_type}#${completed_event.event_id.slice(-4)} had ${errors.length} handler error(s)`
-      )
+      if (errors.length === 1) {
+        throw errors[0]
+      }
+      throw new AggregateError(errors, `Event ${this.event_type}#${this.event_id.slice(-4)} had ${errors.length} handler error(s)`)
     }
 
-    const included_results = all_results.filter((event_result) => include(event_result.result, event_result))
     if (raise_if_none && included_results.length === 0) {
       throw new Error(
-        `Expected at least one handler to return a non-null result, but none did: ${completed_event.event_type}#${completed_event.event_id.slice(-4)}`
+        `Expected at least one handler to return a non-null result, but none did: ${this.event_type}#${this.event_id.slice(-4)}`
       )
     }
 
     return included_results.map((event_result) => event_result.result)
   }
 
-  // awaitable that waits for the event to be processed in normal queue order by the _runloop
-  eventCompleted(): Promise<this> {
+  private _hasIncludedResult(options: EventResultOptions<this> = {}): boolean {
+    const include: EventResultInclude<this> = options.include ?? BaseEvent._defaultResultInclude
+    return this._orderedEventResults().some((event_result) => BaseEvent._includeEventResult(include, event_result))
+  }
+
+  private async _waitForFirstResultOrCompletion(options: EventWaitOptions & EventResultOptions<this> = {}): Promise<this> {
     const original = this._event_original ?? this
+    if (options.timeout !== undefined && options.timeout !== null && options.timeout < 0) {
+      throw new Error('timeout must be >= 0 or null')
+    }
+    if (!this.event_bus && original.event_status !== 'completed') {
+      throw new Error('event has no bus attached')
+    }
+    if (original.event_status === 'completed' || this._hasIncludedResult(options)) {
+      return this
+    }
+
+    const waitForResult = async (): Promise<this> => {
+      for (;;) {
+        if (original.event_status === 'completed' || this._hasIncludedResult(options)) {
+          return this
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1))
+      }
+    }
+
+    const timeout = options.timeout ?? null
+    return this._timeoutPromise(timeout, () => `Timed out waiting for ${original.event_type} result after ${timeout}s`, waitForResult)
+  }
+
+  // Active awaitable that triggers immediate (queue-jump) processing of the event on all buses where it is queued.
+  now(options: EventWaitOptions = {}): EventWaitPromise<this> {
+    const original = this._event_original ?? this
+    if (options.timeout !== undefined && options.timeout !== null && options.timeout < 0) {
+      return this._withEventResultMethods(Promise.reject(new Error('timeout must be >= 0 or null')))
+    }
+    if (!this.event_bus && original.event_status !== 'completed') {
+      return this._withEventResultMethods(Promise.reject(new Error('event has no bus attached')))
+    }
     original._markBlocksParentCompletionIfAwaitedFromEmittingHandler()
-    if (this.event_status === 'completed') {
-      return Promise.resolve(this)
+    const resolved_timeout_seconds = options.timeout ?? null
+    const processing =
+      original.event_status === 'completed'
+        ? Promise.resolve(this)
+        : this._timeoutPromise(
+            resolved_timeout_seconds,
+            () => `Timed out waiting for ${original.event_type} completion after ${resolved_timeout_seconds}s`,
+            () => this.event_bus!._processEventImmediately(this)
+          )
+
+    if (options.first_result) {
+      void processing.catch(() => undefined)
+      return this._withEventResultMethods(this._waitForFirstResultOrCompletion(options))
+    }
+
+    return this._withEventResultMethods(processing)
+  }
+
+  // Passive awaitable that waits for normal queue-order processing without forcing execution.
+  wait(options: EventWaitOptions = {}): EventWaitPromise<this> {
+    const original = this._event_original ?? this
+    if (options.timeout !== undefined && options.timeout !== null && options.timeout < 0) {
+      return this._withEventResultMethods(Promise.reject(new Error('timeout must be >= 0 or null')))
+    }
+    if (!this.event_bus && original.event_status !== 'completed') {
+      return this._withEventResultMethods(Promise.reject(new Error('event has no bus attached')))
+    }
+    if (options.first_result) {
+      return this._withEventResultMethods(this._waitForFirstResultOrCompletion(options))
+    }
+    if (original.event_status === 'completed') {
+      return this._withEventResultMethods(Promise.resolve(this))
     }
     this._notifyDoneListeners()
-    return this._event_completed_signal!.promise
+    const timeout = options.timeout ?? null
+    return this._withEventResultMethods(
+      this._timeoutPromise(
+        timeout,
+        () => `Timed out waiting for ${original.event_type} completion after ${timeout}s`,
+        () => this._event_completed_signal!.promise.then(() => this)
+      )
+    )
+  }
+
+  async eventResult(options: EventResultOptions<this> = {}): Promise<EventResultType<this> | undefined> {
+    const original = this._event_original ?? this
+    if (original.event_status === 'pending' && original.event_results.size === 0) {
+      await this.now({ first_result: true })
+    }
+    return this._collectResultValues(options, 'registration').at(0)
+  }
+
+  async eventResultsList(options: EventResultOptions<this> = {}): Promise<Array<EventResultType<this> | undefined>> {
+    const original = this._event_original ?? this
+    if (original.event_status === 'pending' && original.event_results.size === 0) {
+      await this.now({ first_result: false })
+    }
+    return this._collectResultValues(options, 'registration')
   }
 
   _markBlocksParentCompletionIfAwaitedFromEmittingHandler(): void {
@@ -1115,33 +1177,11 @@ export class BaseEvent {
     )
   }
 
-  private _isFirstModeControlError(error: unknown): boolean {
-    if (!(error instanceof EventHandlerCancelledError || error instanceof EventHandlerAbortedError)) {
-      return false
-    }
-    if (error.message.includes('first() resolved')) {
-      return true
-    }
-    return error.cause instanceof Error && error.cause.message.includes('first() resolved')
-  }
-
-  _firstProcessingError(options: { ignore_first_mode_control_errors?: boolean } = {}): unknown | undefined {
-    const ignore_first_mode_control_errors = options.ignore_first_mode_control_errors ?? false
+  _firstProcessingError(): unknown | undefined {
     return Array.from(this.event_results.values())
       .filter((event_result) => event_result.error !== undefined && event_result.completed_at !== null)
-      .filter((event_result) => (ignore_first_mode_control_errors ? !this._isFirstModeControlError(event_result.error) : true))
       .sort((event_result_a, event_result_b) => compareIsoDatetime(event_result_a.completed_at, event_result_b.completed_at))
       .map((event_result) => event_result.error)
-      .at(0)
-  }
-
-  // Returns the first non-undefined completed handler result, sorted by completion time.
-  // Useful after first() or done() to get the winning result value.
-  get event_result(): EventResultType<this> | undefined {
-    return Array.from(this.event_results.values())
-      .filter((event_result) => event_result.completed_at !== null && event_result.result !== undefined)
-      .sort((event_result_a, event_result_b) => compareIsoDatetime(event_result_a.completed_at, event_result_b.completed_at))
-      .map((event_result) => event_result.result as EventResultType<this>)
       .at(0)
   }
 

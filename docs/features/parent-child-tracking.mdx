@@ -22,15 +22,15 @@ This tracking works across nested chains (parent -> child -> grandchild) and is 
 
 ## Which emit style should I use?
 
-Most handler code should use `await event.emit(ChildEvent(...))` in Python or `await event.emit(ChildEvent(...)).done()` in TypeScript. That is the "owned child work" style: the child is linked to the parent, runs immediately from the caller's point of view, and the parent cannot complete until the child completes.
+Most handler code should use `await event.emit(ChildEvent(...)).now()` in Python or TypeScript. That is the "owned child work" style: the child is linked to the parent, runs immediately from the caller's point of view, and the parent cannot complete until the child completes.
 
 Use the other styles only when you explicitly want linked background work or a fully detached top-level event.
 
 | Style | `event_parent_id` | `event_blocks_parent_completion` | Blocks current handler? | Effect |
 | --- | --- | --- | --- | --- |
-| `await event.emit(ChildEvent(...))`<br />`await event.emit(ChildEvent(...)).done()` | Parent event id | `True` / `true` | Yes | Linked child work. The child can queue-jump, and parent completion waits for the child. |
+| `await event.emit(ChildEvent(...)).now()` | Parent event id | `True` / `true` | Yes | Linked child work. The child can queue-jump, and parent completion waits for the child. |
 | `event.emit(ChildEvent(...))` without awaiting | Parent event id | `False` / `false` | No | Linked background child. It appears in ancestry/tree logs, but the parent can complete before the child finishes. |
-| `await bus.emit(TopLevelEvent(...))`<br />`await bus.emit(TopLevelEvent(...)).done()` | `None` / `null` | `False` / `false` because there is no linked parent to block | Yes | Detached top-level event that the current handler waits for naturally because it is awaited. It is not a child in hierarchy tracking. |
+| `await bus.emit(TopLevelEvent(...)).now()` | `None` / `null` | `False` / `false` because there is no linked parent to block | Yes | Detached top-level event that the current handler waits for naturally because it is awaited. It is not a child in hierarchy tracking. |
 | `bus.emit(TopLevelEvent(...))` without awaiting | `None` / `null` | `False` / `false` | No | True background event. It is queued for later processing and has no retained relationship to the event that emitted it. |
 
 In short: use `event.emit(...)` when you want parent-child lineage, and add `await` when that child work is part of the parent's completion. Use `bus.emit(...)` when the event should be treated as a separate top-level event.
@@ -38,16 +38,16 @@ In short: use `event.emit(...)` when you want parent-child lineage, and add `awa
 In Rust, the same split is explicit:
 
 - `current_bus.emit_child(ChildEvent { ..., ..Default::default() })` creates linked child work while inside a handler.
-- `child.done().await` queue-jumps and waits for that linked child.
+- `child.now().await` queue-jumps and waits for that linked child.
 - `bus.emit(EventType { ... })` creates detached top-level work.
-- calling `done().await` on a bus-emitted event waits for it without adding parent-child lineage.
+- calling `now().await` on a bus-emitted event waits for it without adding parent-child lineage.
 
 In Go, the same split is explicit:
 
 - `child := event.Emit(abxbus.NewBaseEvent(...))` creates linked child work.
-- `child.Done(ctx)` queue-jumps and waits for that linked child.
+- `child.Now()` queue-jumps and waits for that linked child.
 - `bus.Emit(abxbus.NewBaseEvent(...))` creates detached top-level work.
-- calling `Done(ctx)` on a bus-emitted event waits for it without adding parent-child lineage.
+- calling `Now()` on a bus-emitted event waits for it without adding parent-child lineage.
 
 ## Works across forwarded buses too
 
@@ -68,7 +68,7 @@ See also: [Forwarding Between Buses](./forwarding-between-buses)
 Lineage tracking works in both execution styles:
 
 - Queue-jumped child events:
-  - emitted inside a handler and immediately awaited (`await child` / `await child.done()`)
+  - emitted inside a handler and immediately awaited (`await child.now()`)
   - child may execute right away (RPC-style), gets normal parent linkage metadata, and sets `event_blocks_parent_completion=True`
 - Normally queued child events:
   - emitted inside a handler but not immediately awaited
@@ -105,15 +105,15 @@ bus = EventBus('TreeBus')
 
 async def on_checkout(event: CheckoutEvent) -> str:
     reserve = event.emit(ReserveInventoryEvent(order_id=event.order_id))
-    await reserve
+    await reserve.now()
     reserve_id = await reserve.event_result()
 
     charge = event.emit(ChargeCardEvent(order_id=event.order_id))
-    await charge
+    await charge.now()
     charge_id = await charge.event_result()
 
     receipt = event.emit(SendReceiptEvent(order_id=event.order_id))
-    await receipt
+    await receipt.now()
     receipt_id = await receipt.event_result()
 
     return f'{reserve_id}|{charge_id}|{receipt_id}'
@@ -123,7 +123,7 @@ async def on_reserve(event: ReserveInventoryEvent) -> str:
 
 async def on_charge(event: ChargeCardEvent) -> str:
     fraud = event.emit(FraudCheckEvent(order_id=event.order_id))
-    await fraud
+    await fraud.now()
     fraud_status = await fraud.event_result()
     return f'charge:{event.order_id}:{fraud_status}'
 
@@ -179,32 +179,32 @@ const bus = new EventBus('TreeBus')
 
 bus.on(CheckoutEvent, async (event) => {
   const reserve = event.emit(ReserveInventoryEvent({ order_id: event.order_id }))
-  await reserve.done()
+  await reserve.now()
 
   const charge = event.emit(ChargeCardEvent({ order_id: event.order_id }))
-  await charge.done()
+  await charge.now()
 
   const receipt = event.emit(SendReceiptEvent({ order_id: event.order_id }))
-  await receipt.done()
+  await receipt.now()
 
-  return `${reserve.event_result}|${charge.event_result}|${receipt.event_result}`
+  return `${await reserve.eventResult()}|${await charge.eventResult()}|${await receipt.eventResult()}`
 })
 
 bus.on(ReserveInventoryEvent, async (event) => `reserve:${event.order_id}`)
 bus.on(ChargeCardEvent, async (event) => {
   const fraud = event.emit(FraudCheckEvent({ order_id: event.order_id }))
-  await fraud.done()
-  return `charge:${event.order_id}:${fraud.event_result}`
+  await fraud.now()
+  return `charge:${event.order_id}:${await fraud.eventResult()}`
 })
 
 bus.on(FraudCheckEvent, async (event) => `fraud-ok:${event.order_id}`)
 bus.on(SendReceiptEvent, async (event) => `receipt:${event.order_id}`)
 
 const root = bus.emit(CheckoutEvent({ order_id: 'ord-123' }))
-await root.done()
+await root.now()
 await bus.waitUntilIdle()
 
-console.log(root.event_result)
+console.log(await root.eventResult())
 console.log(bus.logTree())
 ```
 
@@ -247,15 +247,15 @@ bus.on(CheckoutEvent, |event: CheckoutEvent| async move {
         order_id: order_id.clone(),
         ..Default::default()
     });
-    reserve.done().await;
-    let reserve_id = reserve.event_result(Default::default()).await?;
+    reserve.now().await;
+    let reserve_id = reserve.event_result().await?;
 
     let receipt = current_bus.emit_child(SendReceiptEvent {
         order_id,
         ..Default::default()
     });
-    receipt.done().await;
-    let receipt_id = receipt.event_result(Default::default()).await?;
+    receipt.now().await;
+    let receipt_id = receipt.event_result().await?;
 
     Ok(json!(format!("{reserve_id}|{receipt_id}")))
 });
@@ -271,7 +271,7 @@ let root = bus.emit(CheckoutEvent {
     order_id: "ord-123".to_string(),
     ..Default::default()
 });
-let result = block_on(root.event_result(Default::default()))?;
+let result = block_on(root.event_result())?;
 block_on(bus.wait_until_idle(None));
 
 println!("{result}");
@@ -287,7 +287,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"time"
 
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 )
@@ -299,28 +298,28 @@ func main() {
 		orderID := event.Payload["order_id"].(string)
 
 		reserve := event.Emit(abxbus.NewBaseEvent("ReserveInventoryEvent", map[string]any{"order_id": orderID}))
-		if _, err := reserve.Done(ctx); err != nil {
+		if _, err := reserve.Now(); err != nil {
 			return nil, err
 		}
-		reserveID, err := reserve.EventResult(ctx)
+		reserveID, err := reserve.EventResult()
 		if err != nil {
 			return nil, err
 		}
 
 		charge := event.Emit(abxbus.NewBaseEvent("ChargeCardEvent", map[string]any{"order_id": orderID}))
-		if _, err := charge.Done(ctx); err != nil {
+		if _, err := charge.Now(); err != nil {
 			return nil, err
 		}
-		chargeID, err := charge.EventResult(ctx)
+		chargeID, err := charge.EventResult()
 		if err != nil {
 			return nil, err
 		}
 
 		receipt := event.Emit(abxbus.NewBaseEvent("SendReceiptEvent", map[string]any{"order_id": orderID}))
-		if _, err := receipt.Done(ctx); err != nil {
+		if _, err := receipt.Now(); err != nil {
 			return nil, err
 		}
-		receiptID, err := receipt.EventResult(ctx)
+		receiptID, err := receipt.EventResult()
 		if err != nil {
 			return nil, err
 		}
@@ -335,10 +334,10 @@ func main() {
 	bus.On("ChargeCardEvent", "on_charge", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		orderID := event.Payload["order_id"].(string)
 		fraud := event.Emit(abxbus.NewBaseEvent("FraudCheckEvent", map[string]any{"order_id": orderID}))
-		if _, err := fraud.Done(ctx); err != nil {
+		if _, err := fraud.Now(); err != nil {
 			return nil, err
 		}
-		fraudStatus, err := fraud.EventResult(ctx)
+		fraudStatus, err := fraud.EventResult()
 		if err != nil {
 			return nil, err
 		}
@@ -352,11 +351,8 @@ func main() {
 		return fmt.Sprintf("receipt:%s", event.Payload["order_id"]), nil
 	}, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
 	root := bus.Emit(abxbus.NewBaseEvent("CheckoutEvent", map[string]any{"order_id": "ord-123"}))
-	result, err := root.EventResult(ctx)
+	result, err := root.EventResult()
 	if err != nil {
 		panic(err)
 	}

@@ -54,7 +54,7 @@ class TestDebouncingPattern:
             assert reused.event_id == child_ref[0].event_id
             assert reused.event_parent_id == parent.event_id
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_returns_existing_fresh_event(self):
         bus = EventBus()
@@ -86,7 +86,7 @@ class TestDebouncingPattern:
             assert result.event_id == original.event_id
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_advanced_debounce_prefers_history_then_waits_future_then_dispatches(self):
         bus = EventBus()
@@ -108,7 +108,7 @@ class TestDebouncingPattern:
             assert resolved_event is not None
             assert resolved_event.event_type == 'SyncEvent'
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_dispatches_new_when_no_match(self):
         bus = EventBus()
@@ -131,7 +131,7 @@ class TestDebouncingPattern:
             assert result.event_status == 'completed'
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_dispatches_new_when_stale(self):
         bus = EventBus()
@@ -156,7 +156,7 @@ class TestDebouncingPattern:
             assert len(screenshots) == 2
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_find_past_only_returns_immediately_without_waiting(self):
         bus = EventBus()
@@ -172,7 +172,7 @@ class TestDebouncingPattern:
             assert elapsed < 0.05
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_find_past_float_returns_immediately_without_waiting(self):
         bus = EventBus()
@@ -188,7 +188,7 @@ class TestDebouncingPattern:
             assert elapsed < 0.05
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_or_chain_without_waiting_finds_existing(self):
         bus = EventBus()
@@ -214,7 +214,7 @@ class TestDebouncingPattern:
             assert elapsed < 0.1
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_or_chain_without_waiting_dispatches_when_no_match(self):
         bus = EventBus()
@@ -239,7 +239,7 @@ class TestDebouncingPattern:
             assert elapsed < 0.1
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_or_chain_multiple_sequential_lookups(self):
         bus = EventBus()
@@ -287,4 +287,4 @@ class TestDebouncingPattern:
             assert elapsed < 0.2
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)

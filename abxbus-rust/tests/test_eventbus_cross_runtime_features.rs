@@ -115,7 +115,7 @@ fn test_queue_jump_preserves_parent_child_lineage_and_find_visibility() {
             let child = bus.emit_child(QueueJumpChildEvent {
                 ..Default::default()
             });
-            child.done().await;
+            let _ = child.now().await;
             push(&order, "root:end");
             Ok(json!("root-ok"))
         }
@@ -150,8 +150,8 @@ fn test_queue_jump_preserves_parent_child_lineage_and_find_visibility() {
     let sibling = bus.emit(QueueJumpSiblingEvent {
         ..Default::default()
     });
-    block_on(root.done());
-    block_on(sibling.done());
+    let _ = block_on(root.now());
+    let _ = block_on(sibling.now());
     block_on(bus.wait_until_idle(Some(2.0)));
 
     assert_eq!(
@@ -182,7 +182,7 @@ fn test_queue_jump_preserves_parent_child_lineage_and_find_visibility() {
         .cloned()
         .expect("root result");
     assert!(root_result.event_children.contains(&expected_child_id));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -250,7 +250,7 @@ fn test_concurrency_intersection_parallel_events_with_serial_handlers_stays_seri
         })
         .collect();
     for event in &events {
-        block_on(event.done());
+        let _ = block_on(event.now());
     }
     block_on(bus.wait_until_idle(Some(2.0)));
 
@@ -270,7 +270,7 @@ fn test_concurrency_intersection_parallel_events_with_serial_handlers_stays_seri
         );
     }
     assert!(*global_max.lock().expect("global max lock") >= 2);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -308,7 +308,7 @@ fn test_timeout_enforcement_preserves_follow_up_processing_and_queue_state() {
     let timed_out = bus.emit(TimeoutEnforcementEvent {
         ..Default::default()
     });
-    block_on(timed_out.done());
+    let _ = block_on(timed_out.now());
     assert_eq!(
         timed_out.inner.inner.lock().event_status,
         EventStatus::Completed
@@ -324,7 +324,7 @@ fn test_timeout_enforcement_preserves_follow_up_processing_and_queue_state() {
     let followup = bus.emit(TimeoutFollowupEvent {
         ..Default::default()
     });
-    block_on(followup.done());
+    let _ = block_on(followup.now());
     assert!(followup
         .inner
         .inner
@@ -346,7 +346,7 @@ fn test_timeout_enforcement_preserves_follow_up_processing_and_queue_state() {
 
     block_on(bus.wait_until_idle(Some(2.0)));
     assert!(bus.is_idle_and_queue_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -369,7 +369,7 @@ fn test_zero_history_backpressure_with_find_future_still_resolves_new_events() {
         ..Default::default()
     });
     let first_id = first.inner.inner.lock().event_id.clone();
-    block_on(first.done());
+    let _ = block_on(first.now());
     assert!(!bus.event_history_ids().contains(&first_id));
     assert!(block_on(bus.find("ZeroHistoryEvent", true, None, None)).is_none());
 
@@ -418,7 +418,7 @@ fn test_zero_history_backpressure_with_find_future_still_resolves_new_events() {
     assert_eq!(future_match.inner.lock().event_id, captured_future_id);
     block_on(bus.wait_until_idle(Some(2.0)));
     assert_eq!(bus.event_history_size(), 0);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -448,7 +448,7 @@ fn test_context_propagates_through_forwarding_and_child_dispatch_with_lineage_in
             let child = bus_b.emit_child(ContextChildEvent {
                 ..Default::default()
             });
-            child.done().await;
+            let _ = child.now().await;
             Ok(json!("parent-ok"))
         }
     });
@@ -466,7 +466,7 @@ fn test_context_propagates_through_forwarding_and_child_dispatch_with_lineage_in
     let parent = bus_a.emit(ContextParentEvent {
         ..Default::default()
     });
-    block_on(parent.done());
+    let _ = block_on(parent.now());
     block_on(bus_b.wait_until_idle(Some(2.0)));
 
     let parent_event_id = parent_event_id
@@ -503,8 +503,8 @@ fn test_context_propagates_through_forwarding_and_child_dispatch_with_lineage_in
         found_child.inner.lock().event_parent_id.as_deref(),
         Some(parent.inner.inner.lock().event_id.as_str())
     );
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -568,8 +568,8 @@ fn test_pending_queue_find_visibility_transitions_to_completed_after_release() {
     let queued_id = queued.inner.inner.lock().event_id.clone();
     assert_eq!(pending_id, queued_id);
 
-    block_on(blocking.done());
-    block_on(queued.done());
+    let _ = block_on(blocking.now());
+    let _ = block_on(queued.now());
     block_on(bus.wait_until_idle(Some(2.0)));
 
     let completed = block_on(bus.find_with_options(
@@ -588,7 +588,7 @@ fn test_pending_queue_find_visibility_transitions_to_completed_after_release() {
     let queued_id = queued.inner.inner.lock().event_id.clone();
     assert_eq!(completed_id, queued_id);
     assert!(bus.is_idle_and_queue_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -611,7 +611,7 @@ fn test_history_backpressure_rejects_overflow_and_preserves_findable_history() {
         ..Default::default()
     });
     let first_id = first.inner.inner.lock().event_id.clone();
-    block_on(first.done());
+    let _ = block_on(first.now());
     assert_eq!(bus.event_history_size(), 1);
     assert!(bus.event_history_ids().contains(&first_id));
 
@@ -636,15 +636,5 @@ fn test_history_backpressure_rejects_overflow_and_preserves_findable_history() {
     assert_eq!(bus.event_history_size(), 1);
     assert!(bus.event_history_ids().contains(&first_id));
     assert!(bus.is_idle_and_queue_empty());
-    bus.stop();
-}
-
-#[test]
-fn test_concurrency_intersection_parallel_events_with_serial_handlers() {
-    test_concurrency_intersection_parallel_events_with_serial_handlers_stays_serial_per_event();
-}
-
-#[test]
-fn test_timeout_enforcement_does_not_break_followup_processing_or_queue_state() {
-    test_timeout_enforcement_preserves_follow_up_processing_and_queue_state();
+    bus.destroy();
 }

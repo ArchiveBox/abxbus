@@ -2,548 +2,658 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { z } from 'zod'
 
-import { BaseEvent, EventBus, retry, clearSemaphoreRegistry } from '../src/index.js'
+import { BaseEvent, EventBus } from '../src/index.js'
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
-// ─── first() with parallel handlers ─────────────────────────────────────────
-
-test('first: returns the first non-undefined result from parallel handlers', async () => {
-  const bus = new EventBus('FirstParallelBus', { event_timeout: null, event_handler_concurrency: 'parallel' })
-  const TestEvent = BaseEvent.extend('FirstParallelEvent', { event_result_type: z.string() })
-
-  bus.on(TestEvent, async (_event) => {
-    await delay(100)
-    return 'slow handler'
+test('test_event_handler_completion_bus_default_first_serial', async () => {
+  const bus = new EventBus('CompletionDefaultFirstBus', {
+    event_timeout: 0,
+    event_handler_concurrency: 'serial',
+    event_handler_completion: 'first',
   })
-
-  await delay(2)
-
-  bus.on(TestEvent, async (_event) => {
-    await delay(10)
-    return 'fast handler'
-  })
-
-  const result = await bus.emit(TestEvent({})).first()
-
-  assert.equal(result, 'fast handler', 'should return the temporally first non-undefined result')
-})
-
-test('first: cancels remaining parallel handlers after first result', async () => {
-  const bus = new EventBus('FirstCancelBus', { event_timeout: null, event_handler_concurrency: 'parallel' })
-  const TestEvent = BaseEvent.extend('FirstCancelEvent', { event_result_type: z.string() })
-
-  let slow_handler_completed = false
-
-  bus.on(TestEvent, async (_event) => {
-    await delay(10)
-    return 'fast result'
-  })
-
-  await delay(2)
-
-  bus.on(TestEvent, async (_event) => {
-    await delay(500)
-    slow_handler_completed = true
-    return 'slow result'
-  })
-
-  const event = bus.emit(TestEvent({}))
-  const result = await event.first()
-
-  assert.equal(result, 'fast result')
-  assert.equal(slow_handler_completed, false, 'slow handler should have been aborted')
-
-  // Verify the slow handler was aborted
-  const results = Array.from(event.event_results.values())
-  const aborted = results.filter((r) => r.status === 'error')
-  assert.equal(aborted.length, 1, 'one handler should be aborted')
-})
-
-// ─── first() with serial handlers ───────────────────────────────────────────
-
-test('first: returns the first non-undefined result from serial handlers', async () => {
-  const bus = new EventBus('FirstSerialBus', { event_timeout: null, event_handler_concurrency: 'serial' })
-  const TestEvent = BaseEvent.extend('FirstSerialEvent', { event_result_type: z.string() })
-
+  const CompletionEvent = BaseEvent.extend('CompletionDefaultFirstEvent', { event_result_type: z.string() })
   let second_handler_called = false
 
-  bus.on(TestEvent, async (_event) => {
-    return 'first handler result'
-  })
+  async function first_handler() {
+    return 'first'
+  }
 
-  await delay(2)
-
-  bus.on(TestEvent, async (_event) => {
+  async function second_handler() {
     second_handler_called = true
-    return 'second handler result'
-  })
-
-  const result = await bus.emit(TestEvent({})).first()
-
-  assert.equal(result, 'first handler result')
-  assert.equal(second_handler_called, false, 'second handler should not have run')
-})
-
-test('first: serial mode skips first handler returning undefined, takes second', async () => {
-  const bus = new EventBus('FirstSerialSkipBus', { event_timeout: null, event_handler_concurrency: 'serial' })
-  const TestEvent = BaseEvent.extend('FirstSerialSkipEvent', { event_result_type: z.string() })
-
-  bus.on(TestEvent, async (_event) => {
-    return undefined // no result
-  })
-
-  await delay(2)
-
-  bus.on(TestEvent, async (_event) => {
-    return 'second handler has it'
-  })
-
-  const result = await bus.emit(TestEvent({})).first()
-
-  assert.equal(result, 'second handler has it')
-})
-
-// ─── first() edge cases ─────────────────────────────────────────────────────
-
-test('first: returns undefined when all handlers return undefined', async () => {
-  const bus = new EventBus('FirstUndefinedBus', { event_timeout: null, event_handler_concurrency: 'parallel' })
-  const TestEvent = BaseEvent.extend('FirstUndefinedEvent', {})
-
-  bus.on(TestEvent, async (_event) => {
-    return undefined
-  })
-
-  await delay(2)
-
-  bus.on(TestEvent, async (_event) => {
-    // no return (void)
-  })
-
-  const result = await bus.emit(TestEvent({})).first()
-
-  assert.equal(result, undefined)
-})
-
-test('first: re-raises the first processing error when all handlers throw', async () => {
-  const bus = new EventBus('FirstErrorBus', { event_timeout: null, event_handler_concurrency: 'parallel' })
-  const TestEvent = BaseEvent.extend('FirstErrorEvent', { event_result_type: z.string() })
-
-  bus.on(TestEvent, async (_event) => {
-    throw new Error('handler 1 error')
-  })
-
-  await delay(2)
-
-  bus.on(TestEvent, async (_event) => {
-    throw new Error('handler 2 error')
-  })
-
-  await assert.rejects(() => bus.emit(TestEvent({})).first(), /handler 1 error|handler 2 error/)
-})
-
-test('first: re-raises processing errors even when another handler succeeds', async () => {
-  const bus = new EventBus('FirstMixBus', { event_timeout: null, event_handler_concurrency: 'parallel' })
-  const TestEvent = BaseEvent.extend('FirstMixEvent', { event_result_type: z.string() })
-
-  bus.on(TestEvent, async (_event) => {
-    throw new Error('fast but fails')
-  })
-
-  await delay(2)
-
-  bus.on(TestEvent, async (_event) => {
-    await delay(20)
-    return 'slow but succeeds'
-  })
-
-  const event = bus.emit(TestEvent({}))
-  await assert.rejects(() => event.first(), /fast but fails/)
-  const has_success = Array.from(event.event_results.values()).some((result) => result.result === 'slow but succeeds')
-  assert.equal(has_success, true)
-})
-
-test('first: returns undefined when no handlers are registered', async () => {
-  const bus = new EventBus('FirstNoHandlerBus', { event_timeout: null })
-  const TestEvent = BaseEvent.extend('FirstNoHandlerEvent', {})
-
-  const result = await bus.emit(TestEvent({})).first()
-
-  assert.equal(result, undefined)
-})
-
-test('first: rejects when event has no bus attached', async () => {
-  const TestEvent = BaseEvent.extend('FirstNoBusEvent', {})
-  const event = TestEvent({})
-
-  await assert.rejects(event.first(), { message: 'event has no bus attached' })
-})
-
-// ─── first() with @retry() decorated handlers ──────────────────────────────
-
-test('first: @retry decorated handler retries before first() resolves', async () => {
-  clearSemaphoreRegistry()
-
-  const bus = new EventBus('FirstRetryBus', { event_timeout: null, event_handler_concurrency: 'parallel' })
-  const TestEvent = BaseEvent.extend('FirstRetryEvent', { event_result_type: z.string() })
-
-  let fast_attempts = 0
-
-  class Service {
-    constructor(b: InstanceType<typeof EventBus>) {
-      b.on(TestEvent, this.on_fast.bind(this))
-    }
-
-    @retry({ max_attempts: 3 })
-    async on_fast(_event: InstanceType<typeof TestEvent>): Promise<string | undefined> {
-      fast_attempts++
-      if (fast_attempts < 3) throw new Error(`attempt ${fast_attempts} failed`)
-      return 'succeeded after retries'
-    }
+    return 'second'
   }
 
-  new Service(bus)
+  bus.on(CompletionEvent, first_handler)
+  bus.on(CompletionEvent, second_handler)
 
-  const result = await bus.emit(TestEvent({})).first()
+  try {
+    const event = bus.emit(CompletionEvent({}))
+    assert.equal(event.event_handler_completion, undefined)
 
-  assert.equal(result, 'succeeded after retries')
-  assert.equal(fast_attempts, 3)
+    await event.now()
+    assert.equal(event.event_handler_completion, undefined)
+    assert.equal(second_handler_called, false)
+    assert.equal(await event.eventResult({ raise_if_any: false, raise_if_none: false }), 'first')
+
+    const first_result = Array.from(event.event_results.values()).find((result) => result.handler_name === 'first_handler')
+    const second_result = Array.from(event.event_results.values()).find((result) => result.handler_name === 'second_handler')
+    assert.equal(first_result?.status, 'completed')
+    assert.equal(second_result?.status, 'error')
+  } finally {
+    await bus.destroy()
+  }
 })
 
-test('first: fast handler wins and slow @retry handler gets cancelled', async () => {
-  clearSemaphoreRegistry()
+test('test_event_handler_completion_explicit_override_beats_bus_default', async () => {
+  const bus = new EventBus('CompletionOverrideBus', {
+    event_timeout: 0,
+    event_handler_concurrency: 'serial',
+    event_handler_completion: 'first',
+  })
+  const CompletionEvent = BaseEvent.extend('CompletionOverrideEvent', { event_result_type: z.string() })
+  let second_handler_called = false
 
-  const bus = new EventBus('FirstRetryRaceBus', { event_timeout: null, event_handler_concurrency: 'parallel' })
-  const TestEvent = BaseEvent.extend('FirstRetryRaceEvent', { event_result_type: z.string() })
-
-  let slow_attempts = 0
-
-  // fast handler returns immediately
-  bus.on(TestEvent, async (_event) => {
-    return 'fast path'
+  bus.on(CompletionEvent, async () => 'first')
+  bus.on(CompletionEvent, async () => {
+    second_handler_called = true
+    return 'second'
   })
 
-  await delay(2)
+  try {
+    const event = bus.emit(CompletionEvent({ event_handler_completion: 'all' }))
+    assert.equal(event.event_handler_completion, 'all')
+    await event.now()
+    assert.equal(second_handler_called, true)
+  } finally {
+    await bus.destroy()
+  }
+})
 
-  class SlowService {
-    constructor(b: InstanceType<typeof EventBus>) {
-      b.on(TestEvent, this.on_slow.bind(this))
-    }
+test('test_event_parallel_first_races_and_cancels_non_winners', async () => {
+  const bus = new EventBus('CompletionParallelFirstBus', {
+    event_timeout: 0,
+    event_handler_concurrency: 'serial',
+    event_handler_completion: 'all',
+  })
+  const CompletionEvent = BaseEvent.extend('CompletionParallelFirstEvent', { event_result_type: z.string() })
+  let slow_started = false
 
-    @retry({ max_attempts: 5, retry_after: 0.1 })
-    async on_slow(_event: InstanceType<typeof TestEvent>): Promise<string> {
-      slow_attempts++
-      await delay(200)
-      return 'slow path'
-    }
+  async function slow_handler_started() {
+    slow_started = true
+    await delay(500)
+    return 'slow-started'
   }
 
-  new SlowService(bus)
-
-  const result = await bus.emit(TestEvent({})).first()
-
-  assert.equal(result, 'fast path')
-  assert.equal(slow_attempts <= 1, true, 'slow handler should have been aborted after at most 1 attempt')
-})
-
-// ─── first() with the recommended @retry decorator pattern ──────────────────
-
-test('first: screenshot-service pattern — fast path wins, slow path with retry cancelled', async () => {
-  clearSemaphoreRegistry()
-
-  const bus = new EventBus('ScreenshotBus', { event_timeout: null, event_handler_concurrency: 'parallel' })
-  const ScreenshotEvent = BaseEvent.extend('ScreenshotEvent', {
-    page_id: z.string(),
-    event_result_type: z.string(),
-  })
-
-  let fast_called = false
-
-  class ScreenshotService {
-    constructor(b: InstanceType<typeof EventBus>) {
-      b.on(ScreenshotEvent, this.on_ScreenshotEvent_fast.bind(this))
-      // small delay so handler IDs don't collide
-    }
-
-    async on_ScreenshotEvent_fast(_event: InstanceType<typeof ScreenshotEvent>): Promise<string | undefined> {
-      fast_called = true
-      return 'fast_screenshot_data'
-    }
-  }
-
-  class SlowScreenshotService {
-    constructor(b: InstanceType<typeof EventBus>) {
-      b.on(ScreenshotEvent, this.on_ScreenshotEvent_slow.bind(this))
-    }
-
-    @retry({ max_attempts: 3, timeout: 15, semaphore_scope: 'global', semaphore_limit: 1, semaphore_name: 'Screenshots' })
-    async on_ScreenshotEvent_slow(_event: InstanceType<typeof ScreenshotEvent>): Promise<string> {
-      await delay(500)
-      return 'slow_screenshot_data'
-    }
-  }
-
-  new ScreenshotService(bus)
-  await delay(2)
-  new SlowScreenshotService(bus)
-
-  const screenshot = await bus.emit(ScreenshotEvent({ page_id: '2e0736d6-e947-74be-8d1c-fa8040515f2c' })).first()
-
-  assert.equal(screenshot, 'fast_screenshot_data')
-  assert.equal(fast_called, true)
-  // slow handler may or may not have started, but should be aborted before completing
-})
-
-test('first: screenshot-service pattern — fast path fails, slow path with retry succeeds', async () => {
-  clearSemaphoreRegistry()
-
-  const bus = new EventBus('ScreenshotFallbackBus', { event_timeout: null, event_handler_concurrency: 'parallel' })
-  const ScreenshotEvent = BaseEvent.extend('ScreenshotFallbackEvent', {
-    page_id: z.string(),
-    event_result_type: z.string(),
-  })
-
-  let slow_attempts = 0
-
-  class ScreenshotService {
-    constructor(b: InstanceType<typeof EventBus>) {
-      b.on(ScreenshotEvent, this.on_fast.bind(this))
-    }
-
-    async on_fast(_event: InstanceType<typeof ScreenshotEvent>): Promise<string | undefined> {
-      // fast path fails, returns undefined to signal "I can't handle this"
-      return undefined
-    }
-  }
-
-  class SlowScreenshotService {
-    constructor(b: InstanceType<typeof EventBus>) {
-      b.on(ScreenshotEvent, this.on_slow.bind(this))
-    }
-
-    @retry({ max_attempts: 3 })
-    async on_slow(_event: InstanceType<typeof ScreenshotEvent>): Promise<string> {
-      slow_attempts++
-      if (slow_attempts < 2) throw new Error('screenshot timeout')
-      return 'slow_screenshot_data'
-    }
-  }
-
-  new ScreenshotService(bus)
-  await delay(2)
-  new SlowScreenshotService(bus)
-
-  const screenshot = await bus.emit(ScreenshotEvent({ page_id: 'd8942b12-5198-70da-8914-e0a0c00ca14a' })).first()
-
-  assert.equal(screenshot, 'slow_screenshot_data')
-  assert.equal(slow_attempts, 2, 'slow handler needed 2 attempts')
-})
-
-// ─── first() with single handler ────────────────────────────────────────────
-
-test('first: works with a single handler', async () => {
-  const bus = new EventBus('FirstSingleBus', { event_timeout: null })
-  const TestEvent = BaseEvent.extend('FirstSingleEvent', { event_result_type: z.number() })
-
-  bus.on(TestEvent, async (_event) => {
-    return 42
-  })
-
-  const result = await bus.emit(TestEvent({})).first()
-
-  assert.equal(result, 42)
-})
-
-// ─── first() preserves non-undefined falsy values ───────────────────────────
-
-test('first: skips null result and uses the next handler winner', async () => {
-  const bus = new EventBus('FirstNullSkipBus', { event_timeout: null, event_handler_concurrency: 'serial' })
-  const TestEvent = BaseEvent.extend('FirstNullSkipEvent', {})
-  let third_handler_called = false
-
-  bus.on(TestEvent, async (_event) => {
-    return null
-  })
-  bus.on(TestEvent, async (_event) => {
-    return 'winner'
-  })
-  bus.on(TestEvent, async (_event) => {
-    third_handler_called = true
-    return 'third'
-  })
-
-  const event = bus.emit(TestEvent({}))
-  const result = await event.first()
-
-  assert.equal(result, 'winner')
-  assert.equal(third_handler_called, false)
-
-  const null_result = Array.from(event.event_results.values()).find((entry) => entry.result === null)
-  const winner_result = Array.from(event.event_results.values()).find((entry) => entry.result === 'winner')
-  assert.ok(null_result, 'expected null-producing handler result metadata')
-  assert.equal(null_result.status, 'completed')
-  assert.equal(null_result.error, undefined)
-  assert.equal(null_result.result, null)
-  assert.ok(winner_result, 'expected winner handler result metadata')
-  assert.equal(winner_result.status, 'completed')
-  assert.equal(winner_result.error, undefined)
-  assert.equal(winner_result.result, 'winner')
-})
-
-test('first: returns 0 as a valid first result', async () => {
-  const bus = new EventBus('FirstZeroBus', { event_timeout: null })
-  const TestEvent = BaseEvent.extend('FirstZeroEvent', { event_result_type: z.number() })
-
-  bus.on(TestEvent, async (_event) => {
-    return 0
-  })
-
-  const result = await bus.emit(TestEvent({})).first()
-
-  assert.equal(result, 0, '0 is a valid non-undefined result')
-})
-
-test('first: returns empty string as a valid first result', async () => {
-  const bus = new EventBus('FirstEmptyBus', { event_timeout: null })
-  const TestEvent = BaseEvent.extend('FirstEmptyEvent', { event_result_type: z.string() })
-
-  bus.on(TestEvent, async (_event) => {
-    return ''
-  })
-
-  const result = await bus.emit(TestEvent({})).first()
-
-  assert.equal(result, '', 'empty string is a valid non-undefined result')
-})
-
-test('first: returns false as a valid first result', async () => {
-  const bus = new EventBus('FirstFalseBus', { event_timeout: null })
-  const TestEvent = BaseEvent.extend('FirstFalseEvent', { event_result_type: z.boolean() })
-
-  bus.on(TestEvent, async (_event) => {
-    return false
-  })
-
-  const result = await bus.emit(TestEvent({})).first()
-
-  assert.equal(result, false, 'false is a valid non-undefined result')
-})
-
-test('first: skips BaseEvent return values and uses the next scalar winner', async () => {
-  const bus = new EventBus('FirstBaseEventSkipBus', { event_timeout: null, event_handler_concurrency: 'serial' })
-  const ParentEvent = BaseEvent.extend('FirstBaseEventSkipParent', {})
-  const ChildEvent = BaseEvent.extend('FirstBaseEventSkipChild', {})
-  let third_handler_called = false
-
-  bus.on(ParentEvent, async (_event) => {
-    return ChildEvent({})
-  })
-  bus.on(ParentEvent, async (_event) => {
-    return 'winner'
-  })
-  bus.on(ParentEvent, async (_event) => {
-    third_handler_called = true
-    return 'third'
-  })
-
-  const result = await bus.emit(ParentEvent({})).first()
-  assert.equal(result, 'winner')
-  assert.equal(third_handler_called, false)
-})
-
-// ─── first() cancels child events of losing handlers ────────────────────────
-
-test('first: cancels child events emitted by losing handlers', async () => {
-  const bus = new EventBus('FirstChildBus', { event_timeout: null, event_handler_concurrency: 'parallel' })
-  const ParentEvent = BaseEvent.extend('FirstChildParent', { event_result_type: z.string() })
-  const ChildEvent = BaseEvent.extend('FirstChildChild', {})
-
-  bus.on(ChildEvent, async (_event) => {
-    await delay(500) // very slow
-    return 'child result'
-  })
-
-  // Fast handler: returns immediately
-  bus.on(ParentEvent, async (_event) => {
-    return 'fast parent'
-  })
-
-  await delay(2)
-
-  // Slow handler: emits a child event, then waits
-  bus.on(ParentEvent, async (event) => {
-    const child = event.emit(ChildEvent({}))
-    await child.done()
-    return 'slow parent with child'
-  })
-
-  const result = await bus.emit(ParentEvent({})).first()
-
-  assert.equal(result, 'fast parent')
-  // Give a moment for any async cleanup
-  await delay(50)
-  // The child event emitted by the slow handler should have been cancelled
-})
-
-// ─── event_handler_completion field visibility ──────────────────────────────
-
-test('first: event_handler_completion is set to "first" after calling first()', async () => {
-  const bus = new EventBus('FirstFieldBus', { event_timeout: null })
-  const TestEvent = BaseEvent.extend('FirstFieldEvent', { event_result_type: z.string() })
-
-  bus.on(TestEvent, async (_event) => {
-    return 'result'
-  })
-
-  const event = bus.emit(TestEvent({}))
-  const original = (event as any)._event_original ?? event
-
-  // before first(), completion mode remains unset on the event object
-  assert.equal(original.event_handler_completion ?? null, null)
-
-  const result = await event.first()
-
-  // after first(), completion mode is 'first'
-  assert.equal(original.event_handler_completion, 'first')
-  assert.equal(result, 'result')
-})
-
-test('first: event_handler_completion appears in toJSON output', async () => {
-  const bus = new EventBus('FirstJsonBus', { event_timeout: null })
-  const TestEvent = BaseEvent.extend('FirstJsonEvent', { event_result_type: z.string() })
-
-  bus.on(TestEvent, async (_event) => {
-    return 'json result'
-  })
-
-  const event = bus.emit(TestEvent({}))
-  await event.first()
-
-  const original = (event as any)._event_original ?? event
-  const json = original.toJSON()
-
-  assert.equal(json.event_handler_completion, 'first', 'toJSON should include event_handler_completion')
-})
-
-test('first: event_handler_completion can be set via event constructor', async () => {
-  const bus = new EventBus('FirstCtorBus', { event_timeout: null, event_handler_concurrency: 'parallel' })
-  const TestEvent = BaseEvent.extend('FirstCtorEvent', { event_result_type: z.string() })
-
-  bus.on(TestEvent, async (_event) => {
-    await delay(100)
-    return 'slow handler'
-  })
-
-  await delay(2)
-
-  bus.on(TestEvent, async (_event) => {
+  async function fast_winner() {
     await delay(10)
-    return 'fast handler'
+    return 'winner'
+  }
+
+  async function slow_handler_pending_or_started() {
+    await delay(500)
+    return 'slow-other'
+  }
+
+  bus.on(CompletionEvent, slow_handler_started)
+  bus.on(CompletionEvent, fast_winner)
+  bus.on(CompletionEvent, slow_handler_pending_or_started)
+
+  try {
+    const event = bus.emit(
+      CompletionEvent({
+        event_handler_concurrency: 'parallel',
+        event_handler_completion: 'first',
+      })
+    )
+    assert.equal(event.event_handler_concurrency, 'parallel')
+    assert.equal(event.event_handler_completion, 'first')
+
+    const started = performance.now()
+    await event.now()
+    const elapsed = performance.now() - started
+    assert.equal(slow_started, true)
+    assert.equal(elapsed < 200, true)
+
+    const winner_result = Array.from(event.event_results.values()).find((result) => result.handler_name === 'fast_winner')
+    assert.equal(winner_result?.status, 'completed')
+    assert.equal(winner_result?.error, undefined)
+    assert.equal(winner_result?.result, 'winner')
+
+    const loser_results = Array.from(event.event_results.values()).filter((result) => result.handler_name !== 'fast_winner')
+    assert.equal(loser_results.length, 2)
+    assert.equal(
+      loser_results.every((result) => result.status === 'error'),
+      true
+    )
+    assert.equal(await event.eventResult({ raise_if_any: false, raise_if_none: true }), 'winner')
+  } finally {
+    await bus.destroy()
+  }
+})
+
+test('test_event_handler_completion_explicit_first_cancels_parallel_losers', async () => {
+  const bus = new EventBus('CompletionFirstShortcutBus', {
+    event_timeout: 0,
+    event_handler_concurrency: 'parallel',
+    event_handler_completion: 'all',
+  })
+  const CompletionEvent = BaseEvent.extend('CompletionFirstShortcutEvent', { event_result_type: z.string() })
+  let slow_handler_completed = false
+
+  bus.on(CompletionEvent, async () => {
+    await delay(10)
+    return 'fast'
+  })
+  bus.on(CompletionEvent, async () => {
+    await delay(500)
+    slow_handler_completed = true
+    return 'slow'
   })
 
-  // Set event_handler_completion directly on the event data
-  const event = bus.emit(TestEvent({ event_handler_completion: 'first' } as any))
-  const result = await event.first()
+  try {
+    const event = bus.emit(CompletionEvent({ event_handler_completion: 'first' }))
+    assert.equal(event.event_handler_completion, 'first')
 
-  assert.equal(result, 'fast handler', 'should still use first-mode when set via constructor')
+    const completed_event = await event.now({ first_result: true })
+    assert.equal(await completed_event.eventResult({ raise_if_any: false }), 'fast')
+    assert.equal(event.event_handler_completion, 'first')
+    await event.wait({ timeout: 1 })
+    assert.equal(slow_handler_completed, false)
+    assert.equal(
+      Array.from(event.event_results.values()).some((result) => result.status === 'error'),
+      true
+    )
+  } finally {
+    await bus.destroy()
+  }
+})
+
+test('test_event_handler_completion_first_preserves_falsy_results', async () => {
+  const bus = new EventBus('CompletionFalsyBus', {
+    event_timeout: 0,
+    event_handler_concurrency: 'serial',
+    event_handler_completion: 'all',
+  })
+  const IntCompletionEvent = BaseEvent.extend('IntCompletionEvent', { event_result_type: z.number() })
+  let second_handler_called = false
+
+  bus.on(IntCompletionEvent, async () => 0)
+  bus.on(IntCompletionEvent, async () => {
+    second_handler_called = true
+    return 99
+  })
+
+  try {
+    const event = bus.emit(IntCompletionEvent({ event_handler_completion: 'first' }))
+    assert.equal(await (await event.now({ first_result: true })).eventResult({ raise_if_any: false }), 0)
+    assert.equal(second_handler_called, false)
+  } finally {
+    await bus.destroy()
+  }
+})
+
+test('test_event_handler_completion_first_preserves_false_and_empty_string_results', async () => {
+  const bool_bus = new EventBus('CompletionFalsyFalseBus', {
+    event_timeout: 0,
+    event_handler_concurrency: 'serial',
+    event_handler_completion: 'all',
+  })
+  const BoolCompletionEvent = BaseEvent.extend('BoolCompletionEvent', { event_result_type: z.boolean() })
+  let bool_second_handler_called = false
+
+  bool_bus.on(BoolCompletionEvent, async () => false)
+  bool_bus.on(BoolCompletionEvent, async () => {
+    bool_second_handler_called = true
+    return true
+  })
+
+  try {
+    const bool_event = bool_bus.emit(BoolCompletionEvent({ event_handler_completion: 'first' }))
+    assert.equal(await (await bool_event.now({ first_result: true })).eventResult({ raise_if_any: false }), false)
+    assert.equal(bool_second_handler_called, false)
+  } finally {
+    await bool_bus.destroy()
+  }
+
+  const str_bus = new EventBus('CompletionFalsyEmptyStringBus', {
+    event_timeout: 0,
+    event_handler_concurrency: 'serial',
+    event_handler_completion: 'all',
+  })
+  const StrCompletionEvent = BaseEvent.extend('StrCompletionEvent', { event_result_type: z.string() })
+  let str_second_handler_called = false
+
+  str_bus.on(StrCompletionEvent, async () => '')
+  str_bus.on(StrCompletionEvent, async () => {
+    str_second_handler_called = true
+    return 'second'
+  })
+
+  try {
+    const str_event = str_bus.emit(StrCompletionEvent({ event_handler_completion: 'first' }))
+    assert.equal(await (await str_event.now({ first_result: true })).eventResult({ raise_if_any: false }), '')
+    assert.equal(str_second_handler_called, false)
+  } finally {
+    await str_bus.destroy()
+  }
+})
+
+test('test_event_handler_completion_first_skips_none_result_and_uses_next_winner', async () => {
+  const bus = new EventBus('CompletionNoneSkipBus', {
+    event_timeout: 0,
+    event_handler_concurrency: 'serial',
+    event_handler_completion: 'all',
+  })
+  const CompletionEvent = BaseEvent.extend('CompletionNoneSkipEvent', {})
+  let third_handler_called = false
+
+  async function none_handler() {
+    return null
+  }
+
+  async function winner_handler() {
+    return 'winner'
+  }
+
+  async function third_handler() {
+    third_handler_called = true
+    return 'third'
+  }
+
+  bus.on(CompletionEvent, none_handler)
+  bus.on(CompletionEvent, winner_handler)
+  bus.on(CompletionEvent, third_handler)
+
+  try {
+    const event = bus.emit(CompletionEvent({ event_handler_completion: 'first' }))
+    assert.equal(await (await event.now({ first_result: true })).eventResult({ raise_if_any: false }), 'winner')
+    assert.equal(third_handler_called, false)
+
+    const none_result = Array.from(event.event_results.values()).find((result) => result.handler_name === 'none_handler')
+    const winner_result = Array.from(event.event_results.values()).find((result) => result.handler_name === 'winner_handler')
+    assert.equal(none_result?.status, 'completed')
+    assert.equal(none_result?.result, null)
+    assert.equal(winner_result?.status, 'completed')
+    assert.equal(winner_result?.result, 'winner')
+  } finally {
+    await bus.destroy()
+  }
+})
+
+test('test_event_handler_completion_first_skips_baseevent_result_and_uses_next_winner', async () => {
+  const bus = new EventBus('CompletionBaseEventSkipBus', {
+    event_timeout: 0,
+    event_handler_concurrency: 'serial',
+    event_handler_completion: 'all',
+  })
+  const CompletionEvent = BaseEvent.extend('CompletionBaseEventSkipEvent', { event_result_type: z.string() })
+  const ChildCompletionEvent = BaseEvent.extend('ChildCompletionEvent', { event_result_type: z.string() })
+  let third_handler_called = false
+
+  async function baseevent_handler() {
+    return ChildCompletionEvent({})
+  }
+
+  async function winner_handler() {
+    return 'winner'
+  }
+
+  async function third_handler() {
+    third_handler_called = true
+    return 'third'
+  }
+
+  bus.on(CompletionEvent, baseevent_handler)
+  bus.on(CompletionEvent, winner_handler)
+  bus.on(CompletionEvent, third_handler)
+
+  try {
+    const event = bus.emit(CompletionEvent({ event_handler_completion: 'first' }))
+    assert.equal(await (await event.now({ first_result: true })).eventResult({ raise_if_any: false }), 'winner')
+    assert.equal(third_handler_called, false)
+
+    const baseevent_result = Array.from(event.event_results.values()).find((result) => result.handler_name === 'baseevent_handler')
+    assert.equal((baseevent_result?.result as unknown) instanceof BaseEvent, true)
+  } finally {
+    await bus.destroy()
+  }
+})
+
+test('test_now_runs_all_handlers_and_event_result_returns_first_valid_result', async () => {
+  const bus = new EventBus('CompletionNowAllBus', {
+    event_timeout: 0,
+    event_handler_concurrency: 'serial',
+    event_handler_completion: 'first',
+  })
+  const CompletionEvent = BaseEvent.extend('CompletionNowAllEvent', { event_result_type: z.string() })
+  const ChildCompletionEvent = BaseEvent.extend('CompletionNowAllChildEvent', {})
+  let late_handler_called = false
+
+  bus.on(CompletionEvent, async () => ChildCompletionEvent({}))
+  bus.on(CompletionEvent, async () => null)
+  bus.on(CompletionEvent, async () => 'winner')
+  bus.on(CompletionEvent, async () => {
+    late_handler_called = true
+    return 'late'
+  })
+
+  try {
+    const event = await bus.emit(CompletionEvent({ event_handler_completion: 'all' })).now()
+    assert.equal(await event.eventResult({ raise_if_any: false }), 'winner')
+    assert.equal(event.event_handler_completion, 'all')
+    assert.equal(late_handler_called, true)
+  } finally {
+    await bus.destroy()
+  }
+})
+
+test('test_event_now_default_error_policy', async () => {
+  const no_handler_bus = new EventBus('CompletionNowNoHandlerBus', { event_timeout: 0 })
+  const CompletionEvent = BaseEvent.extend('CompletionNowErrorPolicyEvent', { event_result_type: z.string() })
+
+  try {
+    const event = await no_handler_bus.emit(CompletionEvent({})).now()
+    assert.equal(await event.eventResult({ raise_if_any: false, raise_if_none: false }), undefined)
+  } finally {
+    await no_handler_bus.destroy()
+  }
+
+  const none_bus = new EventBus('CompletionNowNoneBus', { event_timeout: 0 })
+  none_bus.on(CompletionEvent, async () => null)
+  try {
+    const event = await none_bus.emit(CompletionEvent({})).now()
+    assert.equal(await event.eventResult({ raise_if_any: false, raise_if_none: false }), undefined)
+  } finally {
+    await none_bus.destroy()
+  }
+
+  const all_error_bus = new EventBus('CompletionNowAllErrorBus', { event_timeout: 0 })
+  all_error_bus.on(CompletionEvent, async () => {
+    throw new Error('now boom 1')
+  })
+  all_error_bus.on(CompletionEvent, async () => {
+    throw new Error('now boom 2')
+  })
+  try {
+    const event = await all_error_bus.emit(CompletionEvent({})).now()
+    await assert.rejects(() => event.eventResult(), AggregateError)
+  } finally {
+    await all_error_bus.destroy()
+  }
+
+  const mixed_valid_bus = new EventBus('CompletionNowMixedValidBus', { event_timeout: 0 })
+  mixed_valid_bus.on(CompletionEvent, async () => {
+    throw new Error('now boom 1')
+  })
+  mixed_valid_bus.on(CompletionEvent, async () => 'winner')
+  try {
+    const event = await mixed_valid_bus.emit(CompletionEvent({})).now()
+    assert.equal(await event.eventResult({ raise_if_any: false }), 'winner')
+  } finally {
+    await mixed_valid_bus.destroy()
+  }
+
+  const mixed_none_bus = new EventBus('CompletionNowMixedNoneBus', { event_timeout: 0 })
+  mixed_none_bus.on(CompletionEvent, async () => {
+    throw new Error('now boom 1')
+  })
+  mixed_none_bus.on(CompletionEvent, async () => null)
+  try {
+    const event = await mixed_none_bus.emit(CompletionEvent({})).now()
+    assert.equal(await event.eventResult({ raise_if_any: false, raise_if_none: false }), undefined)
+  } finally {
+    await mixed_none_bus.destroy()
+  }
+})
+
+test('test_event_result_options_match_event_results_shape', async () => {
+  const bus = new EventBus('CompletionNowOptionsBus', { event_timeout: 0, event_handler_concurrency: 'serial' })
+  const CompletionEvent = BaseEvent.extend('CompletionNowOptionsEvent', { event_result_type: z.string() })
+
+  bus.on(CompletionEvent, async () => {
+    throw new Error('now option boom')
+  })
+  bus.on(CompletionEvent, async () => 'first')
+  bus.on(CompletionEvent, async () => 'second')
+
+  try {
+    const event = await bus.emit(CompletionEvent({})).now()
+    await assert.rejects(() => event.eventResult({ raise_if_any: true }), /now option boom/)
+
+    const filtered_event = await bus.emit(CompletionEvent({})).now()
+    assert.equal(
+      await filtered_event.eventResult({
+        raise_if_any: false,
+        include: (result, event_result) => {
+          assert.equal(result, event_result.result)
+          return event_result.status === 'completed' && event_result.result === 'second'
+        },
+      }),
+      'second'
+    )
+  } finally {
+    await bus.destroy()
+  }
+})
+
+test('test_event_result_returns_first_valid_result_by_registration_order_after_now', async () => {
+  const bus = new EventBus('CompletionNowRegistrationOrderBus', { event_timeout: 0, event_handler_concurrency: 'parallel' })
+  const CompletionEvent = BaseEvent.extend('CompletionNowRegistrationOrderEvent', { event_result_type: z.string() })
+
+  bus.on(CompletionEvent, async () => {
+    await delay(50)
+    return 'slow'
+  })
+  bus.on(CompletionEvent, async () => {
+    await delay(1)
+    return 'fast'
+  })
+
+  try {
+    const event = await bus.emit(CompletionEvent({})).now()
+    assert.equal(await event.eventResult(), 'slow')
+  } finally {
+    await bus.destroy()
+  }
+})
+
+test('test_event_handler_completion_first_returns_none_when_all_handlers_fail', async () => {
+  const bus = new EventBus('CompletionAllFailBus', { event_timeout: 0, event_handler_concurrency: 'parallel' })
+  const CompletionEvent = BaseEvent.extend('CompletionAllFailEvent', { event_result_type: z.string() })
+
+  bus.on(CompletionEvent, async () => {
+    throw new Error('boom1')
+  })
+  bus.on(CompletionEvent, async () => {
+    await delay(10)
+    throw new Error('boom2')
+  })
+
+  try {
+    const event = await bus.emit(CompletionEvent({ event_handler_completion: 'first' })).now({ first_result: true })
+    assert.equal(await event.eventResult({ raise_if_any: false, raise_if_none: false }), undefined)
+  } finally {
+    await bus.destroy()
+  }
+})
+
+test('test_event_handler_completion_first_result_options_match_event_result_options', async () => {
+  const bus = new EventBus('CompletionFirstOptionsBus', { event_timeout: 0, event_handler_concurrency: 'parallel' })
+  const CompletionEvent = BaseEvent.extend('CompletionFirstOptionsEvent', { event_result_type: z.string() })
+
+  bus.on(CompletionEvent, async () => {
+    throw new Error('first option boom')
+  })
+  bus.on(CompletionEvent, async () => {
+    await delay(10)
+    return 'winner'
+  })
+
+  try {
+    const event = await bus.emit(CompletionEvent({ event_handler_completion: 'first' })).now({ first_result: true })
+    assert.equal(await event.eventResult({ raise_if_any: false }), 'winner')
+
+    const error_event = await bus.emit(CompletionEvent({ event_handler_completion: 'first' })).now({ first_result: true })
+    await assert.rejects(() => error_event.eventResult({ raise_if_any: true }), /first option boom/)
+  } finally {
+    await bus.destroy()
+  }
+
+  const none_bus = new EventBus('CompletionFirstRaiseNoneBus', { event_timeout: 0 })
+  const NoneCompletionEvent = BaseEvent.extend('CompletionFirstRaiseNoneEvent', {})
+  none_bus.on(NoneCompletionEvent, async () => null)
+  try {
+    const event = await none_bus.emit(NoneCompletionEvent({ event_handler_completion: 'first' })).now({ first_result: true })
+    await assert.rejects(() => event.eventResult({ raise_if_none: true }), /Expected at least one handler/)
+  } finally {
+    await none_bus.destroy()
+  }
+})
+
+test('test_now_first_result_timeout_limits_processing_wait', async () => {
+  const bus = new EventBus('CompletionFirstTimeoutBus', { event_timeout: 0, event_handler_concurrency: 'serial' })
+  const CompletionEvent = BaseEvent.extend('CompletionFirstTimeoutEvent', { event_result_type: z.string() })
+
+  bus.on(CompletionEvent, async () => {
+    await delay(500)
+    return 'slow'
+  })
+
+  try {
+    await assert.rejects(
+      () =>
+        bus.emit(CompletionEvent({ event_handler_completion: 'first' })).now({
+          timeout: 0.01,
+          first_result: true,
+        }),
+      /Timed out/
+    )
+  } finally {
+    await bus.destroy()
+  }
+})
+
+test('test_event_result_include_callback_receives_result_and_event_result', async () => {
+  const bus = new EventBus('CompletionFirstIncludeBus', { event_timeout: 0, event_handler_concurrency: 'serial' })
+  const CompletionEvent = BaseEvent.extend('CompletionFirstIncludeEvent', { event_result_type: z.string() })
+  const seen_handler_names: Array<string | null> = []
+  const seen_results: Array<string | undefined> = []
+
+  async function none_handler() {
+    return null
+  }
+
+  async function second_handler() {
+    return 'second'
+  }
+
+  bus.on(CompletionEvent, none_handler)
+  bus.on(CompletionEvent, second_handler)
+
+  try {
+    const event = await bus.emit(CompletionEvent({ event_handler_completion: 'first' })).now({ first_result: true })
+    assert.equal(
+      await event.eventResult({
+        raise_if_any: false,
+        include: (result, event_result) => {
+          assert.equal(result, event_result.result)
+          seen_results.push(result)
+          seen_handler_names.push(event_result.handler_name)
+          return event_result.status === 'completed' && result === 'second'
+        },
+      }),
+      'second'
+    )
+    assert.deepEqual(seen_results.slice(-2), [undefined, 'second'])
+    assert.deepEqual(seen_handler_names.slice(-2), ['none_handler', 'second_handler'])
+  } finally {
+    await bus.destroy()
+  }
+})
+
+test('test_event_results_include_callback_receives_result_and_event_result', async () => {
+  const bus = new EventBus('CompletionResultsListIncludeBus', { event_timeout: 0, event_handler_concurrency: 'serial' })
+  const CompletionEvent = BaseEvent.extend('CompletionResultsListIncludeEvent', { event_result_type: z.string() })
+  const seen_pairs: Array<[string | undefined, string | null]> = []
+
+  async function keep_handler() {
+    return 'keep'
+  }
+
+  async function drop_handler() {
+    return 'drop'
+  }
+
+  bus.on(CompletionEvent, keep_handler)
+  bus.on(CompletionEvent, drop_handler)
+
+  try {
+    const event = await bus.emit(CompletionEvent({})).now()
+    assert.deepEqual(
+      await event.eventResultsList({
+        raise_if_any: false,
+        raise_if_none: true,
+        include: (result, event_result) => {
+          assert.equal(result, event_result.result)
+          seen_pairs.push([result, event_result.handler_name])
+          return result === 'keep'
+        },
+      }),
+      ['keep']
+    )
+    assert.deepEqual(seen_pairs, [
+      ['keep', 'keep_handler'],
+      ['drop', 'drop_handler'],
+    ])
+  } finally {
+    await bus.destroy()
+  }
+})
+
+test('test_event_result_returns_first_current_result_with_first_result_wait', async () => {
+  const bus = new EventBus('CompletionFirstCurrentResultBus', { event_timeout: 0, event_handler_concurrency: 'parallel' })
+  const CompletionEvent = BaseEvent.extend('CompletionFirstCurrentResultEvent', { event_result_type: z.string() })
+
+  bus.on(CompletionEvent, async () => {
+    await delay(50)
+    return 'slow'
+  })
+  bus.on(CompletionEvent, async () => {
+    await delay(1)
+    return 'fast'
+  })
+
+  try {
+    const event = await bus.emit(CompletionEvent({})).now({ first_result: true })
+    assert.equal(await event.eventResult(), 'fast')
+  } finally {
+    await bus.destroy()
+  }
+})
+
+test('test_event_result_raise_if_any_includes_first_mode_control_errors', async () => {
+  const bus = new EventBus('CompletionFirstControlErrorBus', {
+    event_timeout: 0,
+    event_handler_concurrency: 'parallel',
+    event_handler_completion: 'all',
+  })
+  const CompletionEvent = BaseEvent.extend('CompletionFirstControlErrorEvent', { event_result_type: z.string() })
+
+  bus.on(CompletionEvent, async () => {
+    await delay(10)
+    return 'fast'
+  })
+  bus.on(CompletionEvent, async () => {
+    await delay(500)
+    return 'slow'
+  })
+
+  try {
+    const event = await bus.emit(CompletionEvent({ event_handler_completion: 'first' })).now({ first_result: true })
+    await assert.rejects(() => event.eventResult({ raise_if_any: true }), /first.*resolved|aborted/i)
+    assert.equal(await event.eventResult({ raise_if_any: false, raise_if_none: true }), 'fast')
+  } finally {
+    await bus.destroy()
+  }
 })

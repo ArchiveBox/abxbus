@@ -1,5 +1,8 @@
 use abxbus_rust::{
-    base_event::BaseEvent, event, event_bus::EventBus, event_handler::EventHandlerOptions,
+    base_event::{BaseEvent, EventResultOptions},
+    event,
+    event_bus::EventBus,
+    event_handler::EventHandlerOptions,
     event_result::EventResultStatus,
 };
 use futures::executor::block_on;
@@ -45,11 +48,11 @@ fn test_on_stores_eventhandler_entry_and_index() {
     let dispatched = bus.emit(WorkEvent {
         ..Default::default()
     });
-    block_on(dispatched.done());
+    let _ = block_on(dispatched.now());
     let results = dispatched.inner.inner.lock().event_results.clone();
     assert!(results.contains_key(&entry.id));
     assert_eq!(results[&entry.id].handler.id, entry.id);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -60,17 +63,17 @@ fn test_on_returns_handler_and_off_removes_handler() {
     let event_1 = bus.emit(WorkEvent {
         ..Default::default()
     });
-    block_on(event_1.done());
+    let _ = block_on(event_1.now());
     assert_eq!(event_1.inner.inner.lock().event_results.len(), 1);
 
     bus.off("work", Some(&handler.id));
     let event_2 = bus.emit(WorkEvent {
         ..Default::default()
     });
-    block_on(event_2.done());
+    let _ = block_on(event_2.now());
     assert_eq!(event_2.inner.inner.lock().event_results.len(), 0);
 
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -127,14 +130,9 @@ fn test_off_removes_handler_id_or_all_and_prunes_empty_index() {
     let dispatched = bus.emit(WorkEvent {
         ..Default::default()
     });
-    block_on(dispatched.done());
+    let _ = block_on(dispatched.now());
     assert_eq!(dispatched.inner.inner.lock().event_results.len(), 0);
-    bus.stop();
-}
-
-#[test]
-fn test_off_removes_by_callable_id_entry_or_all() {
-    test_off_removes_handler_id_or_all_and_prunes_empty_index();
+    bus.destroy();
 }
 
 #[test]
@@ -174,7 +172,7 @@ fn test_on_with_options_supports_id_override_and_handler_file_path() {
         handler_payload["handler_registered_at"],
         "2025-01-02T03:04:05.678901000Z"
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -194,13 +192,13 @@ fn test_on_accepts_handlers_and_dispatch_captures_return_values() {
     let dispatched = bus.emit(WorkEvent {
         ..Default::default()
     });
-    block_on(dispatched.done());
+    let _ = block_on(dispatched.now());
     let result = dispatched.inner.inner.lock().event_results[&entry.id].clone();
 
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("normalized")));
     assert_eq!(calls.lock().expect("calls lock").len(), 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -227,13 +225,13 @@ fn test_on_normalizes_sync_handler_to_async_callable() {
     let dispatched = bus.emit(WorkEvent {
         ..Default::default()
     });
-    block_on(dispatched.done());
+    let _ = block_on(dispatched.now());
     let result = dispatched.inner.inner.lock().event_results[&entry.id].clone();
 
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("normalized")));
     assert_eq!(calls.lock().expect("calls lock").len(), 2);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -261,13 +259,13 @@ fn test_on_keeps_async_handlers_normalized_through_handler_async() {
     let dispatched = bus.emit(WorkEvent {
         ..Default::default()
     });
-    block_on(dispatched.done());
+    let _ = block_on(dispatched.now());
     let result = dispatched.inner.inner.lock().event_results[&entry.id].clone();
 
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("async_normalized")));
     assert_eq!(calls.lock().expect("calls lock").len(), 2);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -283,13 +281,18 @@ fn test_handler_async_preserves_typed_arg_return_contracts_for_sync_handlers() {
         required_token: "sync".to_string(),
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let result = event.inner.inner.lock().event_results[&entry.id].clone();
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("sync")));
-    assert_eq!(event.first_result().as_deref(), Some("sync"));
-    bus.stop();
+    assert_eq!(
+        block_on(event.event_result_with_options(EventResultOptions::default()))
+            .expect("first result")
+            .as_deref(),
+        Some("sync")
+    );
+    bus.destroy();
 }
 
 #[test]
@@ -305,13 +308,18 @@ fn test_handler_async_preserves_typed_arg_return_contracts_for_async_handlers() 
         required_token: "sync".to_string(),
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let result = event.inner.inner.lock().event_results[&entry.id].clone();
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("sync")));
-    assert_eq!(event.first_result().as_deref(), Some("sync"));
-    bus.stop();
+    assert_eq!(
+        block_on(event.event_result_with_options(EventResultOptions::default()))
+            .expect("first result")
+            .as_deref(),
+        Some("sync")
+    );
+    bus.destroy();
 }
 
 #[test]
@@ -345,8 +353,8 @@ fn test_off_removing_all_for_one_event_key_preserves_other_event_keys() {
         ..Default::default()
     });
     block_on(async {
-        work.done().await;
-        other.done().await;
+        let _ = work.now().await;
+        let _ = other.now().await;
     });
 
     assert_eq!(work.inner.inner.lock().event_results.len(), 0);
@@ -355,7 +363,7 @@ fn test_off_removing_all_for_one_event_key_preserves_other_event_keys() {
         other.inner.inner.lock().event_results[&other_entry.id].result,
         Some(json!("other"))
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -371,7 +379,7 @@ fn test_on_uses_explicit_handler_name_in_json_and_log_tree() {
     let event = bus.emit(WorkEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
     let payload = bus.to_json_value();
     let output = bus.log_tree();
 
@@ -381,20 +389,5 @@ fn test_on_uses_explicit_handler_name_in_json_and_log_tree() {
     );
     assert!(output.contains(&format!("{}#", bus.name)));
     assert!(output.contains(&format!("{handler_name}#")));
-    bus.stop();
-}
-
-#[test]
-fn test_on_stores_eventhandler_entry_and_indexes_it_by_event_key() {
-    test_on_stores_eventhandler_entry_and_index();
-}
-
-#[test]
-fn test_off_removes_handlers_by_callable_handler_id_entry_object_or_all() {
-    test_off_removes_handler_id_or_all_and_prunes_empty_index();
-}
-
-#[test]
-fn test_on_accepts_sync_handlers_and_dispatch_captures_their_return_values() {
-    test_on_accepts_handlers_and_dispatch_captures_return_values();
+    bus.destroy();
 }

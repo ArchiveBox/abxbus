@@ -75,7 +75,7 @@ export const wrap = <TEvents extends EventMap>(class_name: string, methods: TEve
     Object.defineProperty(WrappedClient.prototype, method_name, {
       value: async function (this: DynamicWrappedClient, init?: Record<string, unknown>, extra?: Record<string, unknown>) {
         const payload = { ...(init ?? {}), ...(extra ?? {}) }
-        return await this.bus.emit(new EventCtor(payload)).first()
+        return await this.bus.emit(new EventCtor(payload)).now({ first_result: true }).eventResult()
       },
       writable: true,
       configurable: true,

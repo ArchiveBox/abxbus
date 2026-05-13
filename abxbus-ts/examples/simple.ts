@@ -50,7 +50,7 @@ async function main(): Promise<void> {
   })
 
   // Dispatch a simple event handled by a string registration.
-  await bus.emit(AuditEvent({ message: 'Starting simple abxbus example' })).done()
+  await bus.emit(AuditEvent({ message: 'Starting simple abxbus example' })).now()
 
   // Dispatch the typed event; one handler returns valid data, one returns invalid data.
   const register_event = bus.emit(
@@ -59,7 +59,7 @@ async function main(): Promise<void> {
       plan: 'pro',
     })
   )
-  await register_event.done({ raise_if_any: false })
+  await register_event.now()
   const schema_error_result = Array.from(register_event.event_results.values()).find(
     (result) => result.status === 'error' && result.error instanceof Error && result.error.name === 'EventHandlerResultSchemaError'
   )
@@ -88,8 +88,8 @@ async function main(): Promise<void> {
     console.log(`- ${result.handler_name}: ${result.status}`)
   }
 
-  // 7) Convenience getters for aggregate inspection.
-  console.log('\nFirst valid parsed result:', register_event.event_result)
+  // 7) Aggregate inspection helpers.
+  console.log('\nFirst valid parsed result:', await register_event.eventResult({ raise_if_any: false, raise_if_none: true }))
   console.log(`Total event errors: ${register_event.event_errors.length}`)
   for (const [index, error] of register_event.event_errors.entries()) {
     const message = error instanceof Error ? error.message : String(error)

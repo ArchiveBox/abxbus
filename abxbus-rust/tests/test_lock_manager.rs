@@ -12,7 +12,7 @@ use abxbus_rust::{
     base_event::BaseEvent,
     event_bus::{EventBus, EventBusOptions},
     lock_manager::{run_with_lock, AsyncLock, HandlerLock, LockManager, ReentrantLock},
-    types::{EventConcurrencyMode, EventHandlerConcurrencyMode},
+    types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
 };
 use futures::executor::block_on;
 use serde_json::json;
@@ -42,7 +42,7 @@ fn register_active_handler(
 }
 
 #[test]
-fn test_asynclock_1_releasing_to_a_queued_waiter_does_not_allow_a_new_acquire_to_slip_in() {
+fn test_async_lock_1_releasing_to_a_queued_waiter_does_not_allow_a_new_acquire_to_slip_in() {
     let lock = AsyncLock::new(1);
     let initial_holder = lock.acquire();
 
@@ -83,7 +83,7 @@ fn test_asynclock_1_releasing_to_a_queued_waiter_does_not_allow_a_new_acquire_to
 }
 
 #[test]
-fn test_asynclock_infinity_acquire_release_is_a_no_op_bypass() {
+fn test_async_lock_infinity_acquire_release_is_a_no_op_bypass() {
     let lock = AsyncLock::infinite();
     let first = lock.acquire();
     let second = lock.acquire();
@@ -100,7 +100,7 @@ fn test_asynclock_infinity_acquire_release_is_a_no_op_bypass() {
 }
 
 #[test]
-fn test_asynclock_size_1_enforces_semaphore_concurrency_limit() {
+fn test_async_lock_size_greater_than_one_enforces_semaphore_concurrency_limit() {
     let lock = Arc::new(AsyncLock::new(2));
     let active = Arc::new(AtomicUsize::new(0));
     let max_active = Arc::new(AtomicUsize::new(0));
@@ -128,7 +128,7 @@ fn test_asynclock_size_1_enforces_semaphore_concurrency_limit() {
 }
 
 #[test]
-fn test_runwithlock_null_executes_function_directly_and_preserves_errors() {
+fn test_run_with_lock_null_executes_function_directly_and_preserves_errors() {
     let called = Arc::new(AtomicUsize::new(0));
     let called_for_success = called.clone();
     let value = run_with_lock(None, || {
@@ -144,12 +144,7 @@ fn test_runwithlock_null_executes_function_directly_and_preserves_errors() {
 }
 
 #[test]
-fn test_run_with_lock_null_executes_function_directly_and_preserves_errors() {
-    test_runwithlock_null_executes_function_directly_and_preserves_errors();
-}
-
-#[test]
-fn test_handlerlock_reclaimhandlerlockifrunning_releases_reclaimed_permit_if_handler_exits_while_waiting(
+fn test_handler_lock_reclaim_handler_lock_if_running_releases_reclaimed_permit_if_handler_exits_while_waiting(
 ) {
     let lock = AsyncLock::new(1);
     let guard = lock.acquire();
@@ -180,7 +175,8 @@ fn test_handlerlock_reclaimhandlerlockifrunning_releases_reclaimed_permit_if_han
 }
 
 #[test]
-fn test_handlerlock_runqueuejump_yields_permit_during_child_run_and_reacquires_before_returning() {
+fn test_handler_lock_run_queue_jump_yields_permit_during_child_run_and_reacquires_before_returning()
+{
     let lock = AsyncLock::new(1);
     let guard = lock.acquire();
     let handler_lock = HandlerLock::new_held(lock.clone(), guard);
@@ -215,7 +211,7 @@ fn test_handlerlock_runqueuejump_yields_permit_during_child_run_and_reacquires_b
 }
 
 #[test]
-fn test_lockmanager_pause_is_re_entrant_and_resumes_waiters_only_at_depth_zero() {
+fn test_lock_manager_pause_is_reentrant_and_resumes_waiters_only_at_depth_zero() {
     let locks = Arc::new(LockManager::default());
     let mut release_a = locks.request_runloop_pause();
     let mut release_b = locks.request_runloop_pause();
@@ -246,7 +242,7 @@ fn test_lockmanager_pause_is_re_entrant_and_resumes_waiters_only_at_depth_zero()
 }
 
 #[test]
-fn test_lockmanager_waitforidle_uses_two_check_stability_and_supports_timeout() {
+fn test_lock_manager_wait_for_idle_uses_two_check_stability_and_supports_timeout() {
     let locks = LockManager::default();
     assert!(!locks.wait_for_idle(Some(Duration::from_millis(10)), || false));
 
@@ -261,8 +257,35 @@ fn test_lockmanager_waitforidle_uses_two_check_stability_and_supports_timeout() 
 }
 
 #[test]
-fn test_lock_manager_wait_for_idle_uses_two_check_stability_and_supports_timeout() {
-    test_lockmanager_waitforidle_uses_two_check_stability_and_supports_timeout();
+fn test_wait_until_idle_behaves_correctly() {
+    let bus = EventBus::new(Some("IdleBus".to_string()));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_handler = calls.clone();
+    bus.on_raw("LockManagerIdleEvent", "handler", move |_event| {
+        let calls = calls_for_handler.clone();
+        async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(json!("ok"))
+        }
+    });
+
+    assert!(block_on(bus.wait_until_idle(Some(0.01))));
+    let event = bus.emit_base(empty_event("LockManagerIdleEvent"));
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    let event_data = event.inner.lock();
+    assert_eq!(event_data.event_status, EventStatus::Completed);
+    assert_eq!(event_data.event_results.len(), 1);
+    for result in event_data.event_results.values() {
+        assert_eq!(
+            result.status,
+            abxbus_rust::event_result::EventResultStatus::Completed
+        );
+        assert_eq!(result.result, Some(json!("ok")));
+    }
+    drop(event_data);
+    bus.destroy();
 }
 
 #[test]
@@ -314,7 +337,7 @@ fn test_handler_dispatch_context_marks_and_restores_lock_depth() {
 }
 
 #[test]
-fn test_reentrant_lock_serializes_across_threads() {
+fn test_reentrant_lock_serializes_one_waiter_across_threads() {
     let lock = Arc::new(ReentrantLock::default());
     let entered_second_thread = Arc::new(AtomicBool::new(false));
 
@@ -425,7 +448,7 @@ fn test_handler_dispatch_context_restores_depth_and_reraises_on_exception() {
 }
 
 #[test]
-fn test_reentrant_lock_serializes_many_workers_to_single_active_holder() {
+fn test_reentrant_lock_serializes_across_tasks() {
     let lock = Arc::new(ReentrantLock::default());
     let active = Arc::new(AtomicUsize::new(0));
     let max_active = Arc::new(AtomicUsize::new(0));
@@ -483,10 +506,10 @@ fn test_lock_manager_get_lock_for_event_modes() {
     );
     let first = bus_serial.emit_base(empty_event("LockModesEvent"));
     let second = bus_serial.emit_base(empty_event("LockModesEvent"));
-    block_on(first.event_completed());
-    block_on(second.event_completed());
+    let _ = block_on(first.wait());
+    let _ = block_on(second.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 1);
-    bus_serial.stop();
+    bus_serial.destroy();
 
     active.store(0, Ordering::SeqCst);
     max_active.store(0, Ordering::SeqCst);
@@ -511,10 +534,10 @@ fn test_lock_manager_get_lock_for_event_modes() {
     second.inner.lock().event_concurrency = Some(EventConcurrencyMode::Parallel);
     let first = parallel_override_bus.emit_base(first);
     let second = parallel_override_bus.emit_base(second);
-    block_on(first.event_completed());
-    block_on(second.event_completed());
+    let _ = block_on(first.wait());
+    let _ = block_on(second.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 2);
-    parallel_override_bus.stop();
+    parallel_override_bus.destroy();
 
     active.store(0, Ordering::SeqCst);
     max_active.store(0, Ordering::SeqCst);
@@ -554,11 +577,11 @@ fn test_lock_manager_get_lock_for_event_modes() {
     second.inner.lock().event_concurrency = Some(EventConcurrencyMode::GlobalSerial);
     let first = bus_a.emit_base(first);
     let second = bus_b.emit_base(second);
-    block_on(first.event_completed());
-    block_on(second.event_completed());
+    let _ = block_on(first.wait());
+    let _ = block_on(second.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 1);
-    bus_a.stop();
-    bus_b.stop();
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -587,9 +610,9 @@ fn test_lock_manager_get_lock_for_event_handler_modes() {
         max_active.clone(),
     );
     let event = serial_bus.emit_base(empty_event("LockHandlerModesEvent"));
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 1);
-    serial_bus.stop();
+    serial_bus.destroy();
 
     active.store(0, Ordering::SeqCst);
     max_active.store(0, Ordering::SeqCst);
@@ -617,9 +640,9 @@ fn test_lock_manager_get_lock_for_event_handler_modes() {
     let event = empty_event("LockHandlerModesEvent");
     event.inner.lock().event_handler_concurrency = Some(EventHandlerConcurrencyMode::Parallel);
     let event = parallel_override_bus.emit_base(event);
-    block_on(event.event_completed());
+    let _ = block_on(event.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 2);
-    parallel_override_bus.stop();
+    parallel_override_bus.destroy();
 }
 
 #[test]
@@ -662,10 +685,10 @@ fn test_run_with_event_lock_and_handler_lock_respect_parallel_bypass() {
     }
     let first = parallel_override_bus.emit_base(first);
     let second = parallel_override_bus.emit_base(second);
-    block_on(first.event_completed());
-    block_on(second.event_completed());
+    let _ = block_on(first.wait());
+    let _ = block_on(second.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 4);
-    parallel_override_bus.stop();
+    parallel_override_bus.destroy();
 
     active.store(0, Ordering::SeqCst);
     max_active.store(0, Ordering::SeqCst);
@@ -693,10 +716,10 @@ fn test_run_with_event_lock_and_handler_lock_respect_parallel_bypass() {
     );
     let first = serial_bus.emit_base(empty_event("SerialAcquireEvent"));
     let second = serial_bus.emit_base(empty_event("SerialAcquireEvent"));
-    block_on(first.event_completed());
-    block_on(second.event_completed());
+    let _ = block_on(first.wait());
+    let _ = block_on(second.wait());
     assert_eq!(max_active.load(Ordering::SeqCst), 1);
-    serial_bus.stop();
+    serial_bus.destroy();
 }
 
 #[test]
@@ -737,9 +760,4 @@ fn test_lock_manager_same_key_waiters_serialize() {
     waiter.join().expect("waiter should join");
 
     assert_eq!(order.lock().expect("order lock").as_slice(), &["waiter"]);
-}
-
-#[test]
-fn test_reentrant_lock_serializes_across_tasks() {
-    test_reentrant_lock_serializes_across_threads();
 }

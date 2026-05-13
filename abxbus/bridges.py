@@ -185,7 +185,7 @@ class EventBridge:
             self._listen_socket_path.unlink()
             self._listen_socket_path = None
 
-        await self._inbound_bus.stop(clear=clear)
+        await self._inbound_bus.destroy(clear=clear)
 
     def _ensure_listener_started(self) -> None:
         if self.listen_on is None or self._server is not None:

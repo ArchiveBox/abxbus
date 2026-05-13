@@ -139,7 +139,7 @@ history_count = len(bus.event_history)
 print('pending_event_queue=', pending_count, 'event_history=', history_count)
 # pending_event_queue= 1 event_history= 1
 
-await event
+await event.now()
 pending_after = bus.pending_event_queue.qsize() if bus.pending_event_queue else 0
 history_after = len(bus.event_history)
 print('after completion -> pending_event_queue=', pending_after, 'event_history=', history_after)
@@ -153,7 +153,7 @@ print('after completion -> pending_event_queue=', pending_after, 'event_history=
 const event = bus.emit(MyEvent({}))
 console.log('pending_event_queue=', bus.pending_event_queue.length, 'event_history=', bus.event_history.size)
 
-await event.done()
+await event.now()
 console.log('after completion -> pending_event_queue=', bus.pending_event_queue.length, 'event_history=', bus.event_history.size)
 ```
 
@@ -177,7 +177,7 @@ if err := json.Unmarshal(snapshot, &before); err != nil {
 fmt.Println("pending_event_queue=", len(before.PendingEventQueue), "event_history=", len(before.EventHistory))
 // pending_event_queue= 1 event_history= 1
 
-if _, err := event.Done(ctx); err != nil {
+if _, err := event.Now(); err != nil {
 	panic(err)
 }
 
@@ -205,7 +205,7 @@ let event = bus.emit(MyEvent {
 });
 println!("pending_event_queue/event_history snapshot={}", bus.to_json_value());
 
-block_on(event.done());
+block_on(event.now());
 println!("after completion -> event_history={}", bus.event_history_size());
 ```
 

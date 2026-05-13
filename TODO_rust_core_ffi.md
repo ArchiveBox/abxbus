@@ -133,7 +133,7 @@ bus.on(TestEvent, async (event) => {
 })
 
 const event = bus.emit(TestEvent({ test: "hi" }))
-await event.done()
+await event.wait()
 ```
 
 Internally:
@@ -143,7 +143,7 @@ EventBus.emit()
   -> core.emit_event(...)
   -> returns native Event view backed by core event_id
 
-Event.done() / await event
+Event.wait() / await event
   -> core.wait_event_completed(event_id)
 
 EventResult fields
@@ -580,7 +580,7 @@ hard-kill:
 
 Current Python/TypeScript behavior:
 
-- `event.done()` / awaiting an event from inside a handler can queue-jump an
+- `event.now()` / awaiting an event from inside a handler can queue-jump an
   awaited child.
 - The awaited child blocks parent completion.
 - Unawaited children retain lineage but do not block parent completion.

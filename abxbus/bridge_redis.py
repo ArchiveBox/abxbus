@@ -156,7 +156,7 @@ class RedisEventBridge:
             await self._close_redis_client(self._redis_pub)
             self._redis_pub = None
 
-        await self._inbound_bus.stop(clear=clear)
+        await self._inbound_bus.destroy(clear=clear)
 
     def _ensure_started(self) -> None:
         if self._running:

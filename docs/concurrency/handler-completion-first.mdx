@@ -49,7 +49,7 @@ bus.on(CompletionEvent, slow_handler)
 bus.on(CompletionEvent, fast_handler)
 
 event = bus.emit(CompletionEvent())
-await event
+await event.now()
 
 value = await event.event_result(raise_if_any=False, raise_if_none=False)
 assert value == 'winner'
@@ -87,9 +87,11 @@ bus.on(CompletionEvent, async () => {
 })
 
 const event = bus.emit(CompletionEvent({}))
-await event.done()
+await event.now()
 
-if (event.event_result !== 'winner') throw new Error('expected first winner result')
+if ((await event.eventResult({ raise_if_any: false, raise_if_none: false })) !== 'winner') {
+  throw new Error('expected first winner result')
+}
 if (!slowStarted) throw new Error('expected slow handler to start')
 if (slowCompleted) throw new Error('slow handler should not complete before event resolves')
 ```
@@ -129,7 +131,14 @@ func main() {
 	}, nil)
 
 	event := bus.Emit(abxbus.NewBaseEvent("CompletionEvent", nil))
-	value, err := event.First(context.Background())
+	_, err := event.Now(&abxbus.EventWaitOptions{FirstResult: true})
+	if err != nil {
+		panic(err)
+	}
+	value, err := event.EventResult(&abxbus.EventResultOptions{
+		RaiseIfAny:  false,
+		RaiseIfNone: false,
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -189,7 +198,7 @@ bus.on(CompletionEvent, |_event: CompletionEvent| async move {
 });
 
 let event = bus.emit(CompletionEvent { ..Default::default() });
-let value = block_on(event.event_result(Default::default()))?;
+let value = block_on(event.event_result())?;
 assert_eq!(value, Some(json!("winner")));
 ```
 
@@ -199,4 +208,4 @@ assert_eq!(value, Some(json!("winner")));
 ## Notes
 
 - This mode is useful for fallback chains and race-to-first-response patterns.
-- `await event.first()` also forces this mode for that event at call time.
+- Use `await event.now(first_result=True)` / `await event.now({ first_result: true })` / `event.Now(&abxbus.EventWaitOptions{FirstResult: true})` / `event.now_with_options(EventWaitOptions { first_result: true, ..Default::default() })` when you want to resolve as soon as a valid result is available while still allowing all handlers to continue. To stop running after the first valid handler result, set `event_handler_completion: 'first'` on the event definition.

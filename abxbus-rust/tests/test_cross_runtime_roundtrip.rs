@@ -27,6 +27,10 @@ fn assert_original_fields_survive(original: &Value, roundtripped: &Value) {
             roundtripped.contains_key(key),
             "missing key after roundtrip: {key}"
         );
+        if let (Some(left), Some(right)) = (roundtripped[key].as_f64(), value.as_f64()) {
+            assert!((left - right).abs() < f64::EPSILON, "field changed: {key}");
+            continue;
+        }
         assert_eq!(&roundtripped[key], value, "field changed: {key}");
     }
 }
@@ -166,11 +170,11 @@ fn cross_runtime_bus_fixture() -> Value {
         "max_history_size": 100,
         "max_history_drop": false,
         "event_concurrency": "bus-serial",
-        "event_timeout": null,
-        "event_slow_timeout": null,
+        "event_timeout": 60.0,
+        "event_slow_timeout": 300.0,
         "event_handler_concurrency": "serial",
         "event_handler_completion": "all",
-        "event_handler_slow_timeout": null,
+        "event_handler_slow_timeout": 30.0,
         "event_handler_detect_file_paths": false,
         "handlers": {
             "handler-one": {
@@ -446,7 +450,7 @@ fn assert_bus_roundtrip_rehydrates_and_resumes_pending_queue(payload: Value) {
         label: "e3".to_string(),
         ..Default::default()
     });
-    block_on(trigger.done());
+    let _ = block_on(trigger.wait());
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
 
     let payload = bus.to_json_value();
@@ -485,5 +489,5 @@ fn assert_bus_roundtrip_rehydrates_and_resumes_pending_queue(payload: Value) {
         vec!["h2:e1", "h1:e2", "h2:e2", "h1:e3", "h2:e3"]
     );
 
-    bus.stop();
+    bus.destroy();
 }

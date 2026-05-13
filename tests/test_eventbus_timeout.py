@@ -183,7 +183,7 @@ async def test_nested_timeout_scenario_from_issue():
     # print(f"Exception caught: {type(exc_info.value).__name__}: {exc_info.value}")
     # # assert 'ChildEvent' in str(exc_info.value) or 'ChildEvent' in str(exc_info.value)
 
-    await bus.stop(clear=True, timeout=0)
+    await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -226,7 +226,101 @@ async def test_handler_timeout_marks_error_and_other_handlers_still_complete():
         assert fast_result.result == 'fast'
         assert 'fast_start' in execution_order
     finally:
-        await bus.stop(clear=True, timeout=0)
+        await bus.destroy(clear=True)
+
+
+@pytest.mark.asyncio
+async def test_handler_timeout_ignores_late_handler_result_and_late_emits() -> None:
+    bus = EventBus(name='TimeoutIgnoresLateHandlerBus')
+
+    class TimeoutIgnoresLateHandlerEvent(BaseEvent[str]):
+        event_timeout: float | None = 0.2
+        event_handler_timeout: float | None = 0.01
+
+    class LateAfterTimeoutEvent(BaseEvent[str]):
+        pass
+
+    late_attempt = asyncio.Event()
+    late_handler_ran = False
+
+    async def slow_handler(event: TimeoutIgnoresLateHandlerEvent) -> str:
+        try:
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            late_attempt.set()
+            event.emit(LateAfterTimeoutEvent())
+            return 'late success'
+        return 'unexpected success'
+
+    async def late_handler(_event: LateAfterTimeoutEvent) -> str:
+        nonlocal late_handler_ran
+        late_handler_ran = True
+        return 'late child'
+
+    bus.on(TimeoutIgnoresLateHandlerEvent, slow_handler)
+    bus.on(LateAfterTimeoutEvent, late_handler)
+
+    try:
+        event = await bus.emit(TimeoutIgnoresLateHandlerEvent())
+        await asyncio.wait_for(late_attempt.wait(), timeout=1)
+        await asyncio.sleep(0.03)
+        await bus.wait_until_idle(timeout=1)
+
+        slow_result = next(result for result in event.event_results.values() if result.handler_name.endswith('slow_handler'))
+        assert slow_result.status == 'error'
+        assert isinstance(slow_result.error, EventHandlerTimeoutError)
+        assert slow_result.result is None
+        assert await bus.find(LateAfterTimeoutEvent, past=True, future=False) is None
+        assert late_handler_ran is False
+    finally:
+        await bus.destroy(clear=True)
+
+
+@pytest.mark.asyncio
+async def test_event_timeout_ignores_late_handler_result_and_late_emits() -> None:
+    bus = EventBus(name='TimeoutIgnoresLateEventBus')
+
+    class TimeoutIgnoresLateEvent(BaseEvent[str]):
+        event_timeout: float | None = 0.01
+
+    class LateAfterTimeoutEvent(BaseEvent[str]):
+        pass
+
+    late_attempt = asyncio.Event()
+    late_handler_ran = False
+
+    async def slow_handler(event: TimeoutIgnoresLateEvent) -> str:
+        try:
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            late_attempt.set()
+            event.emit(LateAfterTimeoutEvent())
+            return 'late success'
+        return 'unexpected success'
+
+    async def late_handler(_event: LateAfterTimeoutEvent) -> str:
+        nonlocal late_handler_ran
+        late_handler_ran = True
+        return 'late child'
+
+    bus.on(TimeoutIgnoresLateEvent, slow_handler)
+    bus.on(LateAfterTimeoutEvent, late_handler)
+
+    try:
+        event = bus.emit(TimeoutIgnoresLateEvent())
+        await event.wait(timeout=1)
+        await asyncio.wait_for(late_attempt.wait(), timeout=1)
+        await asyncio.sleep(0.03)
+        await bus.wait_until_idle(timeout=1)
+
+        slow_result = next(result for result in event.event_results.values() if result.handler_name.endswith('slow_handler'))
+        assert slow_result.status == 'error'
+        assert isinstance(slow_result.error, EventHandlerAbortedError)
+        assert slow_result.result is None
+        assert await bus.find(LateAfterTimeoutEvent, past=True, future=False) is None
+        assert late_handler_ran is False
+    finally:
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -268,7 +362,7 @@ async def test_event_timeout_is_hard_cap_across_serial_handlers():
         assert pending_result.status == 'error'
         assert isinstance(pending_result.error, EventHandlerCancelledError)
     finally:
-        await bus.stop(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -304,7 +398,7 @@ async def test_event_timeout_is_hard_cap_in_parallel_mode() -> None:
             for result in event.event_results.values()
         )
     finally:
-        await bus.stop(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -352,7 +446,7 @@ async def test_event_level_timeout_marks_started_parallel_handlers_as_aborted_or
         )
         assert not any(isinstance(result.error, EventHandlerCancelledError) for result in event.event_results.values())
     finally:
-        await bus.stop(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -384,7 +478,7 @@ async def test_event_timeout_does_not_relabel_preexisting_handler_timeout() -> N
         assert any(isinstance(result.error, EventHandlerTimeoutError) for result in results)
         assert any(isinstance(result.error, EventHandlerAbortedError) for result in results)
     finally:
-        await bus.stop(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -414,8 +508,8 @@ async def test_multi_bus_timeout_is_recorded_on_target_bus():
         assert isinstance(bus_b_result.error, EventHandlerAbortedError)
         assert event.event_path == [bus_a.label, bus_b.label]
     finally:
-        await bus_a.stop(clear=True, timeout=0)
-        await bus_b.stop(clear=True, timeout=0)
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -469,7 +563,7 @@ async def test_followup_event_runs_after_parent_timeout_in_queue_jump_path():
         assert completed_tail.event_status == 'completed'
         assert tail_runs == 1
     finally:
-        await bus.stop(clear=True, timeout=0)
+        await bus.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -547,8 +641,8 @@ async def test_forwarded_timeout_path_does_not_stall_followup_events():
         assert bus_a_tail_runs == 1
         assert bus_b_tail_runs == 1
     finally:
-        await bus_a.stop(clear=True, timeout=0)
-        await bus_b.stop(clear=True, timeout=0)
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
 
 
 # Consolidated from tests/test_event_timeout_defaults.py
@@ -559,9 +653,9 @@ class TimeoutDefaultsEvent(BaseEvent[str]):
 
 
 @pytest.mark.asyncio
-async def test_processing_time_timeout_defaults_do_not_mutate_event_fields() -> None:
+async def test_processing_time_timeout_defaults_resolve_at_execution_time() -> None:
     bus = EventBus(
-        name='TimeoutDefaultsCopyBus',
+        name='TimeoutDefaultsResolveBus',
         event_timeout=12.0,
         event_slow_timeout=34.0,
         event_handler_slow_timeout=56.0,
@@ -577,13 +671,42 @@ async def test_processing_time_timeout_defaults_do_not_mutate_event_fields() -> 
         assert event.event_timeout is None
         assert event.event_handler_timeout is None
         assert event.event_handler_slow_timeout is None
-        assert getattr(event, 'event_slow_timeout', None) is None
+        assert event.event_slow_timeout is None
+        assert event.event_concurrency is None
+        assert event.event_handler_concurrency is None
+        assert event.event_handler_completion is None
 
         completed = await event
+        assert completed.event_timeout is None
+        assert completed.event_handler_slow_timeout is None
+        assert completed.event_slow_timeout is None
+        assert completed.event_concurrency is None
+        assert completed.event_handler_concurrency is None
+        assert completed.event_handler_completion is None
         handler_result = next(iter(completed.event_results.values()))
         assert handler_result.timeout is not None and abs(handler_result.timeout - 12.0) < 1e-9
     finally:
-        await bus.stop()
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_event_timeout_none_uses_bus_default_timeout_at_execution() -> None:
+    bus = EventBus(name='TimeoutNoneUsesBusDefault', event_timeout=0.01)
+
+    async def handler(_event: TimeoutDefaultsEvent) -> str:
+        await asyncio.sleep(0.02)
+        return 'slow'
+
+    bus.on(TimeoutDefaultsEvent, handler)
+
+    try:
+        event = await bus.emit(TimeoutDefaultsEvent(event_timeout=None)).now()
+        handler_result = next(iter(event.event_results.values()))
+        assert event.event_timeout is None
+        assert handler_result.status == 'error'
+        assert isinstance(handler_result.error, EventHandlerAbortedError)
+    finally:
+        await bus.destroy()
 
 
 @pytest.mark.asyncio
@@ -628,7 +751,7 @@ async def test_handler_timeout_resolution_matches_ts_precedence() -> None:
         assert tighter_default.timeout is not None and abs(tighter_default.timeout - 0.08) < 1e-9
         assert tighter_overridden.timeout is not None and abs(tighter_overridden.timeout - 0.08) < 1e-9
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 @pytest.mark.asyncio
@@ -642,7 +765,7 @@ async def test_event_handler_detect_file_paths_toggle() -> None:
         entry = bus.on(TimeoutDefaultsEvent, handler)
         assert entry.handler_file_path is None
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 @pytest.mark.asyncio
@@ -651,8 +774,70 @@ async def test_handler_slow_warning_uses_event_handler_slow_timeout(caplog: pyte
     bus = EventBus(
         name='SlowHandlerWarnBus',
         event_timeout=0.5,
-        event_slow_timeout=None,
-        event_handler_slow_timeout=0.01,
+        event_slow_timeout=0.5,
+        event_handler_slow_timeout=0.5,
+    )
+
+    async def slow_handler(_event: TimeoutDefaultsEvent) -> str:
+        await asyncio.sleep(0.03)
+        logger = logging.getLogger('abxbus')
+        logger.warning('slow warning child handler finishing')
+        return 'ok'
+
+    bus.on(TimeoutDefaultsEvent, slow_handler)
+
+    try:
+        await bus.emit(TimeoutDefaultsEvent(event_slow_timeout=0, event_handler_slow_timeout=0.01))
+        messages = [record.message for record in caplog.records]
+        slow_warning_index = next(index for index, message in enumerate(messages) if 'Slow event handler:' in message)
+        finish_marker_index = next(
+            index for index, message in enumerate(messages) if 'slow warning child handler finishing' in message
+        )
+        assert slow_warning_index < finish_marker_index
+        assert not any('Slow event processing:' in message for message in messages)
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_event_slow_warning_uses_event_slow_timeout(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.WARNING, logger='abxbus')
+    bus = EventBus(
+        name='SlowEventWarnBus',
+        event_timeout=0.5,
+        event_slow_timeout=0.5,
+        event_handler_slow_timeout=0.5,
+    )
+
+    async def slow_event_handler(_event: TimeoutDefaultsEvent) -> str:
+        await asyncio.sleep(0.03)
+        logger = logging.getLogger('abxbus')
+        logger.warning('slow warning child handler finishing')
+        return 'ok'
+
+    bus.on(TimeoutDefaultsEvent, slow_event_handler)
+
+    try:
+        await bus.emit(TimeoutDefaultsEvent(event_slow_timeout=0.01, event_handler_slow_timeout=0))
+        messages = [record.message for record in caplog.records]
+        slow_warning_index = next(index for index, message in enumerate(messages) if 'Slow event processing:' in message)
+        finish_marker_index = next(
+            index for index, message in enumerate(messages) if 'slow warning child handler finishing' in message
+        )
+        assert slow_warning_index < finish_marker_index
+        assert not any('Slow event handler:' in message for message in messages)
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_slow_handler_and_slow_event_warnings_can_both_fire(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.WARNING, logger='abxbus')
+    bus = EventBus(
+        name='SlowComboWarnBus',
+        event_timeout=0.5,
+        event_slow_timeout=0.5,
+        event_handler_slow_timeout=0.5,
     )
 
     async def slow_handler(_event: TimeoutDefaultsEvent) -> str:
@@ -662,30 +847,39 @@ async def test_handler_slow_warning_uses_event_handler_slow_timeout(caplog: pyte
     bus.on(TimeoutDefaultsEvent, slow_handler)
 
     try:
-        await bus.emit(TimeoutDefaultsEvent())
-        assert any('Slow event handler:' in record.message for record in caplog.records)
+        await bus.emit(TimeoutDefaultsEvent(event_slow_timeout=0.01, event_handler_slow_timeout=0.01))
+        messages = [record.message for record in caplog.records]
+        assert any('Slow event handler:' in message for message in messages)
+        assert any('Slow event processing:' in message for message in messages)
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 @pytest.mark.asyncio
-async def test_event_slow_warning_uses_event_slow_timeout(caplog: pytest.LogCaptureFixture) -> None:
+async def test_zero_slow_warning_thresholds_disable_event_and_handler_slow_warnings(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     caplog.set_level(logging.WARNING, logger='abxbus')
     bus = EventBus(
-        name='SlowEventWarnBus',
+        name='NoSlowWarnBus',
         event_timeout=0.5,
-        event_slow_timeout=0.01,
-        event_handler_slow_timeout=None,
+        event_slow_timeout=0,
+        event_handler_slow_timeout=0,
     )
 
-    async def slow_event_handler(_event: TimeoutDefaultsEvent) -> str:
+    async def slow_handler(_event: TimeoutDefaultsEvent) -> str:
         await asyncio.sleep(0.03)
+        logger = logging.getLogger('abxbus')
+        logger.warning('slow warning child handler finishing')
         return 'ok'
 
-    bus.on(TimeoutDefaultsEvent, slow_event_handler)
+    bus.on(TimeoutDefaultsEvent, slow_handler)
 
     try:
         await bus.emit(TimeoutDefaultsEvent())
-        assert any('Slow event processing:' in record.message for record in caplog.records)
+        messages = [record.message for record in caplog.records]
+        assert not any('Slow event handler:' in message for message in messages)
+        assert not any('Slow event processing:' in message for message in messages)
+        assert any('slow warning child handler finishing' in message for message in messages)
     finally:
-        await bus.stop()
+        await bus.destroy()

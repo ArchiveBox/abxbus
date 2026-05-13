@@ -78,7 +78,7 @@ let bus = EventBus::new_with_history(Some("HistoryBus".to_string()), Some(100), 
 let event = bus.emit(SomeEvent {
     ..Default::default()
 });
-block_on(event.done());
+block_on(event.now());
 
 let count = bus.event_history_size();
 let ids = bus.event_history_ids();

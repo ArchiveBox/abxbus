@@ -107,7 +107,7 @@ class TestEventIsChildOf:
             assert bus.event_is_child_of(child, parent) is True
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_grandchild_returns_true(self):
         """event_is_child_of returns True for grandparent relationship."""
@@ -138,7 +138,7 @@ class TestEventIsChildOf:
             assert bus.event_is_child_of(grandchild, parent) is True
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_unrelated_events_returns_false(self):
         """event_is_child_of returns False for unrelated events."""
@@ -154,7 +154,7 @@ class TestEventIsChildOf:
             assert bus.event_is_child_of(unrelated, parent) is False
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_same_event_returns_false(self):
         """event_is_child_of returns False when checking event against itself."""
@@ -168,7 +168,7 @@ class TestEventIsChildOf:
             assert bus.event_is_child_of(event, event) is False
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_reversed_relationship_returns_false(self):
         """event_is_child_of returns False when parent/child are reversed."""
@@ -194,7 +194,7 @@ class TestEventIsChildOf:
             assert bus.event_is_child_of(parent, child) is False
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
 
 class TestEventIsParentOf:
@@ -224,7 +224,7 @@ class TestEventIsParentOf:
             assert bus.event_is_parent_of(parent, child) is True
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_grandparent_returns_true(self):
         """event_is_parent_of returns True for grandparent relationship."""
@@ -255,7 +255,7 @@ class TestEventIsParentOf:
             assert bus.event_is_parent_of(parent, grandchild) is True
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
 
 # =============================================================================
@@ -287,7 +287,7 @@ class TestFindPastOnly:
             found_past = await bus.find(ParentEvent, past=True, future=False)
             assert found_past is None
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_returns_matching_event_from_history(self):
         """find(past=True, future=False) returns event from history."""
@@ -306,7 +306,7 @@ class TestFindPastOnly:
             assert found.event_id == dispatched.event_id
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_history_lookup_is_bus_scoped(self):
         """find(past=True, future=False) only searches this bus history."""
@@ -324,8 +324,8 @@ class TestFindPastOnly:
             assert found_on_b is not None
             assert found_on_b.value == 10
         finally:
-            await bus_a.stop(clear=True)
-            await bus_b.stop(clear=True)
+            await bus_a.destroy(clear=True)
+            await bus_b.destroy(clear=True)
 
     async def test_found_event_retains_origin_bus_label(self):
         """Events returned by find() keep the bus label in event_path."""
@@ -340,7 +340,7 @@ class TestFindPastOnly:
             assert found.event_path
             assert found.event_path[-1] == bus.label
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_past_float_filters_by_time_window(self):
         """find(past=0.1) only returns events from last 0.1 seconds."""
@@ -369,7 +369,7 @@ class TestFindPastOnly:
             assert found.event_id == new_event.event_id
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_past_float_returns_none_when_all_events_too_old(self):
         """find(past=0.05) returns None if all events are older than 0.05 seconds."""
@@ -389,7 +389,7 @@ class TestFindPastOnly:
             assert found is None
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_returns_none_when_no_match(self):
         """find(past=True, future=False) returns None when no matching event."""
@@ -402,7 +402,7 @@ class TestFindPastOnly:
             assert found is None
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_respects_where_filter(self):
         """find() applies where filter correctly."""
@@ -427,7 +427,7 @@ class TestFindPastOnly:
             assert found.event_id == event2.event_id
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_returns_most_recent_match(self):
         """find() returns most recent matching event from history."""
@@ -448,7 +448,7 @@ class TestFindPastOnly:
             assert found.event_id == event2.event_id
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_past_includes_in_progress_events(self):
         """History search should include pending/started events, matching TS semantics."""
@@ -479,7 +479,7 @@ class TestFindPastOnly:
             assert found_after_completion is not None
             assert found_after_completion.event_id == dispatched.event_id
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_find_default_is_past_only_no_future_wait(self):
         """find() with no windows defaults to past=True, future=False."""
@@ -494,7 +494,7 @@ class TestFindPastOnly:
             assert found is None
             assert elapsed < 0.05
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_find_supports_event_field_keyword_filters(self):
         """find(..., **kwargs) applies metadata equality filters."""
@@ -525,7 +525,7 @@ class TestFindPastOnly:
             assert completed is not None
             assert completed.event_id == in_flight.event_id
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_find_supports_event_id_and_event_timeout_filters(self):
         """find(..., **kwargs) supports exact-match metadata equality filters."""
@@ -556,7 +556,7 @@ class TestFindPastOnly:
             )
             assert mismatch is None
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_find_supports_non_event_data_field_filters(self):
         """find(..., **kwargs) supports exact-match filters for non event_* fields too."""
@@ -577,7 +577,7 @@ class TestFindPastOnly:
             not_found = await bus.find(UserActionEvent, past=True, future=False, action='signup')
             assert not_found is None
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_find_wildcard_with_where_filter_matches_history(self):
         """find('*', where=..., past=True) matches across event types in history."""
@@ -603,7 +603,7 @@ class TestFindPastOnly:
             assert found.event_id == expected.event_id
             assert found.event_type == 'UserActionEvent'
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
 
 class TestFindFutureOnly:
@@ -630,7 +630,7 @@ class TestFindFutureOnly:
             assert found.event_id == dispatched.event_id
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_future_float_timeout(self):
         """find(future=0.01) times out quickly when no event."""
@@ -645,7 +645,7 @@ class TestFindFutureOnly:
             assert elapsed < 0.1  # Should timeout quickly
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_ignores_past_events(self):
         """find(past=False, future=...) ignores events already in history."""
@@ -663,7 +663,7 @@ class TestFindFutureOnly:
             assert found is None
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_ignores_inflight_events_dispatched_before_find(self):
         """find(past=False, future=...) ignores already-dispatched in-flight events."""
@@ -687,7 +687,7 @@ class TestFindFutureOnly:
             release.set()
             await in_flight
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_future_works_with_string_event_type(self):
         """find('EventName', ...) resolves using string keys, not just model classes."""
@@ -709,7 +709,7 @@ class TestFindFutureOnly:
             assert found.event_id == dispatched.event_id
             assert found.event_type == 'ParentEvent'
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_find_wildcard_with_where_filter_waits_for_future_match(self):
         """find('*', where=..., past=False) waits for matching future event only."""
@@ -738,7 +738,7 @@ class TestFindFutureOnly:
             assert found.event_id == expected.event_id
             assert found.event_type == 'UserActionEvent'
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_future_class_pattern_matches_generic_base_event_by_event_type(self):
         """find(SomeEventClass) should match BaseEvent(event_type='SomeEventClass')."""
@@ -764,7 +764,7 @@ class TestFindFutureOnly:
             assert found.event_id == dispatched.event_id
             assert found.event_type == 'DifferentNameFromClass'
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_multiple_concurrent_find_waiters_resolve_correct_events(self):
         """Concurrent find() waiters should each resolve to the correct event."""
@@ -806,7 +806,7 @@ class TestFindFutureOnly:
             # All temporary find handlers should be removed.
             assert len(bus.handlers_by_key.get('ScreenshotEvent', [])) == baseline_handler_count
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_find_future_resolves_before_handlers_complete(self):
         """find(future=...) resolves on dispatch, before slow handlers complete."""
@@ -837,7 +837,7 @@ class TestFindFutureOnly:
             await bus.wait_until_idle()
             assert processing_complete is True
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_find_returns_coroutine_that_can_be_awaited_later(self):
         """A started find(...) coroutine should resolve later after dispatch."""
@@ -862,7 +862,7 @@ class TestFindFutureOnly:
             assert found is not None
             assert found.event_id == dispatched.event_id
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
 
 class TestFindNeitherPastNorFuture:
@@ -887,7 +887,7 @@ class TestFindNeitherPastNorFuture:
             assert elapsed < 0.1  # Should be instant
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
 
 class TestFindPastAndFuture:
@@ -913,7 +913,7 @@ class TestFindPastAndFuture:
             assert elapsed < 0.1  # Should be nearly instant
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_waits_for_future_when_no_past_match(self):
         """find(past=True, future=1) waits for future if no past match."""
@@ -940,7 +940,7 @@ class TestFindPastAndFuture:
             assert found.event_id == dispatched.event_id
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_past_and_future_independent_control(self):
         """past=0.05, future=0.05 uses different windows for each."""
@@ -964,7 +964,7 @@ class TestFindPastAndFuture:
             assert 0.04 < elapsed < 0.15
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_past_true_future_float(self):
         """past=True searches all history, future=0.1 waits up to 0.1s."""
@@ -984,7 +984,7 @@ class TestFindPastAndFuture:
             assert found.event_id == dispatched.event_id
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_past_float_future_true_would_wait_forever(self):
         """past=0.05 with old events + future=True - verify past window works."""
@@ -1012,7 +1012,7 @@ class TestFindPastAndFuture:
             assert found.event_id == dispatched.event_id
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_most_recent_wins_across_completed_and_inflight(self):
         """find(past=True, future=True) returns newest event even when it is in-flight."""
@@ -1040,7 +1040,7 @@ class TestFindPastAndFuture:
             release.set()
             await in_flight
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
 
 # =============================================================================
@@ -1076,7 +1076,7 @@ class TestFindWithChildOf:
             assert found.event_id == child_ref[0].event_id
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_returns_none_for_non_child(self):
         """find(child_of=parent) returns None if event is not a child."""
@@ -1095,7 +1095,7 @@ class TestFindWithChildOf:
             assert found is None
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_finds_grandchild(self):
         """find(child_of=grandparent) returns grandchild event."""
@@ -1127,7 +1127,7 @@ class TestFindWithChildOf:
             assert found.event_id == grandchild_ref[0].event_id
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_child_of_works_across_forwarded_buses(self):
         """find(child_of=parent) works when events are forwarded across buses."""
@@ -1161,8 +1161,8 @@ class TestFindWithChildOf:
             assert found.event_id == child_ref[0].event_id
 
         finally:
-            await main_bus.stop(clear=True)
-            await auth_bus.stop(clear=True)
+            await main_bus.destroy(clear=True)
+            await auth_bus.destroy(clear=True)
 
     async def test_future_wait_with_child_of(self):
         """find(child_of=..., past=False, future=...) waits for future matching child."""
@@ -1191,7 +1191,7 @@ class TestFindWithChildOf:
 
             await parent
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
 
 # =============================================================================
@@ -1222,7 +1222,7 @@ class TestFindLegacyPatternCoverage:
             assert found.event_id == dispatched.event_id
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_find_with_include_style_filter(self):
         """find(where=...) supports include-style filters."""
@@ -1253,7 +1253,7 @@ class TestFindLegacyPatternCoverage:
             assert found.target_id == '519664bf-c9fa-7654-896b-fb0cc5b6adab'
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_find_with_exclude_style_filter(self):
         """find(where=...) supports exclude-style filters."""
@@ -1284,7 +1284,7 @@ class TestFindLegacyPatternCoverage:
             assert found.target_id == '45c2761f-3475-72aa-8dd8-b3cf4a4923e2'
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_find_with_past_true_and_future_timeout(self):
         """find(past=True, future=...) finds already-dispatched events."""
@@ -1302,7 +1302,7 @@ class TestFindLegacyPatternCoverage:
             assert found.event_id == dispatched.event_id
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_find_with_past_float_and_future_timeout(self):
         """find(past=5.0, future=...) searches recent history first."""
@@ -1320,7 +1320,7 @@ class TestFindLegacyPatternCoverage:
             assert found.event_id == dispatched.event_id
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_find_with_child_of_and_future_timeout(self):
         """find(child_of=parent) filters by parent relationship."""
@@ -1346,7 +1346,7 @@ class TestFindLegacyPatternCoverage:
             assert found.event_id == child_ref[0].event_id
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
 
 # =============================================================================
@@ -1384,7 +1384,7 @@ class TestRaceConditionFix:
             assert found.event_id == tab_ref[0].event_id
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_child_of_filters_to_correct_parent(self):
         """child_of correctly filters to events from the right parent."""
@@ -1415,7 +1415,7 @@ class TestRaceConditionFix:
             assert tab2.tab_id == 'tab_for_site2'
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
 
 # =============================================================================
@@ -1443,7 +1443,7 @@ class TestNewParameterCombinations:
             assert found.event_id == dispatched.event_id
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_past_float_future_false_filters_by_age(self):
         """past=0.05, future=False only searches last 0.05 seconds."""
@@ -1461,7 +1461,7 @@ class TestNewParameterCombinations:
             assert found is None
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_past_false_future_float_waits_for_timeout(self):
         """past=False, future=0.05 waits up to 0.05 seconds."""
@@ -1478,7 +1478,7 @@ class TestNewParameterCombinations:
             assert 0.04 < elapsed < 0.15  # Should wait ~0.05s
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_past_true_future_true_searches_all_and_waits_forever(self):
         """past=True, future=True searches all history, would wait forever."""
@@ -1501,7 +1501,7 @@ class TestNewParameterCombinations:
             assert elapsed < 0.1  # Should be instant (found in past)
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_find_with_where_and_past_float(self):
         """where filter combined with past=float works correctly."""
@@ -1535,7 +1535,7 @@ class TestNewParameterCombinations:
             assert found is None
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_find_with_child_of_and_past_float(self):
         """child_of filter combined with past=float works correctly."""
@@ -1566,7 +1566,7 @@ class TestNewParameterCombinations:
             assert found.event_id == child_ref[0].event_id
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
     async def test_find_with_all_parameters(self):
         """All parameters combined work correctly."""
@@ -1599,7 +1599,7 @@ class TestNewParameterCombinations:
             assert found.target_id == TARGET_ID_CHILD
 
         finally:
-            await bus.stop(clear=True)
+            await bus.destroy(clear=True)
 
 
 if __name__ == '__main__':

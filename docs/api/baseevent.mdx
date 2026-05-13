@@ -81,11 +81,14 @@ let event = bus.emit(FooCreateEvent {
 </Tabs>
 
 Queue semantics are split in each runtime:
-- Immediate path: `await event` (Python) / `await event.done()` (TypeScript)
-- Queue-order path: `await event.event_completed()` (Python) / `await event.eventCompleted()` (TypeScript)
+- Immediate path: `await event.now()` (Python/TypeScript), `event.Now()` (Go), `event.now().await` (Rust)
+- Queue-order path: `await event.wait()` (Python/TypeScript), `event.Wait()` (Go), `event.wait().await` (Rust)
 
-In Go the same split is exposed as `event.Done(ctx)` for immediate queue-jump execution and `event.EventCompleted(ctx)` for normal queue-order waiting.
-In Rust the same split is exposed as `event.done().await` for immediate queue-jump execution and `event.event_completed().await` for normal queue-order waiting.
+`now()` and `wait()` accept the wait-shaping options (`first_result` and `timeout`). Result filtering and error policy live on `event_result()` / `event_results_list()`.
+Python also supports `await event` as a Python-only shortcut for `await event.now()`. Other runtimes require the explicit `now()` / `wait()` methods.
+In Go the same split is exposed as `event.Now()` for immediate queue-jump execution and `event.Wait()` for normal queue-order waiting.
+In Rust the same split is exposed as `event.now().await` for immediate queue-jump execution and `event.wait().await` for normal queue-order waiting.
+Unset event option fields are not hydrated onto the event at emit time; the bus that actually processes the event resolves its defaults at execution time.
 
 ## Core metadata fields
 
@@ -95,12 +98,13 @@ Common event metadata fields available in all runtimes:
 - `event_type`: event name/type key
 - `event_version`: payload version marker
 - `event_result_type`: expected handler return schema/type
-- `event_timeout`: per-event timeout override (`None`/`null` means use the current processing bus default)
+- `event_timeout`: per-event timeout override (`None`/`null` means use the current processing bus default at execution time; `0` disables)
 - `event_handler_timeout`: per-handler timeout cap override
-- `event_handler_slow_timeout`: per-handler slow warning threshold
-- `event_concurrency`: event scheduling mode override (`None`/`null` means use the current processing bus default)
-- `event_handler_concurrency`: handler scheduling mode override (`None`/`null` means use the current processing bus default)
-- `event_handler_completion`: handler completion strategy override (`None`/`null` means use the current processing bus default)
+- `event_handler_slow_timeout`: per-handler slow warning threshold (`None`/`null` means use the current processing bus default; `0` disables)
+- `event_slow_timeout`: per-event slow warning threshold (`None`/`null` means use the current processing bus default; `0` disables)
+- `event_concurrency`: event scheduling mode override (`None`/`null`/zero-value mode means use the current processing bus default)
+- `event_handler_concurrency`: handler scheduling mode override (`None`/`null`/zero-value mode means use the current processing bus default)
+- `event_handler_completion`: handler completion strategy override (`None`/`null`/zero-value mode means use the current processing bus default)
 
 ## Runtime fields
 
@@ -122,8 +126,9 @@ Events are returned in pending state from `emit()`, then complete asynchronously
 
 ```python
 pending = bus.emit(MyEvent())
-completed = await pending
-completed_in_queue_order = await pending.event_completed()
+completed = await pending.now()
+completed_without_raise = await pending.now()
+completed_in_queue_order = await pending.wait()
 value = await completed.event_result()
 ```
 
@@ -132,9 +137,10 @@ value = await completed.event_result()
 
 ```ts
 const pending = bus.emit(MyEvent({}))
-const completed = await pending.done()
-const completed_in_queue_order = await pending.eventCompleted()
-const value = completed.event_result
+const completed = await pending.now()
+const completedWithoutRaise = await pending.now()
+const completed_in_queue_order = await pending.wait()
+const value = await completed.eventResult()
 ```
 
 </Tab>
@@ -142,14 +148,16 @@ const value = completed.event_result
 
 ```go
 pending := bus.Emit(abxbus.NewBaseEvent("MyEvent", nil))
-completed, err := pending.Done(context.Background())
+completed, err := pending.Now()
 if err != nil {
 	return err
 }
-if err := pending.EventCompleted(context.Background()); err != nil {
+completedInQueueOrder, err := pending.Wait()
+if err != nil {
 	return err
 }
-value, err := completed.EventResult(context.Background())
+value, err := completed.EventResult()
+_ = completedInQueueOrder
 ```
 
 </Tab>
@@ -157,16 +165,16 @@ value, err := completed.EventResult(context.Background())
 
 ```rust
 use abxbus_rust::{
-    base_event::EventResultsOptions,
+    base_event::{EventResultOptions, EventWaitOptions},
 };
 use futures::executor::block_on;
 
 let pending = bus.emit(MyEvent {
     ..Default::default()
 });
-block_on(pending.done());
-block_on(pending.event_completed());
-let value = block_on(pending.event_result(EventResultsOptions::default()))?;
+block_on(pending.now())?;
+block_on(pending.wait())?;
+let value = block_on(pending.event_result())?;
 ```
 
 </Tab>
@@ -174,35 +182,50 @@ let value = block_on(pending.event_result(EventResultsOptions::default()))?;
 
 ## Result access helpers
 
-### `first()`
+Result helpers share the same defaults in all runtimes:
+
+- `raise_if_any=true`: raise when any handler result is an error.
+- `raise_if_none=false`: return `None` / `undefined` / `nil` / `[]` when no result matches the filter.
+- If every handler errors, only `raise_if_any=false` plus `raise_if_none=false` suppresses the error. Any other combination raises.
+- A single handler error is raised as that error; multiple handler errors are raised as an aggregate/exception-group shape.
+
+### First Result
 
 <Tabs>
 <Tab title="Python">
 
 ```python
-value = await event.first()
-# equivalent: await event.event_result(...) with first-completion mode
+completed = await event.now(first_result=True)
+value = await completed.event_result()
 ```
 
 </Tab>
 <Tab title="TypeScript">
 
 ```ts
-const value = await event.first()
+const value = await event.now({ first_result: true }).eventResult()
 ```
 
 </Tab>
 <Tab title="Go">
 
 ```go
-value, err := event.First(context.Background())
+completed, err := event.Now(&abxbus.EventWaitOptions{FirstResult: true})
+if err != nil {
+	return err
+}
+value, err := completed.EventResult()
 ```
 
 </Tab>
 <Tab title="Rust">
 
 ```rust
-let value = block_on(event.event_result(EventResultsOptions::default()))?;
+let completed = block_on(event.now_with_options(EventWaitOptions {
+    first_result: true,
+    ..Default::default()
+}))?;
+let value = block_on(completed.event_result())?;
 ```
 
 </Tab>
@@ -223,11 +246,12 @@ by_handler = {handler_id: result.result for handler_id, result in event.event_re
 
 ```ts
 const items = await event.eventResultsList()
-const filtered = await event.eventResultsList((result) => typeof result === 'string', {
+const filtered = await event.eventResultsList({
+  include: (result) => typeof result === 'string',
   raise_if_any: false,
   raise_if_none: true,
 })
-const first = event.event_result
+const first = await event.eventResult()
 const errors = event.event_errors
 ```
 
@@ -235,14 +259,16 @@ const errors = event.event_errors
 <Tab title="Go">
 
 ```go
-items, err := event.EventResultsList(context.Background(), nil, nil)
+items, err := event.EventResultsList()
 filtered, err := event.EventResultsList(
-	context.Background(),
-	func(result any, eventResult *abxbus.EventResult) bool {
-		_, ok := result.(string)
-		return ok
+	&abxbus.EventResultOptions{
+		Include: func(result any, eventResult *abxbus.EventResult) bool {
+			_, ok := result.(string)
+			return ok
+		},
+		RaiseIfAny: false,
+		RaiseIfNone: true,
 	},
-	&abxbus.EventResultsListOptions{RaiseIfAny: false, RaiseIfNone: true},
 )
 ```
 
@@ -250,10 +276,10 @@ filtered, err := event.EventResultsList(
 <Tab title="Rust">
 
 ```rust
-let items = block_on(event.event_results_list(EventResultsOptions {
+let items = block_on(event.event_results_list_with_options(EventResultOptions {
     raise_if_any: false,
     raise_if_none: false,
-    timeout: None,
+    ..EventResultOptions::default()
 }))?;
 let by_handler = event.inner.lock().event_results.clone();
 ```
@@ -440,7 +466,7 @@ let restored = BaseEvent::from_json_value(payload);
 ## Notes
 
 - Reserved names are validated in all runtimes:
-  - `bus` and `first` are reserved runtime APIs and cannot be provided as payload fields.
+  - runtime API names such as `bus`, `emit`, `now`, and `wait` cannot be provided as payload fields where they would collide with event methods/properties.
   - Unknown `event_*` fields are rejected.
   - Known built-in `event_*` fields (for example `event_timeout`) can still be intentionally overridden in event definitions.
 - `model_*` is also reserved:

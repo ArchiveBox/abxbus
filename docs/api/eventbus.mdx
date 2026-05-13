@@ -116,7 +116,7 @@ let bus = EventBus::new_with_options(
 | `middlewares` | Ordered middleware instances (or middleware classes/constructors) that receive lifecycle hooks. |
 
 Defaults are resolved at processing time on each bus, not copied onto the event at emit.
-When event fields are unset (`None`/`null`), the current processing bus applies its own defaults.
+When event fields are unset (`None`/`null`/zero-value mode), the current processing bus applies its own defaults, so forwarded events can inherit the target bus defaults.
 
 ## Runtime state
 
@@ -259,7 +259,7 @@ result = await event.event_result()
 
 ```ts
 const event = bus.emit(MyEvent({ data: 'x' }))
-const result = await event.first()
+const result = await event.now({ first_result: true }).eventResult()
 ```
 
 </Tab>
@@ -267,7 +267,7 @@ const result = await event.first()
 
 ```go
 event := bus.Emit(abxbus.NewBaseEvent("MyEvent", map[string]any{"data": "x"}))
-result, err := event.EventResult(context.Background())
+result, err := event.EventResult()
 if err != nil {
 	return err
 }
@@ -289,7 +289,7 @@ event! {
 
 let bus = EventBus::new(Some("EmitBus".to_string()));
 let event = bus.emit(MyEvent { data: "x".to_string(), ..Default::default() });
-let result = block_on(event.event_result(Default::default()))?;
+let result = block_on(event.event_result())?;
 ```
 
 </Tab>
@@ -638,8 +638,8 @@ bus.emit(ResumeTickEvent())
 await bus.wait_until_idle()
 
 # 5) Teardown when done
-await bus.stop(timeout=1.0)
-await bus.stop(clear=True)
+await bus.destroy(timeout=1.0)       # wait up to 1sec, then clear by default
+await bus.destroy(clear=False)       # preserve handlers/history if you need to resume
 ```
 
 </Tab>
@@ -677,7 +677,7 @@ bus.emit(ResumeTickEvent({}))
 await bus.waitUntilIdle()
 
 // 5) Teardown when done
-bus.destroy()
+await bus.destroy({ timeout: 1, clear: true })
 ```
 
 </Tab>
@@ -715,11 +715,61 @@ timeout := 1.0
 bus.WaitUntilIdle(&timeout)
 
 // 5) Teardown when done
-bus.Stop()
+bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Timeout: 1.0, Clear: true})
 ```
 
 </Tab>
 </Tabs>
+
+## `destroy(...)`
+
+Destroy stops runtime work and optionally clears bus-owned state.
+
+<Tabs>
+<Tab title="Python">
+
+```python
+await bus.destroy()
+await bus.destroy(timeout=1.0)
+await bus.destroy(clear=False)
+```
+
+</Tab>
+<Tab title="TypeScript">
+
+```ts
+await bus.destroy()
+await bus.destroy(1)
+await bus.destroy({ timeout: 1, clear: false })
+```
+
+</Tab>
+<Tab title="Go">
+
+```go
+bus.Destroy()
+bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Timeout: 1.0})
+bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Clear: false})
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+use abxbus_rust::event_bus::DestroyOptions;
+
+bus.destroy();
+bus.destroy_with_options(DestroyOptions { timeout: Some(1.0), ..Default::default() });
+bus.destroy_with_options(DestroyOptions { clear: false, ..Default::default() });
+```
+
+</Tab>
+</Tabs>
+
+- `clear` defaults to `true` in every runtime.
+- With `clear=true`, destroy is terminal and clears handlers, history, queues, in-flight tracking, waiters, locks, and dispatch/context state so the bus can be released.
+- With `clear=false`, destroy stops current runtime work and resolves waiters but preserves handlers/history so the same bus can be used again.
+- Destroying one bus only clears that bus's local state; shared event objects, handler functions, and other buses are not destroyed.
 
 ## Timeout and precedence
 

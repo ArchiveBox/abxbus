@@ -39,7 +39,7 @@ test('comprehensive patterns: forwarding, async/sync dispatch, parent tracking',
     const child_event_async = event.emit(QueuedChildEvent({}))!
     assert.notEqual(child_event_async.event_status, 'completed')
 
-    const child_event_sync = await event.emit(ImmediateChildEvent({})).done()!
+    const child_event_sync = await event.emit(ImmediateChildEvent({})).now()!
     assert.equal(child_event_sync.event_status, 'completed')
 
     assert.ok(child_event_sync.event_path.includes(bus_2.label))
@@ -57,7 +57,7 @@ test('comprehensive patterns: forwarding, async/sync dispatch, parent tracking',
   bus_1.on(ParentEvent, parent_bus1_handler)
 
   const parent_event = bus_1.emit(ParentEvent({}))
-  await parent_event.done()
+  await parent_event.now()
   await bus_1.waitUntilIdle()
   await bus_2.waitUntilIdle()
 
@@ -105,7 +105,7 @@ test('race condition stress', async () => {
     }
 
     for (let i = 0; i < 3; i += 1) {
-      const child = await event.emit(ImmediateChildEvent({})).done()!
+      const child = await event.emit(ImmediateChildEvent({})).now()!
       assert.equal(child.event_status, 'completed')
       children.push(child)
     }
@@ -128,7 +128,7 @@ test('race condition stress', async () => {
     results.length = 0
 
     const event = bus_1.emit(RootEvent({}))
-    await event.done()
+    await event.now()
     await bus_1.waitUntilIdle()
     await bus_2.waitUntilIdle()
 
@@ -161,7 +161,7 @@ test('awaited child jumps queue without overshoot', async () => {
     const child = _event.emit(LocalChildEvent({}))!
     execution_order.push('Child_dispatched')
     debug_order.push({ label: 'Child_dispatched', at: new Date().toISOString() })
-    await child.done()
+    await child.now()
     execution_order.push('Child_await_returned')
     debug_order.push({ label: 'Child_await_returned', at: new Date().toISOString() })
     execution_order.push('Event1_end')
@@ -203,7 +203,7 @@ test('awaited child jumps queue without overshoot', async () => {
   const event_3 = bus.emit(Event3({}))
 
   // Wait for everything to complete
-  await event_1.done()
+  await event_1.now()
   await bus.waitUntilIdle()
 
   // Core assertion: child jumped the queue and ran DURING Event1's handler
@@ -245,12 +245,12 @@ test('awaited child jumps queue without overshoot', async () => {
   assert.ok(child_event!.event_started_at! <= event3_from_history!.event_started_at!)
 })
 
-test('done() on non-proxied event keeps bus paused during queue-jump', async () => {
-  const bus = new EventBus('RawDoneBus', { max_history_size: 100 })
+test('now() on non-proxied event keeps bus paused during queue-jump', async () => {
+  const bus = new EventBus('RawNowBus', { max_history_size: 100 })
   const Event1 = BaseEvent.extend('Event1', {})
   const ChildEvent = BaseEvent.extend('RawChild', {})
 
-  let paused_after_done = false
+  let paused_after_now = false
 
   bus.on(ChildEvent, () => {})
 
@@ -259,19 +259,19 @@ test('done() on non-proxied event keeps bus paused during queue-jump', async () 
     const child = bus.emit(ChildEvent({}))
     // Get the raw (non-proxied) event
     const raw_child = child._event_original ?? child
-    // done() on raw event bypasses handler_result injection from proxy
-    await raw_child.done()
-    // After done() returns, bus should still be paused because
+    // now() on raw event bypasses handler_result injection from proxy
+    await raw_child.now()
+    // After now() returns, bus should still be paused because
     // we're still inside a handler doing queue-jump processing
     // NOTE: Test-only exception to our no-private-access rule:
     // we intentionally read internal pause state to verify this transient invariant.
-    paused_after_done = bus.locks._isPaused()
+    paused_after_now = bus.locks._isPaused()
   })
 
   bus.emit(Event1({}))
   await bus.waitUntilIdle()
 
-  assert.equal(paused_after_done, true, 'bus should be paused after raw done() but before handler returns')
+  assert.equal(paused_after_now, true, 'bus should be paused after raw now() but before handler returns')
 })
 
 test('bus pause state clears after queue-jump completes', async () => {
@@ -281,8 +281,8 @@ test('bus pause state clears after queue-jump completes', async () => {
   const ChildB = BaseEvent.extend('DepthChildB', {})
 
   let paused_during_handler = false
-  let paused_between_dones = false
-  let paused_after_second_done = false
+  let paused_between_now_calls = false
+  let paused_after_second_now = false
 
   bus.on(ChildA, () => {})
   bus.on(ChildB, () => {})
@@ -292,27 +292,27 @@ test('bus pause state clears after queue-jump completes', async () => {
     // we intentionally read internal pause state to verify transient pause-depth behavior.
     // First queue-jump
     const child_a = event.emit(ChildA({}))!
-    await child_a.done()
+    await child_a.now()
     paused_during_handler = bus.locks._isPaused()
 
     // Second queue-jump — bus should remain paused across both awaits.
     const child_b = event.emit(ChildB({}))!
-    paused_between_dones = bus.locks._isPaused()
-    await child_b.done()
-    paused_after_second_done = bus.locks._isPaused()
+    paused_between_now_calls = bus.locks._isPaused()
+    await child_b.now()
+    paused_after_second_now = bus.locks._isPaused()
   })
 
   bus.emit(Event1({}))
   await bus.waitUntilIdle()
 
   // During handler, pause should still be held.
-  assert.equal(paused_during_handler, true, 'bus should remain paused after first done()')
+  assert.equal(paused_during_handler, true, 'bus should remain paused after first now()')
 
-  // Between done() calls, pause should still be held.
-  assert.equal(paused_between_dones, true, 'bus should remain paused between done() calls')
+  // Between now() calls, pause should still be held.
+  assert.equal(paused_between_now_calls, true, 'bus should remain paused between now() calls')
 
-  // After second done(), pause is still held until handler returns.
-  assert.equal(paused_after_second_done, true, 'bus should remain paused after second done()')
+  // After second now(), pause is still held until handler returns.
+  assert.equal(paused_after_second_now, true, 'bus should remain paused after second now()')
 
   // After handler finishes and bus is idle, pause must be released.
   // Intentional private-access exception for this test; verifies pause release at steady state.
@@ -329,19 +329,22 @@ test('awaited parallel queue-jump child does not pause later parallel child even
   const ChildEvent = BaseEvent.extend('ParallelPauseChildEvent', {
     name: z.string(),
   })
-  const DoneEvent = BaseEvent.extend('ParallelPauseDoneEvent', {
+  const ObservedEvent = BaseEvent.extend('ParallelPauseObservedEvent', {
     name: z.string(),
   })
   const log: string[] = []
 
   bus.on(ParentEvent, async (event) => {
     log.push('parent_start')
-    await event.emit(ChildEvent({ name: 'awaited', event_concurrency: 'parallel' } as any)).first()
+    await event
+      .emit(ChildEvent({ name: 'awaited', event_concurrency: 'parallel' } as any))
+      .now({ first_result: true })
+      .eventResult()
     log.push('parent_after_awaited')
 
     event.emit(ChildEvent({ name: 'bg', event_concurrency: 'parallel' } as any))
     log.push('parent_after_bg_emit')
-    const found = await bus.find(DoneEvent, (candidate) => candidate.name === 'bg', {
+    const found = await bus.find(ObservedEvent, (candidate) => candidate.name === 'bg', {
       past: true,
       future: 0.2,
     })
@@ -352,17 +355,17 @@ test('awaited parallel queue-jump child does not pause later parallel child even
   bus.on(ChildEvent, async (event) => {
     log.push(`child_start_${event.name}`)
     if (event.name === 'bg') {
-      event.emit(DoneEvent({ name: 'bg' }))
+      event.emit(ObservedEvent({ name: 'bg' }))
     }
     log.push(`child_end_${event.name}`)
     return event.name
   })
-  bus.on(DoneEvent, () => {
-    log.push('done_seen')
+  bus.on(ObservedEvent, () => {
+    log.push('observed_seen')
   })
 
-  const parent = bus.emit(ParentEvent({ event_timeout: null }))
-  await parent.done()
+  const parent = bus.emit(ParentEvent({ event_timeout: 0 }))
+  await parent.now()
   await bus.waitUntilIdle()
 
   assert.ok(
@@ -396,11 +399,11 @@ test('isInsideHandler() is per-bus, not global', async () => {
   })
 
   // Dispatch to bus_a first, wait for completion so bus_b has no active handlers
-  await bus_a.emit(EventA({})).done()
+  await bus_a.emit(EventA({})).now()
   await bus_a.waitUntilIdle()
 
   // Then dispatch to bus_b so bus_a has no active handlers
-  await bus_b.emit(EventB({})).done()
+  await bus_b.emit(EventB({})).now()
   await bus_b.waitUntilIdle()
 
   // During bus_a's handler: bus_a should report inside, bus_b should not
@@ -440,7 +443,7 @@ test('dispatch multiple, await one skips others until after handler completes', 
     event.emit(ChildC({}))
     execution_order.push('ChildC_dispatched')
 
-    await child_b.done()
+    await child_b.now()
     execution_order.push('ChildB_await_returned')
 
     execution_order.push('Event1_end')
@@ -488,7 +491,7 @@ test('dispatch multiple, await one skips others until after handler completes', 
   bus.emit(Event2({}))
   bus.emit(Event3({}))
 
-  await event_1.done()
+  await event_1.now()
 
   assert.ok(execution_order.includes('ChildB_start'))
   assert.ok(execution_order.includes('ChildB_end'))
@@ -541,7 +544,7 @@ test('multi-bus queues are independent when awaiting child', async () => {
     execution_order.push('Bus1_Event1_start')
     const child = event.emit(LocalChildEvent({}))!
     execution_order.push('Child_dispatched_to_Bus1')
-    await child.done()
+    await child.now()
     execution_order.push('Child_await_returned')
     execution_order.push('Bus1_Event1_end')
     return 'event1_done'
@@ -585,7 +588,7 @@ test('multi-bus queues are independent when awaiting child', async () => {
 
   await delay(0)
 
-  await event_1.done()
+  await event_1.now()
 
   assert.ok(execution_order.includes('Child_start'))
   assert.ok(execution_order.includes('Child_end'))
@@ -640,12 +643,12 @@ test('awaiting an already completed event is a no-op', async () => {
   bus.on(Event1, event1_handler)
   bus.on(Event2, event2_handler)
 
-  const event_1 = await bus.emit(Event1({})).done()
+  const event_1 = await bus.emit(Event1({})).now()
   assert.equal(event_1.event_status, 'completed')
 
   const event_2 = bus.emit(Event2({}))
 
-  await event_1.done()
+  await event_1.now()
 
   assert.equal(event_2.event_status, 'pending')
 
@@ -667,7 +670,7 @@ test('multiple awaits on same event', async () => {
     const child = event.emit(LocalChildEvent({}))!
 
     const await_child = async (name: string): Promise<void> => {
-      await child.done()
+      await child.now()
       await_results.push(`${name}_completed`)
     }
 
@@ -697,7 +700,7 @@ test('multiple awaits on same event', async () => {
   const event_1 = bus.emit(Event1({}))
   bus.emit(Event2({}))
 
-  await event_1.done()
+  await event_1.now()
 
   assert.equal(await_results.length, 2)
   assert.ok(await_results.includes('await1_completed'))
@@ -726,7 +729,7 @@ test('deeply nested awaited children', async () => {
   const event1_handler = async (event: BaseEvent): Promise<string> => {
     execution_order.push('Event1_start')
     const child1 = event.emit(Child1({}))!
-    await child1.done()
+    await child1.now()
     execution_order.push('Event1_end')
     return 'event1_done'
   }
@@ -734,7 +737,7 @@ test('deeply nested awaited children', async () => {
   const child1_handler = async (event: BaseEvent): Promise<string> => {
     execution_order.push('Child1_start')
     const child2 = event.emit(Child2({}))!
-    await child2.done()
+    await child2.now()
     execution_order.push('Child1_end')
     return 'child1_done'
   }
@@ -759,7 +762,7 @@ test('deeply nested awaited children', async () => {
   const event_1 = bus.emit(Event1({}))
   bus.emit(Event2({}))
 
-  await event_1.done()
+  await event_1.now()
 
   assert.ok(execution_order.includes('Child1_start'))
   assert.ok(execution_order.includes('Child1_end'))
@@ -790,7 +793,7 @@ test('deeply nested awaited children', async () => {
 //
 // The fix requires "yield-and-reacquire":
 //   - Before processing the child, temporarily RELEASE the lock the parent
-//     handler holds (the parent is suspended in `await child.done()` and isn't
+//     handler holds (the parent is suspended in `await child.now()` and isn't
 //     using it).
 //   - Process the child event NORMALLY — handlers acquire/release the real
 //     lock, serializing among themselves as configured.
@@ -805,7 +808,7 @@ test('deeply nested awaited children', async () => {
 //   bus_a: origin bus where TriggerEvent handler dispatches a child
 //   bus_b: forward bus that also handles the child event
 //   The trigger handler dispatches the child on bus_a and also to bus_b,
-//   then awaits child.done(), which queue-jumps the child on both buses.
+//   then awaits child.now(), which queue-jumps the child on both buses.
 // =============================================================================
 
 test('BUG: queue-jump two-bus serial handlers should serialize on each bus', async () => {
@@ -848,17 +851,17 @@ test('BUG: queue-jump two-bus serial handlers should serialize on each bus', asy
   }
 
   bus_a.on(TriggerEvent, async (event: InstanceType<typeof TriggerEvent>) => {
-    const child = event.emit(ChildEvent({ event_timeout: null }))!
+    const child = event.emit(ChildEvent({ event_timeout: 0 }))!
     bus_b.emit(child)
-    await child.done()
+    await child.now()
   })
   bus_a.on(ChildEvent, a_handler_1)
   bus_a.on(ChildEvent, a_handler_2)
   bus_b.on(ChildEvent, b_handler_1)
   bus_b.on(ChildEvent, b_handler_2)
 
-  const top = bus_a.emit(TriggerEvent({ event_timeout: null }))
-  await top.done()
+  const top = bus_a.emit(TriggerEvent({ event_timeout: 0 }))
+  await top.now()
   await bus_a.waitUntilIdle()
   await bus_b.waitUntilIdle()
 
@@ -913,17 +916,17 @@ test('BUG: queue-jump two-bus global handler lock should serialize across both b
   })
 
   bus_a.on(TriggerEvent, async (event: InstanceType<typeof TriggerEvent>) => {
-    const child = event.emit(ChildEvent({ event_timeout: null }))!
+    const child = event.emit(ChildEvent({ event_timeout: 0 }))!
     bus_b.emit(child)
-    await child.done()
+    await child.now()
   })
   bus_a.on(ChildEvent, a_handler_1)
   bus_a.on(ChildEvent, a_handler_2)
   bus_b.on(ChildEvent, b_handler_1)
   bus_b.on(ChildEvent, b_handler_2)
 
-  const top = bus_a.emit(TriggerEvent({ event_timeout: null }))
-  await top.done()
+  const top = bus_a.emit(TriggerEvent({ event_timeout: 0 }))
+  await top.now()
   await bus_a.waitUntilIdle()
   await bus_b.waitUntilIdle()
 
@@ -990,17 +993,17 @@ test('BUG: queue-jump two-bus mixed: bus_a serial, bus_b parallel', async () => 
   }
 
   bus_a.on(TriggerEvent, async (event: InstanceType<typeof TriggerEvent>) => {
-    const child = event.emit(ChildEvent({ event_timeout: null }))!
+    const child = event.emit(ChildEvent({ event_timeout: 0 }))!
     bus_b.emit(child)
-    await child.done()
+    await child.now()
   })
   bus_a.on(ChildEvent, a_handler_1)
   bus_a.on(ChildEvent, a_handler_2)
   bus_b.on(ChildEvent, b_handler_1)
   bus_b.on(ChildEvent, b_handler_2)
 
-  const top = bus_a.emit(TriggerEvent({ event_timeout: null }))
-  await top.done()
+  const top = bus_a.emit(TriggerEvent({ event_timeout: 0 }))
+  await top.now()
   await bus_a.waitUntilIdle()
   await bus_b.waitUntilIdle()
 
@@ -1053,17 +1056,17 @@ test('BUG: queue-jump two-bus mixed: bus_a parallel, bus_b serial', async () => 
   }
 
   bus_a.on(TriggerEvent, async (event: InstanceType<typeof TriggerEvent>) => {
-    const child = event.emit(ChildEvent({ event_timeout: null }))!
+    const child = event.emit(ChildEvent({ event_timeout: 0 }))!
     bus_b.emit(child)
-    await child.done()
+    await child.now()
   })
   bus_a.on(ChildEvent, a_handler_1)
   bus_a.on(ChildEvent, a_handler_2)
   bus_b.on(ChildEvent, b_handler_1)
   bus_b.on(ChildEvent, b_handler_2)
 
-  const top = bus_a.emit(TriggerEvent({ event_timeout: null }))
-  await top.done()
+  const top = bus_a.emit(TriggerEvent({ event_timeout: 0 }))
+  await top.now()
   await bus_a.waitUntilIdle()
   await bus_b.waitUntilIdle()
 
@@ -1107,23 +1110,23 @@ test('forwarded event uses processing-bus defaults unless explicit overrides are
   })
 
   bus_a.on(TriggerEvent, async (event: InstanceType<typeof TriggerEvent>) => {
-    const inherited = event.emit(ChildEvent({ mode: 'inherited', event_timeout: null }))!
+    const inherited = event.emit(ChildEvent({ mode: 'inherited', event_timeout: 0 }))!
     bus_b.emit(inherited)
-    await inherited.done()
+    await inherited.now()
 
     const override = event.emit(
       ChildEvent({
         mode: 'override',
-        event_timeout: null,
+        event_timeout: 0,
         event_handler_concurrency: 'serial',
       })
     )!
     bus_b.emit(override)
-    await override.done()
+    await override.now()
   })
 
-  const top = bus_a.emit(TriggerEvent({ event_timeout: null }))
-  await top.done()
+  const top = bus_a.emit(TriggerEvent({ event_timeout: 0 }))
+  await top.now()
   await bus_a.waitUntilIdle()
   await bus_b.waitUntilIdle()
 
@@ -1169,7 +1172,10 @@ test('forwarded first-mode uses processing-bus handler concurrency defaults', as
     return 'fast'
   })
 
-  const result = await bus_a.emit(ForwardedFirstEvent({ event_timeout: null })).first()
+  const result = await bus_a
+    .emit(ForwardedFirstEvent({ event_timeout: 0 }))
+    .now({ first_result: true })
+    .eventResult({ raise_if_any: false })
   await bus_a.waitUntilIdle()
   await bus_b.waitUntilIdle()
 
@@ -1233,18 +1239,18 @@ test('BUG: queue-jump should respect bus-serial event concurrency on forward bus
 
   // TriggerEvent handler: dispatches child to both buses, awaits completion
   bus_a.on(TriggerEvent, async (event: InstanceType<typeof TriggerEvent>) => {
-    const child = event.emit(ChildEvent({ event_timeout: null }))!
+    const child = event.emit(ChildEvent({ event_timeout: 0 }))!
     bus_b.emit(child)
-    await child.done()
+    await child.now()
   })
 
   // Step 1: Start a slow event on bus_b so it's busy
-  bus_b.emit(SlowEvent({ event_timeout: null }))
+  bus_b.emit(SlowEvent({ event_timeout: 0 }))
   await delay(5) // let slow_handler start
 
   // Step 2: Trigger the queue-jump on bus_a
-  const top = bus_a.emit(TriggerEvent({ event_timeout: null }))
-  await top.done()
+  const top = bus_a.emit(TriggerEvent({ event_timeout: 0 }))
+  await top.now()
   await bus_a.waitUntilIdle()
   await bus_b.waitUntilIdle()
 
@@ -1296,16 +1302,16 @@ test('queue-jump with fully-parallel forward bus starts immediately', async () =
   })
 
   bus_a.on(TriggerEvent, async (event: InstanceType<typeof TriggerEvent>) => {
-    const child = event.emit(ChildEvent({ event_timeout: null }))!
+    const child = event.emit(ChildEvent({ event_timeout: 0 }))!
     bus_b.emit(child)
-    await child.done()
+    await child.now()
   })
 
-  bus_b.emit(SlowEvent({ event_timeout: null }))
+  bus_b.emit(SlowEvent({ event_timeout: 0 }))
   await delay(5)
 
-  const top = bus_a.emit(TriggerEvent({ event_timeout: null }))
-  await top.done()
+  const top = bus_a.emit(TriggerEvent({ event_timeout: 0 }))
+  await top.now()
   await bus_a.waitUntilIdle()
   await bus_b.waitUntilIdle()
 
@@ -1348,16 +1354,16 @@ test('queue-jump with parallel events and serial handlers on forward bus still o
   })
 
   bus_a.on(TriggerEvent, async (event: InstanceType<typeof TriggerEvent>) => {
-    const child = event.emit(ChildEvent({ event_timeout: null }))!
+    const child = event.emit(ChildEvent({ event_timeout: 0 }))!
     bus_b.emit(child)
-    await child.done()
+    await child.now()
   })
 
-  bus_b.emit(SlowEvent({ event_timeout: null }))
+  bus_b.emit(SlowEvent({ event_timeout: 0 }))
   await delay(5)
 
-  const top = bus_a.emit(TriggerEvent({ event_timeout: null }))
-  await top.done()
+  const top = bus_a.emit(TriggerEvent({ event_timeout: 0 }))
+  await top.now()
   await bus_a.waitUntilIdle()
   await bus_b.waitUntilIdle()
 

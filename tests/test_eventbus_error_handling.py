@@ -35,7 +35,7 @@ async def test_result_schema_mismatch_uses_event_handler_result_schema_error() -
         assert result.status == 'error'
         assert isinstance(result.error, EventHandlerResultSchemaError)
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_handler_timeout_uses_event_handler_timeout_error() -> None:
@@ -59,7 +59,7 @@ async def test_handler_timeout_uses_event_handler_timeout_error() -> None:
         assert isinstance(result.error, EventHandlerTimeoutError)
         assert isinstance(result.error, TimeoutError)
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_first_mode_pending_non_winner_uses_cancelled_error_class() -> None:
@@ -88,7 +88,7 @@ async def test_first_mode_pending_non_winner_uses_cancelled_error_class() -> Non
         assert isinstance(loser_result.error, EventHandlerCancelledError)
         assert isinstance(loser_result.error, asyncio.CancelledError)
     finally:
-        await bus.stop()
+        await bus.destroy()
 
 
 async def test_parallel_first_started_loser_uses_aborted_error_class() -> None:
@@ -120,4 +120,4 @@ async def test_parallel_first_started_loser_uses_aborted_error_class() -> None:
         assert isinstance(slow_result.error, EventHandlerAbortedError)
         assert isinstance(slow_result.error, asyncio.CancelledError)
     finally:
-        await bus.stop()
+        await bus.destroy()

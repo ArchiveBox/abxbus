@@ -34,6 +34,7 @@ These emit warnings when work is taking longer than expected:
 - `event_handler_slow_timeout` / `handler_slow_timeout`: warns when a handler run is still running past the threshold.
 
 Slow thresholds are warnings, not forced cancellation.
+For event and handler timeout fields, unset (`None` / `null` / `nil`) means inherit the processing bus default at execution time. Set `0` to explicitly disable that timeout or slow warning.
 
 ## Where to set each value
 
@@ -262,9 +263,7 @@ Resolved in this order:
 
 1. `handler_slow_timeout`
 2. `event_handler_slow_timeout`
-3. `event_slow_timeout`
-4. bus `event_handler_slow_timeout`
-5. bus `event_slow_timeout`
+3. bus `event_handler_slow_timeout`
 
 ### Effective event slow-warning threshold
 

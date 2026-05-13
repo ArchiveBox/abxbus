@@ -37,7 +37,7 @@ test('context propagates to handler', async () => {
 
   await storage.run({ request_id, user_id }, async () => {
     const event = bus.emit(SimpleEvent({}))
-    await event.done()
+    await event.now()
   })
 
   assert.equal(captured_values.request_id, request_id)
@@ -59,7 +59,7 @@ test('context propagates through nested handlers', async () => {
 
     const child = event.emit(ChildEvent({}))
     if (child) {
-      await child.done()
+      await child.now()
     }
   })
 
@@ -71,7 +71,7 @@ test('context propagates through nested handlers', async () => {
 
   await storage.run({ request_id, trace_id }, async () => {
     const event = bus.emit(SimpleEvent({}))
-    await event.done()
+    await event.now()
   })
 
   assert.equal(captured_parent.request_id, request_id)
@@ -95,8 +95,8 @@ test('context isolation between dispatches', async () => {
   const event_a = storage.run({ request_id: request_id_a }, () => bus.emit(SimpleEvent({})))
   const event_b = storage.run({ request_id: request_id_b }, () => bus.emit(SimpleEvent({})))
 
-  await event_a.done()
-  await event_b.done()
+  await event_a.now()
+  await event_b.now()
 
   assert.ok(captured_values.includes(request_id_a))
   assert.ok(captured_values.includes(request_id_b))
@@ -120,7 +120,7 @@ test('context propagates to multiple handlers', async () => {
 
   await storage.run({ request_id }, async () => {
     const event = bus.emit(SimpleEvent({}))
-    await event.done()
+    await event.now()
   })
 
   assert.ok(captured_values.includes(`h1:${request_id}`))
@@ -149,7 +149,7 @@ test('context propagates through event forwarding', async () => {
 
   await storage.run({ request_id }, async () => {
     const event = bus_a.emit(SimpleEvent({}))
-    await event.done()
+    await event.now()
     await bus_b.waitUntilIdle()
   })
 
@@ -171,7 +171,7 @@ test('handler can modify context without affecting parent', async () => {
     storage.enterWith({ request_id: parent_request_id })
     const child = event.emit(ChildEvent({}))
     if (child) {
-      await child.done()
+      await child.now()
     }
     const store = get_store(storage.getStore() as ContextStore | undefined)
     parent_value_after_child = store.request_id ?? '<unset>'
@@ -186,7 +186,7 @@ test('handler can modify context without affecting parent', async () => {
 
   await storage.run({}, async () => {
     const event = bus.emit(SimpleEvent({}))
-    await event.done()
+    await event.now()
   })
 
   assert.equal(parent_value_after_child, parent_request_id)
@@ -202,7 +202,7 @@ test('event parent_id tracking still works with context propagation', async () =
     parent_event_id = event.event_id
     const child = event.emit(ChildEvent({}))
     if (child) {
-      await child.done()
+      await child.now()
     }
   })
 
@@ -212,7 +212,7 @@ test('event parent_id tracking still works with context propagation', async () =
 
   await storage.run({ request_id: '36a584b5-40c5-7c8b-8627-f9a2e9ce6f82' }, async () => {
     const event = bus.emit(SimpleEvent({}))
-    await event.done()
+    await event.now()
   })
 
   assert.ok(parent_event_id)
@@ -232,7 +232,7 @@ test('dispatch context and parent_id both work together', async () => {
     results.parent_event_id = event.event_id
     const child = event.emit(ChildEvent({}))
     if (child) {
-      await child.done()
+      await child.now()
     }
   })
 
@@ -244,7 +244,7 @@ test('dispatch context and parent_id both work together', async () => {
 
   await storage.run({ request_id }, async () => {
     const event = bus.emit(SimpleEvent({}))
-    await event.done()
+    await event.now()
   })
 
   assert.equal(results.parent_request_id, request_id)
@@ -276,7 +276,7 @@ test('deeply nested context and parent tracking', async () => {
     })
     const child = event.emit(Level2Event({}))
     if (child) {
-      await child.done()
+      await child.now()
     }
   })
 
@@ -290,7 +290,7 @@ test('deeply nested context and parent tracking', async () => {
     })
     const child = event.emit(Level3Event({}))
     if (child) {
-      await child.done()
+      await child.now()
     }
   })
 
@@ -306,7 +306,7 @@ test('deeply nested context and parent tracking', async () => {
 
   await storage.run({ request_id }, async () => {
     const event = bus.emit(SimpleEvent({}))
-    await event.done()
+    await event.now()
   })
 
   assert.equal(results.length, 3)

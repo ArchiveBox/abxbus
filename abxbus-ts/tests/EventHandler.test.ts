@@ -63,7 +63,7 @@ test('handlers can be sync or async', async () => {
   assert.equal(handler_count, 2)
 
   const event = bus.emit(BaseEvent.extend('TestEvent', {})({}))
-  await event.done()
+  await event.now()
 
   const results = Array.from(event.event_results.values()).map((result) => result.result)
   assert.ok(results.includes('sync'))
@@ -86,7 +86,7 @@ test('class matcher falls back to class name and matches generic BaseEvent event
     seen.push(`wildcard:${event.event_type}`)
   })
 
-  await bus.emit(new BaseEvent({ event_type: 'DifferentNameFromClass' })).done()
+  await bus.emit(new BaseEvent({ event_type: 'DifferentNameFromClass' })).now()
 
   assert.deepEqual(seen, ['class:DifferentNameFromClass', 'string:DifferentNameFromClass', 'wildcard:DifferentNameFromClass'])
   assert.equal(bus.handlers_by_key.get('DifferentNameFromClass')?.length, 2)
@@ -138,7 +138,7 @@ test('instance, class, and static method handlers', async () => {
 
   const event = UserActionEvent({ action: 'test_methods', user_id: 'dab45f48-9e3a-7042-80f8-ac8f07b6cfe3' })
   const completed_event = bus.emit(event)
-  await completed_event.done()
+  await completed_event.now()
 
   assert.equal(results.length, 5)
   assert.ok(results.includes('Processor1_sync'))

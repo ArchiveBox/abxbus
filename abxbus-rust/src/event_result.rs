@@ -331,10 +331,10 @@ impl EventResult {
                 "message": reason,
             });
         }
-        if message.contains("first() resolved") {
+        if message.contains("first result resolved") {
             return json!({
                 "type": "Error",
-                "message": "first() resolved",
+                "message": "first result resolved",
             });
         }
         Value::Null

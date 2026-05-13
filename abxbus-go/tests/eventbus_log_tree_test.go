@@ -13,7 +13,7 @@ func TestLogTreeShowsParentChildAndHandlerResults(t *testing.T) {
 	bus := abxbus.NewEventBus("TreeBus", nil)
 	bus.On("RootEvent", "root", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
 		child := e.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
-		if _, err := child.Done(context.Background()); err != nil {
+		if _, err := child.Now(); err != nil {
 			return nil, err
 		}
 		return "root-ok", nil
@@ -23,7 +23,7 @@ func TestLogTreeShowsParentChildAndHandlerResults(t *testing.T) {
 	}, nil)
 
 	e := bus.Emit(abxbus.NewBaseEvent("RootEvent", nil))
-	if _, err := e.Done(context.Background()); err != nil {
+	if _, err := e.Now(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -48,7 +48,7 @@ func TestLogTreeIncludesTimedOutResultErrors(t *testing.T) {
 		}
 	}, nil)
 	e := bus.Emit(abxbus.NewBaseEvent("SlowEvent", nil))
-	if _, err := e.EventResult(context.Background()); err == nil {
+	if _, err := e.EventResult(); err == nil {
 		t.Fatal("expected timeout error from event result")
 	}
 	out := bus.LogTree()

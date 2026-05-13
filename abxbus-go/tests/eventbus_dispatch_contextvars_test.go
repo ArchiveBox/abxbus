@@ -19,7 +19,7 @@ func TestAwaitedDispatchPropagatesContextIntoHandlers(t *testing.T) {
 	}, nil)
 
 	ctx := context.WithValue(context.Background(), key, "req-123")
-	if _, err := bus.Emit(abxbus.NewBaseEvent("ContextEvent", nil)).Done(ctx); err != nil {
+	if _, err := bus.EmitWithContext(ctx, abxbus.NewBaseEvent("ContextEvent", nil)).Now(); err != nil {
 		t.Fatal(err)
 	}
 	if seen != "req-123" {
@@ -33,7 +33,7 @@ func TestAwaitedChildDispatchPropagatesHandlerContext(t *testing.T) {
 	childSeen := ""
 	bus.On("ParentContextEvent", "parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		child := event.Emit(abxbus.NewBaseEvent("ChildContextEvent", nil))
-		if _, err := child.Done(ctx); err != nil {
+		if _, err := child.Now(); err != nil {
 			return nil, err
 		}
 		return "parent", nil
@@ -44,7 +44,7 @@ func TestAwaitedChildDispatchPropagatesHandlerContext(t *testing.T) {
 	}, nil)
 
 	ctx := context.WithValue(context.Background(), key, "trace-456")
-	if _, err := bus.Emit(abxbus.NewBaseEvent("ParentContextEvent", nil)).Done(ctx); err != nil {
+	if _, err := bus.EmitWithContext(ctx, abxbus.NewBaseEvent("ParentContextEvent", nil)).Now(); err != nil {
 		t.Fatal(err)
 	}
 	if childSeen != "trace-456" {
@@ -52,7 +52,7 @@ func TestAwaitedChildDispatchPropagatesHandlerContext(t *testing.T) {
 	}
 }
 
-func TestEventCompletedChildDispatchPreservesHandlerContext(t *testing.T) {
+func TestWaitChildDispatchPreservesHandlerContext(t *testing.T) {
 	bus := abxbus.NewEventBus("ContextEventCompletedChildBus", &abxbus.EventBusOptions{
 		EventConcurrency:        abxbus.EventConcurrencyParallel,
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
@@ -61,7 +61,7 @@ func TestEventCompletedChildDispatchPreservesHandlerContext(t *testing.T) {
 	childSeen := ""
 	bus.On("EventCompletedParentContextEvent", "parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		child := event.Emit(abxbus.NewBaseEvent("EventCompletedChildContextEvent", nil))
-		if err := child.EventCompleted(ctx); err != nil {
+		if _, err := child.Wait(); err != nil {
 			return nil, err
 		}
 		return "parent", nil
@@ -72,7 +72,7 @@ func TestEventCompletedChildDispatchPreservesHandlerContext(t *testing.T) {
 	}, nil)
 
 	ctx := context.WithValue(context.Background(), key, "trace-789")
-	if _, err := bus.Emit(abxbus.NewBaseEvent("EventCompletedParentContextEvent", nil)).Done(ctx); err != nil {
+	if _, err := bus.EmitWithContext(ctx, abxbus.NewBaseEvent("EventCompletedParentContextEvent", nil)).Now(); err != nil {
 		t.Fatal(err)
 	}
 	waitTimeout := 2.0
@@ -80,6 +80,6 @@ func TestEventCompletedChildDispatchPreservesHandlerContext(t *testing.T) {
 		t.Fatal("timed out waiting for bus to become idle")
 	}
 	if childSeen != "trace-789" {
-		t.Fatalf("child handler did not receive parent handler context through event_completed, got %q", childSeen)
+		t.Fatalf("child handler did not receive parent handler context through wait, got %q", childSeen)
 	}
 }

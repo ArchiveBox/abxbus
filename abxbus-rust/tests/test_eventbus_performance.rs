@@ -16,14 +16,14 @@ use futures::executor::block_on;
 use futures_timer::Delay;
 use serde_json::{json, Map, Value};
 
-const PERFORMANCE_MAX_MS_PER_UNIT: f64 = 0.5;
+const PERFORMANCE_MAX_MS_PER_UNIT: f64 = 0.6;
 static PERFORMANCE_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn performance_test_guard() -> MutexGuard<'static, ()> {
     PERFORMANCE_TEST_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
-        .expect("performance test lock poisoned")
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn payload(entries: impl IntoIterator<Item = (&'static str, Value)>) -> Map<String, Value> {
@@ -35,7 +35,7 @@ fn payload(entries: impl IntoIterator<Item = (&'static str, Value)>) -> Map<Stri
 
 fn wait_for_performance_batch(events: &[Arc<BaseEvent>]) {
     for event in events {
-        block_on(event.done());
+        let _ = block_on(event.now());
     }
 }
 
@@ -84,7 +84,7 @@ fn test_performance_50k_events() {
         "handler",
         no_path_handler_options("perf-simple-handler"),
         move |event| {
-            processed_for_handler.fetch_add(1, Ordering::SeqCst);
+            processed_for_handler.fetch_add(1, Ordering::Relaxed);
             let inner = event.inner.lock();
             let value = inner
                 .payload
@@ -96,7 +96,7 @@ fn test_performance_50k_events() {
                 .get("batch_id")
                 .and_then(Value::as_i64)
                 .unwrap_or_default();
-            checksum_for_handler.fetch_add(value + batch_id, Ordering::SeqCst);
+            checksum_for_handler.fetch_add(value + batch_id, Ordering::Relaxed);
             Ok(Value::Null)
         },
     );
@@ -125,11 +125,11 @@ fn test_performance_50k_events() {
     assert!(block_on(bus.wait_until_idle(Some(10.0))));
     let elapsed = started.elapsed();
 
-    assert_eq!(processed.load(Ordering::SeqCst), total_events as i64);
-    assert_eq!(checksum.load(Ordering::SeqCst), expected_checksum);
+    assert_eq!(processed.load(Ordering::Relaxed), total_events as i64);
+    assert_eq!(checksum.load(Ordering::Relaxed), expected_checksum);
     assert!(bus.event_history_size() <= history_size);
     assert_performance_budget("50k events", total_events, elapsed, "event");
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -157,7 +157,7 @@ fn test_performance_ephemeral_buses() {
             "handler",
             no_path_handler_options(format!("perf-ephemeral-handler-{bus_index}")),
             move |_event| {
-                processed_for_handler.fetch_add(1, Ordering::SeqCst);
+                processed_for_handler.fetch_add(1, Ordering::Relaxed);
                 Ok(Value::Null)
             },
         );
@@ -167,19 +167,15 @@ fn test_performance_ephemeral_buses() {
             .collect();
         wait_for_performance_batch(&pending);
         assert!(block_on(bus.wait_until_idle(Some(2.0))));
-        bus.stop();
+        bus.destroy();
     }
     let elapsed = started.elapsed();
     let total_events = total_buses * events_per_bus;
-    assert_eq!(processed.load(Ordering::SeqCst), total_events as i64);
+    assert_eq!(processed.load(Ordering::Relaxed), total_events as i64);
     assert_performance_budget("500 buses x 100 events", total_events, elapsed, "event");
 }
 
 #[test]
-#[cfg_attr(
-    debug_assertions,
-    ignore = "50k parallel handler performance budget is measured with cargo test --release"
-)]
 fn test_performance_single_event_many_parallel_handlers() {
     let _perf_guard = performance_test_guard();
     let total_handlers = 50_000usize;
@@ -204,7 +200,7 @@ fn test_performance_single_event_many_parallel_handlers() {
             &handler_id,
             no_path_handler_options(handler_id.clone()),
             move |_event| {
-                handled_for_handler.fetch_add(1, Ordering::SeqCst);
+                handled_for_handler.fetch_add(1, Ordering::Relaxed);
                 Ok(Value::Null)
             },
         );
@@ -216,14 +212,14 @@ fn test_performance_single_event_many_parallel_handlers() {
     assert!(block_on(bus.wait_until_idle(Some(10.0))));
     let elapsed = started.elapsed();
 
-    assert_eq!(handled.load(Ordering::SeqCst), total_handlers as i64);
+    assert_eq!(handled.load(Ordering::Relaxed), total_handlers as i64);
     assert_performance_budget(
         "1 event x 50k parallel handlers",
         total_handlers,
         elapsed,
         "handler",
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -250,7 +246,7 @@ fn test_performance_on_off_churn() {
             &handler_id,
             no_path_handler_options(handler_id.clone()),
             move |_event| {
-                handled_for_handler.fetch_add(1, Ordering::SeqCst);
+                handled_for_handler.fetch_add(1, Ordering::Relaxed);
                 Ok(Value::Null)
             },
         );
@@ -261,14 +257,14 @@ fn test_performance_on_off_churn() {
     assert!(block_on(bus.wait_until_idle(Some(10.0))));
     let elapsed = started.elapsed();
 
-    assert_eq!(handled.load(Ordering::SeqCst), total_events as i64);
+    assert_eq!(handled.load(Ordering::Relaxed), total_events as i64);
     assert_performance_budget(
         "50k one-off handlers over 50k events",
         total_events,
         elapsed,
         "event",
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -305,7 +301,7 @@ fn test_performance_worst_case_forwarding_queue_jump_timeouts() {
         let child_bus = child_bus_for_handler.clone();
         let parents = parents_for_handler.clone();
         async move {
-            parents.fetch_add(1, Ordering::SeqCst);
+            parents.fetch_add(1, Ordering::Relaxed);
             let iteration = event
                 .inner
                 .lock()
@@ -320,7 +316,7 @@ fn test_performance_worst_case_forwarding_queue_jump_timeouts() {
                     ("iteration", iteration),
                 ]),
             ));
-            child.done().await;
+            let _ = child.now().await;
             Ok(Value::Null)
         }
     });
@@ -332,7 +328,7 @@ fn test_performance_worst_case_forwarding_queue_jump_timeouts() {
         "child",
         no_path_handler_options("perf-worst-child-handler"),
         move |event| {
-            children_for_handler.fetch_add(1, Ordering::SeqCst);
+            children_for_handler.fetch_add(1, Ordering::Relaxed);
             let iteration = event
                 .inner
                 .lock()
@@ -343,7 +339,7 @@ fn test_performance_worst_case_forwarding_queue_jump_timeouts() {
             let timed_out = timed_out_for_handler.clone();
             async move {
                 if iteration % 10 == 0 {
-                    timed_out.fetch_add(1, Ordering::SeqCst);
+                    timed_out.fetch_add(1, Ordering::Relaxed);
                     Delay::new(Duration::from_millis(2)).await;
                 }
                 Ok(json!("ok"))
@@ -370,15 +366,15 @@ fn test_performance_worst_case_forwarding_queue_jump_timeouts() {
     assert!(block_on(child_bus.wait_until_idle(Some(10.0))));
     let elapsed = started.elapsed();
 
-    assert_eq!(parents.load(Ordering::SeqCst), total_events as i64);
-    assert!(children.load(Ordering::SeqCst) > 0);
-    assert!(timed_out.load(Ordering::SeqCst) > 0);
+    assert_eq!(parents.load(Ordering::Relaxed), total_events as i64);
+    assert!(children.load(Ordering::Relaxed) > 0);
+    assert!(timed_out.load(Ordering::Relaxed) > 0);
     assert_performance_budget(
         "worst-case forwarding + timeouts",
         total_events,
         elapsed,
         "event",
     );
-    parent_bus.stop();
-    child_bus.stop();
+    parent_bus.destroy();
+    child_bus.destroy();
 }

@@ -2,12 +2,11 @@ package abxbus_test
 
 import (
 	"context"
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
-
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go"
 )
 
 func TestGlobalSerialAcrossBuses(t *testing.T) {
@@ -115,7 +114,7 @@ func TestGlobalSerialAwaitedChildJumpsAheadOfQueuedEventsAcrossBuses(t *testing.
 		child := e.Emit(abxbus.NewBaseEvent("ChildEvent", nil))
 		busB.Emit(child)
 		record("child_dispatched")
-		if _, err := child.Done(ctx); err != nil {
+		if _, err := child.Now(); err != nil {
 			return nil, err
 		}
 		record("child_awaited")
@@ -124,9 +123,7 @@ func TestGlobalSerialAwaitedChildJumpsAheadOfQueuedEventsAcrossBuses(t *testing.
 	}, nil)
 
 	parent := busA.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if _, err := parent.Done(ctx); err != nil {
+	if _, err := parent.Now(); err != nil {
 		t.Fatal(err)
 	}
 	timeout := 2.0
@@ -220,10 +217,8 @@ func TestEventConcurrencyBusSerialSerializesPerBusButOverlapsAcrossBuses(t *test
 
 	close(releaseA)
 	close(releaseB)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
 	for _, event := range []*abxbus.BaseEvent{firstA, secondA, firstB} {
-		if _, err := event.Done(ctx); err != nil {
+		if _, err := event.Now(); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -275,12 +270,10 @@ func TestEventConcurrencyParallelAllowsSameBusEventsToOverlap(t *testing.T) {
 	}
 	close(release)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if _, err := first.Done(ctx); err != nil {
+	if _, err := first.Now(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.Done(ctx); err != nil {
+	if _, err := second.Now(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -336,12 +329,10 @@ func TestEventConcurrencyOverrideParallelBeatsBusSerialDefault(t *testing.T) {
 	}
 	close(release)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if _, err := emittedFirst.Done(ctx); err != nil {
+	if _, err := emittedFirst.Now(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := emittedSecond.Done(ctx); err != nil {
+	if _, err := emittedSecond.Now(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -401,22 +392,12 @@ func TestEventConcurrencyOverrideBusSerialBeatsBusParallelDefault(t *testing.T) 
 	}
 	close(release)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if _, err := emittedFirst.Done(ctx); err != nil {
+	if _, err := emittedFirst.Now(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := emittedSecond.Done(ctx); err != nil {
+	if _, err := emittedSecond.Now(); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func TestPrecedenceEventEventConcurrencyOverridesBusDefaultsToParallel(t *testing.T) {
-	TestEventConcurrencyOverrideParallelBeatsBusSerialDefault(t)
-}
-
-func TestPrecedenceEventEventConcurrencyOverridesBusDefaultsToBusSerial(t *testing.T) {
-	TestEventConcurrencyOverrideBusSerialBeatsBusParallelDefault(t)
 }
 
 func indexOfLockingOrder(values []string, target string) int {
@@ -426,4 +407,131 @@ func indexOfLockingOrder(values []string, target string) int {
 		}
 	}
 	return -1
+}
+
+// Folded from eventbus_concurrency_test.go to keep test layout class-based.
+func TestHandlerConcurrencyParallelStartsBoth(t *testing.T) {
+	bus := abxbus.NewEventBus("ParallelBus", &abxbus.EventBusOptions{EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel})
+	var mu sync.Mutex
+	count := 0
+	gate := make(chan struct{})
+	started := make(chan struct{}, 2)
+
+	for i := 0; i < 2; i++ {
+		bus.On("Evt", "h", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+			mu.Lock()
+			count++
+			mu.Unlock()
+			started <- struct{}{}
+			<-gate
+			return nil, nil
+		}, nil)
+	}
+
+	e := bus.Emit(abxbus.NewBaseEvent("Evt", nil))
+	deadline := time.After(2 * time.Second)
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-deadline:
+			close(gate)
+			t.Fatalf("timed out waiting for parallel handlers to start")
+		}
+	}
+
+	mu.Lock()
+	c := count
+	mu.Unlock()
+	if c != 2 {
+		close(gate)
+		t.Fatalf("expected 2 starts, got %d", c)
+	}
+
+	close(gate)
+	if _, err := e.Now(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEventHandlerConcurrencyPerEventOverrideControlsExecutionMode(t *testing.T) {
+	bus := abxbus.NewEventBus("HandlerConcurrencyOverrideBus", &abxbus.EventBusOptions{
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
+	})
+	var mu sync.Mutex
+	inFlight := 0
+	maxInFlightByMode := map[string]int{}
+	release := make(chan struct{})
+	started := make(chan string, 4)
+
+	handler := func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		mode := e.Payload["mode"].(string)
+		mu.Lock()
+		inFlight++
+		if inFlight > maxInFlightByMode[mode] {
+			maxInFlightByMode[mode] = inFlight
+		}
+		mu.Unlock()
+		started <- mode
+		<-release
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+		return mode, nil
+	}
+	bus.On("Evt", "first", handler, nil)
+	bus.On("Evt", "second", handler, nil)
+
+	parallelEvent := abxbus.NewBaseEvent("Evt", map[string]any{"mode": "parallel"})
+	parallelEvent.EventHandlerConcurrency = abxbus.EventHandlerConcurrencyParallel
+	emittedParallel := bus.Emit(parallelEvent)
+	for i := 0; i < 2; i++ {
+		select {
+		case mode := <-started:
+			if mode != "parallel" {
+				close(release)
+				t.Fatalf("unexpected mode %s", mode)
+			}
+		case <-time.After(2 * time.Second):
+			close(release)
+			t.Fatal("timed out waiting for parallel handlers")
+		}
+	}
+
+	close(release)
+	if _, err := emittedParallel.Now(); err != nil {
+		t.Fatal(err)
+	}
+	if maxInFlightByMode["parallel"] < 2 {
+		t.Fatalf("expected per-event parallel override to run handlers concurrently, max=%d", maxInFlightByMode["parallel"])
+	}
+
+	release = make(chan struct{})
+	started = make(chan string, 4)
+	inFlight = 0
+	serialEvent := abxbus.NewBaseEvent("Evt", map[string]any{"mode": "serial"})
+	serialEvent.EventHandlerConcurrency = abxbus.EventHandlerConcurrencySerial
+	emittedSerial := bus.Emit(serialEvent)
+	select {
+	case mode := <-started:
+		if mode != "serial" {
+			close(release)
+			t.Fatalf("unexpected mode %s", mode)
+		}
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("timed out waiting for serial handler")
+	}
+	select {
+	case <-started:
+		close(release)
+		t.Fatal("second serial handler should not start before first is released")
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(release)
+	if _, err := emittedSerial.Now(); err != nil {
+		t.Fatal(err)
+	}
+	if maxInFlightByMode["serial"] != 1 {
+		t.Fatalf("expected per-event serial override to keep max in-flight at 1, got %d", maxInFlightByMode["serial"])
+	}
 }

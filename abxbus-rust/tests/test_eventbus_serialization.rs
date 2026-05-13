@@ -47,7 +47,7 @@ fn assert_eventbus_json_roundtrip_uses_id_keyed_structures(bus_name: &str, bus_i
             event_concurrency: EventConcurrencyMode::Parallel,
             event_handler_concurrency: EventHandlerConcurrencyMode::Parallel,
             event_handler_completion: EventHandlerCompletionMode::First,
-            event_timeout: None,
+            event_timeout: Some(0.0),
             event_slow_timeout: Some(34.0),
             event_handler_slow_timeout: Some(12.0),
             event_handler_detect_file_paths: false,
@@ -61,7 +61,7 @@ fn assert_eventbus_json_roundtrip_uses_id_keyed_structures(bus_name: &str, bus_i
     let event = bus.emit(SerializableEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let payload = bus.to_json_value();
     assert_eq!(payload["id"], bus_id);
@@ -71,7 +71,7 @@ fn assert_eventbus_json_roundtrip_uses_id_keyed_structures(bus_name: &str, bus_i
     assert_eq!(payload["event_concurrency"], "parallel");
     assert_eq!(payload["event_handler_concurrency"], "parallel");
     assert_eq!(payload["event_handler_completion"], "first");
-    assert_eq!(payload["event_timeout"], serde_json::Value::Null);
+    assert_eq!(payload["event_timeout"], 0.0);
     assert_eq!(payload["event_slow_timeout"], 34.0);
     assert_eq!(payload["event_handler_slow_timeout"], 12.0);
     assert_eq!(payload["event_handler_detect_file_paths"], false);
@@ -96,16 +96,8 @@ fn assert_eventbus_json_roundtrip_uses_id_keyed_structures(bus_name: &str, bus_i
     assert_eq!(restored.id, bus_id);
     assert_eq!(restored.name, bus_name);
     assert_eq!(restored.to_json_value(), payload);
-    restored.stop();
-    bus.stop();
-}
-
-#[test]
-fn test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() {
-    assert_eventbus_json_roundtrip_uses_id_keyed_structures(
-        "SerializableBusModelDump",
-        "018f8e40-1234-7000-8000-000000001234",
-    );
+    restored.destroy();
+    bus.destroy();
 }
 
 #[test]
@@ -114,6 +106,60 @@ fn test_eventbus_to_json_from_json_roundtrip_uses_id_keyed_structures() {
         "SerializableBusToJson",
         "018f8e40-1234-7000-8000-000000001235",
     );
+}
+
+#[test]
+fn test_eventbus_serialization_preserves_unbounded_history_null() {
+    let bus = EventBus::new_with_options(
+        Some("UnlimitedSerBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            max_history_drop: false,
+            ..EventBusOptions::default()
+        },
+    );
+    let payload = bus.to_json_value();
+    assert_eq!(payload["max_history_size"], Value::Null);
+
+    let restored = EventBus::from_json_value(payload);
+    assert_eq!(restored.to_json_value()["max_history_size"], Value::Null);
+    restored.destroy();
+    bus.destroy();
+}
+
+#[test]
+fn test_eventbus_from_json_null_event_timeout_uses_default() {
+    let bus = EventBus::new(Some("TimeoutNullBus".to_string()));
+    let mut payload = bus.to_json_value();
+    payload["event_timeout"] = Value::Null;
+
+    let restored = EventBus::from_json_value(payload);
+    assert_eq!(restored.to_json_value()["event_timeout"], json!(60.0));
+    restored.destroy();
+    bus.destroy();
+}
+
+#[test]
+fn test_eventbus_from_json_defaults_missing_handler_maps() {
+    let bus = EventBus::new(Some("MissingHandlerMaps".to_string()));
+    let mut payload = bus.to_json_value();
+    payload.as_object_mut().expect("payload").remove("handlers");
+    payload
+        .as_object_mut()
+        .expect("payload")
+        .remove("handlers_by_key");
+
+    let restored = EventBus::from_json_value(payload);
+    restored.on_raw("SerializableEvent", "handler", |_event| async move {
+        Ok(json!({}))
+    });
+    let event = restored.emit(SerializableEvent {
+        ..Default::default()
+    });
+    let _ = block_on(event.now());
+    assert_eq!(event.inner.inner.lock().event_results.len(), 1);
+    restored.destroy();
+    bus.destroy();
 }
 
 #[test]
@@ -169,7 +215,7 @@ fn test_eventbus_preserves_handler_registration_order_through_json_and_restore()
     let event = bus.emit(HandlerOrderEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.wait());
     assert_eq!(
         original_order.lock().expect("order").clone(),
         vec!["first".to_string(), "second".to_string()]
@@ -221,14 +267,14 @@ fn test_eventbus_preserves_handler_registration_order_through_json_and_restore()
     let restored_event = restored.emit(HandlerOrderEvent {
         ..Default::default()
     });
-    block_on(restored_event.done());
+    let _ = block_on(restored_event.wait());
     assert_eq!(
         restored_order.lock().expect("order").clone(),
         vec!["first".to_string(), "second".to_string()]
     );
 
-    restored.stop();
-    bus.stop();
+    restored.destroy();
+    bus.destroy();
 }
 
 #[test]
@@ -247,12 +293,12 @@ fn test_baseevent_model_validate_roundtrips_runtime_json_shape() {
     let event = bus.emit(SerializableEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let payload = event.inner.to_json_value();
     let restored_payload = BaseEvent::from_json_value(payload.clone()).to_json_value();
     assert_eq!(restored_payload, payload);
-    bus.stop();
+    bus.destroy();
 }
 
 fn assert_eventbus_recreates_missing_handler_entries_from_event_result_metadata() {
@@ -270,7 +316,7 @@ fn assert_eventbus_recreates_missing_handler_entries_from_event_result_metadata(
     let event = bus.emit(SerializableEvent {
         ..Default::default()
     });
-    block_on(event.done());
+    let _ = block_on(event.now());
 
     let mut payload = bus.to_json_value();
     payload["handlers"] = json!({});
@@ -286,13 +332,8 @@ fn assert_eventbus_recreates_missing_handler_entries_from_event_result_metadata(
         restored_payload["handlers_by_key"]["SerializableEvent"],
         json!([handler.id])
     );
-    restored.stop();
-    bus.stop();
-}
-
-#[test]
-fn test_eventbus_validate_creates_missing_handler_entries_from_event_results() {
-    assert_eventbus_recreates_missing_handler_entries_from_event_result_metadata();
+    restored.destroy();
+    bus.destroy();
 }
 
 #[test]
@@ -336,14 +377,9 @@ fn assert_eventbus_promotes_pending_events_into_event_history() {
     assert!(event_history.contains_key(&pending_id));
     assert_eq!(payload["pending_event_queue"], json!([pending_id]));
 
-    block_on(first.done());
-    block_on(pending.done());
-    bus.stop();
-}
-
-#[test]
-fn test_eventbus_model_dump_promotes_pending_events_into_event_history() {
-    assert_eventbus_promotes_pending_events_into_event_history();
+    let _ = block_on(first.now());
+    let _ = block_on(pending.now());
+    bus.destroy();
 }
 
 #[test]
@@ -352,19 +388,30 @@ fn test_eventbus_to_json_promotes_pending_events_into_event_history_snapshot() {
 }
 
 #[test]
-fn test_eventbus_tojson_fromjson_roundtrip_uses_id_keyed_structures() {
-    assert_eventbus_json_roundtrip_uses_id_keyed_structures(
-        "SerializableBusToJSON",
-        "018f8e40-1234-7000-8000-000000001236",
+fn test_eventbus_from_json_preserves_event_history_object_order() {
+    let bus = EventBus::new(Some("HistoryOrderBus".to_string()));
+    let first = bus.emit(SerializableEvent {
+        ..Default::default()
+    });
+    let second = bus.emit(SerializableEvent {
+        ..Default::default()
+    });
+    let _ = block_on(first.now());
+    let _ = block_on(second.now());
+    let first_id = first.inner.inner.lock().event_id.clone();
+    let second_id = second.inner.inner.lock().event_id.clone();
+
+    let payload = bus.to_json_value();
+    assert_eq!(
+        json_object_keys(&payload, "event_history"),
+        vec![first_id.clone(), second_id.clone()]
     );
-}
 
-#[test]
-fn test_eventbus_fromjson_recreates_missing_handler_entries_from_event_result_metadata() {
-    assert_eventbus_recreates_missing_handler_entries_from_event_result_metadata();
-}
-
-#[test]
-fn test_eventbus_tojson_promotes_pending_events_into_event_history_snapshot() {
-    assert_eventbus_promotes_pending_events_into_event_history();
+    let restored = EventBus::from_json_value(payload);
+    assert_eq!(
+        json_object_keys(&restored.to_json_value(), "event_history"),
+        vec![first_id, second_id]
+    );
+    restored.destroy();
+    bus.destroy();
 }

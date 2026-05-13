@@ -1,13 +1,11 @@
-use std::{
-    any::TypeId, collections::HashMap, future::Future, marker::PhantomData, ops::Deref, sync::Arc,
-};
+use std::{any::TypeId, fmt, future::Future, marker::PhantomData, ops::Deref, sync::Arc};
 
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::types::{EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode};
 use crate::{
-    base_event::{BaseEvent as RawBaseEvent, EventResultsOptions},
+    base_event::{BaseEvent as RawBaseEvent, EventResultOptions, EventWaitOptions},
     event_bus::EventBus,
     event_handler::{EventHandler, EventHandlerOptions},
 };
@@ -130,6 +128,16 @@ pub struct BaseEventHandle<E: EventSpec> {
     pub inner: Arc<RawBaseEvent>,
     payload: Arc<E::payload>,
     marker: PhantomData<E>,
+}
+
+impl<E: EventSpec> fmt::Debug for BaseEventHandle<E> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BaseEventHandle")
+            .field("event_type", &E::event_type)
+            .field("event_id", &self.inner.inner.lock().event_id)
+            .finish()
+    }
 }
 
 pub trait IntoBaseEventHandle {
@@ -306,123 +314,65 @@ impl<E: EventSpec> BaseEventHandle<E> {
         self.inner.to_json_value()
     }
 
-    pub async fn done(&self) {
-        self.inner.done().await;
+    pub async fn now(&self) -> Result<Self, String> {
+        self.inner.now().await.map(|_| Self {
+            inner: self.inner.clone(),
+            payload: self.payload.clone(),
+            marker: PhantomData,
+        })
     }
 
-    pub async fn event_completed(&self) {
-        self.inner.event_completed().await;
+    pub async fn now_with_options(&self, options: EventWaitOptions) -> Result<Self, String> {
+        self.inner.now_with_options(options).await.map(|_| Self {
+            inner: self.inner.clone(),
+            payload: self.payload.clone(),
+            marker: PhantomData,
+        })
     }
 
-    pub async fn first(&self) -> Result<Option<E::event_result_type>, String> {
-        {
-            let event = self.inner.inner.lock();
-            if event.event_status == crate::types::EventStatus::Pending
-                && event.event_path.is_empty()
-                && event.event_pending_bus_count == 0
-                && event.event_results.is_empty()
-            {
-                return Err("event has no bus attached".to_string());
-            }
-        }
-        self.inner.inner.lock().event_handler_completion = Some(EventHandlerCompletionMode::First);
-        self.done().await;
-        self.first_result_or_error()
+    pub async fn wait(&self) -> Result<Self, String> {
+        self.wait_with_options(EventWaitOptions::default()).await
     }
 
-    pub async fn event_result(
+    pub async fn wait_with_options(&self, options: EventWaitOptions) -> Result<Self, String> {
+        self.inner.wait_with_options(options).await.map(|_| Self {
+            inner: self.inner.clone(),
+            payload: self.payload.clone(),
+            marker: PhantomData,
+        })
+    }
+
+    pub async fn event_result(&self) -> Result<Option<E::event_result_type>, String> {
+        self.event_result_with_options(EventResultOptions::default())
+            .await
+    }
+
+    pub async fn event_result_with_options(
         &self,
-        options: EventResultsOptions,
+        options: EventResultOptions,
     ) -> Result<Option<E::event_result_type>, String> {
         self.inner
-            .event_result(options)
+            .event_result_with_options(options)
             .await?
             .map(Self::decode_result_value)
             .transpose()
     }
 
-    pub async fn event_results_list(
+    pub async fn event_results_list(&self) -> Result<Vec<E::event_result_type>, String> {
+        self.event_results_list_with_options(EventResultOptions::default())
+            .await
+    }
+
+    pub async fn event_results_list_with_options(
         &self,
-        options: EventResultsOptions,
+        options: EventResultOptions,
     ) -> Result<Vec<E::event_result_type>, String> {
         self.inner
-            .event_results_list(options)
+            .event_results_list_with_options(options)
             .await?
             .into_iter()
             .map(Self::decode_result_value)
             .collect()
-    }
-
-    pub fn first_result(&self) -> Option<E::event_result_type> {
-        self.first_result_from_completed().ok().flatten()
-    }
-
-    pub fn first_result_or_error(&self) -> Result<Option<E::event_result_type>, String> {
-        let results: HashMap<String, crate::event_result::EventResult> =
-            self.inner.inner.lock().event_results.clone();
-        let mut error_results: Vec<_> = results
-            .values()
-            .filter(|result| {
-                result.status == crate::event_result::EventResultStatus::Error
-                    && !result
-                        .error
-                        .as_deref()
-                        .unwrap_or_default()
-                        .contains("first() resolved")
-            })
-            .collect();
-        error_results.sort_by(|left, right| {
-            left.completed_at
-                .cmp(&right.completed_at)
-                .then_with(|| left.started_at.cmp(&right.started_at))
-                .then_with(|| {
-                    left.handler
-                        .handler_registered_at
-                        .cmp(&right.handler.handler_registered_at)
-                })
-                .then_with(|| left.handler.id.cmp(&right.handler.id))
-        });
-        if let Some(error) = error_results
-            .into_iter()
-            .filter_map(|result| result.error.clone())
-            .next()
-        {
-            return Err(error);
-        }
-        self.first_result_from_completed()
-    }
-
-    fn first_result_from_completed(&self) -> Result<Option<E::event_result_type>, String> {
-        let results: HashMap<String, crate::event_result::EventResult> =
-            self.inner.inner.lock().event_results.clone();
-        let mut ordered_results: Vec<_> = results
-            .values()
-            .filter(|result| result.status == crate::event_result::EventResultStatus::Completed)
-            .collect();
-        ordered_results.sort_by(|left, right| {
-            left.completed_at
-                .cmp(&right.completed_at)
-                .then_with(|| left.started_at.cmp(&right.started_at))
-                .then_with(|| {
-                    left.handler
-                        .handler_registered_at
-                        .cmp(&right.handler.handler_registered_at)
-                })
-                .then_with(|| left.handler.id.cmp(&right.handler.id))
-        });
-        for result in ordered_results {
-            if result.error.is_none() {
-                if let Some(value) = &result.result {
-                    if value.is_null() || RawBaseEvent::is_base_event_json(value) {
-                        continue;
-                    }
-                    let decoded: E::event_result_type =
-                        serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
-                    return Ok(Some(decoded));
-                }
-            }
-        }
-        Ok(None)
     }
 
     fn decode_result_value(value: Value) -> Result<E::event_result_type, String> {
@@ -459,6 +409,7 @@ where
 
 impl EventBus {
     pub fn emit<I: IntoBaseEventHandle>(&self, event: I) -> BaseEventHandle<I::Event> {
+        self.raise_if_terminal_destroyed();
         let event = event.into_base_event_handle();
         let emitted = self.enqueue_base(event.inner.clone());
         BaseEventHandle::from_base_event(emitted)
@@ -469,12 +420,14 @@ impl EventBus {
         event: I,
         queue_jump: bool,
     ) -> BaseEventHandle<I::Event> {
+        self.raise_if_terminal_destroyed();
         let event = event.into_base_event_handle();
         let emitted = self.enqueue_base_with_options(event.inner.clone(), queue_jump);
         BaseEventHandle::from_base_event(emitted)
     }
 
     pub fn emit_child<I: IntoBaseEventHandle>(&self, event: I) -> BaseEventHandle<I::Event> {
+        self.raise_if_terminal_destroyed();
         let event = event.into_base_event_handle();
         let emitted = self.enqueue_child_base(event.inner.clone());
         BaseEventHandle::from_base_event(emitted)
@@ -485,6 +438,7 @@ impl EventBus {
         event: I,
         queue_jump: bool,
     ) -> BaseEventHandle<I::Event> {
+        self.raise_if_terminal_destroyed();
         let event = event.into_base_event_handle();
         let emitted = self.enqueue_child_base_with_options(event.inner.clone(), queue_jump);
         BaseEventHandle::from_base_event(emitted)

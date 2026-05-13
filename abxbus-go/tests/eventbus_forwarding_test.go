@@ -14,10 +14,13 @@ func TestEventsForwardBetweenBusesWithoutDuplication(t *testing.T) {
 	busA := abxbus.NewEventBus("BusA", nil)
 	busB := abxbus.NewEventBus("BusB", nil)
 	busC := abxbus.NewEventBus("BusC", nil)
+	defer busA.Destroy()
+	defer busB.Destroy()
+	defer busC.Destroy()
+
 	seenA := []string{}
 	seenB := []string{}
 	seenC := []string{}
-
 	busA.On("PingEvent", "seen_a", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		seenA = append(seenA, event.EventID)
 		return "a", nil
@@ -40,7 +43,7 @@ func TestEventsForwardBetweenBusesWithoutDuplication(t *testing.T) {
 	}, nil)
 
 	event := busA.Emit(abxbus.NewBaseEvent("PingEvent", map[string]any{"value": 1}))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
 	waitAllIdle(t, busA, busB, busC)
@@ -54,14 +57,83 @@ func TestEventsForwardBetweenBusesWithoutDuplication(t *testing.T) {
 	if !reflect.DeepEqual(event.EventPath, expectedPath) {
 		t.Fatalf("unexpected forwarding path: got %v want %v", event.EventPath, expectedPath)
 	}
+	if event.EventPendingBusCount != 0 {
+		t.Fatalf("event pending bus count should be zero, got %d", event.EventPendingBusCount)
+	}
+}
+
+func TestTreeLevelHierarchyBubbling(t *testing.T) {
+	parentBus := abxbus.NewEventBus("ParentBus", nil)
+	childBus := abxbus.NewEventBus("ChildBus", nil)
+	subchildBus := abxbus.NewEventBus("SubchildBus", nil)
+	defer parentBus.Destroy()
+	defer childBus.Destroy()
+	defer subchildBus.Destroy()
+
+	seenParent := []string{}
+	seenChild := []string{}
+	seenSubchild := []string{}
+	parentBus.On("PingEvent", "parent_seen", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		seenParent = append(seenParent, event.EventID)
+		return nil, nil
+	}, nil)
+	childBus.On("PingEvent", "child_seen", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		seenChild = append(seenChild, event.EventID)
+		return nil, nil
+	}, nil)
+	subchildBus.On("PingEvent", "subchild_seen", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		seenSubchild = append(seenSubchild, event.EventID)
+		return nil, nil
+	}, nil)
+	childBus.On("*", "forward_to_parent", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		parentBus.Emit(event)
+		return nil, nil
+	}, nil)
+	subchildBus.On("*", "forward_to_child", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		childBus.Emit(event)
+		return nil, nil
+	}, nil)
+
+	bottom := subchildBus.Emit(abxbus.NewBaseEvent("PingEvent", map[string]any{"value": 1}))
+	if _, err := bottom.Now(); err != nil {
+		t.Fatal(err)
+	}
+	waitAllIdle(t, subchildBus, childBus, parentBus)
+
+	if !reflect.DeepEqual(seenSubchild, []string{bottom.EventID}) ||
+		!reflect.DeepEqual(seenChild, []string{bottom.EventID}) ||
+		!reflect.DeepEqual(seenParent, []string{bottom.EventID}) {
+		t.Fatalf("bottom event should bubble once through all buses, got subchild=%v child=%v parent=%v", seenSubchild, seenChild, seenParent)
+	}
+	expectedPath := []string{subchildBus.Label(), childBus.Label(), parentBus.Label()}
+	if !reflect.DeepEqual(bottom.EventPath, expectedPath) {
+		t.Fatalf("unexpected bottom path: got %v want %v", bottom.EventPath, expectedPath)
+	}
+
+	seenParent, seenChild, seenSubchild = []string{}, []string{}, []string{}
+	middle := childBus.Emit(abxbus.NewBaseEvent("PingEvent", map[string]any{"value": 2}))
+	if _, err := middle.Now(); err != nil {
+		t.Fatal(err)
+	}
+	waitAllIdle(t, childBus, parentBus)
+
+	if len(seenSubchild) != 0 || !reflect.DeepEqual(seenChild, []string{middle.EventID}) || !reflect.DeepEqual(seenParent, []string{middle.EventID}) {
+		t.Fatalf("middle event should bubble to parent only, got subchild=%v child=%v parent=%v", seenSubchild, seenChild, seenParent)
+	}
+	expectedPath = []string{childBus.Label(), parentBus.Label()}
+	if !reflect.DeepEqual(middle.EventPath, expectedPath) {
+		t.Fatalf("unexpected middle path: got %v want %v", middle.EventPath, expectedPath)
+	}
 }
 
 func TestForwardingDisambiguatesBusesThatShareTheSameName(t *testing.T) {
 	busA := abxbus.NewEventBus("SharedName", nil)
 	busB := abxbus.NewEventBus("SharedName", nil)
+	defer busA.Destroy()
+	defer busB.Destroy()
+
 	seenA := []string{}
 	seenB := []string{}
-
 	busA.On("PingEvent", "seen_a", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		seenA = append(seenA, event.EventID)
 		return "a", nil
@@ -76,7 +148,7 @@ func TestForwardingDisambiguatesBusesThatShareTheSameName(t *testing.T) {
 	}, nil)
 
 	event := busA.Emit(abxbus.NewBaseEvent("PingEvent", map[string]any{"value": 99}))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
 	waitAllIdle(t, busA, busB)
@@ -93,10 +165,14 @@ func TestForwardingDisambiguatesBusesThatShareTheSameName(t *testing.T) {
 	}
 }
 
-func TestAwaitDoneWaitsForHandlersOnForwardedBuses(t *testing.T) {
+func TestAwaitEventNowWaitsForHandlersOnForwardedBuses(t *testing.T) {
 	busA := abxbus.NewEventBus("ForwardWaitA", nil)
 	busB := abxbus.NewEventBus("ForwardWaitB", nil)
 	busC := abxbus.NewEventBus("ForwardWaitC", nil)
+	defer busA.Destroy()
+	defer busB.Destroy()
+	defer busC.Destroy()
+
 	var mu sync.Mutex
 	completionLog := []string{}
 	record := func(value string) {
@@ -130,7 +206,7 @@ func TestAwaitDoneWaitsForHandlersOnForwardedBuses(t *testing.T) {
 	}, nil)
 
 	event := busA.Emit(abxbus.NewBaseEvent("PingEvent", map[string]any{"value": 2}))
-	if _, err := event.Done(context.Background()); err != nil {
+	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
 	waitAllIdle(t, busA, busB, busC)
@@ -138,21 +214,464 @@ func TestAwaitDoneWaitsForHandlersOnForwardedBuses(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	if len(completionLog) != 3 || !containsAll(completionLog, []string{"A", "B", "C"}) {
-		t.Fatalf("event.Done should wait for all forwarded handlers, got %v", completionLog)
+		t.Fatalf("event.Now should wait for all forwarded handlers, got %v", completionLog)
 	}
 	if event.EventPendingBusCount != 0 {
 		t.Fatalf("event pending bus count should be zero, got %d", event.EventPendingBusCount)
 	}
+	expectedPath := []string{busA.Label(), busB.Label(), busC.Label()}
+	if !reflect.DeepEqual(event.EventPath, expectedPath) {
+		t.Fatalf("unexpected forwarded wait path: got %v want %v", event.EventPath, expectedPath)
+	}
 }
 
-func TestCircularForwardingDoesNotLoop(t *testing.T) {
+func TestCircularForwardingFromFirstPeerDoesNotLoop(t *testing.T) {
 	peer1 := abxbus.NewEventBus("Peer1", nil)
 	peer2 := abxbus.NewEventBus("Peer2", nil)
 	peer3 := abxbus.NewEventBus("Peer3", nil)
+	defer peer1.Destroy()
+	defer peer2.Destroy()
+	defer peer3.Destroy()
+
+	seen1, seen2, seen3 := registerCycle(t, peer1, peer2, peer3)
+	event := peer1.Emit(abxbus.NewBaseEvent("PingEvent", map[string]any{"value": 42}))
+	if _, err := event.Now(); err != nil {
+		t.Fatal(err)
+	}
+	waitAllIdle(t, peer1, peer2, peer3)
+
+	if !reflect.DeepEqual(*seen1, []string{event.EventID}) ||
+		!reflect.DeepEqual(*seen2, []string{event.EventID}) ||
+		!reflect.DeepEqual(*seen3, []string{event.EventID}) {
+		t.Fatalf("cycle should see event once per peer, got p1=%v p2=%v p3=%v", *seen1, *seen2, *seen3)
+	}
+	expectedPath := []string{peer1.Label(), peer2.Label(), peer3.Label()}
+	if !reflect.DeepEqual(event.EventPath, expectedPath) {
+		t.Fatalf("unexpected cycle path from peer1: got %v want %v", event.EventPath, expectedPath)
+	}
+}
+
+func TestCircularForwardingFromMiddlePeerDoesNotLoop(t *testing.T) {
+	peer1 := abxbus.NewEventBus("RacePeer1", nil)
+	peer2 := abxbus.NewEventBus("RacePeer2", nil)
+	peer3 := abxbus.NewEventBus("RacePeer3", nil)
+	defer peer1.Destroy()
+	defer peer2.Destroy()
+	defer peer3.Destroy()
+
+	seen1, seen2, seen3 := registerCycle(t, peer1, peer2, peer3)
+	warmup := peer1.Emit(abxbus.NewBaseEvent("PingEvent", map[string]any{"value": 42}))
+	if _, err := warmup.Now(); err != nil {
+		t.Fatal(err)
+	}
+	waitAllIdle(t, peer1, peer2, peer3)
+	*seen1, *seen2, *seen3 = []string{}, []string{}, []string{}
+
+	event := peer2.Emit(abxbus.NewBaseEvent("PingEvent", map[string]any{"value": 99}))
+	if _, err := event.Now(); err != nil {
+		t.Fatal(err)
+	}
+	waitAllIdle(t, peer1, peer2, peer3)
+
+	if !reflect.DeepEqual(*seen1, []string{event.EventID}) ||
+		!reflect.DeepEqual(*seen2, []string{event.EventID}) ||
+		!reflect.DeepEqual(*seen3, []string{event.EventID}) {
+		t.Fatalf("cycle should see event once per peer, got p1=%v p2=%v p3=%v", *seen1, *seen2, *seen3)
+	}
+	expectedPath := []string{peer2.Label(), peer3.Label(), peer1.Label()}
+	if !reflect.DeepEqual(event.EventPath, expectedPath) {
+		t.Fatalf("unexpected cycle path from peer2: got %v want %v", event.EventPath, expectedPath)
+	}
+	if event.EventStatus != "completed" {
+		t.Fatalf("event should be completed, got %s", event.EventStatus)
+	}
+}
+
+func TestAwaitEventNowWaitsWhenForwardingHandlerIsAsyncDelayed(t *testing.T) {
+	busA := abxbus.NewEventBus("BusADelayedForward", nil)
+	busB := abxbus.NewEventBus("BusBDelayedForward", nil)
+	defer busA.Destroy()
+	defer busB.Destroy()
+
+	busADone := false
+	busBDone := false
+	busA.On("PingEvent", "handler_a", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		time.Sleep(20 * time.Millisecond)
+		busADone = true
+		return nil, nil
+	}, nil)
+	busB.On("PingEvent", "handler_b", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		time.Sleep(10 * time.Millisecond)
+		busBDone = true
+		return nil, nil
+	}, nil)
+	busA.On("*", "delayed_forward_to_b", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		time.Sleep(30 * time.Millisecond)
+		busB.Emit(event)
+		return nil, nil
+	}, nil)
+
+	event := busA.Emit(abxbus.NewBaseEvent("PingEvent", map[string]any{"value": 3}))
+	if _, err := event.Now(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !busADone || !busBDone {
+		t.Fatalf("event.Now should wait for delayed forwarding handlers, busADone=%v busBDone=%v", busADone, busBDone)
+	}
+	if event.EventPendingBusCount != 0 {
+		t.Fatalf("event pending bus count should be zero, got %d", event.EventPendingBusCount)
+	}
+	expectedPath := []string{busA.Label(), busB.Label()}
+	if !reflect.DeepEqual(event.EventPath, expectedPath) {
+		t.Fatalf("unexpected delayed forwarding path: got %v want %v", event.EventPath, expectedPath)
+	}
+}
+
+func TestForwardingSameEventDoesNotSetSelfParentID(t *testing.T) {
+	origin := abxbus.NewEventBus("SelfParentOrigin", nil)
+	target := abxbus.NewEventBus("SelfParentTarget", nil)
+	defer origin.Destroy()
+	defer target.Destroy()
+
+	origin.On("SelfParentForwardEvent", "origin_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return "origin-ok", nil
+	}, nil)
+	target.On("SelfParentForwardEvent", "target_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return "target-ok", nil
+	}, nil)
+	origin.On("*", "forward_to_target", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		target.Emit(event)
+		return nil, nil
+	}, nil)
+
+	event := origin.Emit(abxbus.NewBaseEvent("SelfParentForwardEvent", nil))
+	if _, err := event.Now(); err != nil {
+		t.Fatal(err)
+	}
+	waitAllIdle(t, origin, target)
+
+	if event.EventParentID != nil {
+		t.Fatalf("expected nil parent for forwarded same event, got %v", *event.EventParentID)
+	}
+	expectedPath := []string{origin.Label(), target.Label()}
+	if !reflect.DeepEqual(event.EventPath, expectedPath) {
+		t.Fatalf("unexpected self-parent forwarding path: got %v want %v", event.EventPath, expectedPath)
+	}
+}
+
+func TestForwardedEventUsesProcessingBusDefaults(t *testing.T) {
+	busATimeout := 1.5
+	busBTimeout := 2.5
+	busA := abxbus.NewEventBus("ForwardDefaultsA", &abxbus.EventBusOptions{
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+		EventTimeout:            &busATimeout,
+	})
+	busB := abxbus.NewEventBus("ForwardDefaultsB", &abxbus.EventBusOptions{
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
+		EventTimeout:            &busBTimeout,
+	})
+	defer busA.Destroy()
+	defer busB.Destroy()
+
+	var mu sync.Mutex
+	entries := []string{}
+	appendEntry := func(v string) {
+		mu.Lock()
+		defer mu.Unlock()
+		entries = append(entries, v)
+	}
+	h1Started := make(chan struct{}, 1)
+	h2Started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var inheritedRef *abxbus.BaseEvent
+
+	busB.On("ForwardedDefaultsChildEvent", "h1", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		if e.EventTimeout != nil || e.EventHandlerConcurrency != "" || e.EventHandlerCompletion != "" {
+			t.Fatalf("forwarded event should keep defaults unset in handler: %#v", e)
+		}
+		mode := e.Payload["mode"].(string)
+		appendEntry(mode + ":b1_start")
+		h1Started <- struct{}{}
+		<-release
+		appendEntry(mode + ":b1_end")
+		return "b1", nil
+	}, nil)
+	busB.On("ForwardedDefaultsChildEvent", "h2", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		if e.EventTimeout != nil || e.EventHandlerConcurrency != "" || e.EventHandlerCompletion != "" {
+			t.Fatalf("forwarded event should keep defaults unset in handler: %#v", e)
+		}
+		mode := e.Payload["mode"].(string)
+		appendEntry(mode + ":b2_start")
+		h2Started <- struct{}{}
+		appendEntry(mode + ":b2_end")
+		return "b2", nil
+	}, nil)
+	busA.On("ForwardedDefaultsTriggerEvent", "trigger", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		inherited := e.Emit(abxbus.NewBaseEvent("ForwardedDefaultsChildEvent", map[string]any{"mode": "inherited"}))
+		inheritedRef = inherited
+		busB.Emit(inherited)
+		if _, err := inherited.Now(); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}, nil)
+
+	top := busA.Emit(abxbus.NewBaseEvent("ForwardedDefaultsTriggerEvent", nil))
+	select {
+	case <-h1Started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for inherited h1 start")
+	}
+	select {
+	case <-h2Started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for inherited h2 start before h1 release")
+	}
+	close(release)
+	if _, err := top.Now(); err != nil {
+		t.Fatal(err)
+	}
+	waitAllIdle(t, busA, busB)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !(forwardingIndexOf(entries, "inherited:b2_start") < forwardingIndexOf(entries, "inherited:b1_end")) {
+		t.Fatalf("expected inherited mode parallel on processing bus, log=%v", entries)
+	}
+	if inheritedRef == nil {
+		t.Fatal("missing inherited event reference")
+	}
+	if inheritedRef.EventTimeout != nil || inheritedRef.EventHandlerConcurrency != "" || inheritedRef.EventHandlerCompletion != "" {
+		t.Fatalf("forwarded event should keep defaults unset after processing: %#v", inheritedRef)
+	}
+	busBResults := 0
+	for _, result := range inheritedRef.EventResults {
+		if result.EventBusID != busB.ID {
+			continue
+		}
+		busBResults++
+		if result.HandlerTimeout == nil || *result.HandlerTimeout != busBTimeout {
+			t.Fatalf("target bus default timeout should be resolved on handler result, got %#v", result.HandlerTimeout)
+		}
+	}
+	if busBResults == 0 {
+		t.Fatal("expected busB handler results")
+	}
+}
+
+func TestForwardedEventPreservesExplicitHandlerConcurrencyOverride(t *testing.T) {
+	busA := abxbus.NewEventBus("ForwardOverrideA", &abxbus.EventBusOptions{EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel})
+	busB := abxbus.NewEventBus("ForwardOverrideB", &abxbus.EventBusOptions{EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel})
+	defer busA.Destroy()
+	defer busB.Destroy()
+
+	var mu sync.Mutex
+	entries := []string{}
+	appendEntry := func(v string) {
+		mu.Lock()
+		defer mu.Unlock()
+		entries = append(entries, v)
+	}
+	h1Started := make(chan struct{}, 1)
+	h2Started := make(chan struct{}, 1)
+	release := make(chan struct{})
+
+	busB.On("ForwardedDefaultsChildEvent", "h1", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		mode := e.Payload["mode"].(string)
+		appendEntry(mode + ":b1_start")
+		h1Started <- struct{}{}
+		<-release
+		appendEntry(mode + ":b1_end")
+		return "b1", nil
+	}, nil)
+	busB.On("ForwardedDefaultsChildEvent", "h2", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		mode := e.Payload["mode"].(string)
+		appendEntry(mode + ":b2_start")
+		h2Started <- struct{}{}
+		appendEntry(mode + ":b2_end")
+		return "b2", nil
+	}, nil)
+	busA.On("ForwardedDefaultsTriggerEvent", "trigger", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
+		override := e.Emit(abxbus.NewBaseEvent("ForwardedDefaultsChildEvent", map[string]any{"mode": "override"}))
+		override.EventHandlerConcurrency = abxbus.EventHandlerConcurrencySerial
+		busB.Emit(override)
+		if _, err := override.Now(); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}, nil)
+
+	top := busA.Emit(abxbus.NewBaseEvent("ForwardedDefaultsTriggerEvent", nil))
+	select {
+	case <-h1Started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for override h1 start")
+	}
+	select {
+	case <-h2Started:
+		t.Fatal("override h2 started before h1 release; explicit serial override was ignored")
+	default:
+	}
+	close(release)
+	if _, err := top.Now(); err != nil {
+		t.Fatal(err)
+	}
+	waitAllIdle(t, busA, busB)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !(forwardingIndexOf(entries, "override:b1_end") < forwardingIndexOf(entries, "override:b2_start")) {
+		t.Fatalf("expected override mode serial, log=%v", entries)
+	}
+}
+
+func TestForwardedFirstModeUsesProcessingBusHandlerConcurrencyDefaults(t *testing.T) {
+	busA := abxbus.NewEventBus("ForwardedFirstDefaultsA", &abxbus.EventBusOptions{
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial,
+		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
+	})
+	busB := abxbus.NewEventBus("ForwardedFirstDefaultsB", &abxbus.EventBusOptions{
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
+		EventHandlerCompletion:  abxbus.EventHandlerCompletionFirst,
+	})
+	defer busA.Destroy()
+	defer busB.Destroy()
+
+	var mu sync.Mutex
+	log := []string{}
+	appendLog := func(v string) {
+		mu.Lock()
+		defer mu.Unlock()
+		log = append(log, v)
+	}
+
+	busA.On("*", "forward_to_b", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		busB.Emit(event)
+		return nil, nil
+	}, nil)
+	busB.On("ForwardedFirstDefaultsEvent", "slow", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		appendLog("slow_start")
+		time.Sleep(20 * time.Millisecond)
+		appendLog("slow_end")
+		return "slow", nil
+	}, nil)
+	busB.On("ForwardedFirstDefaultsEvent", "fast", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		appendLog("fast_start")
+		time.Sleep(time.Millisecond)
+		appendLog("fast_end")
+		return "fast", nil
+	}, nil)
+
+	event := busA.Emit(abxbus.NewBaseEvent("ForwardedFirstDefaultsEvent", nil))
+	if _, err := event.Now(&abxbus.EventWaitOptions{FirstResult: true}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitAllIdle(t, busA, busB)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if result != "fast" {
+		t.Fatalf("first-mode on processing bus should pick fast handler, got %v log=%v", result, log)
+	}
+	if !containsAll(log, []string{"slow_start", "fast_start"}) {
+		t.Fatalf("both handlers should start under parallel first-mode, log=%v", log)
+	}
+}
+
+func TestProxyDispatchAutoLinksChildEventsLikeEmit(t *testing.T) {
+	bus := abxbus.NewEventBus("ProxyDispatchAutoLinkBus", nil)
+	defer bus.Destroy()
+
+	bus.On("ProxyDispatchRootEvent", "root_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		event.Emit(abxbus.NewBaseEvent("ProxyDispatchChildEvent", nil))
+		return "root", nil
+	}, nil)
+	bus.On("ProxyDispatchChildEvent", "child_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		return "child", nil
+	}, nil)
+
+	root := bus.Emit(abxbus.NewBaseEvent("ProxyDispatchRootEvent", nil))
+	if _, err := root.Now(); err != nil {
+		t.Fatal(err)
+	}
+	waitAllIdle(t, bus)
+
+	children := eventChildren(root)
+	if len(children) != 1 {
+		t.Fatalf("expected one child event, got %d", len(children))
+	}
+	if children[0].EventParentID == nil || *children[0].EventParentID != root.EventID {
+		t.Fatalf("child parent id should be root event id, got %v want %s", children[0].EventParentID, root.EventID)
+	}
+}
+
+func TestProxyDispatchOfSameEventDoesNotSelfParentOrSelfLinkChild(t *testing.T) {
+	bus := abxbus.NewEventBus("ProxyDispatchSameEventBus", nil)
+	defer bus.Destroy()
+
+	bus.On("ProxyDispatchRootEvent", "root_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		event.Emit(event)
+		return "root", nil
+	}, nil)
+
+	root := bus.Emit(abxbus.NewBaseEvent("ProxyDispatchRootEvent", nil))
+	if _, err := root.Now(); err != nil {
+		t.Fatal(err)
+	}
+	waitAllIdle(t, bus)
+
+	if root.EventParentID != nil {
+		t.Fatalf("expected nil parent for same-event dispatch, got %v", *root.EventParentID)
+	}
+	if children := eventChildren(root); len(children) != 0 {
+		t.Fatalf("expected no self-linked children, got %d", len(children))
+	}
+}
+
+func TestEventsAreProcessedInFIFOOrder(t *testing.T) {
+	bus := abxbus.NewEventBus("FifoBus", nil)
+	defer bus.Destroy()
+
+	processedOrders := []int{}
+	handlerStartTimes := []time.Time{}
+	bus.On("OrderEvent", "order_handler", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
+		handlerStartTimes = append(handlerStartTimes, time.Now())
+		order := event.Payload["order"].(int)
+		if order%2 == 0 {
+			time.Sleep(30 * time.Millisecond)
+		} else {
+			time.Sleep(5 * time.Millisecond)
+		}
+		processedOrders = append(processedOrders, order)
+		return nil, nil
+	}, nil)
+
+	for order := 0; order < 10; order++ {
+		bus.Emit(abxbus.NewBaseEvent("OrderEvent", map[string]any{"order": order}))
+	}
+	waitAllIdle(t, bus)
+
+	expected := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+	if !reflect.DeepEqual(processedOrders, expected) {
+		t.Fatalf("events should be processed in FIFO order, got %v want %v", processedOrders, expected)
+	}
+	for i := 1; i < len(handlerStartTimes); i++ {
+		if handlerStartTimes[i].Before(handlerStartTimes[i-1]) {
+			t.Fatalf("handler start times should be monotonic, got %v", handlerStartTimes)
+		}
+	}
+}
+
+func registerCycle(t *testing.T, peer1, peer2, peer3 *abxbus.EventBus) (*[]string, *[]string, *[]string) {
+	t.Helper()
 	seen1 := []string{}
 	seen2 := []string{}
 	seen3 := []string{}
-
 	peer1.On("PingEvent", "seen_1", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
 		seen1 = append(seen1, event.EventID)
 		return "p1", nil
@@ -177,175 +696,15 @@ func TestCircularForwardingDoesNotLoop(t *testing.T) {
 		peer1.Emit(event)
 		return nil, nil
 	}, nil)
-
-	event := peer1.Emit(abxbus.NewBaseEvent("PingEvent", map[string]any{"value": 42}))
-	if _, err := event.Done(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	waitAllIdle(t, peer1, peer2, peer3)
-
-	if !reflect.DeepEqual(seen1, []string{event.EventID}) ||
-		!reflect.DeepEqual(seen2, []string{event.EventID}) ||
-		!reflect.DeepEqual(seen3, []string{event.EventID}) {
-		t.Fatalf("cycle should see first event once per peer, got p1=%v p2=%v p3=%v", seen1, seen2, seen3)
-	}
-	expectedPath := []string{peer1.Label(), peer2.Label(), peer3.Label()}
-	if !reflect.DeepEqual(event.EventPath, expectedPath) {
-		t.Fatalf("unexpected cycle path from peer1: got %v want %v", event.EventPath, expectedPath)
-	}
-
-	seen1, seen2, seen3 = []string{}, []string{}, []string{}
-	event2 := peer2.Emit(abxbus.NewBaseEvent("PingEvent", map[string]any{"value": 99}))
-	if _, err := event2.Done(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	waitAllIdle(t, peer1, peer2, peer3)
-
-	if !reflect.DeepEqual(seen1, []string{event2.EventID}) ||
-		!reflect.DeepEqual(seen2, []string{event2.EventID}) ||
-		!reflect.DeepEqual(seen3, []string{event2.EventID}) {
-		t.Fatalf("cycle should see second event once per peer, got p1=%v p2=%v p3=%v", seen1, seen2, seen3)
-	}
-	expectedPath = []string{peer2.Label(), peer3.Label(), peer1.Label()}
-	if !reflect.DeepEqual(event2.EventPath, expectedPath) {
-		t.Fatalf("unexpected cycle path from peer2: got %v want %v", event2.EventPath, expectedPath)
-	}
+	return &seen1, &seen2, &seen3
 }
 
-func TestForwardingDoesNotSetSelfParentOnSameEvent(t *testing.T) {
-	origin := abxbus.NewEventBus("Origin", nil)
-	target := abxbus.NewEventBus("Target", nil)
-	origin.On("*", "forward", func(ctx context.Context, e *abxbus.BaseEvent) (any, error) { return target.Emit(e), nil }, nil)
-
-	e := origin.Emit(abxbus.NewBaseEvent("SelfParentForwardEvent", nil))
-	if _, err := e.Done(context.Background()); err != nil {
-		t.Fatal(err)
+func eventChildren(event *abxbus.BaseEvent) []*abxbus.BaseEvent {
+	children := []*abxbus.BaseEvent{}
+	for _, result := range event.EventResults {
+		children = append(children, result.EventChildren...)
 	}
-	if e.EventParentID != nil {
-		t.Fatalf("expected nil parent for forwarded same event, got %v", *e.EventParentID)
-	}
-	if len(e.EventPath) != 2 {
-		t.Fatalf("expected both buses in event_path, got %v", e.EventPath)
-	}
-}
-
-func TestForwardedEventUsesProcessingBusDefaults(t *testing.T) {
-	busA := abxbus.NewEventBus("ForwardDefaultsA", &abxbus.EventBusOptions{EventHandlerConcurrency: abxbus.EventHandlerConcurrencySerial})
-	busB := abxbus.NewEventBus("ForwardDefaultsB", &abxbus.EventBusOptions{EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel})
-
-	var mu sync.Mutex
-	entries := []string{}
-	appendEntry := func(v string) {
-		mu.Lock()
-		defer mu.Unlock()
-		entries = append(entries, v)
-	}
-
-	h1StartedInherited := make(chan struct{}, 1)
-	h1StartedOverride := make(chan struct{}, 1)
-	h2StartedInherited := make(chan struct{}, 1)
-	releaseInherited := make(chan struct{})
-	releaseOverride := make(chan struct{})
-
-	h1 := func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
-		mode := e.Payload["mode"].(string)
-		appendEntry(mode + ":b1_start")
-		switch mode {
-		case "inherited":
-			h1StartedInherited <- struct{}{}
-			<-releaseInherited
-		case "override":
-			h1StartedOverride <- struct{}{}
-			<-releaseOverride
-		}
-		appendEntry(mode + ":b1_end")
-		return "b1", nil
-	}
-	h2 := func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
-		mode := e.Payload["mode"].(string)
-		appendEntry(mode + ":b2_start")
-		if mode == "inherited" {
-			h2StartedInherited <- struct{}{}
-		}
-		appendEntry(mode + ":b2_end")
-		return "b2", nil
-	}
-	trigger := func(ctx context.Context, e *abxbus.BaseEvent) (any, error) {
-		inherited := busA.Emit(abxbus.NewBaseEvent("ForwardedDefaultsChildEvent", map[string]any{"mode": "inherited"}))
-		busB.Emit(inherited)
-		if _, err := inherited.Done(ctx); err != nil {
-			return nil, err
-		}
-
-		override := busA.Emit(abxbus.NewBaseEvent("ForwardedDefaultsChildEvent", map[string]any{"mode": "override"}))
-		override.EventHandlerConcurrency = abxbus.EventHandlerConcurrencySerial
-		busB.Emit(override)
-		if _, err := override.Done(ctx); err != nil {
-			return nil, err
-		}
-		return nil, nil
-	}
-	busA.On("ForwardedDefaultsTriggerEvent", "trigger", trigger, nil)
-	busB.On("ForwardedDefaultsChildEvent", "h1", h1, nil)
-	busB.On("ForwardedDefaultsChildEvent", "h2", h2, nil)
-
-	top := busA.Emit(abxbus.NewBaseEvent("ForwardedDefaultsTriggerEvent", nil))
-	select {
-	case <-h1StartedInherited:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for inherited h1 start")
-	}
-	select {
-	case <-h2StartedInherited:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for inherited h2 start before h1 release")
-	}
-	close(releaseInherited)
-
-	select {
-	case <-h1StartedOverride:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for override h1 start")
-	}
-	close(releaseOverride)
-
-	if _, err := top.Done(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	to := 2.0
-	if !busA.WaitUntilIdle(&to) {
-		t.Fatal("busA did not become idle")
-	}
-	if !busB.WaitUntilIdle(&to) {
-		t.Fatal("busB did not become idle")
-	}
-
-	idx := func(s string) int {
-		for i, v := range entries {
-			if v == s {
-				return i
-			}
-		}
-		return -1
-	}
-	requireIndex := func(label string) int {
-		i := idx(label)
-		if i < 0 {
-			t.Fatalf("missing required log entry %q, log=%v", label, entries)
-		}
-		return i
-	}
-
-	inheritedB2Start := requireIndex("inherited:b2_start")
-	inheritedB1End := requireIndex("inherited:b1_end")
-	if !(inheritedB2Start < inheritedB1End) {
-		t.Fatalf("expected inherited mode parallel on processing bus, log=%v", entries)
-	}
-	overrideB1End := requireIndex("override:b1_end")
-	overrideB2Start := requireIndex("override:b2_start")
-	if !(overrideB1End < overrideB2Start) {
-		t.Fatalf("expected override mode serial, log=%v", entries)
-	}
+	return children
 }
 
 func waitAllIdle(t *testing.T, buses ...*abxbus.EventBus) {
@@ -356,6 +715,15 @@ func waitAllIdle(t *testing.T, buses ...*abxbus.EventBus) {
 			t.Fatalf("%s did not become idle", bus.Name)
 		}
 	}
+}
+
+func forwardingIndexOf(values []string, expected string) int {
+	for i, value := range values {
+		if value == expected {
+			return i
+		}
+	}
+	return -1
 }
 
 func containsAll(values []string, expected []string) bool {

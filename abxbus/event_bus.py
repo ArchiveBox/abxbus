@@ -26,6 +26,7 @@ from abxbus.base_event import (
     EventHandlerCompletionMode,
     EventHandlerConcurrencyMode,
     EventResult,
+    EventResultsDict,
     EventStatus,
     PythonIdentifierStr,
     PythonIdStr,
@@ -39,6 +40,7 @@ from abxbus.event_handler import (
     EventHandlerAbortedError,
     EventHandlerCallable,
     EventHandlerCancelledError,
+    EventHandlerTimeoutError,
 )
 from abxbus.event_history import EventHistory
 from abxbus.helpers import (
@@ -122,6 +124,27 @@ def in_handler_context() -> bool:
     return get_current_handler_id() is not None
 
 
+def current_handler_context_is_stale() -> bool:
+    """Return True when this async context belongs to a cancelled/aborted handler."""
+    current_event = get_current_event()
+    current_handler_id = get_current_handler_id()
+    if current_event is None or current_handler_id is None:
+        return False
+    current_task = asyncio.current_task()
+    if current_task is not None and current_task.cancelling():
+        return True
+    current_result = current_event.event_results.get(current_handler_id)
+    if current_result is None:
+        return False
+    current_error = current_result.error
+    if current_error is None and isinstance(current_result.result, BaseException):
+        current_error = current_result.result
+    return isinstance(
+        current_error,
+        (EventHandlerTimeoutError, EventHandlerCancelledError, EventHandlerAbortedError),
+    )
+
+
 class EventBus:
     """
     Async event bus with write-ahead logging and guaranteed FIFO processing.
@@ -178,6 +201,7 @@ class EventBus:
     find_waiters: set[_FindWaiter]
     _lock_for_event_bus_serial: ReentrantLock
     locks: LockManagerProtocol
+    _destroyed: bool
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -237,7 +261,7 @@ class EventBus:
 
         for existing_bus in list(type(self).all_instances):  # Make a list copy to avoid modification during iteration
             if existing_bus is not self and existing_bus.name == self.name:
-                # Since stop() renames buses to _stopped_{id}, any bus with a matching
+                # Since destroy() renames buses to _destroyed_{id}, any bus with a matching
                 # user-specified name is either running or never-started - both should
                 # be considered conflicts. This makes name conflict detection deterministic.
                 conflicting_buses.append(existing_bus)
@@ -251,7 +275,7 @@ class EventBus:
             warnings.warn(
                 f'⚠️ EventBus with name "{original_name}" already exists. '
                 f'Auto-generated unique name: "{self.name}" to avoid conflicts. '
-                f'Consider using unique names or stop(clear=True) on unused buses.',
+                f'Consider using unique names or destroy(clear=True) on unused buses.',
                 UserWarning,
                 stacklevel=2,
             )
@@ -282,20 +306,20 @@ class EventBus:
             self.event_handler_completion = EventHandlerCompletionMode(event_handler_completion or EventHandlerCompletionMode.ALL)
         except ValueError as exc:
             raise AssertionError(f'event_handler_completion must be "all" or "first", got: {event_handler_completion!r}') from exc
-        self.event_timeout = event_timeout
-        self.event_slow_timeout = event_slow_timeout
-        self.event_handler_slow_timeout = event_handler_slow_timeout
+        self.event_timeout = 60.0 if event_timeout is None else event_timeout
+        self.event_slow_timeout = 300.0 if event_slow_timeout is None else event_slow_timeout
+        self.event_handler_slow_timeout = 30.0 if event_handler_slow_timeout is None else event_handler_slow_timeout
         self.event_handler_detect_file_paths = bool(event_handler_detect_file_paths)
         self.warn_on_duplicate_handler_names = bool(warn_on_duplicate_handler_names)
         self.max_handler_recursion_depth = int(max_handler_recursion_depth)
-        assert self.event_timeout is None or self.event_timeout > 0, (
-            f'event_timeout must be > 0 or None, got: {self.event_timeout!r}'
+        assert self.event_timeout is None or self.event_timeout >= 0, (
+            f'event_timeout must be >= 0 or None, got: {self.event_timeout!r}'
         )
-        assert self.event_slow_timeout is None or self.event_slow_timeout > 0, (
-            f'event_slow_timeout must be > 0 or None, got: {self.event_slow_timeout!r}'
+        assert self.event_slow_timeout is None or self.event_slow_timeout >= 0, (
+            f'event_slow_timeout must be >= 0 or None, got: {self.event_slow_timeout!r}'
         )
-        assert self.event_handler_slow_timeout is None or self.event_handler_slow_timeout > 0, (
-            f'event_handler_slow_timeout must be > 0 or None, got: {self.event_handler_slow_timeout!r}'
+        assert self.event_handler_slow_timeout is None or self.event_handler_slow_timeout >= 0, (
+            f'event_handler_slow_timeout must be >= 0 or None, got: {self.event_handler_slow_timeout!r}'
         )
         assert self.max_handler_recursion_depth >= 0, (
             f'max_handler_recursion_depth must be >= 0, got: {self.max_handler_recursion_depth!r}'
@@ -306,9 +330,14 @@ class EventBus:
         self.processing_event_ids = set()
         self._pending_handler_changes = []
         self.find_waiters = set()
+        self._destroyed = False
 
         # Register this instance
         type(self).all_instances.add(self)
+
+    def _raise_if_destroyed(self) -> None:
+        if self._destroyed:
+            raise RuntimeError(f'{self} has been destroyed and cannot be used again')
 
     @staticmethod
     def _normalize_middlewares(middlewares: Sequence[EventBusMiddlewareInput] | None) -> list[EventBusMiddleware]:
@@ -330,7 +359,7 @@ class EventBus:
         # Most cleanup should have been done by the event loop close hook
         # This is just a fallback for any remaining cleanup
 
-        # Signal the run loop to stop
+        # Signal the run loop to exit
         self._is_running = False
         if self.pending_event_queue:
             try:
@@ -588,7 +617,7 @@ class EventBus:
         bus.event_history.clear()
 
         raw_handlers = cls._normalize_json_object_required(
-            payload.get('handlers'),
+            payload.get('handlers', {}),
             'EventBus.validate() expects handlers to be an id-keyed object',
         )
         for raw_handler_id, raw_handler_payload in raw_handlers.items():
@@ -602,7 +631,7 @@ class EventBus:
             bus.handlers[handler_entry.id] = handler_entry
 
         raw_handlers_by_key = cls._normalize_json_object_required(
-            payload.get('handlers_by_key'),
+            payload.get('handlers_by_key', {}),
             'EventBus.validate() expects handlers_by_key to be an object',
         )
         for raw_key, raw_ids in raw_handlers_by_key.items():
@@ -660,7 +689,7 @@ class EventBus:
                 hydrated_results[event_result.handler_id] = event_result
                 pending_child_links.append((event_result, child_ids))
 
-            event.event_results = hydrated_results
+            event.event_results = EventResultsDict(hydrated_results)
             bus.event_history[event.event_id] = event
 
         pending_event_ids: list[str] = []
@@ -866,20 +895,19 @@ class EventBus:
 
     @staticmethod
     def _resolve_event_slow_timeout(event: BaseEvent[Any], eventbus: 'EventBus') -> float | None:
-        event_slow_timeout = event.event_slow_timeout
-        if event_slow_timeout is not None:
-            return event_slow_timeout
-        return eventbus.event_slow_timeout
+        event_slow_timeout = event.event_slow_timeout if event.event_slow_timeout is not None else eventbus.event_slow_timeout
+        return event_slow_timeout if event_slow_timeout is not None and event_slow_timeout > 0 else None
 
     @staticmethod
     def _resolve_handler_slow_timeout(event: BaseEvent[Any], handler: EventHandler, eventbus: 'EventBus') -> float | None:
-        if 'handler_slow_timeout' in handler.model_fields_set:
+        if 'handler_slow_timeout' in handler.model_fields_set and handler.handler_slow_timeout is not None:
             return handler.handler_slow_timeout
-        if event.event_handler_slow_timeout is not None:
-            return event.event_handler_slow_timeout
-        if event.event_slow_timeout is not None:
-            return event.event_slow_timeout
-        return eventbus.event_handler_slow_timeout
+        event_handler_slow_timeout = (
+            event.event_handler_slow_timeout
+            if event.event_handler_slow_timeout is not None
+            else eventbus.event_handler_slow_timeout
+        )
+        return event_handler_slow_timeout if event_handler_slow_timeout is not None and event_handler_slow_timeout > 0 else None
 
     @staticmethod
     def _resolve_handler_timeout(
@@ -888,14 +916,18 @@ class EventBus:
         eventbus: 'EventBus',
         timeout_override: float | None = None,
     ) -> float | None:
-        if 'handler_timeout' in handler.model_fields_set:
+        if 'handler_timeout' in handler.model_fields_set and handler.handler_timeout is not None:
             resolved_handler_timeout = handler.handler_timeout
         elif event.event_handler_timeout is not None:
             resolved_handler_timeout = event.event_handler_timeout
         else:
-            resolved_handler_timeout = eventbus.event_timeout
+            resolved_handler_timeout = None
 
-        resolved_event_timeout = event.event_timeout if event.event_timeout is not None else eventbus.event_timeout
+        if resolved_handler_timeout is not None and resolved_handler_timeout <= 0:
+            resolved_handler_timeout = None
+
+        raw_event_timeout = event.event_timeout if event.event_timeout is not None else eventbus.event_timeout
+        resolved_event_timeout = raw_event_timeout if raw_event_timeout is not None and raw_event_timeout > 0 else None
 
         if resolved_handler_timeout is None and resolved_event_timeout is None:
             resolved_timeout = None
@@ -905,6 +937,9 @@ class EventBus:
             resolved_timeout = resolved_handler_timeout
         else:
             resolved_timeout = min(resolved_handler_timeout, resolved_event_timeout)
+
+        if timeout_override is not None and timeout_override <= 0:
+            timeout_override = None
 
         if timeout_override is None:
             return resolved_timeout
@@ -1006,6 +1041,7 @@ class EventBus:
         flattened into the original event's results, so EventResults sees all handlers
         from all buses as a single flat collection.
         """
+        self._raise_if_destroyed()
         assert isinstance(event_pattern, str) or isinstance(event_pattern, type), (
             f'Invalid event pattern: {event_pattern}, must be a string event type or subclass of BaseEvent'
         )
@@ -1081,6 +1117,7 @@ class EventBus:
         handler: EventHandlerCallable | PythonIdStr | EventHandler | None = None,
     ) -> None:
         """Deregister handlers for an event pattern by id, callable, EventHandler, or all."""
+        self._raise_if_destroyed()
         event_key = EventHistory.normalize_event_pattern(event_pattern)
         indexed_ids = list(self.handlers_by_key.get(event_key, []))
         if not indexed_ids:
@@ -1132,6 +1169,7 @@ class EventBus:
                 # 2. returns a pending SomeEvent() with pending results in .event_results
                 # 3. awaiting .event_result() waits until all pending results are complete, and returns the raw result value of the first one
         """
+        self._raise_if_destroyed()
 
         try:
             asyncio.get_running_loop()
@@ -1141,6 +1179,9 @@ class EventBus:
         assert event.event_id, 'Missing event.event_id: UUIDStr = uuid7str()'
         assert event.event_created_at, 'Missing event.event_created_at: str = monotonic_datetime()'
         assert event.event_type and event.event_type.isidentifier(), 'Missing event.event_type: str'
+
+        if current_handler_context_is_stale():
+            return event
 
         # Capture emit-time context for propagation to handlers (GitHub issue #20)
         # This ensures ContextVars set before emit() are accessible in handlers
@@ -1210,7 +1251,7 @@ class EventBus:
                 # Resolve future find waiters immediately on emit so callers
                 # don't wait for queue position or handler execution.
                 self._resolve_find_waiters(event)
-                if in_handler_context() and self.locks.get_lock_for_event(self, event) is None:
+                if self.locks.get_lock_for_event(self, event) is None:
                     self._start_parallel_event_task_from_queue(event)
                 if logger.isEnabledFor(logging.INFO):
                     logger.info(
@@ -1403,6 +1444,7 @@ class EventBus:
         (newest to oldest) instead of just the first match. Accepts an
         additional ``limit`` argument to cap the number of results.
         """
+        self._raise_if_destroyed()
         return await self.event_history.filter(
             event_type,
             where=where,
@@ -1456,6 +1498,7 @@ class EventBus:
 
     def _start(self) -> None:
         """Start the event bus if not already running"""
+        self._raise_if_destroyed()
         if not self._is_running:
             try:
                 loop = asyncio.get_running_loop()
@@ -1477,7 +1520,7 @@ class EventBus:
                         # Clean up all registered EventBuses before closing the loop
                         for eventbus in list(eventbus_class._loop_eventbus_instances.get(loop, empty_eventbuses)):
                             try:
-                                # Stop the eventbus while loop is still running
+                                # Exit the EventBus loop while the asyncio loop is still running
                                 if eventbus._is_running:
                                     eventbus._is_running = False
 
@@ -1513,7 +1556,7 @@ class EventBus:
 
                 # Create and start the run loop task.
                 # Use a weakref-based runner so an unreferenced EventBus can be GC'd
-                # without requiring explicit stop(clear=True) by callers.
+                # without requiring explicit destroy(clear=True) by callers.
                 # Run loops must start with a clean context. If emit() is called
                 # from inside a handler, lock-depth ContextVars would otherwise leak
                 # into the new task and bypass event lock acquisition.
@@ -1527,35 +1570,26 @@ class EventBus:
                 # No event loop - will start when one becomes available
                 pass
 
-    async def stop(self, timeout: float | None = None, clear: bool = False) -> None:
-        """Stop the event bus, optionally waiting for events to complete
+    async def destroy(self, clear: bool = True) -> None:
+        """Destroy the event bus immediately and prevent further use
 
         Args:
-            timeout: Maximum time to wait for pending events to complete
-            clear: If True, clear event history and remove from global tracking to free memory
+            clear: If True, clear handlers/history for memory cleanup. If False, preserve
+                handlers/history for inspection. Destroy is terminal either way.
         """
-        if not self._is_running and not self._parallel_event_tasks:
-            for waiter in tuple(self.find_waiters):
-                self.find_waiters.discard(waiter)
-                if waiter.timeout_handle is not None:
-                    waiter.timeout_handle.cancel()
-                if not waiter.future.done():
-                    waiter.future.set_result(None)
+        if self._destroyed:
+            if clear:
+                self.event_history.clear()
+                self.handlers.clear()
+                self.handlers_by_key.clear()
+                self.middlewares.clear()
             return
-
-        # Wait for completion if timeout specified and > 0
-        # timeout=0 means "don't wait", so skip the wait entirely
-        if timeout is not None and timeout > 0:
-            try:
-                await self.wait_until_idle(timeout=timeout)
-            except TimeoutError:
-                pass
 
         queue_size = self.pending_event_queue.qsize() if self.pending_event_queue else 0
         has_inflight = self._has_inflight_events_fast()
         if queue_size or has_inflight:
             logger.debug(
-                '⚠️ %s stopping with pending events: queue=%d inflight=%s history=%d',
+                '⚠️ %s destroying with pending events: queue=%d inflight=%s history=%d',
                 self,
                 queue_size,
                 has_inflight,
@@ -1564,18 +1598,19 @@ class EventBus:
 
         # Signal shutdown
         self._is_running = False
+        self._destroyed = True
 
         # Shutdown the queue to unblock any pending get() operations
         if self.pending_event_queue:
-            self.pending_event_queue.shutdown()
+            self.pending_event_queue.shutdown(immediate=True)
+            self.pending_event_queue._queue.clear()  # pyright: ignore[reportPrivateUsage]
 
-        # print('STOPPING', self.event_history)
+        # print('DESTROYING', self.event_history)
 
-        # Wait for the run loop task to finish / force-cancel it if it's hanging
         if self._runloop_task and not self._runloop_task.done():
-            await asyncio.wait({self._runloop_task}, timeout=0.1)
             try:
                 self._runloop_task.cancel()
+                self._runloop_task.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
             except Exception:
                 pass
 
@@ -1583,13 +1618,13 @@ class EventBus:
             for task in list(self._parallel_event_tasks):
                 if not task.done():
                     task.cancel()
-            await asyncio.gather(*list(self._parallel_event_tasks), return_exceptions=True)
             self._parallel_event_tasks.clear()
 
         # Clear references
         self._runloop_task = None
         self.in_flight_event_ids.clear()
         self.processing_event_ids.clear()
+        self._pending_handler_changes.clear()
         for waiter in tuple(self.find_waiters):
             self.find_waiters.discard(waiter)
             if waiter.timeout_handle is not None:
@@ -1599,35 +1634,42 @@ class EventBus:
         if self._on_idle:
             self._on_idle.set()
 
-        # Rename the bus to release the name. This ensures stopped buses don't
-        # cause name conflicts with new buses using the same name. This makes
-        # name conflict detection deterministic (not dependent on GC timing).
-        self.name = f'_stopped_{self.id[-8:]}'
-
         # Clear event history and handlers if requested (for memory cleanup)
         if clear:
             self.event_history.clear()
             self.handlers.clear()
             self.handlers_by_key.clear()
             self.in_flight_event_ids.clear()
-
-            # Remove from global instance tracking
-            if self in type(self).all_instances:
-                type(self).all_instances.discard(self)
-
-            # Remove from event loop's tracking if present
-            try:
-                loop = asyncio.get_running_loop()
-                registered_eventbuses = type(self)._loop_eventbus_instances.get(loop)
-                if registered_eventbuses is not None:
-                    registered_eventbuses.discard(self)
-            except RuntimeError:
-                # No running loop, that's fine
-                pass
+            self.processing_event_ids.clear()
+            self._parallel_event_tasks.clear()
+            self._pending_middleware_tasks.clear()
+            self.middlewares.clear()
+            self.pending_event_queue = None
+            self._on_idle = None
+            self._lock_for_event_bus_serial = ReentrantLock()
+            self.locks = LockManager()
 
             logger.debug('🧹 %s cleared event history and removed from global tracking', self)
+        else:
+            self.pending_event_queue = None
+            self._on_idle = None
+            self._lock_for_event_bus_serial = ReentrantLock()
+            self.locks = LockManager()
 
-        logger.debug('🛑 %s shut down %s', self, 'gracefully' if timeout is not None else 'immediately')
+        # Rename and remove from tracking even when clear=False. clear=False preserves
+        # inspectable handlers/history, but destroy is terminal and non-resumable.
+        self.name = f'_destroyed_{self.id[-8:]}'
+        if self in type(self).all_instances:
+            type(self).all_instances.discard(self)
+        try:
+            loop = asyncio.get_running_loop()
+            registered_eventbuses = type(self)._loop_eventbus_instances.get(loop)
+            if registered_eventbuses is not None:
+                registered_eventbuses.discard(self)
+        except RuntimeError:
+            pass
+
+        logger.debug('🛑 %s shut down immediately', self)
 
         # Check total memory usage across all instances
         try:
@@ -1682,7 +1724,7 @@ class EventBus:
 
         This runner avoids holding a strong EventBus reference while idle,
         allowing unreferenced buses to be garbage-collected naturally without
-        an explicit stop().
+        an explicit destroy().
         """
         try:
             while True:
@@ -1980,7 +2022,7 @@ class EventBus:
         event: BaseEvent[Any],
     ) -> Callable[[], Coroutine[Any, Any, None]] | None:
         event_slow_timeout = self._resolve_event_slow_timeout(event, self)
-        if event_slow_timeout is None:
+        if event_slow_timeout is None or event_slow_timeout <= 0:
             return None
         return partial(self._slow_event_warning_monitor, event, event_slow_timeout)
 
@@ -2072,9 +2114,11 @@ class EventBus:
         # Get applicable handlers
         applicable_handlers = self._get_handlers_for_event(event)
         slow_event_monitor_factory = self._create_slow_event_warning_timer(event)
-        resolved_event_timeout = (
-            timeout if timeout is not None else (event.event_timeout if event.event_timeout is not None else self.event_timeout)
-        )
+        resolved_event_timeout = timeout if timeout is not None else event.event_timeout
+        if resolved_event_timeout is None:
+            resolved_event_timeout = self.event_timeout
+        if resolved_event_timeout is not None and resolved_event_timeout <= 0:
+            resolved_event_timeout = None
 
         await self.on_event_change(event, EventStatus.PENDING)
 
@@ -2402,7 +2446,7 @@ class EventBus:
 
             warning_msg += '\nConsider:\n'
             warning_msg += '  - Reducing max_history_size\n'
-            warning_msg += '  - Clearing completed EventBus instances with stop(clear=True)\n'
+            warning_msg += '  - Clearing completed EventBus instances with destroy(clear=True)\n'
             warning_msg += '  - Reducing event payload sizes\n'
 
             logger.warning(warning_msg)

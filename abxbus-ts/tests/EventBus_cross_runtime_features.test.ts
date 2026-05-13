@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { BaseEvent, EventBus } from '../../src/index.js'
-import { async_local_storage, hasAsyncLocalStorage } from '../../src/async_context.js'
+import { BaseEvent, EventBus } from '../src/index.js'
+import { async_local_storage, hasAsyncLocalStorage } from '../src/async_context.js'
 
 type ContextStore = {
   request_id?: string
@@ -37,7 +37,7 @@ test('queue-jump preserves parent/child lineage and find visibility', async () =
   bus.on(QueueJumpRootEvent, async (event) => {
     execution_order.push('root:start')
     const child = event.emit(QueueJumpChildEvent({}))
-    await child.done()
+    await child.now()
     execution_order.push('root:end')
     return 'root-ok'
   })
@@ -56,8 +56,8 @@ test('queue-jump preserves parent/child lineage and find visibility', async () =
 
   const root = bus.emit(QueueJumpRootEvent({}))
   const sibling = bus.emit(QueueJumpSiblingEvent({}))
-  await root.done()
-  await sibling.done()
+  await root.now()
+  await sibling.now()
   await bus.waitUntilIdle()
 
   assert.deepEqual(execution_order, ['root:start', 'child', 'root:end', 'sibling'])
@@ -111,7 +111,7 @@ test('concurrency intersection: parallel events with serial handlers stays seria
   bus.on(ConcurrencyIntersectionEvent, tracked_handler)
 
   const events = Array.from({ length: 8 }, () => bus.emit(ConcurrencyIntersectionEvent({})))
-  await Promise.all(events.map((event) => event.done()))
+  await Promise.all(events.map((event) => event.now()))
   await bus.waitUntilIdle()
 
   for (const event of events) {
@@ -143,14 +143,14 @@ test('timeout enforcement preserves follow-up processing and queue state', async
 
   bus.on(TimeoutFollowupEvent, async () => 'followup-ok')
 
-  const timed_out = await bus.emit(TimeoutEnforcementEvent({})).done({ raise_if_any: false })
+  const timed_out = await bus.emit(TimeoutEnforcementEvent({})).now()
   assert.equal(timed_out.event_status, 'completed')
   assert.equal(
     Array.from(timed_out.event_results.values()).every((result) => result.status === 'error'),
     true
   )
 
-  const followup = await bus.emit(TimeoutFollowupEvent({})).done()
+  const followup = await bus.emit(TimeoutFollowupEvent({})).now()
   assert.equal(
     Array.from(followup.event_results.values()).every((result) => result.status === 'completed'),
     true
@@ -171,7 +171,7 @@ test('zero-history backpressure with find future still resolves new events', asy
 
   bus.on(ZeroHistoryEvent, async (event) => `ok:${(event as BaseEvent & { value?: string }).value ?? '<missing>'}`)
 
-  const first = await bus.emit(ZeroHistoryEvent({ value: 'first' } as Record<string, unknown>)).done()
+  const first = await bus.emit(ZeroHistoryEvent({ value: 'first' } as Record<string, unknown>)).now()
   assert.equal(bus.event_history.has(first.event_id), false)
 
   const past = await bus.find(ZeroHistoryEvent, { past: true, future: false })
@@ -221,7 +221,7 @@ test('context propagates through forwarding and child dispatch with lineage inta
     parent_event_id = event.event_id
 
     const child = event.emit(ContextChildEvent({}))
-    await child.done()
+    await child.now()
     return 'parent-ok'
   })
 
@@ -233,7 +233,7 @@ test('context propagates through forwarding and child dispatch with lineage inta
   })
 
   const request_id = 'fc81f432-98cd-7a06-824c-dafed74761bb'
-  const parent = await storage.run({ request_id }, async () => bus_a.emit(ContextParentEvent({})).done())
+  const parent = await storage.run({ request_id }, async () => bus_a.emit(ContextParentEvent({})).now())
   await bus_b.waitUntilIdle()
 
   assert.equal(captured_parent_request_id, request_id)
@@ -296,8 +296,8 @@ test('pending queue find visibility transitions to completed after release', asy
   const release = blocking_control.release
   assert.ok(release)
   release()
-  await blocking.done()
-  await queued.done()
+  await blocking.now()
+  await queued.now()
   await bus.waitUntilIdle()
 
   const completed = await bus.find(PendingVisibilityEvent, (event) => (event as BaseEvent & { tag?: string }).tag === 'queued', {
@@ -321,7 +321,7 @@ test('history backpressure rejects overflow and preserves findable history', asy
 
   bus.on(BackpressureEvent, async (event) => `ok:${(event as BaseEvent & { value?: string }).value ?? '<missing>'}`)
 
-  const first = await bus.emit(BackpressureEvent({ value: 'first' } as Record<string, unknown>)).done()
+  const first = await bus.emit(BackpressureEvent({ value: 'first' } as Record<string, unknown>)).now()
   assert.equal(bus.event_history.size, 1)
   assert.equal(bus.event_history.has(first.event_id), true)
 
@@ -334,7 +334,7 @@ test('history backpressure rejects overflow and preserves findable history', asy
 
   await assert.rejects(
     async () => {
-      await bus.emit(BackpressureEvent({ value: 'second' } as Record<string, unknown>)).done()
+      await bus.emit(BackpressureEvent({ value: 'second' } as Record<string, unknown>)).now()
     },
     (error: unknown) => error instanceof Error && error.message.includes('history limit reached')
   )

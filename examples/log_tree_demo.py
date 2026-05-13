@@ -39,7 +39,7 @@ async def main() -> None:
         async def root_fast_handler(event: RootEvent) -> str:
             await delay_ms(10)
             child = event.emit(ChildEvent(tab_id='tab-123', event_timeout=0.1))
-            await child
+            await child.now()
             return 'root_fast_handler_ok'
 
         async def root_slow_handler(event: RootEvent) -> str:
@@ -57,7 +57,7 @@ async def main() -> None:
         async def child_fast_handler(event: ChildEvent) -> str:
             await delay_ms(10)
             grandchild = event.emit(GrandchildEvent(status='ok', event_timeout=0.05))
-            await grandchild
+            await grandchild.now()
             return 'child_handler_ok'
 
         async def grandchild_fast_handler(_event: GrandchildEvent) -> str:
@@ -74,7 +74,7 @@ async def main() -> None:
         bus_b.on(GrandchildEvent, grandchild_slow_handler)
 
         root_event = bus_a.emit(RootEvent(url='https://example.com', event_timeout=0.25))
-        await root_event
+        await root_event.now()
 
         print('\n=== BusA log_tree ===')
         print(bus_a.log_tree())
@@ -82,8 +82,8 @@ async def main() -> None:
         print('\n=== BusB log_tree ===')
         print(bus_b.log_tree())
     finally:
-        await bus_a.stop(clear=True, timeout=0)
-        await bus_b.stop(clear=True, timeout=0)
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
 
 
 if __name__ == '__main__':

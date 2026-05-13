@@ -95,14 +95,14 @@ async def main() -> None:
 
             if event.mode == 'immediate':
                 # Immediate: queue-jump by awaiting child directly inside handler context.
-                log(f'[parent:{event.mode}] await child')
-                await child
-                log(f'[parent:{event.mode}] child await resolved')
+                log(f'[parent:{event.mode}] await child.now()')
+                await child.now()
+                log(f'[parent:{event.mode}] child.now() resolved')
             else:
                 # Queued: wait on completion signal without queue-jump processing.
-                log(f'[parent:{event.mode}] await child.event_completed()')
-                await child.event_completed()
-                log(f'[parent:{event.mode}] child.event_completed() resolved')
+                log(f'[parent:{event.mode}] await child.wait()')
+                await child.wait()
+                log(f'[parent:{event.mode}] child.wait() resolved')
 
             log(f'[parent:{event.mode}] end')
 
@@ -118,7 +118,7 @@ async def main() -> None:
                 )
             )
 
-            await parent
+            await parent.now()
             await asyncio.gather(bus_a.wait_until_idle(), bus_b.wait_until_idle())
             log(f'----- done scenario={mode} -----')
 
@@ -133,8 +133,8 @@ async def main() -> None:
         print('\n=== bus_b.log_tree() ===')
         print(bus_b.log_tree())
     finally:
-        await bus_a.stop(clear=True, timeout=0)
-        await bus_b.stop(clear=True, timeout=0)
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
 
 
 if __name__ == '__main__':

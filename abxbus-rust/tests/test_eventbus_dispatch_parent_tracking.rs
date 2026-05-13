@@ -90,7 +90,7 @@ fn test_basic_parent_tracking_child_events_get_event_parent_id() {
     );
     assert!(bus.event_is_child_of(&child, &parent.inner));
     assert!(bus.event_is_parent_of(&parent.inner, &child));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -150,7 +150,7 @@ fn test_multi_level_parent_tracking_preserves_lineage() {
         Some(child_id.as_str())
     );
     assert!(bus.event_is_child_of(&grandchild, &parent.inner));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -192,7 +192,7 @@ fn test_multiple_children_from_same_parent_keep_same_event_parent_id() {
             Some(parent_id.as_str())
         );
     }
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -251,7 +251,7 @@ fn test_parallel_parent_handlers_preserve_parent_tracking() {
         );
         assert!(child.inner.lock().event_emitted_by_handler_id.is_some());
     }
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -305,7 +305,7 @@ fn test_sync_handler_parent_tracking() {
     let parent = bus.emit(ParentEvent {
         ..Default::default()
     });
-    block_on(parent.done());
+    let _ = block_on(parent.now());
     block_on(bus.wait_until_idle(None));
 
     let parent_id = parent.inner.inner.lock().event_id.clone();
@@ -320,7 +320,7 @@ fn test_sync_handler_parent_tracking() {
     let parent_errors = parent.inner.event_errors();
     assert_eq!(parent_errors.len(), 1);
     assert!(parent_errors[0].contains("expected parent-tracking error path"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -391,7 +391,7 @@ fn test_event_children_tracks_multiple_children_from_a_single_handler() {
     assert!(parent_event_children
         .iter()
         .all(|child| child.inner.lock().event_type == "ChildEvent"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -479,7 +479,7 @@ fn test_event_children_tracks_direct_and_nested_descendants() {
         child_event_children[0].inner.lock().event_type,
         "GrandchildEvent"
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -540,7 +540,7 @@ fn test_multiple_parent_handlers_contribute_to_one_event_children_list() {
     assert!(parent_event_children
         .iter()
         .all(|child| child.inner.lock().event_type == "ChildEvent"));
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -578,7 +578,7 @@ fn test_explicit_event_parent_id_is_not_overridden() {
         child.inner.lock().event_parent_id.as_deref(),
         Some(explicit_parent_id.as_str())
     );
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -624,8 +624,8 @@ fn test_cross_eventbus_dispatch_preserves_parent_tracking() {
         received_child.inner.lock().event_parent_id.as_deref(),
         Some(parent_id.as_str())
     );
-    bus_1.stop();
-    bus_2.stop();
+    bus_1.destroy();
+    bus_2.destroy();
 }
 
 #[test]
@@ -675,8 +675,8 @@ fn test_cross_bus_bus_emit_inside_handler_does_not_link_parent_when_exactly_one_
         .next()
         .expect("parent result");
     assert!(result.event_children.is_empty());
-    bus_1.stop();
-    bus_2.stop();
+    bus_1.destroy();
+    bus_2.destroy();
 }
 
 #[test]
@@ -740,9 +740,9 @@ fn test_bus_emit_outside_handler_does_not_guess_a_parent_when_multiple_handlers_
     release_a_tx.send(()).expect("release a send");
     release_b_tx.send(()).expect("release b send");
     block_on(async {
-        parent_a.done().await;
-        parent_b.done().await;
-        unrelated_child.done().await;
+        let _ = parent_a.now().await;
+        let _ = parent_b.now().await;
+        let _ = unrelated_child.now().await;
         bus_1.wait_until_idle(None).await;
         bus_2.wait_until_idle(None).await;
         bus_3.wait_until_idle(None).await;
@@ -757,9 +757,9 @@ fn test_bus_emit_outside_handler_does_not_guess_a_parent_when_multiple_handlers_
             .event_emitted_by_handler_id,
         None
     );
-    bus_1.stop();
-    bus_2.stop();
-    bus_3.stop();
+    bus_1.destroy();
+    bus_2.destroy();
+    bus_3.destroy();
 }
 
 #[test]
@@ -818,7 +818,7 @@ fn test_erroring_parent_handlers_still_preserve_child_event_parent_id() {
         .filter(|result| result.error.is_some())
         .count();
     assert_eq!(parent_errors, 1);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -831,7 +831,7 @@ fn test_event_children_is_empty_when_handlers_do_not_emit_children() {
     let parent = bus.emit(ParentEvent {
         ..Default::default()
     });
-    block_on(parent.done());
+    let _ = block_on(parent.now());
 
     let parent_inner = parent.inner.inner.lock();
     let result = parent_inner
@@ -841,7 +841,7 @@ fn test_event_children_is_empty_when_handlers_do_not_emit_children() {
     assert!(result.event_children.is_empty());
     drop(parent_inner);
     assert!(event_children_for(&bus, &parent.inner).is_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -871,8 +871,8 @@ fn test_parent_completion_waits_for_awaited_children() {
                 refs.push(child_a.inner.clone());
                 refs.push(child_b.inner.clone());
             }
-            child_a.done().await;
-            child_b.done().await;
+            let _ = child_a.now().await;
+            let _ = child_b.now().await;
             Ok(json!("parent"))
         }
     });
@@ -914,7 +914,7 @@ fn test_parent_completion_waits_for_awaited_children() {
 
     release_children_tx.send(()).expect("release child a send");
     release_children_tx.send(()).expect("release child b send");
-    block_on(parent.done());
+    let _ = block_on(parent.now());
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
     assert_eq!(
         parent.inner.inner.lock().event_status,
@@ -926,7 +926,7 @@ fn test_parent_completion_waits_for_awaited_children() {
         assert!(child.inner.lock().event_blocks_parent_completion);
         assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
     }
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -968,7 +968,7 @@ fn test_event_emit_without_await_sets_parentage_without_blocking_parent_completi
     let parent = bus.emit(ParentEvent {
         ..Default::default()
     });
-    block_on(parent.done());
+    let _ = block_on(parent.now());
     assert_eq!(
         parent.inner.inner.lock().event_status,
         EventStatus::Completed
@@ -999,7 +999,7 @@ fn test_event_emit_without_await_sets_parentage_without_blocking_parent_completi
     release_child_tx.send(()).expect("release child send");
     block_on(bus.wait_until_idle(Some(2.0)));
     assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1021,7 +1021,7 @@ fn test_awaited_event_emit_child_blocks_parent_completion_and_queue_jumps() {
             });
             assert!(!child.inner.inner.lock().event_blocks_parent_completion);
             *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
-            child.done().await;
+            let _ = child.now().await;
             assert!(child.inner.inner.lock().event_blocks_parent_completion);
             Ok(json!("parent"))
         }
@@ -1064,13 +1064,13 @@ fn test_awaited_event_emit_child_blocks_parent_completion_and_queue_jumps() {
     let child_id = child.inner.lock().event_id.clone();
     assert_eq!(parent_child_id, child_id);
     release_child_tx.send(()).expect("release child send");
-    block_on(parent.done());
+    let _ = block_on(parent.now());
     assert_eq!(
         parent.inner.inner.lock().event_status,
         EventStatus::Completed
     );
     assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1115,7 +1115,7 @@ fn test_bus_emit_inside_handler_dispatches_root_event_by_default() {
     assert!(result.event_children.is_empty());
     drop(parent_inner);
     assert!(event_children_for(&bus, &parent.inner).is_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1159,7 +1159,7 @@ fn test_bus_emit_inside_handler_does_not_link_parent_when_not_using_event_emit()
     child_started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("child should start");
-    block_on(parent.done());
+    let _ = block_on(parent.now());
     assert_eq!(
         parent.inner.inner.lock().event_status,
         EventStatus::Completed
@@ -1189,11 +1189,11 @@ fn test_bus_emit_inside_handler_does_not_link_parent_when_not_using_event_emit()
     release_child_tx.send(()).expect("release child send");
     assert!(block_on(bus.wait_until_idle(Some(2.0))));
     assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
-fn test_outside_done_of_bus_emit_child_keeps_it_independent_of_active_handler() {
+fn test_outside_now_of_bus_emit_child_keeps_it_independent_of_active_handler() {
     let bus = EventBus::new(Some("RootChildExternalDoneBus".to_string()));
     let bus_for_handler = bus.clone();
     let child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
@@ -1252,13 +1252,13 @@ fn test_outside_done_of_bus_emit_child_keeps_it_independent_of_active_handler() 
 
     let child_for_wait = child.clone();
     let wait_thread = thread::spawn(move || {
-        block_on(child_for_wait.done());
+        let _ = block_on(child_for_wait.now());
     });
     thread::sleep(Duration::from_millis(10));
     assert!(!child.inner.lock().event_blocks_parent_completion);
 
     release_parent_tx.send(()).expect("release parent send");
-    block_on(parent.done());
+    let _ = block_on(parent.now());
     assert_eq!(
         parent.inner.inner.lock().event_status,
         EventStatus::Completed
@@ -1269,11 +1269,11 @@ fn test_outside_done_of_bus_emit_child_keeps_it_independent_of_active_handler() 
     wait_thread.join().expect("child wait thread");
     block_on(bus.wait_until_idle(Some(2.0)));
     assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
-fn test_outside_event_completed_wait_of_bus_emit_child_keeps_it_independent_of_active_handler() {
+fn test_outside_wait_of_bus_emit_child_keeps_it_independent_of_active_handler() {
     let bus = EventBus::new(Some("RootChildExternalEventCompletedBus".to_string()));
     let bus_for_handler = bus.clone();
     let child_ref = Arc::new(Mutex::new(None::<Arc<BaseEvent>>));
@@ -1332,13 +1332,13 @@ fn test_outside_event_completed_wait_of_bus_emit_child_keeps_it_independent_of_a
 
     let child_for_wait = child.clone();
     let wait_thread = thread::spawn(move || {
-        block_on(child_for_wait.event_completed());
+        let _ = block_on(child_for_wait.wait());
     });
     thread::sleep(Duration::from_millis(10));
     assert!(!child.inner.lock().event_blocks_parent_completion);
 
     release_parent_tx.send(()).expect("release parent send");
-    block_on(parent.done());
+    let _ = block_on(parent.now());
     assert_eq!(
         parent.inner.inner.lock().event_status,
         EventStatus::Completed
@@ -1349,7 +1349,7 @@ fn test_outside_event_completed_wait_of_bus_emit_child_keeps_it_independent_of_a
     wait_thread.join().expect("child wait thread");
     block_on(bus.wait_until_idle(Some(2.0)));
     assert_eq!(child.inner.lock().event_status, EventStatus::Completed);
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1369,7 +1369,7 @@ fn test_awaited_bus_emit_child_remains_independent_and_does_not_block_parent_com
             assert_eq!(child.inner.inner.lock().event_parent_id, None);
             assert_eq!(child.inner.inner.lock().event_emitted_by_handler_id, None);
             assert!(!child.inner.inner.lock().event_blocks_parent_completion);
-            child.done().await;
+            let _ = child.now().await;
             assert!(!child.inner.inner.lock().event_blocks_parent_completion);
             *child_ref.lock().expect("child ref lock") = Some(child.inner.clone());
             Ok(json!("parent"))
@@ -1382,7 +1382,7 @@ fn test_awaited_bus_emit_child_remains_independent_and_does_not_block_parent_com
     let parent = bus.emit(ParentEvent {
         ..Default::default()
     });
-    block_on(parent.done());
+    let _ = block_on(parent.now());
     let child = child_ref
         .lock()
         .expect("child ref lock")
@@ -1399,7 +1399,7 @@ fn test_awaited_bus_emit_child_remains_independent_and_does_not_block_parent_com
     assert!(result.event_children.is_empty());
     drop(parent_inner);
     assert!(event_children_for(&bus, &parent.inner).is_empty());
-    bus.stop();
+    bus.destroy();
 }
 
 #[test]
@@ -1422,7 +1422,7 @@ fn test_forwarded_events_are_not_counted_as_parent_event_children() {
     block_on(async {
         bus_1.wait_until_idle(None).await;
         bus_2.wait_until_idle(None).await;
-        parent.done().await;
+        let _ = parent.now().await;
     });
 
     let parent_inner = parent.inner.inner.lock();
@@ -1433,107 +1433,6 @@ fn test_forwarded_events_are_not_counted_as_parent_event_children() {
     assert_eq!(parent_inner.event_parent_id, None);
     drop(parent_inner);
     assert!(event_children_for(&bus_1, &parent.inner).is_empty());
-    bus_1.stop();
-    bus_2.stop();
-}
-
-#[test]
-fn test_multiple_children_same_parent() {
-    test_multiple_children_from_same_parent_keep_same_event_parent_id();
-}
-
-#[test]
-fn test_basic_parent_tracking() {
-    test_basic_parent_tracking_child_events_get_event_parent_id();
-}
-
-#[test]
-fn test_multi_level_parent_tracking() {
-    test_multi_level_parent_tracking_preserves_lineage();
-}
-
-#[test]
-fn test_parallel_handler_concurrency_parent_tracking() {
-    test_parallel_parent_handlers_preserve_parent_tracking();
-}
-
-#[test]
-fn test_explicit_parent_not_overridden() {
-    test_explicit_event_parent_id_is_not_overridden();
-}
-
-#[test]
-fn test_cross_eventbus_parent_tracking() {
-    test_cross_eventbus_dispatch_preserves_parent_tracking();
-}
-
-#[test]
-fn test_error_handler_parent_tracking() {
-    test_erroring_parent_handlers_still_preserve_child_event_parent_id();
-}
-
-#[test]
-fn test_event_children_tracking() {
-    test_event_children_tracks_multiple_children_from_a_single_handler();
-}
-
-#[test]
-fn test_nested_event_children_tracking() {
-    test_event_children_tracks_direct_and_nested_descendants();
-}
-
-#[test]
-fn test_multiple_handlers_event_children() {
-    test_multiple_parent_handlers_contribute_to_one_event_children_list();
-}
-
-#[test]
-fn test_event_children_empty_when_no_children() {
-    test_event_children_is_empty_when_handlers_do_not_emit_children();
-}
-
-#[test]
-fn test_forwarded_events_not_counted_as_children() {
-    test_forwarded_events_are_not_counted_as_parent_event_children();
-}
-
-#[test]
-fn test_event_emit_without_await_sets_parentage_without_blocking_completion() {
-    test_event_emit_without_await_sets_parentage_without_blocking_parent_completion();
-}
-
-#[test]
-fn test_bus_emit_inside_handler_dispatches_detached_event_by_default() {
-    test_bus_emit_inside_handler_does_not_link_parent_when_not_using_event_emit();
-}
-
-#[test]
-fn test_awaited_event_emit_marks_child_as_parent_completion_blocking() {
-    test_awaited_event_emit_child_blocks_parent_completion_and_queue_jumps();
-}
-
-#[test]
-fn test_awaiting_bus_emitted_child_keeps_independent_parentage() {
-    test_awaited_bus_emit_child_remains_independent_and_does_not_block_parent_completion();
-}
-
-#[test]
-fn test_parent_tracking_works_with_sync_handlers_and_handler_errors() {
-    test_sync_handler_parent_tracking();
-    test_erroring_parent_handlers_still_preserve_child_event_parent_id();
-}
-
-#[test]
-fn test_bus_emit_inside_a_handler_dispatches_a_root_event_by_default() {
-    test_bus_emit_inside_handler_dispatches_root_event_by_default();
-}
-
-#[test]
-fn test_outside_await_of_bus_emit_child_done_keeps_it_independent_of_the_active_handler() {
-    test_outside_done_of_bus_emit_child_keeps_it_independent_of_active_handler();
-}
-
-#[test]
-fn test_outside_eventcompleted_wait_of_bus_emit_child_keeps_it_independent_of_the_active_handler() {
-    test_outside_event_completed_wait_of_bus_emit_child_keeps_it_independent_of_active_handler();
+    bus_1.destroy();
+    bus_2.destroy();
 }

@@ -31,14 +31,14 @@ jobs:
           cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
       - name: Install native TypeScript build tools
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: cmake gcc-14 g++-14
+          version: native-typescript-build-tools-v1
+          execute_install_scripts: true
+
+      - name: Configure native TypeScript build tools
         run: |
-          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null \
-            | gpg --dearmor \
-            | sudo tee /usr/share/keyrings/kitware-archive-keyring.gpg > /dev/null
-          echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ noble main" \
-            | sudo tee /etc/apt/sources.list.d/kitware.list
-          sudo apt-get update
-          sudo apt-get install -y cmake gcc-14 g++-14
           echo "CC=gcc-14" >> "$GITHUB_ENV"
           echo "CXX=g++-14" >> "$GITHUB_ENV"
           cmake --version
@@ -61,7 +61,7 @@ jobs:
       - id: lsgrep
         run: |
           TS_TEST_TASKS="$(
-            find abxbus-ts/tests -maxdepth 1 -type f -name '*.test.ts' ! -name 'eventbus_performance.test.ts' \
+            find abxbus-ts/tests -maxdepth 1 -type f -name '*.test.ts' ! -name 'EventBus_performance.test.ts' \
               | sort \
               | sed 's|^abxbus-ts/tests/||' \
               | sed 's|\.test\.ts$||' \
@@ -95,6 +95,7 @@ jobs:
       - find_ts_tests
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         task: ${{ fromJson(needs.find_ts_tests.outputs.TS_TASKS || '[{"kind":"error","name":"FAILED_TO_DISCOVER_TASKS"}]') }}
         # autodiscovers all files in abxbus-ts/tests/*.test.ts and abxbus-ts/examples/*.ts
@@ -126,11 +127,16 @@ jobs:
           cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
       - name: Install bridge service binaries
-        if: matrix.task.kind == 'test' && matrix.task.name == 'bridges'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y redis-server nats-server postgresql sqlite3 gcc-14 g++-14
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: redis-server nats-server postgresql sqlite3 gcc-14 g++-14
+          version: bridge-service-binaries-v1
+          execute_install_scripts: true
 
+      - name: Configure bridge service binaries
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')
+        run: |
           PG_INITDB_PATH="$(find /usr/lib/postgresql -type f -name initdb | head -n 1)"
           PG_BINDIR="$(dirname "${PG_INITDB_PATH}")"
           if [[ -z "${PG_BINDIR}" || ! -x "${PG_BINDIR}/initdb" || ! -x "${PG_BINDIR}/postgres" ]]; then
@@ -148,14 +154,14 @@ jobs:
           gcc-14 --version
 
       - name: Install native TypeScript build tools
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: cmake gcc-14 g++-14
+          version: native-typescript-build-tools-v1
+          execute_install_scripts: true
+
+      - name: Configure native TypeScript build tools
         run: |
-          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null \
-            | gpg --dearmor \
-            | sudo tee /usr/share/keyrings/kitware-archive-keyring.gpg > /dev/null
-          echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ noble main" \
-            | sudo tee /etc/apt/sources.list.d/kitware.list
-          sudo apt-get update
-          sudo apt-get install -y cmake gcc-14 g++-14
           echo "CC=gcc-14" >> "$GITHUB_ENV"
           echo "CXX=g++-14" >> "$GITHUB_ENV"
           cmake --version
@@ -180,19 +186,19 @@ jobs:
           node -e "const m = require('@tachyon-ipc/core'); console.log('tachyon-ipc loaded:', typeof m.Bus)"
 
       - uses: astral-sh/setup-uv@v6
-        if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'EventBus_locking')
         with:
           enable-cache: true
           activate-environment: true
 
-      - name: Install Python deps for cross-runtime roundtrip tests
-        if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
+      - name: Install Python deps for cross-runtime tests
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'EventBus_locking')
         run: |
           cd ..
           uv sync --dev --all-extras --no-extra tachyon
 
       - name: Verify bridge optional Node deps
-        if: matrix.task.kind == 'test' && matrix.task.name == 'bridges'
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')
         run: |
           node - <<'NODE'
           const required = ['ioredis', 'nats', 'pg']
@@ -239,14 +245,14 @@ jobs:
           cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
       - name: Install native TypeScript build tools
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: cmake gcc-14 g++-14
+          version: native-typescript-build-tools-v1
+          execute_install_scripts: true
+
+      - name: Configure native TypeScript build tools
         run: |
-          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null \
-            | gpg --dearmor \
-            | sudo tee /usr/share/keyrings/kitware-archive-keyring.gpg > /dev/null
-          echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ noble main" \
-            | sudo tee /etc/apt/sources.list.d/kitware.list
-          sudo apt-get update
-          sudo apt-get install -y cmake gcc-14 g++-14
           echo "CC=gcc-14" >> "$GITHUB_ENV"
           echo "CXX=g++-14" >> "$GITHUB_ENV"
           cmake --version
@@ -379,14 +385,14 @@ jobs:
           deno-version: v2.x
 
       - name: Install native TypeScript build tools
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: cmake gcc-14 g++-14
+          version: native-typescript-build-tools-v1
+          execute_install_scripts: true
+
+      - name: Configure native TypeScript build tools
         run: |
-          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null \
-            | gpg --dearmor \
-            | sudo tee /usr/share/keyrings/kitware-archive-keyring.gpg > /dev/null
-          echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ noble main" \
-            | sudo tee /etc/apt/sources.list.d/kitware.list
-          sudo apt-get update
-          sudo apt-get install -y cmake gcc-14 g++-14
           echo "CC=gcc-14" >> "$GITHUB_ENV"
           echo "CXX=g++-14" >> "$GITHUB_ENV"
           cmake --version
