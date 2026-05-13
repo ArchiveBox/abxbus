@@ -67,8 +67,7 @@ test('invalid result marks handler error', async () => {
   await event.now()
   await assert.rejects(
     () => event.eventResult(),
-    (error: unknown) =>
-      error instanceof AggregateError && error.errors.some((entry: unknown) => entry instanceof EventHandlerResultSchemaError)
+    (error: unknown) => error instanceof EventHandlerResultSchemaError
   )
 
   const result = Array.from(event.event_results.values())[0]

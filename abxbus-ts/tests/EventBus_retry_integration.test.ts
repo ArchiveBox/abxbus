@@ -59,10 +59,7 @@ test('retry: bus handler with retry_on_errors only retries matching errors (inli
 
   const event = bus.emit(TestEvent({}))
   await event.now()
-  await assert.rejects(
-    event.eventResult(),
-    (error: unknown) => error instanceof AggregateError && error.errors.some((entry: unknown) => entry instanceof ValidationError)
-  )
+  await assert.rejects(event.eventResult(), (error: unknown) => error instanceof ValidationError)
 
   assert.equal(calls, 1)
   const result = Array.from(event.event_results.values())[0]

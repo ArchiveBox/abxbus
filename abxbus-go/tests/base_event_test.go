@@ -392,12 +392,12 @@ func TestWaitFirstResultReturnsBeforeEventCompletion(t *testing.T) {
 	if completed != event {
 		t.Fatal("Wait should return the event")
 	}
-	value, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: false})
+	value, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: abxbus.Ptr(false)})
 	if err != nil || value != "fast" {
 		t.Fatalf("expected first current result, got %#v err=%v", value, err)
 	}
 	time.Sleep(50 * time.Millisecond)
-	values, err := event.EventResultsList(&abxbus.EventResultOptions{RaiseIfAny: false})
+	values, err := event.EventResultsList(&abxbus.EventResultOptions{RaiseIfAny: abxbus.Ptr(false)})
 	if err != nil || len(values) != 2 || values[0] != "medium" || values[1] != "fast" {
 		t.Fatalf("expected current result subset in registration order, got %#v err=%v", values, err)
 	}
@@ -462,12 +462,12 @@ func TestNowFirstResultReturnsBeforeEventCompletion(t *testing.T) {
 	if completed != event {
 		t.Fatal("Now should return the event")
 	}
-	value, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: false})
+	value, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: abxbus.Ptr(false)})
 	if err != nil || value != "fast" {
 		t.Fatalf("expected first current result, got %#v err=%v", value, err)
 	}
 	time.Sleep(50 * time.Millisecond)
-	values, err := event.EventResultsList(&abxbus.EventResultOptions{RaiseIfAny: false})
+	values, err := event.EventResultsList(&abxbus.EventResultOptions{RaiseIfAny: abxbus.Ptr(false)})
 	if err != nil || len(values) != 2 || values[0] != "medium" || values[1] != "fast" {
 		t.Fatalf("expected current result subset in registration order, got %#v err=%v", values, err)
 	}
@@ -614,7 +614,7 @@ func TestEventResultHelpersDoNotWaitForStartedEvent(t *testing.T) {
 	resultCh := make(chan any, 1)
 	resultErrCh := make(chan error, 1)
 	go func() {
-		result, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfNone: false})
+		result, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfNone: abxbus.Ptr(false)})
 		resultCh <- result
 		resultErrCh <- err
 	}()
@@ -633,7 +633,7 @@ func TestEventResultHelpersDoNotWaitForStartedEvent(t *testing.T) {
 	resultsCh := make(chan []any, 1)
 	resultsErrCh := make(chan error, 1)
 	go func() {
-		results, err := event.EventResultsList(&abxbus.EventResultOptions{RaiseIfNone: false})
+		results, err := event.EventResultsList(&abxbus.EventResultOptions{RaiseIfNone: abxbus.Ptr(false)})
 		resultsCh <- results
 		resultsErrCh <- err
 	}()
@@ -730,19 +730,19 @@ func TestEventResultOptionsApplyToCurrentResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: false})
+	result, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: abxbus.Ptr(false)})
 	if err != nil || result != "keep" {
 		t.Fatalf("expected keep result, got %#v err=%v", result, err)
 	}
-	if _, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: true}); err == nil || !strings.Contains(err.Error(), "option boom") {
+	if _, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: abxbus.Ptr(true)}); err == nil || !strings.Contains(err.Error(), "option boom") {
 		t.Fatalf("expected option boom, got %v", err)
 	}
 	results, err := event.EventResultsList(&abxbus.EventResultOptions{
 		Include: func(result any, eventResult *abxbus.EventResult) bool {
 			return result == "missing"
 		},
-		RaiseIfAny:  false,
-		RaiseIfNone: false,
+		RaiseIfAny:  abxbus.Ptr(false),
+		RaiseIfNone: abxbus.Ptr(false),
 	})
 	if err != nil || len(results) != 0 {
 		t.Fatalf("expected empty filtered results, got %#v err=%v", results, err)

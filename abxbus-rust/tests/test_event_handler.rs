@@ -96,7 +96,8 @@ fn test_event_handler_completion_bus_default_first_serial() {
 
     assert!(!*second_handler_called.lock().expect("called lock"));
     assert_eq!(
-        block_on(event.event_result(non_raising_result_options())).expect("first result"),
+        block_on(event.event_result_with_options(non_raising_result_options()))
+            .expect("first result"),
         Some(json!("first"))
     );
     let results = event.inner.inner.lock().event_results.clone();
@@ -207,7 +208,8 @@ fn test_event_parallel_first_races_and_cancels_non_winners() {
     assert!(started.elapsed() < Duration::from_millis(200));
     assert!(*slow_started.lock().expect("slow started lock"));
     assert_eq!(
-        block_on(event.event_result(non_raising_result_options())).expect("first result"),
+        block_on(event.event_result_with_options(non_raising_result_options()))
+            .expect("first result"),
         Some(json!("winner"))
     );
 
@@ -344,7 +346,8 @@ fn test_event_first_preserves_falsy_results() {
     });
 
     let event = emit_with_first_completion(&bus);
-    let result = block_on(event.event_result(non_raising_result_options())).expect("first result");
+    let result = block_on(event.event_result_with_options(non_raising_result_options()))
+        .expect("first result");
     assert_eq!(result, Some(json!(0)));
     assert!(!*second_handler_called.lock().expect("called lock"));
     bus.destroy();
@@ -374,7 +377,8 @@ fn test_event_first_preserves_false_and_empty_string_results() {
     });
     let false_event = emit_with_first_completion(&false_bus);
     let false_result =
-        block_on(false_event.event_result(non_raising_result_options())).expect("first result");
+        block_on(false_event.event_result_with_options(non_raising_result_options()))
+            .expect("first result");
     assert_eq!(false_result, Some(json!(false)));
     assert!(!*false_second_called.lock().expect("called lock"));
     false_bus.destroy();
@@ -400,8 +404,8 @@ fn test_event_first_preserves_false_and_empty_string_results() {
         }
     });
     let str_event = emit_with_first_completion(&str_bus);
-    let str_result =
-        block_on(str_event.event_result(non_raising_result_options())).expect("first result");
+    let str_result = block_on(str_event.event_result_with_options(non_raising_result_options()))
+        .expect("first result");
     assert_eq!(str_result, Some(json!("")));
     assert!(!*str_second_called.lock().expect("called lock"));
     str_bus.destroy();
@@ -435,7 +439,8 @@ fn test_event_first_skips_none_result_and_uses_next_winner() {
     });
 
     let event = emit_with_first_completion(&bus);
-    let result = block_on(event.event_result(non_raising_result_options())).expect("first result");
+    let result = block_on(event.event_result_with_options(non_raising_result_options()))
+        .expect("first result");
 
     assert_eq!(result, Some(json!("winner")));
     assert!(!*third_handler_called.lock().expect("called lock"));
@@ -484,7 +489,8 @@ fn test_event_first_skips_baseevent_result_and_uses_next_winner() {
     });
 
     let event = emit_with_first_completion(&bus);
-    let result = block_on(event.event_result(non_raising_result_options())).expect("first result");
+    let result = block_on(event.event_result_with_options(non_raising_result_options()))
+        .expect("first result");
 
     assert_eq!(result, Some(json!("winner")));
     assert!(!*third_handler_called.lock().expect("called lock"));

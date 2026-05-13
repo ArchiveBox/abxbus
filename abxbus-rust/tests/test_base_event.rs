@@ -301,8 +301,12 @@ fn test_event_result_re_raises_first_processing_exception_after_completion() {
         ..Default::default()
     });
     block_on(event.inner.now()).expect("complete error event");
-    let error = block_on(event.inner.event_result(EventResultOptions::default()))
-        .expect_err("handler error should be surfaced");
+    let error = block_on(
+        event
+            .inner
+            .event_result_with_options(EventResultOptions::default()),
+    )
+    .expect_err("handler error should be surfaced");
 
     assert!(error.contains("first failure"));
     assert_eq!(
@@ -547,7 +551,7 @@ fn test_now_outside_handler_completes_without_raising_processing_error() {
         ..Default::default()
     });
     block_on(event.now()).expect("now should wait for completion without raising handler errors");
-    let error = block_on(event.event_result(EventResultOptions::default()))
+    let error = block_on(event.event_result_with_options(EventResultOptions::default()))
         .expect_err("event_result should raise outside handler errors");
     assert_eq!(error, "outside failure");
     assert_eq!(
@@ -912,7 +916,7 @@ fn test_wait_first_result_returns_before_event_completion() {
     .expect("wait first_result");
     assert!(Arc::ptr_eq(&waited, &event));
     assert_eq!(
-        block_on(event.event_result(EventResultOptions {
+        block_on(event.event_result_with_options(EventResultOptions {
             raise_if_any: false,
             ..EventResultOptions::default()
         }))
@@ -921,7 +925,7 @@ fn test_wait_first_result_returns_before_event_completion() {
     );
     thread::sleep(Duration::from_millis(50));
     assert_eq!(
-        block_on(event.event_results_list(EventResultOptions {
+        block_on(event.event_results_list_with_options(EventResultOptions {
             raise_if_any: false,
             ..EventResultOptions::default()
         }))
@@ -978,7 +982,7 @@ fn test_now_first_result_returns_before_event_completion() {
     .expect("now first_result");
     assert!(Arc::ptr_eq(&waited, &event));
     assert_eq!(
-        block_on(event.event_result(EventResultOptions {
+        block_on(event.event_result_with_options(EventResultOptions {
             raise_if_any: false,
             ..EventResultOptions::default()
         }))
@@ -987,7 +991,7 @@ fn test_now_first_result_returns_before_event_completion() {
     );
     thread::sleep(Duration::from_millis(50));
     assert_eq!(
-        block_on(event.event_results_list(EventResultOptions {
+        block_on(event.event_results_list_with_options(EventResultOptions {
             raise_if_any: false,
             ..EventResultOptions::default()
         }))
@@ -1054,7 +1058,7 @@ fn test_event_result_starts_never_started_event_and_returns_first_result() {
     let target = bus.emit_base(BaseEvent::new("EventResultShortcutTargetEvent", Map::new()));
     let target_for_result = target.clone();
     let result_thread = thread::spawn(move || {
-        block_on(target_for_result.event_result(EventResultOptions::default()))
+        block_on(target_for_result.event_result_with_options(EventResultOptions::default()))
     });
     thread::sleep(Duration::from_millis(50));
     assert_eq!(
@@ -1134,7 +1138,7 @@ fn test_event_results_list_starts_never_started_event_and_returns_all_results() 
     ));
     let target_for_results = target.clone();
     let results_thread = thread::spawn(move || {
-        block_on(target_for_results.event_results_list(EventResultOptions::default()))
+        block_on(target_for_results.event_results_list_with_options(EventResultOptions::default()))
     });
     thread::sleep(Duration::from_millis(50));
     assert_eq!(
@@ -1195,7 +1199,7 @@ fn test_event_result_helpers_do_not_wait_for_started_event() {
     let event_for_result = event.clone();
     let (result_tx, result_rx) = mpsc::channel();
     thread::spawn(move || {
-        let _ = result_tx.send(block_on(event_for_result.event_result(
+        let _ = result_tx.send(block_on(event_for_result.event_result_with_options(
             EventResultOptions {
                 raise_if_any: true,
                 raise_if_none: false,
@@ -1214,7 +1218,7 @@ fn test_event_result_helpers_do_not_wait_for_started_event() {
     let event_for_results = event.clone();
     let (results_tx, results_rx) = mpsc::channel();
     thread::spawn(move || {
-        let _ = results_tx.send(block_on(event_for_results.event_results_list(
+        let _ = results_tx.send(block_on(event_for_results.event_results_list_with_options(
             EventResultOptions {
                 raise_if_any: true,
                 raise_if_none: false,
@@ -1284,7 +1288,7 @@ fn test_now_on_already_executing_event_waits_without_duplicate_execution() {
         .map(|completed| Arc::ptr_eq(&completed, &event))
         .unwrap_or(false));
     assert_eq!(
-        block_on(event.event_result(EventResultOptions::default())).expect("result"),
+        block_on(event.event_result_with_options(EventResultOptions::default())).expect("result"),
         Some(json!("done"))
     );
     assert_eq!(run_count.load(Ordering::SeqCst), 1);
@@ -1342,21 +1346,23 @@ fn test_event_result_options_apply_to_current_results() {
     )
     .expect("now first_result");
     assert_eq!(
-        block_on(event.event_result(EventResultOptions {
+        block_on(event.event_result_with_options(EventResultOptions {
             raise_if_any: false,
             ..EventResultOptions::default()
         }))
         .expect("event result"),
         Some(json!("keep"))
     );
-    assert!(block_on(event.event_result(EventResultOptions {
-        raise_if_any: true,
-        ..EventResultOptions::default()
-    }))
-    .expect_err("raise_if_any should surface current error")
-    .contains("option boom"));
+    assert!(
+        block_on(event.event_result_with_options(EventResultOptions {
+            raise_if_any: true,
+            ..EventResultOptions::default()
+        }))
+        .expect_err("raise_if_any should surface current error")
+        .contains("option boom")
+    );
     assert_eq!(
-        block_on(event.event_results_list(EventResultOptions {
+        block_on(event.event_results_list_with_options(EventResultOptions {
             include: Some(Arc::new(
                 |result, _event_result| result == Some(&json!("missing"))
             )),

@@ -952,6 +952,9 @@ export class BaseEvent {
         }
         return new Error(String(event_result.error ?? event_result.result))
       })
+      if (errors.length === 1) {
+        throw errors[0]
+      }
       throw new AggregateError(errors, `Event ${this.event_type}#${this.event_id.slice(-4)} had ${errors.length} handler error(s)`)
     }
 

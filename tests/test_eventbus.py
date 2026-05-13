@@ -162,6 +162,101 @@ class TestEventBusBasics:
         await bus.destroy()
         assert bus._is_running is False
 
+    async def test_destroy_default_clear_is_terminal_and_frees_bus_state(self):
+        """destroy() defaults to clear=True: bus-owned state is released and use is terminal."""
+
+        class DestroyEvent(BaseEvent[str]):
+            pass
+
+        bus = EventBus(name='DestroyDefaultClearBus')
+        bus.on(DestroyEvent, lambda _event: 'done')
+
+        event = await bus.emit(DestroyEvent())
+        assert await event.event_result() == 'done'
+
+        await bus.destroy(timeout=0)
+
+        assert bus._is_running is False
+        assert bus.pending_event_queue is None
+        assert bus._on_idle is None
+        assert len(bus.handlers) == 0
+        assert len(bus.handlers_by_key) == 0
+        assert len(bus.event_history) == 0
+        assert len(bus.in_flight_event_ids) == 0
+        assert len(bus.processing_event_ids) == 0
+        assert len(bus.find_waiters) == 0
+        assert bus not in type(bus).all_instances
+
+        with pytest.raises(RuntimeError, match='destroyed'):
+            bus.on(DestroyEvent, lambda _event: 'again')
+        with pytest.raises(RuntimeError, match='destroyed'):
+            bus.emit(DestroyEvent())
+        with pytest.raises(RuntimeError, match='destroyed'):
+            await bus.find(DestroyEvent, future=False)
+
+    async def test_destroy_clear_false_preserves_handlers_and_history_and_resumes(self):
+        """destroy(clear=False) stops runtime work but keeps enough state to resume."""
+
+        class ReusableEvent(BaseEvent[str]):
+            pass
+
+        bus = EventBus(name='DestroyClearFalseReusableBus')
+        calls: list[str] = []
+
+        async def handler(event: ReusableEvent) -> str:
+            calls.append(event.event_id)
+            return f'handled:{len(calls)}'
+
+        bus.on(ReusableEvent, handler)
+
+        first = await bus.emit(ReusableEvent())
+        assert await first.event_result() == 'handled:1'
+
+        await bus.destroy(timeout=0, clear=False)
+
+        assert bus._is_running is False
+        assert bus.pending_event_queue is None
+        assert len(bus.handlers) == 1
+        assert len(bus.event_history) == 1
+        assert bus in type(bus).all_instances
+
+        second = await bus.emit(ReusableEvent())
+        assert await second.event_result() == 'handled:2'
+        assert len(bus.event_history) == 2
+
+        await bus.destroy(clear=True)
+
+    async def test_destroying_one_bus_does_not_break_shared_handlers_or_forward_targets(self):
+        """A terminal destroy only clears the selected bus, not shared callables or peer buses."""
+
+        class SharedDestroyEvent(BaseEvent[str]):
+            pass
+
+        source = EventBus(name='DestroySharedSourceBus')
+        target = EventBus(name='DestroySharedTargetBus')
+        seen: list[str] = []
+
+        def shared_handler(event: SharedDestroyEvent) -> str:
+            seen.append(event.event_type)
+            return 'shared'
+
+        source.on(SharedDestroyEvent, shared_handler)
+        source.on('*', target.emit)
+        target.on(SharedDestroyEvent, shared_handler)
+
+        forwarded = await source.emit(SharedDestroyEvent())
+        assert await forwarded.event_results_list(raise_if_any=False) == ['shared', 'shared']
+
+        await source.destroy(clear=True)
+
+        direct = await target.emit(SharedDestroyEvent())
+        assert await direct.event_result() == 'shared'
+        assert len(target.handlers) == 1
+        assert len(target.event_history) >= 1
+        assert len(seen) == 3
+
+        await target.destroy(clear=True)
+
     async def test_wait_until_idle_recovers_when_idle_flag_was_cleared(self):
         """wait_until_idle should not hang if _on_idle was cleared after work finished."""
         bus = EventBus()
@@ -1765,7 +1860,7 @@ class TestEventResults:
         assert 'v2' in results.values()
 
     async def test_manual_dict_merge(self, eventbus):
-        """Users can merge dict handler results manually from event_results()."""
+        """Users can merge dict handler results manually from event_results_list()."""
 
         async def config_base(event):
             return {'debug': False, 'port': 8080, 'name': 'base'}
@@ -1831,7 +1926,7 @@ class TestEventResults:
         assert merged['unique2'] == 'b'
 
     async def test_manual_list_flatten(self, eventbus):
-        """Users can flatten list handler results manually from event_results()."""
+        """Users can flatten list handler results manually from event_results_list()."""
 
         async def errors1(event):
             return ['error1', 'error2']

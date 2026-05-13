@@ -375,6 +375,10 @@ impl LockManager {
             .clone()
     }
 
+    pub fn clear(&self) {
+        self.locks.lock().clear();
+    }
+
     pub fn get_lock_for_event(
         &self,
         bus: &EventBus,

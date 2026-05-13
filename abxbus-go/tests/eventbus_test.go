@@ -49,7 +49,7 @@ func TestEmitAndDispatchUseDefaultBehavior(t *testing.T) {
 		t.Fatalf("expected 2 event results, got %d", len(e.EventResults))
 	}
 
-	values, err := e.EventResultsList(&abxbus.EventResultOptions{RaiseIfAny: false, RaiseIfNone: false})
+	values, err := e.EventResultsList(&abxbus.EventResultOptions{RaiseIfAny: abxbus.Ptr(false), RaiseIfNone: abxbus.Ptr(false)})
 	if err != nil {
 		t.Fatal(err)
 	}

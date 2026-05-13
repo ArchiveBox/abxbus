@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,8 +57,55 @@ type EventWaitOptions struct {
 
 type EventResultOptions struct {
 	Include     func(result any, event_result *EventResult) bool
+	RaiseIfAny  *bool
+	RaiseIfNone *bool
+}
+
+type resolvedEventResultOptions struct {
+	Include     func(result any, event_result *EventResult) bool
 	RaiseIfAny  bool
 	RaiseIfNone bool
+}
+
+type EventHandlerErrors struct {
+	EventType string
+	EventID   string
+	Errors    []error
+}
+
+func (e *EventHandlerErrors) Error() string {
+	if e == nil || len(e.Errors) == 0 {
+		return ""
+	}
+	if len(e.Errors) == 1 {
+		return e.Errors[0].Error()
+	}
+	parts := make([]string, 0, len(e.Errors))
+	for _, err := range e.Errors {
+		if err != nil {
+			parts = append(parts, err.Error())
+		}
+	}
+	return fmt.Sprintf("Event %s#%s had %d handler error(s): %s", e.EventType, suffix(e.EventID, 4), len(e.Errors), strings.Join(parts, "; "))
+}
+
+func (e *EventHandlerErrors) Unwrap() []error {
+	if e == nil {
+		return nil
+	}
+	return e.Errors
+}
+
+type EventResultNoneError struct {
+	EventType string
+	EventID   string
+}
+
+func (e *EventResultNoneError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("Expected at least one handler to return a non-null result, but none did: %s#%s", e.EventType, suffix(e.EventID, 4))
 }
 
 type BaseEventResultUpdateOptions struct {
@@ -663,7 +711,7 @@ func (e *BaseEvent) eventResultWithContext(ctx context.Context, options ...*Even
 		}
 	}
 	if opts.RaiseIfNone {
-		return nil, errors.New("no valid handler results")
+		return nil, &EventResultNoneError{EventType: e.EventType, EventID: e.EventID}
 	}
 	return nil, nil
 }
@@ -692,16 +740,22 @@ func (e *BaseEvent) eventResultsListWithContext(ctx context.Context, options ...
 		}
 	}
 	if opts.RaiseIfNone && len(out) == 0 {
-		return nil, errors.New("no valid handler results")
+		return nil, &EventResultNoneError{EventType: e.EventType, EventID: e.EventID}
 	}
 	return out, nil
 }
 
-func defaultEventResultOptions(options ...*EventResultOptions) *EventResultOptions {
-	opts := &EventResultOptions{RaiseIfAny: true, RaiseIfNone: false}
+func defaultEventResultOptions(options ...*EventResultOptions) *resolvedEventResultOptions {
+	opts := &resolvedEventResultOptions{RaiseIfAny: true, RaiseIfNone: false}
 	if len(options) > 0 && options[0] != nil {
-		copied := *options[0]
-		opts = &copied
+		provided := options[0]
+		opts.Include = provided.Include
+		if provided.RaiseIfAny != nil {
+			opts.RaiseIfAny = *provided.RaiseIfAny
+		}
+		if provided.RaiseIfNone != nil {
+			opts.RaiseIfNone = *provided.RaiseIfNone
+		}
 	}
 	return opts
 }
@@ -718,7 +772,7 @@ func (e *BaseEvent) ensureResultsReady(ctx context.Context, firstResult bool) er
 	return err
 }
 
-func (e *BaseEvent) raiseResultErrorsIfNeeded(options *EventResultOptions) error {
+func (e *BaseEvent) raiseResultErrorsIfNeeded(options *resolvedEventResultOptions) error {
 	if !options.RaiseIfAny {
 		return nil
 	}
@@ -729,7 +783,10 @@ func (e *BaseEvent) raiseResultErrorsIfNeeded(options *EventResultOptions) error
 		}
 	}
 	if len(handlerErrs) > 0 {
-		return errors.Join(handlerErrs...)
+		if len(handlerErrs) == 1 {
+			return handlerErrs[0]
+		}
+		return &EventHandlerErrors{EventType: e.EventType, EventID: e.EventID, Errors: handlerErrs}
 	}
 	return nil
 }

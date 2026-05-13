@@ -287,6 +287,29 @@ func (l *LockManager) notifyIdleListeners() {
 	}
 }
 
+func (l *LockManager) clear() {
+	l.pause_mu.Lock()
+	pauseWaiters := l.pause_waiters
+	l.pause_depth = 0
+	l.pause_waiters = nil
+	l.pause_mu.Unlock()
+	for _, waiter := range pauseWaiters {
+		close(waiter)
+	}
+
+	l.active_mu.Lock()
+	l.active_handler_result = nil
+	l.active_dispatch_context = nil
+	l.active_handler_context = nil
+	l.active_handler_by_g = map[uint64][]*EventResult{}
+	l.active_dispatch_by_g = map[uint64][]context.Context{}
+	l.active_context_by_g = map[uint64][]context.Context{}
+	l.bus_event_lock = NewAsyncLock(1)
+	l.active_mu.Unlock()
+
+	l.notifyIdleListeners()
+}
+
 func (l *LockManager) removeIdleWaiter(waiter chan struct{}) {
 	l.idle_mu.Lock()
 	defer l.idle_mu.Unlock()

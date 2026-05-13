@@ -11,7 +11,7 @@ use std::{
 
 use abxbus_rust::{
     base_event::{BaseEvent, EventResultOptions, EventWaitOptions},
-    event_bus::{EventBus, EventBusOptions},
+    event_bus::{DestroyOptions, EventBus, EventBusOptions},
     event_result::{EventResult, EventResultStatus},
     types::{
         EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventStatus,
@@ -48,6 +48,17 @@ fn wait_for_eventbus_weak_refs_to_drop(refs: &[Weak<EventBus>]) -> bool {
         }
         thread::sleep(Duration::from_millis(1));
     }
+}
+
+fn panic_message(result: std::thread::Result<()>) -> String {
+    let payload = result.expect_err("operation should panic");
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        return (*message).to_string();
+    }
+    "<non-string panic>".to_string()
 }
 
 event! {
@@ -445,6 +456,184 @@ fn test_destroy_with_pending_events() {
     bus.destroy();
     assert!(!bus.is_running_for_test());
     assert!(bus.is_destroyed_for_test());
+}
+
+#[test]
+fn test_destroy_clear_false_preserves_handlers_and_history_and_resumes() {
+    let bus = EventBus::new(Some("DestroyClearFalseReuseBus".to_string()));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let calls_for_handler = calls.clone();
+    bus.on_raw("UserActionEvent", "handler", move |_event| {
+        let calls = calls_for_handler.clone();
+        async move {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(json!(null))
+        }
+    });
+
+    let first = bus.emit(UserActionEvent {
+        ..Default::default()
+    });
+    block_on(first.inner.now()).expect("first event should complete");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(bus.event_history_size(), 1);
+
+    bus.destroy_with_options(DestroyOptions {
+        timeout: Some(0.1),
+        clear: false,
+    });
+
+    assert!(!bus.is_destroyed_for_test());
+    assert_eq!(bus.event_history_size(), 1);
+    assert!(bus
+        .to_json_value()
+        .get("handlers")
+        .and_then(Value::as_object)
+        .is_some_and(|handlers| !handlers.is_empty()));
+    assert!(block_on(bus.find("UserActionEvent", true, None, None)).is_some());
+
+    let second = bus.emit(UserActionEvent {
+        ..Default::default()
+    });
+    block_on(second.inner.now()).expect("reused bus event should complete");
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(bus.event_history_size(), 2);
+
+    bus.destroy();
+}
+
+#[test]
+fn test_destroy_default_clear_is_terminal_and_frees_bus_state() {
+    let bus = EventBus::new(Some("TerminalDestroyBus".to_string()));
+    bus.on_raw("UserActionEvent", "handler", |_event| async move {
+        Ok(json!(null))
+    });
+    let event = bus.emit(UserActionEvent {
+        ..Default::default()
+    });
+    block_on(event.inner.now()).expect("event should complete before destroy");
+    assert_eq!(bus.event_history_size(), 1);
+    assert!(!bus.runtime_payload_for_test().is_empty());
+
+    let label = bus.label();
+    bus.destroy();
+
+    assert!(bus.is_destroyed_for_test());
+    assert_eq!(bus.event_history_size(), 0);
+    assert!(bus.runtime_payload_for_test().is_empty());
+    assert!(bus
+        .to_json_value()
+        .get("handlers")
+        .and_then(Value::as_object)
+        .is_some_and(|handlers| handlers.is_empty()));
+    assert!(!EventBus::all_instances_contains(&bus));
+
+    for message in [
+        panic_message(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            || {
+                bus.emit(UserActionEvent {
+                    ..Default::default()
+                });
+            },
+        ))),
+        panic_message(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            || {
+                bus.on_raw("UserActionEvent", "late_handler", |_event| async move {
+                    Ok(json!(null))
+                });
+            },
+        ))),
+        panic_message(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            || {
+                let _ = block_on(bus.find("UserActionEvent", true, None, None));
+            },
+        ))),
+    ] {
+        assert!(
+            message.contains("has been destroyed and cannot be used again"),
+            "{message}"
+        );
+        assert!(message.contains(&label), "{message}");
+    }
+}
+
+#[test]
+fn test_destroying_one_bus_does_not_break_shared_handlers_or_forward_targets() {
+    let source = EventBus::new(Some("DestroySharedSourceBus".to_string()));
+    let target = EventBus::new(Some("DestroySharedTargetBus".to_string()));
+    let seen = Arc::new(AtomicUsize::new(0));
+    let seen_for_source = seen.clone();
+    source.on_raw("UserActionEvent", "shared", move |_event| {
+        let seen = seen_for_source.clone();
+        async move {
+            seen.fetch_add(1, Ordering::SeqCst);
+            Ok(json!("shared"))
+        }
+    });
+    let target_for_forwarding = target.clone();
+    source.on_raw("*", "forward", move |event| {
+        let target = target_for_forwarding.clone();
+        async move {
+            target.emit_base(event);
+            Ok(json!(null))
+        }
+    });
+    let seen_for_target = seen.clone();
+    target.on_raw("UserActionEvent", "shared", move |_event| {
+        let seen = seen_for_target.clone();
+        async move {
+            seen.fetch_add(1, Ordering::SeqCst);
+            Ok(json!("shared"))
+        }
+    });
+
+    let forwarded = source.emit(UserActionEvent {
+        ..Default::default()
+    });
+    block_on(forwarded.inner.now()).expect("forwarded event should complete");
+    assert_eq!(seen.load(Ordering::SeqCst), 2);
+
+    source.destroy();
+
+    let independent_event = target.emit(UserActionEvent {
+        ..Default::default()
+    });
+    block_on(independent_event.inner.now()).expect("target bus should still run");
+    assert_eq!(target.event_history_size(), 2);
+    assert_eq!(seen.load(Ordering::SeqCst), 3);
+
+    target.destroy();
+}
+
+#[test]
+fn test_destroy_clear_false_resolves_future_waiters_without_hanging() {
+    let bus = EventBus::new(Some("DestroyClearFalseWaiterBus".to_string()));
+    let bus_for_waiter = bus.clone();
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+
+    thread::spawn(move || {
+        let found = block_on(bus_for_waiter.find("NeverHappens", false, Some(5.0), None));
+        result_tx.send(found.is_none()).expect("send waiter result");
+    });
+    thread::sleep(Duration::from_millis(20));
+    bus.destroy_with_options(DestroyOptions {
+        timeout: Some(0.0),
+        clear: false,
+    });
+
+    assert!(result_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("destroy should resolve future waiter"),);
+    assert!(!bus.is_destroyed_for_test());
+
+    bus.on_raw("UserActionEvent", "handler", |_event| async move {
+        Ok(json!(null))
+    });
+    let event = bus.emit(UserActionEvent {
+        ..Default::default()
+    });
+    block_on(event.inner.now()).expect("bus should resume after clear=false destroy");
+    bus.destroy();
 }
 
 #[test]
@@ -1027,8 +1216,12 @@ fn test_event_result_raises_exception_group_when_multiple_handlers_fail() {
     });
     let _ = block_on(event.now());
 
-    let error = block_on(event.inner.event_result(EventResultOptions::default()))
-        .expect_err("multiple handler errors should be raised");
+    let error = block_on(
+        event
+            .inner
+            .event_result_with_options(EventResultOptions::default()),
+    )
+    .expect_err("multiple handler errors should be raised");
     assert!(error.contains("2 handler error(s)"), "{error}");
     assert!(error.contains("ValueError: first failure"), "{error}");
     assert!(error.contains("RuntimeError: second failure"), "{error}");
@@ -1048,8 +1241,12 @@ fn test_event_result_single_handler_error_raises_original_exception() {
     });
     let _ = block_on(event.now());
 
-    let error = block_on(event.inner.event_result(EventResultOptions::default()))
-        .expect_err("single handler error should be raised");
+    let error = block_on(
+        event
+            .inner
+            .event_result_with_options(EventResultOptions::default()),
+    )
+    .expect_err("single handler error should be raised");
     assert_eq!(error, "ValueError: single failure");
     bus.destroy();
 }
@@ -1068,13 +1265,17 @@ fn test_event_result_raise_if_any_options() {
 
     block_on(event.inner.now_with_options(EventWaitOptions::default()))
         .expect("now should complete");
-    let error = match block_on(event.inner.event_result(EventResultOptions::default())) {
+    let error = match block_on(
+        event
+            .inner
+            .event_result_with_options(EventResultOptions::default()),
+    ) {
         Ok(_) => panic!("event_result should raise handler errors by default"),
         Err(error) => error,
     };
     assert_eq!(error, "ValueError: handler failure");
 
-    block_on(event.inner.event_result(EventResultOptions {
+    block_on(event.inner.event_result_with_options(EventResultOptions {
         raise_if_any: false,
         raise_if_none: false,
         include: None,
@@ -1915,7 +2116,7 @@ fn test_dispatch_returns_event_results() {
     let all_results = block_on(
         event
             .inner
-            .event_results_list(EventResultOptions::default()),
+            .event_results_list_with_options(EventResultOptions::default()),
     )
     .expect("event results list");
 
@@ -1938,8 +2139,9 @@ fn test_handler() {
     let event = bus.emit_base(base_event("TestEvent", json!({})));
     let _ = block_on(event.wait());
 
-    let all_results = block_on(event.event_results_list(EventResultOptions::default()))
-        .expect("event results list");
+    let all_results =
+        block_on(event.event_results_list_with_options(EventResultOptions::default()))
+            .expect("event results list");
     assert_eq!(all_results, vec![json!({"result": "test_result"})]);
 
     let no_handlers = bus.emit_base(base_event("NoHandlersEvent", json!({})));
@@ -2010,7 +2212,7 @@ fn test_manual_dict_merge() {
 
     let event = bus.emit_base(base_event("GetConfig", json!({})));
     let _ = block_on(event.wait());
-    let dict_results = block_on(event.event_results_list(EventResultOptions {
+    let dict_results = block_on(event.event_results_list_with_options(EventResultOptions {
         raise_if_any: false,
         raise_if_none: true,
         include: Some(Arc::new(|result, _event_result| {
@@ -2032,13 +2234,15 @@ fn test_manual_dict_merge() {
     });
     let event_bad = bus.emit_base(base_event("BadConfig", json!({})));
     let _ = block_on(event_bad.wait());
-    let merged_bad = block_on(event_bad.event_results_list(EventResultOptions {
-        raise_if_any: false,
-        raise_if_none: false,
-        include: Some(Arc::new(|result, _event_result| {
-            result.is_some_and(Value::is_object)
-        })),
-    }))
+    let merged_bad = block_on(
+        event_bad.event_results_list_with_options(EventResultOptions {
+            raise_if_any: false,
+            raise_if_none: false,
+            include: Some(Arc::new(|result, _event_result| {
+                result.is_some_and(Value::is_object)
+            })),
+        }),
+    )
     .expect("empty dict results");
     assert!(merged_bad.is_empty());
     bus.destroy();
@@ -2057,7 +2261,7 @@ fn test_manual_dict_merge_conflicts_last_write_wins() {
 
     let event = bus.emit_base(base_event("ConflictEvent", json!({})));
     let _ = block_on(event.wait());
-    let dict_results = block_on(event.event_results_list(EventResultOptions {
+    let dict_results = block_on(event.event_results_list_with_options(EventResultOptions {
         raise_if_any: false,
         raise_if_none: true,
         include: Some(Arc::new(|result, _event_result| {
@@ -2092,7 +2296,7 @@ fn test_manual_list_flatten() {
 
     let event = bus.emit_base(base_event("GetErrors", json!({})));
     let _ = block_on(event.wait());
-    let list_results = block_on(event.event_results_list(EventResultOptions {
+    let list_results = block_on(event.event_results_list_with_options(EventResultOptions {
         raise_if_any: false,
         raise_if_none: true,
         include: Some(Arc::new(|result, _event_result| {
@@ -2120,13 +2324,15 @@ fn test_manual_list_flatten() {
     });
     let event_single = bus.emit_base(base_event("GetSingle", json!({})));
     let _ = block_on(event_single.wait());
-    let single_lists = block_on(event_single.event_results_list(EventResultOptions {
-        raise_if_any: false,
-        raise_if_none: false,
-        include: Some(Arc::new(|result, _event_result| {
-            result.is_some_and(Value::is_array)
-        })),
-    }))
+    let single_lists = block_on(
+        event_single.event_results_list_with_options(EventResultOptions {
+            raise_if_any: false,
+            raise_if_none: false,
+            include: Some(Arc::new(|result, _event_result| {
+                result.is_some_and(Value::is_array)
+            })),
+        }),
+    )
     .expect("empty list results");
     assert!(single_lists.is_empty());
     bus.destroy();
@@ -2368,7 +2574,7 @@ fn test_complex_multi_bus_scenario() {
         vec![app_bus.label(), auth_bus.label(), data_bus.label()]
     );
 
-    let dict_results = block_on(event.event_results_list(EventResultOptions {
+    let dict_results = block_on(event.event_results_list_with_options(EventResultOptions {
         raise_if_any: false,
         raise_if_none: true,
         include: Some(Arc::new(|result, _event_result| {
@@ -2384,7 +2590,7 @@ fn test_complex_multi_bus_scenario() {
     assert_eq!(merged.get("auth_valid"), Some(&json!(true)));
     assert_eq!(merged.get("data_valid"), Some(&json!(true)));
 
-    let list_results = block_on(event.event_results_list(EventResultOptions {
+    let list_results = block_on(event.event_results_list_with_options(EventResultOptions {
         raise_if_any: false,
         raise_if_none: true,
         include: Some(Arc::new(|result, _event_result| {
@@ -2497,7 +2703,7 @@ fn test_event_result_type_enforcement_with_list() {
         assert!(error.contains("expected array"), "{error}");
     }
 
-    let list_results = block_on(event.event_results_list(EventResultOptions {
+    let list_results = block_on(event.event_results_list_with_options(EventResultOptions {
         raise_if_any: false,
         raise_if_none: false,
         include: Some(Arc::new(|result, _event_result| {

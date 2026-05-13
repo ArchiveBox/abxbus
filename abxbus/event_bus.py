@@ -194,6 +194,7 @@ class EventBus:
     find_waiters: set[_FindWaiter]
     _lock_for_event_bus_serial: ReentrantLock
     locks: LockManagerProtocol
+    _destroyed: bool
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -322,9 +323,14 @@ class EventBus:
         self.processing_event_ids = set()
         self._pending_handler_changes = []
         self.find_waiters = set()
+        self._destroyed = False
 
         # Register this instance
         type(self).all_instances.add(self)
+
+    def _raise_if_destroyed(self) -> None:
+        if self._destroyed:
+            raise RuntimeError(f'{self} has been destroyed and cannot be used again')
 
     @staticmethod
     def _normalize_middlewares(middlewares: Sequence[EventBusMiddlewareInput] | None) -> list[EventBusMiddleware]:
@@ -1028,6 +1034,7 @@ class EventBus:
         flattened into the original event's results, so EventResults sees all handlers
         from all buses as a single flat collection.
         """
+        self._raise_if_destroyed()
         assert isinstance(event_pattern, str) or isinstance(event_pattern, type), (
             f'Invalid event pattern: {event_pattern}, must be a string event type or subclass of BaseEvent'
         )
@@ -1103,6 +1110,7 @@ class EventBus:
         handler: EventHandlerCallable | PythonIdStr | EventHandler | None = None,
     ) -> None:
         """Deregister handlers for an event pattern by id, callable, EventHandler, or all."""
+        self._raise_if_destroyed()
         event_key = EventHistory.normalize_event_pattern(event_pattern)
         indexed_ids = list(self.handlers_by_key.get(event_key, []))
         if not indexed_ids:
@@ -1154,6 +1162,7 @@ class EventBus:
                 # 2. returns a pending SomeEvent() with pending results in .event_results
                 # 3. awaiting .event_result() waits until all pending results are complete, and returns the raw result value of the first one
         """
+        self._raise_if_destroyed()
 
         try:
             asyncio.get_running_loop()
@@ -1428,6 +1437,7 @@ class EventBus:
         (newest to oldest) instead of just the first match. Accepts an
         additional ``limit`` argument to cap the number of results.
         """
+        self._raise_if_destroyed()
         return await self.event_history.filter(
             event_type,
             where=where,
@@ -1481,6 +1491,7 @@ class EventBus:
 
     def _start(self) -> None:
         """Start the event bus if not already running"""
+        self._raise_if_destroyed()
         if not self._is_running:
             try:
                 loop = asyncio.get_running_loop()
@@ -1552,20 +1563,16 @@ class EventBus:
                 # No event loop - will start when one becomes available
                 pass
 
-    async def destroy(self, timeout: float | None = None, clear: bool = False) -> None:
+    async def destroy(self, timeout: float | None = None, clear: bool = True) -> None:
         """Destroy the event bus, optionally waiting for events to complete
 
         Args:
             timeout: Maximum time to wait for pending events to complete
-            clear: If True, clear event history and remove from global tracking to free memory
+            clear: If True, permanently clear bus-owned state and remove from global tracking.
+                If False, stop runtime work but keep event history and handler registration so
+                the bus can be used again.
         """
-        if not self._is_running and not self._parallel_event_tasks:
-            for waiter in tuple(self.find_waiters):
-                self.find_waiters.discard(waiter)
-                if waiter.timeout_handle is not None:
-                    waiter.timeout_handle.cancel()
-                if not waiter.future.done():
-                    waiter.future.set_result(None)
+        if self._destroyed:
             return
 
         # Wait for completion if timeout specified and > 0
@@ -1592,7 +1599,8 @@ class EventBus:
 
         # Shutdown the queue to unblock any pending get() operations
         if self.pending_event_queue:
-            self.pending_event_queue.shutdown()
+            self.pending_event_queue.shutdown(immediate=True)
+            self.pending_event_queue._queue.clear()  # pyright: ignore[reportPrivateUsage]
 
         # print('DESTROYING', self.event_history)
 
@@ -1615,6 +1623,7 @@ class EventBus:
         self._runloop_task = None
         self.in_flight_event_ids.clear()
         self.processing_event_ids.clear()
+        self._pending_handler_changes.clear()
         for waiter in tuple(self.find_waiters):
             self.find_waiters.discard(waiter)
             if waiter.timeout_handle is not None:
@@ -1624,17 +1633,27 @@ class EventBus:
         if self._on_idle:
             self._on_idle.set()
 
-        # Rename the bus to release the name. This ensures destroyed buses don't
-        # cause name conflicts with new buses using the same name. This makes
-        # name conflict detection deterministic (not dependent on GC timing).
-        self.name = f'_destroyed_{self.id[-8:]}'
-
         # Clear event history and handlers if requested (for memory cleanup)
         if clear:
+            self._destroyed = True
+
+            # Rename the bus to release the name. This ensures destroyed buses don't
+            # cause name conflicts with new buses using the same name. This makes
+            # name conflict detection deterministic (not dependent on GC timing).
+            self.name = f'_destroyed_{self.id[-8:]}'
+
             self.event_history.clear()
             self.handlers.clear()
             self.handlers_by_key.clear()
             self.in_flight_event_ids.clear()
+            self.processing_event_ids.clear()
+            self._parallel_event_tasks.clear()
+            self._pending_middleware_tasks.clear()
+            self.middlewares.clear()
+            self.pending_event_queue = None
+            self._on_idle = None
+            self._lock_for_event_bus_serial = ReentrantLock()
+            self.locks = LockManager()
 
             # Remove from global instance tracking
             if self in type(self).all_instances:
@@ -1651,6 +1670,11 @@ class EventBus:
                 pass
 
             logger.debug('🧹 %s cleared event history and removed from global tracking', self)
+        else:
+            self.pending_event_queue = None
+            self._on_idle = None
+            self._lock_for_event_bus_serial = ReentrantLock()
+            self.locks = LockManager()
 
         logger.debug('🛑 %s shut down %s', self, 'gracefully' if timeout is not None else 'immediately')
 

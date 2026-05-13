@@ -162,7 +162,7 @@ fn test_log_tree_first_mode_control_cancellations_use_cancelled_icon() {
     let event = bus.emit(event);
     let _ = block_on(event.now());
     block_on(bus.wait_until_idle(Some(2.0)));
-    let first = block_on(event.event_result(EventResultOptions {
+    let first = block_on(event.event_result_with_options(EventResultOptions {
         raise_if_any: false,
         raise_if_none: false,
         include: None,

@@ -121,8 +121,7 @@ test('event_result_type supports constructor shorthands and enforces them', asyn
   await invalid.now()
   await assert.rejects(
     () => invalid.eventResult(),
-    (error: unknown) =>
-      error instanceof AggregateError && error.errors.some((entry: unknown) => entry instanceof EventHandlerResultSchemaError)
+    (error: unknown) => error instanceof EventHandlerResultSchemaError
   )
   const invalid_result = Array.from(invalid.event_results.values())[0]
   assert.equal(invalid_result?.status, 'error')
@@ -139,8 +138,7 @@ test('invalid handler result marks error when schema is defined', async () => {
   await event.now()
   await assert.rejects(
     () => event.eventResult(),
-    (error: unknown) =>
-      error instanceof AggregateError && error.errors.some((entry: unknown) => entry instanceof EventHandlerResultSchemaError)
+    (error: unknown) => error instanceof EventHandlerResultSchemaError
   )
 
   const result = Array.from(event.event_results.values())[0]

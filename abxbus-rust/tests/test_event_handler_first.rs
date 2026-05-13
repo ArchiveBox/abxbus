@@ -56,7 +56,7 @@ fn test_event_handler_completion_first_stops_after_first_valid_result() {
     };
     let emitted = bus.emit(event);
     block_on(emitted.now()).expect("event should run");
-    let result = block_on(emitted.event_result(EventResultOptions {
+    let result = block_on(emitted.event_result_with_options(EventResultOptions {
         raise_if_any: false,
         raise_if_none: false,
         include: None,
@@ -97,7 +97,8 @@ fn test_now_runs_all_handlers_and_event_result_returns_first_valid_result() {
         ..Default::default()
     });
     let completed = block_on(emitted.now()).expect("event should run");
-    let result = block_on(completed.event_result(EventResultOptions::default())).expect("result");
+    let result = block_on(completed.event_result_with_options(EventResultOptions::default()))
+        .expect("result");
 
     assert_eq!(result, Some(json!("winner")));
     assert_eq!(
@@ -124,11 +125,11 @@ fn test_event_result_default_error_policy_raises_handler_errors() {
 
     let emitted = bus.emit(ValueEvent::default());
     let completed = block_on(emitted.now()).expect("event should run");
-    let error = block_on(completed.event_result(EventResultOptions::default()))
+    let error = block_on(completed.event_result_with_options(EventResultOptions::default()))
         .expect_err("default EventResult should surface handler errors");
     assert!(error.contains("event result boom"));
 
-    let result = block_on(completed.event_result(EventResultOptions {
+    let result = block_on(completed.event_result_with_options(EventResultOptions {
         raise_if_any: false,
         raise_if_none: false,
         include: None,
@@ -162,7 +163,7 @@ fn test_event_result_options_can_raise_and_filter_results() {
         .now(),
     )
     .expect("event should run");
-    let error = block_on(emitted.event_result(EventResultOptions {
+    let error = block_on(emitted.event_result_with_options(EventResultOptions {
         raise_if_any: true,
         raise_if_none: false,
         include: None,
@@ -170,7 +171,7 @@ fn test_event_result_options_can_raise_and_filter_results() {
     .expect_err("RaiseIfAny should surface handler errors");
     assert!(error.contains("event result option boom"));
 
-    let result = block_on(emitted.event_result(EventResultOptions {
+    let result = block_on(emitted.event_result_with_options(EventResultOptions {
         raise_if_any: false,
         raise_if_none: false,
         include: Some(std::sync::Arc::new(|result, event_result| {
@@ -207,7 +208,7 @@ fn test_event_result_include_callback_receives_result_and_event_result() {
     .expect("event should run");
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let seen_for_include = seen.clone();
-    let result = block_on(emitted.event_result(EventResultOptions {
+    let result = block_on(emitted.event_result_with_options(EventResultOptions {
         raise_if_any: true,
         raise_if_none: false,
         include: Some(std::sync::Arc::new(move |result, event_result| {
@@ -278,7 +279,8 @@ fn test_event_result_returns_first_valid_result_by_registration_order() {
     )
     .expect("event should run");
     thread::sleep(Duration::from_millis(60));
-    let result = block_on(emitted.event_result(EventResultOptions::default())).expect("result");
+    let result =
+        block_on(emitted.event_result_with_options(EventResultOptions::default())).expect("result");
 
     assert_eq!(result, Some(json!("slow")));
     destroy_and_settle(&bus);

@@ -504,7 +504,12 @@ impl BaseEvent {
             .any(|result| Self::default_result_include(result.result.as_ref(), result))
     }
 
-    pub async fn event_result(
+    pub async fn event_result(self: &Arc<Self>) -> Result<Option<Value>, String> {
+        self.event_result_with_options(EventResultOptions::default())
+            .await
+    }
+
+    pub async fn event_result_with_options(
         self: &Arc<Self>,
         options: EventResultOptions,
     ) -> Result<Option<Value>, String> {
@@ -522,7 +527,12 @@ impl BaseEvent {
         Ok(results.into_iter().next())
     }
 
-    pub async fn event_results_list(
+    pub async fn event_results_list(self: &Arc<Self>) -> Result<Vec<Value>, String> {
+        self.event_results_list_with_options(EventResultOptions::default())
+            .await
+    }
+
+    pub async fn event_results_list_with_options(
         self: &Arc<Self>,
         options: EventResultOptions,
     ) -> Result<Vec<Value>, String> {

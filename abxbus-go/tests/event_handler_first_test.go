@@ -31,7 +31,7 @@ func TestEventHandlerCompletionFirstStopsAfterFirstValidResult(t *testing.T) {
 	if _, err := emitted.Now(); err != nil {
 		t.Fatal(err)
 	}
-	result, err := emitted.EventResult(&abxbus.EventResultOptions{RaiseIfAny: false})
+	result, err := emitted.EventResult(&abxbus.EventResultOptions{RaiseIfAny: abxbus.Ptr(false)})
 	if err != nil || result != "winner" {
 		t.Fatalf("expected first non-nil result, got %#v err=%v", result, err)
 	}
@@ -95,7 +95,7 @@ func TestEventResultDefaultErrorPolicyRaisesHandlerErrors(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "event result boom") {
 		t.Fatalf("default EventResult should surface handler errors, got %v", err)
 	}
-	result, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: false})
+	result, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: abxbus.Ptr(false)})
 	if err != nil || result != "winner" {
 		t.Fatalf("RaiseIfAny=false should return the valid result; result=%#v err=%v", result, err)
 	}
@@ -119,12 +119,12 @@ func TestEventResultOptionsCanRaiseAndFilterResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: true})
+	_, err = event.EventResult(&abxbus.EventResultOptions{RaiseIfAny: abxbus.Ptr(true)})
 	if err == nil || !strings.Contains(err.Error(), "event result option boom") {
 		t.Fatalf("RaiseIfAny=true should surface handler errors, got %v", err)
 	}
 	result, err := event.EventResult(&abxbus.EventResultOptions{
-		RaiseIfAny: false,
+		RaiseIfAny: abxbus.Ptr(false),
 		Include: func(result any, eventResult *abxbus.EventResult) bool {
 			return eventResult.Status == abxbus.EventResultCompleted && result == "second"
 		},

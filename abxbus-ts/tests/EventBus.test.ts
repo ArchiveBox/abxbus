@@ -740,9 +740,7 @@ test('eventResultsList supports include/raise_if_any/raise_if_none arguments', a
   })
   await assert.rejects(
     async () => bus.emit(ArgsEvent({})).eventResultsList({ raise_if_any: true }),
-    (error) =>
-      error instanceof AggregateError &&
-      error.errors.some((handlerError) => handlerError instanceof Error && handlerError.message === 'boom')
+    (error) => error instanceof Error && !(error instanceof AggregateError) && error.message === 'boom'
   )
 
   const values_without_errors = await bus.emit(ArgsEvent({})).eventResultsList({ raise_if_any: false, raise_if_none: true })
@@ -780,7 +778,7 @@ test('eventResultsList supports include/raise_if_any/raise_if_none arguments', a
   await assert.rejects(async () => bus.emit(TimeoutEvent({})).now({ timeout: 0.01 }).eventResultsList(), /Timed out waiting/)
 })
 
-test('eventResult and eventResultsList handle all-error results with shared defaults', async () => {
+test('event result all error options contract', async () => {
   const bus = new EventBus('AllErrorResultOptionsBus', { event_handler_concurrency: 'parallel' })
   const AllErrorEvent = BaseEvent.extend('AllErrorResultOptionsEvent', {})
 
@@ -808,7 +806,116 @@ test('eventResult and eventResultsList handle all-error results with shared defa
   await assert.rejects(() => event.eventResult({ raise_if_any: true, raise_if_none: true }), AggregateError)
   await assert.rejects(() => event.eventResultsList({ raise_if_any: true, raise_if_none: true }), AggregateError)
 
-  bus.destroy()
+  await bus.destroy()
+})
+
+test('event result error shapes use single exception or group', async () => {
+  const bus = new EventBus('ErrorShapeContractBus', { event_handler_concurrency: 'parallel' })
+  const SingleErrorEvent = BaseEvent.extend('SingleErrorShapeEvent', {})
+  const MultiErrorEvent = BaseEvent.extend('MultiErrorShapeEvent', {})
+
+  bus.on(SingleErrorEvent, () => {
+    throw new Error('single shape failure')
+  })
+  bus.on(MultiErrorEvent, () => {
+    throw new Error('first shape failure')
+  })
+  bus.on(MultiErrorEvent, () => {
+    throw new TypeError('second shape failure')
+  })
+
+  const single_event = await bus.emit(SingleErrorEvent({})).now()
+  await assert.rejects(
+    () => single_event.eventResult(),
+    (error) => error instanceof Error && !(error instanceof AggregateError) && /single shape failure/.test(error.message)
+  )
+
+  const multi_event = await bus.emit(MultiErrorEvent({})).now()
+  await assert.rejects(
+    () => multi_event.eventResult(),
+    (error) => error instanceof AggregateError && error.errors.length === 2 && /had 2 handler error/.test(error.message)
+  )
+
+  await bus.destroy()
+})
+
+test('destroy default clear is terminal and frees bus state', async () => {
+  const DestroyEvent = BaseEvent.extend('DestroyDefaultClearEvent', {})
+  const bus = new EventBus('DestroyDefaultClearBus')
+
+  bus.on(DestroyEvent, () => 'done')
+  const event = await bus.emit(DestroyEvent({})).now()
+  assert.equal(await event.eventResult(), 'done')
+
+  await bus.destroy(0)
+
+  assert.equal(bus.runloop_running, false)
+  assert.equal(bus.pending_event_queue.length, 0)
+  assert.equal(bus.handlers.size, 0)
+  assert.equal(bus.handlers_by_key.size, 0)
+  assert.equal(bus.event_history.size, 0)
+  assert.equal(bus.in_flight_event_ids.size, 0)
+  assert.equal(bus.find_waiters.size, 0)
+  assert.equal(bus.all_instances.has(bus), false)
+
+  assert.throws(() => bus.on(DestroyEvent, () => 'again'), /destroyed/)
+  assert.throws(() => bus.emit(DestroyEvent({})), /destroyed/)
+  await assert.rejects(() => bus.find(DestroyEvent, { future: false }), /destroyed/)
+})
+
+test('destroy clear false preserves handlers and history and resumes', async () => {
+  const ReusableEvent = BaseEvent.extend('DestroyClearFalseReusableEvent', {})
+  const bus = new EventBus('DestroyClearFalseReusableBus')
+  let calls = 0
+
+  bus.on(ReusableEvent, () => {
+    calls += 1
+    return `handled:${calls}`
+  })
+
+  const first = await bus.emit(ReusableEvent({})).now()
+  assert.equal(await first.eventResult(), 'handled:1')
+
+  await bus.destroy({ timeout: 0, clear: false })
+
+  assert.equal(bus.runloop_running, false)
+  assert.equal(bus.pending_event_queue.length, 0)
+  assert.equal(bus.handlers.size, 1)
+  assert.equal(bus.event_history.size, 1)
+  assert.equal(bus.all_instances.has(bus), true)
+
+  const second = await bus.emit(ReusableEvent({})).now()
+  assert.equal(await second.eventResult(), 'handled:2')
+  assert.equal(bus.event_history.size, 2)
+
+  await bus.destroy()
+})
+
+test('destroying one bus does not break shared handlers or forward targets', async () => {
+  const SharedDestroyEvent = BaseEvent.extend('SharedDestroyEvent', {})
+  const source = new EventBus('DestroySharedSourceBus')
+  const target = new EventBus('DestroySharedTargetBus')
+  let seen = 0
+  const shared_handler = () => {
+    seen += 1
+    return 'shared'
+  }
+
+  source.on(SharedDestroyEvent, shared_handler)
+  source.on('*', (event) => target.emit(event))
+  target.on(SharedDestroyEvent, shared_handler)
+
+  const forwarded = await source.emit(SharedDestroyEvent({})).now()
+  assert.equal((await forwarded.eventResultsList({ raise_if_any: false })).filter((value) => value === 'shared').length, 2)
+
+  await source.destroy()
+
+  const direct = await target.emit(SharedDestroyEvent({})).now()
+  assert.equal(await direct.eventResult(), 'shared')
+  assert.equal(target.handlers.size, 1)
+  assert.equal(seen, 3)
+
+  await target.destroy()
 })
 
 // ─── Concurrent dispatch ─────────────────────────────────────────────────────

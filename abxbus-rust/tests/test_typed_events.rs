@@ -45,7 +45,8 @@ fn test_on_and_emit_typed_roundtrip() {
     });
     let _ = block_on(event.now());
 
-    let first = block_on(event.event_result(EventResultOptions::default())).expect("first result");
+    let first = block_on(event.event_result_with_options(EventResultOptions::default()))
+        .expect("first result");
     assert_eq!(first, Some(AddResult { sum: 13 }));
     bus.destroy();
 }
@@ -171,9 +172,10 @@ fn test_dispatch_type_inference() {
     assert_eq!(dispatched_event.event_type, "AddEvent");
 
     let _ = block_on(dispatched_event.now());
-    let result = block_on(dispatched_event.event_result(EventResultOptions::default()))
-        .expect("typed event result")
-        .expect("handler result");
+    let result =
+        block_on(dispatched_event.event_result_with_options(EventResultOptions::default()))
+            .expect("typed event result")
+            .expect("handler result");
     assert_eq!(result, AddResult { sum: 10 });
     bus.destroy();
 }
@@ -200,7 +202,7 @@ fn test_typed_event_result_accessors_decode_handler_values() {
     });
     let _ = block_on(event.now());
 
-    let first = block_on(event.event_result(EventResultOptions {
+    let first = block_on(event.event_result_with_options(EventResultOptions {
         raise_if_any: false,
         raise_if_none: true,
         include: None,
@@ -208,7 +210,7 @@ fn test_typed_event_result_accessors_decode_handler_values() {
     .expect("typed first result");
     assert_eq!(first, Some(AddResult { sum: 8 }));
 
-    let values = block_on(event.event_results_list(EventResultOptions {
+    let values = block_on(event.event_results_list_with_options(EventResultOptions {
         raise_if_any: false,
         raise_if_none: true,
         include: None,

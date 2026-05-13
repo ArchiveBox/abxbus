@@ -394,8 +394,6 @@ jobs:
           gcc-14 --version
 
       - run: pnpm install --frozen-lockfile
-      - name: Run TypeScript performance test file
-        run: NODE_OPTIONS='--expose-gc' node --expose-gc --test --import tsx tests/EventBus_performance.test.ts
       - name: Run TypeScript runtime perf
         run: pnpm run perf | tee ts_perf.log
       - name: Export TypeScript perf stats

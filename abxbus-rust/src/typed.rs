@@ -342,23 +342,33 @@ impl<E: EventSpec> BaseEventHandle<E> {
         })
     }
 
-    pub async fn event_result(
+    pub async fn event_result(&self) -> Result<Option<E::event_result_type>, String> {
+        self.event_result_with_options(EventResultOptions::default())
+            .await
+    }
+
+    pub async fn event_result_with_options(
         &self,
         options: EventResultOptions,
     ) -> Result<Option<E::event_result_type>, String> {
         self.inner
-            .event_result(options)
+            .event_result_with_options(options)
             .await?
             .map(Self::decode_result_value)
             .transpose()
     }
 
-    pub async fn event_results_list(
+    pub async fn event_results_list(&self) -> Result<Vec<E::event_result_type>, String> {
+        self.event_results_list_with_options(EventResultOptions::default())
+            .await
+    }
+
+    pub async fn event_results_list_with_options(
         &self,
         options: EventResultOptions,
     ) -> Result<Vec<E::event_result_type>, String> {
         self.inner
-            .event_results_list(options)
+            .event_results_list_with_options(options)
             .await?
             .into_iter()
             .map(Self::decode_result_value)
@@ -399,6 +409,7 @@ where
 
 impl EventBus {
     pub fn emit<I: IntoBaseEventHandle>(&self, event: I) -> BaseEventHandle<I::Event> {
+        self.raise_if_terminal_destroyed();
         let event = event.into_base_event_handle();
         let emitted = self.enqueue_base(event.inner.clone());
         BaseEventHandle::from_base_event(emitted)
@@ -409,12 +420,14 @@ impl EventBus {
         event: I,
         queue_jump: bool,
     ) -> BaseEventHandle<I::Event> {
+        self.raise_if_terminal_destroyed();
         let event = event.into_base_event_handle();
         let emitted = self.enqueue_base_with_options(event.inner.clone(), queue_jump);
         BaseEventHandle::from_base_event(emitted)
     }
 
     pub fn emit_child<I: IntoBaseEventHandle>(&self, event: I) -> BaseEventHandle<I::Event> {
+        self.raise_if_terminal_destroyed();
         let event = event.into_base_event_handle();
         let emitted = self.enqueue_child_base(event.inner.clone());
         BaseEventHandle::from_base_event(emitted)
@@ -425,6 +438,7 @@ impl EventBus {
         event: I,
         queue_jump: bool,
     ) -> BaseEventHandle<I::Event> {
+        self.raise_if_terminal_destroyed();
         let event = event.into_base_event_handle();
         let emitted = self.enqueue_child_base_with_options(event.inner.clone(), queue_jump);
         BaseEventHandle::from_base_event(emitted)

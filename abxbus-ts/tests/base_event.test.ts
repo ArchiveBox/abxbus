@@ -609,7 +609,7 @@ test('eventResult: options apply to current results', async () => {
   const event = await bus.emit(ResultOptionsEvent({})).now({ timeout: 1, first_result: true })
   assert.equal(await event.eventResult({ raise_if_any: false }), 'keep')
   try {
-    await assert.rejects(() => event.eventResult({ raise_if_any: true }), AggregateError)
+    await assert.rejects(() => event.eventResult({ raise_if_any: true }), /option boom/)
     assert.deepEqual(
       await event.eventResultsList({
         include: (result) => result === 'missing',

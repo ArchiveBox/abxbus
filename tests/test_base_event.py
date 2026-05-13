@@ -698,6 +698,80 @@ async def test_event_result_raises_processing_error_group_after_completion():
     await bus.destroy()
 
 
+async def test_event_result_error_shapes_use_single_exception_or_group():
+    class SingleErrorEvent(BaseEvent[None]):
+        pass
+
+    class MultiErrorEvent(BaseEvent[None]):
+        pass
+
+    bus = EventBus(name='BaseEventErrorShapeContractBus', event_handler_concurrency='parallel')
+
+    async def single_fail(_: SingleErrorEvent) -> None:
+        raise ValueError('single shape failure')
+
+    async def first_fail(_: MultiErrorEvent) -> None:
+        raise ValueError('first shape failure')
+
+    async def second_fail(_: MultiErrorEvent) -> None:
+        raise RuntimeError('second shape failure')
+
+    bus.on(SingleErrorEvent, single_fail)
+    bus.on(MultiErrorEvent, first_fail)
+    bus.on(MultiErrorEvent, second_fail)
+
+    try:
+        single_event = await bus.emit(SingleErrorEvent()).now()
+        with pytest.raises(ValueError, match='single shape failure'):
+            await single_event.event_result()
+
+        multi_event = await bus.emit(MultiErrorEvent()).now()
+        with pytest.raises(ExceptionGroup, match='had 2 handler error') as exc_info:
+            await multi_event.event_result()
+        assert {type(error) for error in exc_info.value.exceptions} == {ValueError, RuntimeError}
+    finally:
+        await bus.destroy()
+
+
+async def test_event_result_all_error_options_contract():
+    class ErrorEvent(BaseEvent[None]):
+        pass
+
+    bus = EventBus(name='BaseEventAllErrorOptionsContractBus', event_handler_concurrency='parallel')
+
+    async def first_fail(_: ErrorEvent) -> None:
+        raise ValueError('first all-error failure')
+
+    async def second_fail(_: ErrorEvent) -> None:
+        raise RuntimeError('second all-error failure')
+
+    bus.on(ErrorEvent, first_fail)
+    bus.on(ErrorEvent, second_fail)
+
+    try:
+        event = await bus.emit(ErrorEvent()).now()
+
+        assert await event.event_result(raise_if_any=False, raise_if_none=False) is None
+        assert await event.event_results_list(raise_if_any=False, raise_if_none=False) == []
+
+        with pytest.raises(ValueError, match='Expected at least one handler'):
+            await event.event_result(raise_if_any=False, raise_if_none=True)
+        with pytest.raises(ValueError, match='Expected at least one handler'):
+            await event.event_results_list(raise_if_any=False, raise_if_none=True)
+
+        with pytest.raises(ExceptionGroup, match='had 2 handler error'):
+            await event.event_result(raise_if_any=True, raise_if_none=False)
+        with pytest.raises(ExceptionGroup, match='had 2 handler error'):
+            await event.event_results_list(raise_if_any=True, raise_if_none=False)
+
+        with pytest.raises(ExceptionGroup, match='had 2 handler error'):
+            await event.event_result(raise_if_any=True, raise_if_none=True)
+        with pytest.raises(ExceptionGroup, match='had 2 handler error'):
+            await event.event_results_list(raise_if_any=True, raise_if_none=True)
+    finally:
+        await bus.destroy()
+
+
 async def test_event_result_accepts_error_options_outside_handler():
     class ErrorEvent(BaseEvent[None]):
         pass

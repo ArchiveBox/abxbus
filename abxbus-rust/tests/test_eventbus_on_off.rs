@@ -292,7 +292,7 @@ fn test_handler_async_preserves_typed_arg_return_contracts_for_sync_handlers() {
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("sync")));
     assert_eq!(
-        block_on(event.event_result(EventResultOptions::default()))
+        block_on(event.event_result_with_options(EventResultOptions::default()))
             .expect("first result")
             .as_deref(),
         Some("sync")
@@ -319,7 +319,7 @@ fn test_handler_async_preserves_typed_arg_return_contracts_for_async_handlers() 
     assert_eq!(result.status, EventResultStatus::Completed);
     assert_eq!(result.result, Some(json!("sync")));
     assert_eq!(
-        block_on(event.event_result(EventResultOptions::default()))
+        block_on(event.event_result_with_options(EventResultOptions::default()))
             .expect("first result")
             .as_deref(),
         Some("sync")

@@ -44,7 +44,7 @@ func TestCompletionModeFirstSerialStopsAfterFirstNonNil(t *testing.T) {
 	if _, err := e.Now(); err != nil {
 		t.Fatal(err)
 	}
-	result, err := e.EventResult(&abxbus.EventResultOptions{RaiseIfAny: false})
+	result, err := e.EventResult(&abxbus.EventResultOptions{RaiseIfAny: abxbus.Ptr(false)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestCompletionModeFirstParallelReturnsFastAndCancelsSlow(t *testing.T) {
 	if _, err := emitted.Now(); err != nil {
 		t.Fatal(err)
 	}
-	result, err := emitted.EventResult(&abxbus.EventResultOptions{RaiseIfAny: false})
+	result, err := emitted.EventResult(&abxbus.EventResultOptions{RaiseIfAny: abxbus.Ptr(false)})
 	if err != nil {
 		t.Fatal(err)
 	}

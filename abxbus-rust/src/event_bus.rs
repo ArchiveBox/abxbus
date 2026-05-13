@@ -44,13 +44,14 @@ struct FindWaiter {
     child_of_event_id: Option<String>,
     where_filter: Option<HashMap<String, Value>>,
     where_predicate: Option<FindPredicate>,
-    sender: std_mpsc::Sender<Arc<BaseEvent>>,
+    sender: std_mpsc::Sender<Option<Arc<BaseEvent>>>,
 }
 
 struct BusRuntime {
     queue: Mutex<VecDeque<Arc<BaseEvent>>>,
     queue_notify: Event,
     destroyed: Mutex<bool>,
+    terminal_destroyed: Mutex<bool>,
     loop_started: Mutex<bool>,
     processing_event_ids: Mutex<HashSet<String>>,
     events: Mutex<HashMap<String, Arc<BaseEvent>>>,
@@ -223,6 +224,12 @@ pub struct EventBusOptions {
     pub max_handler_recursion_depth: usize,
 }
 
+#[derive(Debug, Clone)]
+pub struct DestroyOptions {
+    pub timeout: Option<f64>,
+    pub clear: bool,
+}
+
 #[derive(Clone, Default)]
 pub struct FindOptions {
     pub past: bool,
@@ -274,6 +281,15 @@ impl Default for EventBusOptions {
             event_handler_slow_timeout: Some(30.0),
             event_handler_detect_file_paths: true,
             max_handler_recursion_depth: 2,
+        }
+    }
+}
+
+impl Default for DestroyOptions {
+    fn default() -> Self {
+        Self {
+            timeout: None,
+            clear: true,
         }
     }
 }
@@ -364,6 +380,14 @@ impl EventBus {
 
     pub fn is_inside_handler_context() -> bool {
         CURRENT_HANDLER_ID.with(|handler_id| handler_id.borrow().is_some())
+    }
+
+    pub(crate) fn raise_if_terminal_destroyed(&self) {
+        assert!(
+            !*self.runtime.terminal_destroyed.lock(),
+            "{} has been destroyed and cannot be used again",
+            self.label()
+        );
     }
 
     fn live_instances() -> Vec<Arc<EventBus>> {
@@ -480,6 +504,7 @@ impl EventBus {
                 queue: Mutex::new(VecDeque::new()),
                 queue_notify: Event::new(),
                 destroyed: Mutex::new(false),
+                terminal_destroyed: Mutex::new(false),
                 loop_started: Mutex::new(false),
                 processing_event_ids: Mutex::new(HashSet::new()),
                 events: Mutex::new(HashMap::new()),
@@ -548,10 +573,12 @@ impl EventBus {
     }
 
     fn ensure_loop_started(&self) {
+        self.raise_if_terminal_destroyed();
         let mut started = self.runtime.loop_started.lock();
         if *started {
             return;
         }
+        *self.runtime.destroyed.lock() = false;
         *started = true;
         let bus = self.clone();
         drop(started);
@@ -629,9 +656,48 @@ impl EventBus {
     }
 
     pub fn destroy(&self) {
+        self.destroy_with_options(DestroyOptions::default());
+    }
+
+    pub fn destroy_with_options(&self, options: DestroyOptions) {
+        if let Some(timeout) = options.timeout {
+            assert!(timeout >= 0.0, "destroy timeout must be >= 0 or None");
+            if timeout > 0.0 {
+                block_on(self.wait_until_idle(Some(timeout)));
+            }
+        }
+
         *self.runtime.destroyed.lock() = true;
-        self.unregister_instance();
+        *self.runtime.loop_started.lock() = false;
+        if options.clear {
+            *self.runtime.terminal_destroyed.lock() = true;
+            self.unregister_instance();
+        }
+        self.clear_runtime_state(options.clear);
         self.runtime.queue_notify.notify(usize::MAX);
+    }
+
+    fn clear_runtime_state(&self, clear: bool) {
+        let waiters = {
+            let mut find_waiters = self.runtime.find_waiters.lock();
+            find_waiters
+                .drain(..)
+                .map(|waiter| waiter.sender)
+                .collect::<Vec<_>>()
+        };
+        for sender in waiters {
+            let _ = sender.send(None);
+        }
+        self.runtime.queue.lock().clear();
+        self.runtime.processing_event_ids.lock().clear();
+        self.runtime.event_contexts.lock().clear();
+        self.runtime.event_context_count.store(0, Ordering::SeqCst);
+        self.locks.clear();
+        if clear {
+            self.runtime.events.lock().clear();
+            self.runtime.history_order.lock().clear();
+            self.handlers.lock().clear();
+        }
     }
 
     pub fn label(&self) -> String {
@@ -656,11 +722,8 @@ impl EventBus {
 
     pub fn is_idle_and_queue_empty(&self) -> bool {
         let queue_empty = self.runtime.queue.lock().is_empty();
-        let all_completed = self.runtime.events.lock().values().all(|event| {
-            let status = event.inner.lock().event_status;
-            status == EventStatus::Completed
-        });
-        queue_empty && all_completed
+        let no_processing = self.runtime.processing_event_ids.lock().is_empty();
+        queue_empty && no_processing
     }
 
     pub fn is_running_for_test(&self) -> bool {
@@ -668,7 +731,7 @@ impl EventBus {
     }
 
     pub fn is_destroyed_for_test(&self) -> bool {
-        *self.runtime.destroyed.lock()
+        *self.runtime.terminal_destroyed.lock()
     }
 
     pub fn runtime_payload_for_test(&self) -> HashMap<String, Arc<BaseEvent>> {
@@ -1212,6 +1275,7 @@ impl EventBus {
         F: Fn(Arc<BaseEvent>) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<Value, String>> + Send + 'static,
     {
+        self.raise_if_terminal_destroyed();
         if let Some(timeout) = options.handler_timeout {
             assert!(timeout >= 0.0, "handler_timeout must be >= 0 or None");
         }
@@ -1254,6 +1318,7 @@ impl EventBus {
     where
         F: Fn(Arc<BaseEvent>) -> Result<Value, String> + Send + Sync + 'static,
     {
+        self.raise_if_terminal_destroyed();
         if let Some(timeout) = options.handler_timeout {
             assert!(timeout >= 0.0, "handler_timeout must be >= 0 or None");
         }
@@ -1301,6 +1366,7 @@ impl EventBus {
     }
 
     pub fn off(&self, pattern: &str, handler_id: Option<&str>) {
+        self.raise_if_terminal_destroyed();
         let mut handlers = self.handlers.lock();
         if let Some(list) = handlers.get_mut(pattern) {
             if let Some(handler_id) = handler_id {
@@ -1319,10 +1385,12 @@ impl EventBus {
     }
 
     pub fn emit_base(&self, event: Arc<BaseEvent>) -> Arc<BaseEvent> {
+        self.raise_if_terminal_destroyed();
         self.enqueue_base(event)
     }
 
     pub fn emit_child_base(&self, event: Arc<BaseEvent>) -> Arc<BaseEvent> {
+        self.raise_if_terminal_destroyed();
         self.enqueue_child_base(event)
     }
 
@@ -1356,6 +1424,7 @@ impl EventBus {
         queue_jump: bool,
         track_child: bool,
     ) -> Arc<BaseEvent> {
+        self.raise_if_terminal_destroyed();
         if Self::current_handler_context_is_stale() {
             return event;
         }
@@ -1731,13 +1800,14 @@ impl EventBus {
         pattern: &str,
         options: FindOptions,
     ) -> Option<Arc<BaseEvent>> {
+        self.raise_if_terminal_destroyed();
         let child_of_event_id = options
             .child_of
             .as_ref()
             .map(|event| event.inner.lock().event_id.clone());
 
         let mut waiter_id: Option<u64> = None;
-        let mut waiter_rx: Option<std_mpsc::Receiver<Arc<BaseEvent>>> = None;
+        let mut waiter_rx: Option<std_mpsc::Receiver<Option<Arc<BaseEvent>>>> = None;
 
         if options.future.is_some() {
             let (tx, rx) = std_mpsc::channel();
@@ -1783,8 +1853,11 @@ impl EventBus {
         }
 
         let timeout = options.future?;
-        let result =
-            waiter_rx.and_then(|rx| rx.recv_timeout(Duration::from_secs_f64(timeout)).ok());
+        let result = waiter_rx.and_then(|rx| {
+            rx.recv_timeout(Duration::from_secs_f64(timeout))
+                .ok()
+                .flatten()
+        });
 
         if let Some(id) = waiter_id {
             self.runtime
@@ -1822,6 +1895,7 @@ impl EventBus {
         pattern: &str,
         options: FilterOptions,
     ) -> Vec<Arc<BaseEvent>> {
+        self.raise_if_terminal_destroyed();
         if !options.past && options.future.is_none() {
             return Vec::new();
         }
@@ -1836,7 +1910,7 @@ impl EventBus {
 
         let mut results = Vec::new();
         let mut waiter_id: Option<u64> = None;
-        let mut waiter_rx: Option<std_mpsc::Receiver<Arc<BaseEvent>>> = None;
+        let mut waiter_rx: Option<std_mpsc::Receiver<Option<Arc<BaseEvent>>>> = None;
 
         if options.future.is_some() {
             let (tx, rx) = std_mpsc::channel();
@@ -1881,9 +1955,11 @@ impl EventBus {
             return results;
         };
 
-        if let Some(future_match) =
-            waiter_rx.and_then(|rx| rx.recv_timeout(Duration::from_secs_f64(timeout)).ok())
-        {
+        if let Some(future_match) = waiter_rx.and_then(|rx| {
+            rx.recv_timeout(Duration::from_secs_f64(timeout))
+                .ok()
+                .flatten()
+        }) {
             results.push(future_match);
         }
 
@@ -2028,7 +2104,7 @@ impl EventBus {
                 .lock()
                 .retain(|waiter| !matched_waiter_ids.contains(&waiter.id));
             for sender in matched_senders {
-                let _ = sender.send(event.clone());
+                let _ = sender.send(Some(event.clone()));
             }
         }
     }

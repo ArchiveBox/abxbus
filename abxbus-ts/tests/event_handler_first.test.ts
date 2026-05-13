@@ -198,7 +198,7 @@ test('eventResult: can return a valid result when handler errors are suppressed'
   const event = await bus.emit(TestEvent({})).now()
 
   assert.equal(await event.eventResult({ raise_if_any: false }), 'slow but succeeds')
-  await assert.rejects(() => event.eventResult({ raise_if_any: true }), AggregateError)
+  await assert.rejects(() => event.eventResult({ raise_if_any: true }), /fast but fails/)
 })
 
 test('eventResult: raises with raise_if_none when no real result is found', async () => {

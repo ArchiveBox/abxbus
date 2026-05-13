@@ -44,6 +44,11 @@ export type EventBusOptions = {
   middlewares?: EventBusMiddlewareInput[]
 }
 
+export type EventBusDestroyOptions = {
+  timeout?: number | null
+  clear?: boolean
+}
+
 export type EventBusJSON = {
   id: string
   name: string
@@ -199,6 +204,7 @@ export class EventBus {
   locks: LockManager
   find_waiters: Set<EphemeralFindEventHandler> // set of EphemeralFindEventHandler objects that are waiting for a matching future event
   middlewares: EventBusMiddleware[]
+  private destroyed: boolean
 
   private static normalizeMiddlewares(middlewares?: EventBusMiddlewareInput[]): EventBusMiddleware[] {
     const normalized: EventBusMiddleware[] = []
@@ -241,6 +247,7 @@ export class EventBus {
     this.in_flight_event_ids = new Set()
     this.locks = new LockManager(this)
     this.middlewares = EventBus.normalizeMiddlewares(options.middlewares)
+    this.destroyed = false
 
     this.all_instances.add(this)
 
@@ -633,21 +640,54 @@ export class EventBus {
     return this.event_history.delete(event_id)
   }
 
-  // destroy the event bus and all its state to allow for garbage collection
-  destroy(): void {
-    this.all_instances.discard(this)
-    this.handlers.clear()
-    this.handlers_by_key.clear()
-    for (const event of this.event_history.values()) {
-      event._gc()
+  private _raiseIfDestroyed(): void {
+    if (this.destroyed) {
+      throw new Error(`${this.toString()} has been destroyed and cannot be used again`)
     }
-    this.event_history.clear()
-    this.pending_event_queue.length = 0
-    this.in_flight_event_ids.clear()
-    this.find_waiters.clear()
-    this.locks.clear()
   }
 
+  // destroy the event bus and all its state to allow for garbage collection
+  destroy(timeout?: number | null, clear?: boolean): Promise<void>
+  destroy(options?: EventBusDestroyOptions): Promise<void>
+  destroy(timeout_or_options: number | null | EventBusDestroyOptions = null, clear_arg: boolean = true): Promise<void> {
+    const timeout =
+      typeof timeout_or_options === 'object' && timeout_or_options !== null ? (timeout_or_options.timeout ?? null) : timeout_or_options
+    const clear = typeof timeout_or_options === 'object' && timeout_or_options !== null ? (timeout_or_options.clear ?? true) : clear_arg
+    if (this.destroyed) {
+      return Promise.resolve()
+    }
+    const finish = (): void => {
+      this.runloop_running = false
+      for (const waiter of Array.from(this.find_waiters)) {
+        if (waiter.timeout_id) {
+          clearTimeout(waiter.timeout_id)
+        }
+        this.find_waiters.delete(waiter)
+        waiter.resolve(null)
+      }
+      this.pending_event_queue.length = 0
+      this.in_flight_event_ids.clear()
+      this.locks.clear()
+      if (!clear) {
+        return
+      }
+      this.destroyed = true
+      this.all_instances.discard(this)
+      this.handlers.clear()
+      this.handlers_by_key.clear()
+      this.event_history.clear()
+      this.middlewares.length = 0
+    }
+    if (timeout !== null && timeout !== undefined && timeout > 0) {
+      return this.waitUntilIdle(timeout)
+        .catch(() => false)
+        .then(() => {
+          finish()
+        })
+    }
+    finish()
+    return Promise.resolve()
+  }
   on<T extends BaseEvent>(event_pattern: EventClass<T>, handler: EventHandlerCallable<T>, options?: Partial<EventHandler>): EventHandler
   on<T extends BaseEvent>(
     event_pattern: string | '*',
@@ -659,6 +699,7 @@ export class EventBus {
     handler: EventHandlerCallable | UntypedEventHandlerFunction,
     options: Partial<EventHandler> = {}
   ): EventHandler {
+    this._raiseIfDestroyed()
     const normalized_key = normalizeEventPattern(event_pattern) // get string event_type or '*'
     const handler_name = EventHandler.handlerNameFromCallable(handler as EventHandlerCallable)
     const handler_entry = new EventHandler({
@@ -687,6 +728,7 @@ export class EventBus {
   }
 
   off<T extends BaseEvent>(event_pattern: EventPattern<T> | '*', handler?: EventHandlerCallable<T> | string | EventHandler): void {
+    this._raiseIfDestroyed()
     const normalized_key = normalizeEventPattern(event_pattern)
     if (typeof handler === 'object' && handler instanceof EventHandler && handler.id !== undefined) {
       handler = handler.id
@@ -708,6 +750,7 @@ export class EventBus {
   }
 
   emit<T extends BaseEvent>(event: T): T {
+    this._raiseIfDestroyed()
     const original_event = event._event_original ?? event // if event is a bus-scoped proxy already, get the original underlying event object
     const current_result = this.locks._getRawActiveHandlerResultForCurrentAsyncContext()
     if (current_result && current_result.status !== 'pending' && current_result.status !== 'started') {
@@ -810,6 +853,7 @@ export class EventBus {
     where_or_options: ((event: T) => boolean) | FilterOptions<T> = {},
     maybe_options: FilterOptions<T> = {}
   ): Promise<T[]> {
+    this._raiseIfDestroyed()
     const where = typeof where_or_options === 'function' ? where_or_options : () => true
     const options = typeof where_or_options === 'function' ? maybe_options : where_or_options
     const matches = await this.event_history.filter(event_pattern as EventPattern<T> | '*', where, {
@@ -847,6 +891,7 @@ export class EventBus {
   }
 
   async waitUntilIdle(timeout: number | null = null): Promise<boolean> {
+    this._raiseIfDestroyed()
     return await this.locks.waitForIdle(timeout)
   }
 
@@ -905,6 +950,7 @@ export class EventBus {
   }
 
   private _startRunloop(): void {
+    this._raiseIfDestroyed()
     if (this.runloop_running) {
       return
     }

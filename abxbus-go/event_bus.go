@@ -36,6 +36,11 @@ type EventBusOptions struct {
 	Middlewares                 []EventBusMiddleware
 }
 
+type EventBusDestroyOptions struct {
+	Timeout *float64
+	Clear   *bool
+}
+
 type FindOptions struct {
 	Past    any
 	Future  any
@@ -125,10 +130,36 @@ type EventBus struct {
 	locks             *LockManager
 	findWaiters       []*findWaiter
 	middlewares       []EventBusMiddleware
+	destroyed         bool
 
 	mu          sync.Mutex
 	global_lock *AsyncLock
 }
+
+var ErrEventBusDestroyed = errors.New("event bus has been destroyed")
+
+type EventBusDestroyedError struct {
+	EventBusName  string
+	EventBusID    string
+	EventBusLabel string
+	Operation     string
+}
+
+func (e *EventBusDestroyedError) Error() string {
+	if e == nil {
+		return ""
+	}
+	label := e.EventBusLabel
+	if label == "" {
+		label = e.EventBusName
+		if e.EventBusID != "" {
+			label = fmt.Sprintf("%s#%s", e.EventBusName, suffix(e.EventBusID, 4))
+		}
+	}
+	return fmt.Sprintf("%s.%s rejected: %s", label, e.Operation, ErrEventBusDestroyed.Error())
+}
+
+func (e *EventBusDestroyedError) Unwrap() error { return ErrEventBusDestroyed }
 
 func NewEventBus(name string, options *EventBusOptions) *EventBus {
 	if name == "" {
@@ -212,6 +243,31 @@ func suffix(value string, n int) string {
 
 func (b *EventBus) Label() string { return fmt.Sprintf("%s#%s", b.Name, suffix(b.ID, 4)) }
 
+func (b *EventBus) IsDestroyed() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.destroyed
+}
+
+func (b *EventBus) destroyedOperationError(operation string) error {
+	return &EventBusDestroyedError{
+		EventBusName:  b.Name,
+		EventBusID:    b.ID,
+		EventBusLabel: b.Label(),
+		Operation:     operation,
+	}
+}
+
+func (b *EventBus) rejectIfDestroyed(operation string) error {
+	b.mu.Lock()
+	destroyed := b.destroyed
+	b.mu.Unlock()
+	if destroyed {
+		return b.destroyedOperationError(operation)
+	}
+	return nil
+}
+
 func eventBusInstancesSnapshot() []*EventBus {
 	eventBusRegistry.Lock()
 	defer eventBusRegistry.Unlock()
@@ -243,6 +299,9 @@ func (b *EventBus) notifyBusHandlersChange(handler *EventHandler, registered boo
 }
 
 func (b *EventBus) On(event_pattern string, handler_name string, handler EventHandlerCallable, options *EventHandler) *EventHandler {
+	if err := b.rejectIfDestroyed("On"); err != nil {
+		panic(err)
+	}
 	if event_pattern == "" {
 		event_pattern = "*"
 	}
@@ -288,6 +347,9 @@ func (b *EventBus) On(event_pattern string, handler_name string, handler EventHa
 }
 
 func (b *EventBus) Off(event_pattern string, handler any) {
+	if err := b.rejectIfDestroyed("Off"); err != nil {
+		panic(err)
+	}
 	b.mu.Lock()
 	ids := b.handlersByKey[event_pattern]
 	removed := []*EventHandler{}
@@ -341,6 +403,9 @@ func (b *EventBus) Emit(input any) *BaseEvent {
 }
 
 func (b *EventBus) EmitWithContext(ctx context.Context, input any) *BaseEvent {
+	if err := b.rejectIfDestroyed("Emit"); err != nil {
+		panic(err)
+	}
 	event, err := baseEventFromAny(input)
 	if err != nil {
 		panic(err)
@@ -1146,11 +1211,15 @@ func (b *EventBus) processEventImmediatelyAcrossBuses(ctx context.Context, event
 				}
 			}
 			alreadyInFlight := bus.inFlightEventIDs[originalEvent.EventID]
-			if !alreadyInFlight {
+			canQueueJumpInFlight := alreadyInFlight &&
+				activeHandlerResult != nil &&
+				(bus == b || (initiatingLock != nil && busEventLock == initiatingLock)) &&
+				!bus.eventHasLocalActiveResults(originalEvent)
+			if !alreadyInFlight || canQueueJumpInFlight {
 				bus.inFlightEventIDs[originalEvent.EventID] = true
 			}
 			bus.mu.Unlock()
-			if alreadyInFlight {
+			if alreadyInFlight && !canQueueJumpInFlight {
 				sawAlreadyInFlight = true
 				continue
 			}
@@ -1586,6 +1655,9 @@ func (b *EventBus) eventMatchesEquals(event *BaseEvent, equals map[string]any) b
 }
 
 func (b *EventBus) Find(event_pattern string, where func(event *BaseEvent) bool, options *FindOptions) (*BaseEvent, error) {
+	if err := b.rejectIfDestroyed("Find"); err != nil {
+		return nil, err
+	}
 	if options == nil {
 		options = &FindOptions{}
 	}
@@ -1659,6 +1731,9 @@ func (b *EventBus) Find(event_pattern string, where func(event *BaseEvent) bool,
 }
 
 func (b *EventBus) Filter(event_pattern string, where func(event *BaseEvent) bool, options *FilterOptions) ([]*BaseEvent, error) {
+	if err := b.rejectIfDestroyed("Filter"); err != nil {
+		return nil, err
+	}
 	if options == nil {
 		options = &FilterOptions{}
 	}
@@ -1793,20 +1868,56 @@ func (b *EventBus) logEventTree(event *BaseEvent, prefix string, isLast bool) []
 	return out
 }
 
+func resolveEventBusDestroyOptions(options *EventBusDestroyOptions) (timeout *float64, clear bool) {
+	clear = true
+	if options == nil {
+		return nil, clear
+	}
+	if options.Timeout != nil {
+		timeout = options.Timeout
+	}
+	if options.Clear != nil {
+		clear = *options.Clear
+	}
+	return timeout, clear
+}
+
 func (b *EventBus) Destroy() {
-	eventBusRegistry.Lock()
-	delete(eventBusRegistry.instances, b)
-	eventBusRegistry.Unlock()
+	b.DestroyWithOptions(nil)
+}
+
+func (b *EventBus) DestroyWithOptions(options *EventBusDestroyOptions) {
+	timeout, clear := resolveEventBusDestroyOptions(options)
+	if timeout != nil {
+		b.WaitUntilIdle(timeout)
+	}
+	alreadyDestroyed := b.IsDestroyed()
+	if clear {
+		eventBusRegistry.Lock()
+		delete(eventBusRegistry.instances, b)
+		eventBusRegistry.Unlock()
+	} else if !alreadyDestroyed {
+		eventBusRegistry.Lock()
+		eventBusRegistry.instances[b] = struct{}{}
+		eventBusRegistry.Unlock()
+	}
+
 	b.mu.Lock()
 	waiters := append([]*findWaiter{}, b.findWaiters...)
 	b.findWaiters = []*findWaiter{}
-	b.handlers = map[string]*EventHandler{}
-	b.handlersByKey = map[string][]string{}
-	b.EventHistory.Clear()
+	if clear {
+		b.destroyed = true
+		b.handlers = map[string]*EventHandler{}
+		b.handlersByKey = map[string][]string{}
+		b.EventHistory.Clear()
+	} else if !b.destroyed {
+		b.destroyed = false
+	}
 	b.pendingEventQueue = []*BaseEvent{}
 	b.inFlightEventIDs = map[string]bool{}
 	b.runloopRunning = false
 	b.mu.Unlock()
+	b.locks.clear()
 	for _, waiter := range waiters {
 		waiter.Resolve(nil)
 	}
