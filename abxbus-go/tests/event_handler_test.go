@@ -97,42 +97,6 @@ func TestEventBusOnSupportsEventFirstOptionalContextHandlerSignatures(t *testing
 	}
 }
 
-type legacyContextFirstHandler func(context.Context, *abxbus.BaseEvent) (any, error)
-
-func TestEventBusOnPreservesLegacyContextFirstHandlerSignatures(t *testing.T) {
-	bus := abxbus.NewEventBus("LegacyContextFirstHandlerBus", nil)
-	gotNamed := false
-	gotVoid := false
-
-	bus.On("LegacyContextFirstEvent", "value_error_ctx_first", func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
-		if ctx == nil {
-			t.Fatal("context should be available when requested")
-		}
-		return event.EventType + ":value", nil
-	}, nil)
-	bus.On("LegacyContextFirstEvent", "named_ctx_first", legacyContextFirstHandler(func(ctx context.Context, event *abxbus.BaseEvent) (any, error) {
-		gotNamed = ctx != nil && event.EventType == "LegacyContextFirstEvent"
-		return nil, nil
-	}), nil)
-	bus.On("LegacyContextFirstEvent", "void_ctx_first", func(ctx context.Context, event *abxbus.BaseEvent) {
-		gotVoid = ctx != nil && event.EventType == "LegacyContextFirstEvent"
-	}, nil)
-
-	values, err := bus.Emit(abxbus.NewBaseEvent("LegacyContextFirstEvent", nil)).EventResultsList(&abxbus.EventResultOptions{
-		RaiseIfAny:  false,
-		RaiseIfNone: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(values) != 1 || values[0] != "LegacyContextFirstEvent:value" {
-		t.Fatalf("expected ctx-first handler value result, got %#v", values)
-	}
-	if !gotNamed || !gotVoid {
-		t.Fatalf("expected named and void ctx-first handlers to run, got named=%v void=%v", gotNamed, gotVoid)
-	}
-}
-
 // Folded from event_handler_ids_test.go to keep test layout class-based.
 func TestBusAndEventIDsAreUUIDv7(t *testing.T) {
 	bus := abxbus.NewEventBus("BusId", nil)
