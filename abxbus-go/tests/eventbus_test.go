@@ -1153,7 +1153,7 @@ func TestEventBusMiddlewareHooksCoverStringAndWildcardPatterns(t *testing.T) {
 	stringHandler := bus.On("MiddlewarePatternEvent", "string", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "string:" + event.EventType, nil
 	}, nil)
-	wildcardHandler := bus.On("*", "wildcard", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	wildcardHandler := bus.OnEventName("*", "wildcard", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "wildcard:" + event.EventType, nil
 	}, nil)
 
@@ -1283,7 +1283,7 @@ func TestDestroyClearFalsePreservesHandlersAndHistoryResolvesWaitersAndIsTermina
 		bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Clear: false})
 		close(destroyed)
 	}()
-	match, err := bus.Find("NeverHappens", nil, &abxbus.FindOptions{Past: false, Future: true})
+	match, err := bus.FindEventName("NeverHappens", nil, &abxbus.FindOptions{Past: false, Future: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1336,7 +1336,11 @@ func TestDestroyClearFalsePreservesHandlersAndHistoryResolvesWaitersAndIsTermina
 			return nil, nil
 		}, nil)
 	})
-	if _, err := bus.Find("Evt", nil, nil); !errors.Is(err, abxbus.ErrEventBusDestroyed) {
+	assertDestroyedPanic("On", func() {
+		type ClearFalseDestroyedEvent struct{}
+		bus.On(func(payload ClearFalseDestroyedEvent) {})
+	})
+	if _, err := bus.FindEventName("Evt", nil, nil); !errors.Is(err, abxbus.ErrEventBusDestroyed) {
 		t.Fatalf("Find should reject with ErrEventBusDestroyed, got %v", err)
 	}
 }
@@ -1483,11 +1487,15 @@ func TestDestroyDefaultClearIsTerminalAndFreesBusState(t *testing.T) {
 	assertDestroyedPanic("On", func() {
 		bus.On("Evt", "new", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) { return nil, nil }, nil)
 	})
+	assertDestroyedPanic("On", func() {
+		type TerminalDestroyedEvent struct{}
+		bus.On(func(payload TerminalDestroyedEvent) {})
+	})
 
-	if _, err := bus.Find("Evt", nil, nil); !errors.Is(err, abxbus.ErrEventBusDestroyed) {
+	if _, err := bus.FindEventName("Evt", nil, nil); !errors.Is(err, abxbus.ErrEventBusDestroyed) {
 		t.Fatalf("Find should reject with ErrEventBusDestroyed, got %v", err)
 	}
-	if _, err := bus.Filter("Evt", nil, nil); !errors.Is(err, abxbus.ErrEventBusDestroyed) {
+	if _, err := bus.FilterEventName("Evt", nil, nil); !errors.Is(err, abxbus.ErrEventBusDestroyed) {
 		t.Fatalf("Filter should reject with ErrEventBusDestroyed, got %v", err)
 	}
 }
@@ -1503,7 +1511,7 @@ func TestDestroyingOneBusDoesNotBreakSharedHandlersOrForwardTargets(t *testing.T
 		return "shared", nil
 	}
 	source.On("SharedDestroyEvent", "shared_source", shared, nil)
-	source.On("*", "forward", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	source.OnEventName("*", "forward", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return target.Emit(event), nil
 	}, nil)
 	target.On("SharedDestroyEvent", "shared_target", shared, nil)

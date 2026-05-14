@@ -85,12 +85,12 @@ func TestComprehensivePatternsForwardingDispatchAndParentTracking(t *testing.T) 
 		results = append(results, fmt.Sprintf("%04d:%s", sequence, label))
 	}
 
-	bus2.On("*", "child_bus2_event_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus2.OnEventName("*", "child_bus2_event_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		eventTypeShort := strings.TrimSuffix(e.EventType, "Event")
 		next("bus2_handler_" + eventTypeShort)
 		return "forwarded bus result", nil
 	}, nil)
-	bus1.On("*", "emit", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus1.OnEventName("*", "emit", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return bus2.Emit(e), nil
 	}, nil)
 
@@ -176,7 +176,7 @@ func TestComprehensiveRaceConditionStress(t *testing.T) {
 	var mu sync.Mutex
 	results := []string{}
 
-	bus1.On("*", "forward_to_bus2", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus1.OnEventName("*", "forward_to_bus2", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return bus2.Emit(e), nil
 	}, nil)
 

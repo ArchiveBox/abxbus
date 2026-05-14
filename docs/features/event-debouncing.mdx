@@ -101,7 +101,7 @@ let result = block_on(event.event_result())?;
 <Tab title="Go">
 
 ```go
-existing, err := bus.Find("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
+existing, err := bus.FindEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
 	return event.Payload["url"] == url
 }, &abxbus.FindOptions{
 	Past: 10.0,     // look back 10s
@@ -186,7 +186,7 @@ let result = block_on(event.event_result())?;
 <Tab title="Go">
 
 ```go
-inFlight, err := bus.Find("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
+inFlight, err := bus.FindEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
 	return event.Payload["url"] == url
 }, &abxbus.FindOptions{
 	Past: false,  // skip history
@@ -285,12 +285,12 @@ sameURL := func(event *abxbus.BaseEvent) bool {
 	return event.Payload["url"] == url
 }
 
-event, err := bus.Find("ScreenshotEvent", sameURL, &abxbus.FindOptions{Past: 10.0, Future: false})
+event, err := bus.FindEventName("ScreenshotEvent", sameURL, &abxbus.FindOptions{Past: 10.0, Future: false})
 if err != nil {
 	panic(err)
 }
 if event == nil {
-	event, err = bus.Find("ScreenshotEvent", sameURL, &abxbus.FindOptions{Past: false, Future: 2.0})
+	event, err = bus.FindEventName("ScreenshotEvent", sameURL, &abxbus.FindOptions{Past: false, Future: 2.0})
 	if err != nil {
 		panic(err)
 	}
@@ -385,12 +385,12 @@ func emitDebouncedScreenshot(ctx context.Context, bus *abxbus.EventBus, url stri
 		return event.Payload["url"] == url
 	}
 
-	event, err := bus.Find("ScreenshotEvent", sameURL, &abxbus.FindOptions{Past: 15.0, Future: false})
+	event, err := bus.FindEventName("ScreenshotEvent", sameURL, &abxbus.FindOptions{Past: 15.0, Future: false})
 	if err != nil {
 		return nil, err
 	}
 	if event == nil {
-		event, err = bus.Find("ScreenshotEvent", sameURL, &abxbus.FindOptions{Past: false, Future: 3.0})
+		event, err = bus.FindEventName("ScreenshotEvent", sameURL, &abxbus.FindOptions{Past: false, Future: 3.0})
 		if err != nil {
 			return nil, err
 		}

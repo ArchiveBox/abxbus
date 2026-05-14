@@ -104,7 +104,7 @@ func runJSONLListener(configPath string) {
 
 	received := make(chan struct{})
 	receivedOnce := sync.Once{}
-	bridge.On("*", "capture", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bridge.OnEventName("*", "capture", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		data, err := json.Marshal(event)
 		if err != nil {
 			return nil, err

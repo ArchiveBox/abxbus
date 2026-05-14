@@ -33,7 +33,7 @@ func TestSimpleDebounceWithChildOfReusesRecentEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	found, err := bus.Find("ScreenshotEvent", nil, &abxbus.FindOptions{
+	found, err := bus.FindEventName("ScreenshotEvent", nil, &abxbus.FindOptions{
 		Past:    10.0,
 		Future:  false,
 		ChildOf: parent,
@@ -75,7 +75,7 @@ func TestReturnsExistingFreshEvent(t *testing.T) {
 		}
 		return time.Since(completedAt) < 5*time.Second
 	}
-	found, err := bus.Find("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
+	found, err := bus.FindEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
 		return event.Payload["target_id"] == debounceTargetID1 && isFresh(event)
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
@@ -96,7 +96,7 @@ func TestAdvancedDebouncePrefersHistoryThenWaitsFutureThenDispatches(t *testing.
 	errs := make(chan error, 1)
 
 	go func() {
-		found, err := bus.Find("SyncEvent", nil, &abxbus.FindOptions{Past: false, Future: 0.5})
+		found, err := bus.FindEventName("SyncEvent", nil, &abxbus.FindOptions{Past: false, Future: 0.5})
 		if err != nil {
 			errs <- err
 			return
@@ -110,7 +110,7 @@ func TestAdvancedDebouncePrefersHistoryThenWaitsFutureThenDispatches(t *testing.
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	historyMatch, err := bus.Find("SyncEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
+	historyMatch, err := bus.FindEventName("SyncEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestDispatchesNewWhenNoMatch(t *testing.T) {
 		return "done", nil
 	}, nil)
 
-	found, err := bus.Find("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
+	found, err := bus.FindEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
 		return event.Payload["target_id"] == debounceTargetID1
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
@@ -171,7 +171,7 @@ func TestDispatchesNewWhenStale(t *testing.T) {
 	if _, err := original.Now(); err != nil {
 		t.Fatal(err)
 	}
-	found, err := bus.Find("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
+	found, err := bus.FindEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
 		return event.Payload["target_id"] == debounceTargetID1 && false
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
@@ -196,7 +196,7 @@ func TestDispatchesNewWhenStale(t *testing.T) {
 func TestFindPastOnlyReturnsImmediatelyWithoutWaiting(t *testing.T) {
 	bus := abxbus.NewEventBus("DebouncePastOnlyBus", nil)
 	start := time.Now()
-	result, err := bus.Find("ParentEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
+	result, err := bus.FindEventName("ParentEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestFindPastOnlyReturnsImmediatelyWithoutWaiting(t *testing.T) {
 func TestFindPastFloatReturnsImmediatelyWithoutWaiting(t *testing.T) {
 	bus := abxbus.NewEventBus("DebouncePastWindowBus", nil)
 	start := time.Now()
-	result, err := bus.Find("ParentEvent", nil, &abxbus.FindOptions{Past: 5.0, Future: false})
+	result, err := bus.FindEventName("ParentEvent", nil, &abxbus.FindOptions{Past: 5.0, Future: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestOrChainWithoutWaitingFindsExisting(t *testing.T) {
 	}
 
 	start := time.Now()
-	found, err := bus.Find("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
+	found, err := bus.FindEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
 		return event.Payload["target_id"] == debounceTargetID1
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
@@ -262,7 +262,7 @@ func TestOrChainWithoutWaitingDispatchesWhenNoMatch(t *testing.T) {
 	}, nil)
 
 	start := time.Now()
-	found, err := bus.Find("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
+	found, err := bus.FindEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
 		return event.Payload["target_id"] == debounceTargetID1
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
@@ -287,7 +287,7 @@ func TestOrChainMultipleSequentialLookups(t *testing.T) {
 	}, nil)
 
 	start := time.Now()
-	found1, err := bus.Find("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
+	found1, err := bus.FindEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
 		return event.Payload["target_id"] == debounceTargetID1
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
@@ -295,7 +295,7 @@ func TestOrChainMultipleSequentialLookups(t *testing.T) {
 	}
 	result1 := debounceEmitFallback(bus, "ScreenshotEvent", map[string]any{"target_id": debounceTargetID1}, found1)
 
-	found2, err := bus.Find("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
+	found2, err := bus.FindEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
 		return event.Payload["target_id"] == debounceTargetID1
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
@@ -303,7 +303,7 @@ func TestOrChainMultipleSequentialLookups(t *testing.T) {
 	}
 	result2 := debounceEmitFallback(bus, "ScreenshotEvent", map[string]any{"target_id": debounceTargetID1}, found2)
 
-	found3, err := bus.Find("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
+	found3, err := bus.FindEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
 		return event.Payload["target_id"] == debounceTargetID2
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {

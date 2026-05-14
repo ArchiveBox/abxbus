@@ -21,7 +21,7 @@ func TestOnOffByEntryByIDAndRemoveAll(t *testing.T) {
 		eventCalls.Add(1)
 		return "h2", nil
 	}, nil)
-	bus.On("*", "all", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.OnEventName("*", "all", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		wildcardCalls.Add(1)
 		return "all", nil
 	}, nil)

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+
+	"github.com/ArchiveBox/abxbus/abxbus-go/v2/jsonschema"
 )
 
 type EventHandlerCallable func(event *BaseEvent, ctx context.Context) (any, error)
@@ -132,27 +134,30 @@ func normalizeEventHandlerCallable(handler any) (EventHandlerCallable, error) {
 		}, nil
 	default:
 		if !value.IsValid() || value.Kind() != reflect.Func || value.IsNil() {
-			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
+			return nil, unsupportedHandlerSignatureError(handler)
 		}
 		handlerType := value.Type()
 		if handlerType.NumIn() != 1 && handlerType.NumIn() != 2 {
-			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
-		}
-		if handlerType.In(0) != baseEventPointerType {
-			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
+			return nil, unsupportedHandlerSignatureError(handler)
 		}
 		withContext := handlerType.NumIn() == 2
 		if withContext && handlerType.In(1) != contextInterfaceType {
-			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
+			return nil, unsupportedHandlerSignatureError(handler)
 		}
 		if handlerType.NumOut() > 2 {
-			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
+			return nil, unsupportedHandlerSignatureError(handler)
 		}
 		if handlerType.NumOut() == 1 && !handlerType.Out(0).Implements(errorInterfaceType) {
-			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
+			if handlerType.In(0) == baseEventPointerType {
+				return nil, unsupportedHandlerSignatureError(handler)
+			}
+			return normalizeTypedEventHandlerReflectCallable(value, handlerType), nil
 		}
 		if handlerType.NumOut() == 2 && !handlerType.Out(1).Implements(errorInterfaceType) {
-			return nil, fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), or the same forms with context.Context as the second argument; got %T", handler)
+			return nil, unsupportedHandlerSignatureError(handler)
+		}
+		if handlerType.In(0) != baseEventPointerType {
+			return normalizeTypedEventHandlerReflectCallable(value, handlerType), nil
 		}
 		return func(event *BaseEvent, ctx context.Context) (any, error) {
 			args := []reflect.Value{reflect.ValueOf(event)}
@@ -177,4 +182,129 @@ func normalizeEventHandlerCallable(handler any) (EventHandlerCallable, error) {
 			}
 		}, nil
 	}
+}
+
+func normalizeTypedEventHandlerCallable(handler any) (EventHandlerCallable, error) {
+	value := reflect.ValueOf(handler)
+	if value.IsValid() && value.Kind() == reflect.Func && value.IsNil() {
+		return nil, nil
+	}
+	if !value.IsValid() || value.Kind() != reflect.Func || value.IsNil() {
+		return nil, unsupportedHandlerSignatureError(handler)
+	}
+	handlerType := value.Type()
+	if handlerType.NumIn() != 1 && handlerType.NumIn() != 2 {
+		return nil, unsupportedHandlerSignatureError(handler)
+	}
+	if handlerType.In(0) == baseEventPointerType {
+		return nil, unsupportedHandlerSignatureError(handler)
+	}
+	if handlerType.NumIn() == 2 && handlerType.In(1) != contextInterfaceType {
+		return nil, unsupportedHandlerSignatureError(handler)
+	}
+	if handlerType.NumOut() > 2 {
+		return nil, unsupportedHandlerSignatureError(handler)
+	}
+	if handlerType.NumOut() == 2 && !handlerType.Out(1).Implements(errorInterfaceType) {
+		return nil, unsupportedHandlerSignatureError(handler)
+	}
+	return normalizeTypedEventHandlerReflectCallable(value, handlerType), nil
+}
+
+func unsupportedHandlerSignatureError(handler any) error {
+	return fmt.Errorf("handler must be one of: func(*BaseEvent), func(*BaseEvent) error, func(*BaseEvent) (any, error), a typed payload handler func(TPayload), func(TPayload) error, func(TPayload) TResult, func(TPayload) (TResult, error), or the same forms with context.Context as the second argument; got %T", handler)
+}
+
+func normalizeTypedEventHandlerReflectCallable(value reflect.Value, handlerType reflect.Type) EventHandlerCallable {
+	payloadType := handlerType.In(0)
+	payloadSchema := jsonSchemaForType(payloadType)
+	withContext := handlerType.NumIn() == 2
+	return func(event *BaseEvent, ctx context.Context) (any, error) {
+		if err := jsonschema.Validate(payloadSchema, event.Payload); err != nil {
+			return nil, fmt.Errorf("EventHandlerPayloadSchemaError: Event payload did not match declared handler payload type: %w", err)
+		}
+		payload, err := eventPayloadAsReflectValue(event, payloadType)
+		if err != nil {
+			return nil, err
+		}
+		args := []reflect.Value{payload}
+		if withContext {
+			args = append(args, reflect.ValueOf(ctx))
+		}
+		results := value.Call(args)
+		switch len(results) {
+		case 0:
+			return nil, nil
+		case 1:
+			if results[0].Type().Implements(errorInterfaceType) {
+				if reflectValueIsNil(results[0]) {
+					return nil, nil
+				}
+				return nil, results[0].Interface().(error)
+			}
+			return reflectResultInterface(results[0]), nil
+		default:
+			var err error
+			if !reflectValueIsNil(results[1]) {
+				err = results[1].Interface().(error)
+			}
+			return reflectResultInterface(results[0]), err
+		}
+	}
+}
+
+func eventPayloadAsReflectValue(event *BaseEvent, payloadType reflect.Type) (reflect.Value, error) {
+	if event == nil {
+		return reflect.Value{}, fmt.Errorf("event is nil")
+	}
+	data, err := json.Marshal(event.Payload)
+	if err != nil {
+		return reflect.Value{}, err
+	}
+	payloadPtr := reflect.New(payloadType)
+	if err := json.Unmarshal(data, payloadPtr.Interface()); err != nil {
+		return reflect.Value{}, err
+	}
+	return payloadPtr.Elem(), nil
+}
+
+func reflectResultInterface(value reflect.Value) any {
+	if reflectValueIsNil(value) {
+		return nil
+	}
+	return value.Interface()
+}
+
+func normalizeTypedFindPredicate(where any) (func(*BaseEvent) bool, error) {
+	if where == nil {
+		return nil, nil
+	}
+	if typed, ok := where.(func(*BaseEvent) bool); ok {
+		return typed, nil
+	}
+	value := reflect.ValueOf(where)
+	if !value.IsValid() || value.Kind() != reflect.Func || value.IsNil() {
+		return nil, fmt.Errorf("where must be func(*BaseEvent) bool or func(TPayload) bool; got %T", where)
+	}
+	predicateType := value.Type()
+	if predicateType.NumIn() != 1 || predicateType.NumOut() != 1 || predicateType.Out(0).Kind() != reflect.Bool {
+		return nil, fmt.Errorf("where must be func(*BaseEvent) bool or func(TPayload) bool; got %T", where)
+	}
+	if predicateType.In(0) == baseEventPointerType {
+		return func(event *BaseEvent) bool {
+			return value.Call([]reflect.Value{reflect.ValueOf(event)})[0].Bool()
+		}, nil
+	}
+	payloadType := predicateType.In(0)
+	payloadSchema := jsonSchemaForType(payloadType)
+	return func(event *BaseEvent) bool {
+		if err := jsonschema.Validate(payloadSchema, event.Payload); err != nil {
+			return false
+		}
+		payload, err := eventPayloadAsReflectValue(event, payloadType)
+		if err != nil {
+			return false
+		}
+		return value.Call([]reflect.Value{payload})[0].Bool()
+	}, nil
 }

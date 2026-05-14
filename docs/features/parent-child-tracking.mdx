@@ -44,9 +44,9 @@ In Rust, the same split is explicit:
 
 In Go, the same split is explicit:
 
-- `child := event.Emit(abxbus.NewBaseEvent(...))` creates linked child work.
+- `child := event.Emit(ChildEvent{...})` creates linked child work.
 - `child.Now()` queue-jumps and waits for that linked child.
-- `bus.Emit(abxbus.NewBaseEvent(...))` creates detached top-level work.
+- `bus.Emit(ParentEvent{...})` creates detached top-level work.
 - calling `Now()` on a bus-emitted event waits for it without adding parent-child lineage.
 
 ## Works across forwarded buses too

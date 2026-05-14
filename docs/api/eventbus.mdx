@@ -155,7 +155,7 @@ bus.on('*', wildcardHandler)
 
 ```go
 bus.On("UserEvent", "handler", handler, nil)
-bus.On("*", "wildcard_handler", wildcardHandler, nil)
+bus.OnEventName("*", "wildcard_handler", wildcardHandler, nil)
 timeout := 5.0
 bus.On("UserEvent", "custom", handler, &abxbus.EventHandler{
 	HandlerTimeout: &timeout,
@@ -266,7 +266,11 @@ const result = await event.now({ first_result: true }).eventResult()
 <Tab title="Go">
 
 ```go
-event := bus.Emit(abxbus.NewBaseEvent("MyEvent", map[string]any{"data": "x"}))
+type MyEvent struct {
+	Data string `json:"data"`
+}
+
+event := bus.Emit(MyEvent{Data: "x"})
 result, err := event.EventResult()
 if err != nil {
 	return err
@@ -321,12 +325,12 @@ const child = await bus.find(ChildEvent, { child_of: parentEvent, future: 5 })
 <Tab title="Go">
 
 ```go
-event, err := bus.Find("ResponseEvent", nil, nil)
-future, err := bus.Find("ResponseEvent", nil, &abxbus.FindOptions{
+event, err := bus.FindEventName("ResponseEvent", nil, nil)
+future, err := bus.FindEventName("ResponseEvent", nil, &abxbus.FindOptions{
 	Past: false,
 	Future: 5.0,
 })
-child, err := bus.Find("ChildEvent", nil, &abxbus.FindOptions{
+child, err := bus.FindEventName("ChildEvent", nil, &abxbus.FindOptions{
 	ChildOf: parentEvent,
 	Future: 5.0,
 })
@@ -379,13 +383,13 @@ const recent = await bus.filter(ResponseEvent, { past: 10, future: false, limit:
 
 ```go
 limit := 5
-recent, err := bus.Filter("ResponseEvent", nil, &abxbus.FilterOptions{
+recent, err := bus.FilterEventName("ResponseEvent", nil, &abxbus.FilterOptions{
 	Past:   10.0,
 	Future: false,
 	Limit:  &limit,
 })
 
-recentWithPredicate, err := bus.Filter(
+recentWithPredicate, err := bus.FilterEventName(
 	"ResponseEvent",
 	func(event *abxbus.BaseEvent) bool {
 		return event.Payload["ok"] == true
@@ -597,7 +601,10 @@ await bus.destroy({ clear: true })
 ```go
 type ResumeTickEvent struct{}
 
-resumeTick := abxbus.MustNewTypedEvent[ResumeTickEvent]("ResumeTickEvent", ResumeTickEvent{})
+resumeTick, err := abxbus.Event(ResumeTickEvent{})
+if err != nil {
+	panic(err)
+}
 
 // 1) Serialize full bus state
 payload, err := bus.ToJSON()

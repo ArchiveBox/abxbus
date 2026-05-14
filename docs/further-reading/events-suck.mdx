@@ -179,7 +179,7 @@ const updated = await client.update({ id: user_id ?? 'fallback-id', age: 46 }, {
 
 ```go
 // events_suck.wrap/make_events/make_handler are not implemented in Go yet.
-// For typed event APIs, use OnTyped[...] and NewBaseEventWithResult[...].
+// For typed event APIs, use bus.On(func(MyEvent) ...) and bus.Emit(MyEvent{...}).
 ```
 
 </Tab>

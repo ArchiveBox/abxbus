@@ -1096,7 +1096,7 @@ func TestWaitIsPassiveInsideHandlersAndTimesOutForSerialEvents(t *testing.T) {
 		record("parent_start")
 		emitted := e.Emit(abxbus.NewBaseEvent("PassiveSerialEmittedEvent", nil))
 		foundSource := e.Emit(abxbus.NewBaseEvent("PassiveSerialFoundEvent", nil))
-		found, err := bus.Find("PassiveSerialFoundEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
+		found, err := bus.FindEventName("PassiveSerialFoundEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
 		if err != nil {
 			return nil, err
 		}
@@ -1179,7 +1179,7 @@ func TestWaitSerialWaitInsideHandlerTimesOutAndWarnsAboutSlowHandler(t *testing.
 	bus.On("EventCompletedSerialDeadlockWarningParentEvent", "parent", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		record("parent_start")
 		child := e.Emit(abxbus.NewBaseEvent("EventCompletedSerialDeadlockWarningChildEvent", nil))
-		found, err := bus.Find("EventCompletedSerialDeadlockWarningChildEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
+		found, err := bus.FindEventName("EventCompletedSerialDeadlockWarningChildEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
 		if err != nil {
 			return nil, err
 		}
@@ -1301,7 +1301,7 @@ func TestWaitWaitsForNormalParallelProcessingInsideHandlers(t *testing.T) {
 		foundEvent := abxbus.NewBaseEvent("PassiveParallelFoundEvent", nil)
 		foundEvent.EventConcurrency = abxbus.EventConcurrencyParallel
 		foundSource := e.Emit(foundEvent)
-		found, err := bus.Find("PassiveParallelFoundEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
+		found, err := bus.FindEventName("PassiveParallelFoundEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
 		if err != nil {
 			return nil, err
 		}
@@ -1379,7 +1379,7 @@ func TestAwaitedParallelQueueJumpChildDoesNotPauseLaterParallelChildEvents(t *te
 
 		e.Emit(newChild("bg"))
 		appendLocked(&mu, &order, "parent_after_bg_emit")
-		found, err := bus.Find("ParallelPauseObservedEvent", func(event *abxbus.BaseEvent) bool {
+		found, err := bus.FindEventName("ParallelPauseObservedEvent", func(event *abxbus.BaseEvent) bool {
 			return event.Payload["name"] == "bg"
 		}, &abxbus.FindOptions{Past: true, Future: 0.2})
 		if err != nil {
@@ -1492,7 +1492,7 @@ func TestWaitWaitsForFutureParallelEventFoundAfterHandlerStarts(t *testing.T) {
 	bus.On("FutureParallelSomeOtherEvent", "other", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		close(otherStarted)
 		<-releaseFind
-		found, err := bus.Find("FutureParallelEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
+		found, err := bus.FindEventName("FutureParallelEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
 		if err != nil {
 			return nil, err
 		}
@@ -1619,7 +1619,7 @@ func TestBaseEventCarriesEventBusReferenceDuringDispatch(t *testing.T) {
 func TestBaseEventBusReferenceReflectsForwardedProcessingBus(t *testing.T) {
 	source := abxbus.NewEventBus("ProxySourceBus", nil)
 	target := abxbus.NewEventBus("ProxyTargetBus", nil)
-	source.On("*", "forward", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	source.OnEventName("*", "forward", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		target.Emit(event)
 		return "forwarded", nil
 	}, nil)
@@ -1653,7 +1653,7 @@ func TestBaseEventBusReferenceReflectsForwardedProcessingBus(t *testing.T) {
 func TestEventEmitFromForwardedHandlerDispatchesChildOnTargetBus(t *testing.T) {
 	source := abxbus.NewEventBus("ProxyChildSourceBus", nil)
 	target := abxbus.NewEventBus("ProxyChildTargetBus", nil)
-	source.On("*", "forward", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	source.OnEventName("*", "forward", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		target.Emit(event)
 		return "forwarded", nil
 	}, nil)

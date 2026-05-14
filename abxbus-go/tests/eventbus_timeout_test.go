@@ -249,7 +249,7 @@ func TestHandlerTimeoutIgnoresLateHandlerResultAndLateEmits(t *testing.T) {
 	if slowResult.Result != nil {
 		t.Fatalf("slow handler late result should be ignored, got %#v", slowResult.Result)
 	}
-	found, err := bus.Find("LateAfterTimeoutEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
+	found, err := bus.FindEventName("LateAfterTimeoutEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +302,7 @@ func TestEventTimeoutIgnoresLateHandlerResultAndLateEmits(t *testing.T) {
 	if slowResult.Result != nil {
 		t.Fatalf("slow handler late result should be ignored, got %#v", slowResult.Result)
 	}
-	found, err := bus.Find("LateAfterEventTimeoutEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
+	found, err := bus.FindEventName("LateAfterEventTimeoutEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -636,7 +636,7 @@ func TestForwardedTimeoutPathDoesNotStallFollowupEvents(t *testing.T) {
 		busATailRuns++
 		return "tail_a", nil
 	}, nil)
-	busA.On("*", "forward_to_b", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	busA.OnEventName("*", "forward_to_b", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return busB.Emit(event), nil
 	}, nil)
 	busB.On("TimeoutRecoveryChildEvent", "slow_child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {

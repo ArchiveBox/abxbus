@@ -134,14 +134,20 @@ block_on(async {
 <Tab title="Go">
 
 ```go
-bus := abxbus.NewEventBus("MyAuthEventBus", nil)
-bus.On("CreateUserEvent", "on_create_user", func(event *abxbus.BaseEvent) (any, error) {
-	return map[string]any{"user_id": "some-user-uuid"}, nil
-}, nil)
+type CreateUserEvent struct {
+	Email string `json:"email"`
+}
 
-event := bus.Emit(abxbus.NewBaseEvent("CreateUserEvent", map[string]any{
-	"email": "someuser@example.com",
-}))
+type CreateUserResult struct {
+	UserID string `json:"user_id"`
+}
+
+bus := abxbus.NewEventBus("MyAuthEventBus", nil)
+bus.On(func(event CreateUserEvent) (CreateUserResult, error) {
+	return CreateUserResult{UserID: "some-user-uuid"}, nil
+})
+
+event := bus.Emit(CreateUserEvent{Email: "someuser@example.com"})
 result, err := event.EventResult()
 if err != nil {
 	panic(err)

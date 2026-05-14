@@ -8,6 +8,11 @@ import (
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
 )
 
+type TypedFindEvent struct {
+	RequestID string `json:"request_id"`
+	Count     int    `json:"count"`
+}
+
 func TestFindHistoryAndFuture(t *testing.T) {
 	bus := abxbus.NewEventBus("FindBus", nil)
 	seed := bus.Emit(abxbus.NewBaseEvent("ResponseEvent", map[string]any{"request_id": "abc"}))
@@ -15,7 +20,7 @@ func TestFindHistoryAndFuture(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	match, err := bus.Find("ResponseEvent", func(e *abxbus.BaseEvent) bool {
+	match, err := bus.FindEventName("ResponseEvent", func(e *abxbus.BaseEvent) bool {
 		return e.Payload["request_id"] == "abc"
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
@@ -29,7 +34,7 @@ func TestFindHistoryAndFuture(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		bus.Emit(abxbus.NewBaseEvent("FutureEvent", map[string]any{"request_id": "future"}))
 	}()
-	future, err := bus.Find("FutureEvent", nil, &abxbus.FindOptions{Past: false, Future: 1.0})
+	future, err := bus.FindEventName("FutureEvent", nil, &abxbus.FindOptions{Past: false, Future: 1.0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,9 +43,52 @@ func TestFindHistoryAndFuture(t *testing.T) {
 	}
 }
 
+func TestFindAndFilterDefaultToTypedEvents(t *testing.T) {
+	bus := abxbus.NewEventBus("TypedFindFilterBus", nil)
+	first := bus.Emit(TypedFindEvent{RequestID: "one", Count: 1})
+	second := bus.Emit(TypedFindEvent{RequestID: "two", Count: 2})
+	if _, err := first.Now(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Now(); err != nil {
+		t.Fatal(err)
+	}
+
+	found, err := bus.Find(TypedFindEvent{}, func(payload TypedFindEvent) bool {
+		return payload.RequestID == "two"
+	}, &abxbus.FindOptions{Past: true, Future: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found == nil || found.EventID != second.EventID {
+		t.Fatalf("expected typed find to match second event, got %#v", found)
+	}
+
+	matches, err := bus.Filter(TypedFindEvent{}, func(payload TypedFindEvent) bool {
+		return payload.Count >= 1
+	}, &abxbus.FilterOptions{Past: true, Future: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 2 || matches[0].EventID != second.EventID || matches[1].EventID != first.EventID {
+		t.Fatalf("expected typed filter to return newest-first matches, got %#v", matches)
+	}
+}
+
+func TestEmitRequiresEventObject(t *testing.T) {
+	bus := abxbus.NewEventBus("EmitRequiresEventObjectBus", nil)
+	event := bus.Emit(abxbus.NewBaseEvent("RawStringEvent", map[string]any{"ok": true}))
+	if _, err := event.Now(); err != nil {
+		t.Fatal(err)
+	}
+	if event.EventType != "RawStringEvent" || event.Payload["ok"] != true {
+		t.Fatalf("unexpected raw event emission: %#v", event)
+	}
+}
+
 func TestFindReturnsNilWhenNoMatch(t *testing.T) {
 	bus := abxbus.NewEventBus("FindNilBus", nil)
-	match, err := bus.Find("MissingEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
+	match, err := bus.FindEventName("MissingEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +103,7 @@ func TestFindDefaultPastOnlyNoFutureWait(t *testing.T) {
 	if _, err := seed.Now(); err != nil {
 		t.Fatal(err)
 	}
-	match, err := bus.Find("DefaultEvent", nil, nil)
+	match, err := bus.FindEventName("DefaultEvent", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +119,7 @@ func TestFindFutureIgnoresPastEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	found, err := bus.Find("ParentEvent", nil, &abxbus.FindOptions{Past: false, Future: 0.03})
+	found, err := bus.FindEventName("ParentEvent", nil, &abxbus.FindOptions{Past: false, Future: 0.03})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +131,7 @@ func TestFindFutureIgnoresPastEvents(t *testing.T) {
 func TestFindPastFalseFutureFalseReturnsNilImmediately(t *testing.T) {
 	bus := abxbus.NewEventBus("FindNeitherBus", nil)
 	start := time.Now()
-	found, err := bus.Find("ParentEvent", nil, &abxbus.FindOptions{Past: false, Future: false})
+	found, err := bus.FindEventName("ParentEvent", nil, &abxbus.FindOptions{Past: false, Future: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +152,7 @@ func TestFindPastAndFutureWindowsAreIndependent(t *testing.T) {
 	time.Sleep(120 * time.Millisecond)
 
 	start := time.Now()
-	found, err := bus.Find("ParentEvent", nil, &abxbus.FindOptions{Past: 0.03, Future: 0.03})
+	found, err := bus.FindEventName("ParentEvent", nil, &abxbus.FindOptions{Past: 0.03, Future: 0.03})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +178,7 @@ func TestFindPastWindowAndEqualsFiltering(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	recent, err := bus.Find("WindowEvent", nil, &abxbus.FindOptions{Past: 0.5, Future: false, Equals: map[string]any{"event_type": "WindowEvent", "event_status": "completed"}})
+	recent, err := bus.FindEventName("WindowEvent", nil, &abxbus.FindOptions{Past: 0.5, Future: false, Equals: map[string]any{"event_type": "WindowEvent", "event_status": "completed"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +186,7 @@ func TestFindPastWindowAndEqualsFiltering(t *testing.T) {
 		t.Fatalf("expected past-window filter to return recent event, got %#v", recent)
 	}
 
-	equalsMatch, err := bus.Find("WindowEvent", nil, &abxbus.FindOptions{Past: true, Future: false, Equals: map[string]any{"request_id": "new"}})
+	equalsMatch, err := bus.FindEventName("WindowEvent", nil, &abxbus.FindOptions{Past: true, Future: false, Equals: map[string]any{"request_id": "new"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +209,7 @@ func TestFindSupportsMetadataAndPayloadEqualityFilters(t *testing.T) {
 		}
 	}
 
-	foundA, err := bus.Find("FieldFilterEvent", nil, &abxbus.FindOptions{
+	foundA, err := bus.FindEventName("FieldFilterEvent", nil, &abxbus.FindOptions{
 		Past:   true,
 		Future: false,
 		Equals: map[string]any{
@@ -179,7 +227,7 @@ func TestFindSupportsMetadataAndPayloadEqualityFilters(t *testing.T) {
 		t.Fatalf("expected metadata and payload filters to match event A, got %#v", foundA)
 	}
 
-	mismatch, err := bus.Find("FieldFilterEvent", nil, &abxbus.FindOptions{
+	mismatch, err := bus.FindEventName("FieldFilterEvent", nil, &abxbus.FindOptions{
 		Past:   true,
 		Future: false,
 		Equals: map[string]any{
@@ -194,7 +242,7 @@ func TestFindSupportsMetadataAndPayloadEqualityFilters(t *testing.T) {
 		t.Fatalf("expected mismatched metadata filters to return nil, got %#v", mismatch)
 	}
 
-	foundPayload, err := bus.Find("FieldFilterEvent", nil, &abxbus.FindOptions{
+	foundPayload, err := bus.FindEventName("FieldFilterEvent", nil, &abxbus.FindOptions{
 		Past:   true,
 		Future: false,
 		Equals: map[string]any{
@@ -222,7 +270,7 @@ func TestFindWherePredicateAndBusScopedHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	foundA, err := busA.Find("ScopedEvent", func(event *abxbus.BaseEvent) bool {
+	foundA, err := busA.FindEventName("ScopedEvent", func(event *abxbus.BaseEvent) bool {
 		return event.Payload["source"] == "A" && event.Payload["value"] == 1
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
@@ -232,7 +280,7 @@ func TestFindWherePredicateAndBusScopedHistory(t *testing.T) {
 		t.Fatalf("expected bus A to find only its own event, got %#v", foundA)
 	}
 
-	foundB, err := busB.Find("ScopedEvent", func(event *abxbus.BaseEvent) bool {
+	foundB, err := busB.FindEventName("ScopedEvent", func(event *abxbus.BaseEvent) bool {
 		return event.Payload["source"] == "B"
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
@@ -281,7 +329,7 @@ func TestFindChildOfFilteringAndLineageTraversal(t *testing.T) {
 		t.Fatal("event should not be child of itself")
 	}
 
-	found, err := bus.Find("Grandchild", nil, &abxbus.FindOptions{Past: true, Future: false, ChildOf: parent})
+	found, err := bus.FindEventName("Grandchild", nil, &abxbus.FindOptions{Past: true, Future: false, ChildOf: parent})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +356,7 @@ func TestFindCanSeeInProgressEventInHistory(t *testing.T) {
 		t.Fatal("timed out waiting for slow handler start")
 	}
 
-	match, err := bus.Find("SlowFindEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
+	match, err := bus.FindEventName("SlowFindEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		close(release)
 		t.Fatal(err)
@@ -347,7 +395,7 @@ func TestFindFutureIgnoresAlreadyDispatchedInFlightEventsWhenPastFalse(t *testin
 		t.Fatal("timed out waiting for in-flight event")
 	}
 
-	match, err := bus.Find("FutureInflightEvent", nil, &abxbus.FindOptions{Past: false, Future: 0.03})
+	match, err := bus.FindEventName("FutureInflightEvent", nil, &abxbus.FindOptions{Past: false, Future: 0.03})
 	close(release)
 	if err != nil {
 		t.Fatal(err)
@@ -379,7 +427,7 @@ func TestFindFutureResolvesOnDispatchBeforeHandlersComplete(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		bus.Emit(abxbus.NewBaseEvent("DispatchVisibleEvent", nil))
 	}()
-	match, err := bus.Find("DispatchVisibleEvent", nil, &abxbus.FindOptions{Past: false, Future: 1.0})
+	match, err := bus.FindEventName("DispatchVisibleEvent", nil, &abxbus.FindOptions{Past: false, Future: 1.0})
 	if err != nil {
 		close(release)
 		t.Fatal(err)
@@ -412,7 +460,7 @@ func TestMultipleConcurrentFutureFindWaitersResolveCorrectEvents(t *testing.T) {
 	errs := make(chan error, 2)
 
 	go func() {
-		event, err := bus.Find("ConcurrentFindA", nil, &abxbus.FindOptions{Past: false, Future: 1.0})
+		event, err := bus.FindEventName("ConcurrentFindA", nil, &abxbus.FindOptions{Past: false, Future: 1.0})
 		if err != nil {
 			errs <- err
 			return
@@ -420,7 +468,7 @@ func TestMultipleConcurrentFutureFindWaitersResolveCorrectEvents(t *testing.T) {
 		resultA <- event
 	}()
 	go func() {
-		event, err := bus.Find("ConcurrentFindB", nil, &abxbus.FindOptions{Past: false, Future: 1.0})
+		event, err := bus.FindEventName("ConcurrentFindB", nil, &abxbus.FindOptions{Past: false, Future: 1.0})
 		if err != nil {
 			errs <- err
 			return
@@ -475,7 +523,7 @@ func TestMaxHistorySizeZeroDisablesPastSearchButFutureFindStillResolves(t *testi
 	if bus.EventHistory.Size() != 0 {
 		t.Fatalf("zero history should drop completed event, got size=%d", bus.EventHistory.Size())
 	}
-	past, err := bus.Find("ZeroHistoryEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
+	past, err := bus.FindEventName("ZeroHistoryEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -487,7 +535,7 @@ func TestMaxHistorySizeZeroDisablesPastSearchButFutureFindStillResolves(t *testi
 		time.Sleep(20 * time.Millisecond)
 		bus.Emit(abxbus.NewBaseEvent("ZeroHistoryEvent", map[string]any{"value": "future"}))
 	}()
-	future, err := bus.Find("ZeroHistoryEvent", func(event *abxbus.BaseEvent) bool {
+	future, err := bus.FindEventName("ZeroHistoryEvent", func(event *abxbus.BaseEvent) bool {
 		return event.Payload["value"] == "future"
 	}, &abxbus.FindOptions{Past: false, Future: 1.0})
 	if err != nil {
@@ -515,12 +563,12 @@ func TestFindReturnsFirstFilterResult(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	found, err := bus.Find("ParentEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
+	found, err := bus.FindEventName("ParentEvent", nil, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
 	}
 	limit := 1
-	filtered, err := bus.Filter("ParentEvent", nil, &abxbus.FilterOptions{Past: true, Future: false, Limit: &limit})
+	filtered, err := bus.FilterEventName("ParentEvent", nil, &abxbus.FilterOptions{Past: true, Future: false, Limit: &limit})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -543,7 +591,7 @@ func TestFindSupportsPayloadFieldNamedLimitViaEquals(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	match, err := bus.Find("LimitFieldEvent", nil, &abxbus.FindOptions{
+	match, err := bus.FindEventName("LimitFieldEvent", nil, &abxbus.FindOptions{
 		Past:   true,
 		Future: false,
 		Equals: map[string]any{"limit": 5},
@@ -564,7 +612,7 @@ func TestFilterLimitZeroAndNegativeReturnImmediatelyWithoutFutureWait(t *testing
 	t.Cleanup(bus.Destroy)
 	for _, limit := range []int{0, -1} {
 		start := time.Now()
-		matches, err := bus.Filter("NeverDispatched", nil, &abxbus.FilterOptions{Past: false, Future: 1.0, Limit: &limit})
+		matches, err := bus.FilterEventName("NeverDispatched", nil, &abxbus.FilterOptions{Past: false, Future: 1.0, Limit: &limit})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -581,7 +629,7 @@ func TestFilterFutureOnlyTimesOutToEmptyList(t *testing.T) {
 	bus := abxbus.NewEventBus("FilterFutureTimeoutBus", nil)
 	t.Cleanup(bus.Destroy)
 	start := time.Now()
-	matches, err := bus.Filter("MissingFutureFilterEvent", nil, &abxbus.FilterOptions{Past: false, Future: 0.03})
+	matches, err := bus.FilterEventName("MissingFutureFilterEvent", nil, &abxbus.FilterOptions{Past: false, Future: 0.03})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -596,7 +644,7 @@ func TestFilterFutureOnlyTimesOutToEmptyList(t *testing.T) {
 
 func TestFilterReturnsEmptyArrayWhenNoMatches(t *testing.T) {
 	bus := abxbus.NewEventBus("FilterEmptyBus", nil)
-	matches, err := bus.Filter("ParentEvent", nil, &abxbus.FilterOptions{Past: true, Future: false})
+	matches, err := bus.FilterEventName("ParentEvent", nil, &abxbus.FilterOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,7 +665,7 @@ func TestFilterReturnsPastMatchesNewestFirstAndRespectsLimit(t *testing.T) {
 	}
 
 	limit := 2
-	matches, err := bus.Filter("Work", nil, &abxbus.FilterOptions{Past: true, Future: false, Limit: &limit})
+	matches, err := bus.FilterEventName("Work", nil, &abxbus.FilterOptions{Past: true, Future: false, Limit: &limit})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -637,7 +685,7 @@ func TestFilterRespectsWherePredicateNewestFirst(t *testing.T) {
 		}
 	}
 
-	matches, err := bus.Filter("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
+	matches, err := bus.FilterEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
 		return event.Payload["target_id"] == "same"
 	}, &abxbus.FilterOptions{Past: true, Future: false})
 	if err != nil {
@@ -659,7 +707,7 @@ func TestFilterWildcardMatchesAllEventTypesNewestFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matches, err := bus.Filter("*", nil, &abxbus.FilterOptions{Past: true, Future: false})
+	matches, err := bus.FilterEventName("*", nil, &abxbus.FilterOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -680,7 +728,7 @@ func TestFilterPastWindowFiltersByAge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	matches, err := bus.Filter("ParentEvent", nil, &abxbus.FilterOptions{Past: 0.1, Future: false})
+	matches, err := bus.FilterEventName("ParentEvent", nil, &abxbus.FilterOptions{Past: 0.1, Future: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -700,7 +748,7 @@ func TestFilterFutureAppendsMatchAfterPastResults(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		bus.Emit(abxbus.NewBaseEvent("ParentEvent", nil))
 	}()
-	matches, err := bus.Filter("ParentEvent", nil, &abxbus.FilterOptions{Past: true, Future: 0.5})
+	matches, err := bus.FilterEventName("ParentEvent", nil, &abxbus.FilterOptions{Past: true, Future: 0.5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -726,7 +774,7 @@ func TestFilterSupportsWhereEqualsWildcardChildAndFuture(t *testing.T) {
 	}
 	bus.Emit(abxbus.NewBaseEvent("Other", map[string]any{"kind": "target"}))
 
-	childMatches, err := bus.Filter("*", func(event *abxbus.BaseEvent) bool {
+	childMatches, err := bus.FilterEventName("*", func(event *abxbus.BaseEvent) bool {
 		return event.Payload["kind"] == "target"
 	}, &abxbus.FilterOptions{Past: true, Future: false, ChildOf: parent, Equals: map[string]any{"kind": "target"}})
 	if err != nil {
@@ -740,7 +788,7 @@ func TestFilterSupportsWhereEqualsWildcardChildAndFuture(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		bus.Emit(abxbus.NewBaseEvent("FutureWork", map[string]any{"kind": "future"}))
 	}()
-	futureMatches, err := bus.Filter("FutureWork", nil, &abxbus.FilterOptions{
+	futureMatches, err := bus.FilterEventName("FutureWork", nil, &abxbus.FilterOptions{
 		Past:   false,
 		Future: 1.0,
 		Equals: map[string]any{"kind": "future"},
@@ -752,7 +800,7 @@ func TestFilterSupportsWhereEqualsWildcardChildAndFuture(t *testing.T) {
 		t.Fatalf("expected one future match, got %#v", futureMatches)
 	}
 
-	none, err := bus.Filter("Missing", nil, &abxbus.FilterOptions{Past: false, Future: false})
+	none, err := bus.FilterEventName("Missing", nil, &abxbus.FilterOptions{Past: false, Future: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -775,7 +823,7 @@ func TestFilterSupportsMetadataEqualityAndFutureLimitShortCircuit(t *testing.T) 
 		}
 	}
 
-	matches, err := bus.Filter("NumberedEvent", nil, &abxbus.FilterOptions{
+	matches, err := bus.FilterEventName("NumberedEvent", nil, &abxbus.FilterOptions{
 		Past:   true,
 		Future: false,
 		Equals: map[string]any{
@@ -792,7 +840,7 @@ func TestFilterSupportsMetadataEqualityAndFutureLimitShortCircuit(t *testing.T) 
 
 	limit := 1
 	start := time.Now()
-	limited, err := bus.Filter("NumberedEvent", nil, &abxbus.FilterOptions{Past: true, Future: 2.0, Limit: &limit})
+	limited, err := bus.FilterEventName("NumberedEvent", nil, &abxbus.FilterOptions{Past: true, Future: 2.0, Limit: &limit})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -49,37 +49,40 @@ func TestEventHandlerJSONRoundtrip(t *testing.T) {
 func TestEventBusOnSupportsEventFirstOptionalContextHandlerSignatures(t *testing.T) {
 	bus := abxbus.NewEventBus("HandlerSignatureBus", nil)
 	seen := []string{}
+	type handlerSignatureResult struct {
+		Source string
+	}
 
-	bus.On("HandlerSignatureEvent", "value_error", func(event *abxbus.BaseEvent) (any, error) {
-		seen = append(seen, event.EventType+":value_error")
-		return "value_error", nil
+	bus.On("HandlerSignatureEvent", "handler_a", func(event *abxbus.BaseEvent) (handlerSignatureResult, error) {
+		seen = append(seen, event.EventType+":handler_a")
+		return handlerSignatureResult{Source: "event"}, nil
 	}, nil)
-	bus.On("HandlerSignatureEvent", "value_error_ctx", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+	bus.On("HandlerSignatureEvent", "handler_b", func(event *abxbus.BaseEvent, ctx context.Context) (handlerSignatureResult, error) {
 		if ctx == nil {
 			t.Fatal("context should be available when requested")
 		}
-		seen = append(seen, event.EventType+":value_error_ctx")
-		return "value_error_ctx", nil
+		seen = append(seen, event.EventType+":handler_b")
+		return handlerSignatureResult{Source: "context"}, nil
 	}, nil)
-	bus.On("HandlerSignatureEvent", "error_only", func(event *abxbus.BaseEvent) error {
-		seen = append(seen, event.EventType+":error_only")
+	bus.On("HandlerSignatureEvent", "handler_c", func(event *abxbus.BaseEvent) error {
+		seen = append(seen, event.EventType+":handler_c")
 		return nil
 	}, nil)
-	bus.On("HandlerSignatureEvent", "error_only_ctx", func(event *abxbus.BaseEvent, ctx context.Context) error {
+	bus.On("HandlerSignatureEvent", "handler_d", func(event *abxbus.BaseEvent, ctx context.Context) error {
 		if ctx == nil {
 			t.Fatal("context should be available when requested")
 		}
-		seen = append(seen, event.EventType+":error_only_ctx")
+		seen = append(seen, event.EventType+":handler_d")
 		return nil
 	}, nil)
-	bus.On("HandlerSignatureEvent", "void", func(event *abxbus.BaseEvent) {
-		seen = append(seen, event.EventType+":void")
+	bus.On("HandlerSignatureEvent", "handler_e", func(event *abxbus.BaseEvent) {
+		seen = append(seen, event.EventType+":handler_e")
 	}, nil)
-	bus.On("HandlerSignatureEvent", "void_ctx", func(event *abxbus.BaseEvent, ctx context.Context) {
+	bus.On("HandlerSignatureEvent", "handler_f", func(event *abxbus.BaseEvent, ctx context.Context) {
 		if ctx == nil {
 			t.Fatal("context should be available when requested")
 		}
-		seen = append(seen, event.EventType+":void_ctx")
+		seen = append(seen, event.EventType+":handler_f")
 	}, nil)
 
 	values, err := bus.Emit(abxbus.NewBaseEvent("HandlerSignatureEvent", nil)).EventResultsList(&abxbus.EventResultOptions{
@@ -89,7 +92,9 @@ func TestEventBusOnSupportsEventFirstOptionalContextHandlerSignatures(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(values) != 2 || values[0] != "value_error" || values[1] != "value_error_ctx" {
+	if len(values) != 2 ||
+		values[0] != (handlerSignatureResult{Source: "event"}) ||
+		values[1] != (handlerSignatureResult{Source: "context"}) {
 		t.Fatalf("expected only non-null handler values, got %#v", values)
 	}
 	if len(seen) != 6 {
@@ -112,12 +117,12 @@ func TestEventBusOnTreatsTypedNilHandlersAsNoop(t *testing.T) {
 	var named nilNamedHandler
 
 	bus.On("TypedNilHandlerEvent", "direct", direct, nil)
-	bus.On("TypedNilHandlerEvent", "value_error", valueError, nil)
-	bus.On("TypedNilHandlerEvent", "value_error_ctx", valueErrorCtx, nil)
-	bus.On("TypedNilHandlerEvent", "error_only", errorOnly, nil)
-	bus.On("TypedNilHandlerEvent", "error_only_ctx", errorOnlyCtx, nil)
-	bus.On("TypedNilHandlerEvent", "void", voidOnly, nil)
-	bus.On("TypedNilHandlerEvent", "void_ctx", voidCtx, nil)
+	bus.On("TypedNilHandlerEvent", "handler_a", valueError, nil)
+	bus.On("TypedNilHandlerEvent", "handler_b", valueErrorCtx, nil)
+	bus.On("TypedNilHandlerEvent", "handler_c", errorOnly, nil)
+	bus.On("TypedNilHandlerEvent", "handler_d", errorOnlyCtx, nil)
+	bus.On("TypedNilHandlerEvent", "handler_e", voidOnly, nil)
+	bus.On("TypedNilHandlerEvent", "handler_f", voidCtx, nil)
 	bus.On("TypedNilHandlerEvent", "named", named, nil)
 
 	values, err := bus.Emit(abxbus.NewBaseEvent("TypedNilHandlerEvent", nil)).EventResultsList(&abxbus.EventResultOptions{
@@ -129,6 +134,30 @@ func TestEventBusOnTreatsTypedNilHandlersAsNoop(t *testing.T) {
 	}
 	if len(values) != 0 {
 		t.Fatalf("typed nil handlers should be no-ops, got values %#v", values)
+	}
+}
+
+func TestEventBusOnAndEmitInferTypesFromHandlerAndEvent(t *testing.T) {
+	type InferredOnEvent struct {
+		A int `json:"a"`
+		B int `json:"b"`
+	}
+
+	bus := abxbus.NewEventBus("InferredOnBus", nil)
+	bus.On(func(payload InferredOnEvent) (int, error) {
+		return payload.A + payload.B, nil
+	})
+
+	event := bus.Emit(InferredOnEvent{A: 2, B: 3})
+	if event.EventType != "InferredOnEvent" {
+		t.Fatalf("event type should be inferred from emitted struct, got %s", event.EventType)
+	}
+	result, err := event.EventResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != 5 {
+		t.Fatalf("handler result should come from typed callback return, got %#v", result)
 	}
 }
 
