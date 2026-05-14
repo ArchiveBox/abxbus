@@ -1,0 +1,21 @@
+abxbus-ts/src/BaseEvent.ts
+  s_c6177c91e53b3b::t_e9e75bd67b2b07 164,469-472
+abxbus-ts/src/type_inference.test.ts
+  s_c6177c91e53b3b::t_03a8fd56c5efa1 20-27,30-31,109-115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "2588bd3f78de2312c2e070eaee317cd4e1546c70",
+  "prompts": {},
+  "sessions": {
+    "s_c6177c91e53b3b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24ec-9815-7d30-9066-d938164b5bf2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
