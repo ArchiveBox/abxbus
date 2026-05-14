@@ -1,0 +1,25 @@
+tests/test_lock_manager.py
+  201f6dfadb4136c9 167,184-185
+.github/workflows/test_py.yaml
+  s_6a8c07f028b30c::t_a1e3ab1b7b37b1 134
+.github/workflows/pre-commit-hooks.yaml
+  s_6a8c07f028b30c::t_89e071bee4fd18 25,29,32,39-50
+abxbus-go/event_bus.go
+  s_6a8c07f028b30c::t_685cac31a8af22 689-698,705
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "035f8dfe3f554add78310cbc2e892b2a05a39979",
+  "prompts": {},
+  "sessions": {
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
