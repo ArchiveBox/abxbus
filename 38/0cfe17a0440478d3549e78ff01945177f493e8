@@ -1,0 +1,25 @@
+abxbus-ts/package.json
+  s_c6177c91e53b3b::t_9189639903fe68 3
+abxbus-go/version.go
+  s_c6177c91e53b3b::t_9189639903fe68 3
+pyproject.toml
+  s_c6177c91e53b3b::t_9189639903fe68 5
+abxbus-rust/Cargo.toml
+  s_c6177c91e53b3b::t_9189639903fe68 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "380cfe17a0440478d3549e78ff01945177f493e8",
+  "prompts": {},
+  "sessions": {
+    "s_c6177c91e53b3b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e24ec-9815-7d30-9066-d938164b5bf2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
