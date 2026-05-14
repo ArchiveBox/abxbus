@@ -17,8 +17,18 @@ const InferableResultEvent = BaseEvent.extend('InferableResultEvent', {
   event_result_type: z.object({ ok: z.boolean() }),
 })
 
+const InferableZodObjectResultEvent = BaseEvent.extend(
+  'InferableZodObjectResultEvent',
+  z.object({
+    target_id: z.string(),
+    event_result_type: z.object({ ok: z.boolean() }),
+  })
+)
+
 type InferableResult = EventResultType<InstanceType<typeof InferableResultEvent>>
 type _assert_inferable_result = Assert<IsEqual<InferableResult, { ok: boolean }>>
+type InferableZodObjectResult = EventResultType<InstanceType<typeof InferableZodObjectResultEvent>>
+type _assert_inferable_zod_object_result = Assert<IsEqual<InferableZodObjectResult, { ok: boolean }>>
 type InferableEventResultEntry =
   InstanceType<typeof InferableResultEvent>['event_results'] extends Map<string, infer TResultEntry> ? TResultEntry : never
 type _assert_inferable_event_result_entry = Assert<
@@ -95,6 +105,14 @@ bus.on(InferableResultEvent, () => undefined)
 
 // @ts-expect-error non-void return must match event_result_type for inferable event keys
 bus.on(InferableResultEvent, () => 'not-ok')
+
+bus.on(InferableZodObjectResultEvent, (event) => {
+  const target: string = event.target_id
+  return { ok: target.length > 0 }
+})
+
+// @ts-expect-error z.object event_result_type must also enforce handler return shape
+bus.on(InferableZodObjectResultEvent, () => 'not-ok')
 
 // String/wildcard keys remain best-effort and do not strongly enforce return shapes.
 bus.on('InferableResultEvent', () => 'anything')

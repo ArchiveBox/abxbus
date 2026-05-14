@@ -161,6 +161,7 @@ type ResultTypeFromEventResultTypeInput<TInput> = TInput extends z.ZodTypeAny
             : unknown
 
 type ResultSchemaFromShape<TShape> = TShape extends { event_result_type: infer S } ? ResultTypeFromEventResultTypeInput<S> : unknown
+type ResultSchemaFromEventSchema<TSchema> = TSchema extends z.ZodObject<infer TShape> ? ResultSchemaFromShape<TShape> : unknown
 export type EventResultInclude<TEvent extends BaseEvent> = (
   result: EventResult<TEvent>['result'],
   event_result: EventResult<TEvent>
@@ -465,7 +466,10 @@ export class BaseEvent {
 
   // main entry point for users to define their own event types
   // BaseEvent.extend("MyEvent", { some_custom_field: z.string(), event_result_type: z.string(), event_timeout: 25, ... }) -> MyEvent
-  static extend<TSchema extends z.ZodObject<z.ZodRawShape>>(event_type: string, event_schema: TSchema): SchemaEventFactory<TSchema, unknown>
+  static extend<TSchema extends z.ZodObject<z.ZodRawShape>>(
+    event_type: string,
+    event_schema: TSchema
+  ): SchemaEventFactory<TSchema, ResultSchemaFromEventSchema<TSchema>>
   static extend<TShape extends z.ZodRawShape>(event_type: string, shape?: TShape): EventFactory<TShape, ResultSchemaFromShape<TShape>>
   static extend<TShape extends Record<string, unknown>>(
     event_type: string,
