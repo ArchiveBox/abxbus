@@ -176,17 +176,10 @@ func (l *LockManager) waitUntilRunloopResumed(ctx context.Context) error {
 func (l *LockManager) runWithHandlerDispatchContext(result *EventResult, dispatchCtx context.Context, fn func() error) error {
 	goid := currentGoroutineID()
 	activeCtx := dispatchCtx
-	if activeCtx == nil && result != nil && result.Event != nil && result.Event.dispatchCtx != nil {
-		activeCtx = result.Event.dispatchCtx
+	if activeCtx == nil && result != nil && result.Event != nil {
+		activeCtx = result.Event.dispatchContext()
 	}
 	activeCtx = contextWithActiveDispatchEntry(activeCtx, l.bus, result)
-	var previousEventCtx context.Context
-	if result != nil && result.Event != nil {
-		result.Event.mu.Lock()
-		previousEventCtx = result.Event.dispatchCtx
-		result.Event.dispatchCtx = activeCtx
-		result.Event.mu.Unlock()
-	}
 	l.active_mu.Lock()
 	l.active_handler_result = append(l.active_handler_result, result)
 	l.active_dispatch_goid = append(l.active_dispatch_goid, goid)
@@ -203,13 +196,6 @@ func (l *LockManager) runWithHandlerDispatchContext(result *EventResult, dispatc
 		activeDispatchRegistry.Unlock()
 	}
 	defer func() {
-		if result != nil && result.Event != nil {
-			result.Event.mu.Lock()
-			if result.Event.dispatchCtx == activeCtx {
-				result.Event.dispatchCtx = previousEventCtx
-			}
-			result.Event.mu.Unlock()
-		}
 		l.active_mu.Lock()
 		for i := len(l.active_handler_result) - 1; i >= 0; i-- {
 			if l.active_handler_result[i] == result {

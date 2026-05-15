@@ -2070,19 +2070,28 @@ func (b *RustCoreEventBus) overlayLocalEventConfig(event *BaseEvent) {
 			continue
 		}
 		local.mu.Lock()
-		event.EventTimeout = local.EventTimeout
-		event.EventSlowTimeout = local.EventSlowTimeout
-		event.EventHandlerTimeout = local.EventHandlerTimeout
-		event.EventHandlerSlowTimeout = local.EventHandlerSlowTimeout
-		event.EventHandlerCompletion = local.EventHandlerCompletion
-		event.EventBlocksParentCompletion = local.EventBlocksParentCompletion
-		if event.dispatchCtx == nil {
-			event.dispatchCtx = local.dispatchCtx
-		}
+		eventTimeout := local.EventTimeout
+		eventSlowTimeout := local.EventSlowTimeout
+		eventHandlerTimeout := local.EventHandlerTimeout
+		eventHandlerSlowTimeout := local.EventHandlerSlowTimeout
+		eventHandlerCompletion := local.EventHandlerCompletion
+		eventBlocksParentCompletion := local.EventBlocksParentCompletion
+		dispatchCtx := local.dispatchCtx
 		local.mu.Unlock()
+		event.mu.Lock()
+		event.EventTimeout = eventTimeout
+		event.EventSlowTimeout = eventSlowTimeout
+		event.EventHandlerTimeout = eventHandlerTimeout
+		event.EventHandlerSlowTimeout = eventHandlerSlowTimeout
+		event.EventHandlerCompletion = eventHandlerCompletion
+		event.EventBlocksParentCompletion = eventBlocksParentCompletion
+		if event.dispatchCtx == nil {
+			event.dispatchCtx = dispatchCtx
+		}
 		if event.Bus == nil {
 			event.Bus = wrapper
 		}
+		event.mu.Unlock()
 		return
 	}
 }

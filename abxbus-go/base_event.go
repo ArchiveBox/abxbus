@@ -505,6 +505,15 @@ func (e *BaseEvent) status() string {
 	return e.EventStatus
 }
 
+func (e *BaseEvent) dispatchContext() context.Context {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.dispatchCtx
+}
+
 func (e *BaseEvent) isUnattachedPendingEvent() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()

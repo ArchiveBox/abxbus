@@ -1170,8 +1170,8 @@ func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, hand
 		signalFirstHandlerStarted()
 	}
 	ctx2 := ctx
-	if event.dispatchCtx != nil {
-		ctx2 = mergeHandlerContext(ctx, event.dispatchCtx)
+	if dispatchCtx := event.dispatchContext(); dispatchCtx != nil {
+		ctx2 = mergeHandlerContext(ctx, dispatchCtx)
 	}
 	explicit_handler_timeout := handler.HandlerTimeout
 	if explicit_handler_timeout == nil {
