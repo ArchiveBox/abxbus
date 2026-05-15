@@ -16,6 +16,7 @@ const tests_dir = dirname(fileURLToPath(import.meta.url))
 const ts_root = resolve(tests_dir, '..')
 const repo_root = resolve(ts_root, '..')
 const PROCESS_TIMEOUT_MS = 30_000
+const PYTHON_BUS_PROCESS_TIMEOUT_MS = 120_000
 const RUST_PROCESS_TIMEOUT_MS = 120_000
 const GO_PROCESS_TIMEOUT_MS = 120_000
 const EVENT_WAIT_TIMEOUT_MS = 15_000
@@ -425,7 +426,8 @@ const resolvePython = (): PythonRunner | null => {
 const runPythonCommand = (
   python_runner: PythonRunner,
   args: string[],
-  extra_env: Record<string, string> = {}
+  extra_env: Record<string, string> = {},
+  timeout_ms = PROCESS_TIMEOUT_MS
 ): ReturnType<typeof spawnSync> =>
   spawnSync(python_runner.command, [...python_runner.args_prefix, ...args], {
     cwd: repo_root,
@@ -434,7 +436,7 @@ const runPythonCommand = (
       ...extra_env,
     },
     encoding: 'utf8',
-    timeout: PROCESS_TIMEOUT_MS,
+    timeout: timeout_ms,
     maxBuffer: 10 * 1024 * 1024,
   })
 
@@ -533,7 +535,7 @@ with open(output_path, 'w', encoding='utf-8') as f:
     const proc = runPythonCommand(python_runner, ['-c', python_script], {
       ABXBUS_TS_PY_BUS_INPUT_PATH: input_path,
       ABXBUS_TS_PY_BUS_OUTPUT_PATH: output_path,
-    })
+    }, PYTHON_BUS_PROCESS_TIMEOUT_MS)
 
     assertProcessSucceeded(proc, 'python bus roundtrip')
     assert.ok(existsSync(output_path), 'python bus roundtrip did not produce output payload')

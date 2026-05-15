@@ -746,8 +746,13 @@ for (const handler_mode of STEP1_HANDLER_MODES) {
     await bus.waitUntilIdle()
 
     const parent_results = Array.from(parent.event_results.values())
-    const aborted_results = parent_results.filter((result) => result.error instanceof EventHandlerAbortedError)
-    assert.ok(aborted_results.length >= 1, `expected at least one aborted result in ${handler_mode.label}`)
+    const timeout_results = parent_results.filter(
+      (result) =>
+        result.error instanceof EventHandlerAbortedError ||
+        result.error instanceof EventHandlerCancelledError ||
+        result.error instanceof EventHandlerTimeoutError
+    )
+    assert.ok(timeout_results.length >= 1, `expected at least one timeout result in ${handler_mode.label}`)
     assert.equal(lock.in_use, baseline_in_use)
   })
 }

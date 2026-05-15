@@ -1579,15 +1579,12 @@ export class RustCoreEventBus {
     } catch {
       // The core may already have been stopped explicitly.
     }
-    try {
-      if (this.owns_shared_core) {
+    if (this.owns_shared_core) {
+      try {
         RustCoreClient.releaseNamed(this.core)
-      } else {
-        this.core.disconnectHost()
-        this.core.disconnect()
+      } catch {
+        // The core transport may already be closed.
       }
-    } catch {
-      // The core transport may already be closed.
     }
     this.handlers.clear()
     this.handlers_by_key.clear()
@@ -1939,17 +1936,8 @@ export class RustCoreEventBus {
     } catch {
       // Best-effort cleanup; the core may already have dropped this bus.
     }
-    try {
-      if (!this.owns_shared_core) {
-        this.core.disconnectHost()
-      }
-    } catch {
-      // The core may already have been stopped explicitly.
-    }
     if (this.owns_shared_core) {
       RustCoreClient.releaseNamed(this.core)
-    } else {
-      this.core.disconnect()
     }
   }
 
@@ -1963,11 +1951,6 @@ export class RustCoreEventBus {
     }
     this.closed = true
     try {
-      try {
-        this.core.disconnectHost()
-      } catch {
-        // The core may already be stopping.
-      }
       this.stopWorker()
       try {
         this.core.unregisterBus(this.bus_id)
@@ -1975,9 +1958,7 @@ export class RustCoreEventBus {
         // Best-effort cleanup before stopping the core.
       }
       if (this.owns_shared_core) {
-        RustCoreClient.releaseNamed(this.core, { stopCore: true })
-      } else {
-        this.core.stop()
+        RustCoreClient.releaseNamed(this.core)
       }
     } finally {
       this.invocation_worker = null

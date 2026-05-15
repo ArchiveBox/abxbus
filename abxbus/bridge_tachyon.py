@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-import inspect
 import json
 import os
 import socket as _socket
@@ -36,6 +35,7 @@ from anyio import Path as AnyPath
 from uuid_extensions import uuid7str
 
 from abxbus.base_event import BaseEvent
+from abxbus.bridge_utils import dispatch_bridge_event, event_pattern_matches
 from abxbus.event_bus import EventPatternType, in_handler_context
 
 _DEFAULT_TACHYON_CAPACITY = 1 << 20
@@ -262,20 +262,11 @@ class TachyonEventBridge:
         asyncio.run_coroutine_threadsafe(self._dispatch_event(event), loop)
 
     async def _dispatch_event(self, event: BaseEvent[Any]) -> None:
-        for event_pattern, handler in list(self._handlers):
-            if not self._matches(event_pattern, event):
-                continue
-            result = handler(event)
-            if inspect.isawaitable(result):
-                await result
+        await dispatch_bridge_event(self._handlers, event)
 
     @staticmethod
     def _matches(event_pattern: EventPatternType, event: BaseEvent[Any]) -> bool:
-        if event_pattern == '*':
-            return True
-        if isinstance(event_pattern, str):
-            return event_pattern == event.event_type
-        return event.event_type == event_pattern.__name__
+        return event_pattern_matches(event_pattern, event)
 
     @staticmethod
     def _is_listener_alive(path: str) -> bool:

@@ -92,9 +92,13 @@ class RustCoreClient:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
-            env=_core_process_env(owner_pid=True),
+            env=_core_process_env(owner_pid=True, capacity=self.capacity),
         )
-        self._rpc = self._connect(self.socket_path, require_process=True)
+        try:
+            self._rpc = self._connect(self.socket_path, require_process=True)
+        except BaseException:
+            self._cleanup_failed_spawn()
+            raise
 
     @classmethod
     def acquire_named(cls, bus_name: str) -> RustCoreClient:
@@ -240,26 +244,41 @@ class RustCoreClient:
                 self.set_patch_seq(response_patch_seq)
         return responses
 
-    def _wait_for_response(self, rpc: Any, cid: int, message: dict[str, Any]) -> Any:
-        wait_timeout = self._rpc_wait_timeout_for_message(message)
+    def _wait_for_response(
+        self,
+        rpc: Any,
+        cid: int,
+        message: dict[str, Any],
+        *,
+        wait_timeout: float | None = None,
+    ) -> Any:
+        if wait_timeout is None:
+            wait_timeout = self._rpc_wait_timeout_for_message(message)
         if wait_timeout is None or threading.current_thread() is not threading.main_thread():
+            return rpc.wait(cid, spin_threshold=SPIN_THRESHOLD)
+
+        sigalrm = getattr(signal, 'SIGALRM', None)
+        itimer_real = getattr(signal, 'ITIMER_REAL', None)
+        getitimer = getattr(signal, 'getitimer', None)
+        setitimer = getattr(signal, 'setitimer', None)
+        if sigalrm is None or itimer_real is None or not callable(getitimer) or not callable(setitimer):
             return rpc.wait(cid, spin_threshold=SPIN_THRESHOLD)
 
         def timeout_handler(_signum: int, _frame: Any) -> None:
             raise TimeoutError(f'timed out waiting for Rust core response to {message.get("type")!r}')
 
-        previous_handler = signal.getsignal(signal.SIGALRM)
-        previous_timer = signal.getitimer(signal.ITIMER_REAL)
+        previous_handler = signal.getsignal(sigalrm)
+        previous_timer = getitimer(itimer_real)
         effective_timeout = wait_timeout
         if previous_timer[0] > 0:
             effective_timeout = min(effective_timeout, previous_timer[0])
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.setitimer(signal.ITIMER_REAL, effective_timeout)
+        signal.signal(sigalrm, timeout_handler)
+        setitimer(itimer_real, effective_timeout)
         try:
             return rpc.wait(cid, spin_threshold=SPIN_THRESHOLD)
         finally:
-            signal.signal(signal.SIGALRM, previous_handler)
-            signal.setitimer(signal.ITIMER_REAL, *previous_timer)
+            signal.signal(sigalrm, previous_handler)
+            setitimer(itimer_real, *previous_timer)
 
     def _rpc_wait_timeout_for_message(self, message: dict[str, Any]) -> float | None:
         message_type = message.get('type')
@@ -1053,7 +1072,7 @@ class RustCoreClient:
             try:
                 return self._request_named_session(bus_name, timeout=0.1)
             except Exception:
-                self._ensure_named_daemon(force_restart=False)
+                self._ensure_named_daemon(force_restart=True)
         else:
             self._ensure_named_daemon(force_restart=False)
         try:
@@ -1064,12 +1083,12 @@ class RustCoreClient:
 
     def _request_named_session(self, bus_name: str, *, timeout: float) -> Any:
         session_socket = stable_core_session_socket_path(bus_name)
-        control = self._connect(self.socket_path, timeout=timeout)
+        control = self._connect(self.socket_path, require_process=self._process is not None, timeout=timeout)
         try:
             payload = msgpack.packb({'socket_path': session_socket}, use_bin_type=True)
             with type(self)._rpc_request_lock:
                 cid = control.call(payload, msg_type=REQUEST_TYPE_ID, spin_threshold=SPIN_THRESHOLD)
-                with control.wait(cid, spin_threshold=SPIN_THRESHOLD) as response:
+                with self._wait_for_response(control, cid, {'type': 'named_session'}, wait_timeout=timeout) as response:
                     try:
                         with memoryview(response) as view:
                             decoded_ack: Any = msgpack.unpackb(view.tobytes(), raw=False)
@@ -1086,7 +1105,7 @@ class RustCoreClient:
             if callable(close):
                 close()
         try:
-            return self._connect(session_socket, timeout=timeout)
+            return self._connect(session_socket, require_process=self._process is not None, timeout=timeout)
         except Exception:
             try:
                 os.unlink(session_socket)
@@ -1100,7 +1119,7 @@ class RustCoreClient:
             payload = msgpack.packb({'stop': True}, use_bin_type=True)
             with type(self)._rpc_request_lock:
                 cid = control.call(payload, msg_type=REQUEST_TYPE_ID, spin_threshold=SPIN_THRESHOLD)
-                with control.wait(cid, spin_threshold=SPIN_THRESHOLD) as response:
+                with self._wait_for_response(control, cid, {'type': 'named_stop'}, wait_timeout=0.5) as response:
                     try:
                         with memoryview(response) as view:
                             decoded_ack: Any = msgpack.unpackb(view.tobytes(), raw=False)
@@ -1139,8 +1158,29 @@ class RustCoreClient:
             stderr=subprocess.DEVNULL,
             text=True,
             start_new_session=True,
-            env=_core_process_env(owner_pid='ABXBUS_CORE_NAMESPACE' not in os.environ),
+            env=_core_process_env(owner_pid='ABXBUS_CORE_NAMESPACE' not in os.environ, capacity=self.capacity),
         )
+
+    def _cleanup_failed_spawn(self) -> None:
+        process = self._process
+        self._process = None
+        if process is not None:
+            try:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=2)
+                else:
+                    process.wait(timeout=0)
+            except Exception:
+                pass
+        try:
+            os.unlink(self.socket_path)
+        except OSError:
+            pass
 
     def __enter__(self) -> RustCoreClient:
         return self
@@ -1159,12 +1199,14 @@ def _msgpack_default(value: Any) -> Any:
     raise TypeError(f'Object of type {type(value).__name__} is not MessagePack serializable')
 
 
-def _core_process_env(*, owner_pid: bool) -> dict[str, str]:
+def _core_process_env(*, owner_pid: bool, capacity: int | None = None) -> dict[str, str]:
     env = os.environ.copy()
     if owner_pid:
         env['ABXBUS_CORE_OWNER_PID'] = str(os.getpid())
     else:
         env.pop('ABXBUS_CORE_OWNER_PID', None)
+    if capacity is not None:
+        env['ABXBUS_CORE_TACHYON_CAPACITY'] = str(capacity)
     return env
 
 

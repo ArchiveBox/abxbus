@@ -515,6 +515,14 @@ impl Core {
             .collect::<BTreeSet<_>>();
 
         for route_id in &route_ids {
+            if let Some(event_id) = self
+                .store
+                .routes
+                .get(route_id)
+                .map(|route| route.event_id.clone())
+            {
+                self.compact_completed_event_routes(&event_id);
+            }
             let _ = self.release_route_event_lock(route_id);
             self.locks.remove_owner(&format!("route:{route_id}"));
             if let Some(route) = self.store.routes.remove(route_id) {

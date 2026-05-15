@@ -679,7 +679,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         if handler is None:
             raise RuntimeError(f'EventResult {self.id} has no callable attached to handler {self.handler.id}')
 
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None and timeout > 0 else None
         self.result_type = event.event_result_type
 
         dispatch_context = event._get_dispatch_context()  # pyright: ignore[reportPrivateUsage]

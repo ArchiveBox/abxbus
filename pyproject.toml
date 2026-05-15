@@ -15,11 +15,13 @@ dependencies = [
     "anyio>=4.13.0",
     "msgpack>=1.1.2",
     "pydantic>=2.13.4",
-    "tachyon-ipc>=0.5.1",
     "typing-extensions>=4.15.0",
     "uuid7>=0.1.0",
 ]
 [project.optional-dependencies]
+tachyon = [
+    "tachyon-ipc>=0.5.1",
+]
 postgres = [
     "asyncpg>=0.31.0",
 ]
@@ -33,6 +35,7 @@ bridges = [
     "asyncpg>=0.31.0",
     "nats-py>=2.14.0",
     "redis>=7.4.0",
+    "tachyon-ipc>=0.5.1",
 ]
 
 [project.urls]

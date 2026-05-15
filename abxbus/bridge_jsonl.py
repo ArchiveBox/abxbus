@@ -8,7 +8,6 @@ This bridge is intentionally simple:
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -17,6 +16,7 @@ from typing import Any
 from uuid_extensions import uuid7str
 
 from abxbus.base_event import BaseEvent
+from abxbus.bridge_utils import dispatch_bridge_event, event_pattern_matches
 from abxbus.event_bus import EventPatternType, in_handler_context
 
 
@@ -87,6 +87,8 @@ class JSONLEventBridge:
             self._listener_task.cancel()
             await asyncio.gather(self._listener_task, return_exceptions=True)
             self._listener_task = None
+        if clear:
+            self._handlers.clear()
 
     def _ensure_started(self) -> None:
         if self._running:
@@ -135,20 +137,11 @@ class JSONLEventBridge:
 
     async def _dispatch_inbound_payload(self, payload: Any) -> None:
         event = BaseEvent[Any].model_validate(payload).event_reset()
-        for event_pattern, handler in list(self._handlers):
-            if not self._matches(event_pattern, event):
-                continue
-            result = handler(event)
-            if inspect.isawaitable(result):
-                await result
+        await dispatch_bridge_event(self._handlers, event)
 
     @staticmethod
     def _matches(event_pattern: EventPatternType, event: BaseEvent[Any]) -> bool:
-        if event_pattern == '*':
-            return True
-        if isinstance(event_pattern, str):
-            return event_pattern == event.event_type
-        return event.event_type == event_pattern.__name__
+        return event_pattern_matches(event_pattern, event)
 
     def _read_appended_text(self, offset: int) -> tuple[str, int]:
         try:

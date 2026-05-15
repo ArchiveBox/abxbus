@@ -630,18 +630,27 @@ test('find future with child_of waits for matching child', async () => {
 test('find with past float and where filter', async () => {
   const bus = new EventBus('FindWherePastFloatBus')
 
-  const old_event = bus.emit(ScreenshotEvent({ target_id: FIND_TARGET_OLD }))
+  const old_event = bus.emit(
+    ScreenshotEvent({
+      target_id: FIND_TARGET_OLD,
+      event_created_at: '2000-01-01T00:00:00.000Z',
+    })
+  )
   await old_event.now()
-  await delay(120)
-  const new_event = bus.emit(ScreenshotEvent({ target_id: FIND_TARGET_NEW }))
+  const new_event = bus.emit(
+    ScreenshotEvent({
+      target_id: FIND_TARGET_NEW,
+      event_created_at: new Date().toISOString(),
+    })
+  )
   await new_event.now()
 
-  const found_tab2 = await bus.find(ScreenshotEvent, (event) => event.target_id === FIND_TARGET_NEW, { past: 0.1, future: false })
+  const found_tab2 = await bus.find(ScreenshotEvent, (event) => event.target_id === FIND_TARGET_NEW, { past: 3600, future: false })
 
   assert.ok(found_tab2)
   assert.equal(found_tab2.event_id, new_event.event_id)
 
-  const found_tab1 = await bus.find(ScreenshotEvent, (event) => event.target_id === FIND_TARGET_OLD, { past: 0.1, future: false })
+  const found_tab1 = await bus.find(ScreenshotEvent, (event) => event.target_id === FIND_TARGET_OLD, { past: 3600, future: false })
   assert.equal(found_tab1, null)
 })
 

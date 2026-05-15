@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"sort"
@@ -156,6 +158,7 @@ type RustCoreEventBus struct {
 	localEventStarts         map[string]time.Time
 	mu                       sync.RWMutex
 	closed                   chan struct{}
+	ownsCore                 bool
 	sharedCore               bool
 }
 
@@ -181,10 +184,20 @@ func acquireSharedRustCore(ctx context.Context) (*RustCoreClient, error) {
 		sharedRustCore.releaseTimer = nil
 	}
 	if sharedRustCore.client != nil && !sharedRustCore.client.closed {
-		sharedRustCore.refs++
-		return sharedRustCore.client, nil
+		if _, exited := sharedRustCore.client.wait.tryErr(); !exited {
+			sharedRustCore.refs++
+			return sharedRustCore.client, nil
+		}
+		_ = sharedRustCore.client.Disconnect()
+		sharedRustCore.client = nil
+		sharedRustCore.refs = 0
 	}
-	client, err := NewRustCoreClient(context.Background(), "")
+	client, err := newRustCoreClientAtSocketWithCommandContext(
+		ctx,
+		context.WithoutCancel(ctx),
+		filepath.Join(os.TempDir(), "abxbus-core-"+uuid.NewString()+".sock"),
+		"",
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -279,11 +292,15 @@ func NewRustCoreEventBus(ctx context.Context, name string, optionList ...RustCor
 	if busID == "" {
 		busID = StableCoreBusID(name)
 	}
+	labelSuffix := busID
+	if len(labelSuffix) > 4 {
+		labelSuffix = labelSuffix[len(labelSuffix)-4:]
+	}
 	bus := &RustCoreEventBus{
 		Core:                    core,
 		Name:                    name,
 		BusID:                   busID,
-		Label:                   fmt.Sprintf("%s#%s", name, busID[len(busID)-4:]),
+		Label:                   fmt.Sprintf("%s#%s", name, labelSuffix),
 		EventConcurrency:        eventConcurrency,
 		EventHandlerConcurrency: eventHandlerConcurrency,
 		EventHandlerCompletion:  eventHandlerCompletion,
@@ -296,6 +313,7 @@ func NewRustCoreEventBus(ctx context.Context, name string, optionList ...RustCor
 		handlerEntries:          map[string]*EventHandler{},
 		localEventStarts:        map[string]time.Time{},
 		closed:                  make(chan struct{}),
+		ownsCore:                ownsCore,
 		sharedCore:              sharedCore,
 	}
 	if _, err := bus.Core.RegisterBus(bus.Record()); err != nil {
@@ -1625,20 +1643,21 @@ func (b *RustCoreEventBus) Disconnect() error {
 	handlerCount := len(b.handlerEntries)
 	b.handlerEntries = map[string]*EventHandler{}
 	b.mu.Unlock()
-	if b.Core != nil && b.sharedCore {
-		_, _ = b.Core.UnregisterBus(b.BusID)
-		return releaseSharedRustCore(b.Core, handlerCount >= sharedRustCoreRetireHandlerThreshold)
-	}
-	if b.Core != nil && b.Core.killCmd {
-		return b.Core.Disconnect()
+	if b.Core == nil {
+		return nil
 	}
 	_, _ = b.Core.UnregisterBus(b.BusID)
-	_, _ = b.Core.DisconnectHost("")
-	return b.Core.Disconnect()
+	if b.sharedCore {
+		return releaseSharedRustCore(b.Core, handlerCount >= sharedRustCoreRetireHandlerThreshold)
+	}
+	if b.ownsCore {
+		return b.Core.Disconnect()
+	}
+	return nil
 }
 
 func (b *RustCoreEventBus) Stop(ctx context.Context) error {
-	if b.sharedCore {
+	if b.sharedCore || !b.ownsCore {
 		return b.Disconnect()
 	}
 	select {
@@ -1649,6 +1668,10 @@ func (b *RustCoreEventBus) Stop(ctx context.Context) error {
 	rustCoreEventBusRegistry.Lock()
 	delete(rustCoreEventBusRegistry.instances, b)
 	rustCoreEventBusRegistry.Unlock()
+	if b.Core == nil {
+		return nil
+	}
+	_, _ = b.Core.UnregisterBus(b.BusID)
 	err := b.Core.Stop(ctx)
 	if err != nil {
 		return err

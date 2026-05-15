@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { RustCoreEventBus } from '../src/index.js'
+import { RustCoreEventBus } from '../src/CoreEventBus.js'
 
 test('RustCoreEventBus runs TS handler via core snapshot', async () => {
   const bus = new RustCoreEventBus('TsCoreBus')

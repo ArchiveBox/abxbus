@@ -897,7 +897,7 @@ fn process_is_running(pid: u32) -> bool {
 
 #[cfg(not(unix))]
 fn process_is_running(_pid: u32) -> bool {
-    false
+    true
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

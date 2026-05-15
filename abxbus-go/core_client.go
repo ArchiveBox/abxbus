@@ -55,10 +55,53 @@ type RustCoreClient struct {
 	args         []string
 	cmd          *exec.Cmd
 	rpc          *tachyon.RpcBus
+	wait         *coreProcessWaiter
 	mu           sync.Mutex
 	lastPatchSeq uint64
 	killCmd      bool
 	closed       bool
+}
+
+type coreProcessWaiter struct {
+	done chan struct{}
+	mu   sync.Mutex
+	err  error
+}
+
+func watchCoreProcess(cmd *exec.Cmd) *coreProcessWaiter {
+	waiter := &coreProcessWaiter{done: make(chan struct{})}
+	go func() {
+		err := cmd.Wait()
+		waiter.mu.Lock()
+		waiter.err = err
+		waiter.mu.Unlock()
+		close(waiter.done)
+	}()
+	return waiter
+}
+
+func (w *coreProcessWaiter) tryErr() (error, bool) {
+	if w == nil {
+		return nil, false
+	}
+	select {
+	case <-w.done:
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		return w.err, true
+	default:
+		return nil, false
+	}
+}
+
+func (w *coreProcessWaiter) wait() error {
+	if w == nil {
+		return nil
+	}
+	<-w.done
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.err
 }
 
 func NewRustCoreClient(ctx context.Context, command string, args ...string) (*RustCoreClient, error) {
@@ -105,22 +148,33 @@ func NewRustCoreClientForBusName(ctx context.Context, busName string) (*RustCore
 }
 
 func newRustCoreClientAtSocket(ctx context.Context, socketPath string, command string, args ...string) (*RustCoreClient, error) {
+	return newRustCoreClientAtSocketWithCommandContext(ctx, ctx, socketPath, command, args...)
+}
+
+func newRustCoreClientAtSocketWithCommandContext(
+	connectCtx context.Context,
+	commandCtx context.Context,
+	socketPath string,
+	command string,
+	args ...string,
+) (*RustCoreClient, error) {
 	if command == "" {
 		command, args = DefaultCoreCommand(socketPath)
 	} else {
 		args = append(args, socketPath)
 	}
-	cmd := exec.CommandContext(ctx, command, args...)
+	cmd := exec.CommandContext(commandCtx, command, args...)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.Env = coreProcessEnv(true)
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	rpc, err := connectTachyonRPC(ctx, socketPath, cmd)
+	waiter := watchCoreProcess(cmd)
+	rpc, err := connectTachyonRPC(connectCtx, socketPath, waiter)
 	if err != nil {
 		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		_ = waiter.wait()
 		_ = os.Remove(socketPath)
 		return nil, err
 	}
@@ -130,6 +184,7 @@ func newRustCoreClientAtSocket(ctx context.Context, socketPath string, command s
 		command:    command,
 		args:       args,
 		cmd:        cmd,
+		wait:       waiter,
 		rpc:        rpc,
 		killCmd:    true,
 	}, nil
@@ -180,18 +235,21 @@ func defaultCoreCommand(socketPath string, daemon bool) (string, []string) {
 	return "cargo", args
 }
 
-func connectTachyonRPC(ctx context.Context, socketPath string, cmd *exec.Cmd) (*tachyon.RpcBus, error) {
-	return connectTachyonRPCWithTimeout(ctx, socketPath, cmd, coreStartupTimeout)
+func connectTachyonRPC(ctx context.Context, socketPath string, waiter *coreProcessWaiter) (*tachyon.RpcBus, error) {
+	return connectTachyonRPCWithTimeout(ctx, socketPath, waiter, coreStartupTimeout)
 }
 
-func connectTachyonRPCWithTimeout(ctx context.Context, socketPath string, cmd *exec.Cmd, timeout time.Duration) (*tachyon.RpcBus, error) {
+func connectTachyonRPCWithTimeout(ctx context.Context, socketPath string, waiter *coreProcessWaiter, timeout time.Duration) (*tachyon.RpcBus, error) {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		if cmd != nil && cmd.ProcessState != nil {
+		if err, exited := waiter.tryErr(); exited {
+			if err != nil {
+				return nil, fmt.Errorf("rust tachyon core exited before connect: %w", err)
+			}
 			return nil, errors.New("rust tachyon core exited before connect")
 		}
 		rpc, err := tachyon.RpcConnect(socketPath)
@@ -200,7 +258,11 @@ func connectTachyonRPCWithTimeout(ctx context.Context, socketPath string, cmd *e
 			return rpc, nil
 		}
 		lastErr = err
-		time.Sleep(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 	return nil, lastErr
 }
@@ -1114,7 +1176,7 @@ func (c *RustCoreClient) Disconnect() error {
 		_ = os.Remove(c.socketPath)
 	}
 	if c.killCmd && c.cmd != nil {
-		return c.cmd.Wait()
+		return c.wait.wait()
 	}
 	return nil
 }

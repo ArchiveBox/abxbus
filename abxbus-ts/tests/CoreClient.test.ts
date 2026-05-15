@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { RustCoreClient } from '../src/index.js'
+import { RustCoreClient } from '../src/CoreClient.js'
 
 const busRecord = (): Record<string, unknown> => ({
   bus_id: 'ts-bus',

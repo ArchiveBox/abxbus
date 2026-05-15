@@ -4313,6 +4313,46 @@ def test_bridge_modules_do_not_eager_import_optional_packages() -> None:
         assert forbidden_roots.isdisjoint(imported_roots), f'{path} eagerly imports {forbidden_roots & imported_roots}'
 
 
+async def test_bridge_dispatch_uses_normalized_event_type_and_isolates_handler_errors() -> None:
+    from abxbus.bridge_utils import dispatch_bridge_event, event_pattern_matches
+
+    class OverrideEvent(BaseEvent):
+        event_type: str = Field(default='CustomEventType', frozen=True)
+
+    event = BaseEvent(event_type='CustomEventType')
+    seen: list[str] = []
+
+    async def failing_handler(_event: BaseEvent) -> None:
+        seen.append('failing')
+        raise RuntimeError('handler failed')
+
+    async def succeeding_handler(received: BaseEvent) -> None:
+        seen.append(received.event_type)
+
+    assert event_pattern_matches(OverrideEvent, event)
+
+    await dispatch_bridge_event(
+        [
+            (OverrideEvent, failing_handler),
+            (OverrideEvent, succeeding_handler),
+        ],
+        event,
+    )
+
+    assert seen == ['failing', 'CustomEventType']
+
+
+async def test_jsonl_bridge_close_clear_removes_handlers(tmp_path) -> None:
+    from abxbus.bridge_jsonl import JSONLEventBridge
+
+    bridge = JSONLEventBridge(str(tmp_path / 'events.jsonl'))
+    bridge.on('BaseEvent', lambda _event: None)
+
+    await bridge.close(clear=True)
+
+    assert bridge._handlers == []  # pyright: ignore[reportPrivateUsage]
+
+
 def test_root_import_excludes_optional_integrations_while_namespaced_imports_resolve() -> None:
     code = """
 import sys

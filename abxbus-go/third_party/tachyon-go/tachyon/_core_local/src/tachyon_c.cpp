@@ -90,8 +90,10 @@ tachyon_error_t tachyon_bus_connect(const char *socket_path, tachyon_bus_t **out
 	}
 
 	auto shm_join = SharedMemory::join(received_fd, hs.shm_size_fwd);
-	if (!shm_join.has_value())
+	if (!shm_join.has_value()) {
+		close(received_fd);
 		return map_shm_error(shm_join.error());
+	}
 
 	auto arena_res = Arena::attach(shm_join->data());
 	if (!arena_res.has_value())

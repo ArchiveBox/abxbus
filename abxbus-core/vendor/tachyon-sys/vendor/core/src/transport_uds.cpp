@@ -22,7 +22,8 @@ namespace tachyon::core {
 			::close(sock);
 			return std::unexpected(TransportError::SystemError);
 		}
-		std::strncpy(addr.sun_path, socket_path.data(), sizeof(addr.sun_path) - 1);
+		std::memcpy(addr.sun_path, socket_path.data(), socket_path.length());
+		addr.sun_path[socket_path.length()] = '\0';
 
 		::unlink(addr.sun_path);
 
@@ -117,7 +118,8 @@ namespace tachyon::core {
 			::close(sock);
 			return std::unexpected(TransportError::SystemError);
 		}
-		std::strncpy(addr.sun_path, socket_path.data(), sizeof(addr.sun_path) - 1);
+		std::memcpy(addr.sun_path, socket_path.data(), socket_path.length());
+		addr.sun_path[socket_path.length()] = '\0';
 
 		if (::connect(sock, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)) < 0) {
 			::close(sock);
@@ -168,7 +170,8 @@ namespace tachyon::core {
 			::close(sock);
 			return std::unexpected(TransportError::SystemError);
 		}
-		std::strncpy(addr.sun_path, socket_path.data(), sizeof(addr.sun_path) - 1);
+		std::memcpy(addr.sun_path, socket_path.data(), socket_path.length());
+		addr.sun_path[socket_path.length()] = '\0';
 
 		::unlink(addr.sun_path);
 
@@ -263,7 +266,8 @@ namespace tachyon::core {
 			::close(sock);
 			return std::unexpected(TransportError::SystemError);
 		}
-		std::strncpy(addr.sun_path, socket_path.data(), sizeof(addr.sun_path) - 1);
+		std::memcpy(addr.sun_path, socket_path.data(), socket_path.length());
+		addr.sun_path[socket_path.length()] = '\0';
 
 		if (::connect(sock, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)) < 0) {
 			::close(sock);

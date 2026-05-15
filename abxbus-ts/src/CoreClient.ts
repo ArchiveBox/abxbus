@@ -170,6 +170,7 @@ export class RustCoreClient {
   private request_seq: number
   private release_transport_timer: ReturnType<typeof setTimeout> | null
   private readonly kill_process_on_close: boolean
+  private readonly owns_socket_path: boolean
   private readonly bus_name: string | null
   private readonly session_id_bytes: Buffer
 
@@ -183,6 +184,7 @@ export class RustCoreClient {
     this.last_patch_seq = 0
     this.request_seq = 0
     this.release_transport_timer = null
+    this.owns_socket_path = options.socket_path === undefined && options.bus_name === undefined
     const default_command = defaultCoreCommand(this.socket_path, { daemon: options.bus_name !== undefined })
     this.command = options.command ?? default_command.command
     this.args = options.args ?? default_command.args
@@ -201,7 +203,12 @@ export class RustCoreClient {
         stdio: ['ignore', 'ignore', 'pipe'],
         env: this.coreProcessEnv({ ownerPid: true }),
       })
-      this.rpc = this.connect(this.socket_path)
+      try {
+        this.rpc = this.connect(this.socket_path)
+      } catch (error) {
+        this.cleanupFailedSpawn()
+        throw error
+      }
     }
   }
 
@@ -277,7 +284,12 @@ export class RustCoreClient {
     const messages: CoreMessage[] = []
     for (const response of responses) {
       const response_message = response.message
-      if (response_message === undefined || response_message === null) {
+      if (
+        response_message === undefined ||
+        response_message === null ||
+        typeof response_message !== 'object' ||
+        Array.isArray(response_message)
+      ) {
         continue
       }
       if (response_message.type === 'error') {
@@ -929,6 +941,7 @@ export class RustCoreClient {
     if (this.kill_process_on_close) {
       this.process?.kill()
     }
+    this.cleanupOwnedSocketPath()
   }
 
   stop(): void {
@@ -939,7 +952,21 @@ export class RustCoreClient {
       if (this.kill_process_on_close) {
         this.process?.kill()
       }
+      this.cleanupOwnedSocketPath()
     }
+  }
+
+  private cleanupFailedSpawn(): void {
+    if (this.process) {
+      try {
+        this.process.kill()
+      } catch {
+        // Process may have already exited.
+      }
+      this.process = null
+    }
+    this.closeTransport()
+    this.cleanupOwnedSocketPath()
   }
 
   private connect(socket_path: string, timeout_ms = CORE_STARTUP_TIMEOUT_MS): RpcBus {
@@ -1134,6 +1161,13 @@ export class RustCoreClient {
     } finally {
       this.rpc = null
     }
+  }
+
+  private cleanupOwnedSocketPath(): void {
+    if (!this.owns_socket_path) {
+      return
+    }
+    rmSync(this.socket_path, { force: true })
   }
 
   releaseTransportSoon(): void {
