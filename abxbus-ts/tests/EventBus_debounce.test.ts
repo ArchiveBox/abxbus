@@ -107,23 +107,19 @@ test('dispatches new when stale', async () => {
 test('find past only returns immediately without waiting', async () => {
   const bus = new EventBus('DebouncePastOnlyBus')
 
-  const start = Date.now()
   const result = await bus.find(ParentEvent, { past: true, future: false })
-  const elapsed_ms = Date.now() - start
 
   assert.equal(result, null)
-  assert.ok(elapsed_ms < 50)
+  assert.equal(bus.find_waiters.size, 0)
 })
 
 test('find past float returns immediately without waiting', async () => {
   const bus = new EventBus('DebouncePastWindowBus')
 
-  const start = Date.now()
   const result = await bus.find(ParentEvent, { past: 5, future: false })
-  const elapsed_ms = Date.now() - start
 
   assert.equal(result, null)
-  assert.ok(elapsed_ms < 50)
+  assert.equal(bus.find_waiters.size, 0)
 })
 
 test('or chain without waiting finds existing', async () => {
@@ -131,36 +127,31 @@ test('or chain without waiting finds existing', async () => {
 
   const original = await bus.emit(ScreenshotEvent({ target_id: TARGET_ID_1 })).now()
 
-  const start = Date.now()
   const result =
     (await bus.find(ScreenshotEvent, (event) => event.target_id === TARGET_ID_1, { past: true, future: false })) ??
     bus.emit(ScreenshotEvent({ target_id: TARGET_ID_1 }))
   await result.now()
-  const elapsed_ms = Date.now() - start
 
   assert.equal(result.event_id, original.event_id)
-  assert.ok(elapsed_ms < 100)
+  assert.equal(bus.find_waiters.size, 0)
 })
 
 test('or chain without waiting dispatches when no match', async () => {
   const bus = new EventBus('DebounceOrChainNoMatchBus')
 
-  const start = Date.now()
   const result =
     (await bus.find(ScreenshotEvent, (event) => event.target_id === TARGET_ID_1, { past: true, future: false })) ??
     bus.emit(ScreenshotEvent({ target_id: TARGET_ID_1 }))
   await result.now()
-  const elapsed_ms = Date.now() - start
 
   assert.ok(result)
   assert.equal(result.target_id, TARGET_ID_1)
-  assert.ok(elapsed_ms < 100)
+  assert.equal(bus.find_waiters.size, 0)
 })
 
 test('or chain multiple sequential lookups', async () => {
   const bus = new EventBus('DebounceSequentialBus')
 
-  const start = Date.now()
   const result1 =
     (await bus.find(ScreenshotEvent, (event) => event.target_id === TARGET_ID_1, { past: true, future: false })) ??
     bus.emit(ScreenshotEvent({ target_id: TARGET_ID_1 }))
@@ -173,10 +164,9 @@ test('or chain multiple sequential lookups', async () => {
     (await bus.find(ScreenshotEvent, (event) => event.target_id === TARGET_ID_2, { past: true, future: false })) ??
     bus.emit(ScreenshotEvent({ target_id: TARGET_ID_2 }))
   await Promise.all([result1.now(), result2.now(), result3.now()])
-  const elapsed_ms = Date.now() - start
 
-  assert.ok(elapsed_ms < 200)
   assert.equal(result1.event_id, result2.event_id)
   assert.notEqual(result1.event_id, result3.event_id)
   assert.equal(result3.target_id, TARGET_ID_2)
+  assert.equal(bus.find_waiters.size, 0)
 })

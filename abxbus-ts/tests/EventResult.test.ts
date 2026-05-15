@@ -18,6 +18,20 @@ const ObjectResultEvent = BaseEvent.extend('ObjectResultEvent', {
 
 const NoResultSchemaEvent = BaseEvent.extend('NoResultSchemaEvent', {})
 
+const waitForHandlerResult = async (event: BaseEvent, handler_name: string, timeout_ms = 5_000): Promise<EventResult> => {
+  const start = Date.now()
+  for (;;) {
+    const result = Array.from(event.event_results.values()).find((candidate) => candidate.handler_name === handler_name)
+    if (result) {
+      return result
+    }
+    if (Date.now() - start > timeout_ms) {
+      throw new Error(`Timed out waiting for handler result: ${handler_name}`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+}
+
 test('event results capture handler return values', async () => {
   const bus = new EventBus('ResultCaptureBus')
 
@@ -380,10 +394,12 @@ test('runHandler is a no-op for already-settled results', async () => {
 test('handler result stays pending while waiting for handler lock entry', async () => {
   const LockWaitEvent = BaseEvent.extend('RunHandlerLockWaitEvent', {})
   const bus = new EventBus('RunHandlerLockWaitBus', { event_handler_concurrency: 'serial' })
-  const first_handler_started = withResolvers<void>()
+  const first_handler_entered = withResolvers<void>()
+  const release_first_handler = withResolvers<void>()
 
   bus.on(LockWaitEvent, async function first_handler() {
-    await first_handler_started.promise
+    first_handler_entered.resolve()
+    await release_first_handler.promise
     return 'first'
   })
   bus.on(LockWaitEvent, async function second_handler() {
@@ -392,22 +408,16 @@ test('handler result stays pending while waiting for handler lock entry', async 
   })
 
   const event = bus.emit(LockWaitEvent({}))
-  const start = Date.now()
-  while (event.event_results.size < 2) {
-    if (Date.now() - start > 1_000) {
-      throw new Error('Timed out waiting for pending handler result')
-    }
-    await new Promise((resolve) => setTimeout(resolve, 0))
-  }
+  const completed = event.now()
+  await first_handler_entered.promise
 
-  const second_result = Array.from(event.event_results.values()).find((result) => result.handler_name === 'second_handler')
-  assert.ok(second_result)
+  const second_result = await waitForHandlerResult(event, 'second_handler')
   assert.equal(second_result.status, 'pending')
 
   await new Promise((resolve) => setTimeout(resolve, 5))
   assert.equal(second_result.status, 'pending')
-  first_handler_started.resolve()
-  await event.now()
+  release_first_handler.resolve()
+  await completed
   assert.equal(second_result.status, 'completed')
   bus.destroy()
 })
@@ -419,6 +429,8 @@ test('slow handler warning is based on handler runtime after lock wait', async (
     event_handler_slow_timeout: 0.01,
   })
   const warnings: string[] = []
+  const first_handler_entered = withResolvers<void>()
+  const release_first_handler = withResolvers<void>()
   const original_warn = console.warn
   console.warn = (message?: unknown, ...args: unknown[]) => {
     warnings.push(String(message))
@@ -428,7 +440,9 @@ test('slow handler warning is based on handler runtime after lock wait', async (
   }
   try {
     bus.on(SlowAfterLockWaitEvent, async function first_handler() {
+      first_handler_entered.resolve()
       await new Promise((resolve) => setTimeout(resolve, 40))
+      await release_first_handler.promise
       return 'first'
     })
     bus.on(SlowAfterLockWaitEvent, async function second_handler() {
@@ -437,20 +451,15 @@ test('slow handler warning is based on handler runtime after lock wait', async (
     })
 
     const event = bus.emit(SlowAfterLockWaitEvent({}))
-    const start = Date.now()
-    while (event.event_results.size < 2) {
-      if (Date.now() - start > 1_000) {
-        throw new Error('Timed out waiting for pending handler result')
-      }
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    }
+    const completed = event.now()
+    await first_handler_entered.promise
 
-    const second_result = Array.from(event.event_results.values()).find((result) => result.handler_name === 'second_handler')
-    assert.ok(second_result)
+    const second_result = await waitForHandlerResult(event, 'second_handler')
     assert.equal(second_result.status, 'pending')
     await new Promise((resolve) => setTimeout(resolve, 20))
     assert.equal(second_result.status, 'pending')
-    await event.now()
+    release_first_handler.resolve()
+    await completed
 
     assert.equal(
       warnings.some((message) => message.toLowerCase().includes('slow event handler')),
