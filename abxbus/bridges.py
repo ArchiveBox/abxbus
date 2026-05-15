@@ -16,9 +16,9 @@ from anyio import Path as AnyPath
 from uuid_extensions import uuid7str
 
 from abxbus.base_event import BaseEvent
-from abxbus.bridge_utils import dispatch_bridge_event, event_pattern_matches
 from abxbus.bridge_jsonl import JSONLEventBridge
 from abxbus.bridge_sqlite import SQLiteEventBridge
+from abxbus.bridge_utils import dispatch_bridge_event, event_pattern_matches
 from abxbus.event_bus import EventPatternType, in_handler_context
 
 logger = logging.getLogger('abxbus.bridges')

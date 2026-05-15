@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import uuid4
 
-from abxbus import BaseEvent, EventStatus, RustCoreEventBus
+from abxbus import BaseEvent, EventStatus, RustCoreClient, RustCoreEventBus
 
 
 class PyCoreTypedEvent(BaseEvent[int]):
@@ -117,3 +117,20 @@ def test_rust_core_event_bus_same_name_shares_bus_without_explicit_id() -> None:
 
     results = sorted(int(result.result) for result in completed.event_results.values() if isinstance(result.result, int))
     assert results == [6, 15]
+
+
+def test_rust_core_event_bus_disconnect_preserves_injected_core_client() -> None:
+    core = RustCoreClient(session_id='py-injected-core')
+    first = RustCoreEventBus(unique_bus_name('PyCoreInjectedA'), core=core)
+    second = RustCoreEventBus(unique_bus_name('PyCoreInjectedB'), core=core)
+    try:
+        second.on(PyCoreTypedEvent, lambda event: event.value + 10)
+        first.disconnect()
+
+        completed = second.emit(PyCoreTypedEvent(value=5))
+    finally:
+        second.disconnect()
+        core.stop()
+
+    assert completed.event_status == EventStatus.COMPLETED
+    assert next(iter(completed.event_results.values())).result == 15

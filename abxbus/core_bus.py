@@ -167,6 +167,7 @@ class RustCoreEventBus:
         background_worker: bool = False,
     ) -> None:
         self._uses_shared_core = core is None
+        self._owns_core_transport = False
         self.core = core or RustCoreClient.acquire_named(name)
         self.name = name
         self.bus_id = id or stable_core_bus_id(name)
@@ -198,6 +199,7 @@ class RustCoreEventBus:
             self.core,
             self._registered_core_handler_ids,
             self._uses_shared_core,
+            self._owns_core_transport,
         )
         self.handlers_by_key: dict[str, list[str]] = {}
         self._handler_names_by_key: dict[str, set[str]] = {}
@@ -259,12 +261,17 @@ class RustCoreEventBus:
         type(self)._instances.add(self)
 
     @staticmethod
-    def _finalize_core_client(core: RustCoreClient, handler_ids: set[str], uses_shared_core: bool) -> None:
+    def _finalize_core_client(
+        core: RustCoreClient,
+        handler_ids: set[str],
+        uses_shared_core: bool,
+        owns_core_transport: bool,
+    ) -> None:
         handler_ids.clear()
         try:
             if uses_shared_core:
                 RustCoreClient.release_named_from_finalizer(core)
-            else:
+            elif owns_core_transport:
                 core.abandon(terminate_process=True)
         except Exception:
             pass
@@ -3434,7 +3441,7 @@ class RustCoreEventBus:
                     pass
             if self._uses_shared_core:
                 RustCoreClient.release_named(self.core)
-            else:
+            elif self._owns_core_transport:
                 try:
                     self.core.disconnect_host()
                 except Exception:
@@ -3607,7 +3614,7 @@ class RustCoreEventBus:
             try:
                 if self._uses_shared_core:
                     RustCoreClient.release_named(self.core)
-                else:
+                elif self._owns_core_transport:
                     self.core.stop()
             except Exception:
                 pass
@@ -6266,7 +6273,7 @@ class RustCoreEventBus:
         if status == 'completed' and existing_result is not None and existing_result.status == 'error':
             return
         if (
-            status in ('error', 'cancelled')
+            status in ('error', 'cancelled', 'timed_out')
             and existing_result is not None
             and existing_result.status == 'error'
             and existing_result.error is not None
@@ -6287,7 +6294,7 @@ class RustCoreEventBus:
                 else:
                     result_value = BaseEvent[Any].model_validate(result_value)
             update['result'] = result_value
-        elif status in ('error', 'cancelled'):
+        elif status in ('error', 'cancelled', 'timed_out'):
             update['status'] = 'error'
             update['error'] = self._normalize_core_error(record.get('error')) or 'handler failed'
         result = self._update_event_result_for_handler(event, handler, **update)
@@ -6299,7 +6306,7 @@ class RustCoreEventBus:
             event._event_is_complete_flag = False  # pyright: ignore[reportPrivateUsage]
             self.in_flight_event_ids.add(event.event_id)
             self._locally_completed_without_core_patch.discard(event.event_id)
-        if status in ('completed', 'error', 'cancelled'):
+        if status in ('completed', 'error', 'cancelled', 'timed_out'):
             self._invocation_by_result_id.pop(result.id, None)
         timeout = record.get('timeout')
         if isinstance(timeout, int | float):

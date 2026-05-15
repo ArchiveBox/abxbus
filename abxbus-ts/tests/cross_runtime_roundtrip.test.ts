@@ -532,10 +532,15 @@ with open(output_path, 'w', encoding='utf-8') as f:
 
   try {
     writeFileSync(input_path, JSON.stringify(payload, null, 2), 'utf8')
-    const proc = runPythonCommand(python_runner, ['-c', python_script], {
-      ABXBUS_TS_PY_BUS_INPUT_PATH: input_path,
-      ABXBUS_TS_PY_BUS_OUTPUT_PATH: output_path,
-    }, PYTHON_BUS_PROCESS_TIMEOUT_MS)
+    const proc = runPythonCommand(
+      python_runner,
+      ['-c', python_script],
+      {
+        ABXBUS_TS_PY_BUS_INPUT_PATH: input_path,
+        ABXBUS_TS_PY_BUS_OUTPUT_PATH: output_path,
+      },
+      PYTHON_BUS_PROCESS_TIMEOUT_MS
+    )
 
     assertProcessSucceeded(proc, 'python bus roundtrip')
     assert.ok(existsSync(output_path), 'python bus roundtrip did not produce output payload')

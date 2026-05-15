@@ -1748,7 +1748,10 @@ func (b *RustCoreEventBus) runInvocationResponsesWithBatchAndOptions(parentCtx c
 	if parentCtx == nil {
 		parentCtx = context.Background()
 	}
-	handlerID := invocation["handler_id"].(string)
+	handlerID, ok := invocation["handler_id"].(string)
+	if !ok || handlerID == "" {
+		return nil, fmt.Errorf("invalid core invocation handler_id: %T", invocation["handler_id"])
+	}
 	b.mu.RLock()
 	handlerEntry, ok := b.handlerEntries[handlerID]
 	b.mu.RUnlock()
@@ -2834,7 +2837,7 @@ func (b *RustCoreEventBus) applyResultRecord(event *BaseEvent, value any, status
 		} else {
 			options.ResultSet = true
 		}
-	} else if status == "error" || status == "cancelled" {
+	} else if status == "error" || status == "cancelled" || status == "timed_out" {
 		options.Error = normalizeCoreValue(record["error"])
 		options.ErrorSet = true
 	}

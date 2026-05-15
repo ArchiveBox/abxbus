@@ -120,7 +120,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Cargo for cross-runtime roundtrip tests
-        if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'core_client')
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'core_client' || matrix.task.name == 'core_event_bus')
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
@@ -128,7 +128,7 @@ jobs:
             abxbus-core -> target
 
       - name: Build Rust core Tachyon binary
-        if: matrix.task.kind == 'test' && matrix.task.name == 'core_client'
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'core_client' || matrix.task.name == 'core_event_bus')
         run: cargo build --manifest-path ../abxbus-core/Cargo.toml --bin abxbus-core-tachyon
 
       - uses: astral-sh/setup-uv@v6

@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict, cast
@@ -267,18 +268,23 @@ class RustCoreClient:
         def timeout_handler(_signum: int, _frame: Any) -> None:
             raise TimeoutError(f'timed out waiting for Rust core response to {message.get("type")!r}')
 
-        previous_handler = signal.getsignal(sigalrm)
-        previous_timer = getitimer(itimer_real)
+        sigalrm_value = cast(int, sigalrm)
+        itimer_real_value = cast(int, itimer_real)
+        getitimer_fn = cast(Callable[[int], tuple[float, float]], getitimer)
+        setitimer_fn = cast(Callable[..., Any], setitimer)
+
+        previous_handler = signal.getsignal(sigalrm_value)
+        previous_timer = getitimer_fn(itimer_real_value)
         effective_timeout = wait_timeout
         if previous_timer[0] > 0:
             effective_timeout = min(effective_timeout, previous_timer[0])
-        signal.signal(sigalrm, timeout_handler)
-        setitimer(itimer_real, effective_timeout)
+        signal.signal(sigalrm_value, timeout_handler)
+        setitimer_fn(itimer_real_value, effective_timeout)
         try:
             return rpc.wait(cid, spin_threshold=SPIN_THRESHOLD)
         finally:
-            signal.signal(sigalrm, previous_handler)
-            setitimer(itimer_real, *previous_timer)
+            signal.signal(sigalrm_value, previous_handler)
+            setitimer_fn(itimer_real_value, *previous_timer)
 
     def _rpc_wait_timeout_for_message(self, message: dict[str, Any]) -> float | None:
         message_type = message.get('type')

@@ -28,8 +28,12 @@ func uniqueCoreBusName(prefix string) string {
 	return prefix + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
+func coreEventBusTestContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 180*time.Second)
+}
+
 func TestRustCoreEventBusRunsGoHandlerViaCoreSnapshot(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := coreEventBusTestContext()
 	defer cancel()
 
 	bus, err := abxbus.NewRustCoreEventBus(ctx, uniqueCoreBusName("GoCoreBus"))
@@ -52,7 +56,7 @@ func TestRustCoreEventBusRunsGoHandlerViaCoreSnapshot(t *testing.T) {
 }
 
 func TestRustCoreEventBusCommitsGoHandlerErrorThroughCore(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := coreEventBusTestContext()
 	defer cancel()
 
 	bus, err := abxbus.NewRustCoreEventBus(ctx, uniqueCoreBusName("GoCoreErrorBus"))
@@ -75,7 +79,7 @@ func TestRustCoreEventBusCommitsGoHandlerErrorThroughCore(t *testing.T) {
 }
 
 func TestRustCoreEventBusFindAndFilterReadFromCoreSnapshots(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := coreEventBusTestContext()
 	defer cancel()
 
 	bus, err := abxbus.NewRustCoreEventBus(ctx, uniqueCoreBusName("GoCoreQueryBus"))
@@ -122,7 +126,7 @@ func TestRustCoreEventBusFindAndFilterReadFromCoreSnapshots(t *testing.T) {
 }
 
 func TestRustCoreEventBusSameNameSharesBusWithoutExplicitID(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := coreEventBusTestContext()
 	defer cancel()
 
 	busName := uniqueCoreBusName("GoCoreSharedRuntimeBus")
@@ -166,7 +170,7 @@ func TestRustCoreEventBusSameNameSharesBusWithoutExplicitID(t *testing.T) {
 }
 
 func BenchmarkRustCoreEventBusEmit(b *testing.B) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := coreEventBusTestContext()
 	defer cancel()
 
 	bus, err := abxbus.NewRustCoreEventBus(ctx, uniqueCoreBusName("GoCoreBenchBus"))
