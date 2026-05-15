@@ -52,6 +52,28 @@ func SchemaForValue(value any) map[string]any {
 
 // SchemaForType returns a small JSON Schema object for t.
 func SchemaForType(t reflect.Type) map[string]any {
+	state := schemaForState{
+		defs:       map[string]any{},
+		inProgress: map[reflect.Type]string{},
+		typeNames:  map[reflect.Type]string{},
+		usedNames:  map[string]reflect.Type{},
+	}
+	schema := state.schemaForType(t)
+	if len(state.defs) > 0 {
+		schema = cloneSchemaMap(schema)
+		schema["$defs"] = state.defs
+	}
+	return schema
+}
+
+type schemaForState struct {
+	defs       map[string]any
+	inProgress map[reflect.Type]string
+	typeNames  map[reflect.Type]string
+	usedNames  map[string]reflect.Type
+}
+
+func (state *schemaForState) schemaForType(t reflect.Type) map[string]any {
 	for t != nil && t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
@@ -60,31 +82,20 @@ func SchemaForType(t reflect.Type) map[string]any {
 	}
 	switch t.Kind() {
 	case reflect.Struct:
-		properties := map[string]any{}
-		required := []any{}
-		for i := 0; i < t.NumField(); i++ {
-			field := t.Field(i)
-			if field.PkgPath != "" {
-				continue
+		if name := state.schemaRefName(t); name != "" {
+			if _, ok := state.defs[name]; ok {
+				return map[string]any{"$ref": "#/$defs/" + name}
 			}
-			name, omitEmpty, skip := jsonFieldName(field)
-			if skip {
-				continue
+			if _, ok := state.inProgress[t]; ok {
+				return map[string]any{"$ref": "#/$defs/" + name}
 			}
-			properties[name] = SchemaForType(field.Type)
-			if !omitEmpty && !isOptionalType(field.Type) {
-				required = append(required, name)
-			}
+			state.inProgress[t] = name
+			schema := state.schemaForStruct(t)
+			delete(state.inProgress, t)
+			state.defs[name] = schema
+			return schema
 		}
-		schema := map[string]any{
-			"type":                 "object",
-			"properties":           properties,
-			"additionalProperties": false,
-		}
-		if len(required) > 0 {
-			schema["required"] = required
-		}
-		return schema
+		return state.schemaForStruct(t)
 	case reflect.String:
 		return map[string]any{"type": "string"}
 	case reflect.Bool:
@@ -95,12 +106,80 @@ func SchemaForType(t reflect.Type) map[string]any {
 	case reflect.Float32, reflect.Float64:
 		return map[string]any{"type": "number"}
 	case reflect.Slice, reflect.Array:
-		return map[string]any{"type": "array", "items": SchemaForType(t.Elem())}
+		return map[string]any{"type": "array", "items": state.schemaForType(t.Elem())}
 	case reflect.Map:
-		return map[string]any{"type": "object", "additionalProperties": SchemaForType(t.Elem())}
+		return map[string]any{"type": "object", "additionalProperties": state.schemaForType(t.Elem())}
 	default:
 		return map[string]any{}
 	}
+}
+
+func (state *schemaForState) schemaForStruct(t reflect.Type) map[string]any {
+	properties := map[string]any{}
+	required := []any{}
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if field.PkgPath != "" {
+			continue
+		}
+		name, omitEmpty, skip := jsonFieldName(field)
+		if skip {
+			continue
+		}
+		properties[name] = state.schemaForType(field.Type)
+		if !omitEmpty && !isOptionalType(field.Type) {
+			required = append(required, name)
+		}
+	}
+	schema := map[string]any{
+		"type":                 "object",
+		"properties":           properties,
+		"additionalProperties": false,
+	}
+	if len(required) > 0 {
+		schema["required"] = required
+	}
+	return schema
+}
+
+func (state *schemaForState) schemaRefName(t reflect.Type) string {
+	if t.Name() == "" {
+		return ""
+	}
+	if name, ok := state.typeNames[t]; ok {
+		return name
+	}
+	base := sanitizeSchemaRefName(t.PkgPath() + "." + t.Name())
+	name := base
+	for i := 2; ; i++ {
+		existing, ok := state.usedNames[name]
+		if !ok || existing == t {
+			state.usedNames[name] = t
+			state.typeNames[t] = name
+			return name
+		}
+		name = fmt.Sprintf("%s_%d", base, i)
+	}
+}
+
+func sanitizeSchemaRefName(name string) string {
+	var builder strings.Builder
+	for _, r := range name {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-' || r == '.' {
+			builder.WriteRune(r)
+		} else {
+			builder.WriteByte('_')
+		}
+	}
+	return builder.String()
+}
+
+func cloneSchemaMap(schema map[string]any) map[string]any {
+	clone := make(map[string]any, len(schema)+1)
+	for key, value := range schema {
+		clone[key] = value
+	}
+	return clone
 }
 
 func jsonFieldName(field reflect.StructField) (string, bool, bool) {

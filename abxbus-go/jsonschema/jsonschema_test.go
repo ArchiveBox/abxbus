@@ -86,3 +86,28 @@ func TestSchemaForStructUsesJSONNamesAndValidates(t *testing.T) {
 		t.Fatalf("expected generated schema to reject wrong id type, got %v", err)
 	}
 }
+
+func TestSchemaForRecursiveStructUsesRefsAndValidates(t *testing.T) {
+	type Node struct {
+		ID       string `json:"id"`
+		Children []Node `json:"children,omitempty"`
+		Parent   *Node  `json:"parent,omitempty"`
+	}
+
+	schema := jsonschema.SchemaFor[Node]()
+	if _, ok := schema["$defs"].(map[string]any); !ok {
+		t.Fatalf("expected recursive schema defs, got %#v", schema)
+	}
+	if err := jsonschema.Validate(schema, Node{ID: "root", Children: []Node{{ID: "child"}}}); err != nil {
+		t.Fatalf("expected recursive struct value to validate: %v", err)
+	}
+	payload := map[string]any{
+		"id": "root",
+		"children": []any{
+			map[string]any{"id": 3},
+		},
+	}
+	if err := jsonschema.Validate(schema, payload); err == nil || !strings.Contains(err.Error(), "expected string") {
+		t.Fatalf("expected generated recursive schema to reject wrong child id type, got %v", err)
+	}
+}
