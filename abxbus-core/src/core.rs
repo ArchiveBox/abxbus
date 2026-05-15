@@ -2921,6 +2921,8 @@ impl Core {
         };
         let mut invocations = Vec::new();
         let mut patches = Vec::new();
+        let mut event_deadline_anchor_at = self.event_deadline_anchor_at(&event_record.event_id);
+        let resolved_event_timeout = resolve_event_timeout(&event_record, &bus_record);
         for result_id in eligible {
             let invocation_id = uuid_v7_string();
             let fence = 1;
@@ -2964,12 +2966,18 @@ impl Core {
                 .invocation
                 .as_ref()
                 .and_then(|invocation| invocation.deadline_at.clone());
-            let event_deadline_at = self
-                .event_deadline_anchor_at(&event_record.event_id)
-                .and_then(|started_at| {
-                    resolve_event_timeout(&event_record, &bus_record)
-                        .and_then(|timeout| timestamp_plus_seconds(&started_at, timeout))
-                });
+            if let Some(started_at) = result_snapshot.started_at.as_ref() {
+                if event_deadline_anchor_at
+                    .as_ref()
+                    .is_none_or(|current| started_at < current)
+                {
+                    event_deadline_anchor_at = Some(started_at.clone());
+                }
+            }
+            let event_deadline_at = event_deadline_anchor_at.as_ref().and_then(|started_at| {
+                resolved_event_timeout
+                    .and_then(|timeout| timestamp_plus_seconds(started_at, timeout))
+            });
             patches.push(CorePatch::ResultStarted {
                 result_id: result_snapshot.result_id.clone(),
                 invocation_id: invocation_id.clone(),

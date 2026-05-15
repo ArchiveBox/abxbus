@@ -1,6 +1,6 @@
 use std::process::Command;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use abxbus_core::{
     eligible_results, event_lock_resource, BusDefaults, BusRecord, Core, CorePatch,
@@ -64,6 +64,36 @@ fn event(id: &str, event_type: &str) -> EventRecord {
         event_status: EventStatus::Pending,
         completed_result_snapshots: Default::default(),
     }
+}
+
+#[test]
+fn large_parallel_handler_startup_uses_linear_event_deadline_indexing() {
+    let mut defaults = BusDefaults::default();
+    defaults.event_handler_concurrency = HandlerConcurrency::Parallel;
+
+    let mut core = Core::default();
+    core.insert_bus(bus("bus-a", "BusA#0001", defaults));
+    for i in 0..5000 {
+        core.insert_handler(handler(&format!("handler-{i}"), "bus-a", "PerfEvent", i));
+    }
+
+    let route_id = core
+        .emit_to_bus(event("event-a", "PerfEvent"), "bus-a")
+        .unwrap();
+    core.create_missing_result_rows_limited(&route_id, Some(65_536))
+        .unwrap();
+
+    let started = Instant::now();
+    let invocations = core
+        .start_eligible_results_limited(&route_id, Some(65_536), true)
+        .unwrap();
+    let elapsed = started.elapsed();
+
+    assert_eq!(invocations.len(), 5000);
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "starting 5k parallel handlers took {elapsed:?}, expected linear startup"
+    );
 }
 
 #[test]
