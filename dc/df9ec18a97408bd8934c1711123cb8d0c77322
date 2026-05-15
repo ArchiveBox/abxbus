@@ -1,0 +1,33 @@
+.github/workflows/test_go.yaml
+  s_5f24dff79e9241::t_f1fa44cd324538 119
+.github/workflows/test_py.yaml
+  s_6a8c07f028b30c::t_a1e3ab1b7b37b1 142
+abxbus-go/event_bus.go
+  s_6a8c07f028b30c::t_685cac31a8af22 689-698,705
+.github/workflows/pre-commit-hooks.yaml
+  s_6a8c07f028b30c::t_89e071bee4fd18 25,29,32,39-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "dcdf9ec18a97408bd8934c1711123cb8d0c77322",
+  "prompts": {},
+  "sessions": {
+    "s_5f24dff79e9241": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e06e9-28ac-73b3-b24d-361167f9c067",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    },
+    "s_6a8c07f028b30c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019df1ad-4ba1-7622-adc6-2cf7715e2bb9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
