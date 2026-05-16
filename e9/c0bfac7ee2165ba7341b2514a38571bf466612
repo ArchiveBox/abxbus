@@ -1,0 +1,29 @@
+docs/api/eventbusmiddleware.mdx
+  s_4f4788d0a20767::t_7e6695fc22db03 266,268
+docs/integrations/middleware-otel-tracing.mdx
+  s_4f4788d0a20767::t_7e6695fc22db03 45-46
+docs/integrations/middlewares.mdx
+  s_4f4788d0a20767::t_7e6695fc22db03 51,55,109
+abxbus-go/go.mod
+  s_4f4788d0a20767::t_40ed947a6c11b5 5
+abxbus-go/README.md
+  s_4f4788d0a20767::t_7e6695fc22db03 24
+abxbus-go/tests/eventbus_test.go
+  s_4f4788d0a20767::t_a8171035fcc4f1 1565,1604
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "e9c0bfac7ee2165ba7341b2514a38571bf466612",
+  "prompts": {},
+  "sessions": {
+    "s_4f4788d0a20767": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3251-d280-7a13-a763-9dbe5f4c0c34",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
