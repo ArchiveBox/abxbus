@@ -1129,9 +1129,7 @@ class TestRetryApiParity:
         retry_ast = ast.parse(inspect.getsource(retry_helpers))
         forbidden_modules = {'abxbus.base_event', 'abxbus.event_bus'}
         imported_modules = {
-            node.module
-            for node in ast.walk(retry_ast)
-            if isinstance(node, ast.ImportFrom) and node.module is not None
+            node.module for node in ast.walk(retry_ast) if isinstance(node, ast.ImportFrom) and node.module is not None
         }
         assert imported_modules.isdisjoint(forbidden_modules)
 

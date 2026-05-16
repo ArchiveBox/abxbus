@@ -441,7 +441,9 @@ def _acquire_threading_semaphore(
     sem_wait_time = time.time() - sem_start
     if not semaphore_lax:
         timeout_str = f', timeout={timeout}s per operation' if timeout is not None else ''
-        raise TimeoutError(f'Failed to acquire semaphore "{sem_key}" within {sem_timeout}s (limit={semaphore_limit}{timeout_str})')
+        raise TimeoutError(
+            f'Failed to acquire semaphore "{sem_key}" within {sem_timeout}s (limit={semaphore_limit}{timeout_str})'
+        )
     logger.warning(f'Failed to acquire semaphore "{sem_key}" after {sem_wait_time:.1f}s, proceeding without concurrency limit')
     return False
 
@@ -858,6 +860,7 @@ def retry(
                     effective_semaphore_limit,
                 )
                 if _is_async_retry_result(result):
+
                     async def finalize_async_result() -> Any:
                         try:
                             return await cast(Awaitable[Any], result)
