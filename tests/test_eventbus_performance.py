@@ -381,19 +381,20 @@ async def test_50k_events_with_memory_control():
 
     processed_count = 0
 
-    async def handler(event: SimpleEvent) -> None:
+    def handler(event: SimpleEvent) -> None:
         nonlocal processed_count
         processed_count += 1
 
     bus.on('SimpleEvent', handler)
 
     total_events = 50_000
+    batch_size = 512
 
     start_time = time.time()
     memory_samples: list[float] = []
     max_memory = initial_memory
 
-    # Dispatch all events as fast as possible (naive flood).
+    # Match the runtime perf and other wrappers: dispatch in bounded batches.
     dispatched = 0
     pending_events: list[BaseEvent[Any]] = []
 
@@ -403,6 +404,11 @@ async def test_50k_events_with_memory_control():
         dispatched += 1
         if dispatched <= 5:
             print(f'Dispatched event {dispatched}')
+
+        if len(pending_events) >= batch_size:
+            await asyncio.gather(*pending_events)
+            pending_events.clear()
+            await bus.wait_until_idle()
 
         # Sample memory every 10k events
         if dispatched % 10_000 == 0 and dispatched > 0:
