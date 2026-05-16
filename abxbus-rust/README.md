@@ -1,4 +1,4 @@
-# abxbus-rust
+# abxbus (Rust)
 
 Idiomatic Rust implementation of `abxbus`, matching the Python/TypeScript event JSON surface and execution semantics as closely as possible.
 
@@ -21,7 +21,7 @@ Not yet implemented in this crate revision:
 ## Quickstart
 
 ```rust
-use abxbus_rust::{event, event_bus::EventBus};
+use abxbus::{event, event_bus::EventBus};
 use futures::executor::block_on;
 use serde_json::json;
 
@@ -54,7 +54,7 @@ Use `event.now_with_options(EventWaitOptions { first_result: true, ..Default::de
 Result helpers default to `raise_if_any=true` and `raise_if_none=false`:
 
 ```rust
-use abxbus_rust::base_event::EventResultOptions;
+use abxbus::base_event::EventResultOptions;
 
 let value = block_on(event.event_result())?;
 let values = block_on(event.event_results_list_with_options(EventResultOptions {
@@ -67,7 +67,7 @@ let values = block_on(event.event_results_list_with_options(EventResultOptions {
 Destroy clears bus-owned state by default:
 
 ```rust
-use abxbus_rust::event_bus::DestroyOptions;
+use abxbus::event_bus::DestroyOptions;
 
 bus.destroy();
 bus.destroy_with_options(DestroyOptions { clear: false, ..Default::default() });

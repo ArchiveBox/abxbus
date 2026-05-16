@@ -59,7 +59,7 @@ const result = await event.eventResult()
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{
+use abxbus::{
     event,
     event_bus::EventBus,
     BaseEvent,
@@ -128,7 +128,7 @@ const values = await event.eventResultsList({ raise_if_any: false, raise_if_none
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{
+use abxbus::{
     base_event::EventResultOptions,
     event,
     event_bus::EventBus,
@@ -200,7 +200,7 @@ await event.wait({ timeout: 0.25 }).eventResultsList()
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::base_event::{EventResultOptions, EventWaitOptions};
+use abxbus::base_event::{EventResultOptions, EventWaitOptions};
 
 event.event_results_list_with_options(EventResultOptions {
     raise_if_any: false,

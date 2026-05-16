@@ -1,3 +1,4 @@
+import ast
 import asyncio
 
 import pytest
@@ -409,6 +410,7 @@ import inspect
 import multiprocessing
 import os
 import re
+import threading
 import time
 from typing import Any
 
@@ -464,6 +466,46 @@ def worker_acquire_semaphore(
         import traceback
 
         traceback.print_exc()
+        results_queue.put(('error', worker_id, error_time, str(e)))
+
+
+def worker_acquire_semaphore_sync(
+    worker_id: int,
+    start_time: float,
+    results_queue: 'multiprocessing.Queue[Any]',
+    hold_time: float = 0.5,
+    timeout: float = 5.0,
+    semaphore_limit: int = 3,
+    semaphore_name: str = 'test_multiprocess_sync_sem',
+):
+    """Worker process that tries to acquire a semaphore from a sync retry wrapper."""
+    try:
+
+        @retry(
+            max_attempts=1,
+            timeout=10,
+            semaphore_limit=semaphore_limit,
+            semaphore_name=semaphore_name,
+            semaphore_scope='multiprocess',
+            semaphore_timeout=timeout,
+            semaphore_lax=False,
+        )
+        def semaphore_protected_function():
+            acquire_time = time.time() - start_time
+            results_queue.put(('acquired', worker_id, acquire_time))
+            time.sleep(hold_time)
+            release_time = time.time() - start_time
+            results_queue.put(('released', worker_id, release_time))
+            return f'Worker {worker_id} completed'
+
+        result = semaphore_protected_function()
+        results_queue.put(('completed', worker_id, result))
+
+    except TimeoutError as e:
+        timeout_time = time.time() - start_time
+        results_queue.put(('timeout', worker_id, timeout_time, str(e)))
+    except Exception as e:
+        error_time = time.time() - start_time
         results_queue.put(('error', worker_id, error_time, str(e)))
 
 
@@ -648,6 +690,55 @@ class TestMultiprocessSemaphore:
             elif event[0] == 'released':
                 if event[1] in active_workers:
                     active_workers.remove(event[1])
+
+    def test_basic_multiprocess_semaphore_sync_wrapper(self):
+        """Test that sync retry wrappers enforce semaphore limits across processes."""
+        results_queue: multiprocessing.Queue[Any] = multiprocessing.Queue()
+        start_time = time.time()
+        semaphore_name = f'test_multiprocess_sync_sem_{time.time_ns()}'
+        processes: list[multiprocessing.Process] = []
+
+        for i in range(2):
+            p = multiprocessing.Process(
+                target=worker_acquire_semaphore_sync,
+                args=(i, start_time, results_queue, 0.7, 5.0, 2, semaphore_name),
+            )
+            p.start()
+            processes.append(p)
+
+        time.sleep(0.2)
+
+        for i in range(2, 4):
+            p = multiprocessing.Process(
+                target=worker_acquire_semaphore_sync,
+                args=(i, start_time, results_queue, 0.2, 5.0, 2, semaphore_name),
+            )
+            p.start()
+            processes.append(p)
+
+        for p in processes:
+            p.join(timeout=10)
+            assert p.exitcode == 0
+
+        results: list[tuple[Any, ...]] = []
+        while not results_queue.empty():
+            results.append(results_queue.get())
+
+        completed_events = [r for r in results if r[0] == 'completed']
+        assert len(completed_events) == 4
+
+        in_flight: set[int] = set()
+        timed_events: list[tuple[str, int, float]] = [
+            (str(e[0]), int(e[1]), float(e[2]))
+            for e in results
+            if len(e) >= 3 and e[0] in ('acquired', 'released') and isinstance(e[2], (int, float))
+        ]
+        for event_type, worker_id, _timestamp in sorted(timed_events, key=lambda x: (x[2], 0 if x[0] == 'released' else 1)):
+            if event_type == 'acquired':
+                in_flight.add(worker_id)
+                assert len(in_flight) <= 2
+            else:
+                in_flight.discard(worker_id)
 
     def test_semaphore_timeout(self):
         """Test that semaphore timeout works correctly."""
@@ -1034,10 +1125,32 @@ class TestRegularSemaphoreScopes:
 
 
 class TestRetryApiParity:
+    def test_retry_module_has_no_event_bus_imports(self):
+        retry_ast = ast.parse(inspect.getsource(retry_helpers))
+        forbidden_modules = {'abxbus.base_event', 'abxbus.event_bus'}
+        imported_modules = {
+            node.module
+            for node in ast.walk(retry_ast)
+            if isinstance(node, ast.ImportFrom) and node.module is not None
+        }
+        assert imported_modules.isdisjoint(forbidden_modules)
+
     async def test_defaults_match_typescript(self):
         params = inspect.signature(retry).parameters
         assert params['max_attempts'].default == 1
         assert params['timeout'].default is None
+
+    async def test_standalone_async_function_without_event_bus(self):
+        calls = 0
+
+        @retry(max_attempts=2)
+        async def standalone():
+            nonlocal calls
+            calls += 1
+            return 'ok'
+
+        assert await standalone() == 'ok'
+        assert calls == 1
 
     async def test_max_attempts_counts_total_attempts(self):
         attempt_count = 0
@@ -1097,6 +1210,511 @@ class TestRetryApiParity:
 
         max_active = 0
         await asyncio.gather(keyed('a', '1'), keyed('b', '2'))
+        assert max_active >= 2
+
+    async def test_in_process_semaphore_is_shared_between_async_and_sync_wrappers(self):
+        semaphore_name = f'test_async_sync_shared_sem_{time.time_ns()}'
+        events: list[tuple[str, float]] = []
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name)
+        async def async_holder():
+            events.append(('async-start', time.time()))
+            await asyncio.sleep(0.1)
+            events.append(('async-end', time.time()))
+            return 'async'
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name)
+        def sync_contender():
+            events.append(('sync-start', time.time()))
+            return 'sync'
+
+        holder_task = asyncio.create_task(async_holder())
+        await asyncio.sleep(0.02)
+        result = await asyncio.to_thread(sync_contender)
+        assert result == 'sync'
+        assert await holder_task == 'async'
+
+        assert [event[0] for event in events] == ['async-start', 'async-end', 'sync-start']
+        assert events[2][1] - events[0][1] >= 0.08
+
+
+class TestSyncRetryApiParity:
+    def test_sync_standalone_function_without_event_bus(self):
+        calls = 0
+
+        @retry(max_attempts=2)
+        def standalone():
+            nonlocal calls
+            calls += 1
+            return 'ok'
+
+        result = standalone()
+        assert result == 'ok'
+        assert calls == 1
+        assert not inspect.isawaitable(result)
+
+    def test_sync_function_succeeds_on_first_attempt_with_no_retries_needed(self):
+        @retry(max_attempts=3)
+        def fn():
+            return 'ok'
+
+        result = fn()
+        assert result == 'ok'
+        assert not inspect.isawaitable(result)
+
+    def test_sync_function_retries_on_failure_and_eventually_succeeds(self):
+        calls = 0
+
+        @retry(max_attempts=3)
+        def fn():
+            nonlocal calls
+            calls += 1
+            if calls < 3:
+                raise ValueError(f'fail {calls}')
+            return 'ok'
+
+        assert fn() == 'ok'
+        assert calls == 3
+
+    def test_sync_throws_after_exhausting_all_attempts(self):
+        calls = 0
+
+        @retry(max_attempts=3)
+        def fn():
+            nonlocal calls
+            calls += 1
+            raise ValueError('always fails')
+
+        with pytest.raises(ValueError, match='always fails'):
+            fn()
+        assert calls == 3
+
+    def test_sync_max_attempts_one_means_no_retries(self):
+        calls = 0
+
+        @retry(max_attempts=1)
+        def fn():
+            nonlocal calls
+            calls += 1
+            raise ValueError('fail')
+
+        with pytest.raises(ValueError, match='fail'):
+            fn()
+        assert calls == 1
+
+    def test_sync_default_max_attempts_one_means_single_attempt(self):
+        calls = 0
+
+        @retry()
+        def fn():
+            nonlocal calls
+            calls += 1
+            raise ValueError('fail')
+
+        with pytest.raises(ValueError, match='fail'):
+            fn()
+        assert calls == 1
+
+    def test_sync_retry_after_introduces_blocking_delay_between_attempts(self):
+        calls = 0
+        timestamps: list[float] = []
+
+        @retry(max_attempts=3, retry_after=0.05)
+        def fn():
+            nonlocal calls
+            calls += 1
+            timestamps.append(time.time())
+            if calls < 3:
+                raise ValueError('fail')
+            return 'ok'
+
+        assert fn() == 'ok'
+        assert calls == 3
+        assert timestamps[1] - timestamps[0] >= 0.04
+        assert timestamps[2] - timestamps[1] >= 0.04
+
+    def test_sync_retry_backoff_factor_increases_blocking_delay_between_attempts(self):
+        calls = 0
+        timestamps: list[float] = []
+
+        @retry(max_attempts=4, retry_after=0.03, retry_backoff_factor=2.0)
+        def fn():
+            nonlocal calls
+            calls += 1
+            timestamps.append(time.time())
+            if calls < 4:
+                raise ValueError('fail')
+            return 'ok'
+
+        assert fn() == 'ok'
+        gap1 = timestamps[1] - timestamps[0]
+        gap2 = timestamps[2] - timestamps[1]
+        gap3 = timestamps[3] - timestamps[2]
+        assert gap1 >= 0.02
+        assert gap2 >= 0.045
+        assert gap3 >= 0.09
+        assert gap2 > gap1
+        assert gap3 > gap2
+
+    def test_sync_retry_on_errors_supports_exception_classes_and_regex(self):
+        calls = 0
+
+        @retry(
+            max_attempts=4,
+            retry_after=0.01,
+            retry_on_errors=[re.compile(r'^ValueError: temporary failure$'), RuntimeError],
+        )
+        def fn():
+            nonlocal calls
+            calls += 1
+            if calls < 3:
+                raise ValueError('temporary failure')
+            return 'ok'
+
+        assert fn() == 'ok'
+        assert calls == 3
+
+    def test_sync_retry_on_errors_does_not_retry_non_matching_errors(self):
+        calls = 0
+
+        @retry(max_attempts=3, retry_on_errors=[RuntimeError])
+        def fn():
+            nonlocal calls
+            calls += 1
+            raise ValueError('not retryable')
+
+        with pytest.raises(ValueError, match='not retryable'):
+            fn()
+        assert calls == 1
+
+    def test_sync_timeout_triggers_timeout_error_on_slow_attempts(self):
+        calls = 0
+
+        @retry(max_attempts=1, timeout=0.02)
+        def fn():
+            nonlocal calls
+            calls += 1
+            time.sleep(0.05)
+            return 'ok'
+
+        with pytest.raises(TimeoutError):
+            fn()
+        assert calls == 1
+
+    def test_sync_timeout_allows_fast_attempts_to_succeed(self):
+        @retry(max_attempts=1, timeout=1)
+        def fn():
+            return 'fast'
+
+        assert fn() == 'fast'
+
+    def test_sync_timed_out_attempts_are_retried_when_max_attempts_gt_one(self):
+        calls = 0
+
+        @retry(max_attempts=3, timeout=0.02)
+        def fn():
+            nonlocal calls
+            calls += 1
+            if calls < 3:
+                time.sleep(0.05)
+                return 'slow'
+            return 'ok'
+
+        assert fn() == 'ok'
+        assert calls == 3
+
+    def test_sync_semaphore_limit_controls_max_concurrent_executions(self):
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+
+        @retry(max_attempts=1, semaphore_limit=2, semaphore_name=f'test_sync_sem_limit_{time.time_ns()}')
+        def fn():
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.05)
+            with lock:
+                active -= 1
+
+        threads = [threading.Thread(target=fn) for _ in range(6)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert max_active == 2
+
+    def test_sync_semaphore_lax_false_throws_when_slots_are_full(self):
+        semaphore_name = f'test_sync_sem_lax_false_{time.time_ns()}'
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name, semaphore_lax=False, semaphore_timeout=0.05)
+        def fn():
+            time.sleep(0.2)
+            return 'ok'
+
+        first_error: list[BaseException] = []
+
+        def run_first() -> None:
+            try:
+                fn()
+            except BaseException as exc:
+                first_error.append(exc)
+
+        thread = threading.Thread(target=run_first)
+        thread.start()
+        time.sleep(0.02)
+        with pytest.raises(TimeoutError):
+            fn()
+        thread.join()
+        assert not first_error
+
+    def test_sync_semaphore_lax_true_proceeds_without_semaphore_on_timeout(self):
+        semaphore_name = f'test_sync_sem_lax_true_{time.time_ns()}'
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name, semaphore_lax=True, semaphore_timeout=0.05)
+        def fn():
+            time.sleep(0.2)
+            return 'ok'
+
+        thread = threading.Thread(target=fn)
+        thread.start()
+        time.sleep(0.02)
+        assert fn() == 'ok'
+        thread.join()
+
+    def test_sync_preserves_function_name(self):
+        @retry()
+        def my_named_function():
+            return 'ok'
+
+        assert my_named_function.__name__ == 'my_named_function'
+
+    def test_sync_preserves_this_context_for_methods(self):
+        class MyService:
+            value = 42
+
+            @retry(max_attempts=2)
+            def fetch(self):
+                return self.value
+
+        assert MyService().fetch() == 42
+
+    def test_sync_max_attempts_zero_is_treated_as_one(self):
+        calls = 0
+
+        @retry(max_attempts=0)
+        def fn():
+            nonlocal calls
+            calls += 1
+            return 'ok'
+
+        assert fn() == 'ok'
+        assert calls == 1
+
+    def test_sync_passes_arguments_through_to_wrapped_function(self):
+        @retry(max_attempts=1)
+        def fn(a: int, b: str):
+            return f'{a}-{b}'
+
+        assert fn(1, 'hello') == '1-hello'
+
+    def test_sync_semaphore_is_held_across_all_retry_attempts(self):
+        active = 0
+        max_active = 0
+        total_calls = 0
+        lock = threading.Lock()
+
+        @retry(max_attempts=3, semaphore_limit=1, semaphore_name=f'test_sync_sem_across_retries_{time.time_ns()}')
+        def fn():
+            nonlocal active, max_active, total_calls
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+                total_calls += 1
+                current_call = total_calls
+            time.sleep(0.01)
+            with lock:
+                active -= 1
+            if current_call % 2 == 1:
+                raise ValueError('fail')
+            return 'ok'
+
+        results: list[str] = []
+        threads = [threading.Thread(target=lambda: results.append(fn())) for _ in range(3)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert max_active == 1
+        assert sorted(results) == ['ok', 'ok', 'ok']
+        assert total_calls == 6
+
+    def test_sync_semaphore_released_even_when_all_attempts_fail(self):
+        @retry(max_attempts=2, semaphore_limit=1, semaphore_name=f'test_sync_sem_release_on_fail_{time.time_ns()}')
+        def fn():
+            raise ValueError('always fails')
+
+        with pytest.raises(ValueError):
+            fn()
+        with pytest.raises(ValueError):
+            fn()
+
+    def test_sync_reentrant_call_on_same_semaphore_does_not_deadlock(self):
+        semaphore_name = f'test_sync_shared_sem_{time.time_ns()}'
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name)
+        def inner():
+            return 'inner ok'
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name)
+        def outer():
+            return f'outer got: {inner()}'
+
+        assert outer() == 'outer got: inner ok'
+
+    def test_sync_recursive_function_with_semaphore_does_not_deadlock(self):
+        depth = 0
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=f'test_sync_recursive_sem_{time.time_ns()}')
+        def recurse(n: int) -> int:
+            nonlocal depth
+            depth += 1
+            if n <= 1:
+                return 1
+            return n + recurse(n - 1)
+
+        assert recurse(5) == 15
+        assert depth == 5
+
+    def test_sync_three_level_nested_reentrancy_does_not_deadlock(self):
+        semaphore_name = f'test_sync_nested_sem_{time.time_ns()}'
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name)
+        def level3():
+            return 'level3'
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name)
+        def level2():
+            return f'level2>{level3()}'
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name)
+        def level1():
+            return f'level1>{level2()}'
+
+        assert level1() == 'level1>level2>level3'
+
+    def test_sync_semaphore_scope_class_shares_semaphore_across_instances(self):
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+
+        class Worker:
+            @retry(max_attempts=1, semaphore_limit=1, semaphore_scope='class', semaphore_name=f'test_sync_class_{time.time_ns()}')
+            def run(self):
+                nonlocal active, max_active
+                with lock:
+                    active += 1
+                    max_active = max(max_active, active)
+                time.sleep(0.05)
+                with lock:
+                    active -= 1
+                return 'done'
+
+        a = Worker()
+        b = Worker()
+        threads = [threading.Thread(target=a.run), threading.Thread(target=b.run)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert max_active == 1
+
+    def test_sync_semaphore_scope_instance_gives_each_instance_its_own_semaphore(self):
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+
+        class Worker:
+            @retry(max_attempts=1, semaphore_limit=1, semaphore_scope='instance', semaphore_name='test_sync_instance')
+            def run(self):
+                nonlocal active, max_active
+                with lock:
+                    active += 1
+                    max_active = max(max_active, active)
+                time.sleep(0.05)
+                with lock:
+                    active -= 1
+                return 'done'
+
+        a = Worker()
+        b = Worker()
+        threads = [threading.Thread(target=a.run), threading.Thread(target=b.run)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert max_active == 2
+
+    def test_sync_semaphore_scope_instance_serializes_calls_on_same_instance(self):
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+
+        class Worker:
+            @retry(max_attempts=1, semaphore_limit=1, semaphore_scope='instance', semaphore_name='test_sync_instance_same')
+            def run(self):
+                nonlocal active, max_active
+                with lock:
+                    active += 1
+                    max_active = max(max_active, active)
+                time.sleep(0.05)
+                with lock:
+                    active -= 1
+                return 'done'
+
+        worker = Worker()
+        threads = [threading.Thread(target=worker.run) for _ in range(3)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert max_active == 1
+
+    def test_sync_semaphore_name_callable_uses_call_args_for_keying(self):
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+
+        def _semaphore_key(a: str, b: str) -> str:
+            return f'{a}-{b}'
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_scope='global', semaphore_name=_semaphore_key)
+        def keyed(a: str, b: str):
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.05)
+            with lock:
+                active -= 1
+
+        max_active = 0
+        threads = [threading.Thread(target=keyed, args=('same', 'key')) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert max_active == 1
+
+        max_active = 0
+        threads = [threading.Thread(target=keyed, args=args) for args in [('a', '1'), ('b', '2')]]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
         assert max_active >= 2
 
 

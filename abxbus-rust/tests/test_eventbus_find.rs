@@ -1,4 +1,4 @@
-use abxbus_rust::event;
+use abxbus::event;
 use std::{
     collections::HashMap,
     sync::{mpsc, Arc, Mutex},
@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use abxbus_rust::{
+use abxbus::{
     base_event::BaseEvent,
     event_bus::{EventBus, FilterOptions, FindOptions},
 };
@@ -1816,7 +1816,7 @@ fn test_find_past_can_match_incomplete_events() {
     let dispatched_id = dispatched.event_id.clone();
     assert_eq!(found_id, dispatched_id);
     let found_status = found.inner.lock().event_status;
-    assert_ne!(found_status, abxbus_rust::types::EventStatus::Completed);
+    assert_ne!(found_status, abxbus::types::EventStatus::Completed);
 
     let _ = block_on(dispatched.now());
     bus.destroy();
@@ -1876,7 +1876,7 @@ fn test_most_recent_wins_across_completed_and_inflight() {
     assert_eq!(found_id, second_id);
     assert_ne!(
         found.inner.lock().event_status,
-        abxbus_rust::types::EventStatus::Completed
+        abxbus::types::EventStatus::Completed
     );
 
     let _ = block_on(second.now());
@@ -1905,13 +1905,13 @@ fn test_find_future_receives_dispatched_event_before_completion() {
     let found_status = found.inner.lock().event_status;
     assert!(matches!(
         found_status,
-        abxbus_rust::types::EventStatus::Pending | abxbus_rust::types::EventStatus::Started
+        abxbus::types::EventStatus::Pending | abxbus::types::EventStatus::Started
     ));
 
     let _ = block_on(found.wait());
     assert_eq!(
         found.inner.lock().event_status,
-        abxbus_rust::types::EventStatus::Completed
+        abxbus::types::EventStatus::Completed
     );
     bus.destroy();
 }
@@ -2101,7 +2101,7 @@ fn test_past_includes_in_progress_events() {
     assert_eq!(found_id, in_flight_id);
     assert!(matches!(
         found.inner.lock().event_status,
-        abxbus_rust::types::EventStatus::Pending | abxbus_rust::types::EventStatus::Started
+        abxbus::types::EventStatus::Pending | abxbus::types::EventStatus::Started
     ));
 
     let _ = block_on(in_flight.now());

@@ -1,11 +1,11 @@
-use abxbus_rust::event;
+use abxbus::event;
 use std::{
     sync::{mpsc, Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
 
-use abxbus_rust::{
+use abxbus::{
     event_bus::{EventBus, FindOptions},
     types::EventStatus,
 };

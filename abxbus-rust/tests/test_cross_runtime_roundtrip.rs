@@ -1,4 +1,4 @@
-use abxbus_rust::event;
+use abxbus::event;
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
@@ -8,7 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use abxbus_rust::{base_event::BaseEvent, event_bus::EventBus, event_handler::EventHandlerOptions};
+use abxbus::{base_event::BaseEvent, event_bus::EventBus, event_handler::EventHandlerOptions};
 use futures::executor::block_on;
 use serde_json::{json, Value};
 

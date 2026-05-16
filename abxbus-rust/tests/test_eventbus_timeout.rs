@@ -1,4 +1,4 @@
-use abxbus_rust::event;
+use abxbus::event;
 use std::{
     process::Command,
     sync::{mpsc, Arc, Mutex},
@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use abxbus_rust::{
+use abxbus::{
     base_event::BaseEvent,
     event_bus::{EventBus, EventBusOptions},
     event_handler::EventHandlerOptions,
@@ -72,7 +72,7 @@ event! {
 fn wait_until_completed(event: &ParentEvent, timeout_ms: u64) {
     let started = std::time::Instant::now();
     while started.elapsed() < Duration::from_millis(timeout_ms) {
-        if event.event_status.read() == abxbus_rust::types::EventStatus::Completed {
+        if event.event_status.read() == abxbus::types::EventStatus::Completed {
             return;
         }
         thread::sleep(Duration::from_millis(5));
@@ -80,7 +80,7 @@ fn wait_until_completed(event: &ParentEvent, timeout_ms: u64) {
     panic!("event did not complete within {timeout_ms}ms");
 }
 
-fn error_type(result: &abxbus_rust::event_result::EventResult) -> String {
+fn error_type(result: &abxbus::event_result::EventResult) -> String {
     result.to_flat_json_value()["error"]["type"]
         .as_str()
         .unwrap_or_default()
@@ -620,7 +620,7 @@ fn test_timeout_still_marks_event_failed_when_other_handlers_finish() {
     assert!(statuses.contains(&EventResultStatus::Error));
     assert_eq!(
         event.event_status.read(),
-        abxbus_rust::types::EventStatus::Completed
+        abxbus::types::EventStatus::Completed
     );
     assert_eq!(
         completed.lock().expect("completed lock").as_slice(),
@@ -946,7 +946,7 @@ fn test_forwarded_timeout_path_does_not_stall_followup_events() {
 
     assert_eq!(
         tail.event_status.read(),
-        abxbus_rust::types::EventStatus::Completed
+        abxbus::types::EventStatus::Completed
     );
     assert_eq!(*bus_a_tail_runs.lock().expect("bus a tail runs lock"), 1);
     assert_eq!(*bus_b_tail_runs.lock().expect("bus b tail runs lock"), 1);
@@ -1275,7 +1275,7 @@ fn test_parent_timeout_does_not_cancel_unawaited_children_that_have_no_timeout_o
         },
     );
     let bus_for_parent = bus.clone();
-    let child_ref = Arc::new(Mutex::new(None::<Arc<abxbus_rust::base_event::BaseEvent>>));
+    let child_ref = Arc::new(Mutex::new(None::<Arc<abxbus::base_event::BaseEvent>>));
     let child_ref_for_parent = child_ref.clone();
 
     bus.on_raw("child", "child_slow_handler", |_event| async move {
@@ -1326,7 +1326,7 @@ fn test_parent_timeout_does_not_cancel_unawaited_children_that_have_no_timeout_o
     let child_inner = child.inner.lock();
     assert_eq!(
         child_inner.event_status,
-        abxbus_rust::types::EventStatus::Completed
+        abxbus::types::EventStatus::Completed
     );
     assert_eq!(
         child_inner.event_parent_id.as_deref(),
@@ -1714,7 +1714,7 @@ fn test_followup_event_runs_after_parent_timeout_in_queue_jump_path() {
     let _ = block_on(tail.now());
     assert_eq!(
         tail.event_status.read(),
-        abxbus_rust::types::EventStatus::Completed
+        abxbus::types::EventStatus::Completed
     );
     assert_eq!(*tail_runs.lock().expect("tail runs lock"), 1);
     bus.destroy();

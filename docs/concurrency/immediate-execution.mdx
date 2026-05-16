@@ -67,7 +67,7 @@ bus.on(ChildEvent, async () => 'child response')
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event, event_bus::EventBus};
+use abxbus::{event, event_bus::EventBus};
 use serde_json::json;
 
 event! {
@@ -224,7 +224,7 @@ bus.On("ParentEvent", "on_parent", func(event *abxbus.BaseEvent) (any, error) {
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event, event_bus::{EventBus, EventBusOptions}, types::EventConcurrencyMode};
+use abxbus::{event, event_bus::{EventBus, EventBusOptions}, types::EventConcurrencyMode};
 use futures::future::join_all;
 use serde_json::json;
 
@@ -398,7 +398,7 @@ if ok := bus.WaitUntilIdle(nil); !ok {
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{
+use abxbus::{
     event,
     event_bus::{EventBus, EventBusOptions},
     types::{EventConcurrencyMode, EventHandlerConcurrencyMode},

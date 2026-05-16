@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use abxbus_rust::{
+use abxbus::{
     base_event::BaseEvent,
     event_bus::{EventBus, EventBusOptions},
     lock_manager::{run_with_lock, AsyncLock, HandlerLock, LockManager, ReentrantLock},
@@ -280,7 +280,7 @@ fn test_wait_until_idle_behaves_correctly() {
     for result in event_data.event_results.values() {
         assert_eq!(
             result.status,
-            abxbus_rust::event_result::EventResultStatus::Completed
+            abxbus::event_result::EventResultStatus::Completed
         );
         assert_eq!(result.result, Some(json!("ok")));
     }

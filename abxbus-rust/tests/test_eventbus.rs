@@ -1,4 +1,4 @@
-use abxbus_rust::event;
+use abxbus::event;
 use std::{
     collections::BTreeSet,
     sync::{
@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use abxbus_rust::{
+use abxbus::{
     base_event::{BaseEvent, EventResultOptions, EventWaitOptions},
     event_bus::{DestroyOptions, EventBus, EventBusOptions},
     event_result::{EventResult, EventResultStatus},
@@ -1735,14 +1735,14 @@ fn test_automatic_event_type_derivation() {
         ..Default::default()
     };
     assert_eq!(
-        <UserActionEvent as abxbus_rust::typed::EventSpec>::event_type,
+        <UserActionEvent as abxbus::typed::EventSpec>::event_type,
         "UserActionEvent"
     );
     let system = RuntimeSerializationEvent {
         ..Default::default()
     };
     assert_eq!(
-        <RuntimeSerializationEvent as abxbus_rust::typed::EventSpec>::event_type,
+        <RuntimeSerializationEvent as abxbus::typed::EventSpec>::event_type,
         "RuntimeSerializationEvent"
     );
 
@@ -3181,7 +3181,7 @@ fn test_base_event_to_json_from_json_roundtrips_runtime_fields_and_event_results
     assert_eq!(json_result["handler_id"], handler_id);
     assert!(json_result.get("handler").is_none());
 
-    let restored = abxbus_rust::base_event::BaseEvent::from_json_value(serialized);
+    let restored = abxbus::base_event::BaseEvent::from_json_value(serialized);
     assert_eq!(restored.inner.lock().event_status, EventStatus::Completed);
     assert_eq!(restored.inner.lock().event_pending_bus_count, 0);
     assert_eq!(restored.inner.lock().event_results.len(), 1);
@@ -3225,7 +3225,7 @@ fn test_event_handler_json_matches_python_typescript_shape() {
     assert_eq!(serialized["handler_name"], "handler");
     assert!(serialized.get("handler").is_none());
 
-    let restored = abxbus_rust::event_handler::EventHandler::from_json_value(serialized);
+    let restored = abxbus::event_handler::EventHandler::from_json_value(serialized);
     assert_eq!(restored.id, handler.id);
     assert_eq!(restored.event_pattern, handler.event_pattern);
     assert_eq!(restored.eventbus_id, handler.eventbus_id);
@@ -3728,8 +3728,8 @@ fn test_parallel_handler_concurrency() {
 
 // Folded from test_event_history_store.rs to keep test layout class-based.
 mod folded_test_event_history_store {
-    use abxbus_rust::event;
-    use abxbus_rust::event_bus::EventBus;
+    use abxbus::event;
+    use abxbus::event_bus::EventBus;
     use futures::executor::block_on;
     use serde::{Deserialize, Serialize};
 
@@ -3777,8 +3777,8 @@ mod folded_test_event_history_store {
 
 // Folded from test_eventbus_edge_cases.rs to keep test layout class-based.
 mod folded_test_eventbus_edge_cases {
-    use abxbus_rust::event;
-    use abxbus_rust::{event_bus::EventBus, event_result::EventResultStatus, types::EventStatus};
+    use abxbus::event;
+    use abxbus::{event_bus::EventBus, event_result::EventResultStatus, types::EventStatus};
     use futures::executor::block_on;
     use serde::{Deserialize, Serialize};
     use serde_json::json;
@@ -4059,7 +4059,7 @@ mod folded_test_eventbus_edge_cases {
 
 // Folded from test_eventbus_name_conflict_gc.rs to keep test layout class-based.
 mod folded_test_eventbus_name_conflict_gc {
-    use abxbus_rust::event;
+    use abxbus::event;
     use std::{
         collections::BTreeSet,
         sync::{
@@ -4070,7 +4070,7 @@ mod folded_test_eventbus_name_conflict_gc {
         time::{Duration, Instant},
     };
 
-    use abxbus_rust::event_bus::{EventBus, EventBusOptions};
+    use abxbus::event_bus::{EventBus, EventBusOptions};
     use futures::executor::block_on;
     use serde::{Deserialize, Serialize};
     use serde_json::json;

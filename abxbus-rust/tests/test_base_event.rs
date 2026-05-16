@@ -1,4 +1,4 @@
-use abxbus_rust::event;
+use abxbus::event;
 use std::{
     process::Command,
     sync::{
@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use abxbus_rust::{
+use abxbus::{
     base_event::{now_iso, BaseEvent, EventResultOptions, EventWaitOptions},
     event_bus::{EventBus, EventBusOptions},
     event_result::EventResultStatus,
@@ -2853,7 +2853,7 @@ mod folded_test_base_event_eventbus_proxy {
         Arc, Mutex, MutexGuard, OnceLock,
     };
 
-    use abxbus_rust::{base_event::BaseEvent, event_bus::EventBus, types::EventStatus};
+    use abxbus::{base_event::BaseEvent, event_bus::EventBus, types::EventStatus};
     use futures::executor::block_on;
     use serde_json::{json, Map, Value};
 
@@ -3627,14 +3627,14 @@ mod folded_test_base_event_eventbus_proxy {
 
 // Folded from test_base_event_runtime_state.rs to keep test layout class-based.
 mod folded_test_base_event_runtime_state {
-    use abxbus_rust::event;
+    use abxbus::event;
     use std::{
         sync::{mpsc, Arc, Mutex},
         thread,
         time::Duration,
     };
 
-    use abxbus_rust::{
+    use abxbus::{
         base_event::{now_iso, BaseEvent},
         event_bus::EventBus,
         event_result::EventResultStatus,
@@ -3913,7 +3913,7 @@ mod folded_test_base_event_runtime_state {
 
 // Folded from test_ids.rs to keep test layout class-based.
 mod folded_test_ids {
-    use abxbus_rust::{
+    use abxbus::{
         event_bus::EventBus,
         event_handler::EventHandler,
         id::{compute_handler_id, handler_id_namespace},
@@ -3927,7 +3927,7 @@ mod folded_test_ids {
         let bus_id = Uuid::parse_str(&bus.id).expect("bus id must parse");
         assert_eq!(bus_id.get_version_num(), 7);
 
-        let event = abxbus_rust::base_event::BaseEvent::new("work", Map::new());
+        let event = abxbus::base_event::BaseEvent::new("work", Map::new());
         let event_id = Uuid::parse_str(&event.inner.lock().event_id).expect("event id must parse");
         assert_eq!(event_id.get_version_num(), 7);
     }

@@ -1,5 +1,5 @@
-use abxbus_rust::event;
-use abxbus_rust::{
+use abxbus::event;
+use abxbus::{
     event_bus::{EventBus, EventBusOptions},
     types::{EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode},
 };

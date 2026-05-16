@@ -1,4 +1,4 @@
-use abxbus_rust::event;
+use abxbus::event;
 use std::{
     collections::BTreeSet,
     sync::{
@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use abxbus_rust::{
+use abxbus::{
     base_event::{BaseEvent, EventResultOptions, EventWaitOptions},
     event_bus::EventBus,
     event_handler::{EventHandler, EventHandlerOptions, HandlerFuture},
@@ -718,9 +718,9 @@ fn test_handler_result_stays_pending_while_waiting_for_handler_lock_entry() {
     let _guard = event_result_test_guard();
     let bus = EventBus::new_with_options(
         Some("RunHandlerLockWaitBus".to_string()),
-        abxbus_rust::event_bus::EventBusOptions {
-            event_handler_concurrency: abxbus_rust::types::EventHandlerConcurrencyMode::Serial,
-            ..abxbus_rust::event_bus::EventBusOptions::default()
+        abxbus::event_bus::EventBusOptions {
+            event_handler_concurrency: abxbus::types::EventHandlerConcurrencyMode::Serial,
+            ..abxbus::event_bus::EventBusOptions::default()
         },
     );
     let (started_tx, started_rx) = std::sync::mpsc::channel();
@@ -806,10 +806,10 @@ fn test_slow_handler_warning_is_based_on_handler_runtime_after_lock_wait() {
     let _guard = event_result_test_guard();
     let bus = EventBus::new_with_options(
         Some("RunHandlerSlowAfterLockWaitBus".to_string()),
-        abxbus_rust::event_bus::EventBusOptions {
-            event_handler_concurrency: abxbus_rust::types::EventHandlerConcurrencyMode::Serial,
+        abxbus::event_bus::EventBusOptions {
+            event_handler_concurrency: abxbus::types::EventHandlerConcurrencyMode::Serial,
             event_handler_slow_timeout: Some(0.01),
-            ..abxbus_rust::event_bus::EventBusOptions::default()
+            ..abxbus::event_bus::EventBusOptions::default()
         },
     );
     let (first_started_tx, first_started_rx) = std::sync::mpsc::channel();
@@ -961,9 +961,9 @@ fn test_event_result_and_results_list_use_registration_order_for_current_result_
     let _guard = event_result_test_guard();
     let bus = EventBus::new_with_options(
         Some("EventResultFirstValueBus".to_string()),
-        abxbus_rust::event_bus::EventBusOptions {
-            event_handler_concurrency: abxbus_rust::types::EventHandlerConcurrencyMode::Parallel,
-            ..abxbus_rust::event_bus::EventBusOptions::default()
+        abxbus::event_bus::EventBusOptions {
+            event_handler_concurrency: abxbus::types::EventHandlerConcurrencyMode::Parallel,
+            ..abxbus::event_bus::EventBusOptions::default()
         },
     );
     let completed_order = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -1478,7 +1478,7 @@ fn test_eventresultslist_supports_timeout_include_raise_if_any_raise_if_none_arg
 mod folded_test_event_result_handler_metadata {
     use std::sync::Arc;
 
-    use abxbus_rust::{
+    use abxbus::{
         base_event::BaseEvent,
         event_handler::{EventHandler, EventHandlerCallable, EventHandlerOptions},
         event_result::{EventResult, EventResultStatus},
@@ -1745,8 +1745,8 @@ mod folded_test_event_result_handler_metadata {
 mod folded_test_event_result_typed_results {
     use std::sync::Arc;
 
-    use abxbus_rust::event;
-    use abxbus_rust::{
+    use abxbus::event;
+    use abxbus::{
         base_event::BaseEvent,
         event_bus::EventBus,
         event_result::{EventResult, EventResultStatus},
@@ -1804,7 +1804,7 @@ mod folded_test_event_result_typed_results {
         let result = first_event_result_record(&event);
         assert_eq!(
             result.status,
-            abxbus_rust::event_result::EventResultStatus::Completed
+            abxbus::event_result::EventResultStatus::Completed
         );
         assert_eq!(result.result, Some(json!({"value": "hello", "count": 42})));
         bus.destroy();
@@ -1864,7 +1864,7 @@ mod folded_test_event_result_typed_results {
 
         assert_eq!(
             event.inner.lock().event_status,
-            abxbus_rust::types::EventStatus::Completed
+            abxbus::types::EventStatus::Completed
         );
 
         let result = first_event_result_record(&event);
@@ -1944,7 +1944,7 @@ mod folded_test_event_result_typed_results {
     }
 
     struct DictIntSchemaEvent;
-    impl abxbus_rust::typed::EventSpec for DictIntSchemaEvent {
+    impl abxbus::typed::EventSpec for DictIntSchemaEvent {
         type payload = Map<String, Value>;
         type event_result_type = Map<String, Value>;
         const event_type: &'static str = "DictIntSchemaEvent";
@@ -1953,7 +1953,7 @@ mod folded_test_event_result_typed_results {
     }
 
     struct DictModuleSchemaEvent;
-    impl abxbus_rust::typed::EventSpec for DictModuleSchemaEvent {
+    impl abxbus::typed::EventSpec for DictModuleSchemaEvent {
         type payload = Map<String, Value>;
         type event_result_type = Map<String, Value>;
         const event_type: &'static str = "DictModuleSchemaEvent";
@@ -1975,7 +1975,7 @@ mod folded_test_event_result_typed_results {
     }
 
     struct DictLocalSchemaEvent;
-    impl abxbus_rust::typed::EventSpec for DictLocalSchemaEvent {
+    impl abxbus::typed::EventSpec for DictLocalSchemaEvent {
         type payload = Map<String, Value>;
         type event_result_type = Map<String, Value>;
         const event_type: &'static str = "DictLocalSchemaEvent";
@@ -1997,12 +1997,12 @@ mod folded_test_event_result_typed_results {
     }
 
     struct SpecificUserEvent;
-    impl abxbus_rust::typed::EventSpec for SpecificUserEvent {
+    impl abxbus::typed::EventSpec for SpecificUserEvent {
         type payload = Map<String, Value>;
         type event_result_type = ModuleLevelResult;
         const event_type: &'static str = "SpecificUserEvent";
         const event_result_type_schema: Option<&'static str> =
-            <RuntimeSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_schema;
+            <RuntimeSchemaEvent as abxbus::typed::EventSpec>::event_result_type_schema;
     }
 
     #[test]
@@ -2107,16 +2107,15 @@ mod folded_test_event_result_typed_results {
     #[test]
     fn test_nested_inheritance() {
         assert_eq!(
-            <SpecificUserEvent as abxbus_rust::typed::EventSpec>::event_result_type_json(),
-            <RuntimeSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json()
+            <SpecificUserEvent as abxbus::typed::EventSpec>::event_result_type_json(),
+            <RuntimeSchemaEvent as abxbus::typed::EventSpec>::event_result_type_json()
         );
     }
 
     #[test]
     fn test_module_level_types_auto_extraction() {
-        let schema =
-            <RuntimeSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json()
-                .expect("module-level schema");
+        let schema = <RuntimeSchemaEvent as abxbus::typed::EventSpec>::event_result_type_json()
+            .expect("module-level schema");
         assert_eq!(schema["type"], "object");
         assert!(schema["properties"].get("result_id").is_some());
         assert!(schema["properties"].get("data").is_some());
@@ -2157,7 +2156,7 @@ mod folded_test_event_result_typed_results {
     #[test]
     fn test_extract_basemodel_generic_arg_basic() {
         assert_eq!(
-            <BuiltinIntEvent as abxbus_rust::typed::EventSpec>::event_result_type_json(),
+            <BuiltinIntEvent as abxbus::typed::EventSpec>::event_result_type_json(),
             Some(json!({"type": "integer"}))
         );
     }
@@ -2165,16 +2164,15 @@ mod folded_test_event_result_typed_results {
     #[test]
     fn test_extract_basemodel_generic_arg_dict() {
         assert_eq!(
-            <DictIntSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json(),
+            <DictIntSchemaEvent as abxbus::typed::EventSpec>::event_result_type_json(),
             Some(json!({"type": "object", "additionalProperties": {"type": "integer"}}))
         );
     }
 
     #[test]
     fn test_extract_basemodel_generic_arg_dict_with_module_type() {
-        let schema =
-            <DictModuleSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json()
-                .expect("module dict schema");
+        let schema = <DictModuleSchemaEvent as abxbus::typed::EventSpec>::event_result_type_json()
+            .expect("module dict schema");
         assert_eq!(schema["type"], "object");
         assert_eq!(
             schema["additionalProperties"]["properties"]["recipients"]["items"]["type"],
@@ -2184,9 +2182,8 @@ mod folded_test_event_result_typed_results {
 
     #[test]
     fn test_extract_basemodel_generic_arg_dict_with_local_type() {
-        let schema =
-            <DictLocalSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json()
-                .expect("local dict schema");
+        let schema = <DictLocalSchemaEvent as abxbus::typed::EventSpec>::event_result_type_json()
+            .expect("local dict schema");
         assert_eq!(schema["type"], "object");
         assert_eq!(
             schema["additionalProperties"]["properties"]["mime_type"]["type"],
@@ -2197,7 +2194,7 @@ mod folded_test_event_result_typed_results {
     #[test]
     fn test_extract_basemodel_generic_arg_no_generic() {
         assert_eq!(
-            <PlainSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json(),
+            <PlainSchemaEvent as abxbus::typed::EventSpec>::event_result_type_json(),
             None
         );
     }
@@ -2228,12 +2225,12 @@ mod folded_test_event_result_typed_results {
         let number_result = first_event_result_record(&number_event);
         assert_eq!(
             string_result.status,
-            abxbus_rust::event_result::EventResultStatus::Completed
+            abxbus::event_result::EventResultStatus::Completed
         );
         assert_eq!(string_result.result, Some(json!("42")));
         assert_eq!(
             number_result.status,
-            abxbus_rust::event_result::EventResultStatus::Completed
+            abxbus::event_result::EventResultStatus::Completed
         );
         assert_eq!(number_result.result, Some(json!(123)));
         bus.destroy();
@@ -2268,7 +2265,7 @@ mod folded_test_event_result_typed_results {
             wait(&event);
             assert_eq!(
                 first_event_result_record(&event).status,
-                abxbus_rust::event_result::EventResultStatus::Completed
+                abxbus::event_result::EventResultStatus::Completed
             );
         }
 
@@ -2285,7 +2282,7 @@ mod folded_test_event_result_typed_results {
         let invalid_result = first_event_result_record(&invalid);
         assert_eq!(
             invalid_result.status,
-            abxbus_rust::event_result::EventResultStatus::Error
+            abxbus::event_result::EventResultStatus::Error
         );
         assert!(invalid_result
             .error
@@ -2313,7 +2310,7 @@ mod folded_test_event_result_typed_results {
         let result = first_event_result_record(&event);
         assert_eq!(
             result.status,
-            abxbus_rust::event_result::EventResultStatus::Error
+            abxbus::event_result::EventResultStatus::Error
         );
         assert!(result
             .error
@@ -2338,7 +2335,7 @@ mod folded_test_event_result_typed_results {
         let result = first_event_result_record(&event);
         assert_eq!(
             result.status,
-            abxbus_rust::event_result::EventResultStatus::Completed
+            abxbus::event_result::EventResultStatus::Completed
         );
         assert_eq!(result.result, Some(json!({"raw": true})));
         bus.destroy();
@@ -2366,7 +2363,7 @@ mod folded_test_event_result_typed_results {
         let result = first_event_result_record(&event);
         assert_eq!(
             result.status,
-            abxbus_rust::event_result::EventResultStatus::Completed
+            abxbus::event_result::EventResultStatus::Completed
         );
         assert_eq!(
             result.result,
@@ -2402,7 +2399,7 @@ mod folded_test_event_result_typed_results {
         let result = first_event_result_record(&dispatched);
         assert_eq!(
             result.status,
-            abxbus_rust::event_result::EventResultStatus::Completed
+            abxbus::event_result::EventResultStatus::Completed
         );
         assert_eq!(
             result.result,
@@ -2445,7 +2442,7 @@ mod folded_test_event_result_typed_results {
         let result = first_event_result_record(&dispatched);
         assert_eq!(
             result.status,
-            abxbus_rust::event_result::EventResultStatus::Completed
+            abxbus::event_result::EventResultStatus::Completed
         );
         assert_eq!(result.result, Some(json!(true)));
         bus.destroy();
@@ -2517,7 +2514,7 @@ mod folded_test_event_result_typed_results {
         assert_eq!(
             event.event_result_type,
             Some(
-                <RuntimeSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json()
+                <RuntimeSchemaEvent as abxbus::typed::EventSpec>::event_result_type_json()
                     .expect("runtime schema")
             )
         );
@@ -2933,7 +2930,7 @@ mod folded_test_event_result_typed_results {
         let result = first_event_result_record(&dispatched);
         assert_eq!(
             result.status,
-            abxbus_rust::event_result::EventResultStatus::Completed
+            abxbus::event_result::EventResultStatus::Completed
         );
         assert_eq!(
             result.result,
@@ -2951,7 +2948,7 @@ mod folded_test_event_result_typed_results {
 
 // Folded from test_typed_events.rs to keep test layout class-based.
 mod folded_test_typed_events {
-    use abxbus_rust::{
+    use abxbus::{
         base_event::EventResultOptions,
         event,
         event_bus::{EventBus, FindOptions},
@@ -3016,7 +3013,7 @@ mod folded_test_typed_events {
         let _ = block_on(event.now());
 
         let found = block_on(bus.find(AddEvent::event_type, true, None, None))
-            .map(<AddEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event)
+            .map(<AddEvent as abxbus::typed::TypedEventObject>::_from_inner_event)
             .expect("expected typed event");
         assert_eq!(found.a, 7);
         assert_eq!(found.b, 1);
@@ -3038,7 +3035,7 @@ mod folded_test_typed_events {
         });
 
         let found = block_on(bus.find(AddEvent::event_type, false, Some(1.0), None))
-            .map(<AddEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event)
+            .map(<AddEvent as abxbus::typed::TypedEventObject>::_from_inner_event)
             .expect("expected future typed event");
         assert_eq!(found.a, 57);
         assert_eq!(found.b, 42);
@@ -3075,7 +3072,7 @@ mod folded_test_typed_events {
                 ..FindOptions::default()
             },
         ))
-        .map(<AddEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event)
+        .map(<AddEvent as abxbus::typed::TypedEventObject>::_from_inner_event)
         .expect("expected filtered typed event");
         assert_eq!(filtered.a, 51);
         assert_eq!(filtered.b, 96);
@@ -3094,7 +3091,7 @@ mod folded_test_typed_events {
         let _ = block_on(event.now());
 
         let found = block_on(bus.find(AddEvent::event_type, true, None, None))
-            .map(<AddEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event)
+            .map(<AddEvent as abxbus::typed::TypedEventObject>::_from_inner_event)
             .expect("expected past typed event");
         let found_event_id = found.event_id.clone();
         let emitted_event_id = event.event_id.clone();

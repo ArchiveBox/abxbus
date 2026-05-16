@@ -44,7 +44,7 @@ bridge := abxbus.NewJSONLEventBridge("/tmp/abxbus_events.jsonl", 0.25, "JsonlBri
 <Tab title="Rust">
 
 ```rust
-// Not implemented in abxbus-rust yet.
+// Not implemented in the Rust crate yet.
 // Use typed event JSON serialization with an external transport for now.
 ```
 
@@ -100,7 +100,7 @@ bridge.OnEventName("*", "bus_emit", func(event *abxbus.BaseEvent) (any, error) {
 <Tab title="Rust">
 
 ```rust
-// Not implemented in abxbus-rust yet.
+// Not implemented in the Rust crate yet.
 // Use typed events plus EventBus JSON serialization with an external transport for now.
 ```
 

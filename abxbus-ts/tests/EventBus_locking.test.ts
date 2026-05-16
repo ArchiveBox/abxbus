@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 
 import { BaseEvent, clearSemaphoreRegistry, EventBus, retry, RetryTimeoutError, SemaphoreTimeoutError } from '../src/index.js'
+import { retry as standaloneRetry } from '../src/retry.js'
 
 /*
 Potential failure modes
@@ -1100,6 +1101,10 @@ test('find: most recent wins across completed and in-flight', async () => {
 
 // Folded from retry.test.ts to keep test layout class-based.
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+const blockFor = (ms: number): void => {
+  const deadline = performance.now() + ms
+  while (performance.now() < deadline) {}
+}
 
 // ─── Basic retry behavior ────────────────────────────────────────────────────
 
@@ -1482,6 +1487,17 @@ test('retry: preserves function name', () => {
   assert.equal(wrapped.name, 'myNamedFunction')
 })
 
+test('retry: standalone retry module wraps async functions without EventBus', async () => {
+  let calls = 0
+  const fn = standaloneRetry({ max_attempts: 2 })(async () => {
+    calls++
+    return 'ok'
+  })
+
+  assert.equal(await fn(), 'ok')
+  assert.equal(calls, 1)
+})
+
 // ─── Preserves `this` context ────────────────────────────────────────────────
 
 test('retry: preserves this context for methods', async () => {
@@ -1498,15 +1514,30 @@ test('retry: preserves this context for methods', async () => {
 
 // ─── Works with synchronous functions ────────────────────────────────────────
 
-test('retry: wraps sync functions (result becomes a promise)', async () => {
+test('retry: wraps sync functions without converting the return value to a promise', () => {
   let calls = 0
   const fn = retry({ max_attempts: 3 })(() => {
     calls++
     if (calls < 2) throw new Error('sync fail')
     return 'sync ok'
   })
-  assert.equal(await fn(), 'sync ok')
+  const result = fn()
+  assert.notEqual(typeof (result as unknown as { then?: unknown }).then, 'function')
+  assert.equal(result, 'sync ok')
   assert.equal(calls, 2)
+})
+
+test('retry sync: standalone retry module wraps sync functions without EventBus', () => {
+  let calls = 0
+  const fn = standaloneRetry({ max_attempts: 2 })(() => {
+    calls++
+    return 'ok'
+  })
+  const result = fn()
+
+  assert.notEqual(typeof (result as unknown as { then?: unknown }).then, 'function')
+  assert.equal(result, 'ok')
+  assert.equal(calls, 1)
 })
 
 // ─── Edge cases ──────────────────────────────────────────────────────────────
@@ -1894,6 +1925,28 @@ test('retry: @retry() TC39 decorator on class method retries on failure', async 
   assert.equal(svc.calls, 3)
 })
 
+test('retry: @retry() legacy experimental decorator on class method retries on failure', async () => {
+  clearSemaphoreRegistry()
+
+  class ApiService {
+    calls = 0
+
+    async fetchData(): Promise<string> {
+      this.calls++
+      if (this.calls < 3) throw new Error('api error')
+      return 'data'
+    }
+  }
+
+  const descriptor = Object.getOwnPropertyDescriptor(ApiService.prototype, 'fetchData')!
+  retry({ max_attempts: 3 })(ApiService.prototype, 'fetchData', descriptor)
+  Object.defineProperty(ApiService.prototype, 'fetchData', descriptor)
+
+  const svc = new ApiService()
+  assert.equal(await svc.fetchData(), 'data')
+  assert.equal(svc.calls, 3)
+})
+
 test('retry: @retry() TC39 decorator preserves this context', async () => {
   class Config {
     endpoint = 'https://api.example.com'
@@ -2055,6 +2108,598 @@ test('retry: HOF retry()(fn.bind(instance)) — scope falls back to global (bind
   assert.equal(max_active, 1, 'bind-before-wrap: scoping falls back to global (serialized)')
 })
 
+// ─── Sync retry behavior ─────────────────────────────────────────────────────
+
+test('retry sync: function succeeds on first attempt with no retries needed', () => {
+  const fn = retry({ max_attempts: 3 })(() => 'ok')
+  const result = fn()
+  assert.equal(result, 'ok')
+  assert.equal(typeof (result as unknown as PromiseLike<unknown>).then, 'undefined')
+})
+
+test('retry sync: function retries on failure and eventually succeeds', () => {
+  let calls = 0
+  const fn = retry({ max_attempts: 3 })(() => {
+    calls++
+    if (calls < 3) throw new Error(`fail ${calls}`)
+    return 'ok'
+  })
+  assert.equal(fn(), 'ok')
+  assert.equal(calls, 3)
+})
+
+test('retry sync: throws after exhausting all attempts', () => {
+  let calls = 0
+  const fn = retry({ max_attempts: 3 })(() => {
+    calls++
+    throw new Error('always fails')
+  })
+  assert.throws(fn, { message: 'always fails' })
+  assert.equal(calls, 3)
+})
+
+test('retry sync: max_attempts=1 means no retries (single attempt)', () => {
+  let calls = 0
+  const fn = retry({ max_attempts: 1 })(() => {
+    calls++
+    throw new Error('fail')
+  })
+  assert.throws(fn, { message: 'fail' })
+  assert.equal(calls, 1)
+})
+
+test('retry sync: default max_attempts=1 means single attempt', () => {
+  let calls = 0
+  const fn = retry()(() => {
+    calls++
+    throw new Error('fail')
+  })
+  assert.throws(fn, { message: 'fail' })
+  assert.equal(calls, 1)
+})
+
+test('retry sync: retry_after introduces blocking delay between attempts', () => {
+  let calls = 0
+  const timestamps: number[] = []
+  const fn = retry({ max_attempts: 3, retry_after: 0.05 })(() => {
+    calls++
+    timestamps.push(performance.now())
+    if (calls < 3) throw new Error('fail')
+    return 'ok'
+  })
+  assert.equal(fn(), 'ok')
+  assert.equal(calls, 3)
+  assert.ok(timestamps[1] - timestamps[0] >= 40)
+  assert.ok(timestamps[2] - timestamps[1] >= 40)
+})
+
+test('retry sync: retry_backoff_factor increases blocking delay between attempts', () => {
+  let calls = 0
+  const timestamps: number[] = []
+  const fn = retry({ max_attempts: 4, retry_after: 0.03, retry_backoff_factor: 2.0 })(() => {
+    calls++
+    timestamps.push(performance.now())
+    if (calls < 4) throw new Error('fail')
+    return 'ok'
+  })
+  assert.equal(fn(), 'ok')
+  assert.equal(calls, 4)
+  const gap1 = timestamps[1] - timestamps[0]
+  const gap2 = timestamps[2] - timestamps[1]
+  const gap3 = timestamps[3] - timestamps[2]
+  assert.ok(gap1 >= 20)
+  assert.ok(gap2 >= 45)
+  assert.ok(gap3 >= 90)
+  assert.ok(gap2 > gap1)
+  assert.ok(gap3 > gap2)
+})
+
+test('retry sync: retry_on_errors retries only matching error types', () => {
+  let calls = 0
+  const fn = retry({ max_attempts: 3, retry_on_errors: [NetworkError] })(() => {
+    calls++
+    if (calls < 3) throw new NetworkError()
+    return 'ok'
+  })
+  assert.equal(fn(), 'ok')
+  assert.equal(calls, 3)
+})
+
+test('retry sync: retry_on_errors does not retry non-matching errors', () => {
+  let calls = 0
+  const fn = retry({ max_attempts: 3, retry_on_errors: [NetworkError] })(() => {
+    calls++
+    throw new ValidationError()
+  })
+  assert.throws(fn, { name: 'ValidationError' })
+  assert.equal(calls, 1)
+})
+
+test('retry sync: retry_on_errors accepts string error name', () => {
+  let calls = 0
+  const fn = retry({ max_attempts: 3, retry_on_errors: ['NetworkError'] })(() => {
+    calls++
+    if (calls < 3) throw new NetworkError()
+    return 'ok'
+  })
+  assert.equal(fn(), 'ok')
+  assert.equal(calls, 3)
+})
+
+test('retry sync: retry_on_errors string matcher does not retry non-matching names', () => {
+  let calls = 0
+  const fn = retry({ max_attempts: 3, retry_on_errors: ['NetworkError'] })(() => {
+    calls++
+    throw new ValidationError()
+  })
+  assert.throws(fn, { name: 'ValidationError' })
+  assert.equal(calls, 1)
+})
+
+test('retry sync: retry_on_errors accepts RegExp pattern', () => {
+  let calls = 0
+  const fn = retry({ max_attempts: 3, retry_on_errors: [/network/i] })(() => {
+    calls++
+    if (calls < 3) throw new NetworkError('Network timeout occurred')
+    return 'ok'
+  })
+  assert.equal(fn(), 'ok')
+  assert.equal(calls, 3)
+})
+
+test('retry sync: retry_on_errors RegExp does not retry non-matching errors', () => {
+  let calls = 0
+  const fn = retry({ max_attempts: 3, retry_on_errors: [/network/i] })(() => {
+    calls++
+    throw new ValidationError('bad input')
+  })
+  assert.throws(fn, { name: 'ValidationError' })
+  assert.equal(calls, 1)
+})
+
+test('retry sync: retry_on_errors mixes class, string, and RegExp matchers', () => {
+  let calls = 0
+  const fn = retry({ max_attempts: 5, retry_on_errors: [TypeError, 'NetworkError', /timeout/i] })(() => {
+    calls++
+    if (calls === 1) throw new TypeError('type error')
+    if (calls === 2) throw new NetworkError()
+    if (calls === 3) throw new Error('Connection timeout')
+    return 'ok'
+  })
+  assert.equal(fn(), 'ok')
+  assert.equal(calls, 4)
+})
+
+test('retry sync: retry_on_errors with multiple error types', () => {
+  let calls = 0
+  const fn = retry({ max_attempts: 5, retry_on_errors: [NetworkError, TypeError] })(() => {
+    calls++
+    if (calls === 1) throw new NetworkError()
+    if (calls === 2) throw new TypeError('type error')
+    return 'ok'
+  })
+  assert.equal(fn(), 'ok')
+  assert.equal(calls, 3)
+})
+
+test('retry sync: timeout triggers RetryTimeoutError on slow attempts', () => {
+  let calls = 0
+  const fn = retry({ max_attempts: 1, timeout: 0.02 })(() => {
+    calls++
+    blockFor(50)
+    return 'ok'
+  })
+  assert.throws(fn, (error: unknown) => {
+    assert.ok(error instanceof RetryTimeoutError)
+    assert.equal(error.attempt, 1)
+    return true
+  })
+  assert.equal(calls, 1)
+})
+
+test('retry sync: timeout allows fast attempts to succeed', () => {
+  const fn = retry({ max_attempts: 1, timeout: 1 })(() => 'fast')
+  assert.equal(fn(), 'fast')
+})
+
+test('retry sync: timed-out attempts are retried when max_attempts > 1', () => {
+  let calls = 0
+  const fn = retry({ max_attempts: 3, timeout: 0.02 })(() => {
+    calls++
+    if (calls < 3) {
+      blockFor(50)
+      return 'slow'
+    }
+    return 'ok'
+  })
+  assert.equal(fn(), 'ok')
+  assert.equal(calls, 3)
+})
+
+test('retry sync: semaphore_lax=false throws SemaphoreTimeoutError when slots are full', async () => {
+  clearSemaphoreRegistry()
+  const holder = retry({
+    max_attempts: 1,
+    semaphore_limit: 1,
+    semaphore_name: 'test_sync_sem_lax_false',
+    semaphore_lax: false,
+    semaphore_timeout: 0.05,
+  })(async () => {
+    await delay(200)
+    return 'held'
+  })
+  const first = holder()
+  await delay(10)
+
+  const fn = retry({
+    max_attempts: 1,
+    semaphore_limit: 1,
+    semaphore_name: 'test_sync_sem_lax_false',
+    semaphore_lax: false,
+    semaphore_timeout: 0.05,
+  })(() => 'sync')
+  assert.throws(fn, (error: unknown) => {
+    assert.ok(error instanceof SemaphoreTimeoutError)
+    assert.equal(error.semaphore_name, 'test_sync_sem_lax_false')
+    return true
+  })
+  assert.equal(await first, 'held')
+})
+
+test('retry sync: semaphore_lax=true (default) proceeds without semaphore on timeout', async () => {
+  clearSemaphoreRegistry()
+  const holder = retry({
+    max_attempts: 1,
+    semaphore_limit: 1,
+    semaphore_name: 'test_sync_sem_lax_true',
+    semaphore_lax: false,
+    semaphore_timeout: 0.05,
+  })(async () => {
+    await delay(200)
+    return 'held'
+  })
+  const first = holder()
+  await delay(10)
+
+  let calls = 0
+  const fn = retry({
+    max_attempts: 1,
+    semaphore_limit: 1,
+    semaphore_name: 'test_sync_sem_lax_true',
+    semaphore_lax: true,
+    semaphore_timeout: 0.05,
+  })(() => {
+    calls++
+    return 'sync'
+  })
+  assert.equal(fn(), 'sync')
+  assert.equal(calls, 1)
+  assert.equal(await first, 'held')
+})
+
+test('retry sync: preserves function name', () => {
+  function myNamedSyncFunction(): string {
+    return 'ok'
+  }
+  const wrapped = retry()(myNamedSyncFunction)
+  assert.equal(wrapped.name, 'myNamedSyncFunction')
+})
+
+test('retry sync: preserves this context for methods', () => {
+  class MyService {
+    value = 42
+    fetch = retry({ max_attempts: 2 })(function (this: MyService) {
+      return this.value
+    })
+  }
+  const svc = new MyService()
+  assert.equal(svc.fetch(), 42)
+})
+
+test('retry sync: max_attempts=0 is treated as 1 (minimum)', () => {
+  let calls = 0
+  const fn = retry({ max_attempts: 0 })(() => {
+    calls++
+    return 'ok'
+  })
+  assert.equal(fn(), 'ok')
+  assert.equal(calls, 1)
+})
+
+test('retry sync: passes arguments through to wrapped function', () => {
+  const fn = retry({ max_attempts: 1 })((a: number, b: string) => `${a}-${b}`)
+  assert.equal(fn(1, 'hello'), '1-hello')
+})
+
+test('retry sync: semaphore is held across all retry attempts', () => {
+  clearSemaphoreRegistry()
+  let active = 0
+  let max_active = 0
+  let total_calls = 0
+  const fn = retry({
+    max_attempts: 3,
+    semaphore_limit: 1,
+    semaphore_name: 'test_sync_sem_across_retries',
+  })(() => {
+    active++
+    max_active = Math.max(max_active, active)
+    total_calls++
+    active--
+    if (total_calls % 2 === 1) throw new Error('fail')
+    return 'ok'
+  })
+  assert.equal(fn(), 'ok')
+  assert.equal(fn(), 'ok')
+  assert.equal(fn(), 'ok')
+  assert.equal(max_active, 1)
+  assert.equal(total_calls, 6)
+})
+
+test('retry sync: semaphore released even when all attempts fail', () => {
+  clearSemaphoreRegistry()
+  const fn = retry({
+    max_attempts: 2,
+    semaphore_limit: 1,
+    semaphore_name: 'test_sync_sem_release_on_fail',
+  })(() => {
+    throw new Error('always fails')
+  })
+  assert.throws(fn)
+  assert.throws(fn)
+})
+
+test('retry sync: works on class method via manual wrapping pattern', () => {
+  class ApiClient {
+    base_url = 'https://example.com'
+    calls = 0
+    fetchData = retry({ max_attempts: 3 })(function (this: ApiClient) {
+      this.calls++
+      if (this.calls < 3) throw new Error('api error')
+      return `data from ${this.base_url}`
+    })
+  }
+  const client = new ApiClient()
+  assert.equal(client.fetchData(), 'data from https://example.com')
+  assert.equal(client.calls, 3)
+})
+
+test('retry sync: re-entrant call on same semaphore does not deadlock', () => {
+  clearSemaphoreRegistry()
+  const inner = retry({ max_attempts: 1, semaphore_limit: 1, semaphore_name: 'sync_shared_sem' })(() => 'inner ok')
+  const outer = retry({ max_attempts: 1, semaphore_limit: 1, semaphore_name: 'sync_shared_sem' })(() => `outer got: ${inner()}`)
+  assert.equal(outer(), 'outer got: inner ok')
+})
+
+test('retry sync: recursive function with semaphore does not deadlock', () => {
+  clearSemaphoreRegistry()
+  let depth = 0
+  const recurse: (n: number) => number = retry({
+    max_attempts: 1,
+    semaphore_limit: 1,
+    semaphore_name: 'sync_recursive_sem',
+  })((n: number): number => {
+    depth++
+    if (n <= 1) return 1
+    return n + recurse(n - 1)
+  })
+  assert.equal(recurse(5), 15)
+  assert.equal(depth, 5)
+})
+
+test('retry sync: different semaphore names do not interfere with re-entrancy', () => {
+  clearSemaphoreRegistry()
+  let inner_active = 0
+  let inner_max_active = 0
+  const inner = retry({ max_attempts: 1, semaphore_limit: 1, semaphore_name: 'sync_inner_sem' })(() => {
+    inner_active++
+    inner_max_active = Math.max(inner_max_active, inner_active)
+    inner_active--
+    return 'inner ok'
+  })
+  const outer = retry({ max_attempts: 1, semaphore_limit: 2, semaphore_name: 'sync_outer_sem' })(() => inner())
+  assert.deepEqual([outer(), outer(), outer()], ['inner ok', 'inner ok', 'inner ok'])
+  assert.equal(inner_max_active, 1)
+})
+
+test('retry sync: three-level nested re-entrancy does not deadlock', () => {
+  clearSemaphoreRegistry()
+  const level3 = retry({ max_attempts: 1, semaphore_limit: 1, semaphore_name: 'sync_nested_sem' })(() => 'level3')
+  const level2 = retry({ max_attempts: 1, semaphore_limit: 1, semaphore_name: 'sync_nested_sem' })(() => `level2>${level3()}`)
+  const level1 = retry({ max_attempts: 1, semaphore_limit: 1, semaphore_name: 'sync_nested_sem' })(() => `level1>${level2()}`)
+  assert.equal(level1(), 'level1>level2>level3')
+})
+
+test('retry sync: semaphore_scope=class shares re-entrant semaphore across instances of same class', () => {
+  clearSemaphoreRegistry()
+  class Worker {
+    peer: Worker | null = null
+    run = retry({
+      max_attempts: 1,
+      semaphore_limit: 1,
+      semaphore_scope: 'class',
+      semaphore_name: 'sync_work',
+    })(function (this: Worker, depth: number): string {
+      return depth > 0 && this.peer ? this.peer.run(depth - 1) : 'done'
+    })
+  }
+  const a = new Worker()
+  const b = new Worker()
+  a.peer = b
+  b.peer = a
+  assert.equal(a.run(2), 'done')
+})
+
+test('retry sync: semaphore_scope=instance gives each instance its own semaphore', () => {
+  clearSemaphoreRegistry()
+  class Worker {
+    run = retry({
+      max_attempts: 1,
+      semaphore_limit: 1,
+      semaphore_scope: 'instance',
+      semaphore_name: 'sync_work',
+    })(function (this: Worker) {
+      return 'done'
+    })
+  }
+  assert.equal(new Worker().run(), 'done')
+  assert.equal(new Worker().run(), 'done')
+})
+
+test('retry sync: semaphore_scope=instance serializes recursive calls on same instance without deadlock', () => {
+  clearSemaphoreRegistry()
+  class Worker {
+    run = retry({
+      max_attempts: 1,
+      semaphore_limit: 1,
+      semaphore_scope: 'instance',
+      semaphore_name: 'sync_work',
+    })(function (this: Worker, n: number): number {
+      return n <= 1 ? 1 : n + this.run(n - 1)
+    })
+  }
+  assert.equal(new Worker().run(5), 15)
+})
+
+test('retry sync: semaphore_name function uses call args for keying', async () => {
+  clearSemaphoreRegistry()
+  const holder = retry({
+    max_attempts: 1,
+    semaphore_limit: 1,
+    semaphore_scope: 'global',
+    semaphore_name: (a: string, b: string) => `${a}-${b}`,
+    semaphore_lax: false,
+    semaphore_timeout: 0.05,
+  })(async (_a: string, _b: string) => {
+    await delay(200)
+    return 'held'
+  })
+  const first = holder('same', 'key')
+  await delay(10)
+  const same_key = retry({
+    max_attempts: 1,
+    semaphore_limit: 1,
+    semaphore_scope: 'global',
+    semaphore_name: (a: string, b: string) => `${a}-${b}`,
+    semaphore_lax: false,
+    semaphore_timeout: 0.05,
+  })((_a: string, _b: string) => 'sync')
+  assert.throws(() => same_key('same', 'key'), SemaphoreTimeoutError)
+  assert.equal(same_key('other', 'key'), 'sync')
+  assert.equal(await first, 'held')
+})
+
+test('retry sync: semaphore_scope=class isolates different classes', () => {
+  clearSemaphoreRegistry()
+  class Alpha {
+    run = retry({ max_attempts: 1, semaphore_limit: 1, semaphore_scope: 'class', semaphore_name: 'sync_run' })(() => 'alpha')
+  }
+  class Beta {
+    run = retry({ max_attempts: 1, semaphore_limit: 1, semaphore_scope: 'class', semaphore_name: 'sync_run' })(() => 'beta')
+  }
+  assert.equal(new Alpha().run(), 'alpha')
+  assert.equal(new Beta().run(), 'beta')
+})
+
+test('retry sync: @retry() TC39 decorator on class method retries on failure', () => {
+  clearSemaphoreRegistry()
+  class ApiService {
+    calls = 0
+    @retry({ max_attempts: 3 })
+    fetchData(): string {
+      this.calls++
+      if (this.calls < 3) throw new Error('api error')
+      return 'data'
+    }
+  }
+  const svc = new ApiService()
+  assert.equal(svc.fetchData(), 'data')
+  assert.equal(svc.calls, 3)
+})
+
+test('retry sync: @retry() legacy experimental decorator on class method retries on failure', () => {
+  clearSemaphoreRegistry()
+  class ApiService {
+    calls = 0
+    fetchData(): string {
+      this.calls++
+      if (this.calls < 3) throw new Error('api error')
+      return 'data'
+    }
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(ApiService.prototype, 'fetchData')!
+  retry({ max_attempts: 3 })(ApiService.prototype, 'fetchData', descriptor)
+  Object.defineProperty(ApiService.prototype, 'fetchData', descriptor)
+
+  const svc = new ApiService()
+  assert.equal(svc.fetchData(), 'data')
+  assert.equal(svc.calls, 3)
+})
+
+test('retry sync: @retry() TC39 decorator preserves this context', () => {
+  class Config {
+    endpoint = 'https://api.example.com'
+    @retry({ max_attempts: 2 })
+    getEndpoint(): string {
+      return this.endpoint
+    }
+  }
+  assert.equal(new Config().getEndpoint(), 'https://api.example.com')
+})
+
+test('retry sync: @retry() TC39 decorator with semaphore_scope=class', () => {
+  clearSemaphoreRegistry()
+  class Service {
+    @retry({ max_attempts: 1, semaphore_limit: 1, semaphore_scope: 'class', semaphore_name: 'sync_handle' })
+    handle(): string {
+      return 'ok'
+    }
+  }
+  assert.deepEqual([new Service().handle(), new Service().handle()], ['ok', 'ok'])
+})
+
+test('retry sync: @retry() TC39 decorator with semaphore_scope=instance', () => {
+  clearSemaphoreRegistry()
+  class Service {
+    @retry({ max_attempts: 1, semaphore_limit: 1, semaphore_scope: 'instance', semaphore_name: 'sync_handle' })
+    handle(): string {
+      return 'ok'
+    }
+  }
+  assert.deepEqual([new Service().handle(), new Service().handle()], ['ok', 'ok'])
+})
+
+test('retry sync: semaphore_scope=class falls back to global for standalone functions', () => {
+  clearSemaphoreRegistry()
+  const fn = retry({ max_attempts: 1, semaphore_limit: 1, semaphore_scope: 'class', semaphore_name: 'sync_standalone_class' })(
+    () => 'ok'
+  )
+  assert.equal(fn(), 'ok')
+})
+
+test('retry sync: semaphore_scope=instance falls back to global for standalone functions', () => {
+  clearSemaphoreRegistry()
+  const fn = retry({ max_attempts: 1, semaphore_limit: 1, semaphore_scope: 'instance', semaphore_name: 'sync_standalone_instance' })(
+    () => 'ok'
+  )
+  assert.equal(fn(), 'ok')
+})
+
+test('retry sync: HOF retry()(fn.bind(instance)) — scope falls back to global (bind before wrap)', () => {
+  clearSemaphoreRegistry()
+  const instance = { value: 'ok' }
+  const handler = retry({
+    max_attempts: 1,
+    semaphore_scope: 'instance',
+    semaphore_limit: 1,
+    semaphore_name: 'sync_handler_bind_before',
+  })(
+    function (this: { value: string }): string {
+      return this.value
+    }.bind(instance)
+  )
+  assert.equal(handler(), 'ok')
+})
+
 // Folded from retry_multiprocess.test.ts to keep test layout class-based.
 const tests_dir = dirname(fileURLToPath(import.meta.url))
 const worker_path = resolve(tests_dir, 'retry_multiprocess_worker.ts')
@@ -2065,11 +2710,12 @@ const runWorker = async (
   start_ms: number,
   hold_ms: number,
   semaphore_name: string,
-  semaphore_limit: number
+  semaphore_limit: number,
+  mode: 'async' | 'sync' = 'async'
 ): Promise<{ code: number | null; events: Array<Record<string, unknown>>; stderr: string }> => {
   const proc = spawn(
     process.execPath,
-    ['--import', 'tsx', worker_path, String(worker_id), String(start_ms), String(hold_ms), semaphore_name, String(semaphore_limit)],
+    ['--import', 'tsx', worker_path, String(worker_id), String(start_ms), String(hold_ms), semaphore_name, String(semaphore_limit), mode],
     {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env,
@@ -2139,6 +2785,39 @@ test('retry: semaphore_scope=multiprocess serializes across JS processes', async
     in_flight += event.type === 'acquired' ? 1 : -1
     assert.ok(in_flight >= 0, `negative in-flight count after ${JSON.stringify(event)}`)
     assert.ok(in_flight <= 2, `semaphore limit exceeded by ${JSON.stringify(event)}`)
+  }
+})
+
+test('retry sync: semaphore_scope=multiprocess serializes across JS processes', async () => {
+  const semaphore_name = `retry-sync-multiprocess-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const start_ms = Date.now()
+
+  const first_batch = [runWorker(0, start_ms, 700, semaphore_name, 2, 'sync'), runWorker(1, start_ms, 700, semaphore_name, 2, 'sync')]
+  await delay(150)
+  const second_batch = [runWorker(2, start_ms, 200, semaphore_name, 2, 'sync'), runWorker(3, start_ms, 200, semaphore_name, 2, 'sync')]
+  const results = await Promise.all([...first_batch, ...second_batch])
+
+  for (const result of results) {
+    assert.equal(result.code, 0, result.stderr || JSON.stringify(result.events))
+  }
+
+  const timeline = results
+    .flatMap((result) => result.events)
+    .filter((event) => event.type === 'acquired' || event.type === 'released')
+    .sort((a, b) => {
+      const delta = Number(a.at_ms) - Number(b.at_ms)
+      if (delta !== 0) return delta
+      return a.type === 'released' ? -1 : 1
+    })
+  const completed = results.flatMap((result) => result.events).filter((event) => event.type === 'completed')
+  assert.equal(timeline.filter((event) => event.type === 'acquired').length, 4)
+  assert.equal(completed.length, 4)
+
+  let in_flight = 0
+  for (const event of timeline) {
+    in_flight += event.type === 'acquired' ? 1 : -1
+    assert.ok(in_flight >= 0, `negative in-flight count after ${JSON.stringify(event)}`)
+    assert.ok(in_flight <= 2, `sync semaphore limit exceeded by ${JSON.stringify(event)}`)
   }
 })
 

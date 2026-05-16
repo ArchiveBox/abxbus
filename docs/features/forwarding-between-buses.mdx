@@ -157,7 +157,7 @@ console.log(event.event_path)
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{
+use abxbus::{
     event,
     event_bus::{EventBus, EventBusOptions},
     types::{EventConcurrencyMode, EventHandlerConcurrencyMode},
@@ -342,7 +342,7 @@ right.on('*', left.emit)
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event, event_bus::EventBus};
+use abxbus::{event, event_bus::EventBus};
 
 event! {
     struct PingEvent {
@@ -459,7 +459,7 @@ console.log(event.event_path)
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event, event_bus::EventBus};
+use abxbus::{event, event_bus::EventBus};
 use futures::executor::block_on;
 
 event! {

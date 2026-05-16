@@ -1,4 +1,4 @@
-use abxbus_rust::event;
+use abxbus::event;
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use abxbus_rust::{
+use abxbus::{
     base_event::EventWaitOptions,
     event_bus::{EventBus, EventBusOptions},
     types::{
@@ -1027,11 +1027,11 @@ fn test_multiple_awaits_on_same_event() {
                 ..Default::default()
             });
             let child_for_await1 =
-                <ChildEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(
+                <ChildEvent as abxbus::typed::TypedEventObject>::_from_inner_event(
                     child._inner_event(),
                 );
             let child_for_await2 =
-                <ChildEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(
+                <ChildEvent as abxbus::typed::TypedEventObject>::_from_inner_event(
                     child._inner_event(),
                 );
             let await_results_1 = await_results.clone();

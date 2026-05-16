@@ -1,4 +1,4 @@
-use abxbus_rust::{
+use abxbus::{
     base_event::{BaseEvent, EventResultOptions},
     event,
     event_bus::EventBus,

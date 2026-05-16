@@ -72,7 +72,7 @@ await requestContext.run({ requestId: 'req-123' }, async () => {
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event, event_bus::EventBus};
+use abxbus::{event, event_bus::EventBus};
 use dcontext::{enter_named_scope, get_context, set_context, try_initialize, RegistryBuilder};
 use futures::executor::block_on;
 
