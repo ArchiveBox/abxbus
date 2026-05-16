@@ -263,9 +263,9 @@ bus := abxbus.NewEventBus("AppBus", &abxbus.EventBusOptions{
 </Tab>
 <Tab title="Go">
 
-- `OtelTracingMiddleware` via `abxbus.NewOtelTracingMiddleware(...)`
+- Middleware interface only.
 
-Go intentionally only ships Otel middleware for now; retry/events_suck and the other middleware implementations are deferred.
+Go intentionally keeps middleware implementations that require optional third-party packages out of the core module so those packages do not become hard dependencies.
 
 </Tab>
 <Tab title="Rust">

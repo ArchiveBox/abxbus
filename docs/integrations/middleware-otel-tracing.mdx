@@ -42,11 +42,8 @@ const bus = new EventBus('AppBus', {
 <Tab title="Go">
 
 ```go
-bus := abxbus.NewEventBus("AppBus", &abxbus.EventBusOptions{
-	Middlewares: []abxbus.EventBusMiddleware{
-		abxbus.NewOtelTracingMiddleware(nil),
-	},
-})
+// Not implemented in the core Go module.
+// OpenTelemetry is intentionally not a required Go dependency.
 ```
 
 </Tab>

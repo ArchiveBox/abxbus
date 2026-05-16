@@ -48,13 +48,11 @@ const bus = new EventBus('MyBus', {
 
 ```go
 bus := abxbus.NewEventBus("MyBus", &abxbus.EventBusOptions{
-	Middlewares: []abxbus.EventBusMiddleware{
-		abxbus.NewOtelTracingMiddleware(nil),
-	},
+	Middlewares: []abxbus.EventBusMiddleware{},
 })
 ```
 
-Go currently ships the middleware interface plus `OtelTracingMiddleware`. The logger/WAL/auto-event/SQLite-history mirror middlewares are Python-only for now.
+Go currently ships the middleware interface only. Middleware implementations that require optional third-party packages are not included in the core Go module so those dependencies do not become hard requirements.
 
 </Tab>
 <Tab title="Rust">
@@ -108,7 +106,7 @@ Middleware hooks receive lifecycle statuses in strict order:
 </Tab>
 <Tab title="Go">
 
-- [OtelTracingMiddleware](./middleware-otel-tracing)
+- Middleware interface only.
 
 </Tab>
 </Tabs>
