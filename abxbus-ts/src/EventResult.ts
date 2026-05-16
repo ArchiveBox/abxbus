@@ -605,4 +605,55 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
     result.event_children = []
     return result
   }
+
+  static fromTrustedCoreJSON<TEvent extends BaseEvent>(
+    event: TEvent,
+    data: Record<string, unknown>,
+    handler?: EventHandler
+  ): EventResult<TEvent> | null {
+    const handler_id = typeof data.handler_id === 'string' ? data.handler_id : null
+    const result_id = typeof data.id === 'string' ? data.id : typeof data.result_id === 'string' ? data.result_id : null
+    if (!handler_id || !result_id) {
+      return null
+    }
+
+    const handler_entry =
+      handler ??
+      EventHandler.fromJSON(
+        {
+          id: handler_id,
+          eventbus_name: typeof data.eventbus_name === 'string' ? data.eventbus_name : 'EventBus',
+          eventbus_id: typeof data.eventbus_id === 'string' ? data.eventbus_id : '00000000-0000-0000-0000-000000000000',
+          event_pattern: typeof data.handler_event_pattern === 'string' ? data.handler_event_pattern : event.event_type,
+          handler_name: typeof data.handler_name === 'string' ? data.handler_name : 'anonymous',
+          handler_file_path: typeof data.handler_file_path === 'string' ? data.handler_file_path : null,
+          handler_timeout: typeof data.handler_timeout === 'number' ? data.handler_timeout : null,
+          handler_slow_timeout: typeof data.handler_slow_timeout === 'number' ? data.handler_slow_timeout : null,
+          handler_registered_at: typeof data.handler_registered_at === 'string' ? data.handler_registered_at : event.event_created_at,
+        },
+        (() => undefined) as EventHandlerCallable
+      )
+
+    const result = new EventResult<TEvent>({ event, handler: handler_entry, id: result_id })
+    result.status =
+      data.status === 'started' || data.status === 'completed' || data.status === 'error'
+        ? data.status
+        : data.status === 'cancelled'
+          ? 'error'
+          : 'pending'
+    result.timeout = result.resolveEffectiveTimeout(typeof data.timeout === 'number' ? data.timeout : null)
+    result.started_at = typeof data.started_at === 'string' ? monotonicDatetime(data.started_at) : null
+    result.completed_at = typeof data.completed_at === 'string' ? monotonicDatetime(data.completed_at) : null
+    result.result_is_event_reference = data.result_is_event_reference === true
+    if (data.result_is_undefined === true) {
+      result.result = undefined
+    } else if ('result' in data || data.result_set === true) {
+      result.result = data.result as EventResultType<TEvent>
+    }
+    if ('error' in data && data.error !== null) {
+      result.error = data.error
+    }
+    result.event_children = []
+    return result
+  }
 }

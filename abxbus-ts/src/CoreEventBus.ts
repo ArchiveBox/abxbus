@@ -543,6 +543,8 @@ export class RustCoreEventBus {
   private background_worker_enabled: boolean
   private foreground_drain_task: Promise<void> | null
   private foreground_drain_requested: boolean
+  private foreground_worker_messages: CoreMessage[]
+  private foreground_worker_task: Promise<void> | null
   private serial_route_pause_releases: Map<string, () => void>
   private completed_event_refs: Map<string, WeakRef<BaseEvent>>
   private closed: boolean
@@ -591,6 +593,8 @@ export class RustCoreEventBus {
     this.background_worker_enabled = options.background_worker ?? true
     this.foreground_drain_task = null
     this.foreground_drain_requested = false
+    this.foreground_worker_messages = []
+    this.foreground_worker_task = null
     this.serial_route_pause_releases = new Map()
     this.completed_event_refs = new Map()
     this.closed = false
@@ -813,7 +817,9 @@ export class RustCoreEventBus {
     event_obj.event_path.push(this.label)
     event_obj.event_status = 'pending'
     this.events.set(event_obj.event_id, event_obj)
-    this.ensurePendingLocalResults(event_obj)
+    if (this.shouldPrecreatePendingLocalResults(event_obj)) {
+      this.ensurePendingLocalResults(event_obj)
+    }
     this.in_flight_event_ids.add(event_obj.event_id)
     this._notifyEventChange(event_obj, 'pending')
     this.syncBusHistoryPolicy()
@@ -842,11 +848,7 @@ export class RustCoreEventBus {
     const core_started_work = core_messages.some(messageIsInvocationBatch)
     if (!active_result && !this.background_worker_enabled) {
       if (core_started_work) {
-        const task = this.handleWorkerMessages(core_messages).catch(() => {
-          // Explicit waits surface errors; foreground eager processing is reconciled by later waits/snapshots.
-        })
-        this.processing_tasks.add(task)
-        task.finally(() => this.processing_tasks.delete(task))
+        this.scheduleForegroundWorkerMessages(core_messages)
       } else {
         for (const message of core_messages) {
           if (!messageIsInvocationBatch(message)) {
@@ -856,12 +858,7 @@ export class RustCoreEventBus {
         this.scheduleForegroundDrain()
       }
     } else if (!active_result && core_started_work) {
-      const task = this.handleWorkerMessages(core_messages).catch(() => {
-        // Explicit waits surface errors; the eager background pass must not
-        // leak unhandled rejections during close or queue-jump handoff.
-      })
-      this.processing_tasks.add(task)
-      task.finally(() => this.processing_tasks.delete(task))
+      this.scheduleForegroundWorkerMessages(core_messages)
     } else if (core_started_work) {
       const task = this.runWithoutCoreOutcomeBatch(() => this.handleWorkerMessages(core_messages)).catch(() => {
         // Core-issued handler invocations are reconciled by later waits/snapshots.
@@ -874,6 +871,36 @@ export class RustCoreEventBus {
       }
     }
     return event_obj
+  }
+
+  private scheduleForegroundWorkerMessages(messages: CoreMessage[]): void {
+    if (messages.length === 0) {
+      return
+    }
+    this.foreground_worker_messages.push(...messages)
+    if (this.foreground_worker_task) {
+      return
+    }
+    const task = Promise.resolve()
+      .then(async () => {
+        while (this.foreground_worker_messages.length > 0) {
+          const batch = this.foreground_worker_messages.splice(0)
+          await this.handleWorkerMessages(batch)
+        }
+      })
+      .catch(() => {
+        // Explicit waits surface errors; foreground eager processing is reconciled by later waits/snapshots.
+      })
+      .finally(() => {
+        this.foreground_worker_task = null
+        this.processing_tasks.delete(task)
+        if (this.foreground_worker_messages.length > 0) {
+          const queued = this.foreground_worker_messages.splice(0)
+          this.scheduleForegroundWorkerMessages(queued)
+        }
+      })
+    this.foreground_worker_task = task
+    this.processing_tasks.add(task)
   }
 
   private scheduleForegroundDrain(): void {
@@ -968,7 +995,26 @@ export class RustCoreEventBus {
     if (event.event_parent_id !== null) record.event_parent_id = event.event_parent_id
     if (event.event_emitted_by_result_id !== null) record.event_emitted_by_result_id = event.event_emitted_by_result_id
     if (event.event_emitted_by_handler_id !== null) record.event_emitted_by_handler_id = event.event_emitted_by_handler_id
-    for (const [key, value] of Object.entries(event as unknown as Record<string, unknown>)) {
+    const event_record = event as unknown as Record<string, unknown>
+    const payload_fields = (event.constructor as typeof BaseEvent & { event_payload_field_names?: Set<string> }).event_payload_field_names
+    if (payload_fields) {
+      for (const key of payload_fields) {
+        const value = event_record[key]
+        if (value === undefined || typeof value === 'function') continue
+        record[key] = value
+      }
+      for (const key of event._event_fields_set ?? []) {
+        if (payload_fields.has(key) || key.startsWith('_') || key === 'bus' || key === 'event_bus' || key === 'event_results') {
+          continue
+        }
+        if (CORE_EVENT_FIELD_NAMES.has(key)) continue
+        const value = event_record[key]
+        if (value === undefined || typeof value === 'function') continue
+        record[key] = value
+      }
+      return record
+    }
+    for (const [key, value] of Object.entries(event_record)) {
       if (key.startsWith('_') || key === 'bus' || key === 'event_bus' || key === 'event_results') continue
       if (CORE_EVENT_FIELD_NAMES.has(key)) continue
       if (value === undefined || typeof value === 'function') continue
@@ -1020,6 +1066,13 @@ export class RustCoreEventBus {
 
   hasEventResultHooks(): boolean {
     return this.middlewares.length > 0 || this.onEventResultChange !== RustCoreEventBus.prototype.onEventResultChange
+  }
+
+  private shouldPrecreatePendingLocalResults(event: BaseEvent): boolean {
+    const original = event._event_original ?? event
+    const handler_concurrency = original.event_handler_concurrency ?? this.event_handler_concurrency
+    const handler_completion = original.event_handler_completion ?? this.event_handler_completion
+    return this.hasEventResultHooks() || handler_concurrency !== 'parallel' || handler_completion === 'first'
   }
 
   _notifyEventChange(event: BaseEvent, status: 'pending' | 'started' | 'completed'): void {
@@ -1172,9 +1225,6 @@ export class RustCoreEventBus {
       return (await this.runWithoutCoreOutcomeBatch(() =>
         this.applyAndRunMessagesUntilEventCompleted(event_id, produced, parent_bus.bus_id, true)
       )) as T
-    }
-    if (this.background_worker_enabled && this._getHandlersForEvent(event).length > 0) {
-      return await this.waitForLocalCompletionPush(event)
     }
     const active_invocation_for_queue_jump = this.findActiveInvocationForQueueJump(event)
     if (active_invocation_for_queue_jump) {
@@ -1821,7 +1871,6 @@ export class RustCoreEventBus {
   }
 
   private applyCoreSnapshotToEvent(event: BaseEvent, snapshot: Record<string, unknown>): void {
-    const snapshot_event = BaseEvent.fromJSON(snapshot)
     event._core_known = true
     const event_results = snapshot.event_results
     if (event_results && typeof event_results === 'object' && !Array.isArray(event_results)) {
@@ -1830,17 +1879,21 @@ export class RustCoreEventBus {
       }
     }
     this.cancelFirstModeLosersForCompletedEvent(event)
-    event.event_started_at = snapshot_event.event_started_at
-    event.event_completed_at = snapshot_event.event_completed_at
-    event.event_parent_id = snapshot_event.event_parent_id
-    event.event_emitted_by_handler_id = snapshot_event.event_emitted_by_handler_id
-    event.event_emitted_by_result_id = snapshot_event.event_emitted_by_result_id
-    event.event_blocks_parent_completion = snapshot_event.event_blocks_parent_completion
-    event.event_path = snapshot_event.event_path
-    if (snapshot_event.event_status === 'completed') {
+    event.event_started_at = typeof snapshot.event_started_at === 'string' ? monotonicDatetime(snapshot.event_started_at) : null
+    event.event_completed_at = typeof snapshot.event_completed_at === 'string' ? monotonicDatetime(snapshot.event_completed_at) : null
+    event.event_parent_id = typeof snapshot.event_parent_id === 'string' ? snapshot.event_parent_id : null
+    event.event_emitted_by_handler_id =
+      typeof snapshot.event_emitted_by_handler_id === 'string' ? snapshot.event_emitted_by_handler_id : null
+    event.event_emitted_by_result_id = typeof snapshot.event_emitted_by_result_id === 'string' ? snapshot.event_emitted_by_result_id : null
+    event.event_blocks_parent_completion = snapshot.event_blocks_parent_completion === true
+    event.event_path = Array.isArray(snapshot.event_path)
+      ? snapshot.event_path.filter((entry): entry is string => typeof entry === 'string')
+      : []
+    const event_status = snapshot.event_status
+    if (event_status === 'completed') {
       event._markCompleted(true, false)
-    } else if (snapshot_event.event_status === 'started') {
-      event._markStarted(snapshot_event.event_started_at, false)
+    } else if (event_status === 'started') {
+      event._markStarted(event.event_started_at, false)
     }
   }
 
@@ -2810,6 +2863,9 @@ export class RustCoreEventBus {
   }
 
   private releaseSerialRoutePausesForInvocation(invocation_id: string): void {
+    if (this.serial_route_pause_releases.size === 0) {
+      return
+    }
     for (const [key, release] of Array.from(this.serial_route_pause_releases.entries())) {
       if (!key.endsWith(`:${invocation_id}`)) {
         continue
@@ -2824,7 +2880,11 @@ export class RustCoreEventBus {
       return
     }
     const result_record = raw_result as Record<string, unknown>
-    const result = EventResult.fromJSON(event, result_record)
+    const handler_id = typeof result_record.handler_id === 'string' ? result_record.handler_id : null
+    const result = EventResult.fromTrustedCoreJSON(event, result_record, handler_id ? this.handlers.get(handler_id) : undefined)
+    if (!result) {
+      return
+    }
     result.event = event
     this.normalizeResultError(result)
     const existing = event.event_results.get(result.handler_id)

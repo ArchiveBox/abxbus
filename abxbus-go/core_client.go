@@ -28,7 +28,7 @@ const fastQueueJumpTypeID uint32 = 7
 const fastHandlerOutcomeErrorFlag uint16 = 0b0100_0000
 const coreSpinThreshold uint32 = 50_000_000
 const corePollingMode = 1
-const handlerOutcomeBatchLimit = 4096
+const handlerOutcomeBatchLimit = 65_536
 const coreStartupTimeout = 120 * time.Second
 
 type CoreProtocolEnvelope struct {

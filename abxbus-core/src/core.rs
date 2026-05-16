@@ -23,7 +23,10 @@ use crate::{
         BusRecord, EventRecord, EventResultRecord, EventRouteRecord, HandlerRecord, InMemoryStore,
         InvocationState,
     },
-    time::{now_timestamp, timestamp_is_past, timestamp_plus_seconds},
+    time::{
+        now_timestamp, timestamp_from_datetime, timestamp_is_past, timestamp_plus_seconds,
+        timestamp_plus_seconds_from_datetime,
+    },
     types::{
         CancelReason, CoreError, CoreErrorKind, CoreErrorState, EventConcurrency, EventId,
         EventStatus, HandlerId, InvocationId, ResultId, ResultStatus, RouteId, RouteStatus,
@@ -497,6 +500,12 @@ impl Core {
                     self.store.handlers_by_bus.remove(&handler.bus_id);
                 }
             }
+            if let Some(members) = self.store.handler_members_by_bus.get_mut(&handler.bus_id) {
+                members.remove(handler_id);
+                if members.is_empty() && !self.store.buses.contains_key(&handler.bus_id) {
+                    self.store.handler_members_by_bus.remove(&handler.bus_id);
+                }
+            }
             self.store.append_patch(CorePatch::HandlerUnregistered {
                 handler_id: handler_id.to_string(),
             });
@@ -552,6 +561,7 @@ impl Core {
                 self.store.handlers.remove(&handler_id);
             }
         }
+        self.store.handler_members_by_bus.remove(bus_id);
         self.store.buses.remove(bus_id);
         for inbox in self.host_inboxes.values_mut() {
             inbox.retain(|invocation| {
@@ -568,6 +578,7 @@ impl Core {
         if self.store.buses.is_empty()
             && self.store.handlers.is_empty()
             && self.store.handlers_by_bus.is_empty()
+            && self.store.handler_members_by_bus.is_empty()
             && self.store.events.is_empty()
             && self.store.routes.is_empty()
             && self.store.routes_by_event.is_empty()
@@ -947,6 +958,28 @@ impl Core {
         bus_id: &str,
         emit_patch: bool,
     ) -> Result<String, CoreErrorState> {
+        self.emit_to_bus_with_options(event, bus_id, emit_patch, true)
+    }
+
+    fn forward_existing_event_to_bus_with_patch(
+        &mut self,
+        mut event: EventRecord,
+        bus_id: &str,
+        emit_patch: bool,
+    ) -> Result<String, CoreErrorState> {
+        event.event_status = EventStatus::Pending;
+        event.event_started_at = None;
+        event.event_completed_at = None;
+        self.emit_to_bus_with_options(event, bus_id, emit_patch, false)
+    }
+
+    fn emit_to_bus_with_options(
+        &mut self,
+        event: EventRecord,
+        bus_id: &str,
+        emit_patch: bool,
+        replace_terminal_event: bool,
+    ) -> Result<String, CoreErrorState> {
         let resolved_bus_id = self
             .store
             .buses
@@ -972,9 +1005,10 @@ impl Core {
                     )
                 })
             });
-        let replace_terminal_event =
-            existing_routes_terminal && event.event_status == EventStatus::Pending;
-        if replace_terminal_event {
+        let should_replace_terminal_event = replace_terminal_event
+            && existing_routes_terminal
+            && event.event_status == EventStatus::Pending;
+        if should_replace_terminal_event {
             self.remove_existing_routes_for_event(&event_id);
         }
         let existing_route_id = self
@@ -993,7 +1027,7 @@ impl Core {
                 })
             })
             .cloned();
-        if replace_terminal_event {
+        if should_replace_terminal_event {
             self.store.insert_event(event);
         } else if let Some(existing) = self.store.events.get_mut(&event_id) {
             let mut clear_completed_deadlines = false;
@@ -1506,7 +1540,11 @@ impl Core {
                 if !event.event_path.iter().any(|label| label == &bus_label) {
                     event.event_path.push(bus_label);
                 }
-                let route_id = self.emit_to_bus_with_patch(event, &bus_id, !compact_response)?;
+                let route_id = self.forward_existing_event_to_bus_with_patch(
+                    event,
+                    &bus_id,
+                    !compact_response,
+                )?;
                 if let Some(parent_invocation_id) = parent_invocation_id {
                     for step in self.process_queue_jump_event(
                         &parent_invocation_id,
@@ -2919,10 +2957,22 @@ impl Core {
         } else {
             None
         };
-        let mut invocations = Vec::new();
+        let mut invocations = Vec::with_capacity(eligible.len());
         let mut patches = Vec::new();
-        let mut event_deadline_anchor_at = self.event_deadline_anchor_at(&event_record.event_id);
+        let started_at_dt = chrono::Utc::now();
+        let started_at = timestamp_from_datetime(started_at_dt);
+        let event_deadline_anchor_at = self
+            .event_deadline_anchor_at(&event_record.event_id)
+            .unwrap_or_else(|| started_at.clone());
+        let event_deadline_anchor_dt =
+            chrono::DateTime::parse_from_rfc3339(&event_deadline_anchor_at)
+                .ok()
+                .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
+                .unwrap_or(started_at_dt);
         let resolved_event_timeout = resolve_event_timeout(&event_record, &bus_record);
+        let event_deadline_at = resolved_event_timeout.and_then(|timeout| {
+            timestamp_plus_seconds_from_datetime(event_deadline_anchor_dt, timeout)
+        });
         for result_id in eligible {
             let invocation_id = uuid_v7_string();
             let fence = 1;
@@ -2943,14 +2993,14 @@ impl Core {
                 if result.status != ResultStatus::Pending {
                     continue;
                 }
-                let started_at = now_timestamp();
-                let deadline_at = handler_timeout
-                    .and_then(|timeout| timestamp_plus_seconds(&started_at, timeout));
-                let slow_warning_at = result
-                    .slow_timeout
-                    .and_then(|timeout| timestamp_plus_seconds(&started_at, timeout));
+                let deadline_at = handler_timeout.and_then(|timeout| {
+                    timestamp_plus_seconds_from_datetime(started_at_dt, timeout)
+                });
+                let slow_warning_at = result.slow_timeout.and_then(|timeout| {
+                    timestamp_plus_seconds_from_datetime(started_at_dt, timeout)
+                });
                 result.status = ResultStatus::Started;
-                result.started_at = Some(started_at);
+                result.started_at = Some(started_at.clone());
                 result.slow_warning_at = slow_warning_at;
                 result.slow_warning_sent = false;
                 result.invocation = Some(InvocationState {
@@ -2967,24 +3017,15 @@ impl Core {
                 .as_ref()
                 .and_then(|invocation| invocation.deadline_at.clone());
             if let Some(started_at) = result_snapshot.started_at.as_ref() {
-                if event_deadline_anchor_at
-                    .as_ref()
-                    .is_none_or(|current| started_at < current)
-                {
-                    event_deadline_anchor_at = Some(started_at.clone());
-                }
+                debug_assert!(started_at >= &event_deadline_anchor_at);
             }
-            let event_deadline_at = event_deadline_anchor_at.as_ref().and_then(|started_at| {
-                resolved_event_timeout
-                    .and_then(|timeout| timestamp_plus_seconds(started_at, timeout))
-            });
             patches.push(CorePatch::ResultStarted {
                 result_id: result_snapshot.result_id.clone(),
                 invocation_id: invocation_id.clone(),
                 started_at: result_snapshot
                     .started_at
                     .clone()
-                    .unwrap_or_else(now_timestamp),
+                    .unwrap_or_else(|| started_at.clone()),
                 deadline_at: deadline_at.clone(),
             });
             invocations.push(InvokeHandler {
@@ -3568,7 +3609,6 @@ impl Core {
             self.store
                 .append_patch(CorePatch::ResultCompleted { result });
         }
-        self.advance_route_after_result(result_id);
         Ok(route_id)
     }
 
@@ -4614,6 +4654,9 @@ impl Core {
         if result_ids.len() < expected_handlers {
             return false;
         }
+        if route.handler_cursor >= expected_handlers {
+            return true;
+        }
         result_ids.iter().all(|result_id| {
             self.store
                 .results
@@ -4652,11 +4695,32 @@ impl Core {
         let Some(result) = self.store.results.get(result_id).cloned() else {
             return;
         };
-        let Some(route) = self.store.routes.get_mut(&result.route_id) else {
+        let Some(route) = self.store.routes.get(&result.route_id) else {
             return;
         };
-        if result.handler_seq == route.handler_cursor && result.status.is_terminal() {
-            route.handler_cursor += 1;
+        if result.handler_seq != route.handler_cursor || !result.status.is_terminal() {
+            return;
+        }
+        let route_id = result.route_id.clone();
+        let Some(result_ids) = self.store.results_by_route.get(&route_id) else {
+            return;
+        };
+        let mut cursor = route.handler_cursor;
+        while let Some(next_result_id) = result_ids.get(cursor) {
+            let terminal = self
+                .store
+                .results
+                .get(next_result_id)
+                .is_some_and(|candidate| candidate.status.is_terminal());
+            if !terminal {
+                break;
+            }
+            cursor += 1;
+        }
+        if cursor != route.handler_cursor {
+            if let Some(route) = self.store.routes.get_mut(&route_id) {
+                route.handler_cursor = cursor;
+            }
         }
     }
 }

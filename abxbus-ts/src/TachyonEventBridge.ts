@@ -27,7 +27,7 @@ import { assertOptionalDependencyAvailable, isNodeRuntime } from './optional_dep
 import type { EventClass, EventHandlerCallable, EventPattern, UntypedEventHandlerFunction } from './types.js'
 
 const randomSuffix = (): string => Math.random().toString(36).slice(2, 10)
-const DEFAULT_TACHYON_CAPACITY = 1 << 20
+const DEFAULT_TACHYON_CAPACITY = 16 << 20
 const TACHYON_CONNECT_TIMEOUT_MS = 5000
 const TACHYON_LISTEN_TIMEOUT_MS = 5000
 // Tachyon recv() blocks on a futex that worker.terminate() cannot preempt; the

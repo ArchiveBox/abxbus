@@ -23,6 +23,8 @@ const HISTORY_LIMIT_WORST_CASE = 128
 const TRIM_TARGET = 1
 const WORST_CASE_IMMEDIATE_TIMEOUT_MS = 0.0001
 const WORST_CASE_IMMEDIATE_TIMEOUT_SECONDS = WORST_CASE_IMMEDIATE_TIMEOUT_MS / 1000
+const PERF_RUN_ID = typeof process !== 'undefined' && typeof process.pid === 'number' ? String(process.pid) : 'runtime'
+const perfBusName = (name) => `${name}_${PERF_RUN_ID}`
 
 const heapDeltaNoiseFloorMb = (runtimeName) => {
   if (runtimeName === 'bun') return 192.0
@@ -424,7 +426,7 @@ export const runPerfSingleEventManyFixedHandlers = async (input) => {
   const totalEvents = 1
   const totalHandlers = 50_000
   const { PerfFixedHandlersEvent: FixedHandlersEvent, PerfTrimEventFixedHandlers: TrimEvent } = getEventClasses(BaseEvent)
-  const bus = new EventBus('FixedHandlersBus', {
+  const bus = new EventBus(perfBusName('FixedHandlersBus'), {
     max_history_size: HISTORY_LIMIT_FIXED_HANDLERS,
     max_history_drop: true,
     event_handler_concurrency: 'parallel',

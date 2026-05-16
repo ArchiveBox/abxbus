@@ -38,7 +38,7 @@ from .event_handler import (
 )
 from .event_history import EventHistory
 from .helpers import CleanShutdownQueue, monotonic_datetime
-from .jsonschema import pydantic_model_to_json_schema
+from .jsonschema import pydantic_model_from_json_schema, pydantic_model_to_json_schema
 from .lock_manager import LockManager, ReentrantLock
 
 CoreHandler = Callable[[Any], Any]
@@ -135,6 +135,7 @@ class RustCoreEventBus:
     _event_global_serial_lock: ReentrantLock = ReentrantLock()
     _INLINE_SYNC_INVOCATION_THRESHOLD = 64
     _CORE_EMIT_BATCH_SIZE = 512
+    _CORE_ROUTE_SLICE_LIMIT = 65_536
 
     event_concurrency: EventConcurrency
     event_handler_concurrency: HandlerConcurrency
@@ -1123,7 +1124,8 @@ class RustCoreEventBus:
         self.event_history[event_obj.event_id] = event_obj
         self._trim_event_history_if_needed()
         self._index_event_relationships(event_obj)
-        self._ensure_local_pending_results_for_event(event_obj)
+        if self.middlewares:
+            self._ensure_local_pending_results_for_event(event_obj)
         self._track_event_replayability_for_new_handlers(event_obj)
         had_existing_pending = any(event_id != event_obj.event_id for event_id in self.in_flight_event_ids)
         resolved_event_concurrency = _option_value(event_obj.event_concurrency) or self.event_concurrency
@@ -1399,7 +1401,7 @@ class RustCoreEventBus:
         while self._pending_core_emits:
             events = self._pending_core_emits[: self._CORE_EMIT_BATCH_SIZE]
             del self._pending_core_emits[: self._CORE_EMIT_BATCH_SIZE]
-            messages = self.core.emit_events(events, self.bus_id, defer_start=False, compact_response=True)
+            messages = self.core.emit_events(events, self.bus_id, defer_start=True, compact_response=True)
             progressed = True
             if not messages:
                 continue
@@ -1414,7 +1416,7 @@ class RustCoreEventBus:
         while self._pending_core_emits:
             events = self._pending_core_emits[: self._CORE_EMIT_BATCH_SIZE]
             del self._pending_core_emits[: self._CORE_EMIT_BATCH_SIZE]
-            messages = self.core.emit_events(events, self.bus_id, defer_start=False, compact_response=True)
+            messages = self.core.emit_events(events, self.bus_id, defer_start=True, compact_response=True)
             progressed = True
             if messages:
                 await self._apply_messages_and_run_invocations_async(messages)
@@ -1500,6 +1502,17 @@ class RustCoreEventBus:
 
     def _messages_include_invocation(self, messages: list[dict[str, Any]]) -> bool:
         return any(self._invocation_messages_from_core_message(message) for message in messages)
+
+    async def _process_own_core_route_work_once_async(self) -> bool:
+        messages = self.core.process_next_route(
+            self.bus_id,
+            limit=self._CORE_ROUTE_SLICE_LIMIT,
+            compact_response=True,
+        )
+        progressed = bool(messages)
+        if await self._apply_messages_and_run_invocations_async(messages):
+            progressed = True
+        return progressed
 
     def _apply_non_invocation_messages(self, messages: list[dict[str, Any]]) -> None:
         for message in messages:
@@ -1622,6 +1635,8 @@ class RustCoreEventBus:
                     pre_progressed = False
                 else:
                     if not self.in_flight_event_ids:
+                        if await self._process_own_core_route_work_once_async():
+                            continue
                         self._mark_idle()
                         return
                     active_processing_tasks = {
@@ -1639,6 +1654,8 @@ class RustCoreEventBus:
                         if event is None or event.event_status == EventStatus.COMPLETED:
                             self.in_flight_event_ids.discard(event_id)
                     if not self.in_flight_event_ids:
+                        if await self._process_own_core_route_work_once_async():
+                            continue
                         self._mark_idle()
                         return
                     if active_target_event_id is not None:
@@ -1649,7 +1666,11 @@ class RustCoreEventBus:
                             event_type=active_target_event.event_type if active_target_event is not None else None,
                         )
                         for bus in live_buses:
-                            bus_messages = bus.core.process_next_route(bus.bus_id, compact_response=True)
+                            bus_messages = bus.core.process_next_route(
+                                bus.bus_id,
+                                limit=self._CORE_ROUTE_SLICE_LIMIT,
+                                compact_response=True,
+                            )
                             if bus_messages:
                                 pre_progressed = True
                             with bus._targeted_core_drive_scope():
@@ -1666,14 +1687,22 @@ class RustCoreEventBus:
                         )
                         if has_related_bus_pending:
                             for bus in live_core_buses:
-                                bus_messages = bus.core.process_next_route(bus.bus_id, limit=128, compact_response=True)
+                                bus_messages = bus.core.process_next_route(
+                                    bus.bus_id,
+                                    limit=self._CORE_ROUTE_SLICE_LIMIT,
+                                    compact_response=True,
+                                )
                                 if bus_messages:
                                     pre_progressed = True
                                 with bus._targeted_core_drive_scope():
                                     if await bus._apply_messages_and_run_invocations_async(bus_messages):
                                         pre_progressed = True
                         else:
-                            messages = self.core.process_next_route(self.bus_id, limit=128, compact_response=True)
+                            messages = self.core.process_next_route(
+                                self.bus_id,
+                                limit=self._CORE_ROUTE_SLICE_LIMIT,
+                                compact_response=True,
+                            )
                 progressed = pre_progressed
                 if messages:
                     progressed = True
@@ -1722,6 +1751,8 @@ class RustCoreEventBus:
                             self.in_flight_event_ids.discard(event_id)
                             continue
                     if not self.in_flight_event_ids:
+                        if await self._process_own_core_route_work_once_async():
+                            continue
                         self._mark_idle()
                         return
                     if progressed:
@@ -1792,6 +1823,8 @@ class RustCoreEventBus:
                         if event is None or event.event_status == EventStatus.COMPLETED:
                             self.in_flight_event_ids.discard(event_id)
                     if not self.in_flight_event_ids:
+                        if await self._process_own_core_route_work_once_async():
+                            continue
                         self._mark_idle()
                         return
                 if not progressed:
@@ -2090,7 +2123,11 @@ class RustCoreEventBus:
                     self._flush_related_pending_core_emits_sync()
                     buses = self._live_buses_for_event(event_id)
                     for bus in buses:
-                        messages = bus.core.process_next_route(bus.bus_id, compact_response=True)
+                        messages = bus.core.process_next_route(
+                            bus.bus_id,
+                            limit=self._CORE_ROUTE_SLICE_LIMIT,
+                            compact_response=True,
+                        )
                         for message in messages:
                             if not bus._invocation_messages_from_core_message(message):
                                 bus._apply_core_message(message)
@@ -2129,7 +2166,11 @@ class RustCoreEventBus:
             with self._targeted_core_drive_scope():
                 for _ in range(1000):
                     await self._flush_pending_core_emits_async()
-                    messages = self.core.process_next_route(self.bus_id, compact_response=True)
+                    messages = self.core.process_next_route(
+                        self.bus_id,
+                        limit=self._CORE_ROUTE_SLICE_LIMIT,
+                        compact_response=True,
+                    )
                     await self._apply_messages_and_run_invocations_async(messages)
                     completed_event = self._completed_live_event(event_id)
                     if completed_event is not None:
@@ -2313,7 +2354,11 @@ class RustCoreEventBus:
                             continue
                     if allow_queue_jump and bus._queue_jump_event_ids and event_id in bus._queue_jump_event_ids:
                         continue
-                    messages = bus.core.process_next_route(bus.bus_id, compact_response=True)
+                    messages = bus.core.process_next_route(
+                        bus.bus_id,
+                        limit=self._CORE_ROUTE_SLICE_LIMIT,
+                        compact_response=True,
+                    )
                     if messages:
                         progressed = True
                     if await bus._apply_messages_and_run_invocations_async(messages):
@@ -2801,11 +2846,13 @@ class RustCoreEventBus:
                     result_id = raw_result.get('id') or raw_result.get('result_id')
                     if isinstance(result_id, str):
                         raw_child_ids_by_result[result_id] = child_ids
-        snapshot_event = BaseEvent[Any].model_validate(snapshot)
         if event_result_type is None:
-            event_result_type = snapshot_event.event_result_type
-            event.event_result_type = snapshot_event.event_result_type
-        event.event_results = self._order_event_results(event.event_type, snapshot_event.event_results)
+            event_result_type = pydantic_model_from_json_schema(snapshot.get('event_result_type'))
+            event.event_result_type = event_result_type
+        event.event_results = self._order_event_results(
+            event.event_type,
+            self._trusted_event_results_from_core_snapshot(event, snapshot),
+        )
         for existing_result in list(existing_results.values()):
             if existing_result.handler_id in event.event_results:
                 continue
@@ -2857,17 +2904,25 @@ class RustCoreEventBus:
                 normalized_error = self._normalize_core_error(raw_result.get('error'))
                 if normalized_error is not None:
                     result.error = normalized_error
-        event.event_path = list(snapshot_event.event_path)
+        event.event_path = [entry for entry in cast(list[Any], snapshot.get('event_path') or []) if isinstance(entry, str)]
         for label in local_event_path:
             if label not in event.event_path:
                 event.event_path.append(label)
-        event.event_parent_id = snapshot_event.event_parent_id
-        event.event_emitted_by_handler_id = snapshot_event.event_emitted_by_handler_id
-        event.event_emitted_by_result_id = snapshot_event.event_emitted_by_result_id
-        event.event_blocks_parent_completion = snapshot_event.event_blocks_parent_completion
-        event.event_started_at = snapshot_event.event_started_at
-        event.event_completed_at = snapshot_event.event_completed_at
-        event.event_status = snapshot_event.event_status
+        event.event_parent_id = snapshot.get('event_parent_id') if isinstance(snapshot.get('event_parent_id'), str) else None
+        event.event_emitted_by_handler_id = (
+            snapshot.get('event_emitted_by_handler_id') if isinstance(snapshot.get('event_emitted_by_handler_id'), str) else None
+        )
+        event.event_emitted_by_result_id = (
+            snapshot.get('event_emitted_by_result_id') if isinstance(snapshot.get('event_emitted_by_result_id'), str) else None
+        )
+        event.event_blocks_parent_completion = snapshot.get('event_blocks_parent_completion') is True
+        event_started_at = snapshot.get('event_started_at')
+        event_completed_at = snapshot.get('event_completed_at')
+        event.event_started_at = event_started_at if isinstance(event_started_at, str) else None
+        event.event_completed_at = event_completed_at if isinstance(event_completed_at, str) else None
+        event_status = snapshot.get('event_status')
+        if event_status in ('pending', 'started', 'completed'):
+            event.event_status = EventStatus(event_status)
         if self._event_has_unfinished_results(event):
             event.event_status = (
                 EventStatus.STARTED
@@ -2916,6 +2971,72 @@ class RustCoreEventBus:
             completed_signal = event.event_completed_signal
             if completed_signal is not None:
                 completed_signal.set()
+
+    def _trusted_event_results_from_core_snapshot(
+        self,
+        event: BaseEvent[Any],
+        snapshot: dict[str, Any],
+    ) -> dict[str, EventResult[Any]]:
+        raw_results = snapshot.get('event_results')
+        if not isinstance(raw_results, dict):
+            return {}
+        results: dict[str, EventResult[Any]] = {}
+        for handler_id, raw_result in cast(dict[str, Any], raw_results).items():
+            if not isinstance(raw_result, dict):
+                continue
+            result = self._trusted_event_result_from_core_record(event, str(handler_id), raw_result)
+            if result is not None:
+                results[result.handler_id] = result
+        return results
+
+    def _trusted_event_result_from_core_record(
+        self,
+        event: BaseEvent[Any],
+        handler_id: str,
+        record: dict[str, Any],
+    ) -> EventResult[Any] | None:
+        result_id = record.get('id') or record.get('result_id')
+        if not isinstance(result_id, str):
+            return None
+        handler = self._handlers.get(handler_id)
+        if handler is None:
+            raw_registered_at = record.get('handler_registered_at')
+            handler = EventHandler.model_construct(
+                id=handler_id,
+                handler=None,
+                handler_name=record.get('handler_name') if isinstance(record.get('handler_name'), str) else 'anonymous',
+                handler_file_path=(record.get('handler_file_path') if isinstance(record.get('handler_file_path'), str) else None),
+                handler_timeout=record.get('handler_timeout') if isinstance(record.get('handler_timeout'), int | float) else None,
+                handler_slow_timeout=(
+                    record.get('handler_slow_timeout') if isinstance(record.get('handler_slow_timeout'), int | float) else None
+                ),
+                handler_registered_at=raw_registered_at if isinstance(raw_registered_at, str) else event.event_created_at,
+                event_pattern=record.get('handler_event_pattern')
+                if isinstance(record.get('handler_event_pattern'), str)
+                else event.event_type,
+                eventbus_name=record.get('eventbus_name') if isinstance(record.get('eventbus_name'), str) else self.name,
+                eventbus_id=record.get('eventbus_id') if isinstance(record.get('eventbus_id'), str) else self.bus_id,
+            )
+        status = record.get('status')
+        if status == 'cancelled':
+            status = 'error'
+        if status not in ('pending', 'started', 'completed', 'error'):
+            status = 'pending'
+        started_at = record.get('started_at')
+        completed_at = record.get('completed_at')
+        return EventResult[Any].model_construct(
+            id=result_id,
+            status=status,
+            event_id=event.event_id,
+            handler=handler,
+            result_type=event.event_result_type,
+            timeout=record.get('timeout') if isinstance(record.get('timeout'), int | float) else None,
+            started_at=started_at if isinstance(started_at, str) else None,
+            result=record.get('result') if 'result' in record else None,
+            error=None,
+            completed_at=completed_at if isinstance(completed_at, str) else None,
+            event_children=[],
+        )
 
     async def _apply_core_snapshot_to_event_async(self, event: BaseEvent[Any], snapshot: dict[str, Any]) -> None:
         old_event_status = event.event_status
@@ -3080,7 +3201,33 @@ class RustCoreEventBus:
             local_event = self._events.get(event_obj.event_id) or self.event_history.get(event_obj.event_id)
             if local_event is not None:
                 event_obj = local_event
-            return event_obj if already_matched or event_matches(event_obj) else None
+            if not already_matched and not event_matches(event_obj):
+                return None
+            if (
+                resolved_future is False
+                and event_obj.event_status != EventStatus.COMPLETED
+                and not event_obj.event_results
+                and self._active_event() is None
+                and not any(bus._passive_handler_wait_depth > 0 for bus in list(type(self)._instances) if not bus._closed)
+                and self._expected_live_handler_ids(event_obj)
+            ):
+                try:
+                    event_obj = await self._drive_all_buses_until_event_completed(
+                        event_obj.event_id,
+                        drain_pending=False,
+                        event_obj=event_obj,
+                    )
+                except RuntimeError:
+                    return None
+            if (
+                event_obj.event_status == EventStatus.COMPLETED
+                and event_obj.event_id in self._locally_completed_without_core_patch
+            ):
+                expected_handler_ids = self._expected_live_handler_ids(event_obj)
+                if expected_handler_ids and not expected_handler_ids.issubset(event_obj.event_results.keys()):
+                    await self._await_core_outcome_commits_for_event(event_obj.event_id, event_type=event_obj.event_type)
+                    event_obj = await self._completed_snapshot_or_event_async(event_obj)
+            return event_obj
 
         matches: list[T_Event | BaseEvent[Any]] = []
         seen_ids = set(initial_seen_ids)
@@ -3229,7 +3376,11 @@ class RustCoreEventBus:
                 continue
             if await bus._flush_pending_core_emits_async():
                 progressed = True
-            messages = bus.core.process_next_route(bus.bus_id, compact_response=True)
+            messages = bus.core.process_next_route(
+                bus.bus_id,
+                limit=self._CORE_ROUTE_SLICE_LIMIT,
+                compact_response=True,
+            )
             if messages:
                 progressed = True
             if await bus._apply_messages_and_run_invocations_async(messages):
@@ -3253,7 +3404,11 @@ class RustCoreEventBus:
         progressed = False
         if await self._flush_pending_core_emits_async():
             progressed = True
-        messages = self.core.process_next_route(self.bus_id, compact_response=True)
+        messages = self.core.process_next_route(
+            self.bus_id,
+            limit=self._CORE_ROUTE_SLICE_LIMIT,
+            compact_response=True,
+        )
         if messages:
             progressed = True
         if await self._apply_messages_and_run_invocations_async(messages):
@@ -3462,8 +3617,11 @@ class RustCoreEventBus:
             and self.pending_event_queue.qsize() == 0
             and not self._active_local_tasks()
         ):
-            self._mark_idle()
-            return
+            if await self._process_own_core_route_work_once_async():
+                pass
+            else:
+                self._mark_idle()
+                return
         live_core_buses = [bus for bus in list(type(self)._instances) if not bus._closed and bus.core is self.core]
         has_related_bus_pending = len(live_core_buses) > 1 and any(
             len(self._live_buses_for_event(event_id)) > 1 for event_id in self.in_flight_event_ids
@@ -3518,6 +3676,8 @@ class RustCoreEventBus:
                     self.in_flight_event_ids.discard(event_id)
             pending_event_ids = set(self.in_flight_event_ids)
             if not pending_event_ids:
+                if await self._process_own_core_route_work_once_async():
+                    continue
                 self._mark_idle()
                 return
             buses_by_id: dict[str, RustCoreEventBus] = {}
@@ -3533,7 +3693,11 @@ class RustCoreEventBus:
                 return
             progressed = False
             for bus in buses:
-                messages = bus.core.process_next_route(bus.bus_id, compact_response=True)
+                messages = bus.core.process_next_route(
+                    bus.bus_id,
+                    limit=self._CORE_ROUTE_SLICE_LIMIT,
+                    compact_response=True,
+                )
                 if messages:
                     progressed = True
                 if await bus._apply_messages_and_run_invocations_async(messages):
@@ -3542,6 +3706,8 @@ class RustCoreEventBus:
                 event.event_id for event in self._events.values() if event.event_status != EventStatus.COMPLETED
             }
             if not current_pending_event_ids:
+                if await self._process_own_core_route_work_once_async():
+                    continue
                 self._mark_idle()
                 return
             if not current_pending_event_ids.issubset(pending_event_ids):
@@ -3985,15 +4151,20 @@ class RustCoreEventBus:
                     for outcome in outcomes
                 )
                 if all_completed:
+                    locally_applied_invocation_ids = self._apply_local_completed_outcomes_without_patch_messages(
+                        outcomes,
+                        buses_by_invocation,
+                        invocations_by_invocation,
+                    )
                     for outcome in outcomes:
                         invocation_id = outcome.get('invocation_id')
                         if not isinstance(invocation_id, str):
                             continue
+                        if invocation_id in locally_applied_invocation_ids:
+                            continue
                         outcome_bus = buses_by_invocation.get(invocation_id, self)
                         invocation = invocations_by_invocation.get(invocation_id)
                         if invocation is None:
-                            continue
-                        if outcome_bus._apply_local_completed_outcome_without_patch_messages(invocation, outcome):
                             continue
                         for message in outcome_bus._local_outcome_patch_messages(invocation, outcome):
                             await outcome_bus._apply_core_message_async(message)
@@ -4073,15 +4244,20 @@ class RustCoreEventBus:
                         for outcome in outcomes
                     )
                     if all_completed and not race_first:
+                        locally_applied_invocation_ids = self._apply_local_completed_outcomes_without_patch_messages(
+                            outcomes,
+                            buses_by_invocation,
+                            invocations_by_invocation,
+                        )
                         for outcome in outcomes:
                             invocation_id = outcome.get('invocation_id')
                             if not isinstance(invocation_id, str):
                                 continue
+                            if invocation_id in locally_applied_invocation_ids:
+                                continue
                             outcome_bus = buses_by_invocation.get(invocation_id, self)
                             invocation = invocations_by_invocation.get(invocation_id)
                             if invocation is None:
-                                continue
-                            if outcome_bus._apply_local_completed_outcome_without_patch_messages(invocation, outcome):
                                 continue
                             for message in outcome_bus._local_outcome_patch_messages(invocation, outcome):
                                 await outcome_bus._apply_core_message_async(message)
@@ -4921,33 +5097,9 @@ class RustCoreEventBus:
         invocation: dict[str, Any],
         outcome_record: dict[str, Any],
     ) -> bool:
-        if self.middlewares:
-            return False
-        outcome = outcome_record.get('outcome')
-        if not isinstance(outcome, dict) or outcome.get('status') != 'completed':
-            return False
-        event_id = invocation.get('event_id')
-        handler_id = invocation.get('handler_id')
-        if not isinstance(event_id, str) or not isinstance(handler_id, str):
-            return False
-        event = self._events.get(event_id)
+        event = self._apply_local_completed_outcome_fields_without_terminal_check(invocation, outcome_record)
         if event is None:
             return False
-        if event.event_path != [self.label]:
-            return False
-        result = event.event_results.get(handler_id)
-        if result is None or result.status != 'completed':
-            return False
-        completion = _option_value(event.event_handler_completion) or self.event_handler_completion
-        snapshot = invocation.get('event_snapshot')
-        if isinstance(snapshot, dict):
-            completion = _option_value(snapshot.get('event_handler_completion')) or completion
-        if completion == 'first':
-            return False
-        result_id = invocation.get('result_id')
-        if isinstance(result_id, str):
-            result.id = result_id
-            self._event_id_by_result_id[result_id] = event.event_id
         if (
             event.event_id in self._locally_completed_without_core_patch
             and event.event_status == EventStatus.COMPLETED
@@ -4956,11 +5108,81 @@ class RustCoreEventBus:
             return True
         if not self._event_has_unfinished_results(event):
             if event.event_started_at is None:
-                event.event_started_at = result.started_at or event.event_completed_at or monotonic_datetime()
+                event.event_started_at = event.event_completed_at or monotonic_datetime()
             if event.event_completed_at is None:
-                event.event_completed_at = result.completed_at or event.event_started_at or monotonic_datetime()
+                event.event_completed_at = event.event_started_at or monotonic_datetime()
             self._mark_local_event_completed_fast(event)
         return True
+
+    def _apply_local_completed_outcomes_without_patch_messages(
+        self,
+        outcomes: list[dict[str, Any]],
+        buses_by_invocation: dict[str, RustCoreEventBus],
+        invocations_by_invocation: dict[str, dict[str, Any]],
+    ) -> set[str]:
+        applied_invocation_ids: set[str] = set()
+        touched_events: dict[str, tuple[RustCoreEventBus, BaseEvent[Any]]] = {}
+        for outcome in outcomes:
+            invocation_id = outcome.get('invocation_id')
+            if not isinstance(invocation_id, str):
+                continue
+            invocation = invocations_by_invocation.get(invocation_id)
+            if invocation is None:
+                continue
+            outcome_bus = buses_by_invocation.get(invocation_id, self)
+            event = outcome_bus._apply_local_completed_outcome_fields_without_terminal_check(invocation, outcome)
+            if event is None:
+                continue
+            applied_invocation_ids.add(invocation_id)
+            touched_events[event.event_id] = (outcome_bus, event)
+        for event_bus, event in touched_events.values():
+            if (
+                event.event_id in event_bus._locally_completed_without_core_patch
+                and event.event_status == EventStatus.COMPLETED
+                and event._event_is_complete_flag  # pyright: ignore[reportPrivateUsage]
+            ):
+                continue
+            if not event_bus._event_has_unfinished_results(event):
+                if event.event_started_at is None:
+                    event.event_started_at = event.event_completed_at or monotonic_datetime()
+                if event.event_completed_at is None:
+                    event.event_completed_at = event.event_started_at or monotonic_datetime()
+                event_bus._mark_local_event_completed_fast(event)
+        return applied_invocation_ids
+
+    def _apply_local_completed_outcome_fields_without_terminal_check(
+        self,
+        invocation: dict[str, Any],
+        outcome_record: dict[str, Any],
+    ) -> BaseEvent[Any] | None:
+        if self.middlewares:
+            return None
+        outcome = outcome_record.get('outcome')
+        if not isinstance(outcome, dict) or outcome.get('status') != 'completed':
+            return None
+        event_id = invocation.get('event_id')
+        handler_id = invocation.get('handler_id')
+        if not isinstance(event_id, str) or not isinstance(handler_id, str):
+            return None
+        event = self._events.get(event_id)
+        if event is None:
+            return None
+        if event.event_path != [self.label]:
+            return None
+        result = event.event_results.get(handler_id)
+        if result is None or result.status != 'completed':
+            return None
+        completion = _option_value(event.event_handler_completion) or self.event_handler_completion
+        snapshot = invocation.get('event_snapshot')
+        if isinstance(snapshot, dict):
+            completion = _option_value(snapshot.get('event_handler_completion')) or completion
+        if completion == 'first':
+            return None
+        result_id = invocation.get('result_id')
+        if isinstance(result_id, str):
+            result.id = result_id
+            self._event_id_by_result_id[result_id] = event.event_id
+        return event
 
     def _mark_local_event_completed_fast(self, event: BaseEvent[Any]) -> None:
         self._remove_pending_event(event.event_id)

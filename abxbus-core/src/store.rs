@@ -191,6 +191,7 @@ pub struct InMemoryStore {
     pub buses: BTreeMap<BusId, BusRecord>,
     pub handlers: BTreeMap<HandlerId, HandlerRecord>,
     pub handlers_by_bus: BTreeMap<BusId, Vec<HandlerId>>,
+    pub handler_members_by_bus: BTreeMap<BusId, BTreeSet<HandlerId>>,
     pub events: BTreeMap<EventId, EventRecord>,
     pub routes: BTreeMap<RouteId, EventRouteRecord>,
     pub routes_by_event: BTreeMap<EventId, Vec<RouteId>>,
@@ -214,15 +215,23 @@ impl InMemoryStore {
             if let Some(ids) = self.handlers_by_bus.get_mut(&existing.bus_id) {
                 ids.retain(|handler_id| handler_id != &handler.handler_id);
             }
+            if let Some(members) = self.handler_members_by_bus.get_mut(&existing.bus_id) {
+                members.remove(&handler.handler_id);
+                if members.is_empty() {
+                    self.handler_members_by_bus.remove(&existing.bus_id);
+                }
+            }
         }
+        let inserted = self
+            .handler_members_by_bus
+            .entry(handler.bus_id.clone())
+            .or_default()
+            .insert(handler.handler_id.clone());
         let ids = self
             .handlers_by_bus
             .entry(handler.bus_id.clone())
             .or_default();
-        if !ids
-            .iter()
-            .any(|handler_id| handler_id == &handler.handler_id)
-        {
+        if inserted {
             ids.push(handler.handler_id.clone());
         }
         self.handlers.insert(handler.handler_id.clone(), handler);

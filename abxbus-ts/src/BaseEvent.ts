@@ -198,6 +198,7 @@ export type EventFactory<TShape extends z.ZodRawShape, TResult = unknown> = {
   event_type?: string
   event_version?: string
   event_result_type?: z.ZodTypeAny
+  event_payload_field_names?: Set<string>
   fromJSON?: (data: unknown) => EventWithResultSchema<TResult> & EventPayload<TShape>
 }
 
@@ -209,6 +210,7 @@ export type SchemaEventFactory<TSchema extends AnyEventSchema, TResult = unknown
   event_type?: string
   event_version?: string
   event_result_type?: z.ZodTypeAny
+  event_payload_field_names?: Set<string>
   fromJSON?: (data: unknown) => EventWithResultSchema<TResult> & EventPayloadFromSchema<TSchema>
 }
 
@@ -289,6 +291,10 @@ function eventResultTypeFromObjectSchema(schema: z.ZodObject<z.ZodRawShape>): z.
   return raw_event_result_type === undefined ? undefined : normalizeEventResultType(raw_event_result_type)
 }
 
+function payloadFieldNames(raw_shape: Record<string, unknown>): Set<string> {
+  return new Set(Object.keys(raw_shape).filter((key) => key !== 'event_result_type' && !KNOWN_BASE_EVENT_FIELDS.has(key)))
+}
+
 function buildFullEventSchema(
   event_type: string,
   spec: unknown
@@ -296,6 +302,7 @@ function buildFullEventSchema(
   event_schema: AnyEventSchema
   event_result_type?: z.ZodTypeAny
   event_version?: string
+  event_payload_field_names: Set<string>
 } {
   if (isZodObjectSchema(spec)) {
     const user_shape = spec.shape
@@ -309,6 +316,7 @@ function buildFullEventSchema(
     return {
       event_schema: full_schema,
       event_result_type: eventResultTypeFromObjectSchema(spec),
+      event_payload_field_names: payloadFieldNames(user_shape),
     }
   }
 
@@ -325,6 +333,7 @@ function buildFullEventSchema(
     event_schema: full_schema,
     event_result_type: normalizeEventResultType(raw_shape.event_result_type),
     event_version: typeof raw_shape.event_version === 'string' ? raw_shape.event_version : undefined,
+    event_payload_field_names: payloadFieldNames(raw_shape),
   }
 }
 
@@ -374,6 +383,7 @@ export class BaseEvent {
   static event_version = '0.0.1'
   static event_result_type?: z.ZodTypeAny
   static event_schema: AnyEventSchema = BaseEventSchema // generated Zod schema for local TS event data validation; never sent over the wire
+  static event_payload_field_names = new Set<string>()
 
   // internal runtime state
   event_bus?: EventBus // bus that dispatched this event, also used by event.emit(child)
@@ -493,6 +503,7 @@ export class BaseEvent {
     const full_schema = built.event_schema
     const event_result_type = built.event_result_type
     const event_version = built.event_version
+    const event_payload_field_names = built.event_payload_field_names
 
     // create a new event class that extends BaseEvent and adds the custom fields
     class ExtendedEvent extends BaseEvent {
@@ -500,6 +511,7 @@ export class BaseEvent {
       static event_type = event_type
       static event_version = event_version ?? BaseEvent.event_version
       static event_result_type = event_result_type
+      static event_payload_field_names = event_payload_field_names
 
       constructor(data: EventInit<ZodShapeFrom<TShape>> | EventInitFromSchema<AnyEventSchema>) {
         super(data as BaseEventInit<Record<string, unknown>>)
@@ -516,6 +528,7 @@ export class BaseEvent {
     EventFactory.event_type = event_type
     EventFactory.event_version = event_version ?? BaseEvent.event_version
     EventFactory.event_result_type = event_result_type
+    EventFactory.event_payload_field_names = event_payload_field_names
     EventFactory.class = ExtendedEvent as unknown as new (
       data: EventInit<ZodShapeFrom<TShape>>
     ) => EventWithResultSchema<ResultSchemaFromShape<TShape>> & EventPayload<ZodShapeFrom<TShape>>
