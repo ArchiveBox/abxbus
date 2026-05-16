@@ -1,0 +1,21 @@
+tests/test_eventbus_locking.py
+  s_4f4788d0a20767::t_6627f626d60f42 1132
+abxbus/retry.py
+  s_4f4788d0a20767::t_6627f626d60f42 444-446,863
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "adc3dc42157b4af45818237d0dbd3f9957bf48ae",
+  "prompts": {},
+  "sessions": {
+    "s_4f4788d0a20767": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3251-d280-7a13-a763-9dbe5f4c0c34",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
