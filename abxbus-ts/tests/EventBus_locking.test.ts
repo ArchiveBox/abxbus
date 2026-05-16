@@ -2670,9 +2670,7 @@ test('retry sync: @retry() TC39 decorator with semaphore_scope=instance', () => 
 
 test('retry sync: semaphore_scope=class falls back to global for standalone functions', () => {
   clearSemaphoreRegistry()
-  const fn = retry({ max_attempts: 1, semaphore_limit: 1, semaphore_scope: 'class', semaphore_name: 'sync_standalone_class' })(
-    () => 'ok'
-  )
+  const fn = retry({ max_attempts: 1, semaphore_limit: 1, semaphore_scope: 'class', semaphore_name: 'sync_standalone_class' })(() => 'ok')
   assert.equal(fn(), 'ok')
 })
 

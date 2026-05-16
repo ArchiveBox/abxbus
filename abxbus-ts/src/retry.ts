@@ -275,7 +275,12 @@ export function retry(options: RetryOptions = {}): RetryDecorator {
       }
     }
 
-    const runRetryLoopFromThenable = async (this_arg: any, args: any[], first_thenable: PromiseLike<any>, first_attempt: number): Promise<any> => {
+    const runRetryLoopFromThenable = async (
+      this_arg: any,
+      args: any[],
+      first_thenable: PromiseLike<any>,
+      first_attempt: number
+    ): Promise<any> => {
       let current_result: any = first_thenable
       for (let attempt = first_attempt; attempt <= effective_max_attempts; attempt++) {
         try {
@@ -560,9 +565,7 @@ function isAsyncFunction(fn: AnyFunction): boolean {
 
 function isThenable(value: unknown): value is PromiseLike<unknown> {
   return (
-    (typeof value === 'object' || typeof value === 'function') &&
-    value !== null &&
-    typeof (value as { then?: unknown }).then === 'function'
+    (typeof value === 'object' || typeof value === 'function') && value !== null && typeof (value as { then?: unknown }).then === 'function'
   )
 }
 
