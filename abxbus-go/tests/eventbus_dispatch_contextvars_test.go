@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
+	abxbus "github.com/ArchiveBox/abxbus/v2/abxbus-go"
 )
 
 type contextKey string

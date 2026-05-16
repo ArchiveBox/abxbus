@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ArchiveBox/abxbus/abxbus-go/v2/jsonschema"
+	"github.com/ArchiveBox/abxbus/v2/abxbus-go/jsonschema"
 )
 
 const jsonSchemaDraft202012 = jsonschema.Draft202012

@@ -25,6 +25,16 @@ Intentionally not implemented yet:
 
 ## Development
 
+Install/import from the repository-root Go module:
+
+```bash
+go get github.com/ArchiveBox/abxbus/v2/abxbus-go
+```
+
+```go
+import abxbus "github.com/ArchiveBox/abxbus/v2/abxbus-go"
+```
+
 ```bash
 go test ./...
 go run ./tests/roundtrip_cli events input.json output.json

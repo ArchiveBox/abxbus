@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
+	abxbus "github.com/ArchiveBox/abxbus/v2/abxbus-go"
 	"reflect"
 	"strings"
 	"testing"
