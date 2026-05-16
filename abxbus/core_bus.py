@@ -228,7 +228,6 @@ class RustCoreEventBus:
         self._pending_core_emits: list[dict[str, Any]] = []
         self._scheduled_core_messages: list[dict[str, Any]] = []
         self._scheduled_core_messages_task: asyncio.Task[None] | None = None
-        self._deferred_explicit_await_messages: list[dict[str, Any]] = []
         self._background_drive_task: asyncio.Task[None] | None = None
         self._background_drive_target_event_id: str | None = None
         self._processing_event_ids: set[str] = set()
@@ -1370,28 +1369,6 @@ class RustCoreEventBus:
         if task is not None and task is not asyncio.current_task() and not task.done():
             await asyncio.shield(task)
 
-    def _release_deferred_explicit_await_messages(self) -> None:
-        explicit_event_ids = type(self)._active_explicit_await_event_ids()
-        for bus in list(type(self)._instances):
-            if bus._closed or bus.core is not self.core or not bus._deferred_explicit_await_messages:
-                continue
-            if not explicit_event_ids:
-                messages = bus._deferred_explicit_await_messages
-                bus._deferred_explicit_await_messages = []
-                bus._schedule_core_messages(messages)
-                continue
-            releasable: list[dict[str, Any]] = []
-            deferred: list[dict[str, Any]] = []
-            for message in bus._deferred_explicit_await_messages:
-                invocations = bus._invocation_messages_from_core_message(message)
-                if any(bus._invocation_related_to_explicit_await(invocation, explicit_event_ids) for invocation in invocations):
-                    releasable.append(message)
-                else:
-                    deferred.append(message)
-            bus._deferred_explicit_await_messages = deferred
-            if releasable:
-                bus._schedule_core_messages(releasable)
-
     def _enqueue_core_emit(self, event_record: dict[str, Any]) -> None:
         self._pending_core_emits.append(event_record)
         self._is_running = True
@@ -1977,34 +1954,6 @@ class RustCoreEventBus:
     def _active_explicit_await_event_ids(cls) -> set[str]:
         return {event_id for bus in list(cls._instances) if not bus._closed for event_id in bus._explicit_await_event_ids}
 
-    def _invocation_related_to_explicit_await(self, invocation: dict[str, Any], explicit_event_ids: set[str]) -> bool:
-        event_id = invocation.get('event_id')
-        if not isinstance(event_id, str):
-            return True
-        if event_id in explicit_event_ids:
-            return True
-        event = self._events.get(event_id)
-        if event is None:
-            for bus in list(type(self)._instances):
-                if bus._closed or bus.core is not self.core:
-                    continue
-                event = bus._events.get(event_id)
-                if event is not None:
-                    break
-        if event is None:
-            return False
-        if event.event_parent_id in explicit_event_ids:
-            return True
-        return any(event_id in bus._queue_jump_event_ids for bus in list(type(self)._instances) if not bus._closed)
-
-    def _should_defer_invocation_message_for_explicit_await(self, invocations: list[dict[str, Any]]) -> bool:
-        if any(bus._passive_handler_wait_depth > 0 for bus in list(type(self)._instances) if not bus._closed):
-            return False
-        explicit_event_ids = type(self)._active_explicit_await_event_ids()
-        if not explicit_event_ids:
-            return False
-        return all(not self._invocation_related_to_explicit_await(invocation, explicit_event_ids) for invocation in invocations)
-
     def _release_queue_jump_children_for_invocation(self, invocation_id: Any) -> None:
         if not isinstance(invocation_id, str):
             return
@@ -2429,7 +2378,7 @@ class RustCoreEventBus:
             if event is None or event.event_completed_signal is None:
                 continue
             try:
-                await asyncio.wait_for(asyncio.shield(event.event_completed_signal.wait()), timeout=0.01)
+                await asyncio.wait_for(event.event_completed_signal.wait(), timeout=0.01)
             except asyncio.CancelledError:
                 return False
             except TimeoutError:
@@ -2437,18 +2386,30 @@ class RustCoreEventBus:
             return event.event_status == EventStatus.COMPLETED
         return False
 
-    def _prepare_background_drain_for_explicit_await(self, event: BaseEvent[Any]) -> None:
-        if event.event_emitted_by_result_id is not None or event.event_parent_id is not None:
-            return
+    async def _wait_for_event_with_shared_core_driver(
+        self,
+        event: BaseEvent[Any],
+        timeout: float | None = None,
+    ) -> bool:
+        if event.event_status == EventStatus.COMPLETED:
+            return True
+        if event.event_id not in self.in_flight_event_ids:
+            return False
+        if event.event_completed_signal is None:
+            return False
         if not self._can_schedule_async_processing() or self._suppress_auto_driver > 0:
-            return
-        concurrent_explicit_awaits = len(type(self)._active_explicit_await_event_ids())
-        task = self._background_drive_task
-        if task is not None and not task.done():
-            self._background_drive_target_event_id = None if concurrent_explicit_awaits > 1 else event.event_id
-            return
-        if any(candidate.event_status != EventStatus.COMPLETED for candidate in self._events.values()):
-            self._ensure_background_driver(None if concurrent_explicit_awaits > 1 else event.event_id)
+            return False
+        if event.event_emitted_by_result_id is not None or event.event_parent_id is not None:
+            return False
+        if len(self.in_flight_event_ids) < 8 and len(type(self)._active_explicit_await_event_ids()) < 8:
+            return False
+
+        self._ensure_background_driver(None)
+        if timeout is None:
+            await event.event_completed_signal.wait()
+        else:
+            await asyncio.wait_for(event.event_completed_signal.wait(), timeout=timeout)
+        return event.event_status == EventStatus.COMPLETED
 
     def _ensure_passive_wait_driver(self) -> None:
         if not self._can_schedule_async_processing() or self._suppress_auto_driver > 0:
@@ -2467,115 +2428,6 @@ class RustCoreEventBus:
             yield
         finally:
             self._passive_handler_wait_depth -= 1
-
-    def _should_await_via_background_driver(self, event: BaseEvent[Any]) -> bool:
-        if self._active_handler_id() is not None:
-            return False
-        if event.event_emitted_by_result_id is not None or event.event_parent_id is not None:
-            return False
-        if self._can_schedule_async_processing() and event.event_id in self.in_flight_event_ids:
-            return True
-        task = self._background_drive_task
-        return task is not None and not task.done()
-
-    async def _wait_for_event_with_active_background_drain(
-        self,
-        event: BaseEvent[Any],
-        timeout: float | None = None,
-    ) -> bool:
-        if event.event_status == EventStatus.COMPLETED:
-            return True
-        task = self._background_drive_task
-        if (
-            task is None
-            or task.done()
-            or task is asyncio.current_task()
-            or self._background_drive_target_event_id is not None
-            or event.event_id not in self.in_flight_event_ids
-            or len(self.in_flight_event_ids) < 8
-        ):
-            return False
-        signal = event.event_completed_signal
-        if signal is None:
-            return False
-        if timeout is None or timeout <= 0:
-            await signal.wait()
-        else:
-            await asyncio.wait_for(signal.wait(), timeout=timeout)
-        return event.event_status == EventStatus.COMPLETED
-
-    async def _await_event_via_background_driver(self, event: BaseEvent[Any]) -> BaseEvent[Any]:
-        if event.event_id in self._local_only_event_ids:
-            if event.event_status != EventStatus.COMPLETED and event.event_completed_signal is not None:
-                await event.event_completed_signal.wait()
-            return self._completed_snapshot_or_event(event)
-        if event.event_status == EventStatus.COMPLETED:
-            if self._can_return_locally_completed_event_without_snapshot(event):
-                return event
-            return await self._completed_event_after_optional_queue_drain(event)
-        self._prepare_background_drain_for_explicit_await(event)
-        deadline = self._event_completion_wait_deadline(event)
-        while True:
-            if not self._deadline_active(deadline):
-                live_buses = self._live_buses_for_event(event.event_id, event_type=event.event_type)
-                if event.event_status != EventStatus.COMPLETED and any(
-                    event.event_id in bus.in_flight_event_ids
-                    or event.event_id in bus._pending_event_ids
-                    or (bus._background_drive_task is not None and not bus._background_drive_task.done())
-                    for bus in live_buses
-                ):
-                    deadline = time.monotonic() + 5.0
-                else:
-                    break
-            if event.event_status == EventStatus.COMPLETED:
-                if self._can_return_locally_completed_event_without_snapshot(event):
-                    return event
-                return await self._completed_event_after_optional_queue_drain(event)
-            task = self._background_drive_task
-            if task is None or task.done():
-                if task is not None and not task.cancelled():
-                    error = task.exception()
-                    if error is not None:
-                        raise error
-                self._ensure_background_driver(None)
-                task = self._background_drive_task
-                if task is None or task.done():
-                    break
-            signal = event.event_completed_signal
-            if signal is None:
-                break
-            wait_timeout = 1.0 if deadline is None else min(1.0, max(0.001, deadline - time.monotonic()))
-            try:
-                await asyncio.wait_for(signal.wait(), timeout=wait_timeout)
-            except TimeoutError:
-                continue
-            if event.event_status != EventStatus.COMPLETED:
-                self._complete_event_if_local_results_terminal(event)
-            if event.event_status != EventStatus.COMPLETED:
-                event._mark_completed(current_bus=cast(Any, self))  # pyright: ignore[reportPrivateUsage]
-                if event.event_status != EventStatus.COMPLETED:
-                    break
-            if self._can_return_locally_completed_event_without_snapshot(event):
-                return event
-        if event.event_status == EventStatus.COMPLETED:
-            if self._can_return_locally_completed_event_without_snapshot(event):
-                return event
-            return await self._completed_event_after_optional_queue_drain(event)
-        if self._complete_event_if_local_results_terminal(event):
-            if self._can_return_locally_completed_event_without_snapshot(event):
-                return event
-            return await self._completed_event_after_optional_queue_drain(event)
-        completed_event = self._completed_live_event(event.event_id, event_type=event.event_type)
-        if completed_event is not None:
-            return await self._completed_event_after_optional_queue_drain(completed_event)
-        snapshot = await self._get_event_snapshot_from_core_async(event.event_id)
-        if isinstance(snapshot, dict):
-            await self._apply_core_snapshot_to_event_async(event, snapshot)
-        if event.event_status == EventStatus.COMPLETED:
-            if self._can_return_locally_completed_event_without_snapshot(event):
-                return event
-            return await self._completed_event_after_optional_queue_drain(event)
-        raise RuntimeError(f'event did not complete within deadline: {event.event_id}')
 
     def _can_return_locally_completed_event_without_snapshot(self, event: BaseEvent[Any]) -> bool:
         if self.middlewares:
@@ -3527,11 +3379,6 @@ class RustCoreEventBus:
             timeout = cast(float | None, options.get('timeout', 0))
             clear = bool(options.get('clear', clear))
         if clear:
-            if self._core_finalizer.alive:
-                try:
-                    self.core.unregister_bus(self.bus_id)
-                except Exception:
-                    pass
             await self.stop(timeout=timeout, clear=True)
             self._destroyed = True
             self._closed = True
@@ -3801,7 +3648,6 @@ class RustCoreEventBus:
         self._pending_core_emits.clear()
         self._scheduled_core_messages.clear()
         self._scheduled_core_messages_task = None
-        self._deferred_explicit_await_messages.clear()
         self._pending_event_ids.clear()
         self.in_flight_event_ids.clear()
         self._event_id_by_result_id.clear()
@@ -4074,9 +3920,6 @@ class RustCoreEventBus:
         for message in messages:
             nested_invocations = self._invocation_messages_from_core_message(message)
             if nested_invocations:
-                if self._should_defer_invocation_message_for_explicit_await(nested_invocations):
-                    self._deferred_explicit_await_messages.append(message)
-                    continue
                 invocations.extend(nested_invocations)
             else:
                 await self._apply_core_message_async(message)

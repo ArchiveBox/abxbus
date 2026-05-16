@@ -363,8 +363,8 @@ class SimpleEvent(BaseEvent):
 
 
 @pytest.mark.asyncio
-async def test_20k_events_with_memory_control():
-    """Test processing 20k events with no memory leaks"""
+async def test_50k_events_with_memory_control():
+    """Test processing 50k events with no memory leaks"""
 
     # Record initial memory
     gc.collect()
@@ -387,7 +387,7 @@ async def test_20k_events_with_memory_control():
 
     bus.on('SimpleEvent', handler)
 
-    total_events = 20_000  # Reduced for faster tests
+    total_events = 50_000
 
     start_time = time.time()
     memory_samples: list[float] = []
@@ -422,6 +422,8 @@ async def test_20k_events_with_memory_control():
     # Wait for all remaining events to complete
     if pending_events:
         await asyncio.gather(*pending_events)
+        pending_events.clear()
+        gc.collect()
 
     # Final wait
     await bus.wait_until_idle()
@@ -478,6 +480,7 @@ async def test_20k_events_with_memory_control():
     print(f'Before destroy - In-flight event ids: {len(bus.in_flight_event_ids)}')
 
     await bus.destroy(clear=True)
+    gc.collect()
     print('EventBus destroyed successfully')
 
 

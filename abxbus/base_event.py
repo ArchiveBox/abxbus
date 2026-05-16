@@ -1082,6 +1082,10 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         if not self._has_included_event_result(include):
             return False
         expected_result_count = len(self.event_results)
+        core_bus = self._core_event_bus_for_event()
+        expected_live_handler_ids = getattr(core_bus, '_expected_live_handler_ids', None)
+        if callable(expected_live_handler_ids):
+            expected_result_count = max(expected_result_count, len(expected_live_handler_ids(self)))
         if expected_result_count <= 1:
             return True
         terminal_results = [
@@ -1151,23 +1155,9 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
             core_bus._explicit_await_event_ids.add(self.event_id)  # pyright: ignore[reportPrivateUsage]
             try:
-                release_deferred = getattr(core_bus, '_release_deferred_explicit_await_messages', None)
-                if callable(release_deferred):
-                    release_deferred()
-                prepare_background_drain = getattr(core_bus, '_prepare_background_drain_for_explicit_await', None)
-                if callable(prepare_background_drain):
-                    prepare_background_drain(self)
-                should_await_via_driver = getattr(core_bus, '_should_await_via_background_driver', None)
-                await_via_driver = getattr(core_bus, '_await_event_via_background_driver', None)
-                if callable(should_await_via_driver) and callable(await_via_driver) and should_await_via_driver(self):
-                    await await_via_driver(self)
-                    return
                 await core_bus._drive_all_buses_until_event_completed(self.event_id, event_obj=self)  # pyright: ignore[reportPrivateUsage]
             finally:
                 core_bus._explicit_await_event_ids.discard(self.event_id)  # pyright: ignore[reportPrivateUsage]
-                release_deferred = getattr(core_bus, '_release_deferred_explicit_await_messages', None)
-                if callable(release_deferred):
-                    release_deferred()
             return
 
         await self._process_self_on_all_buses()
@@ -1183,11 +1173,15 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             if core_bus is not None and not first_result and not self._uses_first_handler_completion():
                 from abxbus.event_bus import in_handler_context
 
-                wait_with_active_drain = getattr(core_bus, '_wait_for_event_with_active_background_drain', None)
-                if callable(wait_with_active_drain) and not in_handler_context():
-                    if await wait_with_active_drain(self, timeout):
+                wait_with_shared_driver = getattr(core_bus, '_wait_for_event_with_shared_core_driver', None)
+                if callable(wait_with_shared_driver) and not in_handler_context():
+                    if await wait_with_shared_driver(self, timeout):
                         return self
             processing_task = asyncio.create_task(self._run_now_processing())
+            processing_tasks = getattr(core_bus, '_processing_tasks', None) if core_bus is not None else None
+            if isinstance(processing_tasks, set):
+                processing_tasks.add(processing_task)
+                processing_task.add_done_callback(processing_tasks.discard)
             if first_result or self._uses_first_handler_completion():
                 try:
                     await self._wait_for_first_included_result_or_completion(
