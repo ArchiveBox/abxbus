@@ -26,7 +26,8 @@ from urllib.parse import urlsplit, urlunsplit
 from uuid_extensions import uuid7str
 
 from abxbus.base_event import BaseEvent
-from abxbus.event_bus import EventBus, EventPatternType, in_handler_context
+from abxbus.bridge_utils import dispatch_bridge_event, event_pattern_matches
+from abxbus.event_bus import EventPatternType, in_handler_context
 
 _IDENTIFIER_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 _DEFAULT_POSTGRES_TABLE = 'abxbus_events'
@@ -80,7 +81,7 @@ class PostgresEventBridge:
         self.dsn, self.table = _parse_table_url(table_url)
         derived_channel = channel or _DEFAULT_POSTGRES_CHANNEL
         self.channel = _validate_identifier(derived_channel[:63], label='channel name')
-        self._inbound_bus = EventBus(name=name or f'PostgresEventBridge_{uuid7str()[-8:]}', max_history_size=0)
+        self.name = name or f'PostgresEventBridge_{uuid7str()[-8:]}'
 
         self._running = False
         self._write_conn: Any | None = None
@@ -90,10 +91,11 @@ class PostgresEventBridge:
         self._start_lock = asyncio.Lock()
         self._listen_query_lock = asyncio.Lock()
         self._table_columns: set[str] = {'event_id', 'event_created_at', 'event_type', _EVENT_PAYLOAD_COLUMN}
+        self._handlers: list[tuple[EventPatternType, Callable[[BaseEvent[Any]], Any]]] = []
 
     def on(self, event_pattern: EventPatternType, handler: Callable[[BaseEvent[Any]], Any]) -> None:
         self._ensure_started()
-        self._inbound_bus.on(event_pattern, handler)
+        self._handlers.append((event_pattern, handler))
 
     async def emit(self, event: BaseEvent[Any]) -> BaseEvent[Any] | None:
         self._ensure_started()
@@ -225,7 +227,6 @@ class PostgresEventBridge:
             except Exception:
                 pass
             self._write_conn = None
-        await self._inbound_bus.destroy(clear=clear)
 
     def _ensure_started(self) -> None:
         if self._running:
@@ -273,7 +274,11 @@ class PostgresEventBridge:
 
     async def _dispatch_inbound_payload(self, payload: Any) -> None:
         event = BaseEvent[Any].model_validate(payload).event_reset()
-        self._inbound_bus.emit(event)
+        await dispatch_bridge_event(self._handlers, event)
+
+    @staticmethod
+    def _matches(event_pattern: EventPatternType, event: BaseEvent[Any]) -> bool:
+        return event_pattern_matches(event_pattern, event)
 
     async def _ensure_table_exists(self) -> None:
         assert self._write_conn is not None

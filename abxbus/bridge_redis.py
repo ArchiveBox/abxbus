@@ -29,7 +29,8 @@ from urllib.parse import urlsplit, urlunsplit
 from uuid_extensions import uuid7str
 
 from abxbus.base_event import BaseEvent
-from abxbus.event_bus import EventBus, EventPatternType, in_handler_context
+from abxbus.bridge_utils import dispatch_bridge_event, event_pattern_matches
+from abxbus.event_bus import EventPatternType, in_handler_context
 
 _DEFAULT_REDIS_CHANNEL = 'abxbus_events'
 _DB_INIT_KEY = '__abxbus:bridge_init__'
@@ -66,7 +67,7 @@ def _parse_redis_url(redis_url: str, channel: str | None) -> tuple[str, str]:
 class RedisEventBridge:
     def __init__(self, redis_url: str, channel: str | None = None, *, name: str | None = None):
         self.url, self.channel = _parse_redis_url(redis_url, channel)
-        self._inbound_bus = EventBus(name=name or f'RedisEventBridge_{uuid7str()[-8:]}', max_history_size=0)
+        self.name = name or f'RedisEventBridge_{uuid7str()[-8:]}'
 
         self._running = False
         self._start_task: asyncio.Task[None] | None = None
@@ -75,10 +76,11 @@ class RedisEventBridge:
         self._redis_pub: Any | None = None
         self._redis_sub: Any | None = None
         self._pubsub: Any | None = None
+        self._handlers: list[tuple[EventPatternType, Callable[[BaseEvent[Any]], Any]]] = []
 
     def on(self, event_pattern: EventPatternType, handler: Callable[[BaseEvent[Any]], Any]) -> None:
         self._ensure_started()
-        self._inbound_bus.on(event_pattern, handler)
+        self._handlers.append((event_pattern, handler))
 
     async def emit(self, event: BaseEvent[Any]) -> BaseEvent[Any] | None:
         self._ensure_started()
@@ -156,8 +158,6 @@ class RedisEventBridge:
             await self._close_redis_client(self._redis_pub)
             self._redis_pub = None
 
-        await self._inbound_bus.destroy(clear=clear)
-
     def _ensure_started(self) -> None:
         if self._running:
             return
@@ -201,7 +201,11 @@ class RedisEventBridge:
 
     async def _dispatch_inbound_payload(self, payload: Any) -> None:
         event = BaseEvent[Any].model_validate(payload).event_reset()
-        self._inbound_bus.emit(event)
+        await dispatch_bridge_event(self._handlers, event)
+
+    @staticmethod
+    def _matches(event_pattern: EventPatternType, event: BaseEvent[Any]) -> bool:
+        return event_pattern_matches(event_pattern, event)
 
     async def _close_pubsub(self, pubsub: Any) -> None:
         try:

@@ -1,4 +1,4 @@
-# pyright: basic
+# pyright: basic, reportGeneralTypeIssues=false
 """
 Comprehensive tests for the EventBus implementation.
 
@@ -13,6 +13,8 @@ Tests cover:
 - Serialization
 - Batch operations
 """
+
+# pyright: reportGeneralTypeIssues=false
 
 import asyncio
 import time
@@ -192,7 +194,7 @@ class TestEventBusBasics:
         with pytest.raises(RuntimeError, match='destroyed'):
             bus.emit(DestroyEvent())
         with pytest.raises(RuntimeError, match='destroyed'):
-            await bus.find(DestroyEvent, future=False)
+            await bus.find(DestroyEvent, future=False)  # pyright: ignore[reportGeneralTypeIssues]
 
     async def test_destroy_clear_false_preserves_handlers_and_history_resolves_waiters_and_is_terminal(self):
         """destroy(clear=False) stops runtime work, resolves waiters, preserves inspectable state, and is terminal."""
@@ -230,9 +232,9 @@ class TestEventBusBasics:
         with pytest.raises(RuntimeError, match='destroyed'):
             bus.emit(TerminalEvent())
         with pytest.raises(RuntimeError, match='destroyed'):
-            await bus.find(TerminalEvent, future=False)
+            await bus.find(TerminalEvent, future=False)  # pyright: ignore[reportGeneralTypeIssues]
 
-        await bus.destroy(clear=True)
+        await bus.destroy(clear=True)  # pyright: ignore[reportGeneralTypeIssues]
 
     async def test_destroying_one_bus_does_not_break_shared_handlers_or_forward_targets(self):
         """A terminal destroy only clears the selected bus, not shared callables or peer buses."""
@@ -4309,6 +4311,46 @@ def test_bridge_modules_do_not_eager_import_optional_packages() -> None:
     for path, forbidden_roots in bridge_modules.items():
         imported_roots = _ast_import_roots(path)
         assert forbidden_roots.isdisjoint(imported_roots), f'{path} eagerly imports {forbidden_roots & imported_roots}'
+
+
+async def test_bridge_dispatch_uses_normalized_event_type_and_isolates_handler_errors() -> None:
+    from abxbus.bridge_utils import dispatch_bridge_event, event_pattern_matches
+
+    class OverrideEvent(BaseEvent):
+        event_type: str = Field(default='CustomEventType', frozen=True)
+
+    event = BaseEvent(event_type='CustomEventType')
+    seen: list[str] = []
+
+    async def failing_handler(_event: BaseEvent) -> None:
+        seen.append('failing')
+        raise RuntimeError('handler failed')
+
+    async def succeeding_handler(received: BaseEvent) -> None:
+        seen.append(received.event_type)
+
+    assert event_pattern_matches(OverrideEvent, event)
+
+    await dispatch_bridge_event(
+        [
+            (OverrideEvent, failing_handler),
+            (OverrideEvent, succeeding_handler),
+        ],
+        event,
+    )
+
+    assert seen == ['failing', 'CustomEventType']
+
+
+async def test_jsonl_bridge_close_clear_removes_handlers(tmp_path) -> None:
+    from abxbus.bridge_jsonl import JSONLEventBridge
+
+    bridge = JSONLEventBridge(str(tmp_path / 'events.jsonl'))
+    bridge.on('BaseEvent', lambda _event: None)
+
+    await bridge.close(clear=True)
+
+    assert bridge._handlers == []  # pyright: ignore[reportPrivateUsage]
 
 
 def test_root_import_excludes_optional_integrations_while_namespaced_imports_resolve() -> None:

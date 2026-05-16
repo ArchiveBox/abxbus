@@ -91,6 +91,7 @@ export const BaseEventSchema = z
     event_path: z.array(z.string()).optional(),
     event_result_type: z.unknown().optional(),
     event_emitted_by_handler_id: z.string().uuid().nullable().optional(),
+    event_emitted_by_result_id: z.string().uuid().nullable().optional(),
     event_pending_bus_count: z.number().nonnegative().optional(),
     event_status: z.enum(['pending', 'started', 'completed']).optional(),
     event_started_at: z.string().datetime().nullable().optional(),
@@ -121,6 +122,7 @@ type BaseEventFieldName =
   | 'event_path'
   | 'event_result_type'
   | 'event_emitted_by_handler_id'
+  | 'event_emitted_by_result_id'
   | 'event_pending_bus_count'
   | 'event_status'
   | 'event_started_at'
@@ -196,6 +198,7 @@ export type EventFactory<TShape extends z.ZodRawShape, TResult = unknown> = {
   event_type?: string
   event_version?: string
   event_result_type?: z.ZodTypeAny
+  event_payload_field_names?: Set<string>
   fromJSON?: (data: unknown) => EventWithResultSchema<TResult> & EventPayload<TShape>
 }
 
@@ -207,6 +210,7 @@ export type SchemaEventFactory<TSchema extends AnyEventSchema, TResult = unknown
   event_type?: string
   event_version?: string
   event_result_type?: z.ZodTypeAny
+  event_payload_field_names?: Set<string>
   fromJSON?: (data: unknown) => EventWithResultSchema<TResult> & EventPayloadFromSchema<TSchema>
 }
 
@@ -232,6 +236,7 @@ function baseEventDefaultShape(event_type: string): z.ZodRawShape {
     event_path: z.array(z.string()).optional(),
     event_result_type: z.unknown().optional(),
     event_emitted_by_handler_id: z.string().uuid().nullable().optional(),
+    event_emitted_by_result_id: z.string().uuid().nullable().optional(),
     event_pending_bus_count: z.number().nonnegative().optional(),
     event_status: z.enum(['pending', 'started', 'completed']).optional(),
     event_started_at: z.string().datetime().nullable().optional(),
@@ -286,6 +291,10 @@ function eventResultTypeFromObjectSchema(schema: z.ZodObject<z.ZodRawShape>): z.
   return raw_event_result_type === undefined ? undefined : normalizeEventResultType(raw_event_result_type)
 }
 
+function payloadFieldNames(raw_shape: Record<string, unknown>): Set<string> {
+  return new Set(Object.keys(raw_shape).filter((key) => key !== 'event_result_type' && !KNOWN_BASE_EVENT_FIELDS.has(key)))
+}
+
 function buildFullEventSchema(
   event_type: string,
   spec: unknown
@@ -293,6 +302,7 @@ function buildFullEventSchema(
   event_schema: AnyEventSchema
   event_result_type?: z.ZodTypeAny
   event_version?: string
+  event_payload_field_names: Set<string>
 } {
   if (isZodObjectSchema(spec)) {
     const user_shape = spec.shape
@@ -306,6 +316,7 @@ function buildFullEventSchema(
     return {
       event_schema: full_schema,
       event_result_type: eventResultTypeFromObjectSchema(spec),
+      event_payload_field_names: payloadFieldNames(user_shape),
     }
   }
 
@@ -322,6 +333,7 @@ function buildFullEventSchema(
     event_schema: full_schema,
     event_result_type: normalizeEventResultType(raw_shape.event_result_type),
     event_version: typeof raw_shape.event_version === 'string' ? raw_shape.event_version : undefined,
+    event_payload_field_names: payloadFieldNames(raw_shape),
   }
 }
 
@@ -357,6 +369,7 @@ export class BaseEvent {
   event_result_type?: z.ZodTypeAny // optional zod schema to enforce the shape of return values from handlers
   event_results!: Map<string, EventResult<this>> // map of handler ids to EventResult objects for the event
   event_emitted_by_handler_id!: string | null // if event was emitted inside a handler while it was running, this is set to the enclosing handler's handler id, else null
+  event_emitted_by_result_id!: string | null // if event was emitted inside a handler while it was running, this is set to the enclosing result id, else null
   event_pending_bus_count!: number // number of buses that have accepted this event and not yet finished processing or removed it from their queues (for queue-jump processing)
   event_status!: 'pending' | 'started' | 'completed' // processing status of the event as a whole, no separate 'error' state because events can not error, only individual handlers can
   event_started_at!: string | null
@@ -370,10 +383,12 @@ export class BaseEvent {
   static event_version = '0.0.1'
   static event_result_type?: z.ZodTypeAny
   static event_schema: AnyEventSchema = BaseEventSchema // generated Zod schema for local TS event data validation; never sent over the wire
+  static event_payload_field_names = new Set<string>()
 
   // internal runtime state
   event_bus?: EventBus // bus that dispatched this event, also used by event.emit(child)
   _event_original?: BaseEvent // underlying event object that was dispatched, if this is a bus-scoped proxy wrapping it
+  _core_known?: boolean
   _event_dispatch_context?: unknown | null // captured AsyncLocalStorage context at dispatch site, used to restore that context when running handlers
   _event_fields_set?: Set<string>
 
@@ -451,8 +466,13 @@ export class BaseEvent {
       typeof (parsed as { event_emitted_by_handler_id?: unknown }).event_emitted_by_handler_id === 'string'
         ? (parsed as { event_emitted_by_handler_id: string }).event_emitted_by_handler_id
         : null
+    this.event_emitted_by_result_id =
+      typeof (parsed as { event_emitted_by_result_id?: unknown }).event_emitted_by_result_id === 'string'
+        ? (parsed as { event_emitted_by_result_id: string }).event_emitted_by_result_id
+        : null
 
     this.event_result_type = normalizeEventResultType(parsed.event_result_type ?? event_result_type)
+    this._core_known = false
 
     this._event_completed_signal = null
     this._lock_for_event_handler = null
@@ -483,6 +503,7 @@ export class BaseEvent {
     const full_schema = built.event_schema
     const event_result_type = built.event_result_type
     const event_version = built.event_version
+    const event_payload_field_names = built.event_payload_field_names
 
     // create a new event class that extends BaseEvent and adds the custom fields
     class ExtendedEvent extends BaseEvent {
@@ -490,6 +511,7 @@ export class BaseEvent {
       static event_type = event_type
       static event_version = event_version ?? BaseEvent.event_version
       static event_result_type = event_result_type
+      static event_payload_field_names = event_payload_field_names
 
       constructor(data: EventInit<ZodShapeFrom<TShape>> | EventInitFromSchema<AnyEventSchema>) {
         super(data as BaseEventInit<Record<string, unknown>>)
@@ -506,6 +528,7 @@ export class BaseEvent {
     EventFactory.event_type = event_type
     EventFactory.event_version = event_version ?? BaseEvent.event_version
     EventFactory.event_result_type = event_result_type
+    EventFactory.event_payload_field_names = event_payload_field_names
     EventFactory.class = ExtendedEvent as unknown as new (
       data: EventInit<ZodShapeFrom<TShape>>
     ) => EventWithResultSchema<ResultSchemaFromShape<TShape>> & EventPayload<ZodShapeFrom<TShape>>
@@ -566,6 +589,8 @@ export class BaseEvent {
     const event_results = Object.fromEntries(
       Array.from(this.event_results.entries()).map(([handler_id, result]) => [handler_id, result.toJSON()])
     )
+    const emitted_by_result =
+      this.event_emitted_by_result_id === null ? {} : { event_emitted_by_result_id: this.event_emitted_by_result_id }
 
     const event_schema = ((this.constructor as typeof BaseEvent).event_schema ?? this.event_schema ?? BaseEventSchema) as AnyEventSchema
     const encoded = encodeEventSchema(event_schema, {
@@ -589,6 +614,7 @@ export class BaseEvent {
       event_parent_id: this.event_parent_id,
       event_path: this.event_path,
       event_emitted_by_handler_id: this.event_emitted_by_handler_id,
+      ...emitted_by_result,
       event_pending_bus_count: this.event_pending_bus_count,
 
       // mutable runtime status and timestamps
@@ -600,6 +626,9 @@ export class BaseEvent {
       ...(Object.keys(event_results).length > 0 ? { event_results } : {}),
     })
     delete encoded.event_schema
+    if (encoded.event_emitted_by_result_id === null) {
+      delete encoded.event_emitted_by_result_id
+    }
 
     return {
       ...encoded,
@@ -622,6 +651,7 @@ export class BaseEvent {
       event_parent_id: this.event_parent_id,
       event_path: this.event_path,
       event_emitted_by_handler_id: this.event_emitted_by_handler_id,
+      ...emitted_by_result,
       event_pending_bus_count: this.event_pending_bus_count,
 
       // mutable runtime status and timestamps
@@ -1204,6 +1234,7 @@ export class BaseEvent {
       return this._withEventResultMethods(Promise.reject(new Error('event has no bus attached')))
     }
     original._markBlocksParentCompletionIfAwaitedFromEmittingHandler()
+    const active_handler_result = original.event_bus?.locks._getActiveHandlerResultForCurrentAsyncContext()
     const resolved_timeout_seconds = options.timeout ?? null
     const processing =
       original.event_status === 'completed'
@@ -1211,7 +1242,7 @@ export class BaseEvent {
         : this._timeoutPromise(
             resolved_timeout_seconds,
             () => `Timed out waiting for ${original.event_type} completion after ${resolved_timeout_seconds}s`,
-            () => this.event_bus!._processEventImmediately(this)
+            () => this.event_bus!._processEventImmediately(this, active_handler_result)
           )
 
     if (options.first_result) {
@@ -1250,7 +1281,7 @@ export class BaseEvent {
 
   async eventResult(options: EventResultOptions<this> = {}): Promise<EventResultType<this> | undefined> {
     const original = this._event_original ?? this
-    if (original.event_status === 'pending' && original.event_results.size === 0) {
+    if (original.event_status === 'pending' && !this._hasIncludedResult(options)) {
       await this.now({ first_result: true })
     }
     return this._collectResultValues(options, 'registration').at(0)
@@ -1258,7 +1289,7 @@ export class BaseEvent {
 
   async eventResultsList(options: EventResultOptions<this> = {}): Promise<Array<EventResultType<this> | undefined>> {
     const original = this._event_original ?? this
-    if (original.event_status === 'pending' && original.event_results.size === 0) {
+    if (original.event_status === 'pending') {
       await this.now({ first_result: false })
     }
     return this._collectResultValues(options, 'registration')
@@ -1319,7 +1350,7 @@ export class BaseEvent {
     }
   }
 
-  _markCompleted(force: boolean = true, notify_parents: boolean = true): void {
+  _markCompleted(force: boolean = true, notify_parents: boolean = true, completed_at: string | null = null): void {
     const original = this._event_original ?? this
     if (original.event_status === 'completed') {
       return
@@ -1333,7 +1364,7 @@ export class BaseEvent {
       }
     }
     original.event_status = 'completed'
-    original.event_completed_at = monotonicDatetime()
+    original.event_completed_at = completed_at === null ? monotonicDatetime() : monotonicDatetime(completed_at)
     if (original.event_bus) {
       const bus_for_hook = original.event_bus
       const event_for_bus = bus_for_hook._getEventProxyScopedToThisBus(original)
@@ -1341,7 +1372,7 @@ export class BaseEvent {
     }
     original._setDispatchContext(null)
     original._notifyDoneListeners()
-    original._event_completed_signal!.resolve(original)
+    original._event_completed_signal?.resolve(original)
     original._event_completed_signal = null
     original.dropFromZeroHistoryBuses()
     if (notify_parents && original.event_bus) {

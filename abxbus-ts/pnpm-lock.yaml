@@ -9,10 +9,18 @@ overrides:
 
 packageExtensionsChecksum: sha256-PunKmwj4MNKissO9RnDbsnPg7/+Mdn4VDkJSYfN5IOg=
 
+patchedDependencies:
+  '@tachyon-ipc/core@0.5.0':
+    hash: 2bf042c4792b71f61883851c19604cd3b6c31a1f7e96340321ee465698593fda
+    path: patches/@tachyon-ipc__core@0.5.0.patch
+
 importers:
 
   .:
     dependencies:
+      '@msgpack/msgpack':
+        specifier: ^3.1.3
+        version: 3.1.3
       uuid:
         specifier: ^14.0.0
         version: 14.0.0
@@ -34,7 +42,7 @@ importers:
         version: 2.7.1(@opentelemetry/api@1.9.1)
       '@tachyon-ipc/core':
         specifier: ^0.5.0
-        version: 0.5.0
+        version: 0.5.0(patch_hash=2bf042c4792b71f61883851c19604cd3b6c31a1f7e96340321ee465698593fda)
       '@types/node':
         specifier: ^25.6.1
         version: 25.6.1
@@ -445,6 +453,10 @@ packages:
   '@isaacs/fs-minipass@4.0.1':
     resolution: {integrity: sha512-wgm9Ehl2jpeqP3zw/7mo3kRHFp5MEDhqAdwy1fTGkHAwnkGOVsgpvQhL8B5n1qlb01jV3n/bI0ZfZp5lWA1k4w==}
     engines: {node: '>=18.0.0'}
+
+  '@msgpack/msgpack@3.1.3':
+    resolution: {integrity: sha512-47XIizs9XZXvuJgoaJUIE2lFoID8ugvc0jzSHP+Ptfk8nTbnR8g788wv48N03Kx0UkAv559HWRQ3yzOgzlRNUA==}
+    engines: {node: '>= 18'}
 
   '@opentelemetry/api-logs@0.217.0':
     resolution: {integrity: sha512-Cdq0jW2lknrNfrAm92MyEAvpe2cRsKjdnQLHUL6xRA4IVUnsWx6P65E7NcUO0Y+L4w1Aee5iV8FvjSwd+lrs9A==}
@@ -1364,6 +1376,8 @@ snapshots:
     dependencies:
       minipass: 7.1.3
 
+  '@msgpack/msgpack@3.1.3': {}
+
   '@opentelemetry/api-logs@0.217.0':
     dependencies:
       '@opentelemetry/api': 1.9.1
@@ -1453,7 +1467,7 @@ snapshots:
 
   '@protobufjs/utf8@1.1.1': {}
 
-  '@tachyon-ipc/core@0.5.0':
+  '@tachyon-ipc/core@0.5.0(patch_hash=2bf042c4792b71f61883851c19604cd3b6c31a1f7e96340321ee465698593fda)':
     dependencies:
       cmake-js: 8.0.0
       node-addon-api: 8.7.0

@@ -295,6 +295,7 @@ fn expected_event_bus_json_keys() -> BTreeSet<String> {
         "event_handler_concurrency".to_string(),
         "event_handler_detect_file_paths".to_string(),
         "event_handler_slow_timeout".to_string(),
+        "event_handler_timeout".to_string(),
         "event_history".to_string(),
         "event_slow_timeout".to_string(),
         "event_timeout".to_string(),
@@ -3246,6 +3247,7 @@ fn test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() {
             event_handler_completion: EventHandlerCompletionMode::First,
             event_timeout: Some(0.0),
             event_slow_timeout: Some(34.0),
+            event_handler_timeout: None,
             event_handler_slow_timeout: Some(12.0),
             event_handler_detect_file_paths: false,
             max_handler_recursion_depth: 2,
@@ -3273,6 +3275,7 @@ fn test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() {
     assert_eq!(payload["event_slow_timeout"], 34.0);
     assert_eq!(payload["event_handler_concurrency"], "parallel");
     assert_eq!(payload["event_handler_completion"], "first");
+    assert_eq!(payload["event_handler_timeout"], Value::Null);
     assert_eq!(payload["event_handler_slow_timeout"], 12.0);
     assert_eq!(payload["event_handler_detect_file_paths"], false);
 

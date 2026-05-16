@@ -6,6 +6,12 @@ type AsyncLocalStorageLike = {
   enterWith?(store: unknown): void
 }
 
+export type AbortContext = {
+  promise: Promise<never>
+  isAborted: () => boolean
+  error: () => Error | null
+}
+
 export type { AsyncLocalStorageLike }
 
 // Cache the AsyncLocalStorage constructor so multiple modules can create separate instances.
@@ -52,6 +58,7 @@ export const createAsyncLocalStorage = (): AsyncLocalStorageLike | null => {
 
 // The primary AsyncLocalStorage instance used for event dispatch context propagation.
 export let async_local_storage: AsyncLocalStorageLike | null = _AsyncLocalStorageClass ? new _AsyncLocalStorageClass() : null
+const abort_context_storage: AsyncLocalStorageLike | null = _AsyncLocalStorageClass ? new _AsyncLocalStorageClass() : null
 
 export const captureAsyncContext = (): unknown | null => {
   if (!async_local_storage) {
@@ -64,7 +71,25 @@ export const _runWithAsyncContext = <T>(context: unknown | null, fn: () => T): T
   if (!async_local_storage) {
     return fn()
   }
+  if (context === null && async_local_storage.getStore() === undefined) {
+    return fn()
+  }
   return async_local_storage.run(context ?? undefined, fn)
 }
 
+export const _enterAsyncContext = (context: unknown | null): void => {
+  async_local_storage?.enterWith?.(context ?? undefined)
+}
+
 export const hasAsyncLocalStorage = (): boolean => async_local_storage !== null
+
+export const runWithAbortContext = <T>(context: AbortContext, fn: () => T): T => {
+  if (!abort_context_storage) {
+    return fn()
+  }
+  return abort_context_storage.run(context, fn)
+}
+
+export const getActiveAbortContext = (): AbortContext | null => {
+  return (abort_context_storage?.getStore() as AbortContext | undefined) ?? null
+}

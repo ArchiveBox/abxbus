@@ -1,3 +1,5 @@
+# pyright: reportUnnecessaryComparison=false
+
 import asyncio
 import json
 import os

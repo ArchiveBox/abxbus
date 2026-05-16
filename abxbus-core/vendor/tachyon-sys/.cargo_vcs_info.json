@@ -1,0 +1,7 @@
+{
+  "git": {
+    "sha1": "bddcf0f017b85db9d45dc53260cfe390c3d737ba",
+    "dirty": true
+  },
+  "path_in_vcs": "bindings/rust/tachyon-sys"
+}

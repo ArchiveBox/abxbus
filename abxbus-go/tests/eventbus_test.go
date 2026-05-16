@@ -1608,7 +1608,6 @@ func TestGoUnsupportedBridgeAPIsAndDependenciesAreAbsent(t *testing.T) {
 			"github.com/nats-io",
 			"modernc.org/sqlite",
 			"github.com/mattn/go-sqlite3",
-			"tachyon",
 		} {
 			if strings.Contains(text, forbidden) {
 				t.Fatalf("%s unexpectedly references unsupported optional integration dependency %q", filename, forbidden)

@@ -31,6 +31,7 @@ pub struct EventResult {
     pub timeout: Option<f64>,
     pub started_at: Option<String>,
     pub result: Option<Value>,
+    pub result_set: bool,
     pub error: Option<String>,
     pub completed_at: Option<String>,
     pub event_children: Vec<String>,
@@ -103,6 +104,8 @@ impl<'de> Deserialize<'de> for EventResult {
                 timeout: Option<f64>,
                 started_at: Option<String>,
                 result: Option<Value>,
+                #[serde(default)]
+                result_set: bool,
                 error: Option<String>,
                 completed_at: Option<String>,
                 event_children: Vec<String>,
@@ -110,6 +113,9 @@ impl<'de> Deserialize<'de> for EventResult {
 
             let nested: NestedEventResult =
                 serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+            let result_set = nested.result_set
+                || (nested.status == EventResultStatus::Completed && nested.result.is_some());
+
             return Ok(Self {
                 id: nested.id,
                 status: nested.status,
@@ -118,6 +124,7 @@ impl<'de> Deserialize<'de> for EventResult {
                 timeout: nested.timeout,
                 started_at: nested.started_at,
                 result: nested.result,
+                result_set,
                 error: nested.error,
                 completed_at: nested.completed_at,
                 event_children: nested.event_children,
@@ -140,6 +147,7 @@ impl EventResult {
             timeout,
             started_at: None,
             result: None,
+            result_set: false,
             error: None,
             completed_at: None,
             event_children: vec![],
@@ -185,10 +193,12 @@ impl EventResult {
     ) -> &mut Self {
         if let Some(result) = result {
             self.result = result;
+            self.result_set = true;
             self.status = EventResultStatus::Completed;
         }
         if let Some(error) = error {
             self.error = error;
+            self.result_set = false;
             self.status = EventResultStatus::Error;
         }
         if let Some(status) = status {
@@ -258,17 +268,20 @@ impl EventResult {
                 Ok(value) => {
                     self.status = EventResultStatus::Completed;
                     self.result = Some(value.clone());
+                    self.result_set = true;
                     Ok(value)
                 }
                 Err(error) => {
                     self.status = EventResultStatus::Error;
                     self.result = None;
+                    self.result_set = false;
                     self.error = Some(error.clone());
                     Err(error)
                 }
             },
             Err(error) => {
                 self.status = EventResultStatus::Error;
+                self.result_set = false;
                 self.error = Some(error.clone());
                 Err(error)
             }
@@ -480,6 +493,11 @@ impl EventResult {
             })
             .unwrap_or_default();
 
+        let result_set = record
+            .get("result_set")
+            .and_then(Value::as_bool)
+            .unwrap_or(status == EventResultStatus::Completed && record.contains_key("result"));
+
         Some(Self {
             id: record
                 .get("id")
@@ -495,6 +513,7 @@ impl EventResult {
                 .and_then(Value::as_str)
                 .map(ToString::to_string),
             result: record.get("result").cloned(),
+            result_set,
             error: record.get("error").and_then(Self::error_from_json_value),
             completed_at: record
                 .get("completed_at")

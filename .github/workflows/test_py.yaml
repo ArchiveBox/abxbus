@@ -28,7 +28,21 @@ jobs:
           enable-cache: true
           activate-environment: true
 
-      - run: uv sync --dev --all-extras --no-extra tachyon
+      - name: Install native build tools
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: cmake gcc-14 g++-14
+          version: native-build-tools-v1
+          execute_install_scripts: true
+
+      - name: Configure native build tools
+        run: |
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+          cmake --version
+          gcc-14 --version
+
+      - run: uv sync --dev --all-extras
       - run: uv pip install fastapi
       - run: uv run ruff format --check
       - run: uv run ruff check
@@ -105,6 +119,14 @@ jobs:
           enable-cache: true
           activate-environment: true
 
+      - name: Set up Rust for core-backed Python tests
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo for core-backed Python tests
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: abxbus-core -> target
+
       - uses: pnpm/action-setup@v4
         if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
         with:
@@ -117,16 +139,14 @@ jobs:
           cache: pnpm
           cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
-      - name: Install native TypeScript build tools
-        if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
+      - name: Install native build tools
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
           packages: cmake gcc-14 g++-14
-          version: native-typescript-build-tools-v1
+          version: native-build-tools-v1
           execute_install_scripts: true
 
-      - name: Configure native TypeScript build tools
-        if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
+      - name: Configure native build tools
         run: |
           echo "CC=gcc-14" >> "$GITHUB_ENV"
           echo "CXX=g++-14" >> "$GITHUB_ENV"
@@ -160,7 +180,10 @@ jobs:
           sqlite3 --version
           gcc-14 --version
 
-      - run: uv sync --dev --all-extras --no-extra tachyon
+      - run: uv sync --dev --all-extras
+
+      - name: Build Rust core Tachyon binary
+        run: cargo build --manifest-path abxbus-core/Cargo.toml --bin abxbus-core-tachyon
 
       - name: Install Tachyon (compiled with gcc-14) for the bridges roundtrip test
         if: matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
@@ -226,7 +249,21 @@ jobs:
           enable-cache: true
           activate-environment: true
 
-      - run: uv sync --dev --all-extras --no-extra tachyon
+      - name: Install native build tools
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: cmake gcc-14 g++-14
+          version: native-build-tools-v1
+          execute_install_scripts: true
+
+      - name: Configure native build tools
+        run: |
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+          cmake --version
+          gcc-14 --version
+
+      - run: uv sync --dev --all-extras
 
       - name: Download all coverage data
         uses: actions/download-artifact@v4
@@ -288,7 +325,21 @@ jobs:
           enable-cache: true
           activate-environment: true
 
-      - run: uv sync --dev --all-extras --no-extra tachyon
+      - name: Install native build tools
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: cmake gcc-14 g++-14
+          version: native-build-tools-v1
+          execute_install_scripts: true
+
+      - name: Configure native build tools
+        run: |
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+          cmake --version
+          gcc-14 --version
+
+      - run: uv sync --dev --all-extras
       - run: uv run pytest tests/test_eventbus_performance.py
       - name: Run Python runtime perf
         run: uv run python tests/performance_runtime.py | tee python_perf.log

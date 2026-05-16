@@ -101,15 +101,35 @@ jobs:
           cache: true
           cache-dependency-path: abxbus-go/go.sum
 
+      - name: Install native build tools
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: cmake gcc-14 g++-14
+          version: native-build-tools-v1
+          execute_install_scripts: true
+
+      - name: Configure native build tools
+        run: |
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+          cmake --version
+          gcc-14 --version
+
       - name: Set up Rust for cross-runtime roundtrip tests
-        if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'core_client' || matrix.task.name == 'core_event_bus')
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Cargo for cross-runtime roundtrip tests
-        if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'core_client' || matrix.task.name == 'core_event_bus')
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: abxbus-rust -> target
+          workspaces: |
+            abxbus-rust -> target
+            abxbus-core -> target
+
+      - name: Build Rust core Tachyon binary
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'core_client' || matrix.task.name == 'core_event_bus')
+        run: cargo build --manifest-path ../abxbus-core/Cargo.toml --bin abxbus-core-tachyon
 
       - uses: astral-sh/setup-uv@v6
         if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
@@ -149,7 +169,7 @@ jobs:
         if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
         run: |
           cd ..
-          uv sync --dev --all-extras --no-extra tachyon
+          uv sync --dev --all-extras
           pnpm --dir abxbus-ts install --frozen-lockfile
 
       - name: Run Go test file

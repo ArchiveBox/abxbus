@@ -42,7 +42,7 @@ export class SQLiteEventBridge {
   readonly poll_interval: number
   readonly name: string
 
-  private readonly inbound_bus: EventBus
+  private inbound_bus: EventBus | null
   private running: boolean
   private last_seen_event_created_at: string
   private last_seen_event_id: string
@@ -56,7 +56,7 @@ export class SQLiteEventBridge {
     this.table = validateIdentifier(table, 'table name')
     this.poll_interval = poll_interval
     this.name = name ?? `SQLiteEventBridge_${randomSuffix()}`
-    this.inbound_bus = new EventBus(this.name, { max_history_size: 0 })
+    this.inbound_bus = null
     this.running = false
     this.last_seen_event_created_at = ''
     this.last_seen_event_id = ''
@@ -74,21 +74,16 @@ export class SQLiteEventBridge {
   on<T extends BaseEvent>(event_pattern: string | '*', handler: UntypedEventHandlerFunction<T>): void
   on(event_pattern: EventPattern | '*', handler: EventHandlerCallable | UntypedEventHandlerFunction): void {
     this.ensureStarted()
+    const inbound_bus = this.getInboundBus()
     if (typeof event_pattern === 'string') {
-      this.inbound_bus.on(event_pattern, handler as UntypedEventHandlerFunction<BaseEvent>)
+      inbound_bus.on(event_pattern, handler as UntypedEventHandlerFunction<BaseEvent>)
       return
     }
-    this.inbound_bus.on(event_pattern as EventClass<BaseEvent>, handler as EventHandlerCallable<BaseEvent>)
+    inbound_bus.on(event_pattern as EventClass<BaseEvent>, handler as EventHandlerCallable<BaseEvent>)
   }
 
   async emit<T extends BaseEvent>(event: T): Promise<void> {
-    this.ensureStarted()
-    if (!this.running) {
-      await this.start()
-    }
-    if (!this.db) {
-      throw new Error('SQLiteEventBridge database not initialized')
-    }
+    await this.initializeDatabase()
 
     const payload = event.toJSON() as Record<string, unknown>
     const { event_fields, event_payload } = splitBridgePayload(payload)
@@ -126,26 +121,7 @@ export class SQLiteEventBridge {
     }
 
     this.start_task = (async (): Promise<void> => {
-      if (!isNodeRuntime()) {
-        throw new Error('SQLiteEventBridge is only supported in Node.js runtimes')
-      }
-
-      const mod = await loadNodeSqlite()
-      const Database = mod.DatabaseSync ?? mod.default?.DatabaseSync
-      if (typeof Database !== 'function') {
-        throw new Error('SQLiteEventBridge could not load DatabaseSync from node:sqlite. Please use Node.js 22+.')
-      }
-      this.db = new Database(this.path)
-      this.db.exec('PRAGMA journal_mode = WAL')
-      this.db
-        .prepare(
-          `CREATE TABLE IF NOT EXISTS "${this.table}" ("event_id" TEXT PRIMARY KEY, "event_created_at" TEXT, "event_type" TEXT, "event_payload" JSON)`
-        )
-        .run()
-
-      this.refreshColumnCache()
-      this.ensureColumns(['event_id', 'event_created_at', 'event_type', EVENT_PAYLOAD_COLUMN])
-      this.ensureBaseIndexes()
+      await this.initializeDatabase()
       this.setCursorToLatestRow()
 
       this.running = true
@@ -170,7 +146,8 @@ export class SQLiteEventBridge {
       this.db = null
     }
 
-    this.inbound_bus.destroy()
+    this.inbound_bus?.destroy()
+    this.inbound_bus = null
   }
 
   private ensureStarted(): void {
@@ -236,8 +213,42 @@ export class SQLiteEventBridge {
   }
 
   private async dispatchInboundPayload(payload: unknown): Promise<void> {
+    if (!this.inbound_bus) {
+      return
+    }
     const event = BaseEvent.fromJSON(payload).eventReset()
     this.inbound_bus.emit(event)
+  }
+
+  private getInboundBus(): EventBus {
+    if (!this.inbound_bus) {
+      this.inbound_bus = new EventBus(this.name, { max_history_size: 100, max_history_drop: true })
+    }
+    return this.inbound_bus
+  }
+
+  private async initializeDatabase(): Promise<void> {
+    if (this.db) return
+    if (!isNodeRuntime()) {
+      throw new Error('SQLiteEventBridge is only supported in Node.js runtimes')
+    }
+
+    const mod = await loadNodeSqlite()
+    const Database = mod.DatabaseSync ?? mod.default?.DatabaseSync
+    if (typeof Database !== 'function') {
+      throw new Error('SQLiteEventBridge could not load DatabaseSync from node:sqlite. Please use Node.js 22+.')
+    }
+    this.db = new Database(this.path)
+    this.db.exec('PRAGMA journal_mode = WAL')
+    this.db
+      .prepare(
+        `CREATE TABLE IF NOT EXISTS "${this.table}" ("event_id" TEXT PRIMARY KEY, "event_created_at" TEXT, "event_type" TEXT, "event_payload" JSON)`
+      )
+      .run()
+
+    this.refreshColumnCache()
+    this.ensureColumns(['event_id', 'event_created_at', 'event_type', EVENT_PAYLOAD_COLUMN])
+    this.ensureBaseIndexes()
   }
 
   private refreshColumnCache(): void {

@@ -108,6 +108,8 @@ export class EventHandler {
   event_pattern: string | '*' // event_type string to match against, or '*' to match all events
   eventbus_name: string // name of the event bus that the handler is registered on
   eventbus_id: string // uuidv7 identifier of the event bus that the handler is registered on
+  readonly handler_is_async: boolean
+  private readonly handler_async_wrapper: EventHandlerCallable
 
   constructor(params: {
     id?: string
@@ -140,14 +142,12 @@ export class EventHandler {
     this.event_pattern = params.event_pattern
     this.eventbus_name = params.eventbus_name
     this.eventbus_id = params.eventbus_id
+    this.handler_is_async = Object.prototype.toString.call(this.handler) === '[object AsyncFunction]'
+    this.handler_async_wrapper = this.handler_is_async ? this.handler : async (event: BaseEvent) => await this.handler(event)
   }
 
   get _handler_async(): EventHandlerCallable {
-    const handler = this.handler
-    if (Object.prototype.toString.call(handler) === '[object AsyncFunction]') {
-      return handler
-    }
-    return async (event: BaseEvent) => await handler(event)
+    return this.handler_async_wrapper
   }
 
   static handlerNameFromCallable(handler: EventHandlerCallable): string {
@@ -179,11 +179,13 @@ export class EventHandler {
     handler_slow_timeout?: number | null
     handler_registered_at?: string
   }): EventHandler {
+    const should_detect_handler_file_path = params.detect_handler_file_path ?? true
+    const handler_file_path = params.handler_file_path ?? (should_detect_handler_file_path ? EventHandler.detectHandlerFilePath() : null)
     const entry = new EventHandler({
       id: params.id,
       handler: params.handler as EventHandlerCallable,
       handler_name: EventHandler.handlerNameFromCallable(params.handler as EventHandlerCallable),
-      handler_file_path: params.handler_file_path ?? null,
+      handler_file_path,
       handler_timeout: params.handler_timeout,
       handler_slow_timeout: params.handler_slow_timeout,
       handler_registered_at: monotonicDatetime(params.handler_registered_at),
@@ -191,19 +193,6 @@ export class EventHandler {
       eventbus_name: params.eventbus_name,
       eventbus_id: params.eventbus_id,
     })
-    const should_detect_handler_file_path = params.detect_handler_file_path ?? true
-    if (should_detect_handler_file_path && entry.handler_file_path === null) {
-      entry._detectHandlerFilePath()
-      if (params.id === undefined) {
-        entry.id = EventHandler.computeHandlerId({
-          eventbus_id: entry.eventbus_id,
-          handler_name: entry.handler_name,
-          handler_file_path: entry.handler_file_path,
-          handler_registered_at: entry.handler_registered_at,
-          event_pattern: entry.event_pattern,
-        })
-      }
-    }
     return entry
   }
 
@@ -216,12 +205,12 @@ export class EventHandler {
 
   // autodetect the path/to/source/file.ts:lineno where the handler is defined for better logs
   // optional (controlled by EventBus.event_handler_detect_file_paths) because it can slow down performance to introspect stack traces and find file paths
-  _detectHandlerFilePath(): void {
+  static detectHandlerFilePath(): string | null {
     const line = new Error().stack
       ?.split('\n')
       .map((l) => l.trim())
       .filter(Boolean)[4]
-    if (!line) return
+    if (!line) return null
     const resolved_path =
       line.trim().match(/\(([^)]+)\)$/)?.[1] ??
       line.trim().match(/^\s*at\s+(.+)$/)?.[1] ??
@@ -241,7 +230,11 @@ export class EventHandler {
       }
     }
     normalized = normalized.replace(/\/users\/[^/]+\//i, '~/').replace(/\/home\/[^/]+\//i, '~/')
-    this.handler_file_path = line_number ? `${normalized}:${line_number}` : normalized
+    return line_number ? `${normalized}:${line_number}` : normalized
+  }
+
+  _detectHandlerFilePath(): void {
+    this.handler_file_path = EventHandler.detectHandlerFilePath()
   }
 
   toJSON(): EventHandlerJSON {

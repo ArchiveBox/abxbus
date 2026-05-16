@@ -17,9 +17,9 @@
  *   await sender.emit(event)
  */
 import { existsSync, symlinkSync, unlinkSync } from 'node:fs'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
-import { Worker } from 'node:worker_threads'
 
 import { BaseEvent } from './BaseEvent.js'
 import { EventBus } from './EventBus.js'
@@ -27,7 +27,7 @@ import { assertOptionalDependencyAvailable, isNodeRuntime } from './optional_dep
 import type { EventClass, EventHandlerCallable, EventPattern, UntypedEventHandlerFunction } from './types.js'
 
 const randomSuffix = (): string => Math.random().toString(36).slice(2, 10)
-const DEFAULT_TACHYON_CAPACITY = 1 << 20
+const DEFAULT_TACHYON_CAPACITY = 16 << 20
 const TACHYON_CONNECT_TIMEOUT_MS = 5000
 const TACHYON_LISTEN_TIMEOUT_MS = 5000
 // Tachyon recv() blocks on a futex that worker.terminate() cannot preempt; the
@@ -68,11 +68,11 @@ const ensureTachyonNativeLayout = () => {
 ensureTachyonNativeLayout()
 `
 
-const TACHYON_LISTENER_WORKER_CODE = `
-const { parentPort, workerData } = require('node:worker_threads')
+const TACHYON_LISTENER_CHILD_CODE = `
 ${TACHYON_NATIVE_LAYOUT_FIX}
 
 const SHUTDOWN_TYPE_ID = ${TACHYON_SHUTDOWN_TYPE_ID}
+const send = (msg) => { if (process.send) process.send(msg) }
 
 const probeListenerAlive = (path) => new Promise((resolve) => {
   const net = require('node:net')
@@ -89,7 +89,7 @@ const probeListenerAlive = (path) => new Promise((resolve) => {
 const main = async () => {
   const { Bus } = await import('@tachyon-ipc/core')
   const fs = require('node:fs')
-  const { path, capacity } = workerData
+  const { path, capacity } = JSON.parse(process.argv[1])
   let bus
   try {
     bus = Bus.listen(path, capacity)
@@ -106,38 +106,35 @@ const main = async () => {
     try { fs.unlinkSync(path) } catch {}
     bus = Bus.listen(path, capacity)
   }
-  parentPort.postMessage({ type: 'ready' })
+  send({ type: 'ready' })
   while (true) {
     let msg
     try {
       msg = bus.recv()
     } catch (err) {
-      parentPort.postMessage({ type: 'error', message: err && err.message ? err.message : String(err) })
+      send({ type: 'error', message: err && err.message ? err.message : String(err) })
       break
     }
     if (msg.typeId === SHUTDOWN_TYPE_ID) break
-    parentPort.postMessage({ type: 'message', data: msg.data, typeId: msg.typeId })
+    send({ type: 'message', data: Buffer.from(msg.data).toString('base64'), typeId: msg.typeId })
   }
-  try { bus.close && bus.close() } catch {}
 }
 
 main().catch((err) => {
-  if (parentPort) {
-    parentPort.postMessage({ type: 'error', message: err && err.message ? err.message : String(err) })
-  }
+  send({ type: 'error', message: err && err.message ? err.message : String(err) })
 }).finally(() => process.exit(0))
 `
 
-const TACHYON_SENDER_WORKER_CODE = `
-const { parentPort, workerData } = require('node:worker_threads')
+const TACHYON_SENDER_CHILD_CODE = `
 ${TACHYON_NATIVE_LAYOUT_FIX}
 
 const SHUTDOWN_TYPE_ID = ${TACHYON_SHUTDOWN_TYPE_ID}
 const DATA_TYPE_ID = ${TACHYON_DATA_TYPE_ID}
+const send = (msg) => { if (process.send) process.send(msg) }
 
 const main = async () => {
   const { Bus } = await import('@tachyon-ipc/core')
-  const { path, connect_timeout_ms } = workerData
+  const { path, connect_timeout_ms } = JSON.parse(process.argv[1])
   let bus = null
   let last_err = null
   const deadline = Date.now() + connect_timeout_ms
@@ -151,33 +148,30 @@ const main = async () => {
     }
   }
   if (!bus) {
-    parentPort.postMessage({ type: 'error', message: 'TachyonEventBridge sender failed to connect: ' + (last_err && last_err.message ? last_err.message : String(last_err)) })
+    send({ type: 'error', message: 'TachyonEventBridge sender failed to connect: ' + (last_err && last_err.message ? last_err.message : String(last_err)) })
     return
   }
-  parentPort.postMessage({ type: 'ready' })
-  parentPort.on('message', (msg) => {
+  send({ type: 'ready' })
+  process.on('message', (msg) => {
     if (!msg) return
     if (msg.type === 'send') {
       try {
-        bus.send(Buffer.from(msg.payload), DATA_TYPE_ID)
-        parentPort.postMessage({ type: 'sent', id: msg.id })
+        bus.send(Buffer.from(msg.payload, 'base64'), DATA_TYPE_ID)
+        send({ type: 'sent', id: msg.id })
       } catch (err) {
-        parentPort.postMessage({ type: 'send_error', id: msg.id, message: err && err.message ? err.message : String(err) })
+        send({ type: 'send_error', id: msg.id, message: err && err.message ? err.message : String(err) })
       }
       return
     }
     if (msg.type === 'close') {
       try { bus.send(Buffer.alloc(0), SHUTDOWN_TYPE_ID) } catch {}
-      try { bus.close && bus.close() } catch {}
       process.exit(0)
     }
   })
 }
 
 main().catch((err) => {
-  if (parentPort) {
-    parentPort.postMessage({ type: 'error', message: err && err.message ? err.message : String(err) })
-  }
+  send({ type: 'error', message: err && err.message ? err.message : String(err) })
 })
 `
 
@@ -188,13 +182,13 @@ export class TachyonEventBridge {
   readonly capacity: number
   readonly name: string
 
-  private readonly inbound_bus: EventBus
-  private listener_worker: Worker | null
+  private inbound_bus: EventBus | null
+  private listener_worker: ChildProcess | null
   // Sticky: `listener_worker` may be cleared mid-session (graceful exit, retry path),
   // but the socket on disk is still ours to unlink in close().
   private acted_as_listener: boolean
   private listener_startup_error: Error | null
-  private sender_worker: Worker | null
+  private sender_worker: ChildProcess | null
   private sender_ready_promise: Promise<void> | null
   private send_seq: number
   private pending_sends: Map<number, SendResolver>
@@ -211,7 +205,7 @@ export class TachyonEventBridge {
     this.path = path
     this.capacity = capacity
     this.name = name ?? `TachyonEventBridge_${randomSuffix()}`
-    this.inbound_bus = new EventBus(this.name, { max_history_size: 0 })
+    this.inbound_bus = null
     this.listener_worker = null
     this.acted_as_listener = false
     this.listener_startup_error = null
@@ -230,16 +224,15 @@ export class TachyonEventBridge {
   on<T extends BaseEvent>(event_pattern: string | '*', handler: UntypedEventHandlerFunction<T>): void
   on(event_pattern: EventPattern | '*', handler: EventHandlerCallable | UntypedEventHandlerFunction): void {
     this.ensureListenerStarted()
+    const inbound_bus = this.getInboundBus()
     if (typeof event_pattern === 'string') {
-      this.inbound_bus.on(event_pattern, handler as UntypedEventHandlerFunction<BaseEvent>)
+      inbound_bus.on(event_pattern, handler as UntypedEventHandlerFunction<BaseEvent>)
       return
     }
-    this.inbound_bus.on(event_pattern as EventClass<BaseEvent>, handler as EventHandlerCallable<BaseEvent>)
+    inbound_bus.on(event_pattern as EventClass<BaseEvent>, handler as EventHandlerCallable<BaseEvent>)
   }
 
   async emit<T extends BaseEvent>(event: T): Promise<void> {
-    // Fail fast before spawning a sender worker / connecting to the listener so a
-    // post-close emit() doesn't leak an extra worker for an instance that is going away.
     if (this.closed) throw new Error('TachyonEventBridge is closed')
     await this.ensureSenderConnected()
     if (this.closed || !this.sender_worker) {
@@ -249,7 +242,7 @@ export class TachyonEventBridge {
     const id = ++this.send_seq
     await new Promise<void>((resolve, reject) => {
       this.pending_sends.set(id, { resolve, reject })
-      this.sender_worker!.postMessage({ type: 'send', id, payload })
+      this.sender_worker!.send({ type: 'send', id, payload: payload.toString('base64') })
     })
   }
 
@@ -283,12 +276,7 @@ export class TachyonEventBridge {
       await new Promise((resolve) => setTimeout(resolve, 5))
     }
     if (this.listener_startup_error) throw this.listener_startup_error
-    // Tear down the worker that never bound so a later on() can spawn a fresh one.
-    // Use .catch() so a terminate() rejection doesn't bubble up as an unhandled
-    // promise rejection (which crashes Node by default in newer versions).
-    worker.terminate().catch(() => {
-      /* ignore */
-    })
+    worker.kill('SIGKILL')
     if (this.listener_worker === worker) this.listener_worker = null
     throw new Error(`TachyonEventBridge listener did not bind socket ${this.path} within ${TACHYON_LISTEN_TIMEOUT_MS}ms`)
   }
@@ -296,46 +284,38 @@ export class TachyonEventBridge {
   async close(): Promise<void> {
     this.closed = true
     if (this.sender_worker) {
+      const sender = this.sender_worker
+      this.sender_worker = null
       const sender_exited = new Promise<void>((resolve) => {
-        this.sender_worker!.once('exit', () => resolve())
+        sender.once('exit', () => resolve())
       })
       try {
-        this.sender_worker.postMessage({ type: 'close' })
+        sender.send({ type: 'close' })
       } catch {
-        // worker may already be gone
+        // listener may already be gone
       }
-      // The sender flushes a SHUTDOWN_TYPE_ID sentinel and self-exits in response
-      // to `close`; await that natural exit before terminating to avoid orphaning.
       await Promise.race([sender_exited, new Promise((resolve) => setTimeout(resolve, 1000))])
-      try {
-        await this.sender_worker.terminate()
-      } catch {
-        // ignore
+      if (sender.exitCode === null && sender.signalCode === null) {
+        try {
+          sender.kill('SIGKILL')
+        } catch {
+          // ignore
+        }
       }
-      this.sender_worker = null
     }
     if (this.listener_worker) {
       const listener = this.listener_worker
       this.listener_worker = null
-      // The listener exits naturally once it consumes the shutdown sentinel.
       const listener_exited = new Promise<void>((resolve) => {
         listener.once('exit', () => resolve())
       })
-      await Promise.race([listener_exited, new Promise((resolve) => setTimeout(resolve, 1000))])
-      // worker.terminate() cannot preempt a futex-blocked Tachyon recv() (see the
-      // SHUTDOWN_TYPE_ID comment above), so a listener-only instance that never
-      // received a sentinel would hang forever if we awaited it. Fire-and-forget the
-      // terminate and bound how long we'll wait for it to come back; if it doesn't,
-      // unref the worker so the parent Node process can still exit (the worker is
-      // daemon-mode and dies with the process either way).
-      const terminate_promise = listener.terminate().catch(() => undefined)
-      const terminate_settled = await Promise.race([
-        terminate_promise.then(() => true),
-        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+      const exited = await Promise.race([
+        listener_exited.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1000)),
       ])
-      if (!terminate_settled) {
+      if (!exited) {
         try {
-          listener.unref()
+          listener.kill('SIGKILL')
         } catch {
           // ignore
         }
@@ -354,7 +334,8 @@ export class TachyonEventBridge {
         // ignore
       }
     }
-    this.inbound_bus.destroy()
+    this.inbound_bus?.destroy()
+    this.inbound_bus = null
   }
 
   private ensureListenerStarted(): void {
@@ -366,19 +347,23 @@ export class TachyonEventBridge {
     // The worker probes the path before unlinking — only stale sockets (no live
     // listener) get cleared. This avoids clobbering a listener owned by another
     // process when two bridges race on the same path.
-    const worker = new Worker(TACHYON_LISTENER_WORKER_CODE, {
-      eval: true,
-      workerData: { path: this.path, capacity: this.capacity },
-    })
+    const worker = spawn(
+      process.execPath,
+      ['-e', TACHYON_LISTENER_CHILD_CODE, JSON.stringify({ path: this.path, capacity: this.capacity })],
+      { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
+    )
     this.listener_startup_error = null
-    worker.on('message', (msg: { type: string; data?: Uint8Array; typeId?: number; message?: string }) => {
+    worker.on('message', (msg: { type: string; data?: string; typeId?: number; message?: string }) => {
       if (msg.type === 'ready') {
         // Bus.listen returning means *this* worker completed the bind+handshake; only
         // now can we safely claim socket ownership for close()'s unlink path.
         this.acted_as_listener = true
       } else if (msg.type === 'message' && msg.data) {
+        if (!this.inbound_bus) {
+          return
+        }
         try {
-          const text = Buffer.from(msg.data).toString('utf-8')
+          const text = Buffer.from(msg.data, 'base64').toString('utf-8')
           const payload = JSON.parse(text)
           const event = BaseEvent.fromJSON(payload).eventReset()
           this.inbound_bus.emit(event)
@@ -414,7 +399,15 @@ export class TachyonEventBridge {
     // worker's 'ready' message which flips acted_as_listener once bind completes.
   }
 
+  private getInboundBus(): EventBus {
+    if (!this.inbound_bus) {
+      this.inbound_bus = new EventBus(this.name, { max_history_size: 100, max_history_drop: true })
+    }
+    return this.inbound_bus
+  }
+
   private async ensureSenderConnected(): Promise<void> {
+    if (this.sender_worker) return
     if (this.sender_ready_promise) {
       await this.sender_ready_promise
       return
@@ -423,10 +416,11 @@ export class TachyonEventBridge {
       throw new Error('TachyonEventBridge is only supported in Node.js runtimes')
     }
     const promise = new Promise<void>((resolve, reject) => {
-      const worker = new Worker(TACHYON_SENDER_WORKER_CODE, {
-        eval: true,
-        workerData: { path: this.path, connect_timeout_ms: TACHYON_CONNECT_TIMEOUT_MS },
-      })
+      const worker = spawn(
+        process.execPath,
+        ['-e', TACHYON_SENDER_CHILD_CODE, JSON.stringify({ path: this.path, connect_timeout_ms: TACHYON_CONNECT_TIMEOUT_MS })],
+        { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
+      )
       let resolved = false
       worker.on('message', (msg: { type: string; id?: number; message?: string }) => {
         if (msg.type === 'ready') {
@@ -461,20 +455,18 @@ export class TachyonEventBridge {
       })
       worker.on('error', (err) => {
         if (!resolved) reject(err instanceof Error ? err : new Error(String(err)))
-        else console.error('[abxbus] TachyonEventBridge sender worker crashed:', err)
+        else console.error('[abxbus] TachyonEventBridge sender process crashed:', err)
       })
-      worker.on('exit', (code) => {
-        // The sender worker exits with code 0 only when responding to our `close`
-        // message; any other exit means the worker died unexpectedly and pending
-        // sends would otherwise hang forever.
+      worker.on('exit', (code, signal) => {
         if (code === 0 && this.closed) return
-        const err = new Error(`TachyonEventBridge sender worker exited with code ${code}`)
+        const err = new Error(`TachyonEventBridge sender process exited with code ${code} signal ${signal}`)
         for (const pending of this.pending_sends.values()) pending.reject(err)
         this.pending_sends.clear()
         if (this.sender_worker === worker) {
           this.sender_worker = null
           this.sender_ready_promise = null
         }
+        if (!resolved) reject(err)
       })
       this.sender_worker = worker
     })
@@ -486,13 +478,18 @@ export class TachyonEventBridge {
       this.sender_ready_promise = null
       if (this.sender_worker) {
         try {
-          await this.sender_worker.terminate()
+          const worker = this.sender_worker as ChildProcess
+          worker.kill('SIGKILL')
         } catch {
           /* ignore */
         }
         this.sender_worker = null
       }
       throw err
+    } finally {
+      if (this.sender_ready_promise === promise) {
+        this.sender_ready_promise = null
+      }
     }
   }
 }

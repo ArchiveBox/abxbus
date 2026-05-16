@@ -19,8 +19,14 @@ HISTORY_LIMIT_ON_OFF = 128
 HISTORY_LIMIT_EPHEMERAL_BUS = 128
 HISTORY_LIMIT_FIXED_HANDLERS = 128
 HISTORY_LIMIT_WORST_CASE = 128
+RUNTIME_PERF_FIXED_HANDLER_COUNT = 50_000
 WORST_CASE_IMMEDIATE_TIMEOUT_MS = 0.0001
 WORST_CASE_IMMEDIATE_TIMEOUT_SECONDS = WORST_CASE_IMMEDIATE_TIMEOUT_MS / 1000.0
+PERF_RUN_ID = str(os.getpid())
+
+
+def _perf_bus_name(name: str) -> str:
+    return f'{name}_{PERF_RUN_ID}'
 
 
 @dataclass(slots=True)
@@ -445,9 +451,9 @@ async def run_perf_single_event_many_fixed_handlers(input: PerfInput) -> dict[st
     hooks = input
     scenario = '1 event x 50k parallel handlers'
     total_events = int(1)
-    total_handlers = int(50_000)
+    total_handlers = int(RUNTIME_PERF_FIXED_HANDLER_COUNT)
     bus = EventBus(
-        name='PerfFixedHandlersBus',
+        name=_perf_bus_name('PerfFixedHandlersBus'),
         max_history_size=HISTORY_LIMIT_FIXED_HANDLERS,
         max_history_drop=True,
         event_handler_concurrency='parallel',

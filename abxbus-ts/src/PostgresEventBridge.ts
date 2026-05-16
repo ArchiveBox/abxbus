@@ -83,7 +83,7 @@ export class PostgresEventBridge {
     this.channel = validateIdentifier(derived_channel.slice(0, 63), 'channel name')
     this.name = name ?? `PostgresEventBridge_${randomSuffix()}`
 
-    this.inbound_bus = new EventBus(this.name, { max_history_size: 0 })
+    this.inbound_bus = new EventBus(this.name, { max_history_size: 100, max_history_drop: true })
     this.running = false
     this.client = null
     this.table_columns = new Set(['event_id', 'event_created_at', 'event_type', EVENT_PAYLOAD_COLUMN])

@@ -18,7 +18,8 @@ from uuid_extensions import uuid7str
 from abxbus.base_event import BaseEvent
 from abxbus.bridge_jsonl import JSONLEventBridge
 from abxbus.bridge_sqlite import SQLiteEventBridge
-from abxbus.event_bus import EventBus, EventPatternType, in_handler_context
+from abxbus.bridge_utils import dispatch_bridge_event, event_pattern_matches
+from abxbus.event_bus import EventPatternType, in_handler_context
 
 logger = logging.getLogger('abxbus.bridges')
 UNIX_SOCKET_MAX_PATH_CHARS = 90
@@ -113,17 +114,17 @@ class EventBridge:
     ):
         self.send_to = _parse_endpoint(send_to) if send_to else None
         self.listen_on = _parse_endpoint(listen_on) if listen_on else None
-        internal_name = name or f'EventBridge_{uuid7str()[-8:]}'
-        self._inbound_bus = EventBus(name=internal_name, max_history_size=0)
+        self.name = name or f'EventBridge_{uuid7str()[-8:]}'
 
         self._server: asyncio.AbstractServer | None = None
         self._start_lock = asyncio.Lock()
         self._listen_socket_path: Path | None = None
         self._autostart_task: asyncio.Task[None] | None = None
+        self._handlers: list[tuple[EventPatternType, Callable[[BaseEvent[Any]], Any]]] = []
 
     def on(self, event_pattern: EventPatternType, handler: Callable[[BaseEvent[Any]], Any]) -> None:
         self._ensure_listener_started()
-        self._inbound_bus.on(event_pattern, handler)
+        self._handlers.append((event_pattern, handler))
 
     async def emit(self, event: BaseEvent[Any]) -> BaseEvent[Any] | None:
         if self.send_to is None:
@@ -184,8 +185,6 @@ class EventBridge:
         if self._listen_socket_path and self._listen_socket_path.exists():
             self._listen_socket_path.unlink()
             self._listen_socket_path = None
-
-        await self._inbound_bus.destroy(clear=clear)
 
     def _ensure_listener_started(self) -> None:
         if self.listen_on is None or self._server is not None:
@@ -279,7 +278,14 @@ class EventBridge:
     async def _handle_incoming_bytes(self, payload: bytes) -> None:
         message = json.loads(payload.decode('utf-8'))
         event = BaseEvent[Any].model_validate(message).event_reset()
-        self._inbound_bus.emit(event)
+        await self._dispatch_event(event)
+
+    async def _dispatch_event(self, event: BaseEvent[Any]) -> None:
+        await dispatch_bridge_event(self._handlers, event)
+
+    @staticmethod
+    def _matches(event_pattern: EventPatternType, event: BaseEvent[Any]) -> bool:
+        return event_pattern_matches(event_pattern, event)
 
     async def _send_unix(self, endpoint: _Endpoint, payload: dict[str, Any]) -> None:
         socket_path = endpoint.path or ''

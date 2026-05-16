@@ -19,7 +19,7 @@ export class JSONLEventBridge {
   readonly poll_interval: number
   readonly name: string
 
-  private readonly inbound_bus: EventBus
+  private inbound_bus: EventBus | null
   private running: boolean
   private byte_offset: number
   private pending_line: string
@@ -29,7 +29,7 @@ export class JSONLEventBridge {
     this.path = path
     this.poll_interval = poll_interval
     this.name = name ?? `JSONLEventBridge_${randomSuffix()}`
-    this.inbound_bus = new EventBus(this.name, { max_history_size: 0 })
+    this.inbound_bus = null
     this.running = false
     this.byte_offset = 0
     this.pending_line = ''
@@ -44,15 +44,15 @@ export class JSONLEventBridge {
   on<T extends BaseEvent>(event_pattern: string | '*', handler: UntypedEventHandlerFunction<T>): void
   on(event_pattern: EventPattern | '*', handler: EventHandlerCallable | UntypedEventHandlerFunction): void {
     this.ensureStarted()
+    const inbound_bus = this.getInboundBus()
     if (typeof event_pattern === 'string') {
-      this.inbound_bus.on(event_pattern, handler as UntypedEventHandlerFunction<BaseEvent>)
+      inbound_bus.on(event_pattern, handler as UntypedEventHandlerFunction<BaseEvent>)
       return
     }
-    this.inbound_bus.on(event_pattern as EventClass<BaseEvent>, handler as EventHandlerCallable<BaseEvent>)
+    inbound_bus.on(event_pattern as EventClass<BaseEvent>, handler as EventHandlerCallable<BaseEvent>)
   }
 
   async emit<T extends BaseEvent>(event: T): Promise<void> {
-    this.ensureStarted()
     const fs = await this.loadFs()
     await fs.promises.mkdir(this.dirname(this.path), { recursive: true })
     const payload = JSON.stringify(event.toJSON()) + '\n'
@@ -79,7 +79,8 @@ export class JSONLEventBridge {
     this.running = false
     await Promise.allSettled(this.listener_task ? [this.listener_task] : [])
     this.listener_task = null
-    this.inbound_bus.destroy()
+    this.inbound_bus?.destroy()
+    this.inbound_bus = null
   }
 
   private ensureStarted(): void {
@@ -125,8 +126,18 @@ export class JSONLEventBridge {
   }
 
   private async dispatchInboundPayload(payload: unknown): Promise<void> {
+    if (!this.inbound_bus) {
+      return
+    }
     const event = BaseEvent.fromJSON(payload).eventReset()
     this.inbound_bus.emit(event)
+  }
+
+  private getInboundBus(): EventBus {
+    if (!this.inbound_bus) {
+      this.inbound_bus = new EventBus(this.name, { max_history_size: 100, max_history_drop: true })
+    }
+    return this.inbound_bus
   }
 
   private async readAppended(offset: number): Promise<{ chunk: string; next_offset: number }> {

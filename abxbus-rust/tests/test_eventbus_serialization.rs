@@ -49,6 +49,7 @@ fn assert_eventbus_json_roundtrip_uses_id_keyed_structures(bus_name: &str, bus_i
             event_handler_completion: EventHandlerCompletionMode::First,
             event_timeout: Some(0.0),
             event_slow_timeout: Some(34.0),
+            event_handler_timeout: None,
             event_handler_slow_timeout: Some(12.0),
             event_handler_detect_file_paths: false,
             max_handler_recursion_depth: 2,
@@ -73,6 +74,7 @@ fn assert_eventbus_json_roundtrip_uses_id_keyed_structures(bus_name: &str, bus_i
     assert_eq!(payload["event_handler_completion"], "first");
     assert_eq!(payload["event_timeout"], 0.0);
     assert_eq!(payload["event_slow_timeout"], 34.0);
+    assert_eq!(payload["event_handler_timeout"], Value::Null);
     assert_eq!(payload["event_handler_slow_timeout"], 12.0);
     assert_eq!(payload["event_handler_detect_file_paths"], false);
     assert_eq!(payload["handlers"].as_object().expect("handlers").len(), 1);

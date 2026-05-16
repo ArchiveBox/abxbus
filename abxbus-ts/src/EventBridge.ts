@@ -71,7 +71,7 @@ export class EventBridge {
   readonly listen_on: ParsedEndpoint | null
   readonly name: string
 
-  protected readonly inbound_bus: EventBus
+  protected inbound_bus: EventBus | null
   private start_promise: Promise<void> | null
   private node_server: any | null
 
@@ -79,7 +79,7 @@ export class EventBridge {
     this.send_to = send_to ? parseEndpoint(send_to) : null
     this.listen_on = listen_on ? parseEndpoint(listen_on) : null
     this.name = name ?? `EventBridge_${randomSuffix()}`
-    this.inbound_bus = new EventBus(this.name, { max_history_size: 0 })
+    this.inbound_bus = null
     this.start_promise = null
     this.node_server = null
 
@@ -96,11 +96,12 @@ export class EventBridge {
   on<T extends BaseEvent>(event_pattern: string | '*', handler: UntypedEventHandlerFunction<T>): void
   on(event_pattern: EventPattern | '*', handler: EventHandlerCallable | UntypedEventHandlerFunction): void {
     this.ensureListenerStarted()
+    const inbound_bus = this.getInboundBus()
     if (typeof event_pattern === 'string') {
-      this.inbound_bus.on(event_pattern, handler as UntypedEventHandlerFunction<BaseEvent>)
+      inbound_bus.on(event_pattern, handler as UntypedEventHandlerFunction<BaseEvent>)
       return
     }
-    this.inbound_bus.on(event_pattern as EventClass<BaseEvent>, handler as EventHandlerCallable<BaseEvent>)
+    inbound_bus.on(event_pattern as EventClass<BaseEvent>, handler as EventHandlerCallable<BaseEvent>)
   }
 
   async emit<T extends BaseEvent>(event: T): Promise<void> {
@@ -174,7 +175,8 @@ export class EventBridge {
       this.node_server = null
     }
 
-    this.inbound_bus.destroy()
+    this.inbound_bus?.destroy()
+    this.inbound_bus = null
   }
 
   private ensureListenerStarted(): void {
@@ -187,8 +189,18 @@ export class EventBridge {
   }
 
   private async handleIncomingPayload(payload: unknown): Promise<void> {
+    if (!this.inbound_bus) {
+      return
+    }
     const event = BaseEvent.fromJSON(payload).eventReset()
     this.inbound_bus.emit(event)
+  }
+
+  private getInboundBus(): EventBus {
+    if (!this.inbound_bus) {
+      this.inbound_bus = new EventBus(this.name, { max_history_size: 100, max_history_drop: true })
+    }
+    return this.inbound_bus
   }
 
   private async sendHttp(endpoint: ParsedEndpoint, payload: unknown): Promise<void> {

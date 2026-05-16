@@ -37,12 +37,12 @@ func NewJSONLEventBridge(path string, pollIntervalSeconds float64, name string) 
 	if pollInterval < time.Millisecond {
 		pollInterval = time.Millisecond
 	}
-	zeroHistory := 0
+	maxHistory := DefaultMaxHistorySize
 	return &JSONLEventBridge{
 		Path:         path,
 		PollInterval: pollInterval,
 		Name:         name,
-		inboundBus:   NewEventBus(name, &EventBusOptions{MaxHistorySize: &zeroHistory}),
+		inboundBus:   NewEventBus(name, &EventBusOptions{MaxHistorySize: &maxHistory, MaxHistoryDrop: true}),
 	}
 }
 
@@ -162,6 +162,9 @@ func (b *JSONLEventBridge) pollNewLines() error {
 	}
 	b.mu.Unlock()
 
+	if !b.hasHandlers() {
+		return nil
+	}
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -179,6 +182,12 @@ func (b *JSONLEventBridge) pollNewLines() error {
 		b.inboundBus.Emit(event)
 	}
 	return nil
+}
+
+func (b *JSONLEventBridge) hasHandlers() bool {
+	b.inboundBus.mu.Lock()
+	defer b.inboundBus.mu.Unlock()
+	return len(b.inboundBus.handlers) > 0
 }
 
 func (b *JSONLEventBridge) readAppendedText() (string, int64, error) {
@@ -221,6 +230,7 @@ func resetInboundEvent(event *BaseEvent) {
 	event.EventStartedAt = nil
 	event.EventCompletedAt = nil
 	event.EventPendingBusCount = 0
+	event.EventEmittedByResultID = nil
 	event.EventResults = map[string]*EventResult{}
 	event.Bus = nil
 	event.done_ch = make(chan struct{})
