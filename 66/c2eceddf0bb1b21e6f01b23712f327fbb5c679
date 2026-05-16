@@ -1,0 +1,120 @@
+abxbus-go/tests/eventbus_dispatch_defaults_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 7
+abxbus-go/README.md
+  s_4f4788d0a20767::t_fe36152f5f5bef 28-37
+abxbus-go/tests/event_handler_first_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 11
+go.mod
+  s_4f4788d0a20767::t_55df06cd54dd01 1
+abxbus-go/tests/eventbus_find_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 8
+docs/concurrency/events-bus-serial.mdx
+  s_4f4788d0a20767::t_716849c6fc6383 122
+docs/features/event-pattern-matching.mdx
+  s_4f4788d0a20767::t_716849c6fc6383 154
+docs/features/parent-child-tracking.mdx
+  s_4f4788d0a20767::t_716849c6fc6383 290
+abxbus-go/tests/eventbus_dispatch_contextvars_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 7
+abxbus-go/tests/base_event_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 7
+docs/features/async-sync-handlers.mdx
+  s_4f4788d0a20767::t_716849c6fc6383 177
+docs/operations/supported-runtimes.mdx
+  s_4f4788d0a20767::t_fe36152f5f5bef 43-44
+abxbus-go/tests/eventbus_error_handling_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 8
+docs/quickstart.mdx
+  s_4f4788d0a20767::t_fe36152f5f5bef 41
+abxbus-go/tests/eventbus_serialization_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 9
+pyproject.toml
+  s_4f4788d0a20767::t_8d08c0705d451d 5
+abxbus-go/version.go
+  s_4f4788d0a20767::t_8d08c0705d451d 3
+docs/concurrency/handlers-serial.mdx
+  s_4f4788d0a20767::t_716849c6fc6383 91
+docs/concurrency/handlers-parallel.mdx
+  s_4f4788d0a20767::t_716849c6fc6383 98
+abxbus-go/base_event.go
+  s_4f4788d0a20767::t_716849c6fc6383 15
+abxbus-go/tests/eventbus_locking_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 5
+abxbus-rust/Cargo.lock
+  ai_agent 7
+abxbus-go/tests/eventbus_test.go
+  s_4f4788d0a20767::t_55df06cd54dd01 1593,1595
+  s_4f4788d0a20767::t_716849c6fc6383 8
+abxbus-go/tests/eventbus_forwarding_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 10
+abxbus-go/tests/eventbus_log_tree_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 9
+abxbus-go/tests/eventbus_on_off_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 8
+docs/concurrency/events-parallel.mdx
+  s_4f4788d0a20767::t_716849c6fc6383 106
+abxbus-go/tests/roundtrip_cli/main.go
+  s_4f4788d0a20767::t_716849c6fc6383 11
+docs/features/context-propagation.mdx
+  s_4f4788d0a20767::t_716849c6fc6383 114
+abxbus-ts/package.json
+  s_4f4788d0a20767::t_8d08c0705d451d 3
+abxbus-go/jsonschema/jsonschema_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 7
+abxbus-go/event_handler.go
+  s_4f4788d0a20767::t_716849c6fc6383 9
+abxbus-go/tests/event_result_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 8
+abxbus-go/tests/eventbus_dispatch_parent_tracking_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 9
+abxbus-go/tests/eventbus_timeout_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 5
+abxbus-go/tests/lock_manager_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 9
+abxbus-go/tests/eventbus_performance_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 10
+abxbus-rust/Cargo.toml
+  s_4f4788d0a20767::t_8d08c0705d451d 3
+abxbus-go/tests/eventbus_cross_runtime_features_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 11
+docs/concurrency/events-global-serial.mdx
+  s_4f4788d0a20767::t_716849c6fc6383 115
+.github/workflows/test_rust.yaml
+  s_4f4788d0a20767::t_55df06cd54dd01 98,100
+docs/concurrency/handler-completion-first.mdx
+  s_4f4788d0a20767::t_716849c6fc6383 108
+docs/index.mdx
+  s_4f4788d0a20767::t_716849c6fc6383 98
+abxbus-go/tests/cross_runtime_roundtrip_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 8
+docs/features/forwarding-between-buses.mdx
+  s_4f4788d0a20767::t_716849c6fc6383 243
+abxbus-go/tests/event_handler_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 6
+docs/features/fifo-processing.mdx
+  s_4f4788d0a20767::t_716849c6fc6383 127
+abxbus-go/tests/eventbus_debounce_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 8
+.github/workflows/test_go.yaml
+  s_4f4788d0a20767::t_55df06cd54dd01 100,102
+abxbus-go/tests/comprehensive_patterns_test.go
+  s_4f4788d0a20767::t_716849c6fc6383 11
+docs/concurrency/handler-completion-all.mdx
+  s_4f4788d0a20767::t_716849c6fc6383 104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "66c2eceddf0bb1b21e6f01b23712f327fbb5c679",
+  "prompts": {},
+  "sessions": {
+    "s_4f4788d0a20767": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3251-d280-7a13-a763-9dbe5f4c0c34",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
