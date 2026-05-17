@@ -1,0 +1,25 @@
+tests/bridge_listener_worker.py
+  s_4f4788d0a20767::t_f21c28b90fd2e5 6,40-42,48,53
+abxbus/bridges.py
+  s_4f4788d0a20767::t_f21c28b90fd2e5 160-161
+tests/test_eventbus.py
+  s_4f4788d0a20767::t_f21c28b90fd2e5 105,124
+abxbus/bridge_tachyon.py
+  s_4f4788d0a20767::t_f21c28b90fd2e5 32,100,111,164-165,167
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "cbb46a4c7bddabcc64b0c9586a44621415ad4b07",
+  "prompts": {},
+  "sessions": {
+    "s_4f4788d0a20767": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3251-d280-7a13-a763-9dbe5f4c0c34",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
