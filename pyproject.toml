@@ -11,8 +11,6 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "aiofiles>=25.1.0",
-    "anyio>=4.13.0",
     "pydantic>=2.13.4",
     "typing-extensions>=4.15.0",
     "uuid7>=0.1.0",

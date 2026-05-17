@@ -29,9 +29,9 @@ import stat as _stat
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
-from anyio import Path as AnyPath
 from uuid_extensions import uuid7str
 
 from abxbus.base_event import BaseEvent
@@ -97,7 +97,7 @@ class TachyonEventBridge:
         # we're inside an async context, capture the running loop.
         if self._listener_loop is None or self._listener_loop.is_closed():
             self._listener_loop = asyncio.get_running_loop()
-        socket_path = AnyPath(self.path)
+        socket_path = Path(self.path)
         deadline = time.monotonic() + _TACHYON_SOCKET_WAIT_TIMEOUT
         path_first_seen_at: float | None = None
         while time.monotonic() < deadline:
@@ -108,7 +108,7 @@ class TachyonEventBridge:
             # actually own the socket file at `path`.
             if self._acted_as_listener:
                 return
-            if await socket_path.exists():
+            if await asyncio.to_thread(socket_path.exists):
                 if path_first_seen_at is None:
                     path_first_seen_at = time.monotonic()
                 # The path exists, but it might belong to another process. Give our
@@ -161,10 +161,10 @@ class TachyonEventBridge:
         # Only the side that bound the socket (the listener) owns the path on disk.
         # Sender-only instances must leave it alone so other senders/listeners can keep using it.
         if self._acted_as_listener:
-            socket_path = AnyPath(self.path)
-            if await socket_path.exists():
+            socket_path = Path(self.path)
+            if await asyncio.to_thread(socket_path.exists):
                 try:
-                    await socket_path.unlink()
+                    await asyncio.to_thread(socket_path.unlink)
                 except OSError:
                     pass
         await self._inbound_bus.destroy(clear=clear)

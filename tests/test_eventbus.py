@@ -102,7 +102,7 @@ class TestEventBusBasics:
 
         assert bus.max_handler_recursion_depth == 5
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_custom_handler_recursion_depth_allows_deeper_nested_handlers(self):
         """A higher configured recursion ceiling should allow deeper nested queue-jumps."""
         bus = EventBus(name='CustomRecursionDepthBus', max_handler_recursion_depth=5)
@@ -121,7 +121,7 @@ class TestEventBusBasics:
         finally:
             await bus.destroy(clear=True)
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_default_handler_recursion_depth_still_catches_runaway_loops(self):
         """The default recursion guard should still raise on deeper self-reentry."""
         bus = EventBus(name='DefaultRecursionDepthBus')
