@@ -1,0 +1,29 @@
+abxbus-rust/tests/test_comprehensive_patterns.rs
+  s_4f4788d0a20767::t_c1021321571c23 536-538
+abxbus-rust/tests/test_event_result.rs
+  s_4f4788d0a20767::t_36bdb373451467 1441
+abxbus-rust/src/event_bus.rs
+  s_4f4788d0a20767::t_59849b4d9570b3 1533-1538
+  s_4f4788d0a20767::t_ac5457f96c57e6 344,383-390,409-410,1532,1633
+  s_4f4788d0a20767::t_868af523c1ba5b 40,414-415,419-420,422-430,1539,2967-2973,2975,2977,2988,3179-3183,3189-3190,3193
+  s_4f4788d0a20767::t_13e7e983f86c02 391-394
+  s_4f4788d0a20767::t_c2e3918660ce92 411-412,416-418,421,431-432,1616-1619,1625
+  s_4f4788d0a20767::t_ee341d13dc214b 413
+  s_4f4788d0a20767::t_cbb10988f2b74d 395-408
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "6985ac67cfd40603e49a2b9c1ff075553d8c541e",
+  "prompts": {},
+  "sessions": {
+    "s_4f4788d0a20767": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3251-d280-7a13-a763-9dbe5f4c0c34",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
