@@ -1438,6 +1438,7 @@ fn test_eventresultslist_supports_timeout_include_raise_if_any_raise_if_none_arg
     });
     let include_event =
         include_bus.emit_base(BaseEvent::new("IncludeEvent", serde_json::Map::new()));
+    block_on(include_event.now()).expect("include event should complete");
     let filtered_values = block_on(include_event.event_results_list_with_options(
         EventResultOptions {
             raise_if_any: false,

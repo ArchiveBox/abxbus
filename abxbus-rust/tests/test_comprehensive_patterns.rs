@@ -533,6 +533,9 @@ fn test_multi_bus_queues_are_independent_when_awaiting_child() {
             let order = order.clone();
             async move {
                 push(&order, start);
+                if start == "Child_start" {
+                    wait_for_entry(&order, "Bus2_Event3_start");
+                }
                 push(&order, end);
                 Ok(json!(result))
             }
