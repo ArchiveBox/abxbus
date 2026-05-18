@@ -24,11 +24,42 @@ const InferableZodObjectResultEvent = BaseEvent.extend(
     event_result_type: z.object({ ok: z.boolean() }),
   })
 )
+const StaticSchemaField = z.literal('abc').default('abc')
+const StaticSchemaResult = z.string()
+const StaticSchemaTimeout = z.number().default(25)
+const StaticSchemaEvent = BaseEvent.extend(
+  'StaticSchemaEventForInference',
+  z.object({
+    some_field: StaticSchemaField,
+    length: z.number().default(3),
+    event_timeout: StaticSchemaTimeout,
+    event_result_type: StaticSchemaResult,
+  })
+)
+const StaticShortcutField = z.string().default('shortcut')
+const StaticShortcutResult = z.number()
+const StaticShortcutEvent = BaseEvent.extend('StaticShortcutEventForInference', {
+  shortcut_field: StaticShortcutField,
+  event_result_type: StaticShortcutResult,
+})
+const static_schema_default_event = StaticSchemaEvent()
+const static_shortcut_default_event = StaticShortcutEvent()
 
 type InferableResult = EventResultType<InstanceType<typeof InferableResultEvent>>
 type _assert_inferable_result = Assert<IsEqual<InferableResult, { ok: boolean }>>
 type InferableZodObjectResult = EventResultType<InstanceType<typeof InferableZodObjectResultEvent>>
 type _assert_inferable_zod_object_result = Assert<IsEqual<InferableZodObjectResult, { ok: boolean }>>
+type _assert_static_schema_field = Assert<IsEqual<typeof StaticSchemaEvent.some_field, typeof StaticSchemaField>>
+type _assert_static_schema_length_field = Assert<IsEqual<typeof StaticSchemaEvent.length, z.ZodDefault<z.ZodNumber>>>
+type _assert_static_schema_builtin_override_field = Assert<IsEqual<typeof StaticSchemaEvent.event_timeout, typeof StaticSchemaTimeout>>
+type _assert_static_schema_result_schema = Assert<IsEqual<typeof StaticSchemaEvent.event_result_type, typeof StaticSchemaResult>>
+type _assert_static_schema_class_field = Assert<IsEqual<typeof StaticSchemaEvent.class.some_field, typeof StaticSchemaField>>
+type _assert_static_schema_instance_default = Assert<IsEqual<typeof static_schema_default_event.some_field, 'abc'>>
+type _assert_static_schema_instance_length_default = Assert<IsEqual<typeof static_schema_default_event.length, number>>
+type _assert_static_schema_instance_builtin_default = Assert<IsEqual<typeof static_schema_default_event.event_timeout, number | null>>
+type _assert_static_shortcut_field = Assert<IsEqual<typeof StaticShortcutEvent.shortcut_field, typeof StaticShortcutField>>
+type _assert_static_shortcut_result_schema = Assert<IsEqual<typeof StaticShortcutEvent.event_result_type, typeof StaticShortcutResult>>
+type _assert_static_shortcut_instance_default = Assert<IsEqual<typeof static_shortcut_default_event.shortcut_field, string>>
 type InferableEventResultEntry =
   InstanceType<typeof InferableResultEvent>['event_results'] extends Map<string, infer TResultEntry> ? TResultEntry : never
 type _assert_inferable_event_result_entry = Assert<

@@ -4,7 +4,9 @@
 # pyright: reportUnnecessaryIsInstance=false
 
 import asyncio
+import json
 import logging
+from pathlib import Path
 from typing import Any, assert_type
 
 import pytest
@@ -13,6 +15,12 @@ from uuid_extensions import uuid7str
 
 from abxbus import BaseEvent, EventBus, EventResult
 from abxbus.event_handler import EventHandler
+from abxbus.jsonschema import (
+    normalize_json_schema,
+    pydantic_model_from_json_schema,
+    pydantic_model_to_json_schema,
+    validate_result_against_type,
+)
 
 
 class ScreenshotEventResult(BaseModel):
@@ -650,6 +658,11 @@ def _to_plain(value: Any) -> Any:
     return to_jsonable_python(value)
 
 
+def _load_json_schema_common_shapes_fixture() -> dict[str, Any]:
+    fixture_path = Path(__file__).with_name('fixtures') / 'jsonschema_common_shapes.json'
+    return json.loads(fixture_path.read_text())
+
+
 def _event_result_schema_json(event: BaseEvent[Any]) -> dict[str, Any]:
     raw_schema = event.model_dump(mode='json')['event_result_type']
     return TypeAdapter(dict[str, Any]).validate_python(raw_schema)
@@ -791,6 +804,159 @@ def test_json_schema_primitive_deserialization(json_schema: dict[str, str], expe
     assert event.event_result_type is expected_schema
     serialized_schema = _event_result_schema_json(event)
     assert serialized_schema.get('type') == json_schema['type']
+
+
+def test_json_schema_null_unions_normalize_to_standard_anyof():
+    json_schema: dict[str, Any] = {'anyOf': [{'type': 'string'}, {'type': 'null'}]}
+    event = BaseEvent[Any].model_validate({'event_type': 'NullableSchemaEvent', 'event_result_type': json_schema})
+
+    adapter = TypeAdapter(event.event_result_type)
+    assert adapter.validate_python('ok') == 'ok'
+    assert adapter.validate_python(None) is None
+    serialized_schema = _event_result_schema_json(event)
+    assert serialized_schema['anyOf'] == [{'type': 'string'}, {'type': 'null'}]
+    assert 'nullable' not in serialized_schema
+    assert 'oneOf' not in serialized_schema
+
+
+def test_json_schema_type_null_union_validates_the_same_as_anyof_null_union():
+    json_schema: dict[str, Any] = {'type': ['integer', 'null']}
+    event = BaseEvent[Any].model_validate({'event_type': 'NullableInputSchemaEvent', 'event_result_type': json_schema})
+
+    adapter = TypeAdapter(event.event_result_type)
+    assert adapter.validate_python(3) == 3
+    assert adapter.validate_python(None) is None
+    serialized_schema = _event_result_schema_json(event)
+    assert serialized_schema['anyOf'] == [{'type': 'integer'}, {'type': 'null'}]
+    bus = EventBus(name='standard_null_union_schema_bus')
+    bus.event_history[event.event_id] = event
+    bus_dump = bus.model_dump()
+    bus_schema = bus_dump['event_history'][event.event_id]['event_result_type']
+    assert bus_schema['anyOf'] == [{'type': 'integer'}, {'type': 'null'}]
+    assert 'nullable' not in bus_schema
+
+
+def test_json_schema_recursive_null_refs_serialize_without_infinite_expansion():
+    class RecursiveResult(BaseModel):
+        name: str
+        child: 'RecursiveResult | None' = None
+
+    RecursiveResult.model_rebuild()
+
+    class RecursiveResultEvent(BaseEvent[RecursiveResult]):
+        pass
+
+    event = RecursiveResultEvent()
+    serialized_schema = _event_result_schema_json(event)
+    assert '$defs' not in serialized_schema
+    assert serialized_schema['title'] == 'RecursiveResult'
+    child_schema = serialized_schema['properties']['child']
+    assert child_schema['anyOf'] == [{'$ref': '#'}, {'type': 'null'}]
+    assert 'nullable' not in child_schema
+    assert 'allOf' not in child_schema
+    assert 'oneOf' not in child_schema
+
+    normalized_schema = normalize_json_schema(
+        {
+            '$defs': {
+                'Node': {
+                    'type': 'object',
+                    'properties': {
+                        'name': {'type': 'string'},
+                        'child': {'anyOf': [{'$ref': '#/$defs/Node'}, {'type': 'null'}]},
+                    },
+                    'required': ['name'],
+                }
+            },
+            '$ref': '#/$defs/Node',
+        }
+    )
+    assert normalized_schema['title'] == 'Node'
+    assert '$defs' not in normalized_schema
+    normalized_child_schema = normalized_schema['properties']['child']
+    assert normalized_child_schema['anyOf'] == [{'$ref': '#'}, {'type': 'null'}]
+    assert 'nullable' not in normalized_child_schema
+    assert 'allOf' not in normalized_child_schema
+    assert 'oneOf' not in normalized_child_schema
+
+
+def test_json_schema_common_shapes_normalize_as_stable_roundtrip_fixtures():
+    class CommonNodeResult(BaseModel):
+        name: str
+        child: 'CommonNodeResult | None' = None
+
+    CommonNodeResult.model_rebuild()
+
+    class CommonPayloadResult(BaseModel):
+        count: int
+        value: str | int
+        tags: list[str] | None = None
+        metadata: dict[str, float] | None = None
+
+    fixture = _load_json_schema_common_shapes_fixture()
+    raw_fixtures = list(fixture['raw_schemas'])
+    common_complex_schema = fixture['common_complex_schema']
+    common_complex_payload = fixture['common_complex_payload']
+    common_complex_validated_payload = fixture['common_complex_validated_payload']
+    common_complex_invalid_payloads = fixture['common_complex_invalid_payloads']
+    raw_fixtures.append(common_complex_schema)
+
+    for schema in raw_fixtures:
+        normalized = normalize_json_schema(schema)
+        assert normalize_json_schema(normalized) == normalized
+        assert normalized.get('$schema') == 'https://json-schema.org/draft/2020-12/schema'
+
+    nullable_string = normalize_json_schema(raw_fixtures[0])
+    assert nullable_string['anyOf'] == [{'type': 'string'}, {'type': 'null'}]
+    assert 'nullable' not in nullable_string
+
+    recursive = normalize_json_schema(raw_fixtures[1])
+    assert '$defs' not in recursive
+    assert recursive['title'] == 'CommonNodeResult'
+    assert recursive['properties']['child']['anyOf'] == [{'$ref': '#'}, {'type': 'null'}]
+    assert 'nullable' not in recursive['properties']['child']
+
+    object_union = normalize_json_schema(raw_fixtures[2])
+    assert object_union['required'] == ['count', 'value']
+
+    normalized_complex = normalize_json_schema(common_complex_schema)
+    assert normalized_complex == common_complex_schema
+    assert normalized_complex['properties']['id']['pattern'] == '^[a-z][a-z0-9-]*$'
+    assert normalized_complex['properties']['mode']['const'] == 'standard'
+    assert normalized_complex['properties']['category']['enum'] == ['alpha', 'beta']
+    assert normalized_complex['properties']['status']['anyOf'][1]['minimum'] == 1
+    assert normalized_complex['properties']['status']['anyOf'][1]['maximum'] == 3
+    assert normalized_complex['properties']['score']['multipleOf'] == 5
+    assert normalized_complex['properties']['confidence']['exclusiveMaximum'] == 1
+    assert normalized_complex['properties']['score']['default'] == 0
+    assert normalized_complex['properties']['owner']['anyOf'][1] == {'type': 'null'}
+    assert normalized_complex['properties']['owner']['anyOf'][0]['properties']['tier']['default'] == 1
+    assert normalized_complex['properties']['tags']['maxItems'] == 4
+    assert (
+        normalized_complex['properties']['metrics']['additionalProperties']['properties']['count']['maximum'] == 9007199254740991
+    )
+    assert (
+        normalized_complex['properties']['metrics']['additionalProperties']['properties']['note']['anyOf'][0]['maxLength'] == 20
+    )
+    assert (
+        normalized_complex['properties']['metrics']['additionalProperties']['properties']['samples']['items']['multipleOf']
+        == 0.25
+    )
+    assert normalized_complex['properties']['regions']['items']['properties']['window']['prefixItems'][1]['maximum'] == 10
+    assert normalized_complex['properties']['regions']['items']['properties']['visible']['default'] is True
+
+    complex_result_type = pydantic_model_from_json_schema(normalized_complex)
+    validated_complex = validate_result_against_type(complex_result_type, common_complex_payload)
+    assert _to_plain(validated_complex) == common_complex_validated_payload
+    for invalid_case in common_complex_invalid_payloads:
+        with pytest.raises(Exception):
+            validate_result_against_type(complex_result_type, invalid_case['payload'])
+
+    for result_type in (str | None, CommonNodeResult, CommonPayloadResult):
+        schema = pydantic_model_to_json_schema(result_type)
+        assert schema is not None
+        roundtripped_schema = pydantic_model_to_json_schema(pydantic_model_from_json_schema(schema))
+        assert roundtripped_schema == schema
 
 
 def test_json_schema_list_of_models_deserialization():

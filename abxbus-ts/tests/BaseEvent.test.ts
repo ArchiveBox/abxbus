@@ -1300,6 +1300,46 @@ test('BaseEvent auto-generates required metadata when partial input fields are u
   assert.match(event.event_created_at, /Z$/)
 })
 
+test('BaseEvent.extend exposes payload schemas statically and parsed values on instances', () => {
+  const some_field_schema = z.literal('abc').default('abc')
+  const length_schema = z.number().default(3)
+  const event_timeout_schema = z.number().default(25)
+  const result_schema = z.string()
+  const SchemaEvent = BaseEvent.extend(
+    'BaseEventStaticSchemaFieldsEvent',
+    z.object({
+      some_field: some_field_schema,
+      length: length_schema,
+      event_timeout: event_timeout_schema,
+      event_result_type: result_schema,
+    })
+  )
+
+  assert.equal(SchemaEvent.some_field, some_field_schema)
+  assert.equal(SchemaEvent.length, length_schema)
+  assert.equal(SchemaEvent.event_timeout, event_timeout_schema)
+  assert.equal(SchemaEvent.class?.some_field, some_field_schema)
+  assert.equal(SchemaEvent.class?.length, length_schema)
+  assert.equal(SchemaEvent.class?.event_timeout, event_timeout_schema)
+  assert.equal(SchemaEvent.event_result_type, result_schema)
+
+  const schema_event = SchemaEvent()
+  assert.equal(schema_event.some_field, 'abc')
+  assert.equal(schema_event.length, 3)
+  assert.equal(schema_event.event_timeout, 25)
+  assert.equal(schema_event.event_result_type, result_schema)
+
+  const shortcut_field_schema = z.string().default('shortcut')
+  const ShortcutEvent = BaseEvent.extend('BaseEventStaticShortcutFieldsEvent', {
+    shortcut_field: shortcut_field_schema,
+    event_result_type: result_schema,
+  })
+
+  assert.equal(ShortcutEvent.shortcut_field, shortcut_field_schema)
+  assert.equal(ShortcutEvent.class?.shortcut_field, shortcut_field_schema)
+  assert.equal(ShortcutEvent().shortcut_field, 'shortcut')
+})
+
 test('BaseEvent toJSON/fromJSON roundtrips runtime fields and event_results', async () => {
   const RuntimeEvent = BaseEvent.extend('BaseEventRuntimeSerializationEvent', {
     event_result_type: z.string(),

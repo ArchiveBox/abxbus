@@ -217,7 +217,7 @@ func unsupportedHandlerSignatureError(handler any) error {
 
 func normalizeTypedEventHandlerReflectCallable(value reflect.Value, handlerType reflect.Type) EventHandlerCallable {
 	payloadType := handlerType.In(0)
-	payloadSchema := jsonSchemaForType(payloadType)
+	payloadSchema := jsonschema.SchemaForType(payloadType)
 	withContext := handlerType.NumIn() == 2
 	return func(event *BaseEvent, ctx context.Context) (any, error) {
 		if err := jsonschema.Validate(payloadSchema, event.Payload); err != nil {
@@ -296,7 +296,7 @@ func normalizeTypedFindPredicate(where any) (func(*BaseEvent) bool, error) {
 		}, nil
 	}
 	payloadType := predicateType.In(0)
-	payloadSchema := jsonSchemaForType(payloadType)
+	payloadSchema := jsonschema.SchemaForType(payloadType)
 	return func(event *BaseEvent) bool {
 		if err := jsonschema.Validate(payloadSchema, event.Payload); err != nil {
 			return false

@@ -8,7 +8,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use abxbus_rust::{base_event::BaseEvent, event_bus::EventBus, event_handler::EventHandlerOptions};
+use abxbus_rust::{
+    base_event::BaseEvent, event_bus::EventBus, event_handler::EventHandlerOptions,
+    jsonschema::normalize_json_schema,
+};
 use futures::executor::block_on;
 use serde_json::{json, Value};
 
@@ -20,8 +23,12 @@ event! {
     }
 }
 fn assert_original_fields_survive(original: &Value, roundtripped: &Value) {
-    let original = original.as_object().expect("original object");
-    let roundtripped = roundtripped.as_object().expect("roundtripped object");
+    let normalized_original = normalize_schema_fields(original.clone());
+    let normalized_roundtripped = normalize_schema_fields(roundtripped.clone());
+    let original = normalized_original.as_object().expect("original object");
+    let roundtripped = normalized_roundtripped
+        .as_object()
+        .expect("roundtripped object");
     for (key, value) in original {
         assert!(
             roundtripped.contains_key(key),
@@ -33,6 +40,57 @@ fn assert_original_fields_survive(original: &Value, roundtripped: &Value) {
         }
         assert_eq!(&roundtripped[key], value, "field changed: {key}");
     }
+}
+
+fn normalize_schema_fields(value: Value) -> Value {
+    match value {
+        Value::Array(items) => {
+            Value::Array(items.into_iter().map(normalize_schema_fields).collect())
+        }
+        Value::Object(mut object) => {
+            if let Some(schema) = object.remove("event_result_type") {
+                object.insert(
+                    "event_result_type".to_string(),
+                    normalize_json_schema(schema),
+                );
+            }
+            Value::Object(
+                object
+                    .into_iter()
+                    .map(|(key, item)| (key, normalize_schema_fields(item)))
+                    .collect(),
+            )
+        }
+        other => other,
+    }
+}
+
+fn assert_json_schema_layout(event_type: &str, schema: &Value, context: &str) {
+    if !event_type.ends_with("RecursiveNodeEvent") {
+        return;
+    }
+    let child_schema = schema
+        .get("$defs")
+        .and_then(|defs| defs.get("RecursiveNodeResult"))
+        .and_then(|node| node.get("properties"))
+        .and_then(|properties| properties.get("child"))
+        .or_else(|| {
+            schema
+                .get("properties")
+                .and_then(|properties| properties.get("child"))
+        })
+        .expect("recursive child schema");
+    assert_eq!(
+        child_schema.get("anyOf"),
+        Some(&json!([{"$ref": "#"}, {"type": "null"}])),
+        "{context}: child schema should keep standard anyOf $ref/null"
+    );
+    assert!(
+        child_schema.get("nullable").is_none()
+            && child_schema.get("allOf").is_none()
+            && child_schema.get("oneOf").is_none(),
+        "{context}: child schema should not use nullable/allOf/oneOf"
+    );
 }
 
 fn run_go_roundtrip(mode: &str, payload: &Value) -> Value {
@@ -224,7 +282,7 @@ fn cross_runtime_bus_fixture() -> Value {
 
 fn go_rust_event_fixture() -> Value {
     json!({
-        "event_type": "GoRustRoundtripEvent",
+        "event_type": "GoRecursiveNodeEvent",
         "event_version": "0.0.1",
         "event_timeout": null,
         "event_slow_timeout": null,
@@ -238,14 +296,10 @@ fn go_rust_event_fixture() -> Value {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",
             "properties": {
-                "kind": {"const": "ok"},
-                "scores": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {"type": "number", "minimum": 0}
-                }
+                "name": {"type": "string"},
+                "child": {"anyOf": [{"$ref": "#"}, {"type": "null"}]}
             },
-            "required": ["kind", "scores"],
+            "required": ["name", "child"],
             "additionalProperties": false
         },
         "event_id": "018f8e40-1234-7000-8000-00000000d001",
@@ -257,14 +311,14 @@ fn go_rust_event_fixture() -> Value {
         "event_status": "pending",
         "event_started_at": null,
         "event_completed_at": null,
-        "label": "rust-go"
+        "label": "rust-go-recursive"
     })
 }
 
 #[test]
 fn test_python_to_rust_roundtrip_preserves_event_fields_and_result_type_schema() {
     let original = json!({
-        "event_type": "PyTsScreenshotEvent",
+        "event_type": "PyTsRecursiveNodeEvent",
         "event_version": "0.0.1",
         "event_timeout": 33.0,
         "event_slow_timeout": null,
@@ -275,18 +329,17 @@ fn test_python_to_rust_roundtrip_preserves_event_fields_and_result_type_schema()
         "event_handler_completion": null,
         "event_blocks_parent_completion": false,
         "event_result_type": {
-            "type": "object",
-            "properties": {
-                "image_url": {"type": "string"},
-                "width": {"type": "integer"},
-                "height": {"type": "integer"},
-                "tags": {"type": "array", "items": {"type": "string"}},
-                "is_animated": {"type": "boolean"},
-                "confidence_scores": {"type": "array", "items": {"type": "number"}},
-                "metadata": {"type": "object", "additionalProperties": {"type": "number"}},
-                "regions": {"type": "array", "items": {"type": "object"}}
+            "$defs": {
+                "RecursiveNodeResult": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "child": {"anyOf": [{"$ref": "#/$defs/RecursiveNodeResult"}, {"type": "null"}], "default": null}
+                    },
+                    "required": ["name"]
+                }
             },
-            "required": ["image_url", "width", "height", "tags", "is_animated"]
+            "$ref": "#/$defs/RecursiveNodeResult"
         },
         "event_id": "018f8e40-1234-7000-8000-00000000a001",
         "event_path": ["PyBus#aaaa", "TsBridge#bbbb"],
@@ -297,20 +350,24 @@ fn test_python_to_rust_roundtrip_preserves_event_fields_and_result_type_schema()
         "event_status": "pending",
         "event_started_at": null,
         "event_completed_at": null,
-        "target_id": "0c1ccf21-65c0-7390-8b64-9182e985740e",
-        "quality": "high"
+        "marker": "recursive"
     });
 
     let restored = BaseEvent::from_json_value(original.clone());
     let roundtripped = restored.to_json_value();
 
     assert_original_fields_survive(&original, &roundtripped);
+    assert_json_schema_layout(
+        "PyTsRecursiveNodeEvent",
+        &roundtripped["event_result_type"],
+        "python to rust",
+    );
 }
 
 #[test]
 fn test_ts_to_rust_roundtrip_preserves_event_fields_and_result_type_schema() {
     let original = json!({
-        "event_type": "TsPy_RecordResultEvent",
+        "event_type": "TsPy_RecursiveNodeEvent",
         "event_version": "0.0.1",
         "event_timeout": null,
         "event_slow_timeout": null,
@@ -321,12 +378,14 @@ fn test_ts_to_rust_roundtrip_preserves_event_fields_and_result_type_schema() {
         "event_handler_completion": null,
         "event_blocks_parent_completion": false,
         "event_result_type": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",
-            "additionalProperties": {
-                "type": "array",
-                "items": {"type": "number"}
-            }
+            "properties": {
+                "name": {"type": "string"},
+                "child": {"anyOf": [{"$ref": "#"}, {"type": "null"}]}
+            },
+            "required": ["name", "child"],
+            "additionalProperties": false
         },
         "event_id": "018f8e40-1234-7000-8000-00000000b001",
         "event_path": ["TsBus#aaaa"],
@@ -337,13 +396,18 @@ fn test_ts_to_rust_roundtrip_preserves_event_fields_and_result_type_schema() {
         "event_status": "pending",
         "event_started_at": null,
         "event_completed_at": null,
-        "id": "ba1a8735-0955-737f-8b4d-7337d2169a3c"
+        "marker": "recursive"
     });
 
     let restored = BaseEvent::from_json_value(original.clone());
     let roundtripped = restored.to_json_value();
 
     assert_original_fields_survive(&original, &roundtripped);
+    assert_json_schema_layout(
+        "TsPy_RecursiveNodeEvent",
+        &roundtripped["event_result_type"],
+        "ts to rust",
+    );
 }
 
 #[test]
@@ -355,10 +419,20 @@ fn test_go_to_rust_roundtrip_preserves_event_fields_and_result_type_schema() {
         .and_then(|events| events.first())
         .expect("go roundtripped event");
     assert_original_fields_survive(&original, go_event);
+    assert_json_schema_layout(
+        "GoRecursiveNodeEvent",
+        &go_event["event_result_type"],
+        "go to rust through go",
+    );
 
     let restored = BaseEvent::from_json_value(go_event.clone());
     let rust_roundtripped = restored.to_json_value();
     assert_original_fields_survive(&original, &rust_roundtripped);
+    assert_json_schema_layout(
+        "GoRecursiveNodeEvent",
+        &rust_roundtripped["event_result_type"],
+        "go to rust",
+    );
 }
 
 #[test]
@@ -371,6 +445,11 @@ fn test_rust_to_go_roundtrip_preserves_event_fields_and_result_type_schema() {
         .and_then(|events| events.first())
         .expect("go roundtripped event");
     assert_original_fields_survive(&rust_serialized, go_event);
+    assert_json_schema_layout(
+        "GoRecursiveNodeEvent",
+        &go_event["event_result_type"],
+        "rust to go",
+    );
 }
 
 #[test]

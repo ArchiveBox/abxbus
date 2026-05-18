@@ -1,12 +1,54 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import { z } from 'zod'
 
 import { BaseEvent, EventBus, EventHandlerResultSchemaError } from '../src/index.js'
 import { EventHandler } from '../src/EventHandler.js'
 import { EventResult } from '../src/EventResult.js'
+import { fromJsonSchema, normalizeJsonSchema, toJsonSchema, type JsonSchema } from '../src/jsonschema.js'
 import { withResolvers } from '../src/LockManager.js'
+
+type JsonSchemaCommonShapesFixture = {
+  raw_schemas: JsonSchema[]
+  common_complex_schema: JsonSchema
+  common_complex_payload: Record<string, unknown>
+  common_complex_validated_payload: Record<string, unknown>
+  common_complex_invalid_payloads: { name: string; payload: Record<string, unknown> }[]
+}
+
+type CommonComplexSchema = JsonSchema & {
+  properties: {
+    id: { pattern: string }
+    mode: { const: string }
+    category: { enum: string[] }
+    status: { anyOf: [{ type: string; enum: string[] }, { type: string; minimum: number; maximum: number }] }
+    score: { default: number; multipleOf: number }
+    confidence: { exclusiveMaximum: number }
+    owner: { anyOf: [{ properties: { tier: { default: number } } }, { type: 'null' }] }
+    tags: { maxItems: number }
+    metrics: {
+      additionalProperties: {
+        properties: {
+          count: { maximum: number }
+          note: { anyOf: [{ maxLength: number }, { type: 'null' }] }
+          samples: { items: { multipleOf: number } }
+        }
+      }
+    }
+    regions: {
+      items: { properties: { window: { prefixItems: [{ maximum: number }, { maximum: number }] }; visible: { default: boolean } } }
+    }
+  }
+}
+
+const loadJsonSchemaCommonShapesFixture = (): JsonSchemaCommonShapesFixture => {
+  const fixture_path = resolve(dirname(fileURLToPath(import.meta.url)), '../../tests/fixtures/jsonschema_common_shapes.json')
+  return JSON.parse(readFileSync(fixture_path, 'utf8')) as JsonSchemaCommonShapesFixture
+}
 
 const TypedStringResultEvent = BaseEvent.extend('TypedStringResultEvent', {
   event_result_type: z.string(),
@@ -684,6 +726,161 @@ test('fromJSON reconstructs primitive JSON schema', async () => {
   const result = Array.from(dispatched.event_results.values())[0]
   assert.equal(result.status, 'completed')
   assert.equal(result.result, true)
+})
+
+test('json schema null unions normalize to standard anyof', () => {
+  const NullableResultEvent = BaseEvent.extend('NullableResultEvent', {
+    event_result_type: z.string().nullable(),
+  })
+  const event = NullableResultEvent({})
+  const schema = (event.toJSON() as Record<string, unknown>).event_result_type as Record<string, unknown>
+
+  assert.deepEqual(schema.anyOf, [{ type: 'string' }, { type: 'null' }])
+  assert.equal('nullable' in schema, false)
+  assert.equal('oneOf' in schema, false)
+})
+
+test('json schema type null union validates the same as anyof null union', async () => {
+  const bus = new EventBus('StandardNullUnionSchemaBus')
+  const event = BaseEvent.fromJSON({
+    event_id: '018f8e40-1234-7000-8000-000000001241',
+    event_created_at: new Date('2025-01-01T00:00:07.000Z').toISOString(),
+    event_type: 'StandardNullUnionSchemaEvent',
+    event_timeout: 0,
+    event_result_type: { type: ['string', 'null'] },
+  })
+
+  bus.on('StandardNullUnionSchemaEvent', () => 'ok')
+  await bus.emit(event).now()
+
+  const result = Array.from(event.event_results.values())[0]
+  assert.equal(result.status, 'completed')
+  assert.equal(result.result, 'ok')
+  const bus_json = bus.toJSON()
+  const event_json = Object.values(bus_json.event_history)[0] as Record<string, unknown>
+  assert.deepEqual((event_json.event_result_type as Record<string, unknown>).anyOf, [{ type: 'string' }, { type: 'null' }])
+  assert.equal('nullable' in (event_json.event_result_type as Record<string, unknown>), false)
+  await bus.destroy()
+})
+
+test('json schema recursive null refs serialize without infinite expansion', () => {
+  const Node = z.object({
+    name: z.string(),
+    get child() {
+      return Node.nullable()
+    },
+  })
+  const RecursiveResultEvent = BaseEvent.extend('RecursiveResultEvent', {
+    event_result_type: Node,
+  })
+  const event = RecursiveResultEvent({})
+  const schema = (event.toJSON() as Record<string, unknown>).event_result_type as Record<string, unknown>
+  const child_schema = (schema.properties as Record<string, unknown>).child as Record<string, unknown>
+
+  assert.deepEqual(child_schema.anyOf, [{ $ref: '#' }, { type: 'null' }])
+  assert.equal('nullable' in child_schema, false)
+  assert.equal('allOf' in child_schema, false)
+  assert.equal('oneOf' in child_schema, false)
+
+  const normalized_schema = normalizeJsonSchema({
+    $defs: {
+      Node: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          child: {
+            anyOf: [{ $ref: '#/$defs/Node' }, { type: 'null' }],
+          },
+        },
+        required: ['name'],
+      },
+    },
+    $ref: '#/$defs/Node',
+  } as JsonSchema) as Record<string, unknown>
+  const normalized_child_schema = (normalized_schema.properties as Record<string, unknown>).child as Record<string, unknown>
+  assert.equal(normalized_schema.title, 'Node')
+  assert.equal('$defs' in normalized_schema, false)
+  assert.deepEqual(normalized_child_schema.anyOf, [{ $ref: '#' }, { type: 'null' }])
+  assert.equal('nullable' in normalized_child_schema, false)
+  assert.equal('allOf' in normalized_child_schema, false)
+  assert.equal('oneOf' in normalized_child_schema, false)
+})
+
+test('json schema common shapes normalize as stable roundtrip fixtures', () => {
+  const fixture = loadJsonSchemaCommonShapesFixture()
+  const raw_fixtures = [...fixture.raw_schemas]
+  const common_complex_schema = fixture.common_complex_schema
+  const common_complex_payload = fixture.common_complex_payload
+  const common_complex_validated_payload = fixture.common_complex_validated_payload
+  const common_complex_invalid_payloads = fixture.common_complex_invalid_payloads
+  raw_fixtures.push(common_complex_schema)
+
+  for (const schema of raw_fixtures) {
+    const normalized = normalizeJsonSchema(schema) as Record<string, unknown>
+    assert.deepEqual(normalizeJsonSchema(normalized as JsonSchema), normalized)
+    assert.equal(normalized.$schema, 'https://json-schema.org/draft/2020-12/schema')
+  }
+
+  const nullable_string = normalizeJsonSchema(raw_fixtures[0]) as Record<string, unknown>
+  assert.deepEqual(nullable_string.anyOf, [{ type: 'string' }, { type: 'null' }])
+  assert.equal('nullable' in nullable_string, false)
+
+  const recursive = normalizeJsonSchema(raw_fixtures[1]) as Record<string, unknown>
+  assert.equal('$defs' in recursive, false)
+  assert.equal(recursive.title, 'CommonNodeResult')
+  assert.deepEqual(((recursive.properties as Record<string, unknown>).child as Record<string, unknown>).anyOf, [
+    { $ref: '#' },
+    { type: 'null' },
+  ])
+  assert.equal('nullable' in ((recursive.properties as Record<string, unknown>).child as Record<string, unknown>), false)
+
+  const object_union = normalizeJsonSchema(raw_fixtures[2]) as Record<string, unknown>
+  assert.deepEqual(object_union.required, ['count', 'value'])
+
+  const normalized_complex = normalizeJsonSchema(common_complex_schema) as CommonComplexSchema
+  assert.deepEqual(normalized_complex, common_complex_schema)
+  assert.equal(normalized_complex.properties.id.pattern, '^[a-z][a-z0-9-]*$')
+  assert.equal(normalized_complex.properties.mode.const, 'standard')
+  assert.deepEqual(normalized_complex.properties.category.enum, ['alpha', 'beta'])
+  assert.equal(normalized_complex.properties.status.anyOf[1].minimum, 1)
+  assert.equal(normalized_complex.properties.status.anyOf[1].maximum, 3)
+  assert.equal(normalized_complex.properties.score.multipleOf, 5)
+  assert.equal(normalized_complex.properties.confidence.exclusiveMaximum, 1)
+  assert.equal(normalized_complex.properties.score.default, 0)
+  assert.deepEqual(normalized_complex.properties.owner.anyOf[1], { type: 'null' })
+  assert.equal(normalized_complex.properties.owner.anyOf[0].properties.tier.default, 1)
+  assert.equal(normalized_complex.properties.tags.maxItems, 4)
+  assert.equal(normalized_complex.properties.metrics.additionalProperties.properties.count.maximum, 9007199254740991)
+  assert.equal(normalized_complex.properties.metrics.additionalProperties.properties.note.anyOf[0].maxLength, 20)
+  assert.equal(normalized_complex.properties.metrics.additionalProperties.properties.samples.items.multipleOf, 0.25)
+  assert.equal(normalized_complex.properties.regions.items.properties.window.prefixItems[1].maximum, 10)
+  assert.equal(normalized_complex.properties.regions.items.properties.visible.default, true)
+
+  const complex_result_type = fromJsonSchema(normalized_complex)
+  assert.deepEqual(toJsonSchema(complex_result_type), normalized_complex)
+  assert.deepEqual(complex_result_type.parse(common_complex_payload), common_complex_validated_payload)
+  for (const invalid_case of common_complex_invalid_payloads) {
+    assert.equal(complex_result_type.safeParse(invalid_case.payload).success, false, invalid_case.name)
+  }
+
+  let CommonNodeResult: z.ZodTypeAny
+  CommonNodeResult = z.object({
+    name: z.string(),
+    get child() {
+      return CommonNodeResult.nullable()
+    },
+  })
+  const CommonPayloadResult = z.object({
+    count: z.int(),
+    value: z.union([z.string(), z.int()]),
+    tags: z.array(z.string()).nullable(),
+    metadata: z.record(z.string(), z.number()).nullable(),
+  })
+
+  for (const result_type of [z.string().nullable(), CommonNodeResult, CommonPayloadResult]) {
+    const schema = toJsonSchema(result_type)
+    assert.deepEqual(toJsonSchema(fromJsonSchema(schema)), schema)
+  }
 })
 
 test('roundtrip preserves complex result schema types', async () => {

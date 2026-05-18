@@ -6,6 +6,7 @@ import (
 	"math"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -59,8 +60,11 @@ func SchemaForType(t reflect.Type) map[string]any {
 		usedNames:  map[string]reflect.Type{},
 	}
 	schema := state.schemaForType(t)
+	schema = cloneSchemaMap(schema)
+	if _, ok := schema["$schema"]; !ok {
+		schema["$schema"] = Draft202012
+	}
 	if len(state.defs) > 0 {
-		schema = cloneSchemaMap(schema)
 		schema["$defs"] = state.defs
 	}
 	return schema
@@ -74,11 +78,11 @@ type schemaForState struct {
 }
 
 func (state *schemaForState) schemaForType(t reflect.Type) map[string]any {
-	for t != nil && t.Kind() == reflect.Pointer {
-		t = t.Elem()
-	}
 	if t == nil {
 		return map[string]any{"type": "object"}
+	}
+	if t.Kind() == reflect.Pointer {
+		return nullUnionSchema(state.schemaForType(t.Elem()))
 	}
 	switch t.Kind() {
 	case reflect.Struct:
@@ -114,16 +118,252 @@ func (state *schemaForState) schemaForType(t reflect.Type) map[string]any {
 	}
 }
 
+func normalizeJSONSchemaValue(schema any) any {
+	switch value := schema.(type) {
+	case []any:
+		normalized := make([]any, 0, len(value))
+		for _, item := range value {
+			normalized = append(normalized, normalizeJSONSchemaValue(item))
+		}
+		return normalized
+	case map[string]any:
+		normalized := make(map[string]any, len(value))
+		for key, item := range value {
+			normalized[key] = normalizeJSONSchemaValue(item)
+		}
+		sortRequiredFields(normalized)
+		candidates, ok := nullUnionCandidates(normalized)
+		if !ok {
+			return normalized
+		}
+		merged := map[string]any{"anyOf": normalizeJSONSchemaValue(candidates)}
+		for key, item := range normalized {
+			if key != "type" && key != "oneOf" {
+				merged[key] = item
+			}
+		}
+		return merged
+	default:
+		return schema
+	}
+}
+
+// NormalizeJSONSchema converts null unions and root self-references to the
+// stable abxbus JSON Schema wire form.
+func NormalizeJSONSchema(schema any) any {
+	normalized := normalizeJSONSchemaValue(schema)
+	schemaMap, ok := normalized.(map[string]any)
+	if !ok {
+		return normalized
+	}
+	rootRef, ok := schemaMap["$ref"].(string)
+	if !ok || !strings.HasPrefix(rootRef, "#/$defs/") {
+		if defs, ok := schemaMap["$defs"].(map[string]any); ok {
+			if rootName, ok := schemaRootDefName(schemaMap, defs); ok {
+				rootRef = "#/$defs/" + rootName
+			} else {
+				if _, ok := schemaMap["$schema"]; !ok {
+					schemaMap["$schema"] = Draft202012
+				}
+				return schemaMap
+			}
+		} else {
+			if _, ok := schemaMap["$schema"]; !ok {
+				schemaMap["$schema"] = Draft202012
+			}
+			return schemaMap
+		}
+	}
+	defs, ok := schemaMap["$defs"].(map[string]any)
+	if !ok {
+		if _, ok := schemaMap["$schema"]; !ok {
+			schemaMap["$schema"] = Draft202012
+		}
+		return schemaMap
+	}
+	rootName := strings.TrimPrefix(rootRef, "#/$defs/")
+	rootSchema, ok := defs[rootName].(map[string]any)
+	if !ok {
+		if _, ok := schemaMap["$schema"]; !ok {
+			schemaMap["$schema"] = Draft202012
+		}
+		return schemaMap
+	}
+	refs := map[string]string{rootRef: "#"}
+	rewrittenRoot, ok := rewriteSchemaRefs(rootSchema, refs).(map[string]any)
+	if !ok {
+		if _, ok := schemaMap["$schema"]; !ok {
+			schemaMap["$schema"] = Draft202012
+		}
+		return schemaMap
+	}
+	remainingDefs := map[string]any{}
+	for name, def := range defs {
+		if name != rootName {
+			remainingDefs[name] = rewriteSchemaRefs(def, refs)
+		}
+	}
+	if len(remainingDefs) > 0 {
+		rewrittenRoot["$defs"] = remainingDefs
+	}
+	if draft, ok := schemaMap["$schema"]; ok {
+		if _, exists := rewrittenRoot["$schema"]; !exists {
+			rewrittenRoot["$schema"] = draft
+		}
+	} else if _, exists := rewrittenRoot["$schema"]; !exists {
+		rewrittenRoot["$schema"] = Draft202012
+	}
+	setTitleFromInlinedRootDefinition(rewrittenRoot, rootName)
+	return rewrittenRoot
+}
+
+func setTitleFromInlinedRootDefinition(schema map[string]any, rootName string) {
+	if strings.HasPrefix(rootName, "__schema") {
+		return
+	}
+	if _, ok := schema["title"]; !ok {
+		schema["title"] = rootName
+	}
+}
+
+func schemaRootDefName(schema map[string]any, defs map[string]any) (string, bool) {
+	root := make(map[string]any, len(schema))
+	for key, value := range schema {
+		if key != "$schema" && key != "$defs" {
+			root[key] = value
+		}
+	}
+	for name, def := range defs {
+		if reflect.DeepEqual(def, root) {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+func sortRequiredFields(schema map[string]any) {
+	required, ok := schema["required"].([]any)
+	if !ok {
+		return
+	}
+	fields := make([]string, 0, len(required))
+	for _, field := range required {
+		name, ok := field.(string)
+		if !ok {
+			return
+		}
+		fields = append(fields, name)
+	}
+	sort.Strings(fields)
+	sorted := make([]any, 0, len(fields))
+	for _, field := range fields {
+		sorted = append(sorted, field)
+	}
+	schema["required"] = sorted
+}
+
+func rewriteSchemaRefs(schema any, refs map[string]string) any {
+	switch value := schema.(type) {
+	case []any:
+		rewritten := make([]any, 0, len(value))
+		for _, item := range value {
+			rewritten = append(rewritten, rewriteSchemaRefs(item, refs))
+		}
+		return rewritten
+	case map[string]any:
+		rewritten := make(map[string]any, len(value))
+		for key, item := range value {
+			rewritten[key] = rewriteSchemaRefs(item, refs)
+		}
+		if ref, ok := rewritten["$ref"].(string); ok {
+			if replacement, ok := refs[ref]; ok {
+				rewritten["$ref"] = replacement
+			}
+		}
+		return rewritten
+	default:
+		return schema
+	}
+}
+
+func nullUnionCandidates(schema map[string]any) ([]any, bool) {
+	rawTypes, ok := schema["type"].([]any)
+	if ok {
+		nonNullTypes := []any{}
+		hasNull := false
+		for _, rawType := range rawTypes {
+			if rawType == "null" {
+				hasNull = true
+				continue
+			}
+			if _, ok := rawType.(string); ok {
+				nonNullTypes = append(nonNullTypes, rawType)
+			}
+		}
+		if hasNull && len(nonNullTypes) > 0 {
+			if len(nonNullTypes) == 1 {
+				return []any{map[string]any{"type": nonNullTypes[0]}, map[string]any{"type": "null"}}, true
+			}
+			return []any{map[string]any{"type": nonNullTypes}, map[string]any{"type": "null"}}, true
+		}
+	}
+	candidates, ok := schema["oneOf"].([]any)
+	if ok && len(candidates) == 2 {
+		var nullCount int
+		var nonNull any
+		for _, candidate := range candidates {
+			candidateMap, ok := candidate.(map[string]any)
+			if !ok {
+				continue
+			}
+			if candidateMap["type"] == "null" {
+				nullCount++
+			} else {
+				nonNull = candidate
+			}
+		}
+		if nullCount == 1 && nonNull != nil {
+			return []any{nonNull, map[string]any{"type": "null"}}, true
+		}
+	}
+	return nil, false
+}
+
+func nullUnionSchema(schema map[string]any) map[string]any {
+	if schema == nil {
+		return map[string]any{"anyOf": []any{map[string]any{}, map[string]any{"type": "null"}}}
+	}
+	return map[string]any{"anyOf": []any{schema, map[string]any{"type": "null"}}}
+}
+
 func (state *schemaForState) schemaForStruct(t reflect.Type) map[string]any {
 	properties := map[string]any{}
 	required := []any{}
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		if field.PkgPath != "" {
+		name, omitEmpty, skip, explicitName := StructFieldJSONName(field)
+		if skip {
 			continue
 		}
-		name, omitEmpty, skip := jsonFieldName(field)
-		if skip {
+		fieldType := field.Type
+		for fieldType.Kind() == reflect.Pointer {
+			fieldType = fieldType.Elem()
+		}
+		if field.Anonymous && !explicitName && fieldType.Kind() == reflect.Struct {
+			embedded := state.schemaForStruct(fieldType)
+			if embeddedProperties, ok := embedded["properties"].(map[string]any); ok {
+				for embeddedName, embeddedSchema := range embeddedProperties {
+					properties[embeddedName] = embeddedSchema
+				}
+			}
+			if !omitEmpty && field.Type.Kind() != reflect.Pointer {
+				if embeddedRequired, ok := embedded["required"].([]any); ok {
+					required = append(required, embeddedRequired...)
+				}
+			}
+			continue
+		}
+		if field.PkgPath != "" {
 			continue
 		}
 		properties[name] = state.schemaForType(field.Type)
@@ -182,23 +422,40 @@ func cloneSchemaMap(schema map[string]any) map[string]any {
 	return clone
 }
 
-func jsonFieldName(field reflect.StructField) (string, bool, bool) {
+func StructFieldJSONName(field reflect.StructField) (string, bool, bool, bool) {
 	tag := field.Tag.Get("json")
 	if tag == "-" {
-		return "", false, true
+		return "", false, true, false
 	}
 	parts := strings.Split(tag, ",")
 	name := parts[0]
+	explicitName := false
 	if name == "" {
-		name = field.Name
+		name = lowerSnakeCase(field.Name)
+	} else {
+		explicitName = true
 	}
 	omitEmpty := false
 	for _, part := range parts[1:] {
-		if part == "omitempty" {
+		if part == "omitempty" || part == "omitzero" {
 			omitEmpty = true
 		}
 	}
-	return name, omitEmpty, false
+	return name, omitEmpty, false, explicitName
+}
+
+var initialismPattern = regexp.MustCompile(`([A-Z]+)([A-Z][a-z])`)
+var wordBoundaryPattern = regexp.MustCompile(`([a-z0-9])([A-Z])`)
+
+func lowerSnakeCase(name string) string {
+	if name == "" {
+		return name
+	}
+	name = initialismPattern.ReplaceAllString(name, `${1}_${2}`)
+	name = wordBoundaryPattern.ReplaceAllString(name, `${1}_${2}`)
+	name = strings.ReplaceAll(name, "-", "_")
+	name = strings.ReplaceAll(name, " ", "_")
+	return strings.ToLower(name)
 }
 
 func isOptionalType(t reflect.Type) bool {

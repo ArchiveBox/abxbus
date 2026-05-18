@@ -70,8 +70,9 @@ func TestGoRoundtripCLIPreservesEventJSONShape(t *testing.T) {
 		t.Fatalf("roundtrip event payload mismatch: %#v", events)
 	}
 	expectedSchema := map[string]any{
-		"type":  "array",
-		"items": map[string]any{"type": "string"},
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type":    "array",
+		"items":   map[string]any{"type": "string"},
 	}
 	if !reflect.DeepEqual(events[0]["event_result_type"], expectedSchema) {
 		t.Fatalf("event_result_type schema did not roundtrip: %#v", events[0]["event_result_type"])
@@ -232,6 +233,12 @@ func assertEventRoundtripEqualAllowingSchemaNormalization(t *testing.T, expected
 		if _, ok := actualEvents[idx]["event_result_type"]; !ok {
 			t.Fatalf("event_result_type missing after roundtrip at index %d", idx)
 		}
+		assertJSONSchemaLayout(
+			t,
+			fmt.Sprint(expectedEvents[idx]["event_type"]),
+			actualEvents[idx]["event_result_type"],
+			fmt.Sprintf("roundtrip event %d", idx),
+		)
 	}
 }
 
@@ -317,6 +324,22 @@ func roundtripEventCases() []roundtripEventCase {
 			valid:   []any{"ok", 7},
 			invalid: []any{false},
 		},
+		{
+			event: roundtripEventFixture("GoRecursiveNodeEvent", "go-recursive", map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string"},
+					"child": map[string]any{"anyOf": []any{
+						map[string]any{"$ref": "#"},
+						map[string]any{"type": "null"},
+					}},
+				},
+				"required":             []any{"name", "child"},
+				"additionalProperties": false,
+			}, 8),
+			valid:   []any{map[string]any{"name": "root", "child": map[string]any{"name": "leaf", "child": nil}}},
+			invalid: []any{map[string]any{"name": "root", "child": map[string]any{"name": 3, "child": nil}}, map[string]any{"child": nil}},
+		},
 	}
 }
 
@@ -344,12 +367,44 @@ func assertGoResultSchemaSemantics(t *testing.T, payload any, cases []roundtripE
 		if !ok {
 			t.Fatalf("unexpected roundtrip event type %q", eventType)
 		}
+		assertJSONSchemaLayout(t, eventType, eventPayload["event_result_type"], eventType)
 		for idx, valid := range tc.valid {
 			assertGoHandlerResultAccepted(t, eventPayload, valid, fmt.Sprintf("%s valid[%d]", eventType, idx))
 		}
 		for idx, invalid := range tc.invalid {
 			assertGoHandlerResultRejected(t, eventPayload, invalid, fmt.Sprintf("%s invalid[%d]", eventType, idx))
 		}
+	}
+}
+
+func assertJSONSchemaLayout(t *testing.T, eventType string, schema any, context string) {
+	t.Helper()
+	if eventType != "GoRecursiveNodeEvent" {
+		return
+	}
+	schemaMap, ok := schema.(map[string]any)
+	if !ok {
+		t.Fatalf("%s: recursive schema should remain an object", context)
+	}
+	properties, ok := schemaMap["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s: missing recursive schema properties", context)
+	}
+	childSchema, ok := properties["child"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s: missing child schema", context)
+	}
+	if !reflect.DeepEqual(childSchema["anyOf"], []any{map[string]any{"$ref": "#"}, map[string]any{"type": "null"}}) {
+		t.Fatalf("%s: child schema should keep standard anyOf $ref/null, got %#v", context, childSchema)
+	}
+	if _, ok := childSchema["nullable"]; ok {
+		t.Fatalf("%s: child schema should not use nullable", context)
+	}
+	if _, ok := childSchema["allOf"]; ok {
+		t.Fatalf("%s: child schema should not use nullable allOf", context)
+	}
+	if _, ok := childSchema["oneOf"]; ok {
+		t.Fatalf("%s: child schema should not use oneOf", context)
 	}
 }
 

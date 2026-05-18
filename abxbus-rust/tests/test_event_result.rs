@@ -38,6 +38,13 @@ fn event_result_test_guard() -> MutexGuard<'static, ()> {
         .expect("event result test lock")
 }
 
+fn load_json_schema_common_shapes_fixture() -> Value {
+    let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../tests/fixtures/jsonschema_common_shapes.json");
+    let fixture = std::fs::read_to_string(fixture_path).expect("json schema fixture");
+    serde_json::from_str(&fixture).expect("json schema fixture json")
+}
+
 fn expected_event_result_json_keys() -> BTreeSet<String> {
     BTreeSet::from([
         "completed_at".to_string(),
@@ -1750,6 +1757,7 @@ mod folded_test_event_result_typed_results {
         base_event::BaseEvent,
         event_bus::EventBus,
         event_result::{EventResult, EventResultStatus},
+        jsonschema::{normalize_json_schema, validate_json_schema_value},
     };
     use futures::executor::block_on;
     use serde::{Deserialize, Serialize};
@@ -1773,9 +1781,13 @@ mod folded_test_event_result_typed_results {
     }
 
     fn assert_schema_roundtrips(schema: Value) {
-        let original = schema_event("SchemaEvent", Some(schema.clone()));
+        let normalized_schema = normalize_json_schema(schema);
+        let original = schema_event("SchemaEvent", Some(normalized_schema.clone()));
         let restored = BaseEvent::from_json_value(original.to_json_value());
-        assert_eq!(restored.inner.lock().event_result_type, Some(schema));
+        assert_eq!(
+            restored.inner.lock().event_result_type,
+            Some(normalized_schema)
+        );
     }
 
     fn wait(event: &Arc<BaseEvent>) {
@@ -2414,6 +2426,7 @@ mod folded_test_event_result_typed_results {
     #[test]
     fn test_fromjson_deserializes_event_result_type_and_tojson_reserializes_schema() {
         let schema = json!({"type": "integer"});
+        let normalized_schema = normalize_json_schema(schema.clone());
         let event = BaseEvent::from_json_value(json!({
             "event_id": "018f8e40-1234-7000-8000-000000001235",
             "event_created_at": "2025-01-01T00:00:01.000Z",
@@ -2422,8 +2435,14 @@ mod folded_test_event_result_typed_results {
             "event_result_type": schema,
         }));
 
-        assert_eq!(event.inner.lock().event_result_type, Some(schema.clone()));
-        assert_eq!(event.to_json_value()["event_result_type"], schema);
+        assert_eq!(
+            event.inner.lock().event_result_type,
+            Some(normalized_schema.clone())
+        );
+        assert_eq!(
+            event.to_json_value()["event_result_type"],
+            normalized_schema
+        );
     }
 
     #[test]
@@ -2505,6 +2524,259 @@ mod folded_test_event_result_typed_results {
             json!({"type": "null"}),
         ] {
             assert_schema_roundtrips(schema);
+        }
+    }
+
+    #[test]
+    fn test_json_schema_null_unions_normalize_to_standard_anyof() {
+        let event = schema_event(
+            "NullableSchemaEvent",
+            Some(json!({"anyOf": [{"type": "string"}, {"type": "null"}]})),
+        );
+        let schema = event.to_json_value()["event_result_type"].clone();
+
+        assert_eq!(
+            schema["anyOf"],
+            json!([{"type": "string"}, {"type": "null"}])
+        );
+        assert!(schema.get("nullable").is_none());
+        assert!(schema.get("oneOf").is_none());
+    }
+
+    #[test]
+    fn test_json_schema_type_null_union_validates_the_same_as_anyof_null_union() {
+        let bus = EventBus::new(Some("StandardNullUnionSchemaBus".to_string()));
+        bus.on_raw(
+            "StandardNullUnionSchemaEvent",
+            "handler",
+            |_event| async move { Ok(json!("ok")) },
+        );
+        let event = bus.emit_base(schema_event(
+            "StandardNullUnionSchemaEvent",
+            Some(json!({"type": ["string", "null"]})),
+        ));
+        wait(&event);
+
+        let result = first_event_result_record(&event);
+        assert_eq!(result.status, EventResultStatus::Completed);
+        assert_eq!(result.result, Some(json!("ok")));
+        let bus_json = bus.to_json_value();
+        let history = bus_json["event_history"]
+            .as_object()
+            .expect("event history");
+        let event_json = history.values().next().expect("event history event");
+        assert_eq!(
+            event_json["event_result_type"]["anyOf"],
+            json!([{"type": "string"}, {"type": "null"}])
+        );
+        assert!(event_json["event_result_type"].get("nullable").is_none());
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_json_schema_recursive_null_refs_serialize_without_infinite_expansion() {
+        let schema = json!({
+            "$defs": {
+                "Node": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "child": {
+                            "anyOf": [
+                                {"$ref": "#/$defs/Node"},
+                                {"type": "null"}
+                            ]
+                        }
+                    },
+                    "required": ["name"]
+                }
+            },
+            "$ref": "#/$defs/Node"
+        });
+        let event = schema_event("RecursiveNullableSchemaEvent", Some(schema));
+        let event_schema = event.to_json_value()["event_result_type"].clone();
+        let child_schema = event_schema["properties"]["child"]
+            .as_object()
+            .expect("child schema");
+
+        assert_eq!(
+            child_schema.get("anyOf"),
+            Some(&json!([{"$ref": "#"}, {"type": "null"}]))
+        );
+        assert_eq!(event_schema.get("title"), Some(&json!("Node")));
+        assert!(child_schema.get("nullable").is_none());
+        assert!(child_schema.get("allOf").is_none());
+        assert!(child_schema.get("oneOf").is_none());
+
+        let normalized_schema = normalize_json_schema(json!({
+            "$defs": {
+                "Node": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "child": {
+                            "anyOf": [
+                                {"$ref": "#/$defs/Node"},
+                                {"type": "null"}
+                            ]
+                        }
+                    },
+                    "required": ["name"]
+                }
+            },
+            "$ref": "#/$defs/Node"
+        }));
+        let normalized_child_schema = normalized_schema["properties"]["child"]
+            .as_object()
+            .expect("normalized child schema");
+        assert_eq!(normalized_schema.get("title"), Some(&json!("Node")));
+        assert!(normalized_schema.get("$defs").is_none());
+        assert_eq!(
+            normalized_child_schema.get("anyOf"),
+            Some(&json!([{"$ref": "#"}, {"type": "null"}]))
+        );
+        assert!(normalized_child_schema.get("nullable").is_none());
+        assert!(normalized_child_schema.get("allOf").is_none());
+        assert!(normalized_child_schema.get("oneOf").is_none());
+    }
+
+    #[test]
+    fn test_json_schema_common_shapes_normalize_as_stable_roundtrip_fixtures() {
+        let fixture = crate::load_json_schema_common_shapes_fixture();
+        let mut raw_fixtures = fixture["raw_schemas"]
+            .as_array()
+            .expect("raw schemas")
+            .clone();
+        let common_complex_schema = fixture["common_complex_schema"].clone();
+        let common_complex_payload = fixture["common_complex_payload"].clone();
+        let common_complex_invalid_payloads = fixture["common_complex_invalid_payloads"]
+            .as_array()
+            .expect("invalid payloads")
+            .clone();
+        raw_fixtures.push(common_complex_schema.clone());
+
+        for schema in &raw_fixtures {
+            let normalized = normalize_json_schema(schema.clone());
+            assert_eq!(normalize_json_schema(normalized.clone()), normalized);
+            assert_eq!(
+                normalized.get("$schema"),
+                Some(&json!("https://json-schema.org/draft/2020-12/schema"))
+            );
+        }
+
+        let nullable_string = normalize_json_schema(raw_fixtures[0].clone());
+        assert_eq!(
+            nullable_string.get("anyOf"),
+            Some(&json!([{"type": "string"}, {"type": "null"}]))
+        );
+        assert!(nullable_string.get("nullable").is_none());
+
+        let recursive = normalize_json_schema(raw_fixtures[1].clone());
+        assert!(recursive.get("$defs").is_none());
+        assert_eq!(recursive.get("title"), Some(&json!("CommonNodeResult")));
+        let recursive_child = &recursive["properties"]["child"];
+        assert_eq!(
+            recursive_child.get("anyOf"),
+            Some(&json!([{"$ref": "#"}, {"type": "null"}]))
+        );
+        assert!(recursive_child.get("nullable").is_none());
+
+        let object_union = normalize_json_schema(raw_fixtures[2].clone());
+        assert_eq!(
+            object_union.get("required"),
+            Some(&json!(["count", "value"]))
+        );
+
+        let normalized_complex = normalize_json_schema(common_complex_schema.clone());
+        assert_eq!(normalized_complex, common_complex_schema);
+        assert_eq!(
+            normalized_complex["properties"]["id"]["pattern"],
+            json!("^[a-z][a-z0-9-]*$")
+        );
+        assert_eq!(
+            normalized_complex["properties"]["mode"]["const"],
+            json!("standard")
+        );
+        assert_eq!(
+            normalized_complex["properties"]["category"]["enum"],
+            json!(["alpha", "beta"])
+        );
+        assert_eq!(
+            normalized_complex["properties"]["status"]["anyOf"][1]["minimum"],
+            json!(1)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["status"]["anyOf"][1]["maximum"],
+            json!(3)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["score"]["multipleOf"],
+            json!(5)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["confidence"]["exclusiveMaximum"],
+            json!(1)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["score"]["default"],
+            json!(0)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["owner"]["anyOf"][1],
+            json!({"type": "null"})
+        );
+        assert_eq!(
+            normalized_complex["properties"]["owner"]["anyOf"][0]["properties"]["tier"]["default"],
+            json!(1)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["tags"]["maxItems"],
+            json!(4)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["metrics"]["additionalProperties"]["properties"]
+                ["count"]["maximum"],
+            json!(9007199254740991i64)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["metrics"]["additionalProperties"]["properties"]
+                ["note"]["anyOf"][0]["maxLength"],
+            json!(20)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["metrics"]["additionalProperties"]["properties"]
+                ["samples"]["items"]["multipleOf"],
+            json!(0.25)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["regions"]["items"]["properties"]["window"]
+                ["prefixItems"][1]["maximum"],
+            json!(10)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["regions"]["items"]["properties"]["visible"]
+                ["default"],
+            json!(true)
+        );
+        validate_json_schema_value(
+            &normalized_complex,
+            &normalized_complex,
+            &common_complex_payload,
+            "$",
+        )
+        .expect("complex payload should validate");
+        for invalid_case in common_complex_invalid_payloads {
+            let invalid_payload = &invalid_case["payload"];
+            assert!(
+                validate_json_schema_value(
+                    &normalized_complex,
+                    &normalized_complex,
+                    invalid_payload,
+                    "$"
+                )
+                .is_err(),
+                "complex invalid payload should fail validation: {invalid_case}"
+            );
         }
     }
 
@@ -2909,12 +3181,13 @@ mod folded_test_event_result_typed_results {
             },
             "required": ["title", "count", "flags", "active", "meta"]
         });
+        let normalized_complex_schema = normalize_json_schema(complex_schema.clone());
         let original = schema_event("ComplexRoundtripEvent", Some(complex_schema.clone()));
         let roundtripped = BaseEvent::from_json_value(original.to_json_value());
 
         assert_eq!(
             roundtripped.inner.lock().event_result_type,
-            Some(complex_schema)
+            Some(normalized_complex_schema)
         );
 
         bus.on_raw("ComplexRoundtripEvent", "handler", |_event| async move {

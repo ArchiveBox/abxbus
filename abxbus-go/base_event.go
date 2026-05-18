@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -39,15 +38,14 @@ type BaseEvent struct {
 	EventHandlerCompletion      EventHandlerCompletionMode  `json:"event_handler_completion,omitempty"`
 	EventBlocksParentCompletion bool                        `json:"event_blocks_parent_completion"`
 
-	Payload            map[string]any
-	Bus                *EventBus               `json:"-"`
-	EventResults       map[string]*EventResult `json:"-"`
-	eventResultOrder   []string
-	eventResultTypeRaw json.RawMessage
-	dispatchCtx        context.Context `json:"-"`
-	mu                 sync.Mutex
-	done_ch            chan struct{}
-	done_once          sync.Once
+	Payload          map[string]any
+	Bus              *EventBus               `json:"-"`
+	EventResults     map[string]*EventResult `json:"-"`
+	eventResultOrder []string
+	dispatchCtx      context.Context `json:"-"`
+	mu               sync.Mutex
+	done_ch          chan struct{}
+	done_once        sync.Once
 }
 
 type EventWaitOptions struct {
@@ -235,14 +233,8 @@ func (e *BaseEvent) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		e.EventResultType = normalizeEventResultTypeSchema(resultType)
-		if rawEventResultTypeIsObject(m.EventResultType) {
-			e.eventResultTypeRaw = append(json.RawMessage(nil), m.EventResultType...)
-		} else {
-			e.eventResultTypeRaw = nil
-		}
 	} else {
 		e.EventResultType = nil
-		e.eventResultTypeRaw = nil
 	}
 	e.EventEmittedByHandlerID = m.EventEmittedByHandlerID
 	e.EventPendingBusCount = m.EventPendingBusCount
@@ -400,49 +392,11 @@ func (e *BaseEvent) eventResultTypeJSONValue() any {
 	if e.EventResultType == nil {
 		return nil
 	}
-	if len(e.eventResultTypeRaw) > 0 && rawEventResultTypeMatchesValue(e.eventResultTypeRaw, e.EventResultType) {
-		return json.RawMessage(e.eventResultTypeRaw)
-	}
 	return normalizeEventResultTypeSchema(e.EventResultType)
 }
 
-func rawEventResultTypeIsObject(raw json.RawMessage) bool {
-	var schema map[string]any
-	if err := json.Unmarshal(raw, &schema); err != nil {
-		return false
-	}
-	return true
-}
-
-func rawEventResultTypeMatchesValue(raw json.RawMessage, value any) bool {
-	var rawValue any
-	if err := json.Unmarshal(raw, &rawValue); err != nil {
-		return false
-	}
-	normalizedRaw := normalizeJSONValue(rawValue)
-	normalizedValue := normalizeJSONValue(value)
-	if reflect.DeepEqual(normalizedRaw, normalizedValue) {
-		return true
-	}
-	rawSchema, rawOK := normalizedRaw.(map[string]any)
-	valueSchema, valueOK := normalizedValue.(map[string]any)
-	if !rawOK || !valueOK {
-		return false
-	}
-	if _, rawHasDraftSchema := rawSchema["$schema"]; rawHasDraftSchema {
-		return false
-	}
-	valueSchemaWithoutDraft := make(map[string]any, len(valueSchema))
-	for key, entry := range valueSchema {
-		if key != "$schema" {
-			valueSchemaWithoutDraft[key] = entry
-		}
-	}
-	return reflect.DeepEqual(rawSchema, valueSchemaWithoutDraft)
-}
-
 func normalizeEventResultTypeSchema(value any) any {
-	normalized := normalizeJSONValue(value)
+	normalized := jsonschema.NormalizeJSONSchema(normalizeJSONValue(value))
 	schema, ok := normalized.(map[string]any)
 	if !ok {
 		return normalized
@@ -891,7 +845,7 @@ func (e *BaseEvent) validateResultValue(value any) error {
 	if _, isEvent := value.(*BaseEvent); isEvent {
 		return nil
 	}
-	schema, ok := normalizeJSONValue(e.EventResultType).(map[string]any)
+	schema, ok := jsonschema.NormalizeJSONSchema(normalizeJSONValue(e.EventResultType)).(map[string]any)
 	if !ok {
 		return nil
 	}

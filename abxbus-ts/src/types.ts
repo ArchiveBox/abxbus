@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { BaseEvent } from './BaseEvent.js'
+import { fromJsonSchema, isJsonSchema, type JsonSchema } from './jsonschema.js'
 
 export type EventStatus = 'pending' | 'started' | 'completed'
 
@@ -13,7 +14,7 @@ export type EventResultType<TEvent extends BaseEvent> = TEvent extends { __event
 
 export type EventResultTypeConstructor = StringConstructor | NumberConstructor | BooleanConstructor | ArrayConstructor | ObjectConstructor
 
-export type EventResultTypeInput = z.ZodTypeAny | EventResultTypeConstructor | unknown
+export type EventResultTypeInput = z.ZodTypeAny | z.core.$ZodType | EventResultTypeConstructor | JsonSchema
 
 export type EventHandlerReturn<T extends BaseEvent = BaseEvent> = EventResultType<T> | BaseEvent | null | void
 
@@ -107,19 +108,7 @@ export const extractZodShape = (raw: Record<string, unknown>): z.ZodRawShape => 
   return shape as z.ZodRawShape
 }
 
-export const toJsonSchema = (schema: unknown): unknown => {
-  if (!schema || !isZodSchema(schema)) return schema
-  const zod_any = z as unknown as { toJSONSchema: (input: z.ZodTypeAny) => unknown }
-  // Cross-language roundtrips preserve core structural types; constraint keywords may not roundtrip exactly.
-  return zod_any.toJSONSchema(schema)
-}
-
-export const fromJsonSchema = (schema: unknown): z.ZodTypeAny => {
-  const zod_any = z as unknown as { fromJSONSchema: (input: unknown) => z.ZodTypeAny }
-  return zod_any.fromJSONSchema(schema)
-}
-
-export const normalizeEventResultType = (value: EventResultTypeInput): z.ZodTypeAny | undefined => {
+export function normalizeEventResultType(value: unknown): z.ZodTypeAny | undefined {
   if (value === undefined || value === null) {
     return undefined
   }
@@ -129,6 +118,9 @@ export const normalizeEventResultType = (value: EventResultTypeInput): z.ZodType
   const constructor_schema = eventResultTypeFromConstructor(value)
   if (constructor_schema) {
     return constructor_schema
+  }
+  if (!isJsonSchema(value)) {
+    throw new Error(`event_result_type must be a Zod schema, constructor shorthand, or JSON Schema value, got: ${typeof value}`)
   }
   return fromJsonSchema(value)
 }
