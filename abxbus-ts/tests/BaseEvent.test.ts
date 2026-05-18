@@ -1339,6 +1339,7 @@ test('BaseEvent.extend exposes Zod model_fields and parsed defaults statically',
   const ShortcutEvent = BaseEvent.extend('BaseEventStaticShortcutFieldsEvent', {
     some_field: z.literal('abc').default('abc'),
     shortcut_field: shortcut_field_schema,
+    raw_shortcut_field: 'abc',
     event_timeout: 2000,
     event_result_type: result_schema,
   })
@@ -1346,17 +1347,21 @@ test('BaseEvent.extend exposes Zod model_fields and parsed defaults statically',
   assert.equal(ShortcutEvent.model_fields.some_field.constructor.name, 'ZodDefault')
   assert.equal(ShortcutEvent.model_fields, ShortcutEvent.event_schema.shape)
   assert.equal(ShortcutEvent.model_fields.shortcut_field, shortcut_field_schema)
+  assert.equal(ShortcutEvent.model_fields.raw_shortcut_field.constructor.name, 'ZodDefault')
   assert.equal(Object.getPrototypeOf(ShortcutEvent.model_fields.event_timeout).constructor.name, 'ZodDefault')
   assert.equal(ShortcutEvent.model_fields.event_result_type, result_schema)
   assert.equal(ShortcutEvent.some_field, 'abc')
   assert.equal(ShortcutEvent.shortcut_field, 'shortcut')
+  assert.equal(ShortcutEvent.raw_shortcut_field, 'abc')
   assert.equal(ShortcutEvent.event_timeout, 2000)
   assert.equal(ShortcutEvent.class?.model_fields, ShortcutEvent.model_fields)
   assert.equal(ShortcutEvent.class?.shortcut_field, 'shortcut')
+  assert.equal(ShortcutEvent.class?.raw_shortcut_field, 'abc')
   assert.equal(ShortcutEvent.class?.event_timeout, 2000)
   assert.equal(ShortcutEvent.event_result_type, result_schema)
   assert.equal(ShortcutEvent().some_field, 'abc')
   assert.equal(ShortcutEvent().shortcut_field, 'shortcut')
+  assert.equal(ShortcutEvent().raw_shortcut_field, 'abc')
   assert.equal(ShortcutEvent().event_timeout, 2000)
 })
 

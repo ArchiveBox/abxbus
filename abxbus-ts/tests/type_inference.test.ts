@@ -40,6 +40,7 @@ const StaticShortcutField = z.string().default('shortcut')
 const StaticShortcutResult = z.number()
 const StaticShortcutEvent = BaseEvent.extend('StaticShortcutEventForInference', {
   shortcut_field: StaticShortcutField,
+  raw_shortcut_field: 'abc',
   event_timeout: 2000,
   event_result_type: StaticShortcutResult,
 })
@@ -72,7 +73,11 @@ type _assert_static_schema_instance_builtin_default = Assert<IsEqual<typeof stat
 type _assert_static_shortcut_model_field = Assert<
   IsEqual<typeof StaticShortcutEvent.model_fields.shortcut_field, typeof StaticShortcutField>
 >
+type _assert_static_shortcut_raw_model_field = Assert<
+  IsEqual<typeof StaticShortcutEvent.model_fields.raw_shortcut_field, z.ZodDefault<z.ZodLiteral<'abc'>>>
+>
 type _assert_static_shortcut_field = Assert<IsEqual<typeof StaticShortcutEvent.shortcut_field, string>>
+type _assert_static_shortcut_raw_field = Assert<IsEqual<typeof StaticShortcutEvent.raw_shortcut_field, 'abc'>>
 type _assert_static_shortcut_model_timeout = Assert<
   IsEqual<typeof StaticShortcutEvent.model_fields.event_timeout, z.ZodDefault<z.ZodNullable<z.ZodNumber>>>
 >
@@ -82,6 +87,7 @@ type _assert_static_shortcut_model_result_schema = Assert<
   IsEqual<typeof StaticShortcutEvent.model_fields.event_result_type, typeof StaticShortcutResult>
 >
 type _assert_static_shortcut_instance_default = Assert<IsEqual<typeof static_shortcut_default_event.shortcut_field, string>>
+type _assert_static_shortcut_raw_instance_default = Assert<IsEqual<typeof static_shortcut_default_event.raw_shortcut_field, 'abc'>>
 type InferableEventResultEntry =
   InstanceType<typeof InferableResultEvent>['event_results'] extends Map<string, infer TResultEntry> ? TResultEntry : never
 type _assert_inferable_event_result_entry = Assert<

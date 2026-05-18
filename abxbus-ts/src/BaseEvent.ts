@@ -229,9 +229,10 @@ type ResultTypeFromEventResultTypeInput<TInput> = TInput extends z.ZodTypeAny
 
 type ResultSchemaFromShape<TShape> = TShape extends { event_result_type: infer S } ? ResultTypeFromEventResultTypeInput<S> : unknown
 type ResultSchemaFromEventSchema<TSchema> = TSchema extends z.ZodObject<infer TShape> ? ResultSchemaFromShape<TShape> : unknown
+type ZodLiteralValue = string | number | bigint | boolean | null | undefined
 type ShortcutDefaultModelField<K, TValue> = K extends keyof BaseEventSchemaShape
   ? z.ZodDefault<BaseEventSchemaShape[K]>
-  : z.ZodDefault<z.ZodUnknown>
+  : z.ZodDefault<TValue extends ZodLiteralValue ? z.ZodLiteral<TValue> : z.ZodType<TValue>>
 type ShortcutModelFields<TShape> = {
   [K in keyof TShape as K extends 'event_result_type' ? never : K]: TShape[K] extends z.ZodTypeAny
     ? TShape[K]
@@ -349,7 +350,8 @@ function missingBaseFields(event_type: string, user_shape: z.ZodRawShape): z.Zod
 
 function shortcutDefaultSchema(base_field_schema: z.ZodTypeAny | undefined, value: unknown): z.ZodTypeAny {
   if (!base_field_schema) {
-    return z.unknown().optional().default(value)
+    const literal = (z.literal as (value: unknown) => z.ZodTypeAny)(value)
+    return literal.default(value)
   }
   return base_field_schema.default(base_field_schema.parse(value))
 }
