@@ -5,7 +5,7 @@ import { z } from 'zod'
 
 import { BaseEvent } from '../src/index.js'
 
-test('BaseEvent.extend accepts full Zod object schemas and exposes user field schemas statically', () => {
+test('BaseEvent.extend accepts full Zod object schemas and exposes model_fields as event_schema.shape', () => {
   const url_schema = z.string().url()
   const retries_schema = z.number().int().min(0).max(2).default(0)
   const payload_schema_field = z.string()
@@ -32,13 +32,18 @@ test('BaseEvent.extend accepts full Zod object schemas and exposes user field sc
   assert.equal(event.retries, 0)
   assert.equal(event.event_timeout, 25)
   assert.equal(typeof FullZodEvent.event_schema.safeParse, 'function')
-  assert.equal(FullZodEvent.url, url_schema)
-  assert.equal(FullZodEvent.retries, retries_schema)
-  assert.equal(FullZodEvent.schema, payload_schema_field)
-  assert.equal(FullZodEvent.event_timeout, event_timeout_schema)
+  assert.equal(FullZodEvent.model_fields, FullZodEvent.event_schema.shape)
+  assert.equal(FullZodEvent.model_fields.url, url_schema)
+  assert.equal(FullZodEvent.model_fields.retries, retries_schema)
+  assert.equal(FullZodEvent.model_fields.schema, payload_schema_field)
+  assert.equal(FullZodEvent.model_fields.event_timeout, event_timeout_schema)
+  assert.equal(FullZodEvent.retries, 0)
+  assert.equal(FullZodEvent.event_timeout, 25)
   assert.ok(FullZodEvent.class)
-  assert.equal(FullZodEvent.class.schema, payload_schema_field)
-  assert.equal(FullZodEvent.class.event_timeout, event_timeout_schema)
+  assert.equal(FullZodEvent.class.model_fields, FullZodEvent.class.event_schema.shape)
+  assert.equal(FullZodEvent.class.model_fields.schema, payload_schema_field)
+  assert.equal(FullZodEvent.class.retries, 0)
+  assert.equal(FullZodEvent.class.event_timeout, 25)
   assert.equal(Object.prototype.propertyIsEnumerable.call(event, 'event_schema'), false)
 
   const json = event.toJSON() as Record<string, unknown>

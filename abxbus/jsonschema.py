@@ -2,10 +2,9 @@ import inspect
 import math
 import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Any, ForwardRef, Literal, Protocol, TypeAlias, cast
+from typing import Annotated, Any, ForwardRef, Literal, Protocol, TypeAlias, cast
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, create_model
-from typing_extensions import Annotated
 
 _SCHEMA_TYPE_REGISTRY: tuple[tuple[str, type[Any], str], ...] = (
     ('string', str, 'string'),
