@@ -38,9 +38,13 @@ const StaticSchemaEvent = BaseEvent.extend(
 )
 const StaticShortcutField = z.string().default('shortcut')
 const StaticShortcutResult = z.number()
+const StaticShortcutObjectField: { mode: 'exact'; nested: { count: number } } = { mode: 'exact', nested: { count: 2 } }
+const StaticShortcutTupleField: ['ready', { retries: number }] = ['ready', { retries: 1 }]
 const StaticShortcutEvent = BaseEvent.extend('StaticShortcutEventForInference', {
   shortcut_field: StaticShortcutField,
   raw_shortcut_field: 'abc',
+  raw_object_shortcut_field: StaticShortcutObjectField,
+  raw_tuple_shortcut_field: StaticShortcutTupleField,
   event_timeout: 2000,
   event_result_type: StaticShortcutResult,
 })
@@ -76,8 +80,20 @@ type _assert_static_shortcut_model_field = Assert<
 type _assert_static_shortcut_raw_model_field = Assert<
   IsEqual<typeof StaticShortcutEvent.model_fields.raw_shortcut_field, z.ZodDefault<z.ZodLiteral<'abc'>>>
 >
+type _assert_static_shortcut_raw_object_model_field = Assert<
+  IsEqual<typeof StaticShortcutEvent.model_fields.raw_object_shortcut_field, z.ZodDefault<z.ZodType<typeof StaticShortcutObjectField>>>
+>
+type _assert_static_shortcut_raw_tuple_model_field = Assert<
+  IsEqual<typeof StaticShortcutEvent.model_fields.raw_tuple_shortcut_field, z.ZodDefault<z.ZodType<typeof StaticShortcutTupleField>>>
+>
 type _assert_static_shortcut_field = Assert<IsEqual<typeof StaticShortcutEvent.shortcut_field, string>>
 type _assert_static_shortcut_raw_field = Assert<IsEqual<typeof StaticShortcutEvent.raw_shortcut_field, 'abc'>>
+type _assert_static_shortcut_raw_object_field = Assert<
+  IsEqual<typeof StaticShortcutEvent.raw_object_shortcut_field, typeof StaticShortcutObjectField>
+>
+type _assert_static_shortcut_raw_tuple_field = Assert<
+  IsEqual<typeof StaticShortcutEvent.raw_tuple_shortcut_field, typeof StaticShortcutTupleField>
+>
 type _assert_static_shortcut_model_timeout = Assert<
   IsEqual<typeof StaticShortcutEvent.model_fields.event_timeout, z.ZodDefault<z.ZodNullable<z.ZodNumber>>>
 >
@@ -88,6 +104,12 @@ type _assert_static_shortcut_model_result_schema = Assert<
 >
 type _assert_static_shortcut_instance_default = Assert<IsEqual<typeof static_shortcut_default_event.shortcut_field, string>>
 type _assert_static_shortcut_raw_instance_default = Assert<IsEqual<typeof static_shortcut_default_event.raw_shortcut_field, 'abc'>>
+type _assert_static_shortcut_raw_object_instance_default = Assert<
+  IsEqual<typeof static_shortcut_default_event.raw_object_shortcut_field, typeof StaticShortcutObjectField>
+>
+type _assert_static_shortcut_raw_tuple_instance_default = Assert<
+  IsEqual<typeof static_shortcut_default_event.raw_tuple_shortcut_field, typeof StaticShortcutTupleField>
+>
 type InferableEventResultEntry =
   InstanceType<typeof InferableResultEvent>['event_results'] extends Map<string, infer TResultEntry> ? TResultEntry : never
 type _assert_inferable_event_result_entry = Assert<
@@ -192,8 +214,10 @@ const wrapped_update_call = wrapped_client.update()
 type WrappedUpdateReturn = Awaited<typeof wrapped_update_call>
 type _assert_wrapped_update_return = Assert<IsEqual<WrappedUpdateReturn, boolean | undefined>>
 
-// @ts-expect-error missing required InferableResultEvent field
-wrapped_client.create({})
+if (false) {
+  // @ts-expect-error missing required InferableResultEvent field
+  wrapped_client.create({})
+}
 
 const make_events_demo = events_suck.make_events({
   FooBarAPIObjEvent: (payload: { id: string; age?: number }) => payload.id.length > 0,

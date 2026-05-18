@@ -109,6 +109,49 @@ test('BaseEvent.extend preserves non-Zod shortcut defaults through generated eve
   assert.equal((event.toJSON() as Record<string, unknown>).event_timeout, 25)
 })
 
+test('BaseEvent.extend treats compound non-Zod shortcut defaults as fixed literals', () => {
+  const ShortcutLiteralEvent = BaseEvent.extend('BaseEventShortcutCompoundLiteralSchemaEvent', {
+    exact_object: { mode: 'exact', nested: { count: 2 }, flags: [true, null] },
+    exact_tuple: ['ready', { retries: 1 }],
+  })
+
+  const default_event = ShortcutLiteralEvent({})
+  assert.deepEqual(default_event.exact_object, { mode: 'exact', nested: { count: 2 }, flags: [true, null] })
+  assert.deepEqual(default_event.exact_tuple, ['ready', { retries: 1 }])
+
+  const roundtripped_event = ShortcutLiteralEvent({
+    exact_object: { mode: 'exact', nested: { count: 2 }, flags: [true, null] },
+    exact_tuple: ['ready', { retries: 1 }],
+  })
+  assert.deepEqual(roundtripped_event.exact_object, default_event.exact_object)
+  assert.deepEqual(roundtripped_event.exact_tuple, default_event.exact_tuple)
+
+  assert.throws(
+    () =>
+      ShortcutLiteralEvent({
+        exact_object: { mode: 'exact', nested: { count: 3 }, flags: [true, null] },
+        exact_tuple: ['ready', { retries: 1 }],
+      }),
+    z.ZodError
+  )
+  assert.throws(
+    () =>
+      ShortcutLiteralEvent({
+        exact_object: { mode: 'exact', nested: { count: 2 }, flags: [true, null], extra: true },
+        exact_tuple: ['ready', { retries: 1 }],
+      }),
+    z.ZodError
+  )
+  assert.throws(
+    () =>
+      ShortcutLiteralEvent({
+        exact_object: { mode: 'exact', nested: { count: 2 }, flags: [true, null] },
+        exact_tuple: ['ready'],
+      }),
+    z.ZodError
+  )
+})
+
 test('BaseEvent.extend validates non-Zod shortcut defaults for builtin metadata fields', () => {
   assert.throws(
     () =>

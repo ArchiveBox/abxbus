@@ -230,6 +230,7 @@ type ResultTypeFromEventResultTypeInput<TInput> = TInput extends z.ZodTypeAny
 type ResultSchemaFromShape<TShape> = TShape extends { event_result_type: infer S } ? ResultTypeFromEventResultTypeInput<S> : unknown
 type ResultSchemaFromEventSchema<TSchema> = TSchema extends z.ZodObject<infer TShape> ? ResultSchemaFromShape<TShape> : unknown
 type ZodLiteralValue = string | number | bigint | boolean | null | undefined
+type SeenShortcutLiteralPairs = WeakMap<object, WeakSet<object>>
 type ShortcutDefaultModelField<K, TValue> = K extends keyof BaseEventSchemaShape
   ? z.ZodDefault<BaseEventSchemaShape[K]>
   : z.ZodDefault<TValue extends ZodLiteralValue ? z.ZodLiteral<TValue> : z.ZodType<TValue>>
@@ -348,10 +349,70 @@ function missingBaseFields(event_type: string, user_shape: z.ZodRawShape): z.Zod
   return Object.fromEntries(Object.entries(baseEventDefaultShape(event_type)).filter(([key]) => !(key in user_shape))) as z.ZodRawShape
 }
 
+function isZodLiteralValue(value: unknown): value is ZodLiteralValue {
+  return value === null || value === undefined || ['string', 'number', 'bigint', 'boolean'].includes(typeof value)
+}
+
+function isPlainShortcutLiteralObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false
+  }
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+function alreadyComparedShortcutLiteralPair(left: object, right: object, seen: SeenShortcutLiteralPairs): boolean {
+  let right_values = seen.get(left)
+  if (right_values?.has(right)) {
+    return true
+  }
+  if (!right_values) {
+    right_values = new WeakSet<object>()
+    seen.set(left, right_values)
+  }
+  right_values.add(right)
+  return false
+}
+
+function shortcutLiteralValuesEqual(left: unknown, right: unknown, seen: SeenShortcutLiteralPairs = new WeakMap()): boolean {
+  if (Object.is(left, right)) {
+    return true
+  }
+  if (typeof left !== 'object' || left === null || typeof right !== 'object' || right === null) {
+    return false
+  }
+  if (alreadyComparedShortcutLiteralPair(left, right, seen)) {
+    return true
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      return false
+    }
+    return left.every((item, index) => shortcutLiteralValuesEqual(item, right[index], seen))
+  }
+  if (!isPlainShortcutLiteralObject(left) || !isPlainShortcutLiteralObject(right)) {
+    return false
+  }
+  const left_keys = Object.keys(left)
+  const right_keys = Object.keys(right)
+  if (left_keys.length !== right_keys.length) {
+    return false
+  }
+  return left_keys.every((key) =>
+    Object.prototype.hasOwnProperty.call(right, key) ? shortcutLiteralValuesEqual(left[key], right[key], seen) : false
+  )
+}
+
+function shortcutLiteralSchema<TValue>(value: TValue): z.ZodType<TValue> {
+  if (isZodLiteralValue(value)) {
+    return z.literal(value) as z.ZodType<TValue>
+  }
+  return z.custom<TValue>((candidate) => shortcutLiteralValuesEqual(candidate, value), 'Invalid literal value')
+}
+
 function shortcutDefaultSchema(base_field_schema: z.ZodTypeAny | undefined, value: unknown): z.ZodTypeAny {
   if (!base_field_schema) {
-    const literal = (z.literal as (value: unknown) => z.ZodTypeAny)(value)
-    return literal.default(value)
+    return shortcutLiteralSchema(value).default(value)
   }
   return base_field_schema.default(base_field_schema.parse(value))
 }

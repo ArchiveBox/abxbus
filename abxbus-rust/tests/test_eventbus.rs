@@ -1692,6 +1692,20 @@ fn test_event_type_and_version_identity_fields() {
 }
 
 #[test]
+fn test_event_model_fields_are_typed_event_metadata() {
+    fn assert_model_field<T>(_field: abxbus::typed::ModelField<T>) {}
+
+    let fields = CreateAgentTaskEvent.model_fields();
+    assert_model_field::<String>(fields.task);
+    assert_model_field::<String>(fields.user_id);
+    assert_model_field::<Option<f64>>(fields.event_timeout);
+    assert_model_field::<EmptyResult>(fields.event_result_type);
+    assert_eq!(fields.task.name, "task");
+    assert_eq!(fields.event_timeout.name, "event_timeout");
+    assert_eq!(fields.event_result_type.name, "event_result_type");
+}
+
+#[test]
 fn test_event_version_defaults_and_overrides() {
     let bus = EventBus::new(Some("VersionFieldsBus".to_string()));
 

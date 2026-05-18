@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/ArchiveBox/abxbus/abxbus-go/v2/jsonschema"
 )
@@ -161,6 +162,107 @@ func normalizeReflectValue(value reflect.Value) any {
 		return nil
 	}
 	return value.Interface()
+}
+
+type ModelField struct {
+	Name       string
+	Schema     map[string]any
+	Default    any
+	HasDefault bool
+}
+
+type EventClass[T any] struct {
+	eventType string
+	options   []EventOption
+}
+
+func NewEventClass[T any](eventType string, options ...EventOption) EventClass[T] {
+	return EventClass[T]{eventType: eventType, options: append([]EventOption(nil), options...)}
+}
+
+func (eventClass EventClass[T]) ModelFields() map[string]ModelField {
+	return ModelFieldsFor[T](eventClass.options...)
+}
+
+func (eventClass EventClass[T]) New(payload T, options ...EventOption) (*BaseEvent, error) {
+	mergedOptions := append(append([]EventOption(nil), eventClass.options...), options...)
+	return NewEvent(eventClass.eventType, payload, mergedOptions...)
+}
+
+func (eventClass EventClass[T]) MustNew(payload T, options ...EventOption) *BaseEvent {
+	event, err := eventClass.New(payload, options...)
+	if err != nil {
+		panic(err)
+	}
+	return event
+}
+
+func ModelFieldsFor[T any](options ...EventOption) map[string]ModelField {
+	fields := map[string]ModelField{}
+	payloadSchema := JSONSchemaFor[T]()
+	properties, _ := payloadSchema["properties"].(map[string]any)
+	defaults := defaultPayloadValues[T]()
+	for _, name := range payloadModelFieldNames(reflect.TypeOf((*T)(nil)).Elem()) {
+		schema, _ := properties[name].(map[string]any)
+		defaultValue, hasDefault := defaults[name]
+		fields[name] = ModelField{
+			Name:       name,
+			Schema:     schema,
+			Default:    defaultValue,
+			HasDefault: hasDefault,
+		}
+	}
+	event := NewBaseEvent("", nil)
+	for _, option := range options {
+		if option != nil {
+			option(event)
+		}
+	}
+	if event.EventResultType != nil {
+		resultSchema, _ := event.EventResultType.(map[string]any)
+		fields["event_result_type"] = ModelField{
+			Name:       "event_result_type",
+			Schema:     resultSchema,
+			Default:    event.EventResultType,
+			HasDefault: true,
+		}
+	}
+	return fields
+}
+
+func defaultPayloadValues[T any]() map[string]any {
+	var zero T
+	data, err := json.Marshal(zero)
+	if err != nil || string(data) == "null" {
+		return map[string]any{}
+	}
+	defaults := map[string]any{}
+	if err := json.Unmarshal(data, &defaults); err != nil {
+		return map[string]any{}
+	}
+	return defaults
+}
+
+func payloadModelFieldNames(t reflect.Type) []string {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
+	names := []string{}
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if field.PkgPath != "" || field.Anonymous || strings.HasPrefix(field.Name, "Event") || strings.HasPrefix(field.Name, "Model") {
+			continue
+		}
+		name, _, skip, _ := jsonschema.StructFieldJSONName(field)
+		if skip {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
 }
 
 func newEventFromPayload[T any](eventType string, payload T) (*BaseEvent, error) {

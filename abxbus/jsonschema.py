@@ -479,11 +479,17 @@ def validate_json_schema_value(schema: Mapping[str, Any], value: Any) -> Any:
     return value
 
 
-def _json_schema_validator_type(schema: Mapping[str, Any], resolved_type: Any) -> Any:
+def _json_schema_validator_type(
+    schema: Mapping[str, Any],
+    resolved_type: Any,
+    *,
+    root_schema: Mapping[str, Any] | None = None,
+) -> Any:
     normalized_schema = normalize_result_dict(normalize_json_schema(dict(schema)))
+    normalized_root_schema = normalize_result_dict(dict(root_schema)) if root_schema is not None else normalized_schema
 
     def _validate(value: Any) -> Any:
-        _validate_json_schema_value(normalized_schema, normalized_schema, value, '$')
+        _validate_json_schema_value(normalized_root_schema, normalized_schema, value, '$')
         return value
 
     runtime_annotated = cast(_RuntimeAnnotated, Annotated)
@@ -656,7 +662,7 @@ def pydantic_model_from_json_schema(result_type: Any) -> Any:
 
     def _wrap_schema_validation(schema: dict[str, Any], resolved_type: Any) -> Any:
         if any(schema.get(key) is not None for key in ('anyOf', 'oneOf', 'allOf', 'not')):
-            return _json_schema_validator_type(schema, resolved_type)
+            return _json_schema_validator_type(schema, resolved_type, root_schema=normalized_schema)
         return resolved_type
 
     def _resolve_composite_schema(schema: dict[str, Any], key: str, *, nullable: bool) -> Any:
@@ -665,7 +671,7 @@ def pydantic_model_from_json_schema(result_type: Any) -> Any:
             return _wrap_schema_validation(schema, _nullable_type(Any, nullable=nullable))
         resolved_types = [_resolve_schema(candidate) for candidate in candidates]
         combined_type = _combine_union_types(resolved_types, nullable=nullable)
-        return _json_schema_validator_type(schema, combined_type)
+        return _json_schema_validator_type(schema, combined_type, root_schema=normalized_schema)
 
     def _resolve_ref_model(model_reference: str) -> Any:
         if model_reference in models:

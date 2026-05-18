@@ -100,7 +100,7 @@ func TestSchemaForRecursiveStructUsesRefsAndValidates(t *testing.T) {
 		t.Fatalf("expected recursive schema defs, got %#v", schema)
 	}
 	parentSchema := schema["properties"].(map[string]any)["parent"].(map[string]any)
-	if !reflect.DeepEqual(parentSchema["anyOf"], []any{map[string]any{"$ref": "#/$defs/github.com_ArchiveBox_abxbus_abxbus-go_jsonschema_test.Node"}, map[string]any{"type": "null"}}) {
+	if !reflect.DeepEqual(parentSchema["anyOf"], []any{map[string]any{"$ref": "#/$defs/github.com_ArchiveBox_abxbus_abxbus-go_v2_jsonschema_test.Node"}, map[string]any{"type": "null"}}) {
 		t.Fatalf("expected standard null union parent ref, got %#v", parentSchema)
 	}
 	if err := jsonschema.Validate(schema, Node{ID: "root", Children: []Node{{ID: "child"}}}); err != nil {

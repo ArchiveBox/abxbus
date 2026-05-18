@@ -1290,6 +1290,13 @@ type addResult struct {
 	Sum int `json:"sum"`
 }
 
+type modelFieldsPayload struct {
+	SomeField    string  `json:"some_field"`
+	Count        int     `json:"count,omitempty"`
+	EventTimeout float64 `json:"event_timeout"`
+	ModelVersion string  `json:"model_version"`
+}
+
 type getConfigEvent struct {
 	Url              string
 	UserID           string
@@ -1308,6 +1315,56 @@ type namedBaseWithContextHandler func(*abxbus.BaseEvent, context.Context) (any, 
 type namedTypedNoContextHandler func(addPayload) addResult
 type namedTypedWithContextHandler func(addPayload, context.Context) (addResult, error)
 type namedTypedAnyHandler func(any) (addResult, error)
+
+func TestEventClassModelFieldsExposePayloadAndResultSchemas(t *testing.T) {
+	MyEvent := abxbus.NewEventClass[modelFieldsPayload]("MyEvent", abxbus.ResultType[addResult]())
+	fields := MyEvent.ModelFields()
+
+	someField, ok := fields["some_field"]
+	if !ok {
+		t.Fatalf("missing some_field model field: %#v", fields)
+	}
+	if someField.Name != "some_field" {
+		t.Fatalf("unexpected field name: %#v", someField)
+	}
+	if someField.Schema["type"] != "string" {
+		t.Fatalf("expected string schema for some_field, got %#v", someField.Schema)
+	}
+	if !someField.HasDefault || someField.Default != "" {
+		t.Fatalf("expected typed zero default for some_field, got %#v", someField)
+	}
+	if _, ok := fields["event_timeout"]; ok {
+		t.Fatalf("event config field should not be exposed as payload model field: %#v", fields["event_timeout"])
+	}
+	if _, ok := fields["model_version"]; ok {
+		t.Fatalf("model config field should not be exposed as payload model field: %#v", fields["model_version"])
+	}
+	resultField, ok := fields["event_result_type"]
+	if !ok {
+		t.Fatalf("missing event_result_type model field: %#v", fields)
+	}
+	resultSchema, ok := resultField.Default.(map[string]any)
+	if !ok {
+		t.Fatalf("expected event_result_type schema default, got %#v", resultField.Default)
+	}
+	if resultSchema["type"] != "object" {
+		t.Fatalf("expected object event_result_type schema, got %#v", resultSchema)
+	}
+	if resultField.Schema["type"] != "object" {
+		t.Fatalf("expected object event_result_type model schema, got %#v", resultField.Schema)
+	}
+
+	event := MyEvent.MustNew(modelFieldsPayload{SomeField: "abc", Count: 3})
+	if event.EventType != "MyEvent" {
+		t.Fatalf("event type mismatch: %s", event.EventType)
+	}
+	if event.Payload["some_field"] != "abc" || event.Payload["count"] != float64(3) {
+		t.Fatalf("payload mismatch: %#v", event.Payload)
+	}
+	if !reflect.DeepEqual(event.EventResultType, resultSchema) {
+		t.Fatalf("event_result_type mismatch: event=%#v model=%#v", event.EventResultType, resultSchema)
+	}
+}
 
 func TestEmitAcceptsTypedStructAndDerivesPayloadAndConfig(t *testing.T) {
 	bus := abxbus.NewEventBus("StructEmitBus", nil)

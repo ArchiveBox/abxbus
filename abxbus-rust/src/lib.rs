@@ -9,6 +9,7 @@ pub mod retry;
 pub mod typed;
 pub mod types;
 
+pub use paste;
 pub use serde;
 pub use serde_json;
 pub use types::*;

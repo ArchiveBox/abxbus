@@ -175,6 +175,104 @@ pub fn is_live_event_results_empty(
 
 pub struct EventType<E: EventSpec>(PhantomData<E>);
 
+#[allow(non_snake_case)]
+pub struct TypeSchema<T> {
+    pub JSONSchema: Value,
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<T> TypeSchema<T> {
+    pub fn new(JSONSchema: Value) -> Self {
+        Self {
+            JSONSchema,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T> Clone for TypeSchema<T> {
+    fn clone(&self) -> Self {
+        Self::new(self.JSONSchema.clone())
+    }
+}
+
+impl<T> fmt::Debug for TypeSchema<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TypeSchema")
+            .field("JSONSchema", &self.JSONSchema)
+            .finish()
+    }
+}
+
+impl<T> PartialEq for TypeSchema<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.JSONSchema == other.JSONSchema
+    }
+}
+
+impl<T> Eq for TypeSchema<T> {}
+
+#[allow(non_snake_case)]
+pub struct ModelField<T, D = ()> {
+    pub name: &'static str,
+    pub Type: TypeSchema<T>,
+    pub Default: D,
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<T: 'static, D> ModelField<T, D> {
+    pub fn new(name: &'static str, Default: D) -> Self {
+        Self {
+            name,
+            Type: TypeSchema::new(json_schema_for_type::<T>()),
+            Default,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T, D> Clone for ModelField<T, D>
+where
+    D: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name,
+            Type: self.Type.clone(),
+            Default: self.Default.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T, D> Copy for ModelField<T, D> where D: Copy {}
+
+impl<T, D> fmt::Debug for ModelField<T, D>
+where
+    D: fmt::Debug,
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ModelField")
+            .field("name", &self.name)
+            .field("Type", &self.Type)
+            .field("Default", &self.Default)
+            .finish()
+    }
+}
+
+impl<T, D> PartialEq for ModelField<T, D>
+where
+    D: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.Type == other.Type && self.Default == other.Default
+    }
+}
+
+impl<T, D> Eq for ModelField<T, D> where D: Eq {}
+
 impl<E: EventSpec> Clone for EventType<E> {
     fn clone(&self) -> Self {
         *self
@@ -192,6 +290,15 @@ impl<E: EventSpec> EventType<E> {
 impl<E: EventSpec> Default for EventType<E> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<E> EventType<E>
+where
+    E: EventSpec + EventModelFields,
+{
+    pub fn model_fields(&self) -> E::ModelFields {
+        E::model_fields()
     }
 }
 
@@ -235,6 +342,12 @@ pub trait EventSpec: Send + Sync + 'static {
     }
 }
 
+pub trait EventModelFields: EventSpec {
+    type ModelFields;
+
+    fn model_fields() -> Self::ModelFields;
+}
+
 fn primitive_result_type_schema<T: 'static>() -> Option<Value> {
     let type_id = TypeId::of::<T>();
     if type_id == TypeId::of::<String>() {
@@ -258,6 +371,10 @@ fn primitive_result_type_schema<T: 'static>() -> Option<Value> {
     } else {
         None
     }
+}
+
+pub fn json_schema_for_type<T: 'static>() -> Value {
+    primitive_result_type_schema::<T>().unwrap_or_else(|| json!({}))
 }
 
 pub trait TypedEventObject:
@@ -554,6 +671,9 @@ macro_rules! event {
             @parse
             [$(#[$attr])*] [$vis] [$name]
             payload[]
+            model_fields[]
+            defaults[]
+            default_methods[]
             result[]
             event_type[]
             event_version[]
@@ -573,10 +693,86 @@ macro_rules! event {
 
 #[doc(hidden)]
 #[macro_export]
+macro_rules! _inner_event_model_fields {
+    ($vis:vis $name:ident { $($payload:tt)* }) => {
+        $crate::_inner_event_model_fields! {
+            @collect
+            [$vis] [$name]
+            fields[]
+            values[]
+            $($payload)*
+        }
+    };
+    (@collect
+        [$vis:vis] [$name:ident]
+        fields[$($fields:tt)*]
+        values[$($values:tt)*]
+    ) => {
+        $crate::paste::paste! {
+            #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+            $vis struct [<$name ModelFields>] {
+                $($fields)*
+                pub event_type: $crate::typed::ModelField<String>,
+                pub event_version: $crate::typed::ModelField<String>,
+                pub event_timeout: $crate::typed::ModelField<Option<f64>>,
+                pub event_slow_timeout: $crate::typed::ModelField<Option<f64>>,
+                pub event_concurrency: $crate::typed::ModelField<Option<$crate::types::EventConcurrencyMode>>,
+                pub event_handler_timeout: $crate::typed::ModelField<Option<f64>>,
+                pub event_handler_slow_timeout: $crate::typed::ModelField<Option<f64>>,
+                pub event_handler_concurrency: $crate::typed::ModelField<Option<$crate::types::EventHandlerConcurrencyMode>>,
+                pub event_handler_completion: $crate::typed::ModelField<Option<$crate::types::EventHandlerCompletionMode>>,
+                pub event_blocks_parent_completion: $crate::typed::ModelField<bool>,
+                pub event_result_type: $crate::typed::ModelField<<$name as $crate::typed::EventSpec>::event_result_type>,
+            }
+
+            impl $crate::typed::EventModelFields for $name {
+                type ModelFields = [<$name ModelFields>];
+
+                fn model_fields() -> Self::ModelFields {
+                    [<$name ModelFields>] {
+                        $($values)*
+                        event_type: $crate::typed::ModelField::new("event_type"),
+                        event_version: $crate::typed::ModelField::new("event_version"),
+                        event_timeout: $crate::typed::ModelField::new("event_timeout"),
+                        event_slow_timeout: $crate::typed::ModelField::new("event_slow_timeout"),
+                        event_concurrency: $crate::typed::ModelField::new("event_concurrency"),
+                        event_handler_timeout: $crate::typed::ModelField::new("event_handler_timeout"),
+                        event_handler_slow_timeout: $crate::typed::ModelField::new("event_handler_slow_timeout"),
+                        event_handler_concurrency: $crate::typed::ModelField::new("event_handler_concurrency"),
+                        event_handler_completion: $crate::typed::ModelField::new("event_handler_completion"),
+                        event_blocks_parent_completion: $crate::typed::ModelField::new("event_blocks_parent_completion"),
+                        event_result_type: $crate::typed::ModelField::new("event_result_type"),
+                    }
+                }
+            }
+        }
+    };
+    (@collect
+        [$vis:vis] [$name:ident]
+        fields[$($fields:tt)*]
+        values[$($values:tt)*]
+        $field_vis:vis $field:ident : $field_ty:ty,
+        $($rest:tt)*
+    ) => {
+        $crate::_inner_event_model_fields! {
+            @collect
+            [$vis] [$name]
+            fields[$($fields)* $field_vis $field: $crate::typed::ModelField<$field_ty>,]
+            values[$($values)* $field: $crate::typed::ModelField::new(stringify!($field)),]
+            $($rest)*
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
 macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -596,6 +792,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -614,6 +813,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -633,6 +835,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$next_result]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -651,6 +856,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -670,6 +878,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$next_event_type]
             event_version[$($event_version)*]
@@ -688,6 +899,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -707,6 +921,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$next_event_version]
@@ -725,6 +942,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -744,6 +964,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -762,6 +985,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -781,6 +1007,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -799,6 +1028,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -818,6 +1050,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -836,6 +1071,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -855,6 +1093,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -873,6 +1114,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -892,6 +1136,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -910,6 +1157,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -929,6 +1179,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -947,6 +1200,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -966,6 +1222,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -984,6 +1243,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -1003,6 +1265,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -1021,6 +1286,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -1040,6 +1308,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -1058,6 +1329,52 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        $field_vis:vis $field:ident : $field_ty:ty = $field_default:expr,
+        $($rest:tt)*
+    ) => {
+        $crate::_inner_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)* $field_vis $field: $field_ty,]
+            model_fields[$($model_fields)* $field_vis $field: $crate::typed::ModelField<$field_ty, $field_ty>,]
+            defaults[$($defaults)* $field: $field_default,]
+            default_methods[$($default_methods)* $field: $crate::typed::ModelField::<$field_ty, $field_ty>::new(stringify!($field), $field_default),]
+            result[$($result)*]
+            event_type[$($event_type)*]
+            event_version[$($event_version)*]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -1077,6 +1394,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)* $field_vis $field: $field_ty,]
+            model_fields[$($model_fields)* $field_vis $field: $crate::typed::ModelField<$field_ty, Option<$field_ty>>,]
+            defaults[$($defaults)* $field: Default::default(),]
+            default_methods[$($default_methods)* $field: $crate::typed::ModelField::<$field_ty, Option<$field_ty>>::new(stringify!($field), None),]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -1095,6 +1415,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -1158,6 +1481,10 @@ macro_rules! _inner_event_parse {
 
         #[allow(non_upper_case_globals)]
         $vis const $name: $crate::typed::EventType<$name> = $crate::typed::EventType::new();
+
+        $crate::_inner_event_model_fields! {
+            $vis $name { $($payload)* }
+        }
 
         impl std::fmt::Debug for $name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
