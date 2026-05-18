@@ -166,7 +166,7 @@ func normalizeReflectValue(value reflect.Value) any {
 
 type ModelField struct {
 	Name       string
-	Schema     map[string]any
+	Type       map[string]any
 	Default    any
 	HasDefault bool
 }
@@ -207,7 +207,7 @@ func ModelFieldsFor[T any](options ...EventOption) map[string]ModelField {
 		defaultValue, hasDefault := defaults[name]
 		fields[name] = ModelField{
 			Name:       name,
-			Schema:     schema,
+			Type:       schema,
 			Default:    defaultValue,
 			HasDefault: hasDefault,
 		}
@@ -222,7 +222,7 @@ func ModelFieldsFor[T any](options ...EventOption) map[string]ModelField {
 		resultSchema, _ := event.EventResultType.(map[string]any)
 		fields["event_result_type"] = ModelField{
 			Name:       "event_result_type",
-			Schema:     resultSchema,
+			Type:       resultSchema,
 			Default:    event.EventResultType,
 			HasDefault: true,
 		}

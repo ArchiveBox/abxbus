@@ -1327,8 +1327,8 @@ func TestEventClassModelFieldsExposePayloadAndResultSchemas(t *testing.T) {
 	if someField.Name != "some_field" {
 		t.Fatalf("unexpected field name: %#v", someField)
 	}
-	if someField.Schema["type"] != "string" {
-		t.Fatalf("expected string schema for some_field, got %#v", someField.Schema)
+	if someField.Type["type"] != "string" {
+		t.Fatalf("expected string schema for some_field, got %#v", someField.Type)
 	}
 	if !someField.HasDefault || someField.Default != "" {
 		t.Fatalf("expected typed zero default for some_field, got %#v", someField)
@@ -1350,8 +1350,8 @@ func TestEventClassModelFieldsExposePayloadAndResultSchemas(t *testing.T) {
 	if resultSchema["type"] != "object" {
 		t.Fatalf("expected object event_result_type schema, got %#v", resultSchema)
 	}
-	if resultField.Schema["type"] != "object" {
-		t.Fatalf("expected object event_result_type model schema, got %#v", resultField.Schema)
+	if resultField.Type["type"] != "object" {
+		t.Fatalf("expected object event_result_type model schema, got %#v", resultField.Type)
 	}
 
 	event := MyEvent.MustNew(modelFieldsPayload{SomeField: "abc", Count: 3})
