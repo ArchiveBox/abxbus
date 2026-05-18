@@ -5,6 +5,7 @@ pub mod event_result;
 pub mod id;
 pub mod jsonschema;
 pub mod lock_manager;
+pub mod retry;
 pub mod typed;
 pub mod types;
 

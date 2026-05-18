@@ -1225,7 +1225,7 @@ uv run tests/performance_runtime.py
 ```
 
 > For AbxBus-TS development see the `abxbus-ts/README.md` `# Development` section.
-> For AbxBus-Rust development see `abxbus-rust/README.md`.
+> For Rust crate development see `abxbus-rust/README.md`.
 > For AbxBus-Go development run `go test ./...` from `abxbus-go/`; cross-runtime Go parity is covered by `tests/test_cross_runtime_roundtrip.py` and `abxbus-ts/tests/cross_runtime_roundtrip.test.ts`.
 
 ## 🔗 Inspiration

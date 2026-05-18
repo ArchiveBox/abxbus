@@ -1112,9 +1112,9 @@ macro_rules! _inner_event_parse {
         $($attr)*
         $vis struct $name {
             $($payload)*
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_string_empty")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_string_empty")]
             pub event_type: String,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_string_empty")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_string_empty")]
             pub event_version: String,
             #[serde(default, skip_serializing_if = "Option::is_none")]
             pub event_timeout: Option<f64>,
@@ -1130,29 +1130,29 @@ macro_rules! _inner_event_parse {
             pub event_handler_concurrency: Option<$crate::types::EventHandlerConcurrencyMode>,
             #[serde(default, skip_serializing_if = "Option::is_none")]
             pub event_handler_completion: Option<$crate::types::EventHandlerCompletionMode>,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_false")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_false")]
             pub event_blocks_parent_completion: bool,
             #[serde(default, skip_serializing_if = "Option::is_none")]
             pub event_result_type: Option<$crate::serde_json::Value>,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_string_empty")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_string_empty")]
             pub event_id: String,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_live_vec_string_empty")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_live_vec_string_empty")]
             pub event_path: $crate::typed::Live<Vec<String>>,
             #[serde(default, skip_serializing_if = "Option::is_none")]
             pub event_parent_id: Option<String>,
             #[serde(default, skip_serializing_if = "Option::is_none")]
             pub event_emitted_by_handler_id: Option<String>,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_live_usize_zero")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_live_usize_zero")]
             pub event_pending_bus_count: $crate::typed::Live<usize>,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_string_empty")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_string_empty")]
             pub event_created_at: String,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_live_event_status_pending")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_live_event_status_pending")]
             pub event_status: $crate::typed::Live<$crate::types::EventStatus>,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_live_option_string_none")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_live_option_string_none")]
             pub event_started_at: $crate::typed::Live<Option<String>>,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_live_option_string_none")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_live_option_string_none")]
             pub event_completed_at: $crate::typed::Live<Option<String>>,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_live_event_results_empty")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_live_event_results_empty")]
             pub event_results: $crate::typed::Live<std::collections::HashMap<String, $crate::event_result::EventResult>>,
         }
 

@@ -212,7 +212,7 @@ console.log(bus.logTree())
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event, event_bus::EventBus};
+use abxbus::{event, event_bus::EventBus};
 use futures::executor::block_on;
 use serde_json::json;
 
@@ -287,7 +287,7 @@ package main
 import (
 	"fmt"
 
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
+	abxbus "github.com/ArchiveBox/abxbus/v2/abxbus-go"
 )
 
 func main() {

@@ -88,7 +88,7 @@ import (
 	"reflect"
 	"time"
 
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
+	abxbus "github.com/ArchiveBox/abxbus/v2/abxbus-go"
 )
 
 func main() {
@@ -127,7 +127,7 @@ func main() {
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{
+use abxbus::{
     event,
     event_bus::{EventBus, EventBusOptions},
     BaseEvent,

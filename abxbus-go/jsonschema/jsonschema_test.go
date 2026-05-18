@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ArchiveBox/abxbus/abxbus-go/v2/jsonschema"
+	"github.com/ArchiveBox/abxbus/v2/abxbus-go/jsonschema"
 )
 
 func TestValidateAcceptsBasicObjectSchema(t *testing.T) {

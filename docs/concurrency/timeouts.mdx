@@ -94,7 +94,7 @@ bus := abxbus.NewEventBus("TimeoutBus", &abxbus.EventBusOptions{
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::event_bus::{EventBus, EventBusOptions};
+use abxbus::event_bus::{EventBus, EventBusOptions};
 
 let bus = EventBus::new_with_options(
     Some("TimeoutBus".to_string()),
@@ -224,7 +224,7 @@ entry.HandlerSlowTimeout = &handlerSlowTimeout
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::event_handler::EventHandlerOptions;
+use abxbus::event_handler::EventHandlerOptions;
 
 let entry = bus.on_with_options(
     WorkEvent,

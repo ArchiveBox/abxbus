@@ -1,9 +1,18 @@
 ---
 title: retry
-description: Retry decorator/higher-order wrapper for async functions and handlers.
+description: Retry decorator/higher-order wrapper for async and sync functions and handlers.
 ---
 
-`retry` adds per-attempt timeout, retry/backoff, and optional semaphore-based concurrency control around async functions (including bus handlers).
+`retry` adds per-attempt timeout, retry/backoff, and optional semaphore-based concurrency control around async and sync callables. It works for ordinary functions without creating an `EventBus`.
+
+Sync callables stay sync and block synchronously for retry sleeps and semaphore waits. Async callables stay async and await retry sleeps and semaphore waits.
+
+Supported callable forms:
+
+- Python: sync and async functions, methods, and lambdas via `@retry(...)` or `retry(...)(fn)`.
+- TypeScript: sync and async functions and arrow functions via `retry(...)(fn)`, plus sync and async class methods via `@retry(...)`.
+- Rust: sync and async free functions and methods via `abxbus::retry!`; call those retried functions from Rust closures such as EventBus handlers.
+- Go: retry is not implemented yet.
 
 ## Signature
 
@@ -22,7 +31,7 @@ def retry(
     semaphore_lax: bool = True,
     semaphore_scope: Literal['multiprocess', 'global', 'class', 'instance'] = 'global',
     semaphore_timeout: float | None = None,
-) -> Callable[[Callable[P, Coroutine[Any, Any, T]]], Callable[P, Coroutine[Any, Any, T]]]
+) -> Callable[[Callable[P, T]], Callable[P, T]]
 ```
 
 </Tab>
@@ -47,11 +56,22 @@ retry({
 <Tab title="Rust">
 
 ```rust
-// Not implemented in abxbus-rust yet.
-//
-// Use bus/event/handler timeout fields for outer execution budgets today.
-// Per-attempt retry/backoff/semaphore behavior should be wrapped inside
-// your Rust handler until retry parity is implemented.
+abxbus::retry! {
+    max_attempts = 3,
+    retry_after = 1.0,
+    retry_backoff_factor = 2.0,
+    timeout = 5.0,
+    retry_if = should_retry,
+    semaphore_limit = 2,
+    semaphore_name = "api",
+    semaphore_lax = true,
+    semaphore_scope = "global",
+    semaphore_timeout = 10.0;
+
+    async fn run(&self) -> Result<T, E> {
+        /* body */
+    }
+}
 ```
 
 </Tab>
@@ -82,6 +102,59 @@ retry({
 | `semaphore_scope` | Semaphore sharing scope (`multiprocess`, `global`, `class`, `instance`). |
 | `semaphore_timeout` | Max wait time for semaphore acquisition before timeout/lax fallback. |
 | `semaphore_lax` | If true, continue execution without semaphore limit when acquisition times out. |
+
+## Example: Standalone function
+
+<Tabs>
+<Tab title="Python">
+
+```python
+from abxbus.retry import retry
+
+@retry(max_attempts=3, retry_after=1, timeout=5)
+async def fetch_with_retry(url: str) -> dict:
+    return await fetch_json(url)
+```
+
+</Tab>
+<Tab title="TypeScript">
+
+```ts
+import { retry } from 'abxbus/retry'
+
+async function fetchJsonWithRetry(url: string): Promise<Record<string, unknown>> {
+  return await fetchJson(url)
+}
+
+const fetchWithRetry = retry({ max_attempts: 3, retry_after: 1, timeout: 5 })(fetchJsonWithRetry)
+```
+
+</Tab>
+<Tab title="Rust">
+
+```rust
+#[derive(Debug)]
+enum ApiError {
+    Retry(abxbus::retry::RetryError),
+    Transport(String),
+}
+
+impl From<abxbus::retry::RetryError> for ApiError {
+    fn from(error: abxbus::retry::RetryError) -> Self {
+        Self::Retry(error)
+    }
+}
+
+abxbus::retry! {
+    max_attempts = 3, retry_after = 1.0, timeout = 5.0;
+    async fn fetch_with_retry(url: String) -> Result<serde_json::Value, ApiError> {
+        fetch_json(url).await.map_err(ApiError::Transport)
+    }
+}
+```
+
+</Tab>
+</Tabs>
 
 ## Example: Inline wrapper
 
@@ -132,10 +205,24 @@ bus.on(
 <Tab title="Rust">
 
 ```rust
-// retry decorators/method wrappers are not implemented in abxbus-rust yet.
-//
-// Put retry/backoff code in a helper function or inside the handler body,
-// then register that function as a normal EventBus handler.
+use abxbus::{event, event_bus::EventBus};
+
+struct Api;
+
+impl Api {
+    abxbus::retry! {
+        max_attempts = 3, retry_after = 1.0, timeout = 5.0;
+        async fn fetch_with_retry(&self, event: FetchEvent) -> Result<serde_json::Value, ApiError> {
+            fetch_json(event.url).await.map_err(ApiError::Transport)
+        }
+    }
+}
+
+let api = Api;
+let bus = EventBus::new(Some("AppBus".to_string()));
+bus.on(FetchEvent, move |event: FetchEvent| async move {
+    api.fetch_with_retry(event).await
+});
 ```
 
 </Tab>
@@ -169,7 +256,7 @@ class ApiService:
 <Tab title="TypeScript">
 
 ```ts
-import { retry } from 'abxbus'
+import { retry } from 'abxbus/retry'
 
 class ApiService {
   @retry({ max_attempts: 4, retry_after: 1, timeout: 10, semaphore_limit: 2, semaphore_scope: 'class' })
@@ -179,14 +266,39 @@ class ApiService {
 }
 ```
 
+Without decorators, use the same closure-based wrapper on a normal function:
+
+```ts
+import { retry } from 'abxbus/retry'
+
+async function getUser(userId: string): Promise<Record<string, unknown>> {
+  return await callRemoteApi(userId)
+}
+
+const getUserWithRetry = retry({ max_attempts: 4, retry_after: 1, timeout: 10, semaphore_limit: 2 })(getUser)
+```
+
+The same `@retry(...)` method syntax works with TypeScript's standard decorators and with legacy `experimentalDecorators` method decorators. For legacy decorators, enable `"experimentalDecorators": true` in `tsconfig.json`; the method keeps its original sync or async return type.
+
 </Tab>
 <Tab title="Rust">
 
 ```rust
-// retry decorators/method wrappers are not implemented in abxbus-rust yet.
-//
-// Put retry/backoff code in a helper function or inside the method body,
-// then register that method/function as a normal EventBus handler.
+struct ApiService;
+
+impl ApiService {
+    abxbus::retry! {
+        max_attempts = 4,
+        retry_after = 1.0,
+        timeout = 10.0,
+        semaphore_limit = 2,
+        semaphore_scope = "class";
+
+        async fn get_user(&self, user_id: String) -> Result<serde_json::Value, ApiError> {
+            call_remote_api(user_id).await.map_err(ApiError::Transport)
+        }
+    }
+}
 ```
 
 </Tab>
@@ -208,12 +320,16 @@ class ApiService {
 - Backoff delay per retry is: `retry_after * retry_backoff_factor^(attempt - 1)`.
 - Retries stop immediately when the thrown error does not match `retry_on_errors`.
 - Bus/event timeouts act as outer execution budgets; `retry.timeout` is per-attempt.
+- Sync wrappers return synchronously and block synchronously for retry sleeps and semaphore waits.
+- Rust retry functions return `Result<T, E>` where `E: From<abxbus::retry::RetryError>`.
 
 ## Runtime differences
 
 - Python and TypeScript both support `multiprocess`, `global`, `class`, and `instance`.
-- Rust and Go do not include `retry` yet.
+- Rust supports `multiprocess`, `global`, `class`, and `instance` through `abxbus::retry!`.
+- Go does not include `retry` yet.
 - TypeScript uses async-context re-entrancy tracking in Node/Bun to avoid same-semaphore nested deadlocks.
 - `retry_on_errors` matching differs slightly:
   - Python: exception classes or compiled regex patterns (matched against `"ErrorClass: message"`).
   - TypeScript: error constructors, error-name strings, or regex patterns.
+  - Rust: typed predicate function via `retry_if = should_retry`.

@@ -1,6 +1,6 @@
 use std::{env, fs, process};
 
-use abxbus_rust::{base_event::BaseEvent, event_bus::EventBus};
+use abxbus::{base_event::BaseEvent, event_bus::EventBus};
 use serde_json::Value;
 
 fn usage() -> ! {

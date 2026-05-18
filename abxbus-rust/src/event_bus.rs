@@ -37,6 +37,7 @@ thread_local! {
     static CURRENT_BUS_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     static CURRENT_EVENT_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
     static CURRENT_HANDLER_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static CURRENT_EVENT_CONCURRENCY: std::cell::RefCell<Option<EventConcurrencyMode>> = const { std::cell::RefCell::new(None) };
 }
 
 struct FindWaiter {
@@ -340,11 +341,7 @@ impl EventBus {
     }
 
     fn current_handler_context_is_stale() -> bool {
-        let current_event_id = CURRENT_EVENT_ID.with(|id| id.borrow().clone());
-        let current_handler_id = CURRENT_HANDLER_ID.with(|id| id.borrow().clone());
-        let (Some(current_event_id), Some(current_handler_id)) =
-            (current_event_id, current_handler_id)
-        else {
+        let Some((current_event_id, current_handler_id)) = Self::current_handler_context() else {
             return false;
         };
         if Self::stale_handler_contexts()
@@ -381,6 +378,56 @@ impl EventBus {
 
     pub fn is_inside_handler_context() -> bool {
         CURRENT_HANDLER_ID.with(|handler_id| handler_id.borrow().is_some())
+    }
+
+    fn current_handler_context() -> Option<(String, String)> {
+        CURRENT_EVENT_ID.with(|event_id| {
+            CURRENT_HANDLER_ID
+                .with(|handler_id| Some((event_id.borrow().clone()?, handler_id.borrow().clone()?)))
+        })
+    }
+
+    fn handler_context_is_active_in_runtime(&self, event_id: &str, handler_id: &str) -> bool {
+        let parent = { self.runtime.events.lock().get(event_id).cloned() };
+        let Some(parent) = parent else {
+            return false;
+        };
+        let status = {
+            parent
+                .inner
+                .lock()
+                .event_results
+                .get(handler_id)
+                .map(|result| result.status)
+        };
+        status.is_some_and(|status| {
+            matches!(
+                status,
+                EventResultStatus::Pending | EventResultStatus::Started
+            )
+        })
+    }
+
+    fn current_handler_event_shares_event_lock_with(&self, event: &Arc<BaseEvent>) -> bool {
+        let current_bus_id = CURRENT_BUS_ID.with(|bus_id| bus_id.borrow().clone());
+        let current_concurrency = CURRENT_EVENT_CONCURRENCY.with(|mode| *mode.borrow());
+        let (Some(current_bus_id), Some(current_concurrency)) =
+            (current_bus_id, current_concurrency)
+        else {
+            return false;
+        };
+        let target_concurrency = event
+            .inner
+            .lock()
+            .event_concurrency
+            .unwrap_or(self.event_concurrency);
+        match (current_concurrency, target_concurrency) {
+            (EventConcurrencyMode::GlobalSerial, EventConcurrencyMode::GlobalSerial) => true,
+            (EventConcurrencyMode::BusSerial, EventConcurrencyMode::BusSerial) => {
+                current_bus_id == self.id
+            }
+            _ => false,
+        }
     }
 
     pub(crate) fn raise_if_terminal_destroyed(&self) {
@@ -1482,35 +1529,14 @@ impl EventBus {
         if Self::current_handler_context_is_stale() {
             return event;
         }
-        let emitted_from_active_handler = CURRENT_EVENT_ID.with(|event_id| {
-            CURRENT_HANDLER_ID.with(|handler_id| {
-                let Some(parent_id) = event_id.borrow().clone() else {
-                    return false;
-                };
-                let Some(handler_id) = handler_id.borrow().clone() else {
-                    return false;
-                };
-                self.runtime
-                    .events
-                    .lock()
-                    .get(&parent_id)
-                    .cloned()
-                    .and_then(|parent| {
-                        parent
-                            .inner
-                            .lock()
-                            .event_results
-                            .get(&handler_id)
-                            .map(|result| result.status)
-                    })
-                    .is_some_and(|status| {
-                        matches!(
-                            status,
-                            EventResultStatus::Pending | EventResultStatus::Started
-                        )
-                    })
-            })
-        });
+        let current_handler_context = Self::current_handler_context();
+        let emitted_from_active_handler =
+            current_handler_context
+                .as_ref()
+                .is_some_and(|(parent_id, handler_id)| {
+                    self.handler_context_is_active_in_runtime(parent_id, handler_id)
+                });
+        let emitted_inside_active_handler = current_handler_context.is_some();
 
         let bus_label = self.label();
         if event.inner.lock().event_path.contains(&bus_label) {
@@ -1587,13 +1613,16 @@ impl EventBus {
             .lock()
             .event_concurrency
             .unwrap_or(self.event_concurrency);
-        if emitted_from_active_handler && event_concurrency != EventConcurrencyMode::Parallel {
+        let defer_for_handler_queue_jump = emitted_from_active_handler
+            || (emitted_inside_active_handler
+                && self.current_handler_event_shares_event_lock_with(&event));
+        if defer_for_handler_queue_jump && event_concurrency != EventConcurrencyMode::Parallel {
             self.pause_current_handler_queue_jumps();
         }
         if event_concurrency == EventConcurrencyMode::Parallel {
             self.start_parallel_event_task_from_queue(event.clone());
         }
-        if !emitted_from_active_handler || event_concurrency == EventConcurrencyMode::Parallel {
+        if !defer_for_handler_queue_jump || event_concurrency == EventConcurrencyMode::Parallel {
             self.ensure_loop_started();
             self.runtime.queue_notify.notify(1);
         }
@@ -1601,11 +1630,7 @@ impl EventBus {
     }
 
     fn pause_current_handler_queue_jumps(&self) {
-        let context = CURRENT_EVENT_ID.with(|event_id| {
-            CURRENT_HANDLER_ID
-                .with(|handler_id| Some((event_id.borrow().clone()?, handler_id.borrow().clone()?)))
-        });
-        let Some((current_event_id, current_handler_id)) = context else {
+        let Some((current_event_id, current_handler_id)) = Self::current_handler_context() else {
             return;
         };
         for bus in Self::live_instances() {
@@ -2939,9 +2964,17 @@ impl EventBus {
     ) -> bool {
         let handler_id = handler.id.clone();
         let context_snapshot = self.context_for_event(&event);
+        let (event_id, event_concurrency) = {
+            let inner = event.inner.lock();
+            (
+                inner.event_id.clone(),
+                inner.event_concurrency.unwrap_or(self.event_concurrency),
+            )
+        };
         CURRENT_BUS_ID.with(|id| *id.borrow_mut() = Some(self.id.clone()));
-        CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = Some(event.inner.lock().event_id.clone()));
+        CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = Some(event_id));
         CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = Some(handler_id.clone()));
+        CURRENT_EVENT_CONCURRENCY.with(|mode| *mode.borrow_mut() = Some(event_concurrency));
         let timed_out = self
             .run_handler(
                 event,
@@ -2952,6 +2985,7 @@ impl EventBus {
                 inline_call,
             )
             .await;
+        CURRENT_EVENT_CONCURRENCY.with(|mode| *mode.borrow_mut() = None);
         CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = None);
         CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = None);
         CURRENT_BUS_ID.with(|id| *id.borrow_mut() = None);
@@ -3142,13 +3176,21 @@ impl EventBus {
             let context_bus_id = self.id.clone();
             let context_event_id = event_id_for_call.clone();
             let context_handler_id = handler_id_for_call.clone();
+            let context_event_concurrency = event
+                .inner
+                .lock()
+                .event_concurrency
+                .unwrap_or(self.event_concurrency);
             Self::handler_call_executor().spawn(move || {
                 let _context_guard = context_snapshot.map(dcontext::attach);
                 CURRENT_BUS_ID.with(|id| *id.borrow_mut() = Some(context_bus_id));
                 CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = Some(context_event_id.clone()));
                 CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = Some(context_handler_id.clone()));
+                CURRENT_EVENT_CONCURRENCY
+                    .with(|mode| *mode.borrow_mut() = Some(context_event_concurrency));
                 let response = block_on(call(event_clone));
                 Self::clear_handler_context_stale(&context_event_id, &context_handler_id);
+                CURRENT_EVENT_CONCURRENCY.with(|mode| *mode.borrow_mut() = None);
                 CURRENT_HANDLER_ID.with(|id| *id.borrow_mut() = None);
                 CURRENT_EVENT_ID.with(|id| *id.borrow_mut() = None);
                 CURRENT_BUS_ID.with(|id| *id.borrow_mut() = None);

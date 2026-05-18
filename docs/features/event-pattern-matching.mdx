@@ -111,7 +111,7 @@ const wildcardMatch = await bus.find('*', { future: 5 }) // BaseEvent | null
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{
+use abxbus::{
     event,
     event_bus::EventBus,
     BaseEvent,
@@ -151,7 +151,7 @@ package main
 import (
 	"fmt"
 
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
+	abxbus "github.com/ArchiveBox/abxbus/v2/abxbus-go"
 )
 
 type UserActionEvent struct {

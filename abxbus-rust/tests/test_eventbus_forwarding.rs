@@ -1,11 +1,11 @@
-use abxbus_rust::event;
+use abxbus::event;
 use std::{
     sync::{Arc, Mutex},
     thread,
     time::Duration,
 };
 
-use abxbus_rust::{
+use abxbus::{
     base_event::{EventResultOptions, EventWaitOptions},
     event_bus::{EventBus, EventBusOptions},
     types::{
@@ -715,7 +715,7 @@ fn test_forwarded_event_uses_processing_bus_defaults() {
         },
     );
     let log = Arc::new(Mutex::new(Vec::new()));
-    let inherited_ref: Arc<Mutex<Option<Arc<abxbus_rust::base_event::BaseEvent>>>> =
+    let inherited_ref: Arc<Mutex<Option<Arc<abxbus::base_event::BaseEvent>>>> =
         Arc::new(Mutex::new(None));
 
     let log_b1 = log.clone();
@@ -790,7 +790,7 @@ fn test_forwarded_event_uses_processing_bus_defaults() {
         },
     );
 
-    let top = bus_a.emit_base(abxbus_rust::base_event::BaseEvent::new(
+    let top = bus_a.emit_base(abxbus::base_event::BaseEvent::new(
         "ForwardedDefaultsTriggerEvent",
         serde_json::Map::new(),
     ));
@@ -900,7 +900,7 @@ fn test_forwarded_event_preserves_explicit_handler_concurrency_override() {
         },
     );
 
-    let top = bus_a.emit_base(abxbus_rust::base_event::BaseEvent::new(
+    let top = bus_a.emit_base(abxbus::base_event::BaseEvent::new(
         "ForwardedDefaultsTriggerEvent",
         serde_json::Map::new(),
     ));

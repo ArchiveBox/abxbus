@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/ArchiveBox/abxbus/abxbus-go/v2/jsonschema"
+	"github.com/ArchiveBox/abxbus/v2/abxbus-go/jsonschema"
 )
 
 type EventHandlerCallable func(event *BaseEvent, ctx context.Context) (any, error)

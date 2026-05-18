@@ -56,7 +56,7 @@ event, err := abxbus.Event(FooCreateEvent{
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::event;
+use abxbus::event;
 
 event! {
     struct FooCreateEvent {
@@ -324,7 +324,7 @@ pending.Update(&abxbus.EventResultUpdateOptions{
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::event_result::EventResultStatus;
+use abxbus::event_result::EventResultStatus;
 use serde_json::json;
 
 let pending = event.event_result_update(
@@ -537,7 +537,7 @@ if err != nil {
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::event;
+use abxbus::event;
 
 event! {
     struct AllowedEvent {

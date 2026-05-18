@@ -95,9 +95,9 @@ jobs:
         if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
         uses: actions/setup-go@v5
         with:
-          go-version-file: abxbus-go/go.mod
+          go-version-file: go.mod
           cache: true
-          cache-dependency-path: abxbus-go/go.sum
+          cache-dependency-path: go.sum
 
       - name: Run Rust library tests
         if: matrix.task.kind == 'lib'

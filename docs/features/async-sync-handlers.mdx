@@ -126,7 +126,7 @@ bus.on(WorkEvent, handlers.instanceAsync.bind(handlers))
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{
+use abxbus::{
     event,
     event_bus::EventBus,
     BaseEvent,
@@ -174,7 +174,7 @@ import (
 	"fmt"
 	"time"
 
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
+	abxbus "github.com/ArchiveBox/abxbus/v2/abxbus-go"
 )
 
 func bareHandler(event *abxbus.BaseEvent) (any, error) {

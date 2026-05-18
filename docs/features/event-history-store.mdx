@@ -102,7 +102,7 @@ inFlightOnly := abxbus.NewEventBus("InFlightBus", &abxbus.EventBusOptions{
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::event_bus::{EventBus, EventBusOptions};
+use abxbus::event_bus::{EventBus, EventBusOptions};
 
 let bounded_drop = EventBus::new_with_options(Some("BoundedDropBus".to_string()), EventBusOptions {
     max_history_size: Some(100),

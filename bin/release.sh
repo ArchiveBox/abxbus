@@ -125,9 +125,9 @@ if not cargo_match:
 
 cargo_lock_path = Path('abxbus-rust/Cargo.lock')
 cargo_lock_text = cargo_lock_path.read_text()
-cargo_lock_match = re.search(r'(?m)^name = "abxbus-rust"\nversion = "([^"]+)"$', cargo_lock_text)
+cargo_lock_match = re.search(r'(?m)^name = "abxbus"\nversion = "([^"]+)"$', cargo_lock_text)
 if not cargo_lock_match:
-    raise SystemExit('Failed to find abxbus-rust version in abxbus-rust/Cargo.lock')
+    raise SystemExit('Failed to find abxbus version in abxbus-rust/Cargo.lock')
 
 go_version_path = Path('abxbus-go/version.go')
 go_version_text = go_version_path.read_text()
@@ -155,7 +155,7 @@ cargo_path.write_text(
 )
 cargo_lock_path.write_text(
     re.sub(
-        r'(?m)^(name = "abxbus-rust"\nversion = ")[^"]+(")$',
+        r'(?m)^(name = "abxbus"\nversion = ")[^"]+(")$',
         rf'\g<1>{next_version}\2',
         cargo_lock_text,
         count=1,

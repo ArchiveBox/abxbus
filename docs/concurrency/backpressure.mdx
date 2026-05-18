@@ -57,7 +57,7 @@ const dropBus = new EventBus('DropBus', { max_history_size: 10_000, max_history_
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::event_bus::{EventBus, EventBusOptions};
+use abxbus::event_bus::{EventBus, EventBusOptions};
 
 let reject_bus = EventBus::new_with_options(Some("RejectBus".to_string()), EventBusOptions {
     max_history_size: Some(10_000),

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
+	abxbus "github.com/ArchiveBox/abxbus/v2/abxbus-go"
 )
 
 const debounceTargetID1 = "9b447756-908c-7b75-8a51-4a2c2b4d9b14"

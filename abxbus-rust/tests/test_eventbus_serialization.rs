@@ -1,4 +1,4 @@
-use abxbus_rust::event;
+use abxbus::event;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use abxbus_rust::{
+use abxbus::{
     base_event::BaseEvent,
     event_bus::{EventBus, EventBusOptions},
     event_handler::EventHandlerOptions,

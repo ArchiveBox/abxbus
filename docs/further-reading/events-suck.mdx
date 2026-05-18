@@ -70,7 +70,7 @@ userID, err := event.EventResult()
 <Tab title="Rust">
 
 ```rust
-// Not implemented in abxbus-rust yet.
+// Not implemented in the Rust crate yet.
 // Use typed event JSON serialization with an external transport for now.
 ```
 
@@ -186,7 +186,7 @@ const updated = await client.update({ id: user_id ?? 'fallback-id', age: 46 }, {
 <Tab title="Rust">
 
 ```rust
-// events_suck.wrap/make_events/make_handler are not implemented in abxbus-rust yet.
+// events_suck.wrap/make_events/make_handler are not implemented in the Rust crate yet.
 // Use typed events from the `event!` macro and the core EventBus APIs directly.
 ```
 
@@ -278,7 +278,7 @@ bus.On("ChargeCardEvent", "on_charge", func(event *abxbus.BaseEvent) (any, error
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event, event_bus::EventBus};
+use abxbus::{event, event_bus::EventBus};
 
 event! {
     struct CheckoutEvent {
@@ -395,7 +395,7 @@ const id = await client.create({ id: null, name: 'bob', age: 45 })
 Keep event payload fields and handler result types in the same event definition, then let handler signatures use the generated Rust struct directly.
 
 ```rust
-use abxbus_rust::{event, event_bus::EventBus};
+use abxbus::{event, event_bus::EventBus};
 use futures::executor::block_on;
 
 event! {

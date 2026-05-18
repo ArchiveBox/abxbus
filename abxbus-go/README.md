@@ -16,15 +16,24 @@ Implemented core features:
 - `ToJSON` / `FromJSON` roundtrips for EventBus, BaseEvent, EventHandler, EventResult
 - Python/TS/Rust-compatible cross-runtime roundtrip helper: `tests/roundtrip_cli`
 - `JSONLEventBridge`
-- `OtelTracingMiddleware`
 
 Intentionally not implemented yet:
 - event_suck helpers
 - retry decorator / retry middleware
 - bridge implementations other than JSONLBridge
-- middleware implementations other than OtelTracingMiddleware
+- middleware implementations
 
 ## Development
+
+Install/import from the repository-root Go module:
+
+```bash
+go get github.com/ArchiveBox/abxbus/v2/abxbus-go
+```
+
+```go
+import abxbus "github.com/ArchiveBox/abxbus/v2/abxbus-go"
+```
 
 ```bash
 go test ./...

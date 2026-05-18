@@ -1,11 +1,11 @@
-use abxbus_rust::event;
+use abxbus::event;
 use std::{
     sync::{Arc, Mutex},
     thread,
     time::Duration,
 };
 
-use abxbus_rust::{
+use abxbus::{
     base_event::BaseEvent,
     event_bus::{EventBus, EventBusOptions},
     types::{EventHandlerConcurrencyMode, EventStatus},
@@ -597,7 +597,7 @@ fn test_cross_eventbus_dispatch_preserves_parent_tracking() {
                 ..Default::default()
             });
             bus_2.emit(
-                <ChildEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(
+                <ChildEvent as abxbus::typed::TypedEventObject>::_from_inner_event(
                     child._inner_event(),
                 ),
             );

@@ -1,4 +1,4 @@
-use abxbus_rust::event;
+use abxbus::event;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use abxbus_rust::{
+use abxbus::{
     event_bus::{EventBus, EventBusOptions, FindOptions},
     types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
 };
@@ -258,16 +258,13 @@ fn test_concurrency_intersection_parallel_events_with_serial_handlers_stays_seri
     for event in events {
         let event_id = event.event_id.clone();
         assert_eq!(max_by_event.get(&event_id), Some(&1));
-        assert!(
-            event
-                ._inner_event()
-                .inner
-                .lock()
-                .event_results
-                .values()
-                .all(|result| result.status
-                    == abxbus_rust::event_result::EventResultStatus::Completed)
-        );
+        assert!(event
+            ._inner_event()
+            .inner
+            .lock()
+            .event_results
+            .values()
+            .all(|result| result.status == abxbus::event_result::EventResultStatus::Completed));
     }
     assert!(*global_max.lock().expect("global max lock") >= 2);
     bus.destroy();
@@ -316,7 +313,7 @@ fn test_timeout_enforcement_does_not_break_followup_processing_or_queue_state() 
         .lock()
         .event_results
         .values()
-        .all(|result| result.status == abxbus_rust::event_result::EventResultStatus::Error));
+        .all(|result| result.status == abxbus::event_result::EventResultStatus::Error));
 
     let followup = bus.emit(TimeoutFollowupEvent {
         ..Default::default()
@@ -328,7 +325,7 @@ fn test_timeout_enforcement_does_not_break_followup_processing_or_queue_state() 
         .lock()
         .event_results
         .values()
-        .all(|result| result.status == abxbus_rust::event_result::EventResultStatus::Completed));
+        .all(|result| result.status == abxbus::event_result::EventResultStatus::Completed));
     assert_eq!(
         followup
             ._inner_event()
