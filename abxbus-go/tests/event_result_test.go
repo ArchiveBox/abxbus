@@ -987,6 +987,58 @@ func TestJSONSchemaTypeNullUnionValidatesTheSameAsAnyOfNullUnion(t *testing.T) {
 	t.Fatalf("bus state did not keep normalized null union schema: %s", string(busJSON))
 }
 
+func TestJSONSchemaOneOfSemanticsSurviveNormalization(t *testing.T) {
+	schema := jsonschema.NormalizeJSONSchema(map[string]any{
+		"oneOf": []any{
+			map[string]any{},
+			map[string]any{"type": "null"},
+		},
+	}).(map[string]any)
+	if _, ok := schema["oneOf"]; !ok {
+		t.Fatalf("oneOf schema should survive normalization: %#v", schema)
+	}
+	if _, ok := schema["anyOf"]; ok {
+		t.Fatalf("oneOf schema should not be weakened to anyOf: %#v", schema)
+	}
+	if err := jsonschema.Validate(schema, "ok"); err != nil {
+		t.Fatalf("oneOf non-null value should validate: %v", err)
+	}
+	if err := jsonschema.Validate(schema, nil); err == nil {
+		t.Fatal("oneOf null value should fail because it matches both branches")
+	}
+}
+
+func TestJSONSchemaAllOfSemanticsSurviveRehydration(t *testing.T) {
+	schema := map[string]any{
+		"allOf": []any{
+			map[string]any{"type": "string", "minLength": 2},
+			map[string]any{"pattern": "^a"},
+		},
+	}
+	if err := jsonschema.Validate(schema, "ab"); err != nil {
+		t.Fatalf("allOf valid value should validate: %v", err)
+	}
+	if err := jsonschema.Validate(schema, "b"); err == nil {
+		t.Fatal("allOf should reject values that fail a branch")
+	}
+	if err := jsonschema.Validate(schema, "a"); err == nil {
+		t.Fatal("allOf should reject values that fail sibling constraints")
+	}
+}
+
+func TestJSONSchemaNullEnumSemanticsSurviveRehydration(t *testing.T) {
+	schema := map[string]any{"enum": []any{"queued", nil}}
+	if err := jsonschema.Validate(schema, "queued"); err != nil {
+		t.Fatalf("enum string value should validate: %v", err)
+	}
+	if err := jsonschema.Validate(schema, nil); err != nil {
+		t.Fatalf("enum null value should validate: %v", err)
+	}
+	if err := jsonschema.Validate(schema, "done"); err == nil {
+		t.Fatal("enum should reject values outside the enum")
+	}
+}
+
 func TestJSONSchemaRecursiveNullRefsSerializeWithoutInfiniteExpansion(t *testing.T) {
 	type Node struct {
 		Name  string `json:"name"`
@@ -1250,7 +1302,7 @@ func TestEmitAcceptsTypedStructAndDerivesPayloadAndConfig(t *testing.T) {
 	if !reflect.DeepEqual(event.EventResultType, map[string]any{"type": "object"}) {
 		t.Fatalf("event result type mismatch: %#v", event.EventResultType)
 	}
-	if event.Payload["url"] != "https://example.com" || event.Payload["user_id"] != "user-1" {
+	if event.Payload["Url"] != "https://example.com" || event.Payload["UserID"] != "user-1" {
 		t.Fatalf("payload casing mismatch: %#v", event.Payload)
 	}
 	if _, ok := event.Payload["event_timeout"]; ok {
@@ -1261,7 +1313,7 @@ func TestEmitAcceptsTypedStructAndDerivesPayloadAndConfig(t *testing.T) {
 	if derived.EventType != "DerivedNameEvent" {
 		t.Fatalf("derived event type mismatch: %s", derived.EventType)
 	}
-	if derived.Payload["url"] != "https://example.org" {
+	if derived.Payload["Url"] != "https://example.org" {
 		t.Fatalf("derived payload mismatch: %#v", derived.Payload)
 	}
 }
@@ -1556,6 +1608,13 @@ func TestJSONSchemaForMapIncludesAdditionalPropertiesForNonStringKeys(t *testing
 	}
 }
 
+func TestJSONSchemaForAnyIsUnconstrained(t *testing.T) {
+	schema := abxbus.JSONSchemaFor[any]()
+	if !reflect.DeepEqual(schema, map[string]any{"$schema": "https://json-schema.org/draft/2020-12/schema"}) {
+		t.Fatalf("any schema should be unconstrained, got %#v", schema)
+	}
+}
+
 func TestJSONSchemaForEmbeddedStructFieldsMatchesJSONFlattening(t *testing.T) {
 	type embeddedProfile struct {
 		Email string `json:"email"`
@@ -1577,6 +1636,19 @@ func TestJSONSchemaForEmbeddedStructFieldsMatchesJSONFlattening(t *testing.T) {
 	expectedRequired := []any{"email", "name"}
 	if !reflect.DeepEqual(schema["required"], expectedRequired) {
 		t.Fatalf("unexpected required fields for flattened embedded struct: %#v", schema["required"])
+	}
+}
+
+func TestJSONSchemaForRecursiveAnonymousEmbeddedStructDoesNotLoop(t *testing.T) {
+	type recursiveProfile struct {
+		*recursiveProfile
+		Name string `json:"name"`
+	}
+
+	schema := abxbus.JSONSchemaFor[recursiveProfile]()
+	properties := schema["properties"].(map[string]any)
+	if properties["name"].(map[string]any)["type"] != "string" {
+		t.Fatalf("recursive embedded struct should keep concrete fields: %#v", properties)
 	}
 }
 

@@ -836,6 +836,39 @@ def test_json_schema_type_null_union_validates_the_same_as_anyof_null_union():
     assert 'nullable' not in bus_schema
 
 
+def test_json_schema_oneof_semantics_survive_normalization():
+    json_schema: dict[str, Any] = {'oneOf': [{}, {'type': 'null'}]}
+    normalized_schema = normalize_json_schema(json_schema)
+
+    assert 'oneOf' in normalized_schema
+    assert 'anyOf' not in normalized_schema
+    result_type = pydantic_model_from_json_schema(normalized_schema)
+    assert validate_result_against_type(result_type, 'ok') == 'ok'
+    with pytest.raises(Exception):
+        validate_result_against_type(result_type, None)
+
+
+def test_json_schema_allof_semantics_survive_rehydration():
+    json_schema: dict[str, Any] = {'allOf': [{'type': 'string', 'minLength': 2}, {'pattern': '^a'}]}
+    result_type = pydantic_model_from_json_schema(json_schema)
+
+    assert validate_result_against_type(result_type, 'ab') == 'ab'
+    with pytest.raises(Exception):
+        validate_result_against_type(result_type, 'b')
+    with pytest.raises(Exception):
+        validate_result_against_type(result_type, 'a')
+
+
+def test_json_schema_null_enum_semantics_survive_rehydration():
+    json_schema: dict[str, Any] = {'enum': ['queued', None]}
+    result_type = pydantic_model_from_json_schema(json_schema)
+
+    assert validate_result_against_type(result_type, 'queued') == 'queued'
+    assert validate_result_against_type(result_type, None) is None
+    with pytest.raises(Exception):
+        validate_result_against_type(result_type, 'done')
+
+
 def test_json_schema_recursive_null_refs_serialize_without_infinite_expansion():
     class RecursiveResult(BaseModel):
         name: str

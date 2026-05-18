@@ -2572,6 +2572,50 @@ mod folded_test_event_result_typed_results {
     }
 
     #[test]
+    fn test_json_schema_oneof_semantics_survive_normalization() {
+        let schema = normalize_json_schema(json!({"oneOf": [{}, {"type": "null"}]}));
+
+        assert!(schema.get("oneOf").is_some());
+        assert!(schema.get("anyOf").is_none());
+        validate_json_schema_value(&schema, &schema, &json!("ok"), "$")
+            .expect("oneOf non-null value should validate");
+        assert!(
+            validate_json_schema_value(&schema, &schema, &Value::Null, "$").is_err(),
+            "oneOf null value should fail because it matches both branches"
+        );
+    }
+
+    #[test]
+    fn test_json_schema_allof_semantics_survive_rehydration() {
+        let schema = json!({"allOf": [{"type": "string", "minLength": 2}, {"pattern": "^a"}]});
+
+        validate_json_schema_value(&schema, &schema, &json!("ab"), "$")
+            .expect("allOf valid value should validate");
+        assert!(
+            validate_json_schema_value(&schema, &schema, &json!("b"), "$").is_err(),
+            "allOf should reject values that fail a branch"
+        );
+        assert!(
+            validate_json_schema_value(&schema, &schema, &json!("a"), "$").is_err(),
+            "allOf should reject values that fail sibling constraints"
+        );
+    }
+
+    #[test]
+    fn test_json_schema_null_enum_semantics_survive_rehydration() {
+        let schema = json!({"enum": ["queued", null]});
+
+        validate_json_schema_value(&schema, &schema, &json!("queued"), "$")
+            .expect("enum string value should validate");
+        validate_json_schema_value(&schema, &schema, &Value::Null, "$")
+            .expect("enum null value should validate");
+        assert!(
+            validate_json_schema_value(&schema, &schema, &json!("done"), "$").is_err(),
+            "enum should reject values outside the enum"
+        );
+    }
+
+    #[test]
     fn test_json_schema_recursive_null_refs_serialize_without_infinite_expansion() {
         let schema = json!({
             "$defs": {

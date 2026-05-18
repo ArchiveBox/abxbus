@@ -14,7 +14,7 @@ export type EventResultType<TEvent extends BaseEvent> = TEvent extends { __event
 
 export type EventResultTypeConstructor = StringConstructor | NumberConstructor | BooleanConstructor | ArrayConstructor | ObjectConstructor
 
-export type EventResultTypeInput = z.ZodTypeAny | z.core.$ZodType | EventResultTypeConstructor | JsonSchema
+export type EventResultTypeInput = z.ZodTypeAny | EventResultTypeConstructor | JsonSchema
 
 export type EventHandlerReturn<T extends BaseEvent = BaseEvent> = EventResultType<T> | BaseEvent | null | void
 

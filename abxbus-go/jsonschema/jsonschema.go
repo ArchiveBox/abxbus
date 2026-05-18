@@ -79,7 +79,7 @@ type schemaForState struct {
 
 func (state *schemaForState) schemaForType(t reflect.Type) map[string]any {
 	if t == nil {
-		return map[string]any{"type": "object"}
+		return map[string]any{}
 	}
 	if t.Kind() == reflect.Pointer {
 		return nullUnionSchema(state.schemaForType(t.Elem()))
@@ -138,7 +138,7 @@ func normalizeJSONSchemaValue(schema any) any {
 		}
 		merged := map[string]any{"anyOf": normalizeJSONSchemaValue(candidates)}
 		for key, item := range normalized {
-			if key != "type" && key != "oneOf" {
+			if key != "type" {
 				merged[key] = item
 			}
 		}
@@ -307,25 +307,6 @@ func nullUnionCandidates(schema map[string]any) ([]any, bool) {
 			return []any{map[string]any{"type": nonNullTypes}, map[string]any{"type": "null"}}, true
 		}
 	}
-	candidates, ok := schema["oneOf"].([]any)
-	if ok && len(candidates) == 2 {
-		var nullCount int
-		var nonNull any
-		for _, candidate := range candidates {
-			candidateMap, ok := candidate.(map[string]any)
-			if !ok {
-				continue
-			}
-			if candidateMap["type"] == "null" {
-				nullCount++
-			} else {
-				nonNull = candidate
-			}
-		}
-		if nullCount == 1 && nonNull != nil {
-			return []any{nonNull, map[string]any{"type": "null"}}, true
-		}
-	}
 	return nil, false
 }
 
@@ -350,6 +331,9 @@ func (state *schemaForState) schemaForStruct(t reflect.Type) map[string]any {
 			fieldType = fieldType.Elem()
 		}
 		if field.Anonymous && !explicitName && fieldType.Kind() == reflect.Struct {
+			if _, recursive := state.inProgress[fieldType]; recursive {
+				continue
+			}
 			embedded := state.schemaForStruct(fieldType)
 			if embeddedProperties, ok := embedded["properties"].(map[string]any); ok {
 				for embeddedName, embeddedSchema := range embeddedProperties {
@@ -431,7 +415,7 @@ func StructFieldJSONName(field reflect.StructField) (string, bool, bool, bool) {
 	name := parts[0]
 	explicitName := false
 	if name == "" {
-		name = lowerSnakeCase(field.Name)
+		name = field.Name
 	} else {
 		explicitName = true
 	}
@@ -442,20 +426,6 @@ func StructFieldJSONName(field reflect.StructField) (string, bool, bool, bool) {
 		}
 	}
 	return name, omitEmpty, false, explicitName
-}
-
-var initialismPattern = regexp.MustCompile(`([A-Z]+)([A-Z][a-z])`)
-var wordBoundaryPattern = regexp.MustCompile(`([a-z0-9])([A-Z])`)
-
-func lowerSnakeCase(name string) string {
-	if name == "" {
-		return name
-	}
-	name = initialismPattern.ReplaceAllString(name, `${1}_${2}`)
-	name = wordBoundaryPattern.ReplaceAllString(name, `${1}_${2}`)
-	name = strings.ReplaceAll(name, "-", "_")
-	name = strings.ReplaceAll(name, " ", "_")
-	return strings.ToLower(name)
 }
 
 func isOptionalType(t reflect.Type) bool {

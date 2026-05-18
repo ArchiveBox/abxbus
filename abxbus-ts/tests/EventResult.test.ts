@@ -763,6 +763,32 @@ test('json schema type null union validates the same as anyof null union', async
   await bus.destroy()
 })
 
+test('json schema oneof semantics survive normalization', () => {
+  const schema = normalizeJsonSchema({ oneOf: [{}, { type: 'null' }] } as JsonSchema) as Record<string, unknown>
+
+  assert.equal('oneOf' in schema, true)
+  assert.equal('anyOf' in schema, false)
+  const result_type = fromJsonSchema(schema)
+  assert.equal(result_type.safeParse('ok').success, true)
+  assert.equal(result_type.safeParse(null).success, false)
+})
+
+test('json schema allof semantics survive rehydration', () => {
+  const result_type = fromJsonSchema({ allOf: [{ type: 'string', minLength: 2 }, { pattern: '^a' }] } as JsonSchema)
+
+  assert.equal(result_type.safeParse('ab').success, true)
+  assert.equal(result_type.safeParse('b').success, false)
+  assert.equal(result_type.safeParse('a').success, false)
+})
+
+test('json schema null enum semantics survive rehydration', () => {
+  const result_type = fromJsonSchema({ enum: ['queued', null] } as JsonSchema)
+
+  assert.equal(result_type.safeParse('queued').success, true)
+  assert.equal(result_type.safeParse(null).success, true)
+  assert.equal(result_type.safeParse('done').success, false)
+})
+
 test('json schema recursive null refs serialize without infinite expansion', () => {
   const Node = z.object({
     name: z.string(),

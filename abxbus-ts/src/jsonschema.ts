@@ -3,28 +3,28 @@ import { z } from 'zod'
 export type JsonSchema = boolean | z.core.JSONSchema.JSONSchema
 type JsonSchemaObject = z.core.JSONSchema.JSONSchema
 
-const isJsonSchemaObject = (value: unknown): value is JsonSchemaObject =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
+const isJsonSchemaObject = (value: unknown): value is JsonSchemaObject => {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
 
-export const isJsonSchema = (value: unknown): value is JsonSchema => typeof value === 'boolean' || isJsonSchemaObject(value)
+export const isJsonSchema = (value: unknown): value is JsonSchema => {
+  if (typeof value === 'boolean') {
+    return true
+  }
+  if (!isJsonSchemaObject(value)) {
+    return false
+  }
+  if ('_zod' in value || '_def' in value || '~standard' in value) {
+    return false
+  }
+  return true
+}
 
 const nullUnionCandidates = (schema: Record<string, unknown>): Record<string, unknown>[] | null => {
   if (Array.isArray(schema.type) && schema.type.includes('null')) {
     const non_null_types = schema.type.filter((item): item is string => typeof item === 'string' && item !== 'null')
     if (non_null_types.length > 0) {
       return [{ type: non_null_types.length === 1 ? non_null_types[0] : non_null_types }, { type: 'null' }]
-    }
-  }
-
-  const one_of = schema.oneOf
-  if (Array.isArray(one_of) && one_of.length === 2) {
-    const object_candidates = one_of.filter(isJsonSchemaObject)
-    if (object_candidates.length === 2) {
-      const null_candidates = object_candidates.filter((candidate) => candidate.type === 'null')
-      const non_null_candidates = object_candidates.filter((candidate) => candidate.type !== 'null')
-      if (null_candidates.length === 1 && non_null_candidates.length === 1) {
-        return [non_null_candidates[0], { type: 'null' }]
-      }
     }
   }
 
@@ -127,7 +127,7 @@ const normalizeJsonSchemaValue = (schema: unknown): unknown => {
   if (null_union_candidates !== null) {
     const merged: Record<string, unknown> = { anyOf: normalizeJsonSchemaValue(null_union_candidates) }
     for (const [key, value] of Object.entries(normalized)) {
-      if (key !== 'type' && key !== 'oneOf') {
+      if (key !== 'type') {
         merged[key] = value
       }
     }

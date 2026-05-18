@@ -18,7 +18,7 @@ fn normalize_json_schema_value(value: Value) -> Value {
             let mut merged = Map::new();
             merged.insert("anyOf".to_string(), normalize_json_schema_value(candidates));
             for (key, item) in object {
-                if key != "type" && key != "oneOf" {
+                if key != "type" {
                     merged.insert(key, item);
                 }
             }
@@ -187,13 +187,12 @@ pub fn validate_json_schema_value(
     }
 
     if let Some(any_of) = schema.get("anyOf").and_then(Value::as_array) {
-        if any_of
+        if !any_of
             .iter()
             .any(|branch| validate_json_schema_value(root_schema, branch, value, path).is_ok())
         {
-            return Ok(());
+            return Err(format!("{path} did not match anyOf schema"));
         }
-        return Err(format!("{path} did not match anyOf schema"));
     }
     if let Some(one_of) = schema.get("oneOf").and_then(Value::as_array) {
         let matches = one_of
@@ -346,28 +345,6 @@ fn null_union_candidates(object: &Map<String, Value>) -> Option<Value> {
                 json!({"type": schema_type}),
                 json!({"type": "null"}),
             ]));
-        }
-    }
-
-    if let Some(candidates) = object.get("oneOf").and_then(Value::as_array) {
-        if candidates.len() == 2 {
-            let mut null_count = 0;
-            let mut non_null = None;
-            for candidate in candidates {
-                let Some(candidate_object) = candidate.as_object() else {
-                    continue;
-                };
-                if candidate_object.get("type").and_then(Value::as_str) == Some("null") {
-                    null_count += 1;
-                } else {
-                    non_null = Some(candidate.clone());
-                }
-            }
-            if null_count == 1 {
-                if let Some(branch) = non_null {
-                    return Some(Value::Array(vec![branch, json!({"type": "null"})]));
-                }
-            }
         }
     }
 

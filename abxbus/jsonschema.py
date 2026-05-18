@@ -1,8 +1,10 @@
 import inspect
+import math
+import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Annotated, Any, ForwardRef, Literal, TypeAlias, cast
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, create_model
+from pydantic import BaseModel, ConfigDict, Field, PlainValidator, TypeAdapter, create_model
 
 _SCHEMA_TYPE_REGISTRY: tuple[tuple[str, type[Any], str], ...] = (
     ('string', str, 'string'),
@@ -128,12 +130,6 @@ def _json_schema_null_union_candidates(schema: Mapping[str, Any]) -> list[dict[s
             return [{'type': non_null_types[0]}, {'type': 'null'}]
         if non_null_types:
             return [{'type': non_null_types}, {'type': 'null'}]
-    one_of_candidates = list(_iter_string_key_dicts(schema.get('oneOf')))
-    if len(one_of_candidates) == 2:
-        null_candidates = [candidate for candidate in one_of_candidates if candidate.get('type') == 'null']
-        non_null_candidates = [candidate for candidate in one_of_candidates if candidate.get('type') != 'null']
-        if len(null_candidates) == 1 and len(non_null_candidates) == 1:
-            return [non_null_candidates[0], {'type': 'null'}]
     return None
 
 
@@ -156,7 +152,7 @@ def _normalize_json_schema_value(value: Any) -> Any:
 
     normalized_schema = {'anyOf': _normalize_json_schema_value(null_union_candidates)}
     for key, item in schema.items():
-        if key not in {'type', 'oneOf'}:
+        if key != 'type':
             normalized_schema[key] = item
     return normalized_schema
 
@@ -238,6 +234,241 @@ def _json_schema_contains_ref(value: Any, reference: str) -> bool:
     return any(_json_schema_contains_ref(item, reference) for key, item in value_mapping.items() if key != '$defs')
 
 
+def _resolve_json_schema_ref(root_schema: Mapping[str, Any], reference: str) -> Any | None:
+    if reference == '#':
+        return root_schema
+    if not reference.startswith('#/'):
+        return None
+    current: Any = root_schema
+    for raw_part in reference[2:].split('/'):
+        part = raw_part.replace('~1', '/').replace('~0', '~')
+        current_mapping = _as_string_key_dict(current)
+        if current_mapping is None or part not in current_mapping:
+            return None
+        current = current_mapping[part]
+    return current
+
+
+def _json_schema_number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        return float(value)
+    return None
+
+
+def _json_schema_type_matches(schema_type: Any, value: Any) -> bool:
+    if not isinstance(schema_type, str):
+        return True
+    if schema_type == 'string':
+        return isinstance(value, str)
+    if schema_type == 'number':
+        return _json_schema_number(value) is not None
+    if schema_type == 'integer':
+        number = _json_schema_number(value)
+        return number is not None and math.trunc(number) == number
+    if schema_type == 'boolean':
+        return isinstance(value, bool)
+    if schema_type == 'null':
+        return value is None
+    if schema_type == 'array':
+        return isinstance(value, list)
+    if schema_type == 'object':
+        return isinstance(value, Mapping)
+    return True
+
+
+def _is_json_schema_multiple_of(number: float, multiple_of: float) -> bool:
+    quotient = number / multiple_of
+    return abs(quotient - round(quotient)) < 1e-9
+
+
+def _validate_json_schema_scalar_constraints(schema: Mapping[str, Any], value: Any, path: str) -> None:
+    if isinstance(value, str):
+        min_length = _json_schema_number(schema.get('minLength'))
+        if min_length is not None and len(value) < min_length:
+            raise ValueError(f'{path} length below minLength')
+        max_length = _json_schema_number(schema.get('maxLength'))
+        if max_length is not None and len(value) > max_length:
+            raise ValueError(f'{path} length above maxLength')
+        pattern = schema.get('pattern')
+        if isinstance(pattern, str):
+            try:
+                matched = re.search(pattern, value) is not None
+            except re.error:
+                raise ValueError(f'{path} invalid pattern {pattern}') from None
+            if not matched:
+                raise ValueError(f'{path} does not match pattern')
+
+    number = _json_schema_number(value)
+    if number is not None:
+        multiple_of = _json_schema_number(schema.get('multipleOf'))
+        if multiple_of is not None and multiple_of != 0 and not _is_json_schema_multiple_of(number, multiple_of):
+            raise ValueError(f'{path} is not multipleOf {multiple_of}')
+        minimum = _json_schema_number(schema.get('minimum'))
+        if minimum is not None and number < minimum:
+            raise ValueError(f'{path} below minimum')
+        maximum = _json_schema_number(schema.get('maximum'))
+        if maximum is not None and number > maximum:
+            raise ValueError(f'{path} above maximum')
+        exclusive_minimum = _json_schema_number(schema.get('exclusiveMinimum'))
+        if exclusive_minimum is not None and number <= exclusive_minimum:
+            raise ValueError(f'{path} below exclusiveMinimum')
+        exclusive_maximum = _json_schema_number(schema.get('exclusiveMaximum'))
+        if exclusive_maximum is not None and number >= exclusive_maximum:
+            raise ValueError(f'{path} above exclusiveMaximum')
+
+    if isinstance(value, list):
+        value_items = cast(list[Any], value)
+        min_items = _json_schema_number(schema.get('minItems'))
+        if min_items is not None and len(value_items) < min_items:
+            raise ValueError(f'{path} item count below minItems')
+        max_items = _json_schema_number(schema.get('maxItems'))
+        if max_items is not None and len(value_items) > max_items:
+            raise ValueError(f'{path} item count above maxItems')
+
+    if isinstance(value, Mapping):
+        value_mapping = cast(Mapping[Any, Any], value)
+        min_properties = _json_schema_number(schema.get('minProperties'))
+        if min_properties is not None and len(value_mapping) < min_properties:
+            raise ValueError(f'{path} property count below minProperties')
+        max_properties = _json_schema_number(schema.get('maxProperties'))
+        if max_properties is not None and len(value_mapping) > max_properties:
+            raise ValueError(f'{path} property count above maxProperties')
+
+
+def _validate_json_schema_children(root_schema: Mapping[str, Any], schema: Mapping[str, Any], value: Any, path: str) -> None:
+    if isinstance(value, list):
+        value_items = cast(list[Any], value)
+        items_schema = schema.get('items')
+        if items_schema is not None:
+            for index, item in enumerate(value_items):
+                _validate_json_schema_value(root_schema, items_schema, item, f'{path}[{index}]')
+        prefix_items = _as_non_string_sequence(schema.get('prefixItems'))
+        if prefix_items is not None:
+            for index, item_schema in enumerate(prefix_items):
+                if index >= len(value_items):
+                    break
+                _validate_json_schema_value(root_schema, item_schema, value_items[index], f'{path}[{index}]')
+
+    value_mapping = _as_string_key_dict(cast(object, value))
+    if value_mapping is None:
+        return
+
+    required = _as_non_string_sequence(schema.get('required'))
+    if required is not None:
+        for key in (item for item in required if isinstance(item, str)):
+            if key not in value_mapping:
+                raise ValueError(f'{path}.{key} is required')
+
+    properties = _as_string_key_dict(schema.get('properties'))
+    if properties is not None:
+        for key, property_schema in properties.items():
+            if key in value_mapping:
+                _validate_json_schema_value(root_schema, property_schema, value_mapping[key], f'{path}.{key}')
+
+    additional_properties = schema.get('additionalProperties')
+    if additional_properties is False:
+        if properties is not None:
+            for key in value_mapping:
+                if key not in properties:
+                    raise ValueError(f'{path}.{key} is not allowed')
+    elif isinstance(additional_properties, Mapping):
+        for key, item in value_mapping.items():
+            if properties is not None and key in properties:
+                continue
+            _validate_json_schema_value(root_schema, additional_properties, item, f'{path}.{key}')
+
+
+def _validate_json_schema_value(root_schema: Mapping[str, Any], schema_raw: Any, value: Any, path: str) -> None:
+    schema = normalize_result_dict(schema_raw)
+    if not schema:
+        return
+
+    if 'const' in schema and schema['const'] != value:
+        raise ValueError(f'{path} expected const value')
+
+    enum_values = _as_non_string_sequence(schema.get('enum'))
+    if enum_values is not None and value not in enum_values:
+        raise ValueError(f'{path} expected enum value')
+
+    not_schema = schema.get('not')
+    if not_schema is not None:
+        try:
+            _validate_json_schema_value(root_schema, not_schema, value, path)
+        except ValueError:
+            pass
+        else:
+            raise ValueError(f'{path} matched not schema')
+
+    reference = schema.get('$ref')
+    if isinstance(reference, str):
+        resolved = _resolve_json_schema_ref(root_schema, reference)
+        if resolved is None:
+            raise ValueError(f'{path} unresolved schema reference {reference}')
+        _validate_json_schema_value(root_schema, resolved, value, path)
+        if len(schema) == 1:
+            return
+
+    any_of = _as_non_string_sequence(schema.get('anyOf'))
+    if any_of is not None:
+        if not any(_json_schema_value_matches(root_schema, candidate, value, path) for candidate in any_of):
+            raise ValueError(f'{path} did not match anyOf schema')
+
+    one_of = _as_non_string_sequence(schema.get('oneOf'))
+    if one_of is not None:
+        matches = sum(1 for candidate in one_of if _json_schema_value_matches(root_schema, candidate, value, path))
+        if matches != 1:
+            raise ValueError(f'{path} matched {matches} oneOf schemas')
+
+    all_of = _as_non_string_sequence(schema.get('allOf'))
+    if all_of is not None:
+        for candidate in all_of:
+            _validate_json_schema_value(root_schema, candidate, value, path)
+
+    schema_type = schema.get('type')
+    type_values = _as_non_string_sequence(schema_type)
+    if type_values is not None:
+        if not any(_json_schema_type_matches(allowed, value) for allowed in type_values):
+            raise ValueError(f'{path} did not match any allowed type')
+    elif schema_type is not None:
+        if not _json_schema_type_matches(schema_type, value):
+            label = schema_type if isinstance(schema_type, str) else 'matching schema type'
+            raise ValueError(f'{path} expected {label}')
+    elif any(schema.get(key) is not None for key in ('properties', 'required', 'additionalProperties')):
+        if _as_string_key_dict(value) is None:
+            raise ValueError(f'{path} expected object')
+
+    _validate_json_schema_scalar_constraints(schema, value, path)
+    _validate_json_schema_children(root_schema, schema, value, path)
+
+
+def _json_schema_value_matches(root_schema: Mapping[str, Any], schema_raw: Any, value: Any, path: str) -> bool:
+    try:
+        _validate_json_schema_value(root_schema, schema_raw, value, path)
+    except ValueError:
+        return False
+    return True
+
+
+def validate_json_schema_value(schema: Mapping[str, Any], value: Any) -> Any:
+    """Validate a Python value against the JSON Schema subset used by abxbus."""
+    normalized_schema = normalize_result_dict(normalize_json_schema(dict(schema)))
+    _validate_json_schema_value(normalized_schema, normalized_schema, value, '$')
+    return value
+
+
+def _json_schema_validator_type(schema: Mapping[str, Any]) -> Any:
+    normalized_schema = normalize_result_dict(normalize_json_schema(dict(schema)))
+
+    def _validate(value: Any) -> Any:
+        _validate_json_schema_value(normalized_schema, normalized_schema, value, '$')
+        return value
+
+    annotated = cast(Any, Annotated)
+    return annotated.__getitem__((Any, PlainValidator(_validate)))
+
+
 def _prepare_json_schema_for_pydantic_rehydration(schema: dict[str, Any]) -> dict[str, Any]:
     if schema.get('$defs') or not _json_schema_contains_ref(schema, '#'):
         return schema
@@ -292,9 +523,9 @@ def _json_schema_literal_type(schema: dict[str, Any]) -> Any | None:
     if raw_enum is None:
         return None
 
-    enum_values = tuple(item for item in raw_enum if item is not None)
+    enum_values = tuple(raw_enum)
     if not enum_values:
-        return type(None) if any(item is None for item in raw_enum) else None
+        return None
     return literal_type.__getitem__(enum_values)
 
 
@@ -466,6 +697,9 @@ def pydantic_model_from_json_schema(result_type: Any) -> Any:
         if model_reference is not None:
             return _nullable_type(_resolve_ref_model(model_reference), nullable=allows_null)
 
+        if _as_non_string_sequence(schema.get('oneOf')) is not None or _as_non_string_sequence(schema.get('allOf')) is not None:
+            return _json_schema_validator_type(schema)
+
         literal_type = _json_schema_literal_type(schema)
         if literal_type is not None:
             return _nullable_type(literal_type, nullable=allows_null)
@@ -484,24 +718,6 @@ def pydantic_model_from_json_schema(result_type: Any) -> Any:
                     continue
                 resolved_types.append(_resolve_schema(candidate))
             return _combine_union_types(resolved_types, nullable=includes_null)
-
-        one_of_candidates = _as_non_string_sequence(schema.get('oneOf'))
-        if one_of_candidates is not None:
-            resolved_types = []
-            includes_null = allows_null
-            for candidate in _iter_string_key_dicts(one_of_candidates):
-                if candidate.get('type') == 'null':
-                    includes_null = True
-                    continue
-                resolved_types.append(_resolve_schema(candidate))
-            return _combine_union_types(resolved_types, nullable=includes_null)
-
-        all_of_candidates = _as_non_string_sequence(schema.get('allOf'))
-        if all_of_candidates is not None:
-            resolved_types = [_resolve_schema(candidate) for candidate in _iter_string_key_dicts(all_of_candidates)]
-            if len(resolved_types) == 1:
-                return _nullable_type(resolved_types[0], nullable=allows_null)
-            return _combine_union_types(resolved_types, nullable=allows_null)
 
         schema_type = _extract_non_null_json_schema_type(schema)
         if schema_type == 'null':
@@ -589,5 +805,6 @@ __all__ = [
     'pydantic_model_from_json_schema',
     'pydantic_model_to_json_schema',
     'result_type_identifier_from_schema',
+    'validate_json_schema_value',
     'validate_result_against_type',
 ]
