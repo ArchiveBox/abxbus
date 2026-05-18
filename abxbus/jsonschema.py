@@ -2,9 +2,10 @@ import inspect
 import math
 import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Annotated, Any, ForwardRef, Literal, TypeAlias, cast
+from typing import Any, ForwardRef, Literal, TypeAlias, cast
 
-from pydantic import BaseModel, ConfigDict, Field, PlainValidator, TypeAdapter, create_model
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, create_model
+from typing_extensions import Annotated
 
 _SCHEMA_TYPE_REGISTRY: tuple[tuple[str, type[Any], str], ...] = (
     ('string', str, 'string'),
@@ -458,14 +459,14 @@ def validate_json_schema_value(schema: Mapping[str, Any], value: Any) -> Any:
     return value
 
 
-def _json_schema_validator_type(schema: Mapping[str, Any]) -> Any:
+def _json_schema_validator_type(schema: Mapping[str, Any], resolved_type: Any) -> Any:
     normalized_schema = normalize_result_dict(normalize_json_schema(dict(schema)))
 
     def _validate(value: Any) -> Any:
         _validate_json_schema_value(normalized_schema, normalized_schema, value, '$')
         return value
 
-    return Annotated[object, PlainValidator(_validate)]
+    return Annotated.__getitem__((resolved_type, BeforeValidator(_validate)))
 
 
 def _prepare_json_schema_for_pydantic_rehydration(schema: dict[str, Any]) -> dict[str, Any]:
@@ -632,6 +633,19 @@ def pydantic_model_from_json_schema(result_type: Any) -> Any:
             combined = combined | candidate_type
         return _nullable_type(combined, nullable=nullable)
 
+    def _wrap_schema_validation(schema: dict[str, Any], resolved_type: Any) -> Any:
+        if any(schema.get(key) is not None for key in ('anyOf', 'oneOf', 'allOf', 'not')):
+            return _json_schema_validator_type(schema, resolved_type)
+        return resolved_type
+
+    def _resolve_composite_schema(schema: dict[str, Any], key: str, *, nullable: bool) -> Any:
+        candidates = _as_non_string_sequence(schema.get(key))
+        if candidates is None:
+            return _wrap_schema_validation(schema, _nullable_type(Any, nullable=nullable))
+        resolved_types = [_resolve_schema(candidate) for candidate in candidates]
+        combined_type = _combine_union_types(resolved_types, nullable=nullable)
+        return _json_schema_validator_type(schema, combined_type)
+
     def _resolve_ref_model(model_reference: str) -> Any:
         if model_reference in models:
             return models[model_reference]
@@ -701,40 +715,37 @@ def pydantic_model_from_json_schema(result_type: Any) -> Any:
         allows_null = _json_schema_allows_null(schema)
         model_reference = _json_schema_ref_name(schema)
         if model_reference is not None:
-            return _nullable_type(_resolve_ref_model(model_reference), nullable=allows_null)
+            return _wrap_schema_validation(schema, _nullable_type(_resolve_ref_model(model_reference), nullable=allows_null))
 
-        if _as_non_string_sequence(schema.get('oneOf')) is not None or _as_non_string_sequence(schema.get('allOf')) is not None:
-            return _json_schema_validator_type(schema)
+        if _as_non_string_sequence(schema.get('oneOf')) is not None:
+            return _resolve_composite_schema(schema, 'oneOf', nullable=False)
+
+        if _as_non_string_sequence(schema.get('allOf')) is not None:
+            return _resolve_composite_schema(schema, 'allOf', nullable=allows_null)
 
         literal_type = _json_schema_literal_type(schema)
         if literal_type is not None:
-            return _nullable_type(literal_type, nullable=allows_null)
+            return _wrap_schema_validation(schema, _nullable_type(literal_type, nullable=allows_null))
 
         primitive_type = _json_schema_primitive_type(schema)
         if primitive_type is not None:
-            return _nullable_type(_json_schema_primitive_type_with_constraints(schema, primitive_type), nullable=allows_null)
+            resolved_type = _nullable_type(_json_schema_primitive_type_with_constraints(schema, primitive_type), nullable=allows_null)
+            return _wrap_schema_validation(schema, resolved_type)
 
         any_of_candidates = _as_non_string_sequence(schema.get('anyOf'))
         if any_of_candidates is not None:
-            resolved_types: list[Any] = []
-            includes_null = allows_null
-            for candidate in _iter_string_key_dicts(any_of_candidates):
-                if candidate.get('type') == 'null':
-                    includes_null = True
-                    continue
-                resolved_types.append(_resolve_schema(candidate))
-            return _combine_union_types(resolved_types, nullable=includes_null)
+            return _resolve_composite_schema(schema, 'anyOf', nullable=False)
 
         schema_type = _extract_non_null_json_schema_type(schema)
         if schema_type == 'null':
-            return type(None)
+            return _wrap_schema_validation(schema, type(None))
         if schema_type == 'array':
-            return _resolve_array_schema(schema, nullable=allows_null)
+            return _wrap_schema_validation(schema, _resolve_array_schema(schema, nullable=allows_null))
         if schema_type == 'object':
-            return _resolve_object_schema(schema, nullable=allows_null)
+            return _wrap_schema_validation(schema, _resolve_object_schema(schema, nullable=allows_null))
         if isinstance(schema_type, str) and schema_type in TYPE_MAPPING:
-            return _nullable_type(TYPE_MAPPING[schema_type], nullable=allows_null)
-        return _nullable_type(Any, nullable=allows_null)
+            return _wrap_schema_validation(schema, _nullable_type(TYPE_MAPPING[schema_type], nullable=allows_null))
+        return _wrap_schema_validation(schema, _nullable_type(Any, nullable=allows_null))
 
     for model_name in definitions:
         _resolve_ref_model(model_name)
