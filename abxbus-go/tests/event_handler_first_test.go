@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	abxbus "github.com/ArchiveBox/abxbus/v2/abxbus-go"
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
 )
 
 func TestEventHandlerCompletionBusDefaultFirstSerial(t *testing.T) {

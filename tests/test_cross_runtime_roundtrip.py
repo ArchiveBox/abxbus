@@ -40,6 +40,14 @@ class ScreenshotResult(BaseModel):
     regions: list[ScreenshotRegion]
 
 
+class RecursiveNodeResult(BaseModel):
+    name: str
+    child: 'RecursiveNodeResult | None' = None
+
+
+RecursiveNodeResult.model_rebuild()
+
+
 class PyTsTypedDictResult(TypedDict):
     name: str
     active: bool
@@ -114,6 +122,10 @@ class PyTsDataclassResultEvent(BaseEvent[PyTsDataclassResult]):
 class PyTsScreenshotEvent(BaseEvent[ScreenshotResult]):
     target_id: str
     quality: str
+
+
+class PyTsRecursiveNodeEvent(BaseEvent[RecursiveNodeResult]):
+    marker: str
 
 
 def _value_repr(value: Any) -> str:
@@ -193,6 +205,29 @@ def _assert_result_type_semantics_equal(
         )
 
 
+def _assert_null_union_ref_schema(schema: dict[str, Any], context: str) -> None:
+    assert '$defs' not in schema, f'{context}: recursive root schema should be inlined'
+    assert schema.get('title') == 'RecursiveNodeResult', f'{context}: recursive schema should keep root definition title'
+    properties = schema.get('properties')
+    assert isinstance(properties, dict), f'{context}: missing RecursiveNodeResult properties'
+    properties = cast(dict[str, Any], properties)
+    child_schema_raw = properties.get('child')
+    assert isinstance(child_schema_raw, dict), f'{context}: missing child schema'
+    child_schema = cast(dict[str, Any], child_schema_raw)
+    assert child_schema.get('anyOf') == [{'$ref': '#'}, {'type': 'null'}], (
+        f'{context}: child schema should keep standard anyOf $ref/null'
+    )
+    assert 'nullable' not in child_schema, f'{context}: child schema should not use nullable'
+    assert 'allOf' not in child_schema and 'oneOf' not in child_schema, (
+        f'{context}: child schema should not use nullable allOf/oneOf'
+    )
+
+
+def _assert_json_schema_layout(event_type: str, schema: dict[str, Any], context: str) -> None:
+    if event_type == 'PyTsRecursiveNodeEvent':
+        _assert_null_union_ref_schema(schema, context)
+
+
 def _build_python_roundtrip_cases() -> list[RoundtripCase]:
     parent = PyTsIntResultEvent(
         value=7,
@@ -246,6 +281,10 @@ def _build_python_roundtrip_cases() -> list[RoundtripCase]:
     )
     dataclass_event = PyTsDataclassResultEvent(
         marker='dataclass',
+        event_path=['PyBus#aaaa'],
+    )
+    recursive_event = PyTsRecursiveNodeEvent(
+        marker='recursive',
         event_path=['PyBus#aaaa'],
     )
 
@@ -339,6 +378,11 @@ def _build_python_roundtrip_cases() -> list[RoundtripCase]:
                     'regions': [{'id': 123, 'label': 'face', 'score': 0.9, 'visible': True}],
                 },
             ],
+        ),
+        RoundtripCase(
+            event=recursive_event,
+            valid_results=[{'name': 'root', 'child': {'name': 'leaf', 'child': None}}],
+            invalid_results=[{'name': 'root', 'child': {'name': 3, 'child': None}}, {'child': None}],
         ),
     ]
 
@@ -563,6 +607,7 @@ def _assert_events_roundtrip_matches_original(
             if key == 'event_result_type':
                 assert isinstance(runtime_event[key], dict), 'event_result_type should serialize as JSON schema dict'
                 assert runtime_event[key] == value, f'event_result_type schema changed after {context}'
+                _assert_json_schema_layout(event_type, runtime_event[key], f'{context} {event_type}')
                 _assert_result_type_semantics_equal(
                     semantics_case.event.event_result_type,
                     runtime_event[key],
@@ -581,6 +626,7 @@ def _assert_events_roundtrip_matches_original(
             if key == 'event_result_type':
                 assert isinstance(restored_dump[key], dict), 'event_result_type should remain JSON schema after reload'
                 assert restored_dump[key] == value, f'event_result_type schema changed after python reload from {context}'
+                _assert_json_schema_layout(event_type, restored_dump[key], f'python reload after {context} {event_type}')
                 _assert_result_type_semantics_equal(
                     semantics_case.event.event_result_type,
                     restored_dump[key],
@@ -621,6 +667,7 @@ def test_python_to_ts_roundtrip_preserves_event_fields_and_result_type_semantics
             assert key in ts_event, f'missing key after ts roundtrip: {key}'
             if key == 'event_result_type':
                 assert isinstance(ts_event[key], dict), 'event_result_type should serialize as JSON schema dict'
+                _assert_json_schema_layout(event_type, ts_event[key], f'ts roundtrip {event_type}')
                 _assert_result_type_semantics_equal(
                     semantics_case.event.event_result_type,
                     ts_event[key],
@@ -639,6 +686,7 @@ def test_python_to_ts_roundtrip_preserves_event_fields_and_result_type_semantics
             assert key in restored_dump, f'missing key after python reload: {key}'
             if key == 'event_result_type':
                 assert isinstance(restored_dump[key], dict), 'event_result_type should remain JSON schema after reload'
+                _assert_json_schema_layout(event_type, restored_dump[key], f'python reload {event_type}')
                 _assert_result_type_semantics_equal(
                     semantics_case.event.event_result_type,
                     restored_dump[key],
@@ -679,6 +727,7 @@ def test_python_to_rust_roundtrip_preserves_event_fields_and_result_type_semanti
             assert key in rust_event, f'missing key after rust roundtrip: {key}'
             if key == 'event_result_type':
                 assert isinstance(rust_event[key], dict), 'event_result_type should serialize as JSON schema dict'
+                _assert_json_schema_layout(event_type, rust_event[key], f'rust roundtrip {event_type}')
                 _assert_result_type_semantics_equal(
                     semantics_case.event.event_result_type,
                     rust_event[key],
@@ -697,6 +746,7 @@ def test_python_to_rust_roundtrip_preserves_event_fields_and_result_type_semanti
             assert key in restored_dump, f'missing key after python reload: {key}'
             if key == 'event_result_type':
                 assert isinstance(restored_dump[key], dict), 'event_result_type should remain JSON schema after reload'
+                _assert_json_schema_layout(event_type, restored_dump[key], f'python reload {event_type}')
                 _assert_result_type_semantics_equal(
                     semantics_case.event.event_result_type,
                     restored_dump[key],
@@ -736,6 +786,7 @@ def test_python_to_go_roundtrip_preserves_event_fields_and_result_type_semantics
             if key == 'event_result_type':
                 assert isinstance(go_event[key], dict), 'event_result_type should serialize as JSON schema dict'
                 assert go_event[key] == value, f'event_result_type schema changed after go roundtrip: {event_type}'
+                _assert_json_schema_layout(event_type, go_event[key], f'go roundtrip {event_type}')
                 _assert_result_type_semantics_equal(
                     semantics_case.event.event_result_type,
                     go_event[key],
@@ -754,6 +805,7 @@ def test_python_to_go_roundtrip_preserves_event_fields_and_result_type_semantics
             if key == 'event_result_type':
                 assert isinstance(restored_dump[key], dict), 'event_result_type should remain JSON schema after reload'
                 assert restored_dump[key] == value, f'event_result_type schema changed after python reload from go: {event_type}'
+                _assert_json_schema_layout(event_type, restored_dump[key], f'python reload {event_type}')
                 _assert_result_type_semantics_equal(
                     semantics_case.event.event_result_type,
                     restored_dump[key],

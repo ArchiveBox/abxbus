@@ -36,6 +36,13 @@ event! {
         event_type: "WaitForIdleTimeoutEvent",
     }
 }
+event! {
+    struct ModelFieldsDefaultEvent {
+        some_field: i32 = 2,
+        event_result_type: EmptyResult,
+        event_type: "ModelFieldsDefaultEvent",
+    }
+}
 fn wait_for_eventbus_weak_refs_to_drop(refs: &[Weak<EventBus>]) -> bool {
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
@@ -1689,6 +1696,31 @@ fn test_event_type_and_version_identity_fields() {
     assert_eq!(emitted.event_version, "0.0.1");
     let _ = block_on(emitted.now());
     bus.destroy();
+}
+
+#[test]
+fn test_event_model_fields_are_typed_event_metadata() {
+    fn assert_model_field<T, D>(_field: &abxbus::typed::ModelField<T, D>) {}
+
+    let fields = CreateAgentTaskEvent.model_fields();
+    assert_model_field::<String, Option<String>>(&fields.task);
+    assert_model_field::<String, Option<String>>(&fields.user_id);
+    assert_model_field::<Option<f64>, Option<f64>>(&fields.event_timeout);
+    assert_model_field::<EmptyResult, Option<Value>>(&fields.event_result_type);
+    assert_eq!(fields.task.name, "task");
+    assert_eq!(fields.event_timeout.name, "event_timeout");
+    assert_eq!(fields.event_result_type.name, "event_result_type");
+}
+
+#[test]
+fn test_event_model_fields_preserve_typed_defaults_and_schema() {
+    fn assert_i32(_value: i32) {}
+
+    let fields = ModelFieldsDefaultEvent.model_fields();
+    assert_i32(fields.some_field.Default);
+    assert_eq!(fields.some_field.Default, 2);
+    assert_eq!(fields.some_field.Type["type"], json!("integer"));
+    assert_eq!(ModelFieldsDefaultEvent::default().some_field, 2);
 }
 
 #[test]

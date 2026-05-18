@@ -5,15 +5,19 @@ import { z } from 'zod'
 
 import { BaseEvent } from '../src/index.js'
 
-test('BaseEvent.extend accepts full Zod object schemas as event_schema metadata only', () => {
+test('BaseEvent.extend accepts full Zod object schemas and exposes model_fields as event_schema.shape', () => {
+  const url_schema = z.string().url()
+  const retries_schema = z.number().int().min(0).max(2).default(0)
+  const payload_schema_field = z.string()
+  const event_timeout_schema = z.number().positive().nullable().default(25)
   const FullZodEvent = BaseEvent.extend(
     'BaseEventFullZodSchemaEvent',
     z
       .object({
-        url: z.string().url(),
-        retries: z.number().int().min(0).max(2).default(0),
-        schema: z.string(),
-        event_timeout: z.number().positive().nullable().default(25),
+        url: url_schema,
+        retries: retries_schema,
+        schema: payload_schema_field,
+        event_timeout: event_timeout_schema,
       })
       .strict()
       .refine((event) => event.retries <= 1)
@@ -28,9 +32,18 @@ test('BaseEvent.extend accepts full Zod object schemas as event_schema metadata 
   assert.equal(event.retries, 0)
   assert.equal(event.event_timeout, 25)
   assert.equal(typeof FullZodEvent.event_schema.safeParse, 'function')
-  assert.equal(Reflect.get(FullZodEvent, 'schema'), undefined)
+  assert.equal(FullZodEvent.model_fields, FullZodEvent.event_schema.shape)
+  assert.equal(FullZodEvent.model_fields.url, url_schema)
+  assert.equal(FullZodEvent.model_fields.retries, retries_schema)
+  assert.equal(FullZodEvent.model_fields.schema, payload_schema_field)
+  assert.equal(FullZodEvent.model_fields.event_timeout, event_timeout_schema)
+  assert.equal(FullZodEvent.retries, 0)
+  assert.equal(FullZodEvent.event_timeout, 25)
   assert.ok(FullZodEvent.class)
-  assert.equal(Reflect.get(FullZodEvent.class, 'schema'), undefined)
+  assert.equal(FullZodEvent.class.model_fields, FullZodEvent.class.event_schema.shape)
+  assert.equal(FullZodEvent.class.model_fields.schema, payload_schema_field)
+  assert.equal(FullZodEvent.class.retries, 0)
+  assert.equal(FullZodEvent.class.event_timeout, 25)
   assert.equal(Object.prototype.propertyIsEnumerable.call(event, 'event_schema'), false)
 
   const json = event.toJSON() as Record<string, unknown>
@@ -94,6 +107,49 @@ test('BaseEvent.extend preserves non-Zod shortcut defaults through generated eve
   const event = TimeoutEvent({})
   assert.equal(event.event_timeout, 25)
   assert.equal((event.toJSON() as Record<string, unknown>).event_timeout, 25)
+})
+
+test('BaseEvent.extend treats compound non-Zod shortcut defaults as fixed literals', () => {
+  const ShortcutLiteralEvent = BaseEvent.extend('BaseEventShortcutCompoundLiteralSchemaEvent', {
+    exact_object: { mode: 'exact', nested: { count: 2 }, flags: [true, null] },
+    exact_tuple: ['ready', { retries: 1 }],
+  })
+
+  const default_event = ShortcutLiteralEvent({})
+  assert.deepEqual(default_event.exact_object, { mode: 'exact', nested: { count: 2 }, flags: [true, null] })
+  assert.deepEqual(default_event.exact_tuple, ['ready', { retries: 1 }])
+
+  const roundtripped_event = ShortcutLiteralEvent({
+    exact_object: { mode: 'exact', nested: { count: 2 }, flags: [true, null] },
+    exact_tuple: ['ready', { retries: 1 }],
+  })
+  assert.deepEqual(roundtripped_event.exact_object, default_event.exact_object)
+  assert.deepEqual(roundtripped_event.exact_tuple, default_event.exact_tuple)
+
+  assert.throws(
+    () =>
+      ShortcutLiteralEvent({
+        exact_object: { mode: 'exact', nested: { count: 3 }, flags: [true, null] },
+        exact_tuple: ['ready', { retries: 1 }],
+      }),
+    z.ZodError
+  )
+  assert.throws(
+    () =>
+      ShortcutLiteralEvent({
+        exact_object: { mode: 'exact', nested: { count: 2 }, flags: [true, null], extra: true },
+        exact_tuple: ['ready', { retries: 1 }],
+      }),
+    z.ZodError
+  )
+  assert.throws(
+    () =>
+      ShortcutLiteralEvent({
+        exact_object: { mode: 'exact', nested: { count: 2 }, flags: [true, null] },
+        exact_tuple: ['ready'],
+      }),
+    z.ZodError
+  )
 })
 
 test('BaseEvent.extend validates non-Zod shortcut defaults for builtin metadata fields', () => {

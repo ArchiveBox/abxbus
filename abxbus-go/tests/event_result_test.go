@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	abxbus "github.com/ArchiveBox/abxbus/v2/abxbus-go"
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
+	"github.com/ArchiveBox/abxbus/abxbus-go/v2/jsonschema"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -603,6 +605,19 @@ func schemaEvent(eventType string, schema map[string]any) *abxbus.BaseEvent {
 	return event
 }
 
+func loadJSONSchemaCommonShapesFixture(t *testing.T) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile("../../tests/fixtures/jsonschema_common_shapes.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture map[string]any
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	return fixture
+}
+
 func firstEventResult(event *abxbus.BaseEvent) *abxbus.EventResult {
 	for _, result := range event.EventResults {
 		return result
@@ -892,12 +907,12 @@ func TestFromJSONPreservesCanonicalEventResultTypeSchemaJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(roundtripped), `"event_result_type":{"type":"string","$schema":"https://json-schema.org/draft/2020-12/schema"}`) {
+	if !strings.Contains(string(roundtripped), `"event_result_type":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"string"}`) {
 		t.Fatalf("canonical event_result_type JSON order changed: %s", string(roundtripped))
 	}
 }
 
-func TestFromJSONPreservesRawEventResultTypeSchemaWithoutDraft(t *testing.T) {
+func TestFromJSONNormalizesEventResultTypeSchemaWithoutDraft(t *testing.T) {
 	data := []byte(`{"event_type":"SchemaRawNoDraftRoundtripEvent","event_version":"0.0.1","event_timeout":null,"event_slow_timeout":null,"event_concurrency":null,"event_handler_timeout":null,"event_handler_slow_timeout":null,"event_handler_concurrency":null,"event_handler_completion":null,"event_blocks_parent_completion":false,"event_result_type":{"type":"array","items":{"type":"string"}},"event_id":"018f8e40-1234-7000-8000-00000000abcd","event_path":[],"event_parent_id":null,"event_emitted_by_handler_id":null,"event_pending_bus_count":0,"event_created_at":"2026-01-01T00:00:00.000000000Z","event_status":"pending","event_started_at":null,"event_completed_at":null}`)
 	event, err := abxbus.BaseEventFromJSON(data)
 	if err != nil {
@@ -907,8 +922,334 @@ func TestFromJSONPreservesRawEventResultTypeSchemaWithoutDraft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(roundtripped), `"event_result_type":{"type":"array","items":{"type":"string"}}`) {
-		t.Fatalf("raw event_result_type JSON changed: %s", string(roundtripped))
+	if !strings.Contains(string(roundtripped), `"event_result_type":{"$schema":"https://json-schema.org/draft/2020-12/schema","items":{"type":"string"},"type":"array"}`) {
+		t.Fatalf("event_result_type schema was not normalized: %s", string(roundtripped))
+	}
+}
+
+func TestJSONSchemaNullUnionsNormalizeToStandardAnyOf(t *testing.T) {
+	schema := map[string]any{
+		"anyOf": []any{
+			map[string]any{"type": "string"},
+			map[string]any{"type": "null"},
+		},
+	}
+	event := schemaEvent("NullableSchemaEvent", schema)
+	data, err := event.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	resultSchema := payload["event_result_type"].(map[string]any)
+	if !reflect.DeepEqual(resultSchema["anyOf"], []any{map[string]any{"type": "string"}, map[string]any{"type": "null"}}) {
+		t.Fatalf("nullable schema should remain standard anyOf: %#v", resultSchema)
+	}
+	if _, ok := resultSchema["nullable"]; ok {
+		t.Fatalf("normalized schema should not use nullable: %#v", resultSchema)
+	}
+	if _, ok := resultSchema["oneOf"]; ok {
+		t.Fatalf("normalized schema should not keep oneOf: %#v", resultSchema)
+	}
+}
+
+func TestJSONSchemaTypeNullUnionValidatesTheSameAsAnyOfNullUnion(t *testing.T) {
+	bus := abxbus.NewEventBus("StandardNullUnionSchemaBus", nil)
+	bus.On("StandardNullUnionSchemaEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "ok", nil
+	}, nil)
+	event := bus.Emit(schemaEvent("StandardNullUnionSchemaEvent", map[string]any{"type": []any{"string", "null"}}))
+	if _, err := event.Now(); err != nil {
+		t.Fatal(err)
+	}
+	result := firstEventResult(event)
+	if result == nil || result.Status != abxbus.EventResultCompleted || result.Result != "ok" {
+		t.Fatalf("standard null union schema result mismatch: %#v", result)
+	}
+	busJSON, err := bus.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var busState map[string]any
+	if err := json.Unmarshal(busJSON, &busState); err != nil {
+		t.Fatal(err)
+	}
+	history := busState["event_history"].(map[string]any)
+	for _, rawEvent := range history {
+		eventPayload := rawEvent.(map[string]any)
+		resultSchema := eventPayload["event_result_type"].(map[string]any)
+		if reflect.DeepEqual(resultSchema["anyOf"], []any{map[string]any{"type": "string"}, map[string]any{"type": "null"}}) {
+			return
+		}
+	}
+	t.Fatalf("bus state did not keep normalized null union schema: %s", string(busJSON))
+}
+
+func TestJSONSchemaOneOfSemanticsSurviveNormalization(t *testing.T) {
+	schema := jsonschema.NormalizeJSONSchema(map[string]any{
+		"oneOf": []any{
+			map[string]any{},
+			map[string]any{"type": "null"},
+		},
+	}).(map[string]any)
+	if _, ok := schema["oneOf"]; !ok {
+		t.Fatalf("oneOf schema should survive normalization: %#v", schema)
+	}
+	if _, ok := schema["anyOf"]; ok {
+		t.Fatalf("oneOf schema should not be weakened to anyOf: %#v", schema)
+	}
+	if err := jsonschema.Validate(schema, "ok"); err != nil {
+		t.Fatalf("oneOf non-null value should validate: %v", err)
+	}
+	if err := jsonschema.Validate(schema, nil); err == nil {
+		t.Fatal("oneOf null value should fail because it matches both branches")
+	}
+}
+
+func TestJSONSchemaAllOfSemanticsSurviveRehydration(t *testing.T) {
+	schema := map[string]any{
+		"allOf": []any{
+			map[string]any{"type": "string", "minLength": 2},
+			map[string]any{"pattern": "^a"},
+		},
+	}
+	if err := jsonschema.Validate(schema, "ab"); err != nil {
+		t.Fatalf("allOf valid value should validate: %v", err)
+	}
+	if err := jsonschema.Validate(schema, "b"); err == nil {
+		t.Fatal("allOf should reject values that fail a branch")
+	}
+	if err := jsonschema.Validate(schema, "a"); err == nil {
+		t.Fatal("allOf should reject values that fail sibling constraints")
+	}
+}
+
+func TestJSONSchemaNullEnumSemanticsSurviveRehydration(t *testing.T) {
+	schema := map[string]any{"enum": []any{"queued", nil}}
+	if err := jsonschema.Validate(schema, "queued"); err != nil {
+		t.Fatalf("enum string value should validate: %v", err)
+	}
+	if err := jsonschema.Validate(schema, nil); err != nil {
+		t.Fatalf("enum null value should validate: %v", err)
+	}
+	if err := jsonschema.Validate(schema, "done"); err == nil {
+		t.Fatal("enum should reject values outside the enum")
+	}
+}
+
+func TestJSONSchemaTuplePrefixItemsOnlyApplyItemsToRemainingValues(t *testing.T) {
+	schema := map[string]any{
+		"type": "array",
+		"prefixItems": []any{
+			map[string]any{"type": "string"},
+			map[string]any{"type": "integer"},
+		},
+		"items": map[string]any{"type": "boolean"},
+	}
+	if err := jsonschema.Validate(schema, []any{"ok", float64(1), true, false}); err != nil {
+		t.Fatalf("tuple prefix plus remaining items should validate: %v", err)
+	}
+	if err := jsonschema.Validate(schema, []any{"ok", float64(1), "not-boolean"}); err == nil {
+		t.Fatal("items should validate only values after prefixItems")
+	}
+	if err := jsonschema.Validate(schema, []any{"ok", "not-integer", true}); err == nil {
+		t.Fatal("prefixItems should still validate tuple-prefix values")
+	}
+}
+
+func TestJSONSchemaObjectWithoutPropertiesRejectsAdditionalProperties(t *testing.T) {
+	schema := map[string]any{"type": "object", "additionalProperties": false}
+	if err := jsonschema.Validate(schema, map[string]any{}); err != nil {
+		t.Fatalf("empty object should validate: %v", err)
+	}
+	if err := jsonschema.Validate(schema, map[string]any{"extra": true}); err == nil {
+		t.Fatal("additionalProperties false should reject keys even without properties")
+	}
+}
+
+func TestJSONSchemaRecursiveNullRefsSerializeWithoutInfiniteExpansion(t *testing.T) {
+	type Node struct {
+		Name  string `json:"name"`
+		Child *Node  `json:"child,omitempty"`
+	}
+	event := abxbus.MustNewEvent("RecursiveNullableSchemaEvent", map[string]any{"name": "root"}, abxbus.ResultType[Node]())
+	data, err := event.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	schema := payload["event_result_type"].(map[string]any)
+	properties := schema["properties"].(map[string]any)
+	childSchema := properties["child"].(map[string]any)
+	if !reflect.DeepEqual(childSchema["anyOf"], []any{map[string]any{"$ref": "#"}, map[string]any{"type": "null"}}) {
+		t.Fatalf("recursive child schema should use standard anyOf $ref/null: %#v", childSchema)
+	}
+	if _, ok := childSchema["nullable"]; ok {
+		t.Fatalf("recursive child schema should not use nullable: %#v", childSchema)
+	}
+	if _, ok := childSchema["allOf"]; ok {
+		t.Fatalf("recursive child schema should not use allOf: %#v", childSchema)
+	}
+	if _, ok := schema["$defs"]; ok {
+		t.Fatalf("recursive root schema should be inlined: %#v", schema)
+	}
+	if schema["title"] == "" {
+		t.Fatalf("recursive root schema should preserve a title from the inlined definition: %#v", schema)
+	}
+
+	normalizedSchema := jsonschema.NormalizeJSONSchema(map[string]any{
+		"$defs": map[string]any{
+			"Node": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string"},
+					"child": map[string]any{"anyOf": []any{
+						map[string]any{"$ref": "#/$defs/Node"},
+						map[string]any{"type": "null"},
+					}},
+				},
+				"required": []any{"name"},
+			},
+		},
+		"$ref": "#/$defs/Node",
+	}).(map[string]any)
+	if normalizedSchema["title"] != "Node" {
+		t.Fatalf("inlined root definition title mismatch: %#v", normalizedSchema)
+	}
+	if _, ok := normalizedSchema["$defs"]; ok {
+		t.Fatalf("normalized recursive root schema should be inlined: %#v", normalizedSchema)
+	}
+	normalizedProperties := normalizedSchema["properties"].(map[string]any)
+	normalizedChildSchema := normalizedProperties["child"].(map[string]any)
+	if !reflect.DeepEqual(normalizedChildSchema["anyOf"], []any{map[string]any{"$ref": "#"}, map[string]any{"type": "null"}}) {
+		t.Fatalf("normalized recursive child schema should use standard anyOf $ref/null: %#v", normalizedChildSchema)
+	}
+	if _, ok := normalizedChildSchema["nullable"]; ok {
+		t.Fatalf("normalized recursive child schema should not use nullable: %#v", normalizedChildSchema)
+	}
+	if _, ok := normalizedChildSchema["allOf"]; ok {
+		t.Fatalf("normalized recursive child schema should not use allOf: %#v", normalizedChildSchema)
+	}
+	if _, ok := normalizedChildSchema["oneOf"]; ok {
+		t.Fatalf("normalized recursive child schema should not use oneOf: %#v", normalizedChildSchema)
+	}
+}
+
+func TestJSONSchemaCommonShapesNormalizeAsStableRoundtripFixtures(t *testing.T) {
+	fixture := loadJSONSchemaCommonShapesFixture(t)
+	rawFixtureValues := fixture["raw_schemas"].([]any)
+	rawFixtures := make([]map[string]any, 0, len(rawFixtureValues)+1)
+	for _, rawFixture := range rawFixtureValues {
+		rawFixtures = append(rawFixtures, rawFixture.(map[string]any))
+	}
+	commonComplexSchema := fixture["common_complex_schema"].(map[string]any)
+	commonComplexPayload := fixture["common_complex_payload"]
+	commonComplexInvalidPayloads := fixture["common_complex_invalid_payloads"].([]any)
+	rawFixtures = append(rawFixtures, commonComplexSchema)
+
+	for _, schema := range rawFixtures {
+		normalized := jsonschema.NormalizeJSONSchema(schema)
+		if !reflect.DeepEqual(jsonschema.NormalizeJSONSchema(normalized), normalized) {
+			t.Fatalf("schema normalization should be stable: %#v", normalized)
+		}
+		normalizedMap := normalized.(map[string]any)
+		if normalizedMap["$schema"] != "https://json-schema.org/draft/2020-12/schema" {
+			t.Fatalf("schema should include draft marker: %#v", normalizedMap)
+		}
+	}
+
+	nullableString := jsonschema.NormalizeJSONSchema(rawFixtures[0]).(map[string]any)
+	if !reflect.DeepEqual(nullableString["anyOf"], []any{map[string]any{"type": "string"}, map[string]any{"type": "null"}}) {
+		t.Fatalf("nullable type array did not normalize: %#v", nullableString)
+	}
+
+	recursive := jsonschema.NormalizeJSONSchema(rawFixtures[1]).(map[string]any)
+	if _, ok := recursive["$defs"]; ok {
+		t.Fatalf("recursive root schema should be inlined: %#v", recursive)
+	}
+	if recursive["title"] != "CommonNodeResult" {
+		t.Fatalf("recursive root schema title mismatch: %#v", recursive)
+	}
+	recursiveChild := recursive["properties"].(map[string]any)["child"].(map[string]any)
+	if !reflect.DeepEqual(recursiveChild["anyOf"], []any{map[string]any{"$ref": "#"}, map[string]any{"type": "null"}}) {
+		t.Fatalf("recursive child schema did not normalize: %#v", recursiveChild)
+	}
+
+	objectUnion := jsonschema.NormalizeJSONSchema(rawFixtures[2]).(map[string]any)
+	if !reflect.DeepEqual(objectUnion["required"], []any{"count", "value"}) {
+		t.Fatalf("required fields should be sorted: %#v", objectUnion["required"])
+	}
+
+	normalizedComplex := jsonschema.NormalizeJSONSchema(commonComplexSchema).(map[string]any)
+	if !reflect.DeepEqual(normalizedComplex, commonComplexSchema) {
+		t.Fatalf("complex schema normalization drifted: %#v", normalizedComplex)
+	}
+	complexProperties := normalizedComplex["properties"].(map[string]any)
+	if complexProperties["id"].(map[string]any)["pattern"] != "^[a-z][a-z0-9-]*$" {
+		t.Fatalf("complex string pattern drifted: %#v", complexProperties["id"])
+	}
+	if complexProperties["mode"].(map[string]any)["const"] != "standard" {
+		t.Fatalf("complex const drifted: %#v", complexProperties["mode"])
+	}
+	if !reflect.DeepEqual(complexProperties["category"].(map[string]any)["enum"], []any{"alpha", "beta"}) {
+		t.Fatalf("complex enum drifted: %#v", complexProperties["category"])
+	}
+	statusSchema := complexProperties["status"].(map[string]any)["anyOf"].([]any)[1].(map[string]any)
+	if statusSchema["minimum"] != float64(1) || statusSchema["maximum"] != float64(3) {
+		t.Fatalf("complex union integer constraints drifted: %#v", statusSchema)
+	}
+	if complexProperties["score"].(map[string]any)["multipleOf"] != float64(5) {
+		t.Fatalf("complex integer multipleOf drifted: %#v", complexProperties["score"])
+	}
+	if complexProperties["confidence"].(map[string]any)["exclusiveMaximum"] != float64(1) {
+		t.Fatalf("complex number exclusive maximum drifted: %#v", complexProperties["confidence"])
+	}
+	if complexProperties["score"].(map[string]any)["default"] != float64(0) {
+		t.Fatalf("complex integer default drifted: %#v", complexProperties["score"])
+	}
+	if !reflect.DeepEqual(complexProperties["owner"].(map[string]any)["anyOf"].([]any)[1], map[string]any{"type": "null"}) {
+		t.Fatalf("complex nullable subtype drifted: %#v", complexProperties["owner"])
+	}
+	ownerTier := complexProperties["owner"].(map[string]any)["anyOf"].([]any)[0].(map[string]any)["properties"].(map[string]any)["tier"].(map[string]any)
+	if ownerTier["default"] != float64(1) {
+		t.Fatalf("complex subtype default drifted: %#v", ownerTier)
+	}
+	if complexProperties["tags"].(map[string]any)["maxItems"] != float64(4) {
+		t.Fatalf("complex array maxItems drifted: %#v", complexProperties["tags"])
+	}
+	metricCount := complexProperties["metrics"].(map[string]any)["additionalProperties"].(map[string]any)["properties"].(map[string]any)["count"].(map[string]any)
+	if metricCount["maximum"] != float64(9007199254740991) {
+		t.Fatalf("complex nested integer maximum drifted: %#v", metricCount)
+	}
+	metricNote := complexProperties["metrics"].(map[string]any)["additionalProperties"].(map[string]any)["properties"].(map[string]any)["note"].(map[string]any)
+	if metricNote["anyOf"].([]any)[0].(map[string]any)["maxLength"] != float64(20) {
+		t.Fatalf("complex nested string maxLength drifted: %#v", metricNote)
+	}
+	metricSamples := complexProperties["metrics"].(map[string]any)["additionalProperties"].(map[string]any)["properties"].(map[string]any)["samples"].(map[string]any)
+	if metricSamples["items"].(map[string]any)["multipleOf"] != 0.25 {
+		t.Fatalf("complex nested multipleOf drifted: %#v", metricSamples)
+	}
+	regionWindow := complexProperties["regions"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)["window"].(map[string]any)
+	if regionWindow["prefixItems"].([]any)[1].(map[string]any)["maximum"] != float64(10) {
+		t.Fatalf("complex tuple prefix item maximum drifted: %#v", regionWindow)
+	}
+	regionVisible := complexProperties["regions"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)["visible"].(map[string]any)
+	if regionVisible["default"] != true {
+		t.Fatalf("complex array subtype default drifted: %#v", regionVisible)
+	}
+	if err := jsonschema.Validate(normalizedComplex, commonComplexPayload); err != nil {
+		t.Fatalf("complex payload should validate: %v", err)
+	}
+	for _, invalidCase := range commonComplexInvalidPayloads {
+		invalidPayload := invalidCase.(map[string]any)["payload"]
+		if err := jsonschema.Validate(normalizedComplex, invalidPayload); err == nil {
+			t.Fatalf("complex invalid payload should fail validation: %#v", invalidCase)
+		}
 	}
 }
 
@@ -949,6 +1290,13 @@ type addResult struct {
 	Sum int `json:"sum"`
 }
 
+type modelFieldsPayload struct {
+	SomeField    string  `json:"some_field"`
+	Count        int     `json:"count,omitempty"`
+	EventTimeout float64 `json:"event_timeout"`
+	ModelVersion string  `json:"model_version"`
+}
+
 type getConfigEvent struct {
 	Url              string
 	UserID           string
@@ -967,6 +1315,56 @@ type namedBaseWithContextHandler func(*abxbus.BaseEvent, context.Context) (any, 
 type namedTypedNoContextHandler func(addPayload) addResult
 type namedTypedWithContextHandler func(addPayload, context.Context) (addResult, error)
 type namedTypedAnyHandler func(any) (addResult, error)
+
+func TestEventClassModelFieldsExposePayloadAndResultSchemas(t *testing.T) {
+	MyEvent := abxbus.NewEventClass[modelFieldsPayload]("MyEvent", abxbus.ResultType[addResult]())
+	fields := MyEvent.ModelFields()
+
+	someField, ok := fields["some_field"]
+	if !ok {
+		t.Fatalf("missing some_field model field: %#v", fields)
+	}
+	if someField.Name != "some_field" {
+		t.Fatalf("unexpected field name: %#v", someField)
+	}
+	if someField.Type["type"] != "string" {
+		t.Fatalf("expected string schema for some_field, got %#v", someField.Type)
+	}
+	if !someField.HasDefault || someField.Default != "" {
+		t.Fatalf("expected typed zero default for some_field, got %#v", someField)
+	}
+	if _, ok := fields["event_timeout"]; ok {
+		t.Fatalf("event config field should not be exposed as payload model field: %#v", fields["event_timeout"])
+	}
+	if _, ok := fields["model_version"]; ok {
+		t.Fatalf("model config field should not be exposed as payload model field: %#v", fields["model_version"])
+	}
+	resultField, ok := fields["event_result_type"]
+	if !ok {
+		t.Fatalf("missing event_result_type model field: %#v", fields)
+	}
+	resultSchema, ok := resultField.Default.(map[string]any)
+	if !ok {
+		t.Fatalf("expected event_result_type schema default, got %#v", resultField.Default)
+	}
+	if resultSchema["type"] != "object" {
+		t.Fatalf("expected object event_result_type schema, got %#v", resultSchema)
+	}
+	if resultField.Type["type"] != "object" {
+		t.Fatalf("expected object event_result_type model schema, got %#v", resultField.Type)
+	}
+
+	event := MyEvent.MustNew(modelFieldsPayload{SomeField: "abc", Count: 3})
+	if event.EventType != "MyEvent" {
+		t.Fatalf("event type mismatch: %s", event.EventType)
+	}
+	if event.Payload["some_field"] != "abc" || event.Payload["count"] != float64(3) {
+		t.Fatalf("payload mismatch: %#v", event.Payload)
+	}
+	if !reflect.DeepEqual(event.EventResultType, resultSchema) {
+		t.Fatalf("event_result_type mismatch: event=%#v model=%#v", event.EventResultType, resultSchema)
+	}
+}
 
 func TestEmitAcceptsTypedStructAndDerivesPayloadAndConfig(t *testing.T) {
 	bus := abxbus.NewEventBus("StructEmitBus", nil)
@@ -991,7 +1389,7 @@ func TestEmitAcceptsTypedStructAndDerivesPayloadAndConfig(t *testing.T) {
 	if !reflect.DeepEqual(event.EventResultType, map[string]any{"type": "object"}) {
 		t.Fatalf("event result type mismatch: %#v", event.EventResultType)
 	}
-	if event.Payload["url"] != "https://example.com" || event.Payload["user_id"] != "user-1" {
+	if event.Payload["Url"] != "https://example.com" || event.Payload["UserID"] != "user-1" {
 		t.Fatalf("payload casing mismatch: %#v", event.Payload)
 	}
 	if _, ok := event.Payload["event_timeout"]; ok {
@@ -1002,7 +1400,7 @@ func TestEmitAcceptsTypedStructAndDerivesPayloadAndConfig(t *testing.T) {
 	if derived.EventType != "DerivedNameEvent" {
 		t.Fatalf("derived event type mismatch: %s", derived.EventType)
 	}
-	if derived.Payload["url"] != "https://example.org" {
+	if derived.Payload["Url"] != "https://example.org" {
 		t.Fatalf("derived payload mismatch: %#v", derived.Payload)
 	}
 }
@@ -1276,8 +1674,8 @@ func TestJSONSchemaForGoStructUsesJSONTagsAndRequiredFields(t *testing.T) {
 	if properties["metadata"].(map[string]any)["additionalProperties"].(map[string]any)["type"] != "integer" {
 		t.Fatalf("map property schema did not match: %#v", properties["metadata"])
 	}
-	nestedAnyOf := properties["nested"].(map[string]any)["anyOf"].([]any)
-	if nestedAnyOf[0].(map[string]any)["type"] != "object" || nestedAnyOf[1].(map[string]any)["type"] != "null" {
+	nestedSchema := properties["nested"].(map[string]any)
+	if !reflect.DeepEqual(nestedSchema["anyOf"], []any{map[string]any{"type": "object", "properties": map[string]any{"tags": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}, "additionalProperties": false}, map[string]any{"type": "null"}}) {
 		t.Fatalf("pointer property schema did not match: %#v", properties["nested"])
 	}
 }
@@ -1294,6 +1692,13 @@ func TestJSONSchemaForMapIncludesAdditionalPropertiesForNonStringKeys(t *testing
 	items := additionalProperties["items"].(map[string]any)
 	if items["type"] != "string" {
 		t.Fatalf("map value item schema should be string, got %#v", items)
+	}
+}
+
+func TestJSONSchemaForAnyIsUnconstrained(t *testing.T) {
+	schema := abxbus.JSONSchemaFor[any]()
+	if !reflect.DeepEqual(schema, map[string]any{"$schema": "https://json-schema.org/draft/2020-12/schema"}) {
+		t.Fatalf("any schema should be unconstrained, got %#v", schema)
 	}
 }
 
@@ -1318,6 +1723,19 @@ func TestJSONSchemaForEmbeddedStructFieldsMatchesJSONFlattening(t *testing.T) {
 	expectedRequired := []any{"email", "name"}
 	if !reflect.DeepEqual(schema["required"], expectedRequired) {
 		t.Fatalf("unexpected required fields for flattened embedded struct: %#v", schema["required"])
+	}
+}
+
+func TestJSONSchemaForRecursiveAnonymousEmbeddedStructDoesNotLoop(t *testing.T) {
+	type recursiveProfile struct {
+		*recursiveProfile
+		Name string `json:"name"`
+	}
+
+	schema := abxbus.JSONSchemaFor[recursiveProfile]()
+	properties := schema["properties"].(map[string]any)
+	if properties["name"].(map[string]any)["type"] != "string" {
+		t.Fatalf("recursive embedded struct should keep concrete fields: %#v", properties)
 	}
 }
 

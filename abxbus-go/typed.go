@@ -4,8 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"regexp"
 	"strings"
+
+	"github.com/ArchiveBox/abxbus/abxbus-go/v2/jsonschema"
 )
 
 func Event[T any](payload T) (*BaseEvent, error) {
@@ -55,7 +56,7 @@ func baseEventFromAny(value any) (*BaseEvent, error) {
 		if field.Anonymous {
 			continue
 		}
-		name, _, skip, _ := jsonFieldName(field)
+		name, _, skip, _ := jsonschema.StructFieldJSONName(field)
 		if skip {
 			continue
 		}
@@ -163,6 +164,107 @@ func normalizeReflectValue(value reflect.Value) any {
 	return value.Interface()
 }
 
+type ModelField struct {
+	Name       string
+	Type       map[string]any
+	Default    any
+	HasDefault bool
+}
+
+type EventClass[T any] struct {
+	eventType string
+	options   []EventOption
+}
+
+func NewEventClass[T any](eventType string, options ...EventOption) EventClass[T] {
+	return EventClass[T]{eventType: eventType, options: append([]EventOption(nil), options...)}
+}
+
+func (eventClass EventClass[T]) ModelFields() map[string]ModelField {
+	return ModelFieldsFor[T](eventClass.options...)
+}
+
+func (eventClass EventClass[T]) New(payload T, options ...EventOption) (*BaseEvent, error) {
+	mergedOptions := append(append([]EventOption(nil), eventClass.options...), options...)
+	return NewEvent(eventClass.eventType, payload, mergedOptions...)
+}
+
+func (eventClass EventClass[T]) MustNew(payload T, options ...EventOption) *BaseEvent {
+	event, err := eventClass.New(payload, options...)
+	if err != nil {
+		panic(err)
+	}
+	return event
+}
+
+func ModelFieldsFor[T any](options ...EventOption) map[string]ModelField {
+	fields := map[string]ModelField{}
+	payloadSchema := JSONSchemaFor[T]()
+	properties, _ := payloadSchema["properties"].(map[string]any)
+	defaults := defaultPayloadValues[T]()
+	for _, name := range payloadModelFieldNames(reflect.TypeOf((*T)(nil)).Elem()) {
+		schema, _ := properties[name].(map[string]any)
+		defaultValue, hasDefault := defaults[name]
+		fields[name] = ModelField{
+			Name:       name,
+			Type:       schema,
+			Default:    defaultValue,
+			HasDefault: hasDefault,
+		}
+	}
+	event := NewBaseEvent("", nil)
+	for _, option := range options {
+		if option != nil {
+			option(event)
+		}
+	}
+	if event.EventResultType != nil {
+		resultSchema, _ := event.EventResultType.(map[string]any)
+		fields["event_result_type"] = ModelField{
+			Name:       "event_result_type",
+			Type:       resultSchema,
+			Default:    event.EventResultType,
+			HasDefault: true,
+		}
+	}
+	return fields
+}
+
+func defaultPayloadValues[T any]() map[string]any {
+	var zero T
+	data, err := json.Marshal(zero)
+	if err != nil || string(data) == "null" {
+		return map[string]any{}
+	}
+	defaults := map[string]any{}
+	if err := json.Unmarshal(data, &defaults); err != nil {
+		return map[string]any{}
+	}
+	return defaults
+}
+
+func payloadModelFieldNames(t reflect.Type) []string {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
+	names := []string{}
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if field.PkgPath != "" || field.Anonymous || strings.HasPrefix(field.Name, "Event") || strings.HasPrefix(field.Name, "Model") {
+			continue
+		}
+		name, _, skip, _ := jsonschema.StructFieldJSONName(field)
+		if skip {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
 func newEventFromPayload[T any](eventType string, payload T) (*BaseEvent, error) {
 	normalized := map[string]any{}
 	data, err := json.Marshal(payload)
@@ -231,139 +333,5 @@ func EventResultAs[T any](result any) (T, error) {
 
 func JSONSchemaFor[T any]() map[string]any {
 	var zero T
-	return jsonSchemaForType(reflect.TypeOf(zero))
-}
-
-func jsonSchemaForType(t reflect.Type) map[string]any {
-	if t == nil {
-		return map[string]any{"$schema": jsonSchemaDraft202012}
-	}
-	for t.Kind() == reflect.Pointer {
-		return map[string]any{
-			"$schema": jsonSchemaDraft202012,
-			"anyOf": []any{
-				jsonSchemaWithoutDraft(jsonSchemaForType(t.Elem())),
-				map[string]any{"type": "null"},
-			},
-		}
-	}
-	schema := jsonSchemaWithoutDraft(jsonSchemaForNonPointerType(t))
-	schema["$schema"] = jsonSchemaDraft202012
-	return schema
-}
-
-func jsonSchemaForNonPointerType(t reflect.Type) map[string]any {
-	switch t.Kind() {
-	case reflect.String:
-		return map[string]any{"type": "string"}
-	case reflect.Bool:
-		return map[string]any{"type": "boolean"}
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return map[string]any{"type": "integer"}
-	case reflect.Float32, reflect.Float64:
-		return map[string]any{"type": "number"}
-	case reflect.Slice, reflect.Array:
-		return map[string]any{"type": "array", "items": jsonSchemaWithoutDraft(jsonSchemaForType(t.Elem()))}
-	case reflect.Map:
-		schema := map[string]any{"type": "object"}
-		schema["additionalProperties"] = jsonSchemaWithoutDraft(jsonSchemaForType(t.Elem()))
-		return schema
-	case reflect.Struct:
-		return jsonSchemaForStruct(t)
-	case reflect.Interface:
-		return map[string]any{}
-	default:
-		return map[string]any{}
-	}
-}
-
-func jsonSchemaForStruct(t reflect.Type) map[string]any {
-	properties := map[string]any{}
-	required := []any{}
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		name, omitempty, skip, explicitName := jsonFieldName(field)
-		if skip {
-			continue
-		}
-		fieldType := field.Type
-		for fieldType.Kind() == reflect.Pointer {
-			fieldType = fieldType.Elem()
-		}
-		if field.Anonymous && !explicitName && fieldType.Kind() == reflect.Struct {
-			embedded := jsonSchemaForStruct(fieldType)
-			if embeddedProperties, ok := embedded["properties"].(map[string]any); ok {
-				for embeddedName, embeddedSchema := range embeddedProperties {
-					properties[embeddedName] = embeddedSchema
-				}
-			}
-			if !omitempty && field.Type.Kind() != reflect.Pointer {
-				if embeddedRequired, ok := embedded["required"].([]any); ok {
-					required = append(required, embeddedRequired...)
-				}
-			}
-			continue
-		}
-		if field.PkgPath != "" {
-			continue
-		}
-		properties[name] = jsonSchemaWithoutDraft(jsonSchemaForType(field.Type))
-		if !omitempty && field.Type.Kind() != reflect.Pointer {
-			required = append(required, name)
-		}
-	}
-	schema := map[string]any{"type": "object", "properties": properties}
-	if len(required) > 0 {
-		schema["required"] = required
-	}
-	return schema
-}
-
-func jsonFieldName(field reflect.StructField) (name string, omitempty bool, skip bool, explicitName bool) {
-	name = lowerSnakeCase(field.Name)
-	tag := field.Tag.Get("json")
-	if tag == "-" {
-		return "", false, true, false
-	}
-	if tag == "" {
-		return name, false, false, false
-	}
-	parts := strings.Split(tag, ",")
-	if parts[0] != "" {
-		name = parts[0]
-		explicitName = true
-	}
-	for _, part := range parts[1:] {
-		if part == "omitempty" || part == "omitzero" {
-			omitempty = true
-			break
-		}
-	}
-	return name, omitempty, false, explicitName
-}
-
-var initialismPattern = regexp.MustCompile(`([A-Z]+)([A-Z][a-z])`)
-var wordBoundaryPattern = regexp.MustCompile(`([a-z0-9])([A-Z])`)
-
-func lowerSnakeCase(name string) string {
-	if name == "" {
-		return name
-	}
-	name = initialismPattern.ReplaceAllString(name, `${1}_${2}`)
-	name = wordBoundaryPattern.ReplaceAllString(name, `${1}_${2}`)
-	name = strings.ReplaceAll(name, "-", "_")
-	name = strings.ReplaceAll(name, " ", "_")
-	return strings.ToLower(name)
-}
-
-func jsonSchemaWithoutDraft(schema map[string]any) map[string]any {
-	out := make(map[string]any, len(schema))
-	for key, value := range schema {
-		if key == "$schema" {
-			continue
-		}
-		out[key] = value
-	}
-	return out
+	return jsonschema.SchemaForType(reflect.TypeOf(zero))
 }

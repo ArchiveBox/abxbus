@@ -13,7 +13,8 @@ import {
   withResolvers,
 } from './LockManager.js'
 import { _runWithTimeout } from './timing.js'
-import { isZodSchema, normalizeEventResultType, toJsonSchema } from './types.js'
+import { toJsonSchema, type JsonSchema } from './jsonschema.js'
+import { isZodSchema, normalizeEventResultType } from './types.js'
 import type { EventHandlerCallable, EventResultType } from './types.js'
 import { monotonicDatetime } from './helpers.js'
 
@@ -103,7 +104,17 @@ export const BaseEventSchema = z
   .loose()
 
 const KNOWN_BASE_EVENT_FIELDS = new Set(Object.keys(BaseEventSchema.shape))
-type AnyEventSchema = z.ZodTypeAny
+const EVENT_FACTORY_METADATA_FIELDS = new Set([
+  'class',
+  'fromJSON',
+  'prototype',
+  'event_schema',
+  'model_fields',
+  'event_type',
+  'event_version',
+  'event_result_type',
+])
+type AnyEventSchema = z.ZodObject<z.ZodRawShape>
 
 export type BaseEventData = z.infer<typeof BaseEventSchema>
 export type BaseEventJSON = BaseEventData & Record<string, unknown>
@@ -135,33 +146,105 @@ export type BaseEventInit<TFields extends Record<string, unknown>> = TFields & P
 
 type BaseEventSchemaShape = typeof BaseEventSchema.shape
 export type EventSchema<TShape extends z.ZodRawShape> = z.ZodObject<BaseEventSchemaShape & TShape>
-type EventPayload<TShape extends z.ZodRawShape> = TShape extends Record<string, never> ? {} : z.infer<z.ZodObject<TShape>>
+type EventPayloadShape<TShape extends z.ZodRawShape> = {
+  [K in keyof TShape as K extends BaseEventFieldName ? never : K]: TShape[K]
+}
+type EventPayload<TShape extends z.ZodRawShape> =
+  EventPayloadShape<TShape> extends Record<string, never> ? {} : z.infer<z.ZodObject<EventPayloadShape<TShape>>>
+type EventFactoryMetadataFieldName =
+  | 'class'
+  | 'fromJSON'
+  | 'prototype'
+  | 'event_schema'
+  | 'model_fields'
+  | 'event_type'
+  | 'event_version'
+  | 'event_result_type'
+type StaticDefaultSchema = z.ZodDefault<z.ZodTypeAny> | z.ZodPrefault<z.ZodTypeAny> | z.ZodCatch<z.ZodTypeAny>
+type EventModelFields<TShape extends z.ZodRawShape> = {
+  readonly [K in keyof TShape]: TShape[K]
+}
+type StaticEventDefaultValues<TShape extends z.ZodRawShape> = {
+  readonly [K in keyof TShape as K extends EventFactoryMetadataFieldName
+    ? never
+    : TShape[K] extends StaticDefaultSchema
+      ? K
+      : never]: z.output<TShape[K]>
+}
+type StaticEventDefaultValuesFromSchema<TSchema extends AnyEventSchema> =
+  TSchema extends z.ZodObject<infer TShape> ? StaticEventDefaultValues<TShape> : {}
+type EventModelFieldsFromSchema<TSchema extends AnyEventSchema> =
+  TSchema extends z.ZodObject<infer TShape> ? TSchema['shape'] & EventModelFields<TShape> : {}
+type OptionalFactoryArgs<TData> = {} extends TData ? [data?: TData] : [data: TData]
 
 type EventInput<TShape extends z.ZodRawShape> = z.input<EventSchema<TShape>>
 export type EventInit<TShape extends z.ZodRawShape> = Omit<EventInput<TShape>, keyof BaseEventFields> & Partial<BaseEventFields>
-type EventPayloadFromSchema<TSchema extends AnyEventSchema> = z.output<TSchema> extends Record<string, unknown> ? z.output<TSchema> : {}
+type EventPayloadFromSchema<TSchema extends AnyEventSchema> =
+  z.output<TSchema> extends Record<string, unknown> ? Omit<z.output<TSchema>, keyof BaseEventFields> : {}
 type EventInputFromSchema<TSchema extends AnyEventSchema> = z.input<TSchema> extends Record<string, unknown> ? z.input<TSchema> : never
 export type EventInitFromSchema<TSchema extends AnyEventSchema> = Omit<EventInputFromSchema<TSchema>, keyof BaseEventFields> &
   Partial<BaseEventFields>
 
 type EventWithResultSchema<TResult> = BaseEvent & { __event_result_type__?: TResult }
+type NormalizedEventResultSchema<TInput> = TInput extends z.ZodTypeAny
+  ? TInput
+  : TInput extends z.core.$ZodType
+    ? z.ZodType<z.output<TInput>>
+    : TInput extends StringConstructor
+      ? z.ZodString
+      : TInput extends NumberConstructor
+        ? z.ZodNumber
+        : TInput extends BooleanConstructor
+          ? z.ZodBoolean
+          : TInput extends ArrayConstructor
+            ? z.ZodArray<z.ZodUnknown>
+            : TInput extends ObjectConstructor
+              ? z.ZodRecord<z.ZodString, z.ZodUnknown>
+              : TInput extends JsonSchema
+                ? z.ZodTypeAny
+                : z.ZodTypeAny
+type ResultTypeSchemaFromShape<TShape> = TShape extends { event_result_type: infer S }
+  ? NormalizedEventResultSchema<S>
+  : z.ZodTypeAny | undefined
+type ResultTypeSchemaFromEventSchema<TSchema> =
+  TSchema extends z.ZodObject<infer TShape> ? ResultTypeSchemaFromShape<TShape> : z.ZodTypeAny | undefined
 
 type ResultTypeFromEventResultTypeInput<TInput> = TInput extends z.ZodTypeAny
   ? z.infer<TInput>
-  : TInput extends StringConstructor
-    ? string
-    : TInput extends NumberConstructor
-      ? number
-      : TInput extends BooleanConstructor
-        ? boolean
-        : TInput extends ArrayConstructor
-          ? unknown[]
-          : TInput extends ObjectConstructor
-            ? Record<string, unknown>
-            : unknown
+  : TInput extends z.core.$ZodType
+    ? z.output<TInput>
+    : TInput extends StringConstructor
+      ? string
+      : TInput extends NumberConstructor
+        ? number
+        : TInput extends BooleanConstructor
+          ? boolean
+          : TInput extends ArrayConstructor
+            ? unknown[]
+            : TInput extends ObjectConstructor
+              ? Record<string, unknown>
+              : TInput extends JsonSchema
+                ? unknown
+                : unknown
 
 type ResultSchemaFromShape<TShape> = TShape extends { event_result_type: infer S } ? ResultTypeFromEventResultTypeInput<S> : unknown
 type ResultSchemaFromEventSchema<TSchema> = TSchema extends z.ZodObject<infer TShape> ? ResultSchemaFromShape<TShape> : unknown
+type ZodLiteralValue = string | number | bigint | boolean | null | undefined
+type SeenShortcutLiteralPairs = WeakMap<object, WeakSet<object>>
+type ShortcutDefaultModelField<K, TValue> = K extends keyof BaseEventSchemaShape
+  ? z.ZodDefault<BaseEventSchemaShape[K]>
+  : z.ZodDefault<TValue extends ZodLiteralValue ? z.ZodLiteral<TValue> : z.ZodType<TValue>>
+type ShortcutModelFields<TShape> = {
+  [K in keyof TShape as K extends 'event_result_type' ? never : K]: TShape[K] extends z.ZodTypeAny
+    ? TShape[K]
+    : ShortcutDefaultModelField<K, TShape[K]>
+} & (TShape extends { event_result_type: infer TResultType } ? { event_result_type: NormalizedEventResultSchema<TResultType> } : {})
+type ShortcutZodModelFields<TShape> = {
+  [K in keyof ShortcutModelFields<TShape>]: ShortcutModelFields<TShape>[K] extends z.ZodTypeAny ? ShortcutModelFields<TShape>[K] : never
+}
+type ShortcutStaticDefaultValues<TShape, TModelFields extends z.ZodRawShape> = StaticEventDefaultValues<TModelFields> & {
+  readonly [K in keyof TShape as K extends EventFactoryMetadataFieldName ? never : TShape[K] extends z.ZodTypeAny ? never : K]: TShape[K]
+}
 export type EventResultInclude<TEvent extends BaseEvent> = (
   result: EventResult<TEvent>['result'],
   event_result: EventResult<TEvent>
@@ -188,26 +271,45 @@ type EventResultUpdateOptions<TEvent extends BaseEvent> = {
 
 const ROOT_EVENTBUS_ID = '00000000-0000-0000-0000-000000000000'
 
-export type EventFactory<TShape extends z.ZodRawShape, TResult = unknown> = {
-  (data: EventInit<TShape>): EventWithResultSchema<TResult> & EventPayload<TShape>
-  new (data: EventInit<TShape>): EventWithResultSchema<TResult> & EventPayload<TShape>
+export type EventFactoryClass<TShape extends z.ZodRawShape, TResult = unknown> = (new (
+  ...args: OptionalFactoryArgs<EventInit<TShape>>
+) => EventWithResultSchema<TResult> & EventPayload<TShape>) &
+  StaticEventDefaultValues<TShape> & {
+    event_schema: EventSchema<TShape>
+    model_fields: EventModelFields<TShape>
+  }
+
+export type EventFactory<
+  TShape extends z.ZodRawShape,
+  TResult = unknown,
+  TStaticFields = StaticEventDefaultValues<TShape>,
+> = TStaticFields & {
+  (...args: OptionalFactoryArgs<EventInit<TShape>>): EventWithResultSchema<TResult> & EventPayload<TShape>
+  new (...args: OptionalFactoryArgs<EventInit<TShape>>): EventWithResultSchema<TResult> & EventPayload<TShape>
   event_schema: EventSchema<TShape>
-  class?: new (data: EventInit<TShape>) => EventWithResultSchema<TResult> & EventPayload<TShape>
-  event_type?: string
-  event_version?: string
-  event_result_type?: z.ZodTypeAny
-  fromJSON?: (data: unknown) => EventWithResultSchema<TResult> & EventPayload<TShape>
+  model_fields: EventModelFields<TShape>
+  class: EventFactoryClass<TShape, TResult>
+  event_type: string
+  event_version: string
+  event_result_type: ResultTypeSchemaFromShape<TShape>
+  fromJSON: (data: unknown) => EventWithResultSchema<TResult> & EventPayload<TShape>
 }
 
-export type SchemaEventFactory<TSchema extends AnyEventSchema, TResult = unknown> = {
-  (data: EventInitFromSchema<TSchema>): EventWithResultSchema<TResult> & EventPayloadFromSchema<TSchema>
-  new (data: EventInitFromSchema<TSchema>): EventWithResultSchema<TResult> & EventPayloadFromSchema<TSchema>
+export type SchemaEventFactoryClass<TSchema extends AnyEventSchema, TResult = unknown> = (new (
+  ...args: OptionalFactoryArgs<EventInitFromSchema<TSchema>>
+) => EventWithResultSchema<TResult> & EventPayloadFromSchema<TSchema>) &
+  StaticEventDefaultValuesFromSchema<TSchema> & { event_schema: TSchema; model_fields: EventModelFieldsFromSchema<TSchema> }
+
+export type SchemaEventFactory<TSchema extends AnyEventSchema, TResult = unknown> = StaticEventDefaultValuesFromSchema<TSchema> & {
+  (...args: OptionalFactoryArgs<EventInitFromSchema<TSchema>>): EventWithResultSchema<TResult> & EventPayloadFromSchema<TSchema>
+  new (...args: OptionalFactoryArgs<EventInitFromSchema<TSchema>>): EventWithResultSchema<TResult> & EventPayloadFromSchema<TSchema>
   event_schema: TSchema
-  class?: new (data: EventInitFromSchema<TSchema>) => EventWithResultSchema<TResult> & EventPayloadFromSchema<TSchema>
-  event_type?: string
-  event_version?: string
-  event_result_type?: z.ZodTypeAny
-  fromJSON?: (data: unknown) => EventWithResultSchema<TResult> & EventPayloadFromSchema<TSchema>
+  model_fields: EventModelFieldsFromSchema<TSchema>
+  class: SchemaEventFactoryClass<TSchema, TResult>
+  event_type: string
+  event_version: string
+  event_result_type: ResultTypeSchemaFromEventSchema<TSchema>
+  fromJSON: (data: unknown) => EventWithResultSchema<TResult> & EventPayloadFromSchema<TSchema>
 }
 
 type ZodShapeFrom<TShape extends Record<string, unknown>> = {
@@ -247,15 +349,72 @@ function missingBaseFields(event_type: string, user_shape: z.ZodRawShape): z.Zod
   return Object.fromEntries(Object.entries(baseEventDefaultShape(event_type)).filter(([key]) => !(key in user_shape))) as z.ZodRawShape
 }
 
-type ZodSchemaWithPrefault = z.ZodTypeAny & {
-  prefault: (value: unknown) => z.ZodTypeAny
+function isZodLiteralValue(value: unknown): value is ZodLiteralValue {
+  return value === null || value === undefined || ['string', 'number', 'bigint', 'boolean'].includes(typeof value)
+}
+
+function isPlainShortcutLiteralObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false
+  }
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+function alreadyComparedShortcutLiteralPair(left: object, right: object, seen: SeenShortcutLiteralPairs): boolean {
+  let right_values = seen.get(left)
+  if (right_values?.has(right)) {
+    return true
+  }
+  if (!right_values) {
+    right_values = new WeakSet<object>()
+    seen.set(left, right_values)
+  }
+  right_values.add(right)
+  return false
+}
+
+function shortcutLiteralValuesEqual(left: unknown, right: unknown, seen: SeenShortcutLiteralPairs = new WeakMap()): boolean {
+  if (Object.is(left, right)) {
+    return true
+  }
+  if (typeof left !== 'object' || left === null || typeof right !== 'object' || right === null) {
+    return false
+  }
+  if (alreadyComparedShortcutLiteralPair(left, right, seen)) {
+    return true
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      return false
+    }
+    return left.every((item, index) => shortcutLiteralValuesEqual(item, right[index], seen))
+  }
+  if (!isPlainShortcutLiteralObject(left) || !isPlainShortcutLiteralObject(right)) {
+    return false
+  }
+  const left_keys = Object.keys(left)
+  const right_keys = Object.keys(right)
+  if (left_keys.length !== right_keys.length) {
+    return false
+  }
+  return left_keys.every((key) =>
+    Object.prototype.hasOwnProperty.call(right, key) ? shortcutLiteralValuesEqual(left[key], right[key], seen) : false
+  )
+}
+
+function shortcutLiteralSchema<TValue>(value: TValue): z.ZodType<TValue> {
+  if (isZodLiteralValue(value)) {
+    return z.literal(value) as z.ZodType<TValue>
+  }
+  return z.custom<TValue>((candidate) => shortcutLiteralValuesEqual(candidate, value), 'Invalid literal value')
 }
 
 function shortcutDefaultSchema(base_field_schema: z.ZodTypeAny | undefined, value: unknown): z.ZodTypeAny {
   if (!base_field_schema) {
-    return z.unknown().optional().default(value)
+    return shortcutLiteralSchema(value).default(value)
   }
-  return (base_field_schema as ZodSchemaWithPrefault).prefault(base_field_schema.parse(value))
+  return base_field_schema.default(base_field_schema.parse(value))
 }
 
 function schemaDefaultsForShortcut(event_type: string, raw_shape: Record<string, unknown>): z.ZodRawShape {
@@ -281,16 +440,54 @@ function zodFieldsForShortcut(raw_shape: Record<string, unknown>): z.ZodRawShape
   return fields
 }
 
+function modelFieldsForShortcut(raw_shape: Record<string, unknown>, shortcut_shape: z.ZodRawShape): z.ZodRawShape {
+  const event_result_type = normalizeEventResultType(raw_shape.event_result_type)
+  return event_result_type ? { ...shortcut_shape, event_result_type } : shortcut_shape
+}
+
+function staticEventDefaultsFromModelFields(model_fields: z.ZodRawShape): Record<string, unknown> {
+  const fields: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(model_fields)) {
+    if (EVENT_FACTORY_METADATA_FIELDS.has(key)) {
+      continue
+    }
+    const parsed = (value as z.ZodTypeAny).safeParse(undefined)
+    if (parsed.success && parsed.data !== undefined) {
+      fields[key] = parsed.data
+    }
+  }
+  return fields
+}
+
+function defineStaticEventFields(target: object, fields: Record<string, unknown>): void {
+  for (const [key, value] of Object.entries(fields)) {
+    Object.defineProperty(target, key, {
+      value,
+      writable: false,
+      enumerable: true,
+      configurable: true,
+    })
+  }
+}
+
 function eventResultTypeFromObjectSchema(schema: z.ZodObject<z.ZodRawShape>): z.ZodTypeAny | undefined {
   const raw_event_result_type = schema.shape.event_result_type
   return raw_event_result_type === undefined ? undefined : normalizeEventResultType(raw_event_result_type)
+}
+
+function eventParseSchemaFromEventSchema(schema: z.ZodObject<z.ZodRawShape>): z.ZodObject<z.ZodRawShape> {
+  return schema.safeExtend({
+    event_result_type: z.unknown().optional(),
+  })
 }
 
 function buildFullEventSchema(
   event_type: string,
   spec: unknown
 ): {
-  event_schema: AnyEventSchema
+  event_schema: z.ZodObject<z.ZodRawShape>
+  event_parse_schema: z.ZodObject<z.ZodRawShape>
+  static_field_defaults: Record<string, unknown>
   event_result_type?: z.ZodTypeAny
   event_version?: string
 } {
@@ -300,11 +497,12 @@ function buildFullEventSchema(
     assertNoUnknownEventPrefixedFields(user_shape, `BaseEvent.extend(${event_type})`)
     assertNoModelPrefixedFields(user_shape, `BaseEvent.extend(${event_type})`)
     const full_schema = spec.safeExtend({
-      event_result_type: z.unknown().optional(),
       ...missingBaseFields(event_type, user_shape),
     })
     return {
       event_schema: full_schema,
+      event_parse_schema: eventParseSchemaFromEventSchema(full_schema),
+      static_field_defaults: staticEventDefaultsFromModelFields(full_schema.shape),
       event_result_type: eventResultTypeFromObjectSchema(spec),
     }
   }
@@ -317,9 +515,12 @@ function buildFullEventSchema(
     ...schemaDefaultsForShortcut(event_type, raw_shape),
     ...zodFieldsForShortcut(raw_shape),
   }
-  const full_schema = z.object(shortcut_shape).safeExtend(missingBaseFields(event_type, shortcut_shape)).loose()
+  const model_fields = modelFieldsForShortcut(raw_shape, shortcut_shape)
+  const full_schema = z.object(model_fields).safeExtend(missingBaseFields(event_type, model_fields)).loose()
   return {
     event_schema: full_schema,
+    event_parse_schema: eventParseSchemaFromEventSchema(full_schema),
+    static_field_defaults: staticEventDefaultsFromModelFields(full_schema.shape),
     event_result_type: normalizeEventResultType(raw_shape.event_result_type),
     event_version: typeof raw_shape.event_version === 'string' ? raw_shape.event_version : undefined,
   }
@@ -365,11 +566,14 @@ export class BaseEvent {
   event_handler_concurrency?: EventHandlerConcurrencyMode | null // concurrency mode for the handlers within the event
   event_handler_completion?: EventHandlerCompletionMode | null // completion strategy: 'all' (default) waits for every handler, 'first' returns earliest non-undefined result and cancels the rest
   event_schema?: z.ZodTypeAny
+  _event_parse_schema?: z.ZodTypeAny
 
   static event_type?: string // class name of the event, e.g. BaseEvent.extend("MyEvent").event_type === "MyEvent"
   static event_version = '0.0.1'
   static event_result_type?: z.ZodTypeAny
   static event_schema: AnyEventSchema = BaseEventSchema // generated Zod schema for local TS event data validation; never sent over the wire
+  static model_fields: z.ZodRawShape = BaseEventSchema.shape
+  static _event_parse_schema: AnyEventSchema = BaseEventSchema
 
   // internal runtime state
   event_bus?: EventBus // bus that dispatched this event, also used by event.emit(child)
@@ -387,6 +591,7 @@ export class BaseEvent {
       event_version?: string
       event_result_type?: z.ZodTypeAny
       event_schema?: AnyEventSchema
+      _event_parse_schema?: AnyEventSchema
     }
     const explicit_event_fields = new Set(Object.keys(data ?? {}))
     const merged_data = { ...data } as BaseEventInit<Record<string, unknown>>
@@ -396,6 +601,7 @@ export class BaseEvent {
     const event_result_type = normalizeEventResultType(raw_event_result_type)
 
     const event_schema = ctor.event_schema ?? BaseEventSchema
+    const event_parse_schema = ctor._event_parse_schema ?? event_schema
     const base_data: Record<string, unknown> = {
       ...merged_data,
       event_id: merged_data.event_id ?? uuidv7(),
@@ -404,16 +610,22 @@ export class BaseEvent {
       event_version,
       event_result_type,
     }
-    if (event_schema === BaseEventSchema) {
+    if (event_parse_schema === BaseEventSchema) {
       base_data.event_timeout ??= null
       base_data.event_blocks_parent_completion ??= false
     }
 
-    const parsed = decodeEventSchema(event_schema, base_data) as BaseEventData & Record<string, unknown>
+    const parsed = decodeEventSchema(event_parse_schema, base_data) as BaseEventData & Record<string, unknown>
 
     Object.assign(this, parsed)
     Object.defineProperty(this, 'event_schema', {
       value: event_schema,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    })
+    Object.defineProperty(this, '_event_parse_schema', {
+      value: event_parse_schema,
       writable: true,
       enumerable: false,
       configurable: true,
@@ -424,7 +636,6 @@ export class BaseEvent {
       enumerable: false,
       configurable: true,
     })
-
     const parsed_path = (parsed as { event_path?: string[] }).event_path
     this.event_path = Array.isArray(parsed_path) ? [...parsed_path] : []
     this.event_created_at = monotonicDatetime(parsed.event_created_at)
@@ -470,39 +681,48 @@ export class BaseEvent {
     event_type: string,
     event_schema: TSchema
   ): SchemaEventFactory<TSchema, ResultSchemaFromEventSchema<TSchema>>
-  static extend<TShape extends z.ZodRawShape>(event_type: string, shape?: TShape): EventFactory<TShape, ResultSchemaFromShape<TShape>>
-  static extend<TShape extends Record<string, unknown>>(
+  static extend<const TShape extends Record<string, unknown>>(
     event_type: string,
     shape?: TShape
-  ): EventFactory<ZodShapeFrom<TShape>, ResultSchemaFromShape<TShape>>
-  static extend<TShape extends Record<string, unknown>>(
+  ): EventFactory<
+    ShortcutZodModelFields<TShape>,
+    ResultSchemaFromShape<ShortcutZodModelFields<TShape>>,
+    ShortcutStaticDefaultValues<TShape, ShortcutZodModelFields<TShape>>
+  >
+  static extend<TShape extends z.ZodRawShape>(event_type: string, shape?: TShape): EventFactory<TShape, ResultSchemaFromShape<TShape>>
+  static extend<const TShape extends Record<string, unknown>>(
     event_type: string,
     shape?: TShape
   ): EventFactory<ZodShapeFrom<TShape>, ResultSchemaFromShape<TShape>> | SchemaEventFactory<AnyEventSchema, unknown> {
     const built = buildFullEventSchema(event_type, shape ?? {})
     const full_schema = built.event_schema
+    const event_parse_schema = built.event_parse_schema
+    const static_field_defaults = built.static_field_defaults
     const event_result_type = built.event_result_type
     const event_version = built.event_version
 
     // create a new event class that extends BaseEvent and adds the custom fields
     class ExtendedEvent extends BaseEvent {
       static event_schema = full_schema
+      static model_fields = full_schema.shape
+      static _event_parse_schema = event_parse_schema
       static event_type = event_type
       static event_version = event_version ?? BaseEvent.event_version
       static event_result_type = event_result_type
 
-      constructor(data: EventInit<ZodShapeFrom<TShape>> | EventInitFromSchema<AnyEventSchema>) {
+      constructor(data?: EventInit<ZodShapeFrom<TShape>> | EventInitFromSchema<AnyEventSchema>) {
         super(data as BaseEventInit<Record<string, unknown>>)
       }
     }
 
     type FactoryResult = EventWithResultSchema<ResultSchemaFromShape<TShape>> & EventPayload<ZodShapeFrom<TShape>>
 
-    function EventFactory(data: EventInit<ZodShapeFrom<TShape>>): FactoryResult {
+    function EventFactory(data?: EventInit<ZodShapeFrom<TShape>>): FactoryResult {
       return new ExtendedEvent(data) as FactoryResult
     }
 
     EventFactory.event_schema = full_schema as EventSchema<ZodShapeFrom<TShape>>
+    EventFactory.model_fields = EventFactory.event_schema.shape as EventModelFields<ZodShapeFrom<TShape>>
     EventFactory.event_type = event_type
     EventFactory.event_version = event_version ?? BaseEvent.event_version
     EventFactory.event_result_type = event_result_type
@@ -511,6 +731,8 @@ export class BaseEvent {
     ) => EventWithResultSchema<ResultSchemaFromShape<TShape>> & EventPayload<ZodShapeFrom<TShape>>
     EventFactory.fromJSON = (data: unknown) => ExtendedEvent.fromJSON(data) as FactoryResult
     EventFactory.prototype = ExtendedEvent.prototype
+    defineStaticEventFields(ExtendedEvent, static_field_defaults)
+    defineStaticEventFields(EventFactory, static_field_defaults)
     EVENT_TYPE_REGISTRY.set(event_type, ExtendedEvent)
 
     return EventFactory as unknown as EventFactory<ZodShapeFrom<TShape>, ResultSchemaFromShape<TShape>>
@@ -518,8 +740,8 @@ export class BaseEvent {
 
   static fromJSON<T extends typeof BaseEvent>(this: T, data: unknown): InstanceType<T> {
     if (!data || typeof data !== 'object') {
-      const event_schema = this.event_schema ?? BaseEventSchema
-      const parsed = decodeEventSchema(event_schema, data)
+      const event_parse_schema = this._event_parse_schema ?? this.event_schema ?? BaseEventSchema
+      const parsed = decodeEventSchema(event_parse_schema, data)
       return new this(parsed) as InstanceType<T>
     }
     const record = { ...(data as Record<string, unknown>) }
@@ -535,9 +757,6 @@ export class BaseEvent {
     const ctor = this as typeof BaseEvent
     if (this !== BaseEvent && ctor.event_result_type && record.event_result_type !== undefined) {
       delete record.event_result_type
-    }
-    if (record.event_result_type !== undefined && record.event_result_type !== null) {
-      record.event_result_type = normalizeEventResultType(record.event_result_type)
     }
     return new this(record as BaseEventInit<Record<string, unknown>>) as InstanceType<T>
   }
@@ -567,8 +786,12 @@ export class BaseEvent {
       Array.from(this.event_results.entries()).map(([handler_id, result]) => [handler_id, result.toJSON()])
     )
 
-    const event_schema = ((this.constructor as typeof BaseEvent).event_schema ?? this.event_schema ?? BaseEventSchema) as AnyEventSchema
-    const encoded = encodeEventSchema(event_schema, {
+    const event_parse_schema = ((this.constructor as typeof BaseEvent)._event_parse_schema ??
+      this._event_parse_schema ??
+      (this.constructor as typeof BaseEvent).event_schema ??
+      this.event_schema ??
+      BaseEventSchema) as AnyEventSchema
+    const encoded = encodeEventSchema(event_parse_schema, {
       ...record,
       event_id: this.event_id,
       event_type: this.event_type,

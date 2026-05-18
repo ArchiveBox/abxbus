@@ -28,11 +28,11 @@ Intentionally not implemented yet:
 Install/import from the repository-root Go module:
 
 ```bash
-go get github.com/ArchiveBox/abxbus/v2/abxbus-go
+go get github.com/ArchiveBox/abxbus/abxbus-go/v2
 ```
 
 ```go
-import abxbus "github.com/ArchiveBox/abxbus/v2/abxbus-go"
+import abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
 ```
 
 ```bash

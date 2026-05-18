@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	abxbus "github.com/ArchiveBox/abxbus/v2/abxbus-go"
+	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1590,9 +1590,8 @@ func TestGoUnsupportedBridgeAPIsAndDependenciesAreAbsent(t *testing.T) {
 		}
 	}
 
-	repoRoot := filepath.Dir(goRoot)
 	for _, filename := range []string{"go.mod", "go.sum"} {
-		data, err := os.ReadFile(filepath.Join(repoRoot, filename))
+		data, err := os.ReadFile(filepath.Join(goRoot, filename))
 		if err != nil {
 			t.Fatal(err)
 		}

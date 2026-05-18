@@ -27,8 +27,9 @@ export type GeneratedEvents<TEvents extends FunctionMap> = {
   [K in keyof TEvents]: GeneratedEvent<TEvents[K]>
 }
 
-type EventInit<TEventClass extends EventClass<BaseEvent>> =
-  ConstructorParameters<TEventClass> extends [infer TInit, ...unknown[]] ? TInit : never
+type EventInit<TEventClass extends EventClass<BaseEvent>> = [ConstructorParameters<TEventClass>[0]] extends [undefined]
+  ? {}
+  : NonNullable<ConstructorParameters<TEventClass>[0]>
 
 type EventMethodArgs<TEventClass extends EventClass<BaseEvent>> =
   {} extends EventInit<TEventClass>

@@ -1,8 +1,10 @@
 import inspect
+import math
+import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Any, TypeAlias, cast
+from typing import Annotated, Any, ForwardRef, Literal, Protocol, TypeAlias, cast
 
-from pydantic import BaseModel, Field, TypeAdapter, create_model
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, create_model
 
 _SCHEMA_TYPE_REGISTRY: tuple[tuple[str, type[Any], str], ...] = (
     ('string', str, 'string'),
@@ -25,6 +27,10 @@ CONSTRAINT_MAPPING: dict[str, str] = {
     'inclusiveMaximum': 'le',
     'minItems': 'min_length',
     'maxItems': 'max_length',
+    'minLength': 'min_length',
+    'maxLength': 'max_length',
+    'multipleOf': 'multiple_of',
+    'pattern': 'pattern',
 }
 
 _NON_PRIMITIVE_SCHEMA_TYPES = {'object', 'array'}
@@ -41,6 +47,10 @@ JSON_SCHEMA_DRAFT = 'https://json-schema.org/draft/2020-12/schema'
 _TYPE_ADAPTER_CACHE: dict[Any, TypeAdapter[Any]] = {}
 
 FieldDefinition: TypeAlias = Any | tuple[Any, Any]
+
+
+class _RuntimeAnnotated(Protocol):
+    def __getitem__(self, params: tuple[object, ...]) -> object: ...
 
 
 def _get_cached_type_adapter(result_type: Any) -> TypeAdapter[Any]:
@@ -110,7 +120,396 @@ def _json_schema_allows_null(schema: Mapping[str, Any]) -> bool:
     for candidate in _iter_string_key_dicts(schema.get('anyOf')):
         if candidate.get('type') == 'null':
             return True
+    for candidate in _iter_string_key_dicts(schema.get('oneOf')):
+        if candidate.get('type') == 'null':
+            return True
     return False
+
+
+def _json_schema_null_union_candidates(schema: Mapping[str, Any]) -> list[dict[str, Any]] | None:
+    raw_type_values = _as_non_string_sequence(schema.get('type'))
+    if raw_type_values is not None and any(item == 'null' for item in raw_type_values):
+        non_null_types = [item for item in raw_type_values if item != 'null']
+        if len(non_null_types) == 1 and isinstance(non_null_types[0], str):
+            return [{'type': non_null_types[0]}, {'type': 'null'}]
+        if non_null_types:
+            return [{'type': non_null_types}, {'type': 'null'}]
+    return None
+
+
+def _normalize_json_schema_value(value: Any) -> Any:
+    if isinstance(value, list):
+        value_sequence = cast(Sequence[Any], value)
+        return [_normalize_json_schema_value(item) for item in value_sequence]
+    if not isinstance(value, Mapping):
+        return value
+
+    value_mapping = cast(Mapping[object, Any], value)
+    schema = {key: _normalize_json_schema_value(item) for key, item in value_mapping.items() if isinstance(key, str)}
+    required = _as_non_string_sequence(schema.get('required'))
+    if required is not None and all(isinstance(item, str) for item in required):
+        schema['required'] = sorted(cast(Sequence[str], required))
+
+    null_union_candidates = _json_schema_null_union_candidates(schema)
+    if null_union_candidates is None:
+        return schema
+
+    normalized_schema = {'anyOf': _normalize_json_schema_value(null_union_candidates)}
+    for key, item in schema.items():
+        if key != 'type':
+            normalized_schema[key] = item
+    return normalized_schema
+
+
+def normalize_json_schema(value: Any) -> Any:
+    """Normalize JSON Schema to the stable abxbus wire form."""
+    normalized = _normalize_json_schema_value(value)
+    schema = normalize_result_dict(normalized)
+    if not schema:
+        return normalized
+
+    root_ref = _json_schema_root_ref(schema)
+    definitions = normalize_result_dict(schema.get('$defs'))
+    if isinstance(root_ref, str) and root_ref.startswith('#/$defs/') and definitions:
+        root_name = root_ref.rsplit('/', 1)[-1]
+        root_schema = normalize_result_dict(definitions.get(root_name))
+        if root_schema:
+            normalized_root = _rewrite_json_schema_refs(root_schema, {root_ref: '#'})
+            remaining_defs = {name: item for name, item in definitions.items() if name != root_name}
+            if remaining_defs:
+                normalized_root['$defs'] = _rewrite_json_schema_refs(remaining_defs, {root_ref: '#'})
+            _set_title_from_inlined_root_definition(normalized_root, root_name)
+            schema = normalized_root
+    else:
+        schema = normalized
+
+    if isinstance(schema, Mapping):
+        schema = normalize_result_dict(schema)
+        schema.setdefault('$schema', JSON_SCHEMA_DRAFT)
+    return schema
+
+
+def _json_schema_root_ref(schema: Mapping[str, Any]) -> str | None:
+    raw_ref = schema.get('$ref')
+    if isinstance(raw_ref, str) and raw_ref.startswith('#/$defs/'):
+        return raw_ref
+
+    definitions = normalize_result_dict(schema.get('$defs'))
+    if not definitions:
+        return None
+
+    root = {key: value for key, value in schema.items() if key not in {'$schema', '$defs'}}
+    for name, definition in definitions.items():
+        if definition == root:
+            return f'#/$defs/{name}'
+    return None
+
+
+def _set_title_from_inlined_root_definition(schema: dict[str, Any], root_name: str) -> None:
+    if root_name.startswith('__schema'):
+        return
+    schema.setdefault('title', root_name)
+
+
+def _rewrite_json_schema_refs(value: Any, refs: Mapping[str, str]) -> Any:
+    if isinstance(value, list):
+        value_sequence = cast(Sequence[Any], value)
+        return [_rewrite_json_schema_refs(item, refs) for item in value_sequence]
+    if not isinstance(value, Mapping):
+        return value
+    value_mapping = cast(Mapping[object, Any], value)
+    rewritten = {key: _rewrite_json_schema_refs(item, refs) for key, item in value_mapping.items() if isinstance(key, str)}
+    raw_ref = rewritten.get('$ref')
+    if isinstance(raw_ref, str) and raw_ref in refs:
+        rewritten['$ref'] = refs[raw_ref]
+    return rewritten
+
+
+def _json_schema_contains_ref(value: Any, reference: str) -> bool:
+    if isinstance(value, list):
+        value_sequence = cast(Sequence[Any], value)
+        return any(_json_schema_contains_ref(item, reference) for item in value_sequence)
+    if not isinstance(value, Mapping):
+        return False
+    raw_mapping = cast(Mapping[object, Any], value)
+    value_mapping = {key: item for key, item in raw_mapping.items() if isinstance(key, str)}
+    if value_mapping.get('$ref') == reference:
+        return True
+    return any(_json_schema_contains_ref(item, reference) for key, item in value_mapping.items() if key != '$defs')
+
+
+def _resolve_json_schema_ref(root_schema: Mapping[str, Any], reference: str) -> Any | None:
+    if reference == '#':
+        return root_schema
+    if not reference.startswith('#/'):
+        return None
+    current: Any = root_schema
+    for raw_part in reference[2:].split('/'):
+        part = raw_part.replace('~1', '/').replace('~0', '~')
+        current_mapping = _as_string_key_dict(current)
+        if current_mapping is None or part not in current_mapping:
+            return None
+        current = current_mapping[part]
+    return current
+
+
+def _json_schema_number(value: Any) -> int | float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and math.isfinite(value):
+        return value
+    return None
+
+
+def _json_schema_type_matches(schema_type: Any, value: Any) -> bool:
+    if not isinstance(schema_type, str):
+        return True
+    if schema_type == 'string':
+        return isinstance(value, str)
+    if schema_type == 'number':
+        return _json_schema_number(value) is not None
+    if schema_type == 'integer':
+        number = _json_schema_number(value)
+        return number is not None and math.trunc(number) == number
+    if schema_type == 'boolean':
+        return isinstance(value, bool)
+    if schema_type == 'null':
+        return value is None
+    if schema_type == 'array':
+        return isinstance(value, list)
+    if schema_type == 'object':
+        return isinstance(value, Mapping)
+    return True
+
+
+def _is_json_schema_multiple_of(number: int | float, multiple_of: int | float) -> bool:
+    if isinstance(number, int) and isinstance(multiple_of, int):
+        return number % multiple_of == 0
+    try:
+        quotient = number / multiple_of
+    except OverflowError:
+        return False
+    return abs(quotient - round(quotient)) < 1e-9
+
+
+def _validate_json_schema_scalar_constraints(schema: Mapping[str, Any], value: Any, path: str) -> None:
+    if isinstance(value, str):
+        min_length = _json_schema_number(schema.get('minLength'))
+        if min_length is not None and len(value) < min_length:
+            raise ValueError(f'{path} length below minLength')
+        max_length = _json_schema_number(schema.get('maxLength'))
+        if max_length is not None and len(value) > max_length:
+            raise ValueError(f'{path} length above maxLength')
+        pattern = schema.get('pattern')
+        if isinstance(pattern, str):
+            try:
+                matched = re.search(pattern, value) is not None
+            except re.error:
+                raise ValueError(f'{path} invalid pattern {pattern}') from None
+            if not matched:
+                raise ValueError(f'{path} does not match pattern')
+
+    number = _json_schema_number(value)
+    if number is not None:
+        multiple_of = _json_schema_number(schema.get('multipleOf'))
+        if multiple_of is not None and multiple_of != 0 and not _is_json_schema_multiple_of(number, multiple_of):
+            raise ValueError(f'{path} is not multipleOf {multiple_of}')
+        minimum = _json_schema_number(schema.get('minimum'))
+        if minimum is not None and number < minimum:
+            raise ValueError(f'{path} below minimum')
+        maximum = _json_schema_number(schema.get('maximum'))
+        if maximum is not None and number > maximum:
+            raise ValueError(f'{path} above maximum')
+        exclusive_minimum = _json_schema_number(schema.get('exclusiveMinimum'))
+        if exclusive_minimum is not None and number <= exclusive_minimum:
+            raise ValueError(f'{path} below exclusiveMinimum')
+        exclusive_maximum = _json_schema_number(schema.get('exclusiveMaximum'))
+        if exclusive_maximum is not None and number >= exclusive_maximum:
+            raise ValueError(f'{path} above exclusiveMaximum')
+
+    if isinstance(value, list):
+        value_items = cast(list[Any], value)
+        min_items = _json_schema_number(schema.get('minItems'))
+        if min_items is not None and len(value_items) < min_items:
+            raise ValueError(f'{path} item count below minItems')
+        max_items = _json_schema_number(schema.get('maxItems'))
+        if max_items is not None and len(value_items) > max_items:
+            raise ValueError(f'{path} item count above maxItems')
+
+    if isinstance(value, Mapping):
+        value_mapping = cast(Mapping[Any, Any], value)
+        min_properties = _json_schema_number(schema.get('minProperties'))
+        if min_properties is not None and len(value_mapping) < min_properties:
+            raise ValueError(f'{path} property count below minProperties')
+        max_properties = _json_schema_number(schema.get('maxProperties'))
+        if max_properties is not None and len(value_mapping) > max_properties:
+            raise ValueError(f'{path} property count above maxProperties')
+
+
+def _validate_json_schema_children(root_schema: Mapping[str, Any], schema: Mapping[str, Any], value: Any, path: str) -> None:
+    if isinstance(value, list):
+        value_items = cast(list[Any], value)
+        prefix_items = _as_non_string_sequence(schema.get('prefixItems'))
+        prefix_item_count = 0
+        if prefix_items is not None:
+            prefix_item_count = len(prefix_items)
+            for index, item_schema in enumerate(prefix_items):
+                if index >= len(value_items):
+                    break
+                _validate_json_schema_value(root_schema, item_schema, value_items[index], f'{path}[{index}]')
+        items_schema = schema.get('items')
+        if items_schema is False:
+            if len(value_items) > prefix_item_count:
+                raise ValueError(f'{path}[{prefix_item_count}] is not allowed')
+        elif items_schema is not None and items_schema is not True:
+            for index in range(prefix_item_count, len(value_items)):
+                _validate_json_schema_value(root_schema, items_schema, value_items[index], f'{path}[{index}]')
+
+    value_mapping = _as_string_key_dict(cast(object, value))
+    if value_mapping is None:
+        return
+
+    required = _as_non_string_sequence(schema.get('required'))
+    if required is not None:
+        for key in (item for item in required if isinstance(item, str)):
+            if key not in value_mapping:
+                raise ValueError(f'{path}.{key} is required')
+
+    properties = _as_string_key_dict(schema.get('properties'))
+    if properties is not None:
+        for key, property_schema in properties.items():
+            if key in value_mapping:
+                _validate_json_schema_value(root_schema, property_schema, value_mapping[key], f'{path}.{key}')
+
+    additional_properties = schema.get('additionalProperties')
+    if additional_properties is False:
+        allowed_properties = properties or {}
+        for key in value_mapping:
+            if key not in allowed_properties:
+                raise ValueError(f'{path}.{key} is not allowed')
+    elif isinstance(additional_properties, Mapping):
+        for key, item in value_mapping.items():
+            if properties is not None and key in properties:
+                continue
+            _validate_json_schema_value(root_schema, additional_properties, item, f'{path}.{key}')
+
+
+def _validate_json_schema_value(root_schema: Mapping[str, Any], schema_raw: Any, value: Any, path: str) -> None:
+    if schema_raw is False:
+        raise ValueError(f'{path} matched false schema')
+    if schema_raw is True:
+        return
+
+    schema = normalize_result_dict(schema_raw)
+    if not schema:
+        return
+
+    if 'const' in schema and schema['const'] != value:
+        raise ValueError(f'{path} expected const value')
+
+    enum_values = _as_non_string_sequence(schema.get('enum'))
+    if enum_values is not None and value not in enum_values:
+        raise ValueError(f'{path} expected enum value')
+
+    not_schema = schema.get('not')
+    if not_schema is not None:
+        try:
+            _validate_json_schema_value(root_schema, not_schema, value, path)
+        except ValueError:
+            pass
+        else:
+            raise ValueError(f'{path} matched not schema')
+
+    reference = schema.get('$ref')
+    if isinstance(reference, str):
+        resolved = _resolve_json_schema_ref(root_schema, reference)
+        if resolved is None:
+            raise ValueError(f'{path} unresolved schema reference {reference}')
+        _validate_json_schema_value(root_schema, resolved, value, path)
+        if len(schema) == 1:
+            return
+
+    any_of = _as_non_string_sequence(schema.get('anyOf'))
+    if any_of is not None:
+        if not any(_json_schema_value_matches(root_schema, candidate, value, path) for candidate in any_of):
+            raise ValueError(f'{path} did not match anyOf schema')
+
+    one_of = _as_non_string_sequence(schema.get('oneOf'))
+    if one_of is not None:
+        matches = sum(1 for candidate in one_of if _json_schema_value_matches(root_schema, candidate, value, path))
+        if matches != 1:
+            raise ValueError(f'{path} matched {matches} oneOf schemas')
+
+    all_of = _as_non_string_sequence(schema.get('allOf'))
+    if all_of is not None:
+        for candidate in all_of:
+            _validate_json_schema_value(root_schema, candidate, value, path)
+
+    schema_type = schema.get('type')
+    type_values = _as_non_string_sequence(schema_type)
+    if type_values is not None:
+        if not any(_json_schema_type_matches(allowed, value) for allowed in type_values):
+            raise ValueError(f'{path} did not match any allowed type')
+    elif schema_type is not None:
+        if not _json_schema_type_matches(schema_type, value):
+            label = schema_type if isinstance(schema_type, str) else 'matching schema type'
+            raise ValueError(f'{path} expected {label}')
+    elif any(schema.get(key) is not None for key in ('properties', 'required', 'additionalProperties')):
+        if _as_string_key_dict(value) is None:
+            raise ValueError(f'{path} expected object')
+
+    _validate_json_schema_scalar_constraints(schema, value, path)
+    _validate_json_schema_children(root_schema, schema, value, path)
+
+
+def _json_schema_value_matches(root_schema: Mapping[str, Any], schema_raw: Any, value: Any, path: str) -> bool:
+    try:
+        _validate_json_schema_value(root_schema, schema_raw, value, path)
+    except ValueError:
+        return False
+    return True
+
+
+def validate_json_schema_value(schema: Mapping[str, Any], value: Any) -> Any:
+    """Validate a Python value against the JSON Schema subset used by abxbus."""
+    normalized_schema = normalize_result_dict(normalize_json_schema(dict(schema)))
+    _validate_json_schema_value(normalized_schema, normalized_schema, value, '$')
+    return value
+
+
+def _json_schema_validator_type(
+    schema: Mapping[str, Any],
+    resolved_type: Any,
+    *,
+    root_schema: Mapping[str, Any] | None = None,
+) -> Any:
+    normalized_schema = normalize_result_dict(normalize_json_schema(dict(schema)))
+    normalized_root_schema = normalize_result_dict(dict(root_schema)) if root_schema is not None else normalized_schema
+
+    def _validate(value: Any) -> Any:
+        _validate_json_schema_value(normalized_root_schema, normalized_schema, value, '$')
+        return value
+
+    runtime_annotated = cast(_RuntimeAnnotated, Annotated)
+    return runtime_annotated[(resolved_type, BeforeValidator(_validate))]
+
+
+def _prepare_json_schema_for_pydantic_rehydration(schema: dict[str, Any]) -> dict[str, Any]:
+    if schema.get('$defs') or not _json_schema_contains_ref(schema, '#'):
+        return schema
+
+    root_name = str(schema.get('title') or 'InlineObject')
+    root_ref = f'#/$defs/{root_name}'
+    definition = {key: value for key, value in schema.items() if key not in {'$schema', '$defs'}}
+    return {
+        '$schema': schema.get('$schema', JSON_SCHEMA_DRAFT),
+        '$ref': root_ref,
+        '$defs': {
+            root_name: _rewrite_json_schema_refs(definition, {'#': root_ref}),
+        },
+    }
 
 
 def _nullable_type(resolved_type: Any, *, nullable: bool) -> Any:
@@ -128,6 +527,40 @@ def _json_schema_primitive_type(schema: dict[str, Any]) -> type[Any] | None:
     """Map simple JSON Schema primitive types to Python runtime types."""
     schema_type = _extract_non_null_json_schema_type(schema)
     return PRIMITIVE_TYPE_MAPPING.get(schema_type) if schema_type is not None else None
+
+
+def _json_schema_primitive_type_with_constraints(schema: dict[str, Any], primitive_type: type[Any]) -> Any:
+    field_params = {
+        key: value
+        for key, value in get_field_params_from_field_schema(schema).items()
+        if key in {'ge', 'le', 'gt', 'lt', 'min_length', 'max_length', 'multiple_of', 'pattern'}
+    }
+    if field_params:
+        field = Field(**field_params)
+        if primitive_type is str:
+            return Annotated[str, field]
+        if primitive_type is int:
+            return Annotated[int, field]
+        if primitive_type is float:
+            return Annotated[float, field]
+        if primitive_type is bool:
+            return Annotated[bool, field]
+    return primitive_type
+
+
+def _json_schema_literal_type(schema: dict[str, Any]) -> Any | None:
+    literal_type = cast(Any, Literal)
+    if 'const' in schema:
+        return literal_type.__getitem__(schema['const'])
+
+    raw_enum = _as_non_string_sequence(schema.get('enum'))
+    if raw_enum is None:
+        return None
+
+    enum_values = tuple(raw_enum)
+    if not enum_values:
+        return None
+    return literal_type.__getitem__(enum_values)
 
 
 def _json_schema_identifier(schema: dict[str, Any]) -> str | None:
@@ -198,9 +631,14 @@ def _create_dynamic_model(
     fields: Mapping[str, FieldDefinition],
 ) -> type[BaseModel]:
     field_definitions: dict[str, Any] = dict(fields)
+    config = ConfigDict(extra='forbid') if model_schema.get('additionalProperties') is False else None
+    create_kwargs: dict[str, Any] = {}
+    if config is not None:
+        create_kwargs['__config__'] = config
     return create_model(
         model_name,
         __doc__=str(model_schema.get('description', '')),
+        **create_kwargs,
         **field_definitions,
     )
 
@@ -209,7 +647,7 @@ def pydantic_model_from_json_schema(result_type: Any) -> Any:
     """Reconstruct runtime types from JSON Schema when possible."""
     if not isinstance(result_type, dict):
         return result_type
-    normalized_schema = normalize_result_dict(result_type)
+    normalized_schema = _prepare_json_schema_for_pydantic_rehydration(normalize_result_dict(normalize_json_schema(result_type)))
     definitions = _as_string_key_dict(normalized_schema.get('$defs')) or {}
     models: dict[str, type[BaseModel]] = {}
     model_build_stack: set[str] = set()
@@ -222,11 +660,24 @@ def pydantic_model_from_json_schema(result_type: Any) -> Any:
             combined = combined | candidate_type
         return _nullable_type(combined, nullable=nullable)
 
+    def _wrap_schema_validation(schema: dict[str, Any], resolved_type: Any) -> Any:
+        if any(schema.get(key) is not None for key in ('anyOf', 'oneOf', 'allOf', 'not')):
+            return _json_schema_validator_type(schema, resolved_type, root_schema=normalized_schema)
+        return resolved_type
+
+    def _resolve_composite_schema(schema: dict[str, Any], key: str, *, nullable: bool) -> Any:
+        candidates = _as_non_string_sequence(schema.get(key))
+        if candidates is None:
+            return _wrap_schema_validation(schema, _nullable_type(Any, nullable=nullable))
+        resolved_types = [_resolve_schema(candidate) for candidate in candidates]
+        combined_type = _combine_union_types(resolved_types, nullable=nullable)
+        return _json_schema_validator_type(schema, combined_type, root_schema=normalized_schema)
+
     def _resolve_ref_model(model_reference: str) -> Any:
         if model_reference in models:
             return models[model_reference]
         if model_reference in model_build_stack:
-            return Any
+            return ForwardRef(model_reference)
         model_schema_raw = definitions.get(model_reference)
         model_schema = _as_string_key_dict(model_schema_raw)
         if model_schema is None:
@@ -291,36 +742,47 @@ def pydantic_model_from_json_schema(result_type: Any) -> Any:
         allows_null = _json_schema_allows_null(schema)
         model_reference = _json_schema_ref_name(schema)
         if model_reference is not None:
-            return _nullable_type(_resolve_ref_model(model_reference), nullable=allows_null)
+            return _wrap_schema_validation(schema, _nullable_type(_resolve_ref_model(model_reference), nullable=allows_null))
+
+        if _as_non_string_sequence(schema.get('oneOf')) is not None:
+            return _resolve_composite_schema(schema, 'oneOf', nullable=False)
+
+        if _as_non_string_sequence(schema.get('allOf')) is not None:
+            return _resolve_composite_schema(schema, 'allOf', nullable=allows_null)
+
+        literal_type = _json_schema_literal_type(schema)
+        if literal_type is not None:
+            return _wrap_schema_validation(schema, _nullable_type(literal_type, nullable=allows_null))
 
         primitive_type = _json_schema_primitive_type(schema)
         if primitive_type is not None:
-            return _nullable_type(primitive_type, nullable=allows_null)
+            resolved_type = _nullable_type(
+                _json_schema_primitive_type_with_constraints(schema, primitive_type), nullable=allows_null
+            )
+            return _wrap_schema_validation(schema, resolved_type)
 
         any_of_candidates = _as_non_string_sequence(schema.get('anyOf'))
         if any_of_candidates is not None:
-            resolved_types: list[Any] = []
-            includes_null = allows_null
-            for candidate in _iter_string_key_dicts(any_of_candidates):
-                if candidate.get('type') == 'null':
-                    includes_null = True
-                    continue
-                resolved_types.append(_resolve_schema(candidate))
-            return _combine_union_types(resolved_types, nullable=includes_null)
+            return _resolve_composite_schema(schema, 'anyOf', nullable=False)
 
         schema_type = _extract_non_null_json_schema_type(schema)
         if schema_type == 'null':
-            return type(None)
+            return _wrap_schema_validation(schema, type(None))
         if schema_type == 'array':
-            return _resolve_array_schema(schema, nullable=allows_null)
+            return _wrap_schema_validation(schema, _resolve_array_schema(schema, nullable=allows_null))
         if schema_type == 'object':
-            return _resolve_object_schema(schema, nullable=allows_null)
+            return _wrap_schema_validation(schema, _resolve_object_schema(schema, nullable=allows_null))
         if isinstance(schema_type, str) and schema_type in TYPE_MAPPING:
-            return _nullable_type(TYPE_MAPPING[schema_type], nullable=allows_null)
-        return _nullable_type(Any, nullable=allows_null)
+            return _wrap_schema_validation(schema, _nullable_type(TYPE_MAPPING[schema_type], nullable=allows_null))
+        return _wrap_schema_validation(schema, _nullable_type(Any, nullable=allows_null))
 
     for model_name in definitions:
         _resolve_ref_model(model_name)
+    for model in models.values():
+        try:
+            model.model_rebuild(_types_namespace=models)
+        except Exception:
+            pass
     return _resolve_schema(normalized_schema)
 
 
@@ -329,25 +791,20 @@ def pydantic_model_to_json_schema(result_type: Any) -> dict[str, Any] | None:
     if result_type is None:
         return None
     if isinstance(result_type, dict):
-        schema = dict(cast(dict[str, Any], result_type))
-        schema.setdefault('$schema', JSON_SCHEMA_DRAFT)
-        return schema
+        return normalize_result_dict(normalize_json_schema(cast(dict[str, Any], result_type)))
     if isinstance(result_type, str):
         return None
 
     try:
         if inspect.isclass(result_type) and issubclass(result_type, BaseModel):
             schema = result_type.model_json_schema()
-            schema.setdefault('$schema', JSON_SCHEMA_DRAFT)
-            return schema
+            return normalize_result_dict(normalize_json_schema(schema))
     except TypeError:
         pass
 
     try:
         schema = TypeAdapter(result_type).json_schema()
-        normalized_schema = normalize_result_dict(schema)
-        normalized_schema.setdefault('$schema', JSON_SCHEMA_DRAFT)
-        return normalized_schema
+        return normalize_result_dict(normalize_json_schema(schema))
     except Exception:
         return None
 
@@ -389,9 +846,11 @@ def validate_result_against_type(result_type: Any, result: Any) -> Any:
 
 __all__ = [
     'get_field_params_from_field_schema',
+    'normalize_json_schema',
     'normalize_result_dict',
     'pydantic_model_from_json_schema',
     'pydantic_model_to_json_schema',
     'result_type_identifier_from_schema',
+    'validate_json_schema_value',
     'validate_result_against_type',
 ]

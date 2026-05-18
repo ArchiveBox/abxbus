@@ -10,7 +10,7 @@ import { z } from 'zod'
 
 import { NATSEventBridge, PostgresEventBridge, RedisEventBridge, TachyonEventBridge } from '../src/bridges.js'
 import { BaseEvent, EventBridge, EventBus, HTTPEventBridge, JSONLEventBridge, SQLiteEventBridge, SocketEventBridge } from '../src/index.js'
-import { fromJsonSchema } from '../src/types.js'
+import { fromJsonSchema, isJsonSchema } from '../src/jsonschema.js'
 
 const tests_dir = dirname(fileURLToPath(import.meta.url))
 const ts_root = resolve(tests_dir, '..')
@@ -92,6 +92,12 @@ const assertSchemaSemanticsEqual = (
   invalid_results: unknown[],
   context: string
 ): void => {
+  if (!isJsonSchema(original_schema_json)) {
+    throw new Error(`${context}: original schema should be JSON Schema`)
+  }
+  if (!isJsonSchema(candidate_schema_json)) {
+    throw new Error(`${context}: candidate schema should be JSON Schema`)
+  }
   const original_schema = fromJsonSchema(original_schema_json)
   const candidate_schema = fromJsonSchema(candidate_schema_json)
 
@@ -120,7 +126,39 @@ const assertSchemaSemanticsEqual = (
   }
 }
 
+const assertNullUnionRefSchema = (schema_json: unknown, context: string): void => {
+  assert.equal(typeof schema_json, 'object', `${context}: recursive schema should remain an object`)
+  assert.notEqual(schema_json, null, `${context}: recursive schema should remain an object`)
+  assert.equal(Array.isArray(schema_json), false, `${context}: recursive schema should remain an object`)
+  const schema = schema_json as Record<string, unknown>
+  const properties = schema.properties
+  assert.equal(typeof properties, 'object', `${context}: missing recursive schema properties`)
+  assert.notEqual(properties, null, `${context}: missing recursive schema properties`)
+  assert.equal(Array.isArray(properties), false, `${context}: missing recursive schema properties`)
+  const child_schema = (properties as Record<string, unknown>).child
+  assert.equal(typeof child_schema, 'object', `${context}: missing child schema`)
+  assert.notEqual(child_schema, null, `${context}: missing child schema`)
+  assert.equal(Array.isArray(child_schema), false, `${context}: missing child schema`)
+  const child_record = child_schema as Record<string, unknown>
+  assert.deepEqual(child_record.anyOf, [{ $ref: '#' }, { type: 'null' }], `${context}: child schema should keep standard anyOf $ref/null`)
+  assert.equal('nullable' in child_record, false, `${context}: child schema should not use nullable`)
+  assert.equal('allOf' in child_record || 'oneOf' in child_record, false, `${context}: child schema should not use nullable allOf/oneOf`)
+}
+
+const assertJsonSchemaLayout = (event_type: string, schema_json: unknown, context: string): void => {
+  if (event_type === 'TsPy_RecursiveNodeEvent') {
+    assertNullUnionRefSchema(schema_json, context)
+  }
+}
+
 const buildRoundtripCases = (): ResultSemanticsCase[] => {
+  let RecursiveNodeResult: z.ZodTypeAny
+  RecursiveNodeResult = z.lazy(() =>
+    z.object({
+      name: z.string(),
+      child: RecursiveNodeResult.nullable(),
+    })
+  )
   const NumberResultEvent = BaseEvent.extend('TsPy_NumberResultEvent', {
     value: z.number(),
     label: z.string(),
@@ -187,6 +225,10 @@ const buildRoundtripCases = (): ResultSemanticsCase[] => {
       ),
     }),
   })
+  const RecursiveNodeEvent = BaseEvent.extend('TsPy_RecursiveNodeEvent', {
+    marker: z.string(),
+    event_result_type: RecursiveNodeResult,
+  })
 
   const number_event = NumberResultEvent({
     value: 7,
@@ -242,6 +284,10 @@ const buildRoundtripCases = (): ResultSemanticsCase[] => {
   })
   const object_ctor_event = ObjectCtorResultEvent({
     id: '2aa37066-45e8-7f65-8ada-7c30ac8982d5',
+    event_path: ['TsBus#aaaa'],
+  })
+  const recursive_event = RecursiveNodeEvent({
+    marker: 'recursive',
     event_path: ['TsBus#aaaa'],
   })
 
@@ -340,6 +386,11 @@ const buildRoundtripCases = (): ResultSemanticsCase[] => {
           regions: [{ id: 123, label: 'face', score: 0.9, visible: true }],
         },
       ],
+    },
+    {
+      event: recursive_event,
+      valid_results: [{ name: 'root', child: { name: 'leaf', child: null } }],
+      invalid_results: [{ name: 'root', child: { name: 3, child: null } }, { child: null }],
     },
   ]
 }
@@ -689,6 +740,7 @@ test('ts_to_python_roundtrip preserves event fields and result type semantics', 
       assert.ok(key in python_event, `missing key after python roundtrip: ${key}`)
       if (key === 'event_result_type') {
         assert.equal(typeof python_event[key], 'object')
+        assertJsonSchemaLayout(event_type, python_event[key], `python roundtrip ${event_type}`)
         assertSchemaSemanticsEqual(
           value,
           python_event[key],
@@ -710,6 +762,7 @@ test('ts_to_python_roundtrip preserves event fields and result type semantics', 
       assert.ok(key in restored_dump, `missing key after ts reload: ${key}`)
       if (key === 'event_result_type') {
         assert.equal(typeof restored_dump[key], 'object')
+        assertJsonSchemaLayout(event_type, restored_dump[key], `ts reload ${event_type}`)
         assertSchemaSemanticsEqual(
           value,
           restored_dump[key],
@@ -754,6 +807,7 @@ test('ts_to_rust_roundtrip preserves event fields and result type semantics', as
       assert.ok(key in rust_event, `missing key after rust roundtrip: ${key}`)
       if (key === 'event_result_type') {
         assert.equal(typeof rust_event[key], 'object')
+        assertJsonSchemaLayout(event_type, rust_event[key], `rust roundtrip ${event_type}`)
         assertSchemaSemanticsEqual(
           value,
           rust_event[key],
@@ -775,6 +829,7 @@ test('ts_to_rust_roundtrip preserves event fields and result type semantics', as
       assert.ok(key in restored_dump, `missing key after ts reload: ${key}`)
       if (key === 'event_result_type') {
         assert.equal(typeof restored_dump[key], 'object')
+        assertJsonSchemaLayout(event_type, restored_dump[key], `ts reload ${event_type}`)
         assertSchemaSemanticsEqual(
           value,
           restored_dump[key],
@@ -820,6 +875,7 @@ test('ts_to_go_roundtrip preserves event fields and result type semantics', asyn
       if (key === 'event_result_type') {
         assert.equal(typeof go_event[key], 'object')
         assert.deepEqual(go_event[key], value, `event_result_type schema changed after go roundtrip: ${event_type}`)
+        assertJsonSchemaLayout(event_type, go_event[key], `go roundtrip ${event_type}`)
         assertSchemaSemanticsEqual(
           value,
           go_event[key],
@@ -841,6 +897,7 @@ test('ts_to_go_roundtrip preserves event fields and result type semantics', asyn
       assert.ok(key in restored_dump, `missing key after ts reload: ${key}`)
       if (key === 'event_result_type') {
         assert.equal(typeof restored_dump[key], 'object')
+        assertJsonSchemaLayout(event_type, restored_dump[key], `ts reload ${event_type}`)
         assertSchemaSemanticsEqual(
           value,
           restored_dump[key],
