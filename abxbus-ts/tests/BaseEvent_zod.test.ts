@@ -39,11 +39,6 @@ test('BaseEvent.extend accepts full Zod object schemas and exposes model_fields 
   assert.equal(FullZodEvent.model_fields.event_timeout, event_timeout_schema)
   assert.equal(FullZodEvent.retries, 0)
   assert.equal(FullZodEvent.event_timeout, 25)
-  assert.ok(FullZodEvent.class)
-  assert.equal(FullZodEvent.class.model_fields, FullZodEvent.class.event_schema.shape)
-  assert.equal(FullZodEvent.class.model_fields.schema, payload_schema_field)
-  assert.equal(FullZodEvent.class.retries, 0)
-  assert.equal(FullZodEvent.class.event_timeout, 25)
   assert.equal(Object.prototype.propertyIsEnumerable.call(event, 'event_schema'), false)
 
   const json = event.toJSON() as Record<string, unknown>

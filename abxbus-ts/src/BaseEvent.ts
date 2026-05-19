@@ -152,7 +152,6 @@ type EventPayloadShape<TShape extends z.ZodRawShape> = {
 type EventPayload<TShape extends z.ZodRawShape> =
   EventPayloadShape<TShape> extends Record<string, never> ? {} : z.infer<z.ZodObject<EventPayloadShape<TShape>>>
 type EventClassMetadataFieldName =
-  | 'class'
   | 'fromJSON'
   | 'prototype'
   | 'event_schema'
@@ -283,11 +282,6 @@ export type EventClass<
   new (...args: OptionalFactoryArgs<TInit>): TEvent
   event_schema: TSchema
   model_fields: TModelFields
-  class: (new (...args: OptionalFactoryArgs<TInit>) => TEvent) &
-    TStaticFields & {
-      event_schema: TSchema
-      model_fields: TModelFields
-    }
   event_type: string
   event_version: string
   event_result_type: TResultSchema
@@ -719,49 +713,41 @@ export class BaseEvent {
     const event_result_type = built.event_result_type
     const event_version = built.event_version
 
-    const event_constructor = class extends BaseEvent {
-      static event_schema = full_schema
-      static model_fields = full_schema.shape
-      static _event_parse_schema = event_parse_schema
-      static event_type = event_type
-      static event_version = event_version ?? BaseEvent.event_version
-      static event_result_type = event_result_type
+    const EventClass = class extends BaseEvent {
+      static override event_schema = full_schema as EventSchema<ZodShapeFrom<TShape>>
+      static override model_fields = full_schema.shape as EventModelFields<ZodShapeFrom<TShape>>
+      static override _event_parse_schema = event_parse_schema
+      static override event_type = event_type
+      static override event_version = event_version ?? BaseEvent.event_version
+      static override event_result_type = event_result_type
 
-      constructor(data?: EventInit<ZodShapeFrom<TShape>> | EventInitFromSchema<AnyEventSchema>) {
-        super(data as BaseEventInit<Record<string, unknown>>)
+      constructor(data?: EventInit<ZodShapeFrom<TShape>>) {
+        super(data)
       }
     }
 
-    type ClassEvent = EventWithResultSchema<ResultSchemaFromShape<ZodShapeFrom<TShape>>> & EventPayload<ZodShapeFrom<TShape>>
-
-    function EventClass(data?: EventInit<ZodShapeFrom<TShape>>): ClassEvent {
-      return new event_constructor(data) as ClassEvent
-    }
-
-    EventClass.event_schema = full_schema as EventSchema<ZodShapeFrom<TShape>>
-    EventClass.model_fields = EventClass.event_schema.shape as EventModelFields<ZodShapeFrom<TShape>>
-    EventClass._event_parse_schema = event_parse_schema
-    EventClass.event_type = event_type
-    EventClass.event_version = event_version ?? BaseEvent.event_version
-    EventClass.event_result_type = event_result_type
-    EventClass.class = EventClass as unknown as new (
-      data: EventInit<ZodShapeFrom<TShape>>
-    ) => EventWithResultSchema<ResultSchemaFromShape<TShape>> & EventPayload<ZodShapeFrom<TShape>>
-    EventClass.fromJSON = (data: unknown) => event_constructor.fromJSON(data) as ClassEvent
-    EventClass.prototype = event_constructor.prototype
     Object.defineProperty(EventClass, 'name', { value: event_type, configurable: true })
-    Object.defineProperty(event_constructor, 'name', { value: event_type, configurable: true })
-    Object.defineProperty(event_constructor.prototype, 'constructor', {
-      value: EventClass,
+    defineStaticEventFields(EventClass, static_field_defaults)
+
+    let CallableEventClass: typeof EventClass
+    CallableEventClass = new Proxy(EventClass, {
+      apply(target, _this_arg, args) {
+        return Reflect.construct(target, args, target)
+      },
+      construct(target, args, new_target) {
+        return Reflect.construct(target, args, new_target === CallableEventClass ? target : new_target)
+      },
+    })
+
+    Object.defineProperty(EventClass.prototype, 'constructor', {
+      value: CallableEventClass,
       writable: true,
       configurable: true,
     })
-    defineStaticEventFields(event_constructor, static_field_defaults)
-    defineStaticEventFields(EventClass, static_field_defaults)
-    EVENT_TYPE_REGISTRY.set(event_type, EventClass as unknown as typeof BaseEvent)
+    EVENT_TYPE_REGISTRY.set(event_type, CallableEventClass as unknown as typeof BaseEvent)
 
-    return EventClass as unknown as EventClass<
-      ClassEvent,
+    return CallableEventClass as unknown as EventClass<
+      EventWithResultSchema<ResultSchemaFromShape<ZodShapeFrom<TShape>>> & EventPayload<ZodShapeFrom<TShape>>,
       EventInit<ZodShapeFrom<TShape>>,
       EventSchema<ZodShapeFrom<TShape>>,
       EventModelFields<ZodShapeFrom<TShape>>,

@@ -76,10 +76,6 @@ const _exported_event_class_result_schema: z.ZodTypeAny | undefined = exported_s
 const _exported_event_class_from_json: InstanceType<typeof StaticSchemaEvent> = exported_static_schema_event_class.fromJSON(
   static_schema_default_event.toJSON()
 )
-type _assert_static_schema_class_model_field = Assert<
-  IsEqual<typeof StaticSchemaEvent.class.model_fields.some_field, typeof StaticSchemaField>
->
-type _assert_static_schema_class_field = Assert<IsEqual<typeof StaticSchemaEvent.class.some_field, 'abc'>>
 type _assert_static_schema_instance_default = Assert<IsEqual<typeof static_schema_default_event.some_field, 'abc'>>
 type _assert_static_schema_instance_length_default = Assert<IsEqual<typeof static_schema_default_event.length, number>>
 type _assert_static_schema_instance_builtin_default = Assert<IsEqual<typeof static_schema_default_event.event_timeout, number | null>>
