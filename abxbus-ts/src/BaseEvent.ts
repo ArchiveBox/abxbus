@@ -719,8 +719,7 @@ export class BaseEvent {
     const event_result_type = built.event_result_type
     const event_version = built.event_version
 
-    // create a new event class that extends BaseEvent and adds the custom fields
-    class ExtendedEvent extends BaseEvent {
+    const event_constructor = class extends BaseEvent {
       static event_schema = full_schema
       static model_fields = full_schema.shape
       static _event_parse_schema = event_parse_schema
@@ -736,7 +735,7 @@ export class BaseEvent {
     type ClassEvent = EventWithResultSchema<ResultSchemaFromShape<ZodShapeFrom<TShape>>> & EventPayload<ZodShapeFrom<TShape>>
 
     function EventClass(data?: EventInit<ZodShapeFrom<TShape>>): ClassEvent {
-      return new ExtendedEvent(data) as ClassEvent
+      return new event_constructor(data) as ClassEvent
     }
 
     EventClass.event_schema = full_schema as EventSchema<ZodShapeFrom<TShape>>
@@ -748,16 +747,16 @@ export class BaseEvent {
     EventClass.class = EventClass as unknown as new (
       data: EventInit<ZodShapeFrom<TShape>>
     ) => EventWithResultSchema<ResultSchemaFromShape<TShape>> & EventPayload<ZodShapeFrom<TShape>>
-    EventClass.fromJSON = (data: unknown) => ExtendedEvent.fromJSON(data) as ClassEvent
-    EventClass.prototype = ExtendedEvent.prototype
+    EventClass.fromJSON = (data: unknown) => event_constructor.fromJSON(data) as ClassEvent
+    EventClass.prototype = event_constructor.prototype
     Object.defineProperty(EventClass, 'name', { value: event_type, configurable: true })
-    Object.defineProperty(ExtendedEvent, 'name', { value: event_type, configurable: true })
-    Object.defineProperty(ExtendedEvent.prototype, 'constructor', {
+    Object.defineProperty(event_constructor, 'name', { value: event_type, configurable: true })
+    Object.defineProperty(event_constructor.prototype, 'constructor', {
       value: EventClass,
       writable: true,
       configurable: true,
     })
-    defineStaticEventFields(ExtendedEvent, static_field_defaults)
+    defineStaticEventFields(event_constructor, static_field_defaults)
     defineStaticEventFields(EventClass, static_field_defaults)
     EVENT_TYPE_REGISTRY.set(event_type, EventClass as unknown as typeof BaseEvent)
 
