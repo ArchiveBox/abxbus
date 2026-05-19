@@ -1301,22 +1301,22 @@ test('BaseEvent auto-generates required metadata when partial input fields are u
 })
 
 test('BaseEvent.extend returns a BaseEvent subclass callable with or without new', () => {
-  const MyEvent = BaseEvent.extend('BaseEventSubclassConstructionEvent', {
+  const ClassA = BaseEvent.extend('BaseEventSubclassConstructionEvent', {
     name: z.string(),
   })
-  const called_event = MyEvent({ name: 'called' })
-  const constructed_event = new MyEvent({ name: 'constructed' })
+  const ObjA = ClassA({ name: 'called' })
+  const ObjB = new ClassA({ name: 'constructed' })
 
-  assert.equal(Object.getPrototypeOf(MyEvent), BaseEvent)
-  assert.equal(Object.getPrototypeOf(MyEvent.prototype), BaseEvent.prototype)
-  assert.ok(called_event instanceof BaseEvent)
-  assert.ok(called_event instanceof MyEvent)
-  assert.equal(called_event.constructor, MyEvent)
-  assert.equal(called_event.name, 'called')
-  assert.ok(constructed_event instanceof BaseEvent)
-  assert.ok(constructed_event instanceof MyEvent)
-  assert.equal(constructed_event.constructor, MyEvent)
-  assert.equal(constructed_event.name, 'constructed')
+  assert.equal(Object.getPrototypeOf(ClassA), BaseEvent)
+  assert.equal(Object.getPrototypeOf(ClassA.prototype), BaseEvent.prototype)
+  assert.ok(ObjA instanceof ClassA)
+  assert.ok(ObjA instanceof BaseEvent)
+  assert.equal(ObjA.constructor, ClassA)
+  assert.equal(ObjA.name, 'called')
+  assert.ok(ObjB instanceof ClassA)
+  assert.ok(ObjB instanceof BaseEvent)
+  assert.equal(ObjB.constructor, ClassA)
+  assert.equal(ObjB.name, 'constructed')
 })
 
 test('BaseEvent.extend exposes Zod model_fields and parsed defaults statically', () => {
