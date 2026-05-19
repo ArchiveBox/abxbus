@@ -744,14 +744,21 @@ export class BaseEvent {
     EventClass.event_type = event_type
     EventClass.event_version = event_version ?? BaseEvent.event_version
     EventClass.event_result_type = event_result_type
-    EventClass.class = ExtendedEvent as unknown as new (
+    EventClass.class = EventClass as unknown as new (
       data: EventInit<ZodShapeFrom<TShape>>
     ) => EventWithResultSchema<ResultSchemaFromShape<TShape>> & EventPayload<ZodShapeFrom<TShape>>
     EventClass.fromJSON = (data: unknown) => ExtendedEvent.fromJSON(data) as ClassEvent
     EventClass.prototype = ExtendedEvent.prototype
+    Object.defineProperty(EventClass, 'name', { value: event_type, configurable: true })
+    Object.defineProperty(ExtendedEvent, 'name', { value: event_type, configurable: true })
+    Object.defineProperty(ExtendedEvent.prototype, 'constructor', {
+      value: EventClass,
+      writable: true,
+      configurable: true,
+    })
     defineStaticEventFields(ExtendedEvent, static_field_defaults)
     defineStaticEventFields(EventClass, static_field_defaults)
-    EVENT_TYPE_REGISTRY.set(event_type, ExtendedEvent)
+    EVENT_TYPE_REGISTRY.set(event_type, EventClass as unknown as typeof BaseEvent)
 
     return EventClass as unknown as EventClass<
       ClassEvent,

@@ -1312,7 +1312,9 @@ test('BaseEvent.extend exposes Zod model_fields and parsed defaults statically',
     event_result_type: result_schema,
   })
   const SchemaEvent = BaseEvent.extend('BaseEventStaticSchemaFieldsEvent', event_schema)
+  const schema_event = SchemaEvent()
 
+  assert.equal(SchemaEvent.name, 'BaseEventStaticSchemaFieldsEvent')
   assert.notEqual(SchemaEvent.event_schema, event_schema)
   assert.equal(SchemaEvent.model_fields, SchemaEvent.event_schema.shape)
   assert.equal(SchemaEvent.model_fields.some_field, some_field_schema)
@@ -1327,9 +1329,10 @@ test('BaseEvent.extend exposes Zod model_fields and parsed defaults statically',
   assert.equal(SchemaEvent.class?.some_field, 'abc')
   assert.equal(SchemaEvent.class?.length, 3)
   assert.equal(SchemaEvent.class?.event_timeout, 25)
+  assert.equal(SchemaEvent.class, SchemaEvent)
   assert.equal(SchemaEvent.event_result_type, result_schema)
-
-  const schema_event = SchemaEvent()
+  assert.ok(schema_event instanceof SchemaEvent)
+  assert.equal(schema_event.constructor, SchemaEvent)
   assert.equal(schema_event.some_field, 'abc')
   assert.equal(schema_event.length, 3)
   assert.equal(schema_event.event_timeout, 25)
