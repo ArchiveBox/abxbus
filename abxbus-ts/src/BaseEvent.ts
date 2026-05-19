@@ -741,6 +741,7 @@ export class BaseEvent {
 
     EventClass.event_schema = full_schema as EventSchema<ZodShapeFrom<TShape>>
     EventClass.model_fields = EventClass.event_schema.shape as EventModelFields<ZodShapeFrom<TShape>>
+    EventClass._event_parse_schema = event_parse_schema
     EventClass.event_type = event_type
     EventClass.event_version = event_version ?? BaseEvent.event_version
     EventClass.event_result_type = event_result_type
