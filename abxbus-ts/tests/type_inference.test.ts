@@ -51,6 +51,8 @@ const StaticShortcutEvent = BaseEvent.extend('StaticShortcutEventForInference', 
 const static_schema_default_event = StaticSchemaEvent()
 const static_shortcut_default_event = StaticShortcutEvent()
 const exported_static_schema_event_class: EventClass<InstanceType<typeof StaticSchemaEvent>> = StaticSchemaEvent
+const exported_static_schema_event_instance: BaseEvent = static_schema_default_event
+const exported_static_schema_event_instance_type: InstanceType<typeof BaseEvent> = static_schema_default_event
 
 type InferableResult = EventResultType<InstanceType<typeof InferableResultEvent>>
 type _assert_inferable_result = Assert<IsEqual<InferableResult, { ok: boolean }>>
