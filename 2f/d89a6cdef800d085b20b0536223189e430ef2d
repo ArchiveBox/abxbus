@@ -1,0 +1,19 @@
+abxbus/event_bus.py
+  s_a5df2e7b7b6c12::t_fe41ba50460999 1815-1816
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2fd89a6cdef800d085b20b0536223189e430ef2d",
+  "prompts": {},
+  "sessions": {
+    "s_a5df2e7b7b6c12": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6ccb-c861-7e33-b618-89ec1e58d9ad",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
