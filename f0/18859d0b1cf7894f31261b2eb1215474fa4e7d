@@ -1,0 +1,40 @@
+abxbus/event_bus.py
+  s_179bfe34e24cf3::t_288ffd96a19f4d 1688
+  s_179bfe34e24cf3::t_6e87937ede9dfd 1701
+abxbus/logging.py
+  s_179bfe34e24cf3::t_4f251236cd52f4 253-254,256
+abxbus-ts/src/LockManager.ts
+  s_179bfe34e24cf3::t_f112f9d6f58817 286
+abxbus-ts/tests/EventBus_timeout.test.ts
+  s_179bfe34e24cf3::t_3210aee8fb6bd4 1017-1032
+abxbus-ts/package.json
+  s_179bfe34e24cf3::t_5e0e2e238e61d7 3
+abxbus/helpers.py
+  s_179bfe34e24cf3::t_2b42b33e2932a2 75
+abxbus/base_event.py
+  s_179bfe34e24cf3::t_0c5651f49f08e1 564
+  s_179bfe34e24cf3::t_16d4174b839271 467-470,621-623
+tests/test_eventbus_timeout.py
+  s_179bfe34e24cf3::t_f6888232dd73ff 713-753
+  s_179bfe34e24cf3::t_dc797c1b857873 754-772
+pyproject.toml
+  s_179bfe34e24cf3::t_5e0e2e238e61d7 5
+abxbus/retry.py
+  s_179bfe34e24cf3::t_56aeeb2f8862dd 838,843,943-944
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f018859d0b1cf7894f31261b2eb1215474fa4e7d",
+  "prompts": {},
+  "sessions": {
+    "s_179bfe34e24cf3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6d98-7b43-7341-af49-07085afa5e1b",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
