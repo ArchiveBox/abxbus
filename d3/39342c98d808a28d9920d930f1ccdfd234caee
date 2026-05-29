@@ -1,0 +1,24 @@
+.github/workflows/test_rust.yaml
+  s_179bfe34e24cf3::t_48c142a26613d0 73,105,109,113
+abxbus-rust/tests/test_base_event.rs
+  s_179bfe34e24cf3::t_30696d95b1842b 3,314-315,324-334
+  s_179bfe34e24cf3::t_48c142a26613d0 309,316,318-323,335-339
+abxbus-rust/Cargo.toml
+  s_179bfe34e24cf3::t_48c142a26613d0 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d339342c98d808a28d9920d930f1ccdfd234caee",
+  "prompts": {},
+  "sessions": {
+    "s_179bfe34e24cf3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6d98-7b43-7341-af49-07085afa5e1b",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
