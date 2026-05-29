@@ -1,0 +1,23 @@
+abxbus-go/version.go
+  s_179bfe34e24cf3::t_4751b62c2e1766 3
+abxbus-go/lock_manager.go
+  s_179bfe34e24cf3::t_d39e8437ba78b3 236
+abxbus-go/tests/eventbus_timeout_test.go
+  s_179bfe34e24cf3::t_d39e8437ba78b3 53-89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "926270a52d5c5b518b9c71c4d6917dbb1fe59d52",
+  "prompts": {},
+  "sessions": {
+    "s_179bfe34e24cf3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6d98-7b43-7341-af49-07085afa5e1b",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
