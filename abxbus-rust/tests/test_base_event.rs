@@ -1,6 +1,6 @@
 use abxbus::event;
 use std::{
-    process::Command,
+    process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc, Arc, Mutex, MutexGuard, OnceLock,
@@ -306,13 +306,37 @@ fn base_event_deadlock_warning_child_enabled() -> bool {
 }
 
 fn run_base_event_deadlock_warning_child(test_name: &str) -> String {
-    let output = Command::new(std::env::current_exe().expect("current test binary"))
+    let mut child = Command::new(std::env::current_exe().expect("current test binary"))
         .arg("--exact")
         .arg(test_name)
         .arg("--nocapture")
         .env("ABXBUS_RUN_BASE_EVENT_DEADLOCK_WARNING_CHILD", "1")
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .expect("run base event deadlock warning child test");
+    let started_at = std::time::Instant::now();
+    while child
+        .try_wait()
+        .expect("poll base event deadlock warning child test")
+        .is_none()
+    {
+        if started_at.elapsed() >= Duration::from_secs(10) {
+            let _ = child.kill();
+            let output = child
+                .wait_with_output()
+                .expect("collect timed out base event deadlock warning child test output");
+            panic!(
+                "child test {test_name} timed out\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let output = child
+        .wait_with_output()
+        .expect("collect base event deadlock warning child test output");
     assert!(
         output.status.success(),
         "child test {test_name} failed\nstdout:\n{}\nstderr:\n{}",

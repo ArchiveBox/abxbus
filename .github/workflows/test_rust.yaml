@@ -70,6 +70,7 @@ jobs:
         # - { kind: "bin", name: "abxbus-rust-roundtrip" }
         # ... and more
     name: rust-${{ matrix.task.kind }}-${{ matrix.task.name }}
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: abxbus-rust
@@ -101,12 +102,12 @@ jobs:
 
       - name: Run Rust library tests
         if: matrix.task.kind == 'lib'
-        run: cargo test --locked --all-features --lib
+        run: cargo test --locked --all-features --lib -- --nocapture
 
       - name: Run Rust integration test
         if: matrix.task.kind == 'test'
-        run: cargo test --locked --all-features --test ${{ matrix.task.name }}
+        run: cargo test --locked --all-features --test ${{ matrix.task.name }} -- --nocapture
 
       - name: Run Rust binary tests
         if: matrix.task.kind == 'bin'
-        run: cargo test --locked --all-features --bin ${{ matrix.task.name }}
+        run: cargo test --locked --all-features --bin ${{ matrix.task.name }} -- --nocapture
