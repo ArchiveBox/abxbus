@@ -34,6 +34,12 @@ event! {
     }
 }
 event! {
+    struct InFlightEvent {
+        event_result_type: String,
+        event_type: "InFlightEvent",
+    }
+}
+event! {
     struct ParentEvent {
         event_result_type: EmptyResult,
         event_type: "parent",
@@ -1595,6 +1601,68 @@ fn test_awaited_bus_emit_inside_handler_preempts_queued_sibling_without_parentag
     assert_eq!(child.inner.lock().event_parent_id, None);
     assert_eq!(child.inner.lock().event_emitted_by_handler_id, None);
     assert!(!child.inner.lock().event_blocks_parent_completion);
+    bus.destroy();
+}
+
+#[test]
+fn test_now_waits_for_event_already_claimed_by_runloop() {
+    let bus = EventBus::new_with_options(
+        Some("InFlightNowBus".to_string()),
+        EventBusOptions {
+            event_concurrency: EventConcurrencyMode::Parallel,
+            event_handler_concurrency: EventHandlerConcurrencyMode::Parallel,
+            ..EventBusOptions::default()
+        },
+    );
+    let handler_runs = Arc::new(Mutex::new(0));
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let release_rx = Arc::new(Mutex::new(release_rx));
+
+    let runs_for_handler = handler_runs.clone();
+    let release_for_handler = release_rx.clone();
+    bus.on_raw("InFlightEvent", "handler", move |_event| {
+        let started_tx = started_tx.clone();
+        let runs = runs_for_handler.clone();
+        let release_rx = release_for_handler.clone();
+        async move {
+            *runs.lock().expect("runs lock") += 1;
+            let _ = started_tx.send(());
+            release_rx
+                .lock()
+                .expect("release lock")
+                .recv_timeout(Duration::from_secs(2))
+                .expect("release signal");
+            Ok(json!("done"))
+        }
+    });
+
+    let event = bus.emit(InFlightEvent {
+        ..Default::default()
+    });
+    let bus_for_idle = bus.clone();
+    let idle_handle = thread::spawn(move || block_on(bus_for_idle.wait_until_idle(Some(2.0))));
+    started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("handler should start");
+
+    let event_for_now =
+        <InFlightEvent as abxbus::typed::TypedEventObject>::_from_inner_event(event._inner_event());
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let completed = block_on(event_for_now.now()).expect("now should complete");
+        let _ = done_tx.send(completed);
+    });
+    assert!(done_rx.recv_timeout(Duration::from_millis(30)).is_err());
+
+    release_tx.send(()).expect("release send");
+    let completed = done_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("now should resolve");
+    assert!(idle_handle.join().expect("idle task should join"));
+
+    assert_eq!(completed.event_status.read(), EventStatus::Completed);
+    assert_eq!(*handler_runs.lock().expect("runs lock"), 1);
     bus.destroy();
 }
 

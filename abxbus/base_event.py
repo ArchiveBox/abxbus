@@ -1003,6 +1003,12 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                     # Event not in any queue, yield control and wait
                     await asyncio.sleep(0)
 
+            if not completed_signal.is_set() and (
+                self.event_status == EventStatus.STARTED
+                or any(bus.is_event_inflight_or_queued(self.event_id) for bus in self._iter_eventbuses_for_registry() if bus)
+            ):
+                await completed_signal.wait()
+
         except asyncio.CancelledError:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug('Polling loop cancelled for %s', self)

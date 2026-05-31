@@ -183,6 +183,46 @@ test('test_global_serial_awaited_child_jumps_ahead_of_queued_events_across_buses
   assert.ok(child_end_idx < queued_start_idx)
 })
 
+test('test_now_waits_for_event_already_claimed_by_runloop', async () => {
+  const ClaimedEvent = BaseEvent.extend('AlreadyClaimedByRunloopEvent', {})
+  const bus = new EventBus('AlreadyClaimedByRunloopBus', { event_concurrency: 'bus-serial' })
+  const handler_started = withResolvers<void>()
+  const release_handler = withResolvers<void>()
+
+  let handler_calls = 0
+
+  bus.on(ClaimedEvent, async () => {
+    handler_calls += 1
+    handler_started.resolve()
+    await release_handler.promise
+    return 'done'
+  })
+
+  const event = bus.emit(ClaimedEvent({}))
+  await handler_started.promise
+
+  assert.equal(event.event_status, 'started')
+  assert.equal(handler_calls, 1)
+
+  let now_settled = false
+  const now_promise = event.now({ timeout: 1 }).then((completed_event) => {
+    now_settled = true
+    return completed_event
+  })
+
+  await sleep(20)
+
+  assert.equal(now_settled, false)
+  assert.equal(handler_calls, 1)
+
+  release_handler.resolve()
+  await now_promise
+
+  assert.equal(now_settled, true)
+  assert.equal(handler_calls, 1)
+  assert.equal(event.event_status, 'completed')
+})
+
 test('global handler lock via retry serializes handlers across buses', async () => {
   const HandlerEvent = BaseEvent.extend('HandlerEvent', {
     order: z.number(),

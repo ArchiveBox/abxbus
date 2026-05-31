@@ -146,6 +146,44 @@ async def test_global_serial_awaited_child_jumps_ahead_of_queued_events_across_b
 
 
 @pytest.mark.asyncio
+async def test_now_waits_for_event_already_claimed_by_runloop() -> None:
+    class InFlightEvent(BaseEvent[str]):
+        pass
+
+    bus = EventBus(name='InFlightNowBus', event_concurrency='parallel')
+    started = asyncio.Event()
+    release = asyncio.Event()
+    handler_runs = 0
+
+    async def handler(_: InFlightEvent) -> str:
+        nonlocal handler_runs
+        handler_runs += 1
+        started.set()
+        await release.wait()
+        return 'done'
+
+    bus.on(InFlightEvent, handler)
+
+    try:
+        event = bus.emit(InFlightEvent())
+        idle_task = asyncio.create_task(bus.wait_until_idle(timeout=2.0))
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+
+        now_task = asyncio.create_task(event.now())
+        await asyncio.sleep(0)
+        assert not now_task.done()
+
+        release.set()
+        completed = await asyncio.wait_for(now_task, timeout=1.0)
+        await idle_task
+
+        assert completed.event_status == 'completed'
+        assert handler_runs == 1
+    finally:
+        await bus.destroy(clear=True)
+
+
+@pytest.mark.asyncio
 async def test_event_concurrency_bus_serial_serializes_per_bus_but_overlaps_across_buses() -> None:
     bus_a = EventBus(name='BusSerialA', event_concurrency='bus-serial')
     bus_b = EventBus(name='BusSerialB', event_concurrency='bus-serial')

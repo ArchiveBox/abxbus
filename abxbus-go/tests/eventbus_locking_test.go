@@ -144,6 +144,97 @@ func TestGlobalSerialAwaitedChildJumpsAheadOfQueuedEventsAcrossBuses(t *testing.
 	}
 }
 
+func TestNowWaitsForEventAlreadyClaimedByRunloop(t *testing.T) {
+	noTimeout := 0.0
+	bus := abxbus.NewEventBus("InFlightNowBus", &abxbus.EventBusOptions{
+		EventConcurrency: abxbus.EventConcurrencyParallel,
+		EventTimeout:     &noTimeout,
+	})
+	defer bus.Destroy()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startOnce sync.Once
+	var mu sync.Mutex
+	handlerRuns := 0
+
+	bus.On("InFlightEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		mu.Lock()
+		handlerRuns++
+		mu.Unlock()
+		startOnce.Do(func() { close(started) })
+		<-release
+		return "done", nil
+	}, nil)
+
+	event := bus.Emit(abxbus.NewBaseEvent("InFlightEvent", nil))
+	idleCh := make(chan bool, 1)
+	go func() {
+		timeout := 2.0
+		idleCh <- bus.WaitUntilIdle(&timeout)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("timed out waiting for runloop handler to start")
+	}
+
+	nowCh := make(chan *abxbus.BaseEvent, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		completed, err := event.Now()
+		nowCh <- completed
+		errCh <- err
+	}()
+
+	select {
+	case completed := <-nowCh:
+		close(release)
+		t.Fatalf("Now returned before the claimed event completed: %#v", completed)
+	case <-time.After(30 * time.Millisecond):
+	}
+
+	mu.Lock()
+	runsWhileBlocked := handlerRuns
+	mu.Unlock()
+	if runsWhileBlocked != 1 {
+		close(release)
+		t.Fatalf("already claimed event should not be double-run, ran %d times", runsWhileBlocked)
+	}
+
+	close(release)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for Now to return after handler completion")
+	}
+	if completed := <-nowCh; completed != event {
+		t.Fatal("Now should return the event")
+	}
+	select {
+	case ok := <-idleCh:
+		if !ok {
+			t.Fatal("bus did not become idle")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for bus idle")
+	}
+	if event.EventStatus != "completed" {
+		t.Fatalf("expected completed event, got %s", event.EventStatus)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if handlerRuns != 1 {
+		t.Fatalf("already claimed event should not be double-run, ran %d times", handlerRuns)
+	}
+}
+
 func TestEventConcurrencyBusSerialSerializesPerBusButOverlapsAcrossBuses(t *testing.T) {
 	busA := abxbus.NewEventBus("BusSerialA", &abxbus.EventBusOptions{EventConcurrency: abxbus.EventConcurrencyBusSerial})
 	busB := abxbus.NewEventBus("BusSerialB", &abxbus.EventBusOptions{EventConcurrency: abxbus.EventConcurrencyBusSerial})
