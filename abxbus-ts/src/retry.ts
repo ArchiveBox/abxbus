@@ -19,7 +19,6 @@ type RetryDecorator = {
   (target: object, property_key: string | symbol, descriptor: LegacyMethodDescriptor): LegacyMethodDescriptor
 }
 
-const MULTIPROCESS_SEMAPHORE_DIRNAME = 'browser_use_semaphores'
 const MULTIPROCESS_STALE_LOCK_MS = 5 * 60 * 1000
 const RETRY_SLOW_WARNING_THROTTLE_MS = 2000
 const RETRY_SLOW_WARNING_ARGS_MAX_LENGTH = 80
@@ -761,6 +760,18 @@ async function importNodeModule(specifier: string): Promise<any> {
   return dynamic_import(specifier) as Promise<any>
 }
 
+function resolveMultiprocessSemaphoreDirectory(path: any, os: any): string {
+  const configured = process.env.ABXBUS_MULTIPROCESS_SEMAPHORE_DIR
+  if (configured) return path.resolve(configured.replace(/^~(?=$|[/\\])/, os.homedir()))
+
+  const runtime_dir = process.env.XDG_RUNTIME_DIR
+  if (runtime_dir) return path.join(path.resolve(runtime_dir.replace(/^~(?=$|[/\\])/, os.homedir())), 'abxbus', 'semaphores')
+
+  const cache_home = process.env.XDG_CACHE_HOME
+  const cache_dir = cache_home ? path.resolve(cache_home.replace(/^~(?=$|[/\\])/, os.homedir())) : path.join(os.homedir(), '.cache')
+  return path.join(cache_dir, 'abxbus', 'semaphores')
+}
+
 async function acquireMultiprocessSemaphore(
   scoped_key: string,
   semaphore_limit: number,
@@ -773,7 +784,7 @@ async function acquireMultiprocessSemaphore(
     importNodeModule('node:os'),
     importNodeModule('node:path'),
   ])
-  const semaphore_directory = path.join(os.tmpdir(), MULTIPROCESS_SEMAPHORE_DIRNAME)
+  const semaphore_directory = resolveMultiprocessSemaphoreDirectory(path, os)
   const lock_prefix = crypto.createHash('sha256').update(scoped_key).digest('hex').slice(0, 40)
   fs.mkdirSync(semaphore_directory, { recursive: true })
 
@@ -871,7 +882,7 @@ function acquireMultiprocessSemaphoreSync(
   const fs = importNodeModuleSync('node:fs')
   const os = importNodeModuleSync('node:os')
   const path = importNodeModuleSync('node:path')
-  const semaphore_directory = path.join(os.tmpdir(), MULTIPROCESS_SEMAPHORE_DIRNAME)
+  const semaphore_directory = resolveMultiprocessSemaphoreDirectory(path, os)
   const lock_prefix = crypto.createHash('sha256').update(scoped_key).digest('hex').slice(0, 40)
   fs.mkdirSync(semaphore_directory, { recursive: true })
 
