@@ -1,0 +1,19 @@
+abxbus-ts/src/retry.ts
+  s_be3edb5822a954::t_fe9835e8ba19b0 763-774,787,885
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "ec014f684020b4b25c8ea9680c75d8a6a61693fa",
+  "prompts": {},
+  "sessions": {
+    "s_be3edb5822a954": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e8c46-aad7-7802-ab71-f24622948dc9",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
