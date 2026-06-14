@@ -1,0 +1,34 @@
+bin/release.sh
+  s_70b3b8284ef391::t_bf557451bd41d1 355
+  s_70b3b8284ef391::t_4999b6bc3f559b 395-397
+AGENTS.md
+  s_15f59ac80abb8e::t_417f00307a7210 1-55
+skills/abxbus/SKILL.md
+  s_15f59ac80abb8e::t_3e7e13744b950f 1-59
+pyproject.toml
+  s_15f59ac80abb8e::t_50935ff3253d61 134-138,141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "425c6e19d38e6d96d47d4b939c547734f5258872",
+  "prompts": {},
+  "sessions": {
+    "s_15f59ac80abb8e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eaa8a-3bcf-7290-a54d-15bd828c06a5",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    },
+    "s_70b3b8284ef391": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ec4bb-38fe-7723-b66e-d0af77a36fd0",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
