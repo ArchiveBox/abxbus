@@ -1,0 +1,27 @@
+abxbus-rust/Cargo.toml
+  s_70b3b8284ef391::t_c599f428cc11c2 3
+.github/workflows/release.yml
+  s_70b3b8284ef391::t_c599f428cc11c2 43-56
+abxbus-ts/package.json
+  s_70b3b8284ef391::t_c599f428cc11c2 3
+abxbus-go/version.go
+  s_70b3b8284ef391::t_c599f428cc11c2 3
+pyproject.toml
+  s_70b3b8284ef391::t_c599f428cc11c2 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "082f529f67634f31f4ce6474ce36747937dab7de",
+  "prompts": {},
+  "sessions": {
+    "s_70b3b8284ef391": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ec4bb-38fe-7723-b66e-d0af77a36fd0",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
