@@ -131,10 +131,14 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 asyncio_default_test_loop_scope = "function"
 testpaths = [
-    "tests"
+    "tests",
+    "README.md",
+    "AGENTS.md",
+    "skills",
+    "docs",
 ]
 python_files = ["test_*.py", "*_test.py"]
-addopts = "-svx --strict-markers --tb=short --dist=loadscope"
+addopts = "-svx --strict-markers --tb=short --dist=loadscope --codeblocks"
 log_cli = true
 log_cli_format = "%(levelname)-8s [%(name)s] %(message)s"
 filterwarnings = [

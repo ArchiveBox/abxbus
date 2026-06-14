@@ -352,7 +352,7 @@ publish_artifacts() {
 }
 
 main() {
-    local slug branch version latest relation
+    local slug branch version latest relation released_tag
 
     source_optional_env
     slug="$(repo_slug)"
@@ -392,10 +392,9 @@ main() {
     publish_artifacts "${version}"
     create_release "${slug}" "${version}"
 
-    latest="$(latest_release_version "${slug}")"
-    relation="$(compare_versions "${latest}" "${version}")"
-    if [[ "${relation}" != "eq" ]]; then
-        echo "GitHub release version mismatch: expected ${version}, got ${latest}" >&2
+    released_tag="$(gh release view "${TAG_PREFIX}${version}" --repo "${slug}" --json tagName --jq '.tagName')"
+    if [[ "${released_tag}" != "${TAG_PREFIX}${version}" ]]; then
+        echo "GitHub release version mismatch: expected ${TAG_PREFIX}${version}, got ${released_tag}" >&2
         return 1
     fi
 
