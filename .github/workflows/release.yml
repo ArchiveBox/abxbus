@@ -40,6 +40,11 @@ jobs:
           cache: pnpm
           cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
+      - name: Use npm with trusted publishing support
+        run: |
+          npm install -g npm@latest
+          npm --version
+
       - name: Install native build tools
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
@@ -63,5 +68,4 @@ jobs:
         env:
           DEFAULT_BRANCH: main
           GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN || github.token }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: ./bin/release.sh

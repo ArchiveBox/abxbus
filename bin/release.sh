@@ -331,7 +331,6 @@ create_release() {
 
 publish_artifacts() {
     local version="$1"
-    local npm_token="${NODE_AUTH_TOKEN:-${NPM_TOKEN:-}}"
 
     if curl -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | jq -e --arg version "${version}" '.releases[$version] | length > 0' >/dev/null 2>&1; then
         echo "${PYPI_PACKAGE} ${version} already published on PyPI"
@@ -342,18 +341,10 @@ publish_artifacts() {
     if npm view "${NPM_PACKAGE}@${version}" version --silent >/dev/null 2>&1; then
         echo "${NPM_PACKAGE} ${version} already published on npm"
     else
-        if [[ -n "${npm_token}" ]]; then
-            (
-                cd abxbus-ts
-                npm_config_file="$(mktemp)"
-                printf '//registry.npmjs.org/:_authToken=%s\n' "${npm_token}" >"${npm_config_file}"
-                NODE_AUTH_TOKEN="${npm_token}" npm_config_userconfig="${npm_config_file}" pnpm publish --access public --no-git-checks
-                rm -f "${npm_config_file}"
-            )
-        else
-            echo "Missing npm credentials: set NPM_TOKEN or NODE_AUTH_TOKEN" >&2
-            return 1
-        fi
+        (
+            cd abxbus-ts
+            npm publish --access public
+        )
     fi
 
     wait_for_pypi "${PYPI_PACKAGE}" "${version}"
