@@ -1,0 +1,38 @@
+README.md
+  s_15f59ac80abb8e::t_28af10b7b6a674 359-373,376,389-393
+  s_15f59ac80abb8e::t_7b04a94def0ae1 108-124
+  s_15f59ac80abb8e::t_0b87b8542f2ad8 77
+  s_15f59ac80abb8e::t_79ad82bdb5b884 246-255,268-273
+  s_15f59ac80abb8e::t_bff9e9679f53d8 329-344,347-349,351-354
+  s_15f59ac80abb8e::t_11d60d0b635c54 488-496,511
+  s_15f59ac80abb8e::t_fec77cc1a15b6c 541,543-552,554,556-561,563-585
+  s_15f59ac80abb8e::t_4591c117933eb6 555
+  s_15f59ac80abb8e::t_b50c7f4a785828 408-425
+  s_15f59ac80abb8e::t_5015741214efe8 474,476-477,479-487,497-499,506-510,512-534
+  s_15f59ac80abb8e::t_21b8946ba0cdc9 650,652-673,679-702,704
+  s_15f59ac80abb8e::t_8d6a130030dbcf 31,66-67,73-74,90
+  s_15f59ac80abb8e::t_9bba812a3caf6b 63-65,81-84,86-89
+  s_15f59ac80abb8e::t_e1c62dd53dced1 145-156
+  s_15f59ac80abb8e::t_dc6fb6bda437d7 285-297,309-315,317
+  s_15f59ac80abb8e::t_d51273485e4b82 16-18,25-30
+  s_15f59ac80abb8e::t_c1dfbf0eb79e63 173-183
+  s_15f59ac80abb8e::t_067f53e93242d3 500-505
+  s_15f59ac80abb8e::t_e136a894a75ca9 594,596-613,615-631
+  s_15f59ac80abb8e::t_a7aa67e624361d 674-678
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "4c48910464f5b741fc408dd13ab2d0fb4989c37d",
+  "prompts": {},
+  "sessions": {
+    "s_15f59ac80abb8e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eaa8a-3bcf-7290-a54d-15bd828c06a5",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
