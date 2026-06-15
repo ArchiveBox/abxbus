@@ -1,0 +1,23 @@
+AGENTS.md
+  s_15f59ac80abb8e::t_551c642d86c8fb 20,50
+skills/abxbus/SKILL.md
+  s_15f59ac80abb8e::t_46288ed7b302de 24,54
+README.md
+  s_15f59ac80abb8e::t_2c1a927bfa20fd 1213,1215-1216,1222,1224
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "b3a1d45a2042d8496624020e5146a8cb1700bd17",
+  "prompts": {},
+  "sessions": {
+    "s_15f59ac80abb8e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eaa8a-3bcf-7290-a54d-15bd828c06a5",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
