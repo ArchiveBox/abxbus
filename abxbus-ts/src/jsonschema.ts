@@ -138,7 +138,14 @@ const normalizeJsonSchemaValue = (schema: unknown): unknown => {
 }
 
 export const toJsonSchema = (schema: z.core.$ZodType, params?: z.core.ToJSONSchemaParams): JsonSchema => {
-  return normalizeJsonSchema(z.toJSONSchema(schema, params) as JsonSchema)
+  try {
+    return normalizeJsonSchema(z.toJSONSchema(schema, params) as JsonSchema)
+  } catch (error) {
+    if (params?.io === 'input') {
+      throw error
+    }
+    return normalizeJsonSchema(z.toJSONSchema(schema, { ...params, io: 'input' }) as JsonSchema)
+  }
 }
 
 export const fromJsonSchema = (schema: JsonSchema): z.ZodTypeAny => {

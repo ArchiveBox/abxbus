@@ -530,15 +530,7 @@ function eventResultTypeToJSON(schema: z.ZodTypeAny | undefined): JsonSchema | u
   if (!schema) {
     return undefined
   }
-  try {
-    return toJsonSchema(schema)
-  } catch {
-    try {
-      return toJsonSchema(schema, { io: 'input' })
-    } catch {
-      return undefined
-    }
-  }
+  return toJsonSchema(schema)
 }
 
 export class BaseEvent {

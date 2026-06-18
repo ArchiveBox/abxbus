@@ -329,6 +329,44 @@ create_release() {
         --generate-notes
 }
 
+go_module_tag_names() {
+    local version="$1"
+    find . -name go.mod -not -path './.git/*' | sort | while read -r mod_file; do
+        local module_dir tag_prefix
+        module_dir="${mod_file%/go.mod}"
+        module_dir="${module_dir#./}"
+        if [[ "${module_dir}" == "." ]]; then
+            tag_prefix=""
+        else
+            tag_prefix="${module_dir}/"
+        fi
+        echo "${tag_prefix}v${version}"
+    done
+}
+
+create_go_module_tags() {
+    local version="$1"
+    local target="$2"
+    local tag
+
+    while read -r tag; do
+        if [[ -z "${tag}" ]]; then
+            continue
+        fi
+        if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "Go module tag ${tag} already exists locally"
+            continue
+        fi
+        if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "Go module tag ${tag} already exists on origin"
+            continue
+        fi
+        git tag "${tag}" "${target}"
+        git push origin "refs/tags/${tag}"
+        echo "Created Go module tag ${tag}"
+    done < <(go_module_tag_names "${version}")
+}
+
 publish_artifacts() {
     local version="$1"
 
@@ -352,7 +390,7 @@ publish_artifacts() {
 }
 
 main() {
-    local slug branch version latest relation released_tag
+    local slug branch version latest relation released_tag release_target
 
     source_optional_env
     slug="$(repo_slug)"
@@ -390,7 +428,9 @@ main() {
     fi
 
     publish_artifacts "${version}"
+    release_target="$(git rev-parse HEAD)"
     create_release "${slug}" "${version}"
+    create_go_module_tags "${version}" "${release_target}"
 
     released_tag="$(gh release view "${TAG_PREFIX}${version}" --repo "${slug}" --json tagName --jq '.tagName')"
     if [[ "${released_tag}" != "${TAG_PREFIX}${version}" ]]; then

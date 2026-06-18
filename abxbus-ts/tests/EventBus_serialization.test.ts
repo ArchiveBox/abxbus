@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import { z } from 'zod'
 
 import { BaseEvent, EventBus } from '../src/index.js'
+import { toJsonSchema } from '../src/jsonschema.js'
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -282,6 +283,30 @@ test('EventBus toJSON falls back to closest JSON Schema for transform event_resu
   } finally {
     bus.destroy()
   }
+})
+
+test('BaseEvent toJSON uses shared JSON Schema fallback for transform event_result_type fields', () => {
+  const TransformResultEvent = BaseEvent.extend('BaseEventTransformResultSchemaSerializationEvent', {
+    event_result_type: z.object({
+      count: z.string().transform(Number),
+    }),
+  })
+  const event = TransformResultEvent({})
+
+  const json = event.toJSON() as Record<string, unknown>
+  const result_schema = json.event_result_type as Record<string, unknown>
+  const properties = result_schema.properties as Record<string, unknown>
+
+  assert.equal((properties.count as Record<string, unknown>).type, 'string')
+  assert.deepEqual(result_schema.required, ['count'])
+})
+
+test('toJsonSchema falls back to Zod input JSON Schema for unidirectional transforms', () => {
+  const schema = toJsonSchema(z.object({ count: z.string().transform(Number) })) as Record<string, unknown>
+  const properties = schema.properties as Record<string, unknown>
+
+  assert.equal((properties.count as Record<string, unknown>).type, 'string')
+  assert.deepEqual(schema.required, ['count'])
 })
 
 test('EventBus.fromJSON preserves event_history object order', () => {
