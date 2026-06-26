@@ -76,7 +76,7 @@ func TestReturnsExistingFreshEvent(t *testing.T) {
 		return time.Since(completedAt) < 5*time.Second
 	}
 	found, err := bus.FindEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
-		return event.Payload["target_id"] == debounceTargetID1 && isFresh(event)
+		return event.EventExtraPayload["target_id"] == debounceTargetID1 && isFresh(event)
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
@@ -144,7 +144,7 @@ func TestDispatchesNewWhenNoMatch(t *testing.T) {
 	}, nil)
 
 	found, err := bus.FindEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
-		return event.Payload["target_id"] == debounceTargetID1
+		return event.EventExtraPayload["target_id"] == debounceTargetID1
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
@@ -153,8 +153,8 @@ func TestDispatchesNewWhenNoMatch(t *testing.T) {
 	if _, err := result.Now(); err != nil {
 		t.Fatal(err)
 	}
-	if result.Payload["target_id"] != debounceTargetID1 {
-		t.Fatalf("expected target_id=%s, got %#v", debounceTargetID1, result.Payload["target_id"])
+	if result.EventExtraPayload["target_id"] != debounceTargetID1 {
+		t.Fatalf("expected target_id=%s, got %#v", debounceTargetID1, result.EventExtraPayload["target_id"])
 	}
 	if result.EventStatus != "completed" {
 		t.Fatalf("expected completed event, got %s", result.EventStatus)
@@ -172,7 +172,7 @@ func TestDispatchesNewWhenStale(t *testing.T) {
 		t.Fatal(err)
 	}
 	found, err := bus.FindEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
-		return event.Payload["target_id"] == debounceTargetID1 && false
+		return event.EventExtraPayload["target_id"] == debounceTargetID1 && false
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
@@ -238,7 +238,7 @@ func TestOrChainWithoutWaitingFindsExisting(t *testing.T) {
 
 	start := time.Now()
 	found, err := bus.FindEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
-		return event.Payload["target_id"] == debounceTargetID1
+		return event.EventExtraPayload["target_id"] == debounceTargetID1
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
@@ -263,7 +263,7 @@ func TestOrChainWithoutWaitingDispatchesWhenNoMatch(t *testing.T) {
 
 	start := time.Now()
 	found, err := bus.FindEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
-		return event.Payload["target_id"] == debounceTargetID1
+		return event.EventExtraPayload["target_id"] == debounceTargetID1
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
@@ -272,8 +272,8 @@ func TestOrChainWithoutWaitingDispatchesWhenNoMatch(t *testing.T) {
 	if _, err := result.Now(); err != nil {
 		t.Fatal(err)
 	}
-	if result.Payload["target_id"] != debounceTargetID1 {
-		t.Fatalf("expected target_id=%s, got %#v", debounceTargetID1, result.Payload["target_id"])
+	if result.EventExtraPayload["target_id"] != debounceTargetID1 {
+		t.Fatalf("expected target_id=%s, got %#v", debounceTargetID1, result.EventExtraPayload["target_id"])
 	}
 	if elapsed := time.Since(start); elapsed >= 100*time.Millisecond {
 		t.Fatalf("missing debounce lookup should dispatch without blocking, elapsed=%s", elapsed)
@@ -288,7 +288,7 @@ func TestOrChainMultipleSequentialLookups(t *testing.T) {
 
 	start := time.Now()
 	found1, err := bus.FindEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
-		return event.Payload["target_id"] == debounceTargetID1
+		return event.EventExtraPayload["target_id"] == debounceTargetID1
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
@@ -296,7 +296,7 @@ func TestOrChainMultipleSequentialLookups(t *testing.T) {
 	result1 := debounceEmitFallback(bus, "ScreenshotEvent", map[string]any{"target_id": debounceTargetID1}, found1)
 
 	found2, err := bus.FindEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
-		return event.Payload["target_id"] == debounceTargetID1
+		return event.EventExtraPayload["target_id"] == debounceTargetID1
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
@@ -304,7 +304,7 @@ func TestOrChainMultipleSequentialLookups(t *testing.T) {
 	result2 := debounceEmitFallback(bus, "ScreenshotEvent", map[string]any{"target_id": debounceTargetID1}, found2)
 
 	found3, err := bus.FindEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
-		return event.Payload["target_id"] == debounceTargetID2
+		return event.EventExtraPayload["target_id"] == debounceTargetID2
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
@@ -325,7 +325,7 @@ func TestOrChainMultipleSequentialLookups(t *testing.T) {
 	if result1.EventID == result3.EventID {
 		t.Fatalf("expected second target to dispatch separately")
 	}
-	if result3.Payload["target_id"] != debounceTargetID2 {
-		t.Fatalf("expected target_id=%s, got %#v", debounceTargetID2, result3.Payload["target_id"])
+	if result3.EventExtraPayload["target_id"] != debounceTargetID2 {
+		t.Fatalf("expected target_id=%s, got %#v", debounceTargetID2, result3.EventExtraPayload["target_id"])
 	}
 }

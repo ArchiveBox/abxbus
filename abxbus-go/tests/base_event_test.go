@@ -6,6 +6,7 @@ import (
 	"errors"
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
 	"github.com/google/uuid"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -886,7 +887,7 @@ func TestBaseEventNowOutsideHandlerWithArgs(t *testing.T) {
 }
 
 func TestBaseEventJSONFlattenedPayload(t *testing.T) {
-	e := abxbus.NewBaseEvent("JSONEvent", map[string]any{"x": 1})
+	e := abxbus.NewBaseEvent("JSONEvent", map[string]any{"x": 1, "future_unrecognized_field": map[string]any{"nested": []any{"kept"}}})
 	data, err := e.ToJSON()
 	if err != nil {
 		t.Fatal(err)
@@ -898,11 +899,48 @@ func TestBaseEventJSONFlattenedPayload(t *testing.T) {
 	if _, ok := obj["payload"]; ok {
 		t.Fatal("payload must be flattened")
 	}
+	// event_extra_payload is an in-memory escape hatch only; wire JSON must stay flat.
+	if _, ok := obj["event_extra_payload"]; ok {
+		t.Fatal("event_extra_payload must not be emitted")
+	}
 	if obj["x"].(float64) != 1 {
 		t.Fatal("payload key x missing")
 	}
+	if !reflect.DeepEqual(obj["future_unrecognized_field"], map[string]any{"nested": []any{"kept"}}) {
+		t.Fatalf("future field did not flatten: %#v", obj["future_unrecognized_field"])
+	}
 	if _, ok := obj["event_id"]; !ok {
 		t.Fatal("missing event_id")
+	}
+	restored, err := abxbus.BaseEventFromJSON(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Unknown event fields are easy to access consistently from BaseEvent at runtime.
+	if !reflect.DeepEqual(restored.EventExtraPayload["future_unrecognized_field"], map[string]any{"nested": []any{"kept"}}) {
+		t.Fatalf("future field did not hydrate: %#v", restored.EventExtraPayload)
+	}
+	typed, err := abxbus.EventPayloadAs[struct {
+		X                 int            `json:"x"`
+		EventExtraPayload map[string]any `json:"-"`
+	}](restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if typed.X != 1 {
+		t.Fatalf("known typed field did not hydrate: %#v", typed)
+	}
+	// Typed Go event payloads keep unknown flat fields without weakening known-field validation.
+	if !reflect.DeepEqual(typed.EventExtraPayload["future_unrecognized_field"], map[string]any{"nested": []any{"kept"}}) {
+		t.Fatalf("typed future field did not hydrate: %#v", typed.EventExtraPayload)
+	}
+	if _, err := abxbus.EventPayloadAs[struct {
+		X int `json:"x"`
+	}](abxbus.NewBaseEvent("BadTypedPayloadEvent", map[string]any{"x": "not-int"})); err == nil {
+		t.Fatal("known typed field with invalid type should fail")
+	}
+	if _, err := abxbus.BaseEventFromJSON([]byte(`{"event_type":"BadWrapperEvent","event_extra_payload":{"future":true}}`)); err == nil || !strings.Contains(err.Error(), "must be flat") {
+		t.Fatalf("expected flat-json error for event_extra_payload, got %v", err)
 	}
 }
 
@@ -1380,7 +1418,7 @@ func TestAwaitedParallelQueueJumpChildDoesNotPauseLaterParallelChildEvents(t *te
 		e.Emit(newChild("bg"))
 		appendLocked(&mu, &order, "parent_after_bg_emit")
 		found, err := bus.FindEventName("ParallelPauseObservedEvent", func(event *abxbus.BaseEvent) bool {
-			return event.Payload["name"] == "bg"
+			return event.EventExtraPayload["name"] == "bg"
 		}, &abxbus.FindOptions{Past: true, Future: 0.2})
 		if err != nil {
 			return nil, err
@@ -1394,7 +1432,7 @@ func TestAwaitedParallelQueueJumpChildDoesNotPauseLaterParallelChildEvents(t *te
 	}, nil)
 
 	bus.On("ParallelPauseChildEvent", "child_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		name, _ := e.Payload["name"].(string)
+		name, _ := e.EventExtraPayload["name"].(string)
 		appendLocked(&mu, &order, "child_start_"+name)
 		if name == "bg" {
 			e.Emit(abxbus.NewBaseEvent("ParallelPauseObservedEvent", map[string]any{"name": "bg"}))

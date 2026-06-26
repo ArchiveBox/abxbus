@@ -3,6 +3,7 @@ from collections import deque
 from typing import Any, TypeAlias, cast
 
 import pytest
+from pydantic import ValidationError
 
 from abxbus.base_event import BaseEvent, EventResult
 from abxbus.event_bus import EventBus
@@ -202,11 +203,29 @@ async def test_eventbus_preserves_handler_registration_order_through_json_and_re
 
 def test_baseevent_model_validate_roundtrips_runtime_json_shape() -> None:
     bus, event, _handler_id = _make_bus_with_pending_event()
+    event = SerializableEvent.model_validate(
+        {
+            **event.model_dump(mode='json'),
+            # Known-event extras are forward-compatible flat JSON fields, not a nested wrapper.
+            'future_unrecognized_field': {'nested': ['kept']},
+        }
+    )
+    bus.event_history[event.event_id] = event
     event_payload = bus.model_dump()['event_history'][event.event_id]
+    assert event_payload['future_unrecognized_field'] == {'nested': ['kept']}
+    assert 'event_extra_payload' not in event_payload
 
     restored_payload = BaseEvent.model_validate(event_payload).model_dump(mode='json')
     assert _json_shape(restored_payload) == _json_shape(event_payload)
     assert restored_payload == event_payload
+
+    # event_extra_payload itself is reserved so event JSON cannot become non-flat.
+    with pytest.raises(ValueError, match='must be flat'):
+        BaseEvent.model_validate({**event_payload, 'event_extra_payload': {'future': True}})
+
+    # Known fields still hard-fail through the declared model type.
+    with pytest.raises(ValidationError):
+        SerializableEvent.model_validate({**event_payload, 'value': 123})
 
 
 def test_eventbus_validate_creates_missing_handler_entries_from_event_results() -> None:

@@ -1507,7 +1507,7 @@ mod folded_test_event_result_handler_metadata {
                 let value = event
                     .inner
                     .lock()
-                    .payload
+                    .event_extra_payload
                     .get("data")
                     .cloned()
                     .unwrap_or(Value::Null);
@@ -1522,7 +1522,7 @@ mod folded_test_event_result_handler_metadata {
                 let value = event
                     .inner
                     .lock()
-                    .payload
+                    .event_extra_payload
                     .get("data")
                     .and_then(Value::as_str)
                     .unwrap_or_default()
@@ -3416,7 +3416,7 @@ mod folded_test_typed_events {
                     event
                         .inner
                         .lock()
-                        .payload
+                        .event_extra_payload
                         .get("a")
                         .and_then(serde_json::Value::as_i64)
                         == Some(51)
@@ -3535,9 +3535,9 @@ mod folded_test_typed_events {
         let inner = base.inner.lock();
         assert_eq!(inner.event_timeout, Some(12.0));
         assert_eq!(inner.event_handler_timeout, Some(3.0));
-        assert_eq!(inner.payload.get("name"), Some(&serde_json::json!("job")));
-        assert!(!inner.payload.contains_key("event_timeout"));
-        assert!(!inner.payload.contains_key("event_handler_timeout"));
+        assert_eq!(inner.event_extra_payload.get("name"), Some(&serde_json::json!("job")));
+        assert!(!inner.event_extra_payload.contains_key("event_timeout"));
+        assert!(!inner.event_extra_payload.contains_key("event_handler_timeout"));
         drop(inner);
         bus.destroy();
     }

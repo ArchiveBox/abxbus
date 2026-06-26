@@ -19,7 +19,7 @@ func TestGlobalSerialAcrossBuses(t *testing.T) {
 	order := []string{}
 	h := func(busLabel string) func(*abxbus.BaseEvent, context.Context) (any, error) {
 		return func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
-			seq := int(e.Payload["n"].(int))
+			seq := int(e.EventExtraPayload["n"].(int))
 			mu.Lock()
 			inFlight++
 			if inFlight > maxInFlight {
@@ -334,12 +334,12 @@ func TestEventConcurrencyParallelAllowsSameBusEventsToOverlap(t *testing.T) {
 			maxInFlight = inFlight
 		}
 		mu.Unlock()
-		started <- e.Payload["n"].(int)
+		started <- e.EventExtraPayload["n"].(int)
 		<-release
 		mu.Lock()
 		inFlight--
 		mu.Unlock()
-		return e.Payload["n"], nil
+		return e.EventExtraPayload["n"], nil
 	}, nil)
 
 	first := bus.Emit(abxbus.NewBaseEvent("Evt", map[string]any{"n": 1}))
@@ -555,7 +555,7 @@ func TestEventHandlerConcurrencyPerEventOverrideControlsExecutionMode(t *testing
 	started := make(chan string, 4)
 
 	handler := func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		mode := e.Payload["mode"].(string)
+		mode := e.EventExtraPayload["mode"].(string)
 		mu.Lock()
 		inFlight++
 		if inFlight > maxInFlightByMode[mode] {

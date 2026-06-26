@@ -38,14 +38,17 @@ type BaseEvent struct {
 	EventHandlerCompletion      EventHandlerCompletionMode  `json:"event_handler_completion,omitempty"`
 	EventBlocksParentCompletion bool                        `json:"event_blocks_parent_completion"`
 
-	Payload          map[string]any
-	Bus              *EventBus               `json:"-"`
-	EventResults     map[string]*EventResult `json:"-"`
-	eventResultOrder []string
-	dispatchCtx      context.Context `json:"-"`
-	mu               sync.Mutex
-	done_ch          chan struct{}
-	done_once        sync.Once
+	// EventExtraPayload holds runtime payload fields that are not statically
+	// declared on a typed event. It is flattened by MarshalJSON and split back
+	// out by UnmarshalJSON; "event_extra_payload" must never appear on the wire.
+	EventExtraPayload map[string]any          `json:"-"`
+	Bus               *EventBus               `json:"-"`
+	EventResults      map[string]*EventResult `json:"-"`
+	eventResultOrder  []string
+	dispatchCtx       context.Context `json:"-"`
+	mu                sync.Mutex
+	done_ch           chan struct{}
+	done_once         sync.Once
 }
 
 type EventWaitOptions struct {
@@ -120,7 +123,7 @@ func NewBaseEvent(event_type string, payload map[string]any) *BaseEvent {
 	return &BaseEvent{
 		EventID: id, EventCreatedAt: monotonicDatetime(), EventType: event_type, EventVersion: "0.0.1",
 		EventStatus: "pending", EventPath: []string{}, EventResults: map[string]*EventResult{}, eventResultOrder: []string{}, EventPendingBusCount: 0,
-		Payload: payload, done_ch: make(chan struct{}),
+		EventExtraPayload: payload, done_ch: make(chan struct{}),
 	}
 }
 
@@ -174,13 +177,13 @@ func (e *BaseEvent) MarshalJSON() ([]byte, error) {
 		}
 		entries = append(entries, jsonObjectEntry{key: "event_results", value: json.RawMessage(resultsJSON)})
 	}
-	payloadKeys := make([]string, 0, len(e.Payload))
-	for key := range e.Payload {
+	payloadKeys := make([]string, 0, len(e.EventExtraPayload))
+	for key := range e.EventExtraPayload {
 		payloadKeys = append(payloadKeys, key)
 	}
 	sort.Strings(payloadKeys)
 	for _, key := range payloadKeys {
-		entries = append(entries, jsonObjectEntry{key: key, value: e.Payload[key]})
+		entries = append(entries, jsonObjectEntry{key: key, value: e.EventExtraPayload[key]})
 	}
 	return marshalOrderedObject(entries)
 }
@@ -189,6 +192,9 @@ func (e *BaseEvent) UnmarshalJSON(data []byte) error {
 	var record map[string]any
 	if err := json.Unmarshal(data, &record); err != nil {
 		return err
+	}
+	if _, ok := record["event_extra_payload"]; ok {
+		return errors.New("event jsons must be flat; event_extra_payload is runtime-only and must not appear on the wire")
 	}
 	type meta struct {
 		EventID                     string                      `json:"event_id"`
@@ -245,11 +251,11 @@ func (e *BaseEvent) UnmarshalJSON(data []byte) error {
 	e.EventHandlerConcurrency = m.EventHandlerConcurrency
 	e.EventHandlerCompletion = m.EventHandlerCompletion
 	e.EventBlocksParentCompletion = m.EventBlocksParentCompletion
-	e.Payload = map[string]any{}
+	e.EventExtraPayload = map[string]any{}
 	known := map[string]bool{"event_id": true, "event_created_at": true, "event_type": true, "event_version": true, "event_timeout": true, "event_slow_timeout": true, "event_handler_timeout": true, "event_handler_slow_timeout": true, "event_parent_id": true, "event_path": true, "event_result_type": true, "event_emitted_by_handler_id": true, "event_pending_bus_count": true, "event_status": true, "event_started_at": true, "event_completed_at": true, "event_concurrency": true, "event_handler_concurrency": true, "event_handler_completion": true, "event_blocks_parent_completion": true, "event_results": true}
 	for k, v := range record {
 		if !known[k] {
-			e.Payload[k] = v
+			e.EventExtraPayload[k] = v
 		}
 	}
 	e.EventResults = map[string]*EventResult{}

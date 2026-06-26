@@ -458,13 +458,13 @@ where
     current.event_parent_id = updated.event_parent_id.clone();
     current.event_emitted_by_handler_id = updated.event_emitted_by_handler_id.clone();
     current.event_created_at = updated.event_created_at.clone();
-    current.payload = updated.payload.clone();
+    current.event_extra_payload = updated.event_extra_payload.clone();
 }
 
 #[doc(hidden)]
 pub fn payload_value_from_inner_event(event: &Arc<RawBaseEvent>) -> Value {
     let event = event.inner.lock();
-    let mut payload = event.payload.clone();
+    let mut payload = event.event_extra_payload.clone();
     payload.insert("event_type".to_string(), json!(event.event_type));
     payload.insert("event_version".to_string(), json!(event.event_version));
     payload.insert("event_timeout".to_string(), json!(event.event_timeout));
@@ -1364,6 +1364,11 @@ macro_rules! _inner_event_parse {
             pub event_completed_at: $crate::typed::Live<Option<String>>,
             #[serde(default, skip_serializing_if = "abxbus::typed::is_live_event_results_empty")]
             pub event_results: $crate::typed::Live<std::collections::HashMap<String, $crate::event_result::EventResult>>,
+            // Runtime-only storage for flat JSON fields not declared on this typed event.
+            // Serde flattens it when dumping and fills it from unknown flat fields when
+            // loading, so "event_extra_payload" never appears on the wire.
+            #[serde(default, flatten)]
+            pub event_extra_payload: $crate::serde_json::Map<String, $crate::serde_json::Value>,
         }
 
         impl Default for $name {
@@ -1391,6 +1396,7 @@ macro_rules! _inner_event_parse {
                     event_started_at: Default::default(),
                     event_completed_at: Default::default(),
                     event_results: Default::default(),
+                    event_extra_payload: Default::default(),
                 }
             }
         }

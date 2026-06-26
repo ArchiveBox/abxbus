@@ -2651,7 +2651,10 @@ fn test_baseevent_reset_returns_a_fresh_pending_event_that_can_be_redispatched()
     assert_eq!(reset.inner.lock().event_pending_bus_count, 0);
     assert!(reset.inner.lock().event_results.is_empty());
     assert_eq!(reset.inner.lock().event_type, "BaseEventResetEvent");
-    assert_eq!(reset.inner.lock().payload.get("value"), Some(&json!(1)));
+    // Unknown event fields are easy to access consistently from BaseEvent at runtime.
+    assert_eq!(reset.inner.lock().event_extra_payload.get("value"), Some(&json!(1)));
+    // event_extra_payload is an in-memory escape hatch only; wire JSON must stay flat.
+    assert!(reset.to_json_value().get("event_extra_payload").is_none());
 }
 
 #[test]
@@ -2749,6 +2752,12 @@ fn test_unknown_event_prefixed_field_rejected_in_payload() {
 
     let error = unwrap_event_error(BaseEvent::try_new("UnknownEventField", payload));
     assert!(error.contains("event_unknown"));
+
+    let mut wrapper_payload = Map::new();
+    wrapper_payload.insert("event_extra_payload".to_string(), json!({"future": true}));
+    // event_extra_payload itself is reserved so event JSON cannot become non-flat.
+    let error = unwrap_event_error(BaseEvent::try_new("WrappedPayloadEvent", wrapper_payload));
+    assert!(error.contains("must be flat"));
 }
 
 #[test]
@@ -2801,9 +2810,42 @@ fn test_attached_typed_event_mutations_sync_to_inner_event() {
 
     let inner = mutated._inner_event();
     let inner = inner.inner.lock();
-    assert_eq!(inner.payload.get("value"), Some(&json!("after")));
+    assert_eq!(inner.event_extra_payload.get("value"), Some(&json!("after")));
     assert_eq!(inner.event_timeout, Some(2.0));
     drop(inner);
+
+    let typed_with_extra: BaseEventAttachedMutationEvent = serde_json::from_value(json!({
+        "event_type": "BaseEventAttachedMutationEvent",
+        "value": "known",
+        // Known-event extras must survive typed hydration as flat top-level fields.
+        "future_unrecognized_field": {"nested": ["kept"]}
+    }))
+    .expect("typed event with future field should hydrate");
+    assert_eq!(
+        typed_with_extra
+            .event_extra_payload
+            .get("future_unrecognized_field"),
+        Some(&json!({"nested": ["kept"]}))
+    );
+    assert_eq!(
+        typed_with_extra.to_json_value()["future_unrecognized_field"],
+        json!({"nested": ["kept"]})
+    );
+    assert!(
+        typed_with_extra
+            .to_json_value()
+            .get("event_extra_payload")
+            .is_none(),
+        "event_extra_payload must never appear in wire JSON"
+    );
+
+    // Known fields still use the declared schema; preserving extras must not weaken validation.
+    let invalid_known_field = serde_json::from_value::<BaseEventAttachedMutationEvent>(json!({
+        "event_type": "BaseEventAttachedMutationEvent",
+        "value": 123
+    }));
+    assert!(invalid_known_field.is_err());
+
     bus.destroy();
 }
 

@@ -87,12 +87,12 @@ fn test_performance_50k_events() {
             processed_for_handler.fetch_add(1, Ordering::Relaxed);
             let inner = event.inner.lock();
             let value = inner
-                .payload
+                .event_extra_payload
                 .get("value")
                 .and_then(Value::as_i64)
                 .unwrap_or_default();
             let batch_id = inner
-                .payload
+                .event_extra_payload
                 .get("batch_id")
                 .and_then(Value::as_i64)
                 .unwrap_or_default();
@@ -305,7 +305,7 @@ fn test_performance_worst_case_forwarding_queue_jump_timeouts() {
             let iteration = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("iteration")
                 .cloned()
                 .unwrap_or_else(|| json!(0));
@@ -332,7 +332,7 @@ fn test_performance_worst_case_forwarding_queue_jump_timeouts() {
             let iteration = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("iteration")
                 .and_then(Value::as_i64)
                 .unwrap_or_default();

@@ -36,6 +36,9 @@ const jsonShape = (value: unknown): unknown => {
 }
 
 const assertJsonShapeEqual = (actual: unknown, expected: unknown, context: string): void => {
+  // event_extra_payload is an in-memory escape hatch only; wire JSON must stay flat.
+  assert.equal(JSON.stringify(actual).includes('"event_extra_payload"'), false, `${context}: emitted event_extra_payload wrapper`)
+  assert.equal(JSON.stringify(expected).includes('"event_extra_payload"'), false, `${context}: fixture used event_extra_payload wrapper`)
   const containsShape = (actual_shape: unknown, expected_shape: unknown): boolean => {
     if (
       actual_shape !== null &&
@@ -235,7 +238,9 @@ const buildRoundtripCases = (): ResultSemanticsCase[] => {
     label: 'parent',
     event_path: ['TsBus#aaaa'],
     event_timeout: 12.5,
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 0, nested: ['kept', { event_type: 'TsPy_NumberResultEvent' }] },
+  } as never)
 
   const screenshot_event = ScreenshotResultEvent({
     target_id: '0c1ccf21-65c0-7390-8b64-9182e985740e',
@@ -243,53 +248,77 @@ const buildRoundtripCases = (): ResultSemanticsCase[] => {
     event_parent_id: number_event.event_id,
     event_path: ['TsBus#aaaa', 'PyBridge#bbbb'],
     event_timeout: 33.0,
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 11, nested: ['kept', { event_type: 'TsPy_ScreenshotResultEvent' }] },
+  } as never)
 
   const string_event = StringResultEvent({
     id: 'ecea6334-c939-7540-89b9-29b439c9a1f4',
     event_parent_id: number_event.event_id,
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 1, nested: ['kept', { event_type: 'TsPy_StringResultEvent' }] },
+  } as never)
   const bool_event = BooleanResultEvent({
     id: '87dc4d01-be2d-7057-834e-5faf35705400',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 2, nested: ['kept', { event_type: 'TsPy_BooleanResultEvent' }] },
+  } as never)
   const null_event = NullResultEvent({
     id: '5fc19a35-064c-7ec1-8d1a-4fb33f119abc',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 3, nested: ['kept', { event_type: 'TsPy_NullResultEvent' }] },
+  } as never)
   const string_ctor_event = StringCtorResultEvent({
     id: 'df54dc78-e988-75bc-8457-87d5bd2d7c4c',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 4, nested: ['kept', { event_type: 'TsPy_StringCtorResultEvent' }] },
+  } as never)
   const number_ctor_event = NumberCtorResultEvent({
     id: 'bfe9459c-c1a4-7906-8a13-c9855aac0001',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 5, nested: ['kept', { event_type: 'TsPy_NumberCtorResultEvent' }] },
+  } as never)
   const boolean_ctor_event = BooleanCtorResultEvent({
     id: 'f472d2e0-5815-7dad-8fb1-a9ce4315cd6e',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 6, nested: ['kept', { event_type: 'TsPy_BooleanCtorResultEvent' }] },
+  } as never)
   const array_event = ArrayResultEvent({
     id: 'e35d91b5-1ca9-7833-8b3d-1516e2896f1e',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 7, nested: ['kept', { event_type: 'TsPy_ArrayResultEvent' }] },
+  } as never)
   const array_ctor_event = ArrayCtorResultEvent({
     id: 'f21399dd-6162-7ac2-832d-a3870373278a',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 8, nested: ['kept', { event_type: 'TsPy_ArrayCtorResultEvent' }] },
+  } as never)
   const record_event = RecordResultEvent({
     id: 'ba1a8735-0955-737f-8b4d-7337d2169a3c',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 9, nested: ['kept', { event_type: 'TsPy_RecordResultEvent' }] },
+  } as never)
   const object_ctor_event = ObjectCtorResultEvent({
     id: '2aa37066-45e8-7f65-8ada-7c30ac8982d5',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 10, nested: ['kept', { event_type: 'TsPy_ObjectCtorResultEvent' }] },
+  } as never)
   const recursive_event = RecursiveNodeEvent({
     marker: 'recursive',
     event_path: ['TsBus#aaaa'],
-  })
+    // Known-event extras must survive every runtime as flat top-level fields.
+    future_unrecognized_field: { source: 'ts', index: 12, nested: ['kept', { event_type: 'TsPy_RecursiveNodeEvent' }] },
+  } as never)
 
   return [
     {

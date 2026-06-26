@@ -1269,6 +1269,21 @@ test('BaseEvent rejects unknown event_* fields while allowing known event_* over
       event_some_field_we_dont_recognize: 1,
     } as unknown as never)
   }, /starts with "event_" but is not a recognized BaseEvent field/i)
+
+  // event_extra_payload is the one reserved wrapper key: event JSON must stay flat.
+  assert.throws(() => {
+    void AllowedEvent({
+      value: 'ok',
+      event_extra_payload: { future: true },
+    } as unknown as never)
+  }, /json must be flat/i)
+
+  // Known fields still use the declared schema; preserving extras must not weaken validation.
+  assert.throws(() => {
+    void AllowedEvent({
+      value: 123,
+    } as unknown as never)
+  }, z.ZodError)
 })
 
 test('BaseEvent rejects model_* fields in payload and event shape', () => {
@@ -1377,16 +1392,26 @@ test('BaseEvent.extend exposes Zod model_fields and parsed defaults statically',
 
 test('BaseEvent toJSON/fromJSON roundtrips runtime fields and event_results', async () => {
   const RuntimeEvent = BaseEvent.extend('BaseEventRuntimeSerializationEvent', {
+    label: z.string(),
     event_result_type: z.string(),
   })
   const bus = new EventBus('BaseEventRuntimeSerializationBus')
 
   bus.on(RuntimeEvent, () => 'ok')
 
-  const event = bus.emit(RuntimeEvent({}))
+  const event = bus.emit(
+    RuntimeEvent({
+      label: 'known-field',
+      future_unrecognized_field: { nested: ['kept'] },
+    } as never)
+  )
   await event.now()
 
   const json = event.toJSON() as Record<string, unknown>
+  // Forward-compatible known-event JSON stays flat: extras roundtrip as normal top-level fields.
+  assert.equal(json.label, 'known-field')
+  assert.deepEqual(json.future_unrecognized_field, { nested: ['kept'] })
+  assert.equal('event_extra_payload' in json, false)
   assert.equal(json.event_status, 'completed')
   assert.equal(typeof json.event_created_at, 'string')
   assert.equal(typeof json.event_started_at, 'string')

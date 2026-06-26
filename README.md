@@ -52,6 +52,7 @@ It's async native, has proper automatic nested event tracking, and powerful conc
 
 Install abxbus and get started with a simple event-driven application:
 
+<!--pytest.mark.skip(reason="package installation command")-->
 ```bash
 pip install abxbus      # see ./abxbus-ts/README.md for JS instructions
 ```
@@ -715,6 +716,9 @@ There are two ways to get [return values](https://abxbus.archivebox.io/features/
 **1. Have handlers return their values directly, which puts them in `event.event_results`:**
 
 ```python
+import asyncio
+from abxbus import BaseEvent, EventBus
+
 class DoSomeMathEvent(BaseEvent[int]):  # BaseEvent[int] = handlers are validated as returning int
     a: int
     b: int
@@ -725,9 +729,15 @@ class DoSomeMathEvent(BaseEvent[int]):  # BaseEvent[int] = handlers are validate
 def do_some_math(event: DoSomeMathEvent) -> int:
     return event.a + event.b
 
+event_bus = EventBus()
 event_bus.on(DoSomeMathEvent, do_some_math)
-event = await event_bus.emit(DoSomeMathEvent(a=100, b=120)).now(first_result=True)
-print(await event.event_result())
+
+async def main():
+    event = await event_bus.emit(DoSomeMathEvent(a=100, b=120)).now(first_result=True)
+    print(await event.event_result())
+    await event_bus.destroy()
+
+asyncio.run(main())
 # 220
 ```
 
@@ -740,14 +750,32 @@ You can use these helpers to interact with the results returned by handlers:
 **2. Have the handler do the work, then emit another event containing the result value, which other code can find:**
 
 ```python
-def do_some_math(event: DoSomeMathEvent[int]) -> int:
+import asyncio
+from abxbus import BaseEvent, EventBus
+
+class DoSomeMathEvent(BaseEvent):
+    a: int
+    b: int
+
+class MathCompleteEvent(BaseEvent):
+    final_sum: int
+
+event_bus = EventBus()
+
+async def do_some_math(event: DoSomeMathEvent) -> None:
     result = event.a + event.b
-    event.emit(MathCompleteEvent(final_sum=result))
+    await event.emit(MathCompleteEvent(final_sum=result)).now()
 
 event_bus.on(DoSomeMathEvent, do_some_math)
-await event_bus.emit(DoSomeMathEvent(a=100, b=120)).now()
-result_event = await event_bus.find(MathCompleteEvent, past=False, future=30)
-print(result_event.final_sum)
+
+async def main():
+    await event_bus.emit(DoSomeMathEvent(a=100, b=120)).now()
+    result_event = await event_bus.find(MathCompleteEvent, past=True, future=False)
+    assert result_event is not None
+    print(result_event.final_sum)
+    await event_bus.destroy()
+
+asyncio.run(main())
 # 220
 ```
 
@@ -759,25 +787,35 @@ AbxBus supports optional [strict typing for Event handler return values](https:/
 For example if you use `BaseEvent[str]`, abxbus would enforce that all handler functions must return `str | None` at compile-time via IDE/`mypy`/`pyright`/`ty` type hints, and at runtime when each handler finishes.
 
 ```python
+import asyncio
+from abxbus import BaseEvent, EventBus
+
 class ScreenshotEvent(BaseEvent[bytes]):  # BaseEvent[bytes] will enforce that handlers can only return bytes
     width: int
     height: int
 
 async def on_ScreenshotEvent(event: ScreenshotEvent) -> bytes:
     return b'someimagebytes...'  # ✅ IDE type-hints & runtime both enforce return type matches expected: bytes
-    return 123                   # ❌ will show mypy/pyright issue + raise TypeError if the wrong type is returned
+    # return 123                 # ❌ will show mypy/pyright issue + raise TypeError if the wrong type is returned
 
+event_bus = EventBus()
 event_bus.on(ScreenshotEvent, on_ScreenshotEvent)
 
-# Handler return values are automatically validated against the bytes type
-event = await event_bus.emit(ScreenshotEvent(...)).now(first_result=True)
-returned_bytes = await event.event_result()
-assert isinstance(returned_bytes, bytes)
+async def main():
+    # Handler return values are automatically validated against the bytes type
+    event = await event_bus.emit(ScreenshotEvent(width=100, height=100)).now(first_result=True)
+    returned_bytes = await event.event_result()
+    assert isinstance(returned_bytes, bytes)
+    await event_bus.destroy()
+
+asyncio.run(main())
 ```
 
 **Important:** The validation uses Pydantic's `TypeAdapter`, which validates but does not coerce types. Handlers must return the exact type specified or `None`:
 
 ```python
+from abxbus import BaseEvent
+
 class StringEvent(BaseEvent[str]):
     pass
 
@@ -793,6 +831,11 @@ def bad_handler(event: StringEvent) -> str:
 This also works with complex types and Pydantic models:
 
 ```python
+import asyncio
+from uuid import UUID
+from pydantic import BaseModel
+from abxbus import BaseEvent, EventBus
+
 class EmailMessage(BaseModel):
     subject: str
     content_len: int
@@ -802,14 +845,27 @@ class FetchInboxEvent(BaseEvent[list[EmailMessage]]):
     account_id: UUID
     auth_key: str
 
-async def fetch_from_gmail(event: FetchInboxEvent) -> list[EmailMessage]:
-    return [EmailMessage(subject=msg.subj, ...) for msg in GmailAPI.get_msgs(event.account_id, ...)]
+class GmailAPI:
+    @staticmethod
+    def get_msgs(account_id: UUID) -> list[EmailMessage]:
+        return [EmailMessage(subject=f"inbox-{account_id}", content_len=42, email_from="sender@example.com")]
 
+async def fetch_from_gmail(event: FetchInboxEvent) -> list[EmailMessage]:
+    return GmailAPI.get_msgs(event.account_id)
+
+event_bus = EventBus()
 event_bus.on(FetchInboxEvent, fetch_from_gmail)
 
-# Return values are automatically validated as list[EmailMessage]
-event = await event_bus.emit(FetchInboxEvent(account_id='124', ...)).now(first_result=True)
-email_list = await event.event_result()
+async def main():
+    # Return values are automatically validated as list[EmailMessage]
+    event = await event_bus.emit(
+        FetchInboxEvent(account_id=UUID("00000000-0000-4000-8000-000000000124"), auth_key="secret")
+    ).now(first_result=True)
+    email_list = await event.event_result()
+    assert email_list[0].email_from == "sender@example.com"
+    await event_bus.destroy()
+
+asyncio.run(main())
 ```
 
 For pure Python usage, `event_result_type` can be any Python/Pydantic type you want. For cross-language JSON roundtrips, object-like shapes (e.g. `TypedDict`, `dataclass`, model-like dict schemas) rehydrate on Python as Pydantic models, map keys are constrained to JSON object string keys, and fine-grained string constraints/custom field validator logic is not preserved.
@@ -824,7 +880,14 @@ For pure Python usage, `event_result_type` can be any Python/Pydantic type you w
 ContextVars set before `emit()` are [automatically propagated to event handlers](https://abxbus.archivebox.io/features/context-propagation). This is essential for request-scoped context like request IDs, user sessions, or tracing spans:
 
 ```python
+import asyncio
 from contextvars import ContextVar
+from abxbus import BaseEvent, EventBus
+
+class MyEvent(BaseEvent[str]):
+    pass
+
+bus = EventBus()
 
 # Define your context variables
 request_id: ContextVar[str] = ContextVar('request_id', default='<unset>')
@@ -842,12 +905,30 @@ request_id.set('req-12345')
 user_id.set('user-abc')
 
 # Handler will see request_id='req-12345' and user_id='user-abc'
-await bus.emit(MyEvent()).now()
+async def main():
+    await bus.emit(MyEvent()).now()
+    await bus.destroy()
+
+asyncio.run(main())
 ```
 
 **Context propagates through nested handlers:**
 
 ```python
+import asyncio
+from contextvars import ContextVar
+from abxbus import BaseEvent, EventBus
+
+request_id: ContextVar[str] = ContextVar('request_id', default='<unset>')
+
+class ParentEvent(BaseEvent[str]):
+    pass
+
+class ChildEvent(BaseEvent[str]):
+    pass
+
+bus = EventBus()
+
 async def parent_handler(event: ParentEvent) -> str:
     # Context is captured at emit time
     print(f"Parent sees: {request_id.get()}")  # 'req-12345'
@@ -860,6 +941,16 @@ async def child_handler(event: ChildEvent) -> str:
     # Child also sees the original emit context
     print(f"Child sees: {request_id.get()}")  # 'req-12345'
     return "child_done"
+
+bus.on(ParentEvent, parent_handler)
+bus.on(ChildEvent, child_handler)
+
+async def main():
+    request_id.set('req-12345')
+    await bus.emit(ParentEvent()).now()
+    await bus.destroy()
+
+asyncio.run(main())
 ```
 
 **Context isolation between emits:**
@@ -867,14 +958,33 @@ async def child_handler(event: ChildEvent) -> str:
 Each emit captures its own context snapshot. Concurrent emits with different context values are properly isolated:
 
 ```python
-request_id.set('req-A')
-event_a = bus.emit(MyEvent())  # Handler A sees 'req-A'
+import asyncio
+from contextvars import ContextVar
+from abxbus import BaseEvent, EventBus
 
-request_id.set('req-B')
-event_b = bus.emit(MyEvent())  # Handler B sees 'req-B'
+request_id: ContextVar[str] = ContextVar('request_id', default='<unset>')
 
-await event_a.now()  # Still sees 'req-A'
-await event_b.now()  # Still sees 'req-B'
+class MyEvent(BaseEvent[str]):
+    pass
+
+async def handler(event: MyEvent) -> str:
+    return request_id.get()
+
+bus = EventBus()
+bus.on(MyEvent, handler)
+
+async def main():
+    request_id.set('req-A')
+    event_a = bus.emit(MyEvent())  # Handler A sees 'req-A'
+
+    request_id.set('req-B')
+    event_b = bus.emit(MyEvent())  # Handler B sees 'req-B'
+
+    await event_a.now()  # Still sees 'req-A'
+    await event_b.now()  # Still sees 'req-B'
+    await bus.destroy()
+
+asyncio.run(main())
 ```
 
 > [!NOTE]
@@ -890,6 +1000,9 @@ await event_b.now()  # Still sees 'req-B'
 EventBus includes [automatic memory management](https://abxbus.archivebox.io/api/eventbus#shared-configuration-semantics) to prevent unbounded growth in long-running applications:
 
 ```python
+import asyncio
+from abxbus import EventBus
+
 # Create a bus with memory limits (default: 100 events)
 bus = EventBus(max_history_size=100)  # Keep max 100 events in history
 
@@ -901,6 +1014,8 @@ bus = EventBus(max_history_size=0)
 
 # Or reject new emits when history is full (instead of dropping old history)
 bus = EventBus(max_history_size=100, max_history_drop=False)
+
+asyncio.run(bus.destroy())
 ```
 
 **Automatic Cleanup:**
@@ -914,13 +1029,33 @@ bus = EventBus(max_history_size=100, max_history_drop=False)
 **Manual Memory Management:**
 
 ```python
+import asyncio
+from abxbus import BaseEvent, EventBus
+
+class ProcessRequestEvent(BaseEvent[str]):
+    request_id: str
+
+class EventService:
+    bus: EventBus
+
+    async def on_ProcessRequestEvent(self, event: ProcessRequestEvent) -> str:
+        return f"ok:{event.request_id}"
+
+    def __init__(self):
+        self.bus = EventBus()
+        self.bus.on(ProcessRequestEvent, self.on_ProcessRequestEvent)
+
 # For request-scoped buses (e.g. web servers), clear all memory after each request
-try:
-    event_service = EventService()  # Creates internal EventBus
-    await event_service.process_request()
-finally:
-    # Clear all event history and remove from global tracking
-    await event_service.eventbus.destroy(clear=True)
+async def main():
+    try:
+        event_service = EventService()  # Creates internal EventBus
+        event = await event_service.bus.emit(ProcessRequestEvent(request_id="req-1")).now()
+        assert await event.event_result() == "ok:req-1"
+    finally:
+        # Clear all event history and remove from global tracking
+        await event_service.eventbus.destroy(clear=True)
+
+asyncio.run(main())
 ```
 
 **Memory Monitoring:**
@@ -945,6 +1080,19 @@ The harsh tradeoff is less deterministic ordering as handler execution order wil
 (It's very hard to write non-flaky/reliable applications when handler execution order is not guaranteed.)
 
 ```python
+import asyncio
+import time
+from abxbus import BaseEvent, EventBus
+
+class DataEvent(BaseEvent):
+    pass
+
+async def slow_handler_1(event: DataEvent) -> None:
+    await asyncio.sleep(0.01)
+
+async def slow_handler_2(event: DataEvent) -> None:
+    await asyncio.sleep(0.01)
+
 # Create bus with parallel handler execution
 bus = EventBus(event_handler_concurrency='parallel')
 
@@ -952,8 +1100,13 @@ bus = EventBus(event_handler_concurrency='parallel')
 bus.on('DataEvent', slow_handler_1)  # Takes 1 second
 bus.on('DataEvent', slow_handler_2)  # Takes 1 second
 
-start = time.time()
-await bus.emit(DataEvent()).now()
+async def main():
+    start = time.time()
+    await bus.emit(DataEvent()).now()
+    assert time.time() - start < 0.1
+    await bus.destroy()
+
+asyncio.run(main())
 # Total time: ~1 second (not 2)
 ```
 
@@ -967,8 +1120,15 @@ await bus.emit(DataEvent()).now()
 [Middlewares](https://abxbus.archivebox.io/integrations/middlewares) can observe or mutate the `EventResult` at each step, emit additional events, or trigger other side effects (metrics, retries, auth checks, etc.).
 
 ```python
-from abxbus import EventBus
-from abxbus.middlewares import LoggerEventBusMiddleware, WALEventBusMiddleware, SQLiteHistoryMirrorMiddleware, OtelTracingMiddleware
+import asyncio
+from abxbus import BaseEvent, EventBus
+from abxbus.middlewares import LoggerEventBusMiddleware, OtelTracingMiddleware, SQLiteHistoryMirrorMiddleware, WALEventBusMiddleware
+
+class SecondEventAbc(BaseEvent):
+    some_key: str
+
+async def handler(event: SecondEventAbc) -> str:
+    return event.some_key
 
 bus = EventBus(
     name='MyBus',
@@ -980,8 +1140,13 @@ bus = EventBus(
         # ...
     ],
 )
+bus.on(SecondEventAbc, handler)
 
-await bus.emit(SecondEventAbc(some_key="banana")).now()
+async def main():
+    await bus.emit(SecondEventAbc(some_key="banana")).now()
+    await bus.destroy()
+
+asyncio.run(main())
 # will persist all events to sqlite + events.jsonl + events.log
 ```
 

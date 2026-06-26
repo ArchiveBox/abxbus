@@ -178,7 +178,7 @@ func TestHandlerTimeoutResolutionMatchesPrecedence(t *testing.T) {
 	})
 	bus.On("TimeoutDefaultsEvent", "default_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		sleepFor := 80 * time.Millisecond
-		if e.Payload["scenario"] == "event-cap" {
+		if e.EventExtraPayload["scenario"] == "event-cap" {
 			sleepFor = 150 * time.Millisecond
 		}
 		select {
@@ -190,7 +190,7 @@ func TestHandlerTimeoutResolutionMatchesPrecedence(t *testing.T) {
 	}, nil)
 	bus.On("TimeoutDefaultsEvent", "overridden_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		sleepFor := 80 * time.Millisecond
-		if e.Payload["scenario"] == "event-cap" {
+		if e.EventExtraPayload["scenario"] == "event-cap" {
 			sleepFor = 150 * time.Millisecond
 		}
 		select {

@@ -1358,8 +1358,8 @@ func TestEventClassModelFieldsExposePayloadAndResultSchemas(t *testing.T) {
 	if event.EventType != "MyEvent" {
 		t.Fatalf("event type mismatch: %s", event.EventType)
 	}
-	if event.Payload["some_field"] != "abc" || event.Payload["count"] != float64(3) {
-		t.Fatalf("payload mismatch: %#v", event.Payload)
+	if event.EventExtraPayload["some_field"] != "abc" || event.EventExtraPayload["count"] != float64(3) {
+		t.Fatalf("payload mismatch: %#v", event.EventExtraPayload)
 	}
 	if !reflect.DeepEqual(event.EventResultType, resultSchema) {
 		t.Fatalf("event_result_type mismatch: event=%#v model=%#v", event.EventResultType, resultSchema)
@@ -1389,19 +1389,19 @@ func TestEmitAcceptsTypedStructAndDerivesPayloadAndConfig(t *testing.T) {
 	if !reflect.DeepEqual(event.EventResultType, map[string]any{"type": "object"}) {
 		t.Fatalf("event result type mismatch: %#v", event.EventResultType)
 	}
-	if event.Payload["Url"] != "https://example.com" || event.Payload["UserID"] != "user-1" {
-		t.Fatalf("payload casing mismatch: %#v", event.Payload)
+	if event.EventExtraPayload["Url"] != "https://example.com" || event.EventExtraPayload["UserID"] != "user-1" {
+		t.Fatalf("payload casing mismatch: %#v", event.EventExtraPayload)
 	}
-	if _, ok := event.Payload["event_timeout"]; ok {
-		t.Fatalf("event config leaked into payload: %#v", event.Payload)
+	if _, ok := event.EventExtraPayload["event_timeout"]; ok {
+		t.Fatalf("event config leaked into payload: %#v", event.EventExtraPayload)
 	}
 
 	derived := bus.Emit(DerivedNameEvent{Url: "https://example.org"})
 	if derived.EventType != "DerivedNameEvent" {
 		t.Fatalf("derived event type mismatch: %s", derived.EventType)
 	}
-	if derived.Payload["Url"] != "https://example.org" {
-		t.Fatalf("derived payload mismatch: %#v", derived.Payload)
+	if derived.EventExtraPayload["Url"] != "https://example.org" {
+		t.Fatalf("derived payload mismatch: %#v", derived.EventExtraPayload)
 	}
 }
 
@@ -1411,7 +1411,14 @@ func TestTypedEventPayloadAndResultHelpers(t *testing.T) {
 		return addResult{Sum: payload.A + payload.B}, nil
 	}, nil)
 
-	event := abxbus.MustNewEvent("AddEvent", addPayload{A: 4, B: 9}, abxbus.ResultType[addResult]())
+	event := abxbus.NewBaseEvent("AddEvent", map[string]any{"a": 4, "b": 9})
+	event.EventResultType = map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"sum": map[string]any{"type": "integer"},
+		},
+		"required": []any{"sum"},
+	}
 	result, err := bus.Emit(event).EventResult()
 	if err != nil {
 		t.Fatal(err)
@@ -1445,7 +1452,7 @@ func TestOnSupportsOptionalContextHandlerSignatures(t *testing.T) {
 		return addResult{Sum: payload.A + payload.B}, nil
 	}, nil)
 
-	noCtxEvent := bus.Emit(abxbus.MustNewEvent("TypedNoContextEvent", addPayload{A: 2, B: 3}, abxbus.ResultType[addResult]()))
+	noCtxEvent := bus.Emit(abxbus.NewBaseEvent("TypedNoContextEvent", map[string]any{"a": 2, "b": 3}))
 	if _, err := noCtxEvent.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -1461,7 +1468,7 @@ func TestOnSupportsOptionalContextHandlerSignatures(t *testing.T) {
 		t.Fatalf("expected typed no-context result sum=5, got %#v", noCtxTypedResult)
 	}
 
-	ctxEvent := bus.Emit(abxbus.MustNewEvent("TypedWithContextEvent", addPayload{A: 4, B: 6}, abxbus.ResultType[addResult]()))
+	ctxEvent := bus.Emit(abxbus.NewBaseEvent("TypedWithContextEvent", map[string]any{"a": 4, "b": 6}))
 	if _, err := ctxEvent.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -1525,7 +1532,7 @@ func TestOnSupportsNamedHandlerFunctionTypes(t *testing.T) {
 		return addResult{Sum: payload.A + payload.B}, nil
 	}), nil)
 
-	noContextEvent := bus.Emit(abxbus.MustNewEvent("TypedNamedNoContextEvent", addPayload{A: 3, B: 4}, abxbus.ResultType[addResult]()))
+	noContextEvent := bus.Emit(abxbus.NewBaseEvent("TypedNamedNoContextEvent", map[string]any{"a": 3, "b": 4}))
 	if _, err := noContextEvent.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -1541,7 +1548,7 @@ func TestOnSupportsNamedHandlerFunctionTypes(t *testing.T) {
 		t.Fatalf("expected named typed no-context result sum=7, got %#v", noContextTypedResult)
 	}
 
-	contextEvent := bus.Emit(abxbus.MustNewEvent("TypedNamedWithContextEvent", addPayload{A: 5, B: 8}, abxbus.ResultType[addResult]()))
+	contextEvent := bus.Emit(abxbus.NewBaseEvent("TypedNamedWithContextEvent", map[string]any{"a": 5, "b": 8}))
 	if _, err := contextEvent.Now(); err != nil {
 		t.Fatal(err)
 	}
@@ -1571,7 +1578,7 @@ func TestOnNamedAnyHandlerAcceptsNilPayload(t *testing.T) {
 	}), nil)
 
 	event := abxbus.NewBaseEvent("TypedNamedAnyNilPayloadEvent", nil)
-	event.Payload = nil
+	event.EventExtraPayload = nil
 	result, err := bus.Emit(event).EventResult()
 	if err != nil {
 		t.Fatal(err)
@@ -1597,7 +1604,14 @@ func TestTypedEventWithResultSchemaValidatesHandlerReturnAtRuntime(t *testing.T)
 		return map[string]any{"sum": "not-an-int"}, nil
 	}, nil)
 
-	event := abxbus.MustNewEvent("TypedSchemaEvent", addPayload{A: 1, B: 2}, abxbus.ResultType[addResult]())
+	event := abxbus.NewBaseEvent("TypedSchemaEvent", map[string]any{"a": 1, "b": 2})
+	event.EventResultType = map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"sum": map[string]any{"type": "integer"},
+		},
+		"required": []any{"sum"},
+	}
 	if _, err := bus.Emit(event).EventResult(); err == nil || !strings.Contains(err.Error(), "EventHandlerResultSchemaError") {
 		t.Fatalf("expected typed result schema error, got %v", err)
 	}

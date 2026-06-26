@@ -46,7 +46,7 @@ pub struct BaseEventData {
     #[serde(skip)]
     pub event_result_order: Vec<String>,
     #[serde(flatten)]
-    pub payload: Map<String, Value>,
+    pub event_extra_payload: Map<String, Value>,
 }
 
 pub struct BaseEvent {
@@ -254,7 +254,7 @@ impl BaseEvent {
                 event_completed_at,
                 event_results,
                 event_result_order: Vec::new(),
-                payload,
+                event_extra_payload: payload,
             }),
             completed: Event::new(),
             runtime_eventbus_id: Mutex::new(None),
@@ -296,6 +296,12 @@ impl BaseEvent {
             "bus", "emit", "now", "wait", "toString", "toJSON", "fromJSON",
         ];
         for key in payload.keys() {
+            if key == "event_extra_payload" {
+                return Err(
+                    "Event JSON must be flat; event_extra_payload is runtime-only and must not appear on the wire"
+                        .to_string(),
+                );
+            }
             if RESERVED_USER_EVENT_FIELDS.contains(&key.as_str()) {
                 return Err(format!(
                     "Reserved runtime field is not allowed in payload: {key}"

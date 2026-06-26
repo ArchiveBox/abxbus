@@ -95,7 +95,7 @@ func TestEventBusSerializationRoundtripPreservesConfigHandlersHistory(t *testing
 		t.Fatalf("expected one history entry after roundtrip, got %d", restored.EventHistory.Size())
 	}
 	restoredEvent := restored.EventHistory.GetEvent(e.EventID)
-	if restoredEvent == nil || restoredEvent.Payload["k"] != "v" {
+	if restoredEvent == nil || restoredEvent.EventExtraPayload["k"] != "v" {
 		t.Fatalf("restored history payload mismatch")
 	}
 	if len(restoredEvent.EventResults) != 1 {

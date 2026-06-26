@@ -263,7 +263,7 @@ func TestZeroHistoryBackpressureWithFindFutureStillResolvesNewEvents(t *testing.
 	})
 	t.Cleanup(bus.Destroy)
 	bus.On("ZeroHistoryEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		return "ok:" + event.Payload["value"].(string), nil
+		return "ok:" + event.EventExtraPayload["value"].(string), nil
 	}, nil)
 
 	first := bus.Emit(abxbus.NewBaseEvent("ZeroHistoryEvent", map[string]any{"value": "first"}))
@@ -288,13 +288,13 @@ func TestZeroHistoryBackpressureWithFindFutureStillResolvesNewEvents(t *testing.
 		capturedFutureID <- futureEvent.EventID
 	}()
 	futureMatch, err := bus.FindEventName("ZeroHistoryEvent", func(event *abxbus.BaseEvent) bool {
-		return event.Payload["value"] == "future"
+		return event.EventExtraPayload["value"] == "future"
 	}, &abxbus.FindOptions{Past: false, Future: 1.0})
 	if err != nil {
 		t.Fatal(err)
 	}
 	capturedID := <-capturedFutureID
-	if futureMatch == nil || futureMatch.Payload["value"] != "future" || futureMatch.EventID != capturedID {
+	if futureMatch == nil || futureMatch.EventExtraPayload["value"] != "future" || futureMatch.EventID != capturedID {
 		t.Fatalf("future find mismatch: got %#v captured=%s", futureMatch, capturedID)
 	}
 	if !bus.WaitUntilIdle(testFloat64Ptr(2)) {
@@ -392,7 +392,7 @@ func TestPendingQueueFindVisibilityTransitionsToCompletedAfterRelease(t *testing
 	release := make(chan struct{})
 	var once sync.Once
 	bus.On("PendingVisibilityEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		if event.Payload["tag"] == "blocking" {
+		if event.EventExtraPayload["tag"] == "blocking" {
 			once.Do(func() { close(started) })
 			select {
 			case <-release:
@@ -400,7 +400,7 @@ func TestPendingQueueFindVisibilityTransitionsToCompletedAfterRelease(t *testing
 				return nil, ctx.Err()
 			}
 		}
-		return "ok:" + event.Payload["tag"].(string), nil
+		return "ok:" + event.EventExtraPayload["tag"].(string), nil
 	}, nil)
 
 	blocking := bus.Emit(abxbus.NewBaseEvent("PendingVisibilityEvent", map[string]any{"tag": "blocking"}))
@@ -409,7 +409,7 @@ func TestPendingQueueFindVisibilityTransitionsToCompletedAfterRelease(t *testing
 	queued := bus.Emit(abxbus.NewBaseEvent("PendingVisibilityEvent", map[string]any{"tag": "queued"}))
 	time.Sleep(10 * time.Millisecond)
 	foundQueued, err := bus.FindEventName("PendingVisibilityEvent", func(event *abxbus.BaseEvent) bool {
-		return event.Payload["tag"] == "queued"
+		return event.EventExtraPayload["tag"] == "queued"
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		close(release)
@@ -440,7 +440,7 @@ func TestHistoryBackpressureRejectsOverflowAndPreservesFindableHistory(t *testin
 	})
 	t.Cleanup(bus.Destroy)
 	bus.On("BackpressureEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		return "ok:" + event.Payload["value"].(string), nil
+		return "ok:" + event.EventExtraPayload["value"].(string), nil
 	}, nil)
 
 	first := bus.Emit(abxbus.NewBaseEvent("BackpressureEvent", map[string]any{"value": "first"}))

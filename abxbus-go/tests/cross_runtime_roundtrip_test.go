@@ -200,6 +200,13 @@ func runRuntimeRoundtrip(t *testing.T, runtime string, mode string, payload any)
 
 func assertJSONEqual(t *testing.T, expected any, actual any) {
 	t.Helper()
+	// event_extra_payload is an in-memory escape hatch only; wire JSON must stay flat.
+	if data, err := json.Marshal(actual); err == nil && strings.Contains(string(data), "event_extra_payload") {
+		t.Fatalf("actual JSON emitted event_extra_payload wrapper: %s", data)
+	}
+	if data, err := json.Marshal(expected); err == nil && strings.Contains(string(data), "event_extra_payload") {
+		t.Fatalf("expected fixture used event_extra_payload wrapper: %s", data)
+	}
 	var expectedJSON any
 	expectedData, err := json.Marshal(expected)
 	if err != nil {
@@ -217,6 +224,13 @@ func assertJSONEqual(t *testing.T, expected any, actual any) {
 
 func assertEventRoundtripEqualAllowingSchemaNormalization(t *testing.T, expected any, actual any) {
 	t.Helper()
+	// event_extra_payload is an in-memory escape hatch only; wire JSON must stay flat.
+	if data, err := json.Marshal(actual); err == nil && strings.Contains(string(data), "event_extra_payload") {
+		t.Fatalf("actual event JSON emitted event_extra_payload wrapper: %s", data)
+	}
+	if data, err := json.Marshal(expected); err == nil && strings.Contains(string(data), "event_extra_payload") {
+		t.Fatalf("expected event fixture used event_extra_payload wrapper: %s", data)
+	}
 	expectedEvents := normalizeEventList(t, expected)
 	actualEvents := normalizeEventList(t, actual)
 	if len(expectedEvents) != len(actualEvents) {
@@ -503,6 +517,12 @@ func roundtripEventFixture(eventType string, label string, resultSchema map[stri
 		"event_started_at":               nil,
 		"event_completed_at":             nil,
 		"label":                          label,
+		// Known-event extras must survive every runtime as flat top-level fields.
+		"future_unrecognized_field": map[string]any{
+			"source": "go",
+			"index":  idSuffix,
+			"nested": []any{"kept", map[string]any{"event_type": eventType}},
+		},
 	}
 }
 
@@ -627,7 +647,7 @@ func TestJSONLEventBridgeForwardsEventsThroughFile(t *testing.T) {
 
 	select {
 	case inbound := <-received:
-		if inbound.EventType != "JSONLTestEvent" || inbound.Payload["value"] != "hello" {
+		if inbound.EventType != "JSONLTestEvent" || inbound.EventExtraPayload["value"] != "hello" {
 			t.Fatalf("unexpected inbound event: %#v", inbound)
 		}
 	case <-time.After(2 * time.Second):
@@ -664,8 +684,8 @@ func TestJSONLEventBridgeIgnoresMalformedLinesAndKeepsPolling(t *testing.T) {
 
 	select {
 	case inbound := <-received:
-		if inbound.Payload["ok"] != true {
-			t.Fatalf("unexpected payload: %#v", inbound.Payload)
+		if inbound.EventExtraPayload["ok"] != true {
+			t.Fatalf("unexpected payload: %#v", inbound.EventExtraPayload)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for valid event after malformed line")
@@ -746,7 +766,7 @@ func measureJSONLBridgeWarmLatencyMS(t *testing.T, jsonlPath string) float64 {
 	warmupOnce := sync.Once{}
 	measuredOnce := sync.Once{}
 	receiver.On("IPCPingEvent", "latency_capture", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		label, _ := event.Payload["label"].(string)
+		label, _ := event.EventExtraPayload["label"].(string)
 		countsMu.Lock()
 		defer countsMu.Unlock()
 		if strings.HasPrefix(label, warmupPrefix) {

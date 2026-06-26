@@ -1518,7 +1518,7 @@ fn test_forwarded_event_uses_processing_bus_defaults_unless_explicit_overrides_a
             let mode = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("mode")
                 .and_then(serde_json::Value::as_str)
                 .expect("mode")
@@ -1536,7 +1536,7 @@ fn test_forwarded_event_uses_processing_bus_defaults_unless_explicit_overrides_a
             let mode = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("mode")
                 .and_then(serde_json::Value::as_str)
                 .expect("mode")

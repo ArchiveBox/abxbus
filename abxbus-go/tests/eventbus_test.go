@@ -534,16 +534,16 @@ func TestEventResetCreatesFreshPendingEventForCrossBusDispatch(t *testing.T) {
 	seenB := []string{}
 
 	busA.On("ResetCoverageEvent", "record_a", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		if label, ok := event.Payload["label"].(string); ok {
+		if label, ok := event.EventExtraPayload["label"].(string); ok {
 			seenA = append(seenA, label)
 		}
-		return "a:" + event.Payload["label"].(string), nil
+		return "a:" + event.EventExtraPayload["label"].(string), nil
 	}, nil)
 	busB.On("ResetCoverageEvent", "record_b", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		if label, ok := event.Payload["label"].(string); ok {
+		if label, ok := event.EventExtraPayload["label"].(string); ok {
 			seenB = append(seenB, label)
 		}
-		return "b:" + event.Payload["label"].(string), nil
+		return "b:" + event.EventExtraPayload["label"].(string), nil
 	}, nil)
 
 	completed := busA.Emit(abxbus.NewBaseEvent("ResetCoverageEvent", map[string]any{"label": "hello"}))

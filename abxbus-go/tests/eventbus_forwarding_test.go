@@ -390,7 +390,7 @@ func TestForwardedEventUsesProcessingBusDefaults(t *testing.T) {
 		if e.EventTimeout != nil || e.EventHandlerConcurrency != "" || e.EventHandlerCompletion != "" {
 			t.Fatalf("forwarded event should keep defaults unset in handler: %#v", e)
 		}
-		mode := e.Payload["mode"].(string)
+		mode := e.EventExtraPayload["mode"].(string)
 		appendEntry(mode + ":b1_start")
 		h1Started <- struct{}{}
 		<-release
@@ -401,7 +401,7 @@ func TestForwardedEventUsesProcessingBusDefaults(t *testing.T) {
 		if e.EventTimeout != nil || e.EventHandlerConcurrency != "" || e.EventHandlerCompletion != "" {
 			t.Fatalf("forwarded event should keep defaults unset in handler: %#v", e)
 		}
-		mode := e.Payload["mode"].(string)
+		mode := e.EventExtraPayload["mode"].(string)
 		appendEntry(mode + ":b2_start")
 		h2Started <- struct{}{}
 		appendEntry(mode + ":b2_end")
@@ -478,7 +478,7 @@ func TestForwardedEventPreservesExplicitHandlerConcurrencyOverride(t *testing.T)
 	release := make(chan struct{})
 
 	busB.On("ForwardedDefaultsChildEvent", "h1", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		mode := e.Payload["mode"].(string)
+		mode := e.EventExtraPayload["mode"].(string)
 		appendEntry(mode + ":b1_start")
 		h1Started <- struct{}{}
 		<-release
@@ -486,7 +486,7 @@ func TestForwardedEventPreservesExplicitHandlerConcurrencyOverride(t *testing.T)
 		return "b1", nil
 	}, nil)
 	busB.On("ForwardedDefaultsChildEvent", "h2", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		mode := e.Payload["mode"].(string)
+		mode := e.EventExtraPayload["mode"].(string)
 		appendEntry(mode + ":b2_start")
 		h2Started <- struct{}{}
 		appendEntry(mode + ":b2_end")
@@ -641,7 +641,7 @@ func TestEventsAreProcessedInFIFOOrder(t *testing.T) {
 	handlerStartTimes := []time.Time{}
 	bus.On("OrderEvent", "order_handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		handlerStartTimes = append(handlerStartTimes, time.Now())
-		order := event.Payload["order"].(int)
+		order := event.EventExtraPayload["order"].(int)
 		if order%2 == 0 {
 			time.Sleep(30 * time.Millisecond)
 		} else {

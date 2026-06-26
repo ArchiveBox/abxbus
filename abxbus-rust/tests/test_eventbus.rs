@@ -355,7 +355,7 @@ fn test_dispatch_returns_pending_event_with_correct_initial_state() {
         assert_eq!(inner.event_type, "TestEvent");
         assert!(!inner.event_id.is_empty());
         assert!(!inner.event_created_at.is_empty());
-        assert_eq!(inner.payload.get("data"), Some(&json!("hello")));
+        assert_eq!(inner.event_extra_payload.get("data"), Some(&json!("hello")));
         assert!(inner.event_path.contains(&bus.label()));
     }
 
@@ -722,9 +722,9 @@ fn test_emit_and_result() {
         let inner = queued.inner.lock();
         assert_eq!(inner.event_type, "UserActionEvent");
         assert_eq!(inner.event_version, "0.0.1");
-        assert_eq!(inner.payload["action"], json!("login"));
+        assert_eq!(inner.event_extra_payload["action"], json!("login"));
         assert_eq!(
-            inner.payload["user_id"],
+            inner.event_extra_payload["user_id"],
             json!("50d357df-e68c-7111-8a6c-7018569514b0")
         );
         assert!(!inner.event_id.is_empty());
@@ -803,7 +803,7 @@ fn test_write_ahead_log_captures_all_events() {
         let event = runtime.get(event_id).expect("history event");
         let inner = event.inner.lock();
         assert_eq!(inner.event_type, "UserActionEvent");
-        assert_eq!(inner.payload["action"], json!(format!("action_{index}")));
+        assert_eq!(inner.event_extra_payload["action"], json!(format!("action_{index}")));
         match inner.event_status {
             EventStatus::Completed => completed += 1,
             EventStatus::Pending => pending += 1,
@@ -846,7 +846,7 @@ fn test_history_is_trimmed_to_max_history_size_completed_events_removed_first() 
         .event_history_ids()
         .iter()
         .map(|event_id| {
-            runtime[event_id].inner.lock().payload["seq"]
+            runtime[event_id].inner.lock().event_extra_payload["seq"]
                 .as_i64()
                 .expect("seq")
         })
@@ -1603,7 +1603,7 @@ fn test_handler_registration() {
             specific
                 .lock()
                 .expect("specific lock")
-                .push(event.inner.lock().payload["action"].clone());
+                .push(event.inner.lock().event_extra_payload["action"].clone());
             Ok(json!("user_handled"))
         }
     });
@@ -1754,7 +1754,7 @@ fn test_event_version_defaults_and_overrides() {
     let restored = BaseEvent::from_json_value(dispatched.to_json_value());
     assert_eq!(restored.inner.lock().event_version, "1.2.3");
     assert_eq!(restored.inner.lock().event_type, "VersionedEvent");
-    assert_eq!(restored.inner.lock().payload["data"], json!("queued"));
+    assert_eq!(restored.inner.lock().event_extra_payload["data"], json!("queued"));
     bus.destroy();
 }
 
@@ -1966,7 +1966,7 @@ fn test_class_and_instance_method_handlers() {
             Ok(json!({
                 "processor": self.name,
                 "value": self.value,
-                "action": event.inner.lock().payload["action"].clone(),
+                "action": event.inner.lock().event_extra_payload["action"].clone(),
             }))
         }
 
@@ -1975,7 +1975,7 @@ fn test_class_and_instance_method_handlers() {
             Ok(json!({
                 "processor": self.name,
                 "value": self.value * 2,
-                "action": event.inner.lock().payload["action"].clone(),
+                "action": event.inner.lock().event_extra_payload["action"].clone(),
             }))
         }
 
@@ -2166,7 +2166,7 @@ fn assert_mixed_delay_handlers_maintain_order() {
         let collected_orders = collected_for_handler.clone();
         let handler_start_orders = starts_for_handler.clone();
         async move {
-            let order = event.inner.lock().payload["order"]
+            let order = event.inner.lock().event_extra_payload["order"]
                 .as_i64()
                 .expect("order payload");
             handler_start_orders
@@ -2237,7 +2237,7 @@ fn test_event_with_complex_data() {
     let _ = block_on(event.wait());
 
     assert_eq!(
-        event.inner.lock().payload["details"]["nested"]["list"][2]["inner"],
+        event.inner.lock().event_extra_payload["details"]["nested"]["list"][2]["inner"],
         json!("value")
     );
     bus.destroy();
@@ -3606,7 +3606,7 @@ fn test_custom_handler_recursion_depth_allows_deeper_nested_handlers() {
         let bus = bus_for_handler.clone();
         let seen_levels = seen_for_handler.clone();
         async move {
-            let payload = event.inner.lock().payload.clone();
+            let payload = event.inner.lock().event_extra_payload.clone();
             let level = payload["level"].as_i64().expect("level");
             let max_level = payload["max_level"].as_i64().expect("max_level");
             seen_levels.lock().expect("seen levels lock").push(level);
@@ -3641,7 +3641,7 @@ fn test_default_handler_recursion_depth_still_catches_runaway_loops() {
     bus.on_raw("RecursiveEvent", "recursive_handler", move |event| {
         let bus = bus_for_handler.clone();
         async move {
-            let payload = event.inner.lock().payload.clone();
+            let payload = event.inner.lock().event_extra_payload.clone();
             let level = payload["level"].as_i64().expect("level");
             let max_level = payload["max_level"].as_i64().expect("max_level");
             if level < max_level {
@@ -3874,7 +3874,7 @@ mod folded_test_eventbus_edge_cases {
                 let label = event
                     .inner
                     .lock()
-                    .payload
+                    .event_extra_payload
                     .get("label")
                     .and_then(|value| value.as_str())
                     .expect("label")
@@ -3889,7 +3889,7 @@ mod folded_test_eventbus_edge_cases {
                 let label = event
                     .inner
                     .lock()
-                    .payload
+                    .event_extra_payload
                     .get("label")
                     .and_then(|value| value.as_str())
                     .expect("label")

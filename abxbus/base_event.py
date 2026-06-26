@@ -1178,6 +1178,8 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                 raise ValueError(f'Field "{key}" is reserved for BaseEvent runtime APIs and cannot be set in event payload')
 
         for key in params:
+            if key == 'event_extra_payload':
+                raise ValueError('Event JSON must be flat; event_extra_payload is runtime-only and must not appear on the wire')
             if key.startswith('event_') and key not in BaseEvent.model_fields:
                 raise ValueError(f'Field "{key}" starts with "event_" but is not a recognized BaseEvent field')
             if key.startswith('model_'):

@@ -46,8 +46,8 @@ func TestPerformance50kEvents(t *testing.T) {
 	var expectedChecksum int64
 	bus.On("PerfSimpleEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		atomic.AddInt64(&processed, 1)
-		value, _ := event.Payload["value"].(int)
-		batchID, _ := event.Payload["batch_id"].(int)
+		value, _ := event.EventExtraPayload["value"].(int)
+		batchID, _ := event.EventExtraPayload["batch_id"].(int)
 		atomic.AddInt64(&checksum, int64(value+batchID))
 		return nil, nil
 	}, nil)
@@ -209,13 +209,13 @@ func TestPerformanceWorstCaseForwardingQueueJumpTimeouts(t *testing.T) {
 	var timedOut int64
 	parentBus.On("WCParent", "forward", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		atomic.AddInt64(&parents, 1)
-		child := childBus.Emit(abxbus.NewBaseEvent("WCChild", map[string]any{"parent": event.EventID, "iteration": event.Payload["iteration"]}))
+		child := childBus.Emit(abxbus.NewBaseEvent("WCChild", map[string]any{"parent": event.EventID, "iteration": event.EventExtraPayload["iteration"]}))
 		_, _ = child.Now()
 		return nil, nil
 	}, nil)
 	childBus.On("WCChild", "child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		atomic.AddInt64(&children, 1)
-		iteration, _ := event.Payload["iteration"].(int)
+		iteration, _ := event.EventExtraPayload["iteration"].(int)
 		if iteration%10 != 0 {
 			return "ok", nil
 		}

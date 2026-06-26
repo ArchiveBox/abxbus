@@ -23,6 +23,15 @@ event! {
     }
 }
 fn assert_original_fields_survive(original: &Value, roundtripped: &Value) {
+    // event_extra_payload is an in-memory escape hatch only; wire JSON must stay flat.
+    assert!(
+        !original.to_string().contains("\"event_extra_payload\""),
+        "fixture used event_extra_payload wrapper"
+    );
+    assert!(
+        !roundtripped.to_string().contains("\"event_extra_payload\""),
+        "roundtrip emitted event_extra_payload wrapper"
+    );
     let normalized_original = normalize_schema_fields(original.clone());
     let normalized_roundtripped = normalize_schema_fields(roundtripped.clone());
     let original = normalized_original.as_object().expect("original object");
@@ -189,7 +198,13 @@ fn event_fixture(event_id: &str, label: &str, event_results: BTreeMap<String, Va
         "event_status": "pending",
         "event_started_at": null,
         "event_completed_at": null,
-        "label": label
+        "label": label,
+        // Known-event extras must survive every runtime as flat top-level fields.
+        "future_unrecognized_field": {
+            "source": "rust",
+            "index": label,
+            "nested": ["kept", {"event_type": "CrossRuntimeResumeEvent"}]
+        }
     });
     if !event_results.is_empty() {
         event["event_results"] = json!(event_results);
@@ -311,7 +326,13 @@ fn go_rust_event_fixture() -> Value {
         "event_status": "pending",
         "event_started_at": null,
         "event_completed_at": null,
-        "label": "rust-go-recursive"
+        "label": "rust-go-recursive",
+        // Known-event extras must survive every runtime as flat top-level fields.
+        "future_unrecognized_field": {
+            "source": "rust",
+            "index": 1,
+            "nested": ["kept", {"event_type": "GoRecursiveNodeEvent"}]
+        }
     })
 }
 
@@ -350,7 +371,13 @@ fn test_python_to_rust_roundtrip_preserves_event_fields_and_result_type_schema()
         "event_status": "pending",
         "event_started_at": null,
         "event_completed_at": null,
-        "marker": "recursive"
+        "marker": "recursive",
+        // Known-event extras must survive every runtime as flat top-level fields.
+        "future_unrecognized_field": {
+            "source": "python",
+            "index": 1,
+            "nested": ["kept", {"event_type": "PyTsRecursiveNodeEvent"}]
+        }
     });
 
     let restored = BaseEvent::from_json_value(original.clone());
@@ -396,7 +423,13 @@ fn test_ts_to_rust_roundtrip_preserves_event_fields_and_result_type_schema() {
         "event_status": "pending",
         "event_started_at": null,
         "event_completed_at": null,
-        "marker": "recursive"
+        "marker": "recursive",
+        // Known-event extras must survive every runtime as flat top-level fields.
+        "future_unrecognized_field": {
+            "source": "ts",
+            "index": 1,
+            "nested": ["kept", {"event_type": "TsPy_RecursiveNodeEvent"}]
+        }
     });
 
     let restored = BaseEvent::from_json_value(original.clone());
@@ -485,7 +518,7 @@ fn assert_bus_roundtrip_rehydrates_and_resumes_pending_queue(payload: Value) {
                 let label = event
                     .inner
                     .lock()
-                    .payload
+                    .event_extra_payload
                     .get("label")
                     .and_then(Value::as_str)
                     .unwrap_or_default()
@@ -513,7 +546,7 @@ fn assert_bus_roundtrip_rehydrates_and_resumes_pending_queue(payload: Value) {
                 let label = event
                     .inner
                     .lock()
-                    .payload
+                    .event_extra_payload
                     .get("label")
                     .and_then(Value::as_str)
                     .unwrap_or_default()

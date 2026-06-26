@@ -143,7 +143,7 @@ fn test_returns_existing_fresh_event() {
                 let Ok(completed_at) = chrono::DateTime::parse_from_rfc3339(completed_at) else {
                     return false;
                 };
-                event.payload.get("target_id") == Some(&json!(TARGET_ID_1))
+                event.event_extra_payload.get("target_id") == Some(&json!(TARGET_ID_1))
                     && chrono::Utc::now()
                         .signed_duration_since(completed_at.with_timezone(&chrono::Utc))
                         .num_seconds()
@@ -227,7 +227,7 @@ fn test_dispatches_new_when_no_match() {
     let _ = block_on(result.wait());
 
     assert_eq!(
-        result.inner.lock().payload.get("target_id"),
+        result.inner.lock().event_extra_payload.get("target_id"),
         Some(&json!(TARGET_ID_1))
     );
     assert_eq!(result.inner.lock().event_status, EventStatus::Completed);
@@ -252,7 +252,7 @@ fn test_dispatches_new_when_stale() {
         FindOptions {
             past: true,
             where_predicate: Some(Arc::new(|event| {
-                event.inner.lock().payload.get("target_id") == Some(&json!(TARGET_ID_1)) && false
+                event.inner.lock().event_extra_payload.get("target_id") == Some(&json!(TARGET_ID_1)) && false
             })),
             ..FindOptions::default()
         },
@@ -377,7 +377,7 @@ fn test_or_chain_without_waiting_dispatches_when_no_match() {
     let elapsed = start.elapsed();
 
     assert_eq!(
-        result.inner.lock().payload.get("target_id"),
+        result.inner.lock().event_extra_payload.get("target_id"),
         Some(&json!(TARGET_ID_1))
     );
     assert!(elapsed < Duration::from_millis(100));
@@ -449,7 +449,7 @@ fn test_or_chain_multiple_sequential_lookups() {
     assert_eq!(result_1_id, result_2_id);
     assert_ne!(result_1_id, result_3_id);
     assert_eq!(
-        result_3.inner.lock().payload.get("target_id"),
+        result_3.inner.lock().event_extra_payload.get("target_id"),
         Some(&json!(TARGET_ID_2))
     );
     bus.destroy();

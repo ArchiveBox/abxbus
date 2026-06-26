@@ -163,6 +163,9 @@ def _json_shape_contains(actual: JsonShape, expected: JsonShape) -> bool:
 
 
 def _assert_json_shape_equal(actual: Any, expected: Any, context: str) -> None:
+    # event_extra_payload is an in-memory escape hatch only; wire JSON must stay flat.
+    assert '"event_extra_payload"' not in json.dumps(actual), f'{context}: emitted event_extra_payload wrapper'
+    assert '"event_extra_payload"' not in json.dumps(expected), f'{context}: fixture used event_extra_payload wrapper'
     assert _json_shape_contains(_json_shape(actual), _json_shape(expected)), f'{context}: JSON shape changed'
 
 
@@ -229,63 +232,159 @@ def _assert_json_schema_layout(event_type: str, schema: dict[str, Any], context:
 
 
 def _build_python_roundtrip_cases() -> list[RoundtripCase]:
-    parent = PyTsIntResultEvent(
-        value=7,
-        label='parent',
-        event_path=['PyBus#aaaa'],
-        event_timeout=12.5,
+    parent = PyTsIntResultEvent.model_validate(
+        {
+            'value': 7,
+            'label': 'parent',
+            'event_path': ['PyBus#aaaa'],
+            'event_timeout': 12.5,
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 0,
+                'nested': ['kept', {'event_type': 'PyTsIntResultEvent'}],
+            },
+        }
     )
 
-    screenshot_event = PyTsScreenshotEvent(
-        target_id='0c1ccf21-65c0-7390-8b64-9182e985740e',
-        quality='high',
-        event_parent_id=parent.event_id,
-        event_path=['PyBus#aaaa', 'TsBridge#bbbb'],
-        event_timeout=33.0,
+    screenshot_event = PyTsScreenshotEvent.model_validate(
+        {
+            'target_id': '0c1ccf21-65c0-7390-8b64-9182e985740e',
+            'quality': 'high',
+            'event_parent_id': parent.event_id,
+            'event_path': ['PyBus#aaaa', 'TsBridge#bbbb'],
+            'event_timeout': 33.0,
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 11,
+                'nested': ['kept', {'event_type': 'PyTsScreenshotEvent'}],
+            },
+        }
     )
 
-    float_event = PyTsFloatResultEvent(
-        marker='float',
-        event_parent_id=parent.event_id,
-        event_path=['PyBus#aaaa'],
+    float_event = PyTsFloatResultEvent.model_validate(
+        {
+            'marker': 'float',
+            'event_parent_id': parent.event_id,
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 1,
+                'nested': ['kept', {'event_type': 'PyTsFloatResultEvent'}],
+            },
+        }
     )
-    string_event = PyTsStringResultEvent(
-        marker='string',
-        event_parent_id=parent.event_id,
-        event_path=['PyBus#aaaa'],
+    string_event = PyTsStringResultEvent.model_validate(
+        {
+            'marker': 'string',
+            'event_parent_id': parent.event_id,
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 2,
+                'nested': ['kept', {'event_type': 'PyTsStringResultEvent'}],
+            },
+        }
     )
-    bool_event = PyTsBoolResultEvent(
-        marker='bool',
-        event_path=['PyBus#aaaa'],
+    bool_event = PyTsBoolResultEvent.model_validate(
+        {
+            'marker': 'bool',
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 3,
+                'nested': ['kept', {'event_type': 'PyTsBoolResultEvent'}],
+            },
+        }
     )
-    null_event = PyTsNullResultEvent(
-        marker='null',
-        event_path=['PyBus#aaaa'],
+    null_event = PyTsNullResultEvent.model_validate(
+        {
+            'marker': 'null',
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 4,
+                'nested': ['kept', {'event_type': 'PyTsNullResultEvent'}],
+            },
+        }
     )
-    list_event = PyTsStringListResultEvent(
-        marker='list[str]',
-        event_parent_id=parent.event_id,
-        event_path=['PyBus#aaaa'],
+    list_event = PyTsStringListResultEvent.model_validate(
+        {
+            'marker': 'list[str]',
+            'event_parent_id': parent.event_id,
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 5,
+                'nested': ['kept', {'event_type': 'PyTsStringListResultEvent'}],
+            },
+        }
     )
-    dict_event = PyTsDictResultEvent(
-        marker='dict[str,int]',
-        event_path=['PyBus#aaaa'],
+    dict_event = PyTsDictResultEvent.model_validate(
+        {
+            'marker': 'dict[str,int]',
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 6,
+                'nested': ['kept', {'event_type': 'PyTsDictResultEvent'}],
+            },
+        }
     )
-    nested_map_event = PyTsNestedMapResultEvent(
-        marker='dict[str,list[int]]',
-        event_path=['PyBus#aaaa'],
+    nested_map_event = PyTsNestedMapResultEvent.model_validate(
+        {
+            'marker': 'dict[str,list[int]]',
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 7,
+                'nested': ['kept', {'event_type': 'PyTsNestedMapResultEvent'}],
+            },
+        }
     )
-    typed_dict_event = PyTsTypedDictResultEvent(
-        marker='typeddict',
-        event_path=['PyBus#aaaa'],
+    typed_dict_event = PyTsTypedDictResultEvent.model_validate(
+        {
+            'marker': 'typeddict',
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 8,
+                'nested': ['kept', {'event_type': 'PyTsTypedDictResultEvent'}],
+            },
+        }
     )
-    dataclass_event = PyTsDataclassResultEvent(
-        marker='dataclass',
-        event_path=['PyBus#aaaa'],
+    dataclass_event = PyTsDataclassResultEvent.model_validate(
+        {
+            'marker': 'dataclass',
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 9,
+                'nested': ['kept', {'event_type': 'PyTsDataclassResultEvent'}],
+            },
+        }
     )
-    recursive_event = PyTsRecursiveNodeEvent(
-        marker='recursive',
-        event_path=['PyBus#aaaa'],
+    recursive_event = PyTsRecursiveNodeEvent.model_validate(
+        {
+            'marker': 'recursive',
+            'event_path': ['PyBus#aaaa'],
+            # Known-event extras must survive every runtime as flat top-level fields.
+            'future_unrecognized_field': {
+                'source': 'python',
+                'index': 12,
+                'nested': ['kept', {'event_type': 'PyTsRecursiveNodeEvent'}],
+            },
+        }
     )
 
     return [

@@ -88,7 +88,7 @@ fn test_queue_jump() {
             let value = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("idx")
                 .and_then(serde_json::Value::as_i64)
                 .expect("idx payload");
@@ -161,7 +161,7 @@ fn test_emit_with_queue_jump_preempts_queued_sibling_on_same_bus() {
             let value = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("idx")
                 .and_then(serde_json::Value::as_i64)
                 .expect("idx payload");
@@ -272,7 +272,7 @@ fn test_bus_serial_fifo_order_preserved_per_bus_with_interleaving() {
             let order = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("order")
                 .and_then(serde_json::Value::as_i64)
                 .expect("order payload");
@@ -288,7 +288,7 @@ fn test_bus_serial_fifo_order_preserved_per_bus_with_interleaving() {
             let order = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("order")
                 .and_then(serde_json::Value::as_i64)
                 .expect("order payload");
@@ -357,7 +357,7 @@ fn test_event_concurrency_global_serial_allows_only_one_inflight_across_buses() 
             let max_in_flight = max_in_flight.clone();
             let starts = starts.clone();
             async move {
-                let payload = event.inner.lock().payload.clone();
+                let payload = event.inner.lock().event_extra_payload.clone();
                 let source = payload
                     .get("source")
                     .and_then(serde_json::Value::as_str)
@@ -1773,7 +1773,7 @@ fn test_fifo_forwarded_events_preserve_order_on_target_bus_bus_serial() {
             let order = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("order")
                 .and_then(serde_json::Value::as_i64)
                 .expect("order payload");
@@ -1793,7 +1793,7 @@ fn test_fifo_forwarded_events_preserve_order_on_target_bus_bus_serial() {
             let (order, in_flight_on_bus_b) = {
                 let inner = event.inner.lock();
                 let order = inner
-                    .payload
+                    .event_extra_payload
                     .get("order")
                     .and_then(serde_json::Value::as_i64)
                     .expect("order payload");
@@ -1838,7 +1838,7 @@ fn test_fifo_forwarded_events_preserve_order_on_target_bus_bus_serial() {
                 .expect("history event")
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("order")
                 .and_then(serde_json::Value::as_i64)
                 .expect("order payload")
@@ -1960,7 +1960,7 @@ fn test_fifo_forwarded_events_preserve_order_across_chained_buses_bus_serial() {
             let order = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("order")
                 .and_then(serde_json::Value::as_i64)
                 .expect("order payload");

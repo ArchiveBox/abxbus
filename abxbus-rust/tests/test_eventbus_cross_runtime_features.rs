@@ -350,7 +350,7 @@ fn test_zero_history_backpressure_with_find_future_still_resolves_new_events() {
         let value = event
             .inner
             .lock()
-            .payload
+            .event_extra_payload
             .get("value")
             .and_then(Value::as_str)
             .unwrap_or("<missing>")
@@ -399,7 +399,7 @@ fn test_zero_history_backpressure_with_find_future_still_resolves_new_events() {
         future_match
             .inner
             .lock()
-            .payload
+            .event_extra_payload
             .get("value")
             .and_then(Value::as_str),
         Some("future")
@@ -520,7 +520,7 @@ fn test_pending_queue_find_visibility_transitions_to_completed_after_release() {
             let tag = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("tag")
                 .and_then(Value::as_str)
                 .unwrap_or("<missing>")
@@ -592,7 +592,7 @@ fn test_history_backpressure_rejects_overflow_and_preserves_findable_history() {
         let value = event
             .inner
             .lock()
-            .payload
+            .event_extra_payload
             .get("value")
             .and_then(Value::as_str)
             .unwrap_or("<missing>")

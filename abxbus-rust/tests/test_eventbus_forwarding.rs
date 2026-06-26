@@ -731,7 +731,7 @@ fn test_forwarded_event_uses_processing_bus_defaults() {
             let mode = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("mode")
                 .and_then(serde_json::Value::as_str)
                 .expect("mode")
@@ -755,7 +755,7 @@ fn test_forwarded_event_uses_processing_bus_defaults() {
             let mode = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("mode")
                 .and_then(serde_json::Value::as_str)
                 .expect("mode")
@@ -847,7 +847,7 @@ fn test_forwarded_event_preserves_explicit_handler_concurrency_override() {
             let mode = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("mode")
                 .and_then(serde_json::Value::as_str)
                 .expect("mode")
@@ -865,7 +865,7 @@ fn test_forwarded_event_preserves_explicit_handler_concurrency_override() {
             let mode = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("mode")
                 .and_then(serde_json::Value::as_str)
                 .expect("mode")
@@ -1075,7 +1075,7 @@ fn test_events_are_processed_in_fifo_order() {
             let order = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("order")
                 .and_then(|value| value.as_i64())
                 .expect("order payload");
