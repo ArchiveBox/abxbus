@@ -58,6 +58,7 @@ fn expected_event_result_json_keys() -> BTreeSet<String> {
         "handler_id".to_string(),
         "handler_name".to_string(),
         "handler_registered_at".to_string(),
+        "handler_result_ttl".to_string(),
         "handler_slow_timeout".to_string(),
         "handler_timeout".to_string(),
         "id".to_string(),
@@ -346,6 +347,7 @@ fn test_event_result_defaults() {
         handler_file_path: None,
         handler_timeout: None,
         handler_slow_timeout: None,
+        handler_result_ttl: None,
         handler_registered_at: "2026-01-01T00:00:00.000Z".into(),
         eventbus_name: "bus".into(),
         eventbus_id: "bus-id".into(),
@@ -367,6 +369,7 @@ fn test_event_result_serializes_handler_metadata_and_derived_fields() {
         handler_file_path: Some("~/project/app.rs:123".into()),
         handler_timeout: Some(10.0),
         handler_slow_timeout: Some(2.0),
+        handler_result_ttl: None,
         handler_registered_at: "2026-01-01T00:00:00.000Z".into(),
         eventbus_name: "StandaloneBus".into(),
         eventbus_id: "018f8e40-1234-7000-8000-000000001234".into(),
@@ -572,6 +575,7 @@ fn test_eventhandler_json_roundtrips_handler_metadata() {
         handler_file_path: Some("~/project/app.rs:123".into()),
         handler_timeout: None,
         handler_slow_timeout: None,
+        handler_result_ttl: None,
         handler_registered_at: "2025-01-02T03:04:05.678Z".into(),
         eventbus_name: "StandaloneBus".into(),
         eventbus_id: "018f8e40-1234-7000-8000-000000001234".into(),
@@ -663,6 +667,7 @@ fn test_event_result_update_keeps_consistent_ordering_semantics_for_status_resul
         handler_file_path: None,
         handler_timeout: None,
         handler_slow_timeout: None,
+        handler_result_ttl: None,
         handler_registered_at: "2026-01-01T00:00:00.000Z".into(),
         eventbus_name: "StandaloneBus".into(),
         eventbus_id: "018f8e40-1234-7000-8000-000000001234".into(),
@@ -697,6 +702,7 @@ fn test_run_handler_is_a_no_op_for_already_settled_results() {
         handler_file_path: None,
         handler_timeout: None,
         handler_slow_timeout: None,
+        handler_result_ttl: None,
         handler_registered_at: "2026-01-01T00:00:00.000Z".into(),
         eventbus_name: "RunHandlerSettledBus".into(),
         eventbus_id: "018f8e40-1234-7000-8000-000000001234".into(),
@@ -895,6 +901,7 @@ fn test_event_result_error_json_roundtrip_preserves_error_type_and_message() {
         "handler_file_path": null,
         "handler_timeout": null,
         "handler_slow_timeout": null,
+        "handler_result_ttl": null,
         "handler_registered_at": "2026-01-01T00:00:00.000Z",
         "handler_event_pattern": "StandaloneEvent",
         "eventbus_name": "StandaloneBus",
@@ -1075,6 +1082,7 @@ fn test_base_event_from_json_preserves_event_results_object_registration_order()
             "handler_file_path": null,
             "handler_timeout": null,
             "handler_slow_timeout": null,
+            "handler_result_ttl": null,
             "handler_registered_at": registered_at,
             "handler_event_pattern": "AccessorEvent",
             "eventbus_name": "RestoredOrderBus",
@@ -3535,9 +3543,14 @@ mod folded_test_typed_events {
         let inner = base.inner.lock();
         assert_eq!(inner.event_timeout, Some(12.0));
         assert_eq!(inner.event_handler_timeout, Some(3.0));
-        assert_eq!(inner.event_extra_payload.get("name"), Some(&serde_json::json!("job")));
+        assert_eq!(
+            inner.event_extra_payload.get("name"),
+            Some(&serde_json::json!("job"))
+        );
         assert!(!inner.event_extra_payload.contains_key("event_timeout"));
-        assert!(!inner.event_extra_payload.contains_key("event_handler_timeout"));
+        assert!(!inner
+            .event_extra_payload
+            .contains_key("event_handler_timeout"));
         drop(inner);
         bus.destroy();
     }

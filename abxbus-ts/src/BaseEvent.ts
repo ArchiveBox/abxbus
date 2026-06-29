@@ -86,10 +86,12 @@ export const BaseEventSchema = z
     event_created_at: z.string().datetime(),
     event_type: z.string(),
     event_version: z.string().default('0.0.1'),
-    event_timeout: z.number().nonnegative().nullable(),
-    event_slow_timeout: z.number().nonnegative().nullable().optional(),
-    event_handler_timeout: z.number().nonnegative().nullable().optional(),
-    event_handler_slow_timeout: z.number().nonnegative().nullable().optional(),
+    event_timeout: z.number().gte(-1).nullable(),
+    event_slow_timeout: z.number().gte(-1).nullable().optional(),
+    event_handler_timeout: z.number().gte(-1).nullable().optional(),
+    event_handler_slow_timeout: z.number().gte(-1).nullable().optional(),
+    event_ttl: z.number().gte(-1).nullable().optional(),
+    event_result_ttl: z.number().gte(-1).nullable().optional(),
     event_blocks_parent_completion: z.boolean().optional(),
     event_parent_id: z.string().uuid().nullable().optional(),
     event_path: z.array(z.string()).optional(),
@@ -130,6 +132,8 @@ type BaseEventFieldName =
   | 'event_slow_timeout'
   | 'event_handler_timeout'
   | 'event_handler_slow_timeout'
+  | 'event_ttl'
+  | 'event_result_ttl'
   | 'event_blocks_parent_completion'
   | 'event_parent_id'
   | 'event_path'
@@ -154,6 +158,32 @@ type EventPayloadShape<TShape extends z.ZodRawShape> = {
 }
 type EventPayload<TShape extends z.ZodRawShape> =
   EventPayloadShape<TShape> extends Record<string, never> ? {} : z.infer<z.ZodObject<EventPayloadShape<TShape>>>
+type EventPayloadRuntimeFieldName =
+  | 'bus'
+  | 'emit'
+  | 'now'
+  | 'wait'
+  | 'toString'
+  | 'toJSON'
+  | 'fromJSON'
+  | 'eventResult'
+  | 'eventResultsList'
+type AnyFunction = (...args: any[]) => unknown
+type KnownEventPayloadFields<TEvent> = {
+  [K in keyof TEvent as K extends string
+    ? K extends `event_${string}`
+      ? never
+      : K extends `_${string}`
+        ? never
+        : K extends EventPayloadRuntimeFieldName
+          ? never
+          : TEvent[K] extends AnyFunction
+            ? never
+            : K
+    : never]: TEvent[K]
+}
+export type EventPayloadFields<TEvent> =
+  keyof KnownEventPayloadFields<TEvent> extends never ? Record<string, unknown> : KnownEventPayloadFields<TEvent>
 type EventClassMetadataFieldName =
   | 'fromJSON'
   | 'prototype'
@@ -304,10 +334,12 @@ function baseEventDefaultShape(event_type: string): z.ZodRawShape {
     event_created_at: z.string().datetime(),
     event_type: z.string().default(event_type),
     event_version: z.string().default('0.0.1'),
-    event_timeout: z.number().nonnegative().nullable().default(null),
-    event_slow_timeout: z.number().nonnegative().nullable().optional(),
-    event_handler_timeout: z.number().nonnegative().nullable().optional(),
-    event_handler_slow_timeout: z.number().nonnegative().nullable().optional(),
+    event_timeout: z.number().gte(-1).nullable().default(null),
+    event_slow_timeout: z.number().gte(-1).nullable().optional(),
+    event_handler_timeout: z.number().gte(-1).nullable().optional(),
+    event_handler_slow_timeout: z.number().gte(-1).nullable().optional(),
+    event_ttl: z.number().gte(-1).nullable().optional(),
+    event_result_ttl: z.number().gte(-1).nullable().optional(),
     event_blocks_parent_completion: z.boolean().default(false),
     event_parent_id: z.string().uuid().nullable().optional(),
     event_path: z.array(z.string()).optional(),
@@ -546,6 +578,8 @@ export class BaseEvent {
   event_slow_timeout?: number | null // optional per-event slow warning threshold in seconds
   event_handler_timeout?: number | null // optional per-event handler timeout override in seconds
   event_handler_slow_timeout?: number | null // optional per-event slow handler warning threshold in seconds
+  event_ttl?: number | null // optional seconds to keep this event in each bus history after completion
+  event_result_ttl?: number | null // optional seconds to keep this event's handler results after completion
   event_blocks_parent_completion!: boolean // true only for children explicitly awaited via now()
   event_parent_id!: string | null // id of the parent event that triggered this event, if this event was emitted during handling of another event, else null
   event_path!: string[] // list of bus labels (name#id) that the event has been dispatched to, including the current bus
@@ -573,7 +607,7 @@ export class BaseEvent {
   event_bus?: EventBus // bus that dispatched this event, also used by event.emit(child)
   _event_original?: BaseEvent // underlying event object that was dispatched, if this is a bus-scoped proxy wrapping it
   _event_dispatch_context?: unknown | null // captured AsyncLocalStorage context at dispatch site, used to restore that context when running handlers
-  _event_fields_set?: Set<string>
+  _event_expires_at_by_bus: Map<string, number>
 
   _event_completed_signal: Deferred<this> | null
   _lock_for_event_handler: AsyncLock | null
@@ -587,7 +621,6 @@ export class BaseEvent {
       event_schema?: AnyEventSchema
       _event_parse_schema?: AnyEventSchema
     }
-    const explicit_event_fields = new Set(Object.keys(data ?? {}))
     const merged_data = { ...data } as BaseEventInit<Record<string, unknown>>
     const event_type = merged_data.event_type ?? ctor.event_type ?? ctor.name
     const event_version = merged_data.event_version ?? ctor.event_version ?? '0.0.1'
@@ -624,15 +657,10 @@ export class BaseEvent {
       enumerable: false,
       configurable: true,
     })
-    Object.defineProperty(this, '_event_fields_set', {
-      value: explicit_event_fields,
-      writable: true,
-      enumerable: false,
-      configurable: true,
-    })
     const parsed_path = (parsed as { event_path?: string[] }).event_path
     this.event_path = Array.isArray(parsed_path) ? [...parsed_path] : []
     this.event_created_at = monotonicDatetime(parsed.event_created_at)
+    this._event_expires_at_by_bus = new Map()
 
     // load event results from potentially raw objects from JSON to proper EventResult objects
     this.event_results = hydrateEventResults(this, (parsed as { event_results?: unknown }).event_results)
@@ -656,6 +684,16 @@ export class BaseEvent {
       typeof (parsed as { event_emitted_by_handler_id?: unknown }).event_emitted_by_handler_id === 'string'
         ? (parsed as { event_emitted_by_handler_id: string }).event_emitted_by_handler_id
         : null
+
+    if (this.event_ttl === null && typeof (ctor as typeof BaseEvent & { event_ttl?: unknown }).event_ttl === 'number') {
+      this.event_ttl = (ctor as typeof BaseEvent & { event_ttl: number }).event_ttl
+    }
+    if (
+      this.event_result_ttl === null &&
+      typeof (ctor as typeof BaseEvent & { event_result_ttl?: unknown }).event_result_ttl === 'number'
+    ) {
+      this.event_result_ttl = (ctor as typeof BaseEvent & { event_result_ttl: number }).event_result_ttl
+    }
 
     this.event_result_type = normalizeEventResultType(parsed.event_result_type ?? event_result_type)
 
@@ -842,6 +880,8 @@ export class BaseEvent {
       event_handler_completion: this.event_handler_completion,
       event_handler_slow_timeout: this.event_handler_slow_timeout,
       event_handler_timeout: this.event_handler_timeout,
+      event_ttl: this.event_ttl,
+      event_result_ttl: this.event_result_ttl,
       event_blocks_parent_completion: this.event_blocks_parent_completion,
 
       // mutable parent/child/bus tracking runtime state
@@ -875,6 +915,8 @@ export class BaseEvent {
       event_handler_completion: this.event_handler_completion,
       event_handler_slow_timeout: this.event_handler_slow_timeout,
       event_handler_timeout: this.event_handler_timeout,
+      event_ttl: this.event_ttl,
+      event_result_ttl: this.event_result_ttl,
       event_blocks_parent_completion: this.event_blocks_parent_completion,
 
       // mutable parent/child/bus tracking runtime state
@@ -892,6 +934,10 @@ export class BaseEvent {
       // mutable result state
       ...(Object.keys(event_results).length > 0 ? { event_results } : {}),
     }
+  }
+
+  event_payload(): EventPayloadFields<this> {
+    return Object.fromEntries(Object.entries(this.toJSON()).filter(([key]) => !key.startsWith('event_'))) as EventPayloadFields<this>
   }
 
   _createSlowEventWarningTimer(

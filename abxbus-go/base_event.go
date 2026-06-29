@@ -25,6 +25,8 @@ type BaseEvent struct {
 	EventSlowTimeout            *float64                    `json:"event_slow_timeout,omitempty"`
 	EventHandlerTimeout         *float64                    `json:"event_handler_timeout,omitempty"`
 	EventHandlerSlowTimeout     *float64                    `json:"event_handler_slow_timeout,omitempty"`
+	EventTTL                    *float64                    `json:"event_ttl,omitempty"`
+	EventResultTTL              *float64                    `json:"event_result_ttl,omitempty"`
 	EventParentID               *string                     `json:"event_parent_id,omitempty"`
 	EventPath                   []string                    `json:"event_path,omitempty"`
 	EventResultType             any                         `json:"event_result_type,omitempty"`
@@ -41,14 +43,15 @@ type BaseEvent struct {
 	// EventExtraPayload holds runtime payload fields that are not statically
 	// declared on a typed event. It is flattened by MarshalJSON and split back
 	// out by UnmarshalJSON; "event_extra_payload" must never appear on the wire.
-	EventExtraPayload map[string]any          `json:"-"`
-	Bus               *EventBus               `json:"-"`
-	EventResults      map[string]*EventResult `json:"-"`
-	eventResultOrder  []string
-	dispatchCtx       context.Context `json:"-"`
-	mu                sync.Mutex
-	done_ch           chan struct{}
-	done_once         sync.Once
+	EventExtraPayload   map[string]any          `json:"-"`
+	Bus                 *EventBus               `json:"-"`
+	EventResults        map[string]*EventResult `json:"-"`
+	eventResultOrder    []string
+	dispatchCtx         context.Context `json:"-"`
+	mu                  sync.Mutex
+	done_ch             chan struct{}
+	done_once           sync.Once
+	eventExpiresAtByBus map[string]time.Time
 }
 
 type EventWaitOptions struct {
@@ -120,14 +123,21 @@ func NewBaseEvent(event_type string, payload map[string]any) *BaseEvent {
 	if payload == nil {
 		payload = map[string]any{}
 	}
+	// Keep cold runtime containers lazy: most history-retained events are never
+	// awaited directly and never receive handler results, so allocating these
+	// maps/channels up front dominates large event_history memory.
 	return &BaseEvent{
 		EventID: id, EventCreatedAt: monotonicDatetime(), EventType: event_type, EventVersion: "0.0.1",
-		EventStatus: "pending", EventPath: []string{}, EventResults: map[string]*EventResult{}, eventResultOrder: []string{}, EventPendingBusCount: 0,
-		EventExtraPayload: payload, done_ch: make(chan struct{}),
+		EventStatus: "pending", EventPendingBusCount: 0,
+		EventExtraPayload: payload,
 	}
 }
 
 func (e *BaseEvent) MarshalJSON() ([]byte, error) {
+	eventPath := e.EventPath
+	if eventPath == nil {
+		eventPath = []string{}
+	}
 	entries := []jsonObjectEntry{
 		{key: "event_type", value: e.EventType},
 		{key: "event_version", value: e.EventVersion},
@@ -142,6 +152,8 @@ func (e *BaseEvent) MarshalJSON() ([]byte, error) {
 	entries = append(entries,
 		jsonObjectEntry{key: "event_handler_timeout", value: e.EventHandlerTimeout},
 		jsonObjectEntry{key: "event_handler_slow_timeout", value: e.EventHandlerSlowTimeout},
+		jsonObjectEntry{key: "event_ttl", value: e.EventTTL},
+		jsonObjectEntry{key: "event_result_ttl", value: e.EventResultTTL},
 	)
 	if e.EventHandlerConcurrency == "" {
 		entries = append(entries, jsonObjectEntry{key: "event_handler_concurrency", value: nil})
@@ -157,7 +169,7 @@ func (e *BaseEvent) MarshalJSON() ([]byte, error) {
 		jsonObjectEntry{key: "event_blocks_parent_completion", value: e.EventBlocksParentCompletion},
 		jsonObjectEntry{key: "event_result_type", value: e.eventResultTypeJSONValue()},
 		jsonObjectEntry{key: "event_id", value: e.EventID},
-		jsonObjectEntry{key: "event_path", value: e.EventPath},
+		jsonObjectEntry{key: "event_path", value: eventPath},
 		jsonObjectEntry{key: "event_parent_id", value: e.EventParentID},
 		jsonObjectEntry{key: "event_emitted_by_handler_id", value: e.EventEmittedByHandlerID},
 		jsonObjectEntry{key: "event_pending_bus_count", value: e.EventPendingBusCount},
@@ -205,6 +217,8 @@ func (e *BaseEvent) UnmarshalJSON(data []byte) error {
 		EventSlowTimeout            *float64                    `json:"event_slow_timeout,omitempty"`
 		EventHandlerTimeout         *float64                    `json:"event_handler_timeout,omitempty"`
 		EventHandlerSlowTimeout     *float64                    `json:"event_handler_slow_timeout,omitempty"`
+		EventTTL                    *float64                    `json:"event_ttl,omitempty"`
+		EventResultTTL              *float64                    `json:"event_result_ttl,omitempty"`
 		EventParentID               *string                     `json:"event_parent_id,omitempty"`
 		EventPath                   []string                    `json:"event_path,omitempty"`
 		EventResultType             json.RawMessage             `json:"event_result_type,omitempty"`
@@ -231,6 +245,8 @@ func (e *BaseEvent) UnmarshalJSON(data []byte) error {
 	e.EventSlowTimeout = m.EventSlowTimeout
 	e.EventHandlerTimeout = m.EventHandlerTimeout
 	e.EventHandlerSlowTimeout = m.EventHandlerSlowTimeout
+	e.EventTTL = m.EventTTL
+	e.EventResultTTL = m.EventResultTTL
 	e.EventParentID = m.EventParentID
 	e.EventPath = m.EventPath
 	if len(m.EventResultType) > 0 && string(m.EventResultType) != "null" {
@@ -252,7 +268,7 @@ func (e *BaseEvent) UnmarshalJSON(data []byte) error {
 	e.EventHandlerCompletion = m.EventHandlerCompletion
 	e.EventBlocksParentCompletion = m.EventBlocksParentCompletion
 	e.EventExtraPayload = map[string]any{}
-	known := map[string]bool{"event_id": true, "event_created_at": true, "event_type": true, "event_version": true, "event_timeout": true, "event_slow_timeout": true, "event_handler_timeout": true, "event_handler_slow_timeout": true, "event_parent_id": true, "event_path": true, "event_result_type": true, "event_emitted_by_handler_id": true, "event_pending_bus_count": true, "event_status": true, "event_started_at": true, "event_completed_at": true, "event_concurrency": true, "event_handler_concurrency": true, "event_handler_completion": true, "event_blocks_parent_completion": true, "event_results": true}
+	known := map[string]bool{"event_id": true, "event_created_at": true, "event_type": true, "event_version": true, "event_timeout": true, "event_slow_timeout": true, "event_handler_timeout": true, "event_handler_slow_timeout": true, "event_ttl": true, "event_result_ttl": true, "event_parent_id": true, "event_path": true, "event_result_type": true, "event_emitted_by_handler_id": true, "event_pending_bus_count": true, "event_status": true, "event_started_at": true, "event_completed_at": true, "event_concurrency": true, "event_handler_concurrency": true, "event_handler_completion": true, "event_blocks_parent_completion": true, "event_results": true}
 	for k, v := range record {
 		if !known[k] {
 			e.EventExtraPayload[k] = v
@@ -300,6 +316,17 @@ func (e *BaseEvent) UnmarshalJSON(data []byte) error {
 }
 
 func (e *BaseEvent) ToJSON() ([]byte, error) { return json.Marshal(e) }
+
+func (e *BaseEvent) EventPayload() (map[string]any, error) {
+	payload := make(map[string]any, len(e.EventExtraPayload))
+	for key, value := range e.EventExtraPayload {
+		if strings.HasPrefix(key, "event_") {
+			continue
+		}
+		payload[key] = value
+	}
+	return payload, nil
+}
 
 func BaseEventFromJSON(data []byte) (*BaseEvent, error) {
 	var event BaseEvent
@@ -436,13 +463,17 @@ func (e *BaseEvent) markCompleted() {
 }
 
 func (e *BaseEvent) signalCompleted() {
+	doneCh := e.doneChan()
+	e.done_once.Do(func() { close(doneCh) })
+}
+
+func (e *BaseEvent) doneChan() chan struct{} {
 	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e.done_ch == nil {
 		e.done_ch = make(chan struct{})
 	}
-	doneCh := e.done_ch
-	e.mu.Unlock()
-	e.done_once.Do(func() { close(doneCh) })
+	return e.done_ch
 }
 
 func (e *BaseEvent) status() string {
@@ -505,8 +536,9 @@ func (e *BaseEvent) waitWithContext(ctx context.Context, options ...*EventWaitOp
 		e.signalCompleted()
 		return e, nil
 	}
+	doneCh := e.doneChan()
 	select {
-	case <-e.done_ch:
+	case <-doneCh:
 		return e, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -807,12 +839,13 @@ func (e *BaseEvent) hasValidResult(include func(result any, event_result *EventR
 func (e *BaseEvent) waitForFirstResultOrCompletion(ctx context.Context) error {
 	ticker := time.NewTicker(time.Millisecond)
 	defer ticker.Stop()
+	doneCh := e.doneChan()
 	for {
 		if e.hasValidResult(nil) || e.status() == "completed" {
 			return nil
 		}
 		select {
-		case <-e.done_ch:
+		case <-doneCh:
 			return nil
 		case <-ticker.C:
 		case <-ctx.Done():

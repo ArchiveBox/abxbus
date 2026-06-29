@@ -1412,6 +1412,15 @@ test('BaseEvent toJSON/fromJSON roundtrips runtime fields and event_results', as
   assert.equal(json.label, 'known-field')
   assert.deepEqual(json.future_unrecognized_field, { nested: ['kept'] })
   assert.equal('event_extra_payload' in json, false)
+  assert.equal('event_payload' in json, false)
+  assert.deepEqual(event.event_payload(), {
+    label: 'known-field',
+    future_unrecognized_field: { nested: ['kept'] },
+  })
+  event.event_payload()['label'] = 'mutated'
+  assert.equal(event.event_payload()['label'], 'known-field')
+  assert.equal('event_id' in event.event_payload(), false)
+  assert.equal('event_ttl' in event.event_payload(), false)
   assert.equal(json.event_status, 'completed')
   assert.equal(typeof json.event_created_at, 'string')
   assert.equal(typeof json.event_started_at, 'string')

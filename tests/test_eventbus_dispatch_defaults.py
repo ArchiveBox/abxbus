@@ -26,6 +26,8 @@ class ConfiguredEvent(BaseEvent[str]):
     event_slow_timeout: float | None = 30.0
     event_handler_timeout: float | None = 3.0
     event_handler_slow_timeout: float | None = 4.0
+    event_ttl: float | None = 5.0
+    event_result_ttl: float | None = 6.0
     event_blocks_parent_completion: bool = True
 
 
@@ -155,6 +157,8 @@ async def test_typed_event_config_defaults_populate_base_event_fields() -> None:
         assert event.event_slow_timeout == 30.0
         assert event.event_handler_timeout == 3.0
         assert event.event_handler_slow_timeout == 4.0
+        assert event.event_ttl == 5.0
+        assert event.event_result_ttl == 6.0
         assert event.event_blocks_parent_completion is True
     finally:
         await bus.destroy()

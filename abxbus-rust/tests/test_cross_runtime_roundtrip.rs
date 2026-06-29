@@ -160,6 +160,7 @@ fn event_result_fixture(
         "handler_file_path": null,
         "handler_timeout": null,
         "handler_slow_timeout": null,
+        "handler_result_ttl": null,
         "handler_registered_at": if handler_id == "handler-one" {
             "2025-01-02T03:04:05.000000000Z"
         } else {
@@ -185,6 +186,8 @@ fn event_fixture(event_id: &str, label: &str, event_results: BTreeMap<String, Va
         "event_concurrency": null,
         "event_handler_timeout": null,
         "event_handler_slow_timeout": null,
+        "event_ttl": null,
+        "event_result_ttl": null,
         "event_handler_concurrency": null,
         "event_handler_completion": null,
         "event_blocks_parent_completion": false,
@@ -245,6 +248,8 @@ fn cross_runtime_bus_fixture() -> Value {
         "event_concurrency": "bus-serial",
         "event_timeout": 60.0,
         "event_slow_timeout": 300.0,
+        "event_ttl": null,
+        "event_result_ttl": null,
         "event_handler_concurrency": "serial",
         "event_handler_completion": "all",
         "event_handler_slow_timeout": 30.0,
@@ -257,6 +262,7 @@ fn cross_runtime_bus_fixture() -> Value {
                 "handler_file_path": null,
                 "handler_timeout": null,
                 "handler_slow_timeout": null,
+                "handler_result_ttl": null,
                 "handler_registered_at": "2025-01-02T03:04:05.000000000Z",
                 "eventbus_name": "CrossRuntimeBus",
                 "eventbus_id": "018f8e40-1234-7000-8000-00000000cc33"
@@ -268,6 +274,7 @@ fn cross_runtime_bus_fixture() -> Value {
                 "handler_file_path": null,
                 "handler_timeout": null,
                 "handler_slow_timeout": null,
+                "handler_result_ttl": null,
                 "handler_registered_at": "2025-01-02T03:04:06.000000000Z",
                 "eventbus_name": "CrossRuntimeBus",
                 "eventbus_id": "018f8e40-1234-7000-8000-00000000cc33"
@@ -304,6 +311,8 @@ fn go_rust_event_fixture() -> Value {
         "event_concurrency": null,
         "event_handler_timeout": null,
         "event_handler_slow_timeout": null,
+        "event_ttl": null,
+        "event_result_ttl": null,
         "event_handler_concurrency": null,
         "event_handler_completion": null,
         "event_blocks_parent_completion": false,
@@ -346,6 +355,8 @@ fn test_python_to_rust_roundtrip_preserves_event_fields_and_result_type_schema()
         "event_concurrency": null,
         "event_handler_timeout": null,
         "event_handler_slow_timeout": null,
+        "event_ttl": null,
+        "event_result_ttl": null,
         "event_handler_concurrency": null,
         "event_handler_completion": null,
         "event_blocks_parent_completion": false,

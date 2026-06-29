@@ -52,6 +52,7 @@ impl Serialize for EventResult {
             handler_file_path: &'a Option<String>,
             handler_timeout: &'a Option<f64>,
             handler_slow_timeout: &'a Option<f64>,
+            handler_result_ttl: &'a Option<f64>,
             handler_registered_at: &'a str,
             handler_event_pattern: &'a str,
             eventbus_name: &'a str,
@@ -73,6 +74,7 @@ impl Serialize for EventResult {
             handler_file_path: &self.handler.handler_file_path,
             handler_timeout: &self.handler.handler_timeout,
             handler_slow_timeout: &self.handler.handler_slow_timeout,
+            handler_result_ttl: &self.handler.handler_result_ttl,
             handler_registered_at: &self.handler.handler_registered_at,
             handler_event_pattern: &self.handler.event_pattern,
             eventbus_name: &self.handler.eventbus_name,
@@ -285,6 +287,7 @@ impl EventResult {
             "handler_file_path": self.handler.handler_file_path,
             "handler_timeout": self.handler.handler_timeout,
             "handler_slow_timeout": self.handler.handler_slow_timeout,
+            "handler_result_ttl": self.handler.handler_result_ttl,
             "handler_registered_at": self.handler.handler_registered_at,
             "handler_event_pattern": self.handler.event_pattern,
             "eventbus_name": self.handler.eventbus_name,
@@ -445,6 +448,7 @@ impl EventResult {
                 .map(ToString::to_string),
             handler_timeout: record.get("handler_timeout").and_then(Value::as_f64),
             handler_slow_timeout: record.get("handler_slow_timeout").and_then(Value::as_f64),
+            handler_result_ttl: record.get("handler_result_ttl").and_then(Value::as_f64),
             handler_registered_at: record
                 .get("handler_registered_at")
                 .and_then(Value::as_str)

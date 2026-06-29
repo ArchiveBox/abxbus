@@ -903,6 +903,9 @@ func TestBaseEventJSONFlattenedPayload(t *testing.T) {
 	if _, ok := obj["event_extra_payload"]; ok {
 		t.Fatal("event_extra_payload must not be emitted")
 	}
+	if _, ok := obj["event_payload"]; ok {
+		t.Fatal("event_payload must not be emitted")
+	}
 	if obj["x"].(float64) != 1 {
 		t.Fatal("payload key x missing")
 	}
@@ -919,6 +922,30 @@ func TestBaseEventJSONFlattenedPayload(t *testing.T) {
 	// Unknown event fields are easy to access consistently from BaseEvent at runtime.
 	if !reflect.DeepEqual(restored.EventExtraPayload["future_unrecognized_field"], map[string]any{"nested": []any{"kept"}}) {
 		t.Fatalf("future field did not hydrate: %#v", restored.EventExtraPayload)
+	}
+	eventPayload, err := restored.EventPayload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eventPayload["x"].(float64) != 1 {
+		t.Fatalf("known payload field missing from EventPayload: %#v", eventPayload)
+	}
+	if !reflect.DeepEqual(eventPayload["future_unrecognized_field"], map[string]any{"nested": []any{"kept"}}) {
+		t.Fatalf("future field missing from EventPayload: %#v", eventPayload)
+	}
+	if _, ok := eventPayload["event_id"]; ok {
+		t.Fatalf("EventPayload must exclude event_id: %#v", eventPayload)
+	}
+	if _, ok := eventPayload["event_ttl"]; ok {
+		t.Fatalf("EventPayload must exclude event_ttl: %#v", eventPayload)
+	}
+	eventPayload["x"] = float64(99)
+	freshPayload, err := restored.EventPayload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if freshPayload["x"].(float64) != 1 {
+		t.Fatalf("EventPayload should return a fresh map: %#v", freshPayload)
 	}
 	typed, err := abxbus.EventPayloadAs[struct {
 		X                 int            `json:"x"`

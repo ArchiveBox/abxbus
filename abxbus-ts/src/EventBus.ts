@@ -35,6 +35,8 @@ export type EventBusOptions = {
   event_concurrency?: EventConcurrencyMode | null
   event_timeout?: number | null // default handler timeout in seconds, applied when event.event_timeout is undefined
   event_slow_timeout?: number | null // threshold before a warning is logged about slow event processing
+  event_ttl?: number | null // seconds to keep completed events in history, -1 disables TTL deletion
+  event_result_ttl?: number | null // seconds to keep completed event results, -1 disables result pruning
 
   // per-event-handler options
   event_handler_concurrency?: EventHandlerConcurrencyMode | null
@@ -56,6 +58,8 @@ export type EventBusJSON = {
   event_concurrency: EventConcurrencyMode
   event_timeout: number | null
   event_slow_timeout: number | null
+  event_ttl: number | null
+  event_result_ttl: number | null
   event_handler_concurrency: EventHandlerConcurrencyMode
   event_handler_completion: EventHandlerCompletionMode
   event_handler_slow_timeout: number | null
@@ -141,6 +145,11 @@ export class GlobalEventBusRegistry {
   }
 }
 
+type TTLExpiryEntry = {
+  expires_at: number
+  event_id: string
+}
+
 export class EventBus {
   private static _registry_by_constructor = new WeakMap<Function, GlobalEventBusRegistry>()
   private static _global_event_lock_by_constructor = new WeakMap<Function, AsyncLock>()
@@ -190,6 +199,8 @@ export class EventBus {
   // slow processing warning timeout settings
   event_handler_slow_timeout: number | null
   event_slow_timeout: number | null
+  event_ttl: number | null
+  event_result_ttl: number | null
 
   // public runtime state
   handlers: Map<string, EventHandler> // map of handler uuidv5 ids to EventHandler objects
@@ -203,6 +214,7 @@ export class EventBus {
   locks: LockManager
   find_waiters: Set<EphemeralFindEventHandler> // set of EphemeralFindEventHandler objects that are waiting for a matching future event
   middlewares: EventBusMiddleware[]
+  private ttl_expiry_index: TTLExpiryEntry[]
   private destroyed: boolean
 
   private static normalizeMiddlewares(middlewares?: EventBusMiddlewareInput[]): EventBusMiddleware[] {
@@ -232,6 +244,8 @@ export class EventBus {
     this.event_timeout = options.event_timeout ?? 60
     this.event_handler_slow_timeout = options.event_handler_slow_timeout ?? 30
     this.event_slow_timeout = options.event_slow_timeout ?? 300
+    this.event_ttl = EventBus._validateOptionalSeconds(options.event_ttl, 'event_ttl')
+    this.event_result_ttl = EventBus._validateOptionalSeconds(options.event_result_ttl, 'event_result_ttl')
 
     // initialize runtime state
     this.runloop_running = false
@@ -246,6 +260,7 @@ export class EventBus {
     this.in_flight_event_ids = new Set()
     this.locks = new LockManager(this)
     this.middlewares = EventBus.normalizeMiddlewares(options.middlewares)
+    this.ttl_expiry_index = []
     this.destroyed = false
 
     this.all_instances.add(this)
@@ -387,24 +402,178 @@ export class EventBus {
     }
   }
 
-  private _markEventCompletedIfNeeded(event: BaseEvent): void {
-    if (event.event_status !== 'completed') {
-      event.event_pending_bus_count = Math.max(0, event.event_pending_bus_count - 1)
-      event._markCompleted(false)
+  private static _validateOptionalSeconds(value: number | null | undefined, name: string): number | null {
+    if (value === undefined || value === null) {
+      return null
     }
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < -1) {
+      throw new Error(`${name} must be >= -1, null, or undefined`)
+    }
+    return value
+  }
+
+  private _eventRetainedByAnyBus(event: BaseEvent): boolean {
+    const original_event = event._event_original ?? event
+    for (const bus of this.all_instances) {
+      if (bus.event_history.get(original_event.event_id) === original_event) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private _gcEventIfUnretained(event: BaseEvent): void {
+    if (!this._eventRetainedByAnyBus(event)) {
+      event._gc()
+    }
+  }
+
+  private _completedEventAgeSeconds(event: BaseEvent): number | null {
+    if (event.event_status !== 'completed' || !event.event_completed_at) {
+      return null
+    }
+    const completed_at = Date.parse(event.event_completed_at)
+    if (!Number.isFinite(completed_at)) {
+      return null
+    }
+    return Math.max(0, (Date.now() - completed_at) / 1000)
+  }
+
+  private _completedEventDeadlineBaseMs(event: BaseEvent): number | null {
+    if (event.event_status !== 'completed' || !event.event_completed_at) {
+      return null
+    }
+    const completed_at = Date.parse(event.event_completed_at)
+    return Number.isNaN(completed_at) ? null : completed_at
+  }
+
+  private _resolveEventTTL(event: BaseEvent): number | null {
+    return event.event_ttl ?? this.event_ttl
+  }
+
+  private _isCompletedEventExpiredForHistory(event: BaseEvent): boolean {
+    const completed_at = this._completedEventDeadlineBaseMs(event)
+    const event_ttl = this._resolveEventTTL(event)
+    return completed_at !== null && event_ttl !== null && event_ttl >= 0 && (event_ttl === 0 || completed_at + event_ttl * 1000 <= Date.now())
+  }
+
+  private _resolveEventResultTTL(event: BaseEvent, result: EventResult): number | null {
+    return result.handler.handler_result_ttl ?? event.event_result_ttl ?? this.event_result_ttl
+  }
+
+  private _earliestTTLDeadlineMs(event: BaseEvent): number | null {
+    const completed_at = this._completedEventDeadlineBaseMs(event)
+    if (completed_at === null) {
+      return null
+    }
+    let ttl: number | null = null
+    const event_ttl = this._resolveEventTTL(event)
+    if (event_ttl !== null && event_ttl >= 0) {
+      ttl = event_ttl
+    }
+    for (const result of event.event_results.values()) {
+      if (result.eventbus_id !== this.id) {
+        continue
+      }
+      const result_ttl = this._resolveEventResultTTL(event, result)
+      if (result_ttl !== null && result_ttl >= 0) {
+        ttl = ttl === null ? result_ttl : Math.min(ttl, result_ttl)
+      }
+    }
+    if (ttl === null) {
+      return null
+    }
+    return ttl === 0 ? 0 : completed_at + ttl * 1000
+  }
+
+  private _pushTTLExpiry(expires_at: number, event_id: string): void {
+    this.ttl_expiry_index.push({ expires_at, event_id })
+    this.ttl_expiry_index.sort((left, right) => right.expires_at - left.expires_at)
+  }
+
+  private _updateEventTTLDeadline(event: BaseEvent): void {
+    const deadline = this._earliestTTLDeadlineMs(event)
+    if (deadline === null) {
+      event._event_expires_at_by_bus.delete(this.id)
+      return
+    }
+    event._event_expires_at_by_bus.set(this.id, deadline)
+    this._pushTTLExpiry(deadline, event.event_id)
+  }
+
+  private _trimEventHistory(include_ttl: boolean = true): void {
     if (
       this.event_history.max_history_size !== null &&
-      this.event_history.max_history_size > 0 &&
-      this.event_history.size > this.event_history.max_history_size
+      (this.event_history.max_history_size === 0 || this.event_history.size > this.event_history.max_history_size)
     ) {
       this.event_history.trimEventHistory({
         is_event_complete: (candidate_event) => candidate_event.event_status === 'completed',
-        on_remove: (candidate_event) => candidate_event._gc(),
+        on_remove: (candidate_event) => this._gcEventIfUnretained(candidate_event),
         owner_label: this.toString(),
         max_history_size: this.event_history.max_history_size,
         max_history_drop: this.event_history.max_history_drop,
       })
     }
+
+    if (!include_ttl) {
+      return
+    }
+    const first_due = this.ttl_expiry_index[this.ttl_expiry_index.length - 1]
+    if (first_due === undefined || first_due.expires_at > Date.now()) {
+      return
+    }
+
+    while (this.ttl_expiry_index.length > 0) {
+      const entry = this.ttl_expiry_index[this.ttl_expiry_index.length - 1]!
+      if (entry.expires_at > Date.now()) {
+        break
+      }
+      this.ttl_expiry_index.pop()
+      const event = this.event_history.get(entry.event_id)
+      if (!event || event._event_expires_at_by_bus.get(this.id) !== entry.expires_at) {
+        continue
+      }
+      const age_seconds = this._completedEventAgeSeconds(event)
+      if (age_seconds === null) {
+        event._event_expires_at_by_bus.delete(this.id)
+        continue
+      }
+
+      for (const [result_id, result] of Array.from(event.event_results.entries())) {
+        if (result.eventbus_id !== this.id) {
+          continue
+        }
+        const result_ttl = this._resolveEventResultTTL(event, result)
+        if (result_ttl === null || result_ttl < 0 || age_seconds < result_ttl) {
+          continue
+        }
+        event.event_results.delete(result_id)
+      }
+
+      const event_ttl = this._resolveEventTTL(event)
+      if (event_ttl === null || event_ttl < 0 || age_seconds < event_ttl) {
+        this._updateEventTTLDeadline(event)
+        continue
+      }
+      this.event_history.delete(entry.event_id)
+      event._event_expires_at_by_bus.delete(this.id)
+      this._gcEventIfUnretained(event)
+    }
+  }
+
+  private _markEventCompletedIfNeeded(event: BaseEvent): void {
+    if (event.event_status !== 'completed') {
+      event.event_pending_bus_count = Math.max(0, event.event_pending_bus_count - 1)
+      event._markCompleted(false)
+    }
+    if (event.event_status === 'completed') {
+      for (const bus of this.all_instances) {
+        if (bus.event_history.get(event.event_id) === event) {
+          bus._updateEventTTLDeadline(event)
+        }
+      }
+    }
+    this._trimEventHistory(false)
   }
 
   toJSON(): EventBusJSON {
@@ -440,6 +609,8 @@ export class EventBus {
       event_concurrency: this.event_concurrency,
       event_timeout: this.event_timeout,
       event_slow_timeout: this.event_slow_timeout,
+      event_ttl: this.event_ttl,
+      event_result_ttl: this.event_result_ttl,
       event_handler_concurrency: this.event_handler_concurrency,
       event_handler_completion: this.event_handler_completion,
       event_handler_slow_timeout: this.event_handler_slow_timeout,
@@ -517,6 +688,8 @@ export class EventBus {
     if (typeof record.event_timeout === 'number' || record.event_timeout === null) options.event_timeout = record.event_timeout
     if (typeof record.event_slow_timeout === 'number' || record.event_slow_timeout === null)
       options.event_slow_timeout = record.event_slow_timeout
+    if (typeof record.event_ttl === 'number' || record.event_ttl === null) options.event_ttl = record.event_ttl
+    if (typeof record.event_result_ttl === 'number' || record.event_result_ttl === null) options.event_result_ttl = record.event_result_ttl
     if (record.event_handler_concurrency === 'serial' || record.event_handler_concurrency === 'parallel') {
       options.event_handler_concurrency = record.event_handler_concurrency
     }
@@ -777,6 +950,12 @@ export class EventBus {
     if (original_event.event_path.includes(this.label) || this._hasProcessedEvent(original_event)) {
       return this._getEventProxyScopedToThisBus(original_event) as T
     }
+    if (this._isCompletedEventExpiredForHistory(original_event)) {
+      this.event_history.delete(original_event.event_id)
+      original_event._event_expires_at_by_bus.delete(this.id)
+      this._gcEventIfUnretained(original_event)
+      return this._getEventProxyScopedToThisBus(original_event) as T
+    }
 
     if (!original_event.event_path.includes(this.label)) {
       original_event.event_path.push(this.label)
@@ -789,6 +968,7 @@ export class EventBus {
       }
     }
 
+    this._trimEventHistory()
     if (
       this.event_history.max_history_size !== null &&
       this.event_history.max_history_size > 0 &&
@@ -801,13 +981,8 @@ export class EventBus {
     }
 
     this.event_history.addEvent(original_event)
-    this.event_history.trimEventHistory({
-      is_event_complete: (candidate_event) => candidate_event.event_status === 'completed',
-      on_remove: (candidate_event) => candidate_event._gc(),
-      owner_label: this.toString(),
-      max_history_size: this.event_history.max_history_size,
-      max_history_drop: this.event_history.max_history_drop,
-    })
+    this._updateEventTTLDeadline(original_event)
+    this._trimEventHistory()
     this._resolveFindWaiters(original_event)
 
     original_event.event_pending_bus_count += 1
@@ -1261,6 +1436,9 @@ export class EventBus {
 
   // check if an event has been processed (and completed) by this bus
   _hasProcessedEvent(event: BaseEvent): boolean {
+    if (event.event_status === 'completed' && event.event_completed_at && event.event_path.includes(this.label)) {
+      return true
+    }
     const results = Array.from(event.event_results.values()).filter((result) => result.eventbus_id === this.id)
     if (results.length === 0) {
       return false

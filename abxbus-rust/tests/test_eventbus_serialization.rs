@@ -49,6 +49,8 @@ fn assert_eventbus_json_roundtrip_uses_id_keyed_structures(bus_name: &str, bus_i
             event_handler_completion: EventHandlerCompletionMode::First,
             event_timeout: Some(0.0),
             event_slow_timeout: Some(34.0),
+            event_ttl: None,
+            event_result_ttl: None,
             event_handler_slow_timeout: Some(12.0),
             event_handler_detect_file_paths: false,
             max_handler_recursion_depth: 2,

@@ -1,5 +1,6 @@
 import asyncio
 import contextvars
+import heapq
 import inspect
 import json
 import logging
@@ -175,6 +176,8 @@ class EventBus:
     event_concurrency: EventConcurrencyMode = EventConcurrencyMode.BUS_SERIAL
     event_timeout: float | None = 60.0
     event_slow_timeout: float | None = 300.0
+    event_ttl: float | None = None
+    event_result_ttl: float | None = None
     event_handler_concurrency: EventHandlerConcurrencyMode = EventHandlerConcurrencyMode.SERIAL
     event_handler_completion: EventHandlerCompletionMode = EventHandlerCompletionMode.ALL
     event_handler_slow_timeout: float | None = 30.0
@@ -201,6 +204,7 @@ class EventBus:
     find_waiters: set[_FindWaiter]
     _lock_for_event_bus_serial: ReentrantLock
     locks: LockManagerProtocol
+    _ttl_expiry_index: list[tuple[float, str]]
     _destroyed: bool
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -230,6 +234,14 @@ class EventBus:
                 seen_buses.add(bus_id)
                 yield bus
 
+    @staticmethod
+    def _validate_optional_seconds(value: float | None, field_name: str) -> float | None:
+        if value is None:
+            return None
+        seconds = float(value)
+        assert seconds >= -1, f'{field_name} must be >= -1 or None, got: {value!r}'
+        return seconds
+
     def __init__(
         self,
         name: PythonIdentifierStr | None = None,
@@ -240,6 +252,8 @@ class EventBus:
         max_history_drop: bool = False,
         event_timeout: float | None = 60.0,
         event_slow_timeout: float | None = 300.0,
+        event_ttl: float | None = None,
+        event_result_ttl: float | None = None,
         event_handler_slow_timeout: float | None = 30.0,
         event_handler_detect_file_paths: bool = True,
         warn_on_duplicate_handler_names: bool = True,
@@ -288,6 +302,7 @@ class EventBus:
         self.locks = LockManager()
         self._parallel_event_tasks = set()
         self._pending_middleware_tasks = set()
+        self._ttl_expiry_index = []
         try:
             self.event_concurrency = EventConcurrencyMode(event_concurrency or EventConcurrencyMode.BUS_SERIAL)
         except ValueError as exc:
@@ -308,18 +323,20 @@ class EventBus:
             raise AssertionError(f'event_handler_completion must be "all" or "first", got: {event_handler_completion!r}') from exc
         self.event_timeout = 60.0 if event_timeout is None else event_timeout
         self.event_slow_timeout = 300.0 if event_slow_timeout is None else event_slow_timeout
+        self.event_ttl = self._validate_optional_seconds(event_ttl, 'event_ttl')
+        self.event_result_ttl = self._validate_optional_seconds(event_result_ttl, 'event_result_ttl')
         self.event_handler_slow_timeout = 30.0 if event_handler_slow_timeout is None else event_handler_slow_timeout
         self.event_handler_detect_file_paths = bool(event_handler_detect_file_paths)
         self.warn_on_duplicate_handler_names = bool(warn_on_duplicate_handler_names)
         self.max_handler_recursion_depth = int(max_handler_recursion_depth)
-        assert self.event_timeout is None or self.event_timeout >= 0, (
-            f'event_timeout must be >= 0 or None, got: {self.event_timeout!r}'
+        assert self.event_timeout is None or self.event_timeout >= -1, (
+            f'event_timeout must be >= -1 or None, got: {self.event_timeout!r}'
         )
-        assert self.event_slow_timeout is None or self.event_slow_timeout >= 0, (
-            f'event_slow_timeout must be >= 0 or None, got: {self.event_slow_timeout!r}'
+        assert self.event_slow_timeout is None or self.event_slow_timeout >= -1, (
+            f'event_slow_timeout must be >= -1 or None, got: {self.event_slow_timeout!r}'
         )
-        assert self.event_handler_slow_timeout is None or self.event_handler_slow_timeout >= 0, (
-            f'event_handler_slow_timeout must be >= 0 or None, got: {self.event_handler_slow_timeout!r}'
+        assert self.event_handler_slow_timeout is None or self.event_handler_slow_timeout >= -1, (
+            f'event_handler_slow_timeout must be >= -1 or None, got: {self.event_handler_slow_timeout!r}'
         )
         assert self.max_handler_recursion_depth >= 0, (
             f'max_handler_recursion_depth must be >= 0, got: {self.max_handler_recursion_depth!r}'
@@ -485,6 +502,8 @@ class EventBus:
             handler_payload.setdefault('handler_timeout', result_payload.get('handler_timeout'))
         if result_payload.get('handler_slow_timeout') is not None:
             handler_payload.setdefault('handler_slow_timeout', result_payload.get('handler_slow_timeout'))
+        if result_payload.get('handler_result_ttl') is not None:
+            handler_payload.setdefault('handler_result_ttl', result_payload.get('handler_result_ttl'))
         if result_payload.get('handler_registered_at') is not None:
             handler_payload.setdefault('handler_registered_at', result_payload.get('handler_registered_at'))
         handler_payload.setdefault('event_pattern', result_payload.get('handler_event_pattern') or event.event_type)
@@ -516,6 +535,7 @@ class EventBus:
             'handler_file_path',
             'handler_timeout',
             'handler_slow_timeout',
+            'handler_result_ttl',
             'handler_registered_at',
             'handler_event_pattern',
             'eventbus_name',
@@ -561,6 +581,8 @@ class EventBus:
             'event_concurrency': str(self.event_concurrency),
             'event_timeout': self.event_timeout,
             'event_slow_timeout': self.event_slow_timeout,
+            'event_ttl': self.event_ttl,
+            'event_result_ttl': self.event_result_ttl,
             'event_handler_concurrency': str(self.event_handler_concurrency),
             'event_handler_completion': str(self.event_handler_completion),
             'event_handler_slow_timeout': self.event_handler_slow_timeout,
@@ -601,6 +623,12 @@ class EventBus:
             event_slow_timeout=payload.get('event_slow_timeout')
             if isinstance(payload.get('event_slow_timeout'), (int, float)) or payload.get('event_slow_timeout') is None
             else 300.0,
+            event_ttl=payload.get('event_ttl')
+            if isinstance(payload.get('event_ttl'), (int, float)) or payload.get('event_ttl') is None
+            else None,
+            event_result_ttl=payload.get('event_result_ttl')
+            if isinstance(payload.get('event_result_ttl'), (int, float)) or payload.get('event_result_ttl') is None
+            else None,
             event_handler_slow_timeout=payload.get('event_handler_slow_timeout')
             if isinstance(payload.get('event_handler_slow_timeout'), (int, float))
             or payload.get('event_handler_slow_timeout') is None
@@ -1007,7 +1035,15 @@ class EventBus:
 
     # Class pattern registration keeps strict event typing.
     @overload
-    def on(self, event_pattern: type[T_OnEvent], handler: ContravariantEventHandlerCallable[T_OnEvent]) -> EventHandler: ...
+    def on(
+        self,
+        event_pattern: type[T_OnEvent],
+        handler: ContravariantEventHandlerCallable[T_OnEvent],
+        *,
+        handler_timeout: float | None = None,
+        handler_slow_timeout: float | None = None,
+        handler_result_ttl: float | None = None,
+    ) -> EventHandler: ...
 
     # String and wildcard registration is looser: any BaseEvent subclass handler is allowed.
     @overload
@@ -1015,6 +1051,10 @@ class EventBus:
         self,
         event_pattern: PythonIdentifierStr | Literal['*'],
         handler: ContravariantEventHandlerCallable[T_OnEvent],
+        *,
+        handler_timeout: float | None = None,
+        handler_slow_timeout: float | None = None,
+        handler_result_ttl: float | None = None,
     ) -> EventHandler: ...
 
     # I dont think this is needed, but leaving it here for now
@@ -1026,6 +1066,10 @@ class EventBus:
         self,
         event_pattern: EventPatternType,
         handler: ContravariantEventHandlerCallable[T_OnEvent],
+        *,
+        handler_timeout: float | None = None,
+        handler_slow_timeout: float | None = None,
+        handler_result_ttl: float | None = None,
     ) -> EventHandler:
         """
         Subscribe to events matching a pattern, event type name, or event model class.
@@ -1084,6 +1128,9 @@ class EventBus:
             eventbus_name=self.name,
             eventbus_id=self.id,
             detect_handler_file_path=self.event_handler_detect_file_paths,
+            handler_timeout=handler_timeout,
+            handler_slow_timeout=handler_slow_timeout,
+            handler_result_ttl=handler_result_ttl,
         )
         assert handler_entry.id is not None
         self.handlers[handler_entry.id] = handler_entry
@@ -1211,6 +1258,8 @@ class EventBus:
             for entry in event.event_path
         ), f'Event.event_path must be a list of EventBus labels BusName#abcd, got: {event.event_path}'
 
+        self._trim_event_history_if_needed()
+
         # NOTE:
         # emit() is intentionally synchronous and runs on the same event-loop
         # thread as the runloop task. Blocking here for "pressure" would deadlock
@@ -1227,7 +1276,7 @@ class EventBus:
                 # Before rejecting, opportunistically evict already-completed history entries.
                 # This preserves max_history_drop=False semantics (never dropping in-flight events)
                 # while avoiding needless backpressure when only completed entries are occupying the cap.
-                self.event_history.trim_event_history(owner_label=str(self))
+                self._trim_event_history_if_needed()
             if len(self.event_history) >= self.event_history.max_history_size:
                 raise RuntimeError(
                     f'{self} history limit reached ({len(self.event_history)}/{self.event_history.max_history_size}); '
@@ -1240,6 +1289,10 @@ class EventBus:
         # Ensure every emitted event has a completion signal tied to this loop.
         # Completion logic always sets this signal; consumers like event_results_* await it.
         _ = event.event_completed_signal
+        if self._completed_event_expired_for_history(event):
+            self.event_history.pop(event.event_id, None)
+            event._event_expires_at_by_bus.pop(self.id, None)
+            return event
 
         # Put event in queue synchronously using put_nowait
         if self.pending_event_queue:
@@ -1247,12 +1300,14 @@ class EventBus:
                 self.pending_event_queue.put_nowait(event)
                 # Only add to history after successfully queuing
                 self.event_history[event.event_id] = event
+                self._update_event_ttl_deadline(event)
                 self.in_flight_event_ids.add(event.event_id)
                 # Resolve future find waiters immediately on emit so callers
                 # don't wait for queue position or handler execution.
                 self._resolve_find_waiters(event)
                 if self.locks.get_lock_for_event(self, event) is None:
                     self._start_parallel_event_task_from_queue(event)
+                self._trim_event_history_if_needed()
                 if logger.isEnabledFor(logging.INFO):
                     logger.info(
                         '🗣️ %s.emit(%s) ➡️ %s#%s (#%d %s)',
@@ -1285,7 +1340,7 @@ class EventBus:
         ):
             soft_limit = max(self.event_history.max_history_size, int(self.event_history.max_history_size * 1.2))
             if len(self.event_history) > soft_limit:
-                self.event_history.trim_event_history(owner_label=str(self))
+                self._trim_event_history_if_needed()
 
         return event
 
@@ -1891,6 +1946,13 @@ class EventBus:
         self.in_flight_event_ids.discard(event.event_id)
 
         newly_completed_events = self._mark_event_tree_complete_if_ready(event)
+        completed_events_for_ttl = list(newly_completed_events)
+        if event.event_status == EventStatus.COMPLETED and event not in completed_events_for_ttl:
+            completed_events_for_ttl.append(event)
+        for completed_event in completed_events_for_ttl:
+            for bus in list(type(self).all_instances):
+                if bus and bus.event_history.get(completed_event.event_id) is completed_event:
+                    bus._update_event_ttl_deadline(completed_event)
         for completed_event in newly_completed_events:
             await self.on_event_change(completed_event, EventStatus.COMPLETED)
 
@@ -2034,6 +2096,7 @@ class EventBus:
         just_completed = (not was_complete) and event.event_status == EventStatus.COMPLETED
         if just_completed:
             self._mark_event_complete_on_all_buses(event)
+            self._update_event_ttl_deadline(event)
             await self.on_event_change(event, EventStatus.COMPLETED)
 
     async def _propagate_parent_completion(self, event: BaseEvent[Any]) -> None:
@@ -2060,18 +2123,122 @@ class EventBus:
             just_completed = (not was_complete) and parent_event.event_status == EventStatus.COMPLETED
             if parent_bus and just_completed:
                 self._mark_event_complete_on_all_buses(parent_event)
+                parent_bus._update_event_ttl_deadline(parent_event)
                 await parent_bus.on_event_change(parent_event, EventStatus.COMPLETED)
 
             current = parent_event
 
-    def _trim_event_history_if_needed(self) -> None:
+    @staticmethod
+    def _completed_event_age_seconds(event: BaseEvent[Any]) -> float | None:
+        if event.event_status != EventStatus.COMPLETED or not event.event_completed_at:
+            return None
+        try:
+            completed_at = datetime.fromisoformat(event.event_completed_at.replace('Z', '+00:00'))
+        except ValueError:
+            return None
+        if completed_at.tzinfo is None:
+            completed_at = completed_at.replace(tzinfo=UTC)
+        return max(0.0, (datetime.now(UTC) - completed_at.astimezone(UTC)).total_seconds())
+
+    @staticmethod
+    def _event_completed_epoch_seconds(event: BaseEvent[Any]) -> float | None:
+        if event.event_status != EventStatus.COMPLETED or not event.event_completed_at:
+            return None
+        try:
+            completed_at = datetime.fromisoformat(event.event_completed_at.replace('Z', '+00:00'))
+        except ValueError:
+            return None
+        if completed_at.tzinfo is None:
+            completed_at = completed_at.replace(tzinfo=UTC)
+        return completed_at.astimezone(UTC).timestamp()
+
+    def _resolve_event_ttl(self, event: BaseEvent[Any]) -> float | None:
+        return event.event_ttl if event.event_ttl is not None else self.event_ttl
+
+    def _completed_event_expired_for_history(self, event: BaseEvent[Any]) -> bool:
+        event_ttl = self._resolve_event_ttl(event)
+        completed_at = self._event_completed_epoch_seconds(event)
+        return (
+            event_ttl is not None
+            and event_ttl >= 0
+            and completed_at is not None
+            and (event_ttl == 0 or completed_at + event_ttl <= datetime.now(UTC).timestamp())
+        )
+
+    def _resolve_event_result_ttl(self, event: BaseEvent[Any], result: EventResult[Any]) -> float | None:
+        handler_ttl = result.handler.handler_result_ttl
+        if handler_ttl is not None:
+            return handler_ttl
+        return event.event_result_ttl if event.event_result_ttl is not None else self.event_result_ttl
+
+    def _earliest_ttl_deadline(self, event: BaseEvent[Any]) -> float | None:
+        completed_at = self._event_completed_epoch_seconds(event)
+        if completed_at is None:
+            return None
+        ttl = self._resolve_event_ttl(event)
+        best_ttl = ttl if ttl is not None and ttl >= 0 else None
+        for result in event.event_results.values():
+            if result.eventbus_id != self.id:
+                continue
+            result_ttl = self._resolve_event_result_ttl(event, result)
+            if result_ttl is None or result_ttl < 0:
+                continue
+            best_ttl = result_ttl if best_ttl is None else min(best_ttl, result_ttl)
+        if best_ttl is None:
+            return None
+        if best_ttl == 0:
+            return 0.0
+        return completed_at + best_ttl
+
+    def _update_event_ttl_deadline(self, event: BaseEvent[Any]) -> None:
+        deadline = self._earliest_ttl_deadline(event)
+        if deadline is None:
+            event._event_expires_at_by_bus.pop(self.id, None)
+            return
+        event._event_expires_at_by_bus[self.id] = deadline
+        heapq.heappush(self._ttl_expiry_index, (deadline, event.event_id))
+
+    def _trim_event_history_if_needed(self, *, include_ttl: bool = True) -> None:
         if (
             self.event_history.max_history_size is not None
-            and self.event_history.max_history_size > 0
-            and self.event_history.max_history_drop
-            and len(self.event_history) > self.event_history.max_history_size
+            and (
+                self.event_history.max_history_size == 0
+                or (
+                    self.event_history.max_history_size > 0
+                    and self.event_history.max_history_drop
+                    and len(self.event_history) > self.event_history.max_history_size
+                )
+            )
         ):
             self.event_history.trim_event_history(owner_label=str(self))
+        if not include_ttl:
+            return
+
+        now = datetime.now(UTC).timestamp()
+        while self._ttl_expiry_index and self._ttl_expiry_index[0][0] <= now:
+            expires_at, event_id = heapq.heappop(self._ttl_expiry_index)
+            event = self.event_history.get(event_id)
+            if event is None or event._event_expires_at_by_bus.get(self.id) != expires_at:
+                continue
+            age_seconds = self._completed_event_age_seconds(event)
+            if age_seconds is None:
+                event._event_expires_at_by_bus.pop(self.id, None)
+                continue
+
+            for result_id, result in list(event.event_results.items()):
+                if result.eventbus_id != self.id:
+                    continue
+                result_ttl = self._resolve_event_result_ttl(event, result)
+                if result_ttl is None or result_ttl < 0 or age_seconds < result_ttl:
+                    continue
+                event.event_results.pop(result_id, None)
+
+            event_ttl = self._resolve_event_ttl(event)
+            if event_ttl is None or event_ttl < 0 or age_seconds < event_ttl:
+                self._update_event_ttl_deadline(event)
+                continue
+            self.event_history.pop(event_id, None)
+            event._event_expires_at_by_bus.pop(self.id, None)
 
     async def _process_event(self, event: BaseEvent[Any], timeout: float | None = None) -> None:
         """
@@ -2145,7 +2312,7 @@ class EventBus:
 
         await self._mark_event_complete_if_ready(event)
         await self._propagate_parent_completion(event)
-        self._trim_event_history_if_needed()
+        self._trim_event_history_if_needed(include_ttl=False)
 
     def _get_handlers_for_event(self, event: BaseEvent[Any]) -> dict[PythonIdStr, EventHandler]:
         """Get all handlers that should process the given event, filtering out those that would create loops"""

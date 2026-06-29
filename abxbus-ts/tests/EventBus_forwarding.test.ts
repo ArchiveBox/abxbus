@@ -14,11 +14,24 @@ const ForwardedDefaultsChildEvent = BaseEvent.extend('ForwardedDefaultsChildEven
 const ForwardedFirstDefaultsEvent = BaseEvent.extend('ForwardedFirstDefaultsEvent', { event_result_type: z.string() })
 const ProxyDispatchRootEvent = BaseEvent.extend('ProxyDispatchRootEvent', {})
 const ProxyDispatchChildEvent = BaseEvent.extend('ProxyDispatchChildEvent', {})
+const ForwardingTTLProbeEvent = BaseEvent.extend('ForwardingTTLProbeEvent', {})
+const ForwardingTTLTouchEvent = BaseEvent.extend('ForwardingTTLTouchEvent', {})
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+
+const ttlBus = (name: string, options: Record<string, unknown>): EventBus =>
+  new EventBus(name, options as ConstructorParameters<typeof EventBus>[1])
+
+const forwardingTTLProbe = (data: Record<string, unknown> = {}): InstanceType<typeof ForwardingTTLProbeEvent> =>
+  ForwardingTTLProbeEvent(data as ConstructorParameters<typeof ForwardingTTLProbeEvent>[0])
+
+const runNaturalHistoryTrimPass = async (bus: EventBus): Promise<void> => {
+  await bus.emit(ForwardingTTLTouchEvent({})).now()
+  await bus.waitUntilIdle()
+}
 
 const indexOf = (values: string[], value: string): number => {
   const index = values.indexOf(value)
@@ -58,6 +71,64 @@ test('test_events_forward_between_buses_without_duplication', async () => {
     assert.equal(event.event_pending_bus_count, 0)
   } finally {
     await Promise.all([bus_a.destroy(), bus_b.destroy(), bus_c.destroy()])
+  }
+})
+
+test('test_completed_forwarded_event_with_pruned_target_results_remains_terminal', async () => {
+  const bus_a = new EventBus('PrunedTerminalA')
+  const bus_b_result_events: string[] = []
+  const middleware_events: string[] = []
+  const bus_b = new EventBus('PrunedTerminalB', {
+    middlewares: [
+      {
+        onEventResultChange: (_bus, event, event_result, status) => {
+          if (event_result.eventbus_id === bus_b.id) {
+            middleware_events.push(`${event.event_id}:${event_result.handler_name}:${status}`)
+          }
+        },
+      },
+    ],
+  })
+
+  try {
+    bus_a.on(PingEvent, (event) => {
+      bus_b.emit(event)
+      return 'a'
+    })
+    bus_b.on(PingEvent, (event) => {
+      bus_b_result_events.push(event.event_id)
+      return 'b'
+    })
+
+    const event = bus_a.emit(PingEvent({ value: 1 }))
+    await event.now()
+    await Promise.all([bus_a.waitUntilIdle(), bus_b.waitUntilIdle()])
+
+    assert.equal(event.event_status, 'completed')
+    assert.ok(event.event_completed_at)
+    assert.deepEqual(bus_b_result_events, [event.event_id])
+    const middleware_event_count = middleware_events.length
+    for (const [handler_id, result] of Array.from(event.event_results.entries())) {
+      if (result.eventbus_id === bus_b.id) {
+        event.event_results.delete(handler_id)
+      }
+    }
+    assert.equal(
+      Array.from(event.event_results.values()).some((result) => result.eventbus_id === bus_b.id),
+      false
+    )
+
+    bus_b.emit(event)
+    await event.now()
+    await Promise.all([bus_a.waitUntilIdle(), bus_b.waitUntilIdle()])
+
+    assert.equal(event.event_status, 'completed')
+    assert.ok(event.event_completed_at)
+    assert.deepEqual(bus_b_result_events, [event.event_id])
+    assert.equal(middleware_events.length, middleware_event_count)
+    assert.equal(bus_b.event_history.has(event.event_id), true)
+  } finally {
+    await Promise.all([bus_a.destroy(), bus_b.destroy()])
   }
 })
 
@@ -350,6 +421,206 @@ test('test_forwarded_event_uses_processing_bus_defaults', async () => {
       bus_b_results.map((result) => result.handler_timeout),
       bus_b_results.map(() => bus_b.event_timeout)
     )
+  } finally {
+    await Promise.all([bus_a.destroy(), bus_b.destroy()])
+  }
+})
+
+test('test_forwarded_event_ttl_absent_uses_each_processing_bus_default', async () => {
+  const bus_a = ttlBus('ForwardTTLAbsentOriginDelete', { max_history_size: null, event_ttl: 0 })
+  const bus_b = ttlBus('ForwardTTLAbsentTargetKeep', { max_history_size: null, event_ttl: -1 })
+
+  try {
+    bus_a.on(ForwardingTTLProbeEvent, (event) => {
+      bus_b.emit(event)
+    })
+    bus_b.on(ForwardingTTLProbeEvent, async () => 'target')
+
+    const event = bus_a.emit(forwardingTTLProbe())
+    await event.now()
+    await Promise.all([bus_a.waitUntilIdle(), bus_b.waitUntilIdle()])
+
+    assert.equal(bus_a.event_history.has(event.event_id), true)
+    assert.equal(bus_b.event_history.has(event.event_id), true)
+
+    await runNaturalHistoryTrimPass(bus_a)
+    await runNaturalHistoryTrimPass(bus_b)
+
+    assert.equal(bus_a.event_history.has(event.event_id), false)
+    assert.equal(bus_b.event_history.has(event.event_id), true)
+  } finally {
+    await Promise.all([bus_a.destroy(), bus_b.destroy()])
+  }
+})
+
+test('test_forwarded_event_ttl_null_uses_each_processing_bus_default', async () => {
+  const bus_a = ttlBus('ForwardTTLNullOriginKeep', { max_history_size: null, event_ttl: -1 })
+  const bus_b = ttlBus('ForwardTTLNullTargetDelete', { max_history_size: null, event_ttl: 0 })
+
+  try {
+    bus_a.on(ForwardingTTLProbeEvent, (event) => {
+      bus_b.emit(event)
+    })
+    bus_b.on(ForwardingTTLProbeEvent, async () => 'target')
+
+    const event = bus_a.emit(forwardingTTLProbe({ event_ttl: null }))
+    await event.now()
+    await Promise.all([bus_a.waitUntilIdle(), bus_b.waitUntilIdle()])
+
+    await runNaturalHistoryTrimPass(bus_a)
+    await runNaturalHistoryTrimPass(bus_b)
+
+    assert.equal(bus_a.event_history.has(event.event_id), true)
+    assert.equal(bus_b.event_history.has(event.event_id), false)
+  } finally {
+    await Promise.all([bus_a.destroy(), bus_b.destroy()])
+  }
+})
+
+test('test_forwarded_event_ttl_positive_uses_shorter_target_default_without_mutating_source_default', async () => {
+  const bus_a = ttlBus('ForwardTTLPositiveOriginLong', { max_history_size: null, event_ttl: 1 })
+  const bus_b = ttlBus('ForwardTTLPositiveTargetShort', { max_history_size: null, event_ttl: 0.01 })
+
+  try {
+    bus_a.on(ForwardingTTLProbeEvent, (event) => {
+      bus_b.emit(event)
+    })
+    bus_b.on(ForwardingTTLProbeEvent, async () => 'target')
+
+    const event = bus_a.emit(forwardingTTLProbe())
+    await event.now()
+    await Promise.all([bus_a.waitUntilIdle(), bus_b.waitUntilIdle()])
+
+    await delay(20)
+    await runNaturalHistoryTrimPass(bus_a)
+    await runNaturalHistoryTrimPass(bus_b)
+
+    assert.equal(bus_a.event_history.has(event.event_id), true)
+    assert.equal(bus_b.event_history.has(event.event_id), false)
+  } finally {
+    await Promise.all([bus_a.destroy(), bus_b.destroy()])
+  }
+})
+
+test('test_forwarded_event_ttl_explicit_never_overrides_both_bus_defaults', async () => {
+  const bus_a = ttlBus('ForwardTTLExplicitNeverOrigin', { max_history_size: null, event_ttl: 0 })
+  const bus_b = ttlBus('ForwardTTLExplicitNeverTarget', { max_history_size: null, event_ttl: 0.01 })
+
+  try {
+    bus_a.on(ForwardingTTLProbeEvent, (event) => {
+      bus_b.emit(event)
+    })
+    bus_b.on(ForwardingTTLProbeEvent, async () => 'target')
+
+    const event = bus_a.emit(forwardingTTLProbe({ event_ttl: -1 }))
+    await event.now()
+    await Promise.all([bus_a.waitUntilIdle(), bus_b.waitUntilIdle()])
+
+    await delay(20)
+    await runNaturalHistoryTrimPass(bus_a)
+    await runNaturalHistoryTrimPass(bus_b)
+
+    assert.equal(bus_a.event_history.has(event.event_id), true)
+    assert.equal(bus_b.event_history.has(event.event_id), true)
+  } finally {
+    await Promise.all([bus_a.destroy(), bus_b.destroy()])
+  }
+})
+
+test('test_forwarded_event_ttl_explicit_zero_overrides_both_bus_defaults', async () => {
+  const bus_a = ttlBus('ForwardTTLExplicitZeroOrigin', { max_history_size: null, event_ttl: -1 })
+  const bus_b = ttlBus('ForwardTTLExplicitZeroTarget', { max_history_size: null, event_ttl: -1 })
+
+  try {
+    bus_a.on(ForwardingTTLProbeEvent, (event) => {
+      bus_b.emit(event)
+    })
+    bus_b.on(ForwardingTTLProbeEvent, async () => 'target')
+
+    const event = bus_a.emit(forwardingTTLProbe({ event_ttl: 0 }))
+    await event.now()
+    await Promise.all([bus_a.waitUntilIdle(), bus_b.waitUntilIdle()])
+
+    await runNaturalHistoryTrimPass(bus_a)
+    await runNaturalHistoryTrimPass(bus_b)
+
+    assert.equal(bus_a.event_history.has(event.event_id), false)
+    assert.equal(bus_b.event_history.has(event.event_id), false)
+  } finally {
+    await Promise.all([bus_a.destroy(), bus_b.destroy()])
+  }
+})
+
+test('test_forwarded_event_result_ttl_absent_uses_processing_bus_default_and_clears_shared_results', async () => {
+  const bus_a = ttlBus('ForwardResultTTLAbsentOriginKeepResults', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: -1,
+  })
+  const bus_b = ttlBus('ForwardResultTTLAbsentTargetClearResults', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: 0,
+  })
+
+  try {
+    bus_a.on(ForwardingTTLProbeEvent, (event) => {
+      bus_b.emit(event)
+    })
+    bus_b.on(ForwardingTTLProbeEvent, async () => 'target')
+
+    const event = bus_a.emit(forwardingTTLProbe())
+    await event.now()
+    await Promise.all([bus_a.waitUntilIdle(), bus_b.waitUntilIdle()])
+    assert.ok(event.event_results.size > 0)
+
+    await runNaturalHistoryTrimPass(bus_b)
+
+    assert.equal(bus_a.event_history.has(event.event_id), true)
+    assert.equal(bus_b.event_history.has(event.event_id), true)
+    assert.equal(
+      Array.from(event.event_results.values()).some((result) => result.eventbus_id === bus_b.id),
+      false
+    )
+    assert.equal(
+      Array.from(event.event_results.values()).some((result) => result.eventbus_id === bus_a.id),
+      true
+    )
+  } finally {
+    await Promise.all([bus_a.destroy(), bus_b.destroy()])
+  }
+})
+
+test('test_forwarded_event_result_ttl_explicit_never_overrides_both_bus_defaults', async () => {
+  const bus_a = ttlBus('ForwardResultTTLExplicitNeverOrigin', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: 0,
+  })
+  const bus_b = ttlBus('ForwardResultTTLExplicitNeverTarget', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: 0.01,
+  })
+
+  try {
+    bus_a.on(ForwardingTTLProbeEvent, (event) => {
+      bus_b.emit(event)
+    })
+    bus_b.on(ForwardingTTLProbeEvent, async () => 'target')
+
+    const event = bus_a.emit(forwardingTTLProbe({ event_result_ttl: -1 }))
+    await event.now()
+    await Promise.all([bus_a.waitUntilIdle(), bus_b.waitUntilIdle()])
+    assert.ok(event.event_results.size > 0)
+
+    await delay(20)
+    await runNaturalHistoryTrimPass(bus_a)
+    await runNaturalHistoryTrimPass(bus_b)
+
+    assert.equal(bus_a.event_history.has(event.event_id), true)
+    assert.equal(bus_b.event_history.has(event.event_id), true)
+    assert.ok(event.event_results.size > 0)
   } finally {
     await Promise.all([bus_a.destroy(), bus_b.destroy()])
   }

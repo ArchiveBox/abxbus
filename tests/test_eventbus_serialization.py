@@ -214,6 +214,15 @@ def test_baseevent_model_validate_roundtrips_runtime_json_shape() -> None:
     event_payload = bus.model_dump()['event_history'][event.event_id]
     assert event_payload['future_unrecognized_field'] == {'nested': ['kept']}
     assert 'event_extra_payload' not in event_payload
+    assert event.event_payload() == {
+        'value': 'roundtrip',
+        'future_unrecognized_field': {'nested': ['kept']},
+    }
+    event.event_payload()['value'] = 'mutated'
+    assert event.event_payload()['value'] == 'roundtrip'
+    assert 'event_id' not in event.event_payload()
+    assert 'event_ttl' not in event.event_payload()
+    assert 'event_payload' not in event_payload
 
     restored_payload = BaseEvent.model_validate(event_payload).model_dump(mode='json')
     assert _json_shape(restored_payload) == _json_shape(event_payload)

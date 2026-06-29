@@ -12,11 +12,34 @@ import {
 } from '../src/index.js'
 
 const TimeoutEvent = BaseEvent.extend('TimeoutEvent', {})
+const TTLProbeEvent = BaseEvent.extend('TTLProbeEvent', {})
+const TTLTouchEvent = BaseEvent.extend('TTLTouchEvent', {})
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+
+const ttlBus = (name: string, options: Record<string, unknown>): EventBus =>
+  new EventBus(name, options as ConstructorParameters<typeof EventBus>[1])
+
+const ttlProbe = (data: Record<string, unknown> = {}): InstanceType<typeof TTLProbeEvent> =>
+  TTLProbeEvent(data as ConstructorParameters<typeof TTLProbeEvent>[0])
+
+const ttlTouch = (data: Record<string, unknown> = {}): InstanceType<typeof TTLTouchEvent> =>
+  TTLTouchEvent(data as ConstructorParameters<typeof TTLTouchEvent>[0])
+
+const emitCompletedTTLProbe = async (bus: EventBus, data: Record<string, unknown> = {}): Promise<InstanceType<typeof TTLProbeEvent>> => {
+  const event = bus.emit(ttlProbe(data))
+  await event.now()
+  await bus.waitUntilIdle()
+  return event
+}
+
+const runNaturalHistoryTrimPass = async (bus: EventBus): Promise<void> => {
+  await bus.emit(ttlTouch()).now()
+  await bus.waitUntilIdle()
+}
 
 const deferred = <T = void>() => {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -1045,6 +1068,355 @@ test('event_timeout null uses bus default timeout at execution', async () => {
   assert.equal(event.event_timeout ?? null, null)
   assert.equal(result.status, 'error')
   assert.ok(result.error instanceof EventHandlerAbortedError)
+})
+
+test('event_timeout -1 disables timeout like legacy zero', async () => {
+  const bus = new EventBus('TimeoutMinusOneDisabledBus', { event_timeout: 0.01 })
+
+  bus.on(TimeoutEvent, async () => {
+    await delay(20)
+    return 'ok'
+  })
+
+  const event = bus.emit(TimeoutEvent({ event_timeout: -1 }))
+  await event.now()
+
+  const result = Array.from(event.event_results.values())[0]
+  assert.equal(result.status, 'completed')
+  assert.equal(result.result, 'ok')
+})
+
+test('event_handler_timeout -1 disables handler timeout like legacy zero', async () => {
+  const bus = new EventBus('HandlerTimeoutMinusOneDisabledBus', { event_handler_concurrency: 'serial' })
+
+  bus.on(TimeoutEvent, async () => {
+    await delay(20)
+    return 'ok'
+  })
+
+  const event = bus.emit(TimeoutEvent({ event_timeout: 0.1, event_handler_timeout: -1 }))
+  await event.now()
+
+  const result = Array.from(event.event_results.values())[0]
+  assert.equal(result.status, 'completed')
+  assert.equal(result.result, 'ok')
+})
+
+test('slow timeout -1 disables slow warnings like legacy zero', async () => {
+  const bus = new EventBus('SlowTimeoutMinusOneDisabledBus', {
+    event_slow_timeout: 0.01,
+    event_handler_slow_timeout: 0.01,
+  })
+  const warnings: string[] = []
+  const original_warn = console.warn
+  console.warn = (message?: unknown, ...args: unknown[]) => {
+    warnings.push(String(message))
+    if (args.length > 0) {
+      warnings.push(args.map(String).join(' '))
+    }
+  }
+
+  try {
+    bus.on(TimeoutEvent, async () => {
+      await delay(25)
+      return 'ok'
+    })
+
+    const event = bus.emit(TimeoutEvent({ event_timeout: 0.1, event_slow_timeout: -1, event_handler_slow_timeout: -1 }))
+    await event.now()
+  } finally {
+    console.warn = original_warn
+  }
+
+  assert.ok(!warnings.some((message) => message.toLowerCase().includes('slow event processing')))
+  assert.ok(!warnings.some((message) => message.toLowerCase().includes('slow event handler')))
+})
+
+test('event_ttl zero deletes completed events on the next natural trim pass regardless of max_history_size', async () => {
+  const bus = ttlBus('EventTTLZeroBus', { max_history_size: null, event_ttl: 0 })
+
+  const event = await emitCompletedTTLProbe(bus)
+  assert.equal(bus.event_history.has(event.event_id), true)
+
+  await runNaturalHistoryTrimPass(bus)
+
+  assert.equal(bus.event_history.has(event.event_id), false)
+})
+
+test('event_result_ttl zero clears completed event results on the next natural trim pass while keeping the event', async () => {
+  const bus = ttlBus('EventResultTTLZeroBus', { max_history_size: null, event_ttl: -1, event_result_ttl: 0 })
+  bus.on(TTLProbeEvent, async () => 'result')
+
+  const event = await emitCompletedTTLProbe(bus)
+  assert.equal(event.event_results.size, 1)
+
+  await runNaturalHistoryTrimPass(bus)
+
+  assert.equal(bus.event_history.has(event.event_id), true)
+  assert.equal(event.event_results.size, 0)
+})
+
+test('event_ttl and event_result_ttl null or undefined inherit bus defaults', async () => {
+  const bus = ttlBus('TTLNullUndefinedInheritBus', { max_history_size: null, event_ttl: 0, event_result_ttl: 0 })
+  bus.on(TTLProbeEvent, async () => 'result')
+
+  const absent = await emitCompletedTTLProbe(bus)
+  const explicit_null = await emitCompletedTTLProbe(bus, { event_ttl: null, event_result_ttl: null })
+
+  await runNaturalHistoryTrimPass(bus)
+
+  assert.equal(bus.event_history.has(absent.event_id), false)
+  assert.equal(bus.event_history.has(explicit_null.event_id), false)
+  assert.equal(absent.event_results.size, 0)
+  assert.equal(explicit_null.event_results.size, 0)
+})
+
+test('event_ttl -1 overrides positive or zero bus defaults and keeps completed events', async () => {
+  const zero_default_bus = ttlBus('EventTTLMinusOneOverridesZeroBus', { max_history_size: null, event_ttl: 0 })
+  const positive_default_bus = ttlBus('EventTTLMinusOneOverridesPositiveBus', { max_history_size: null, event_ttl: 0.01 })
+
+  const zero_default_event = await emitCompletedTTLProbe(zero_default_bus, { event_ttl: -1 })
+  const positive_default_event = await emitCompletedTTLProbe(positive_default_bus, { event_ttl: -1 })
+
+  await delay(20)
+  await runNaturalHistoryTrimPass(zero_default_bus)
+  await runNaturalHistoryTrimPass(positive_default_bus)
+
+  assert.equal(zero_default_bus.event_history.has(zero_default_event.event_id), true)
+  assert.equal(positive_default_bus.event_history.has(positive_default_event.event_id), true)
+})
+
+test('event_result_ttl -1 overrides positive or zero bus defaults and keeps completed results', async () => {
+  const zero_default_bus = ttlBus('EventResultTTLMinusOneOverridesZeroBus', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: 0,
+  })
+  const positive_default_bus = ttlBus('EventResultTTLMinusOneOverridesPositiveBus', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: 0.01,
+  })
+  zero_default_bus.on(TTLProbeEvent, async () => 'zero-default')
+  positive_default_bus.on(TTLProbeEvent, async () => 'positive-default')
+
+  const zero_default_event = await emitCompletedTTLProbe(zero_default_bus, { event_result_ttl: -1 })
+  const positive_default_event = await emitCompletedTTLProbe(positive_default_bus, { event_result_ttl: -1 })
+
+  await delay(20)
+  await runNaturalHistoryTrimPass(zero_default_bus)
+  await runNaturalHistoryTrimPass(positive_default_bus)
+
+  assert.equal(zero_default_event.event_results.size, 1)
+  assert.equal(positive_default_event.event_results.size, 1)
+})
+
+test('event_ttl event-level zero overrides bus never-delete default', async () => {
+  const bus = ttlBus('EventTTLZeroOverridesNeverBus', { max_history_size: null, event_ttl: -1 })
+
+  const event = await emitCompletedTTLProbe(bus, { event_ttl: 0 })
+  await runNaturalHistoryTrimPass(bus)
+
+  assert.equal(bus.event_history.has(event.event_id), false)
+})
+
+test('event_result_ttl event-level zero overrides bus never-delete default', async () => {
+  const bus = ttlBus('EventResultTTLZeroOverridesNeverBus', { max_history_size: null, event_ttl: -1, event_result_ttl: -1 })
+  bus.on(TTLProbeEvent, async () => 'result')
+
+  const event = await emitCompletedTTLProbe(bus, { event_result_ttl: 0 })
+  await runNaturalHistoryTrimPass(bus)
+
+  assert.equal(bus.event_history.has(event.event_id), true)
+  assert.equal(event.event_results.size, 0)
+})
+
+test('event_ttl positive event override can be shorter than bus default', async () => {
+  const bus = ttlBus('EventTTLShorterOverrideBus', { max_history_size: null, event_ttl: 1 })
+
+  const event = await emitCompletedTTLProbe(bus, { event_ttl: 0.01 })
+  await delay(20)
+  await runNaturalHistoryTrimPass(bus)
+
+  assert.equal(bus.event_history.has(event.event_id), false)
+})
+
+test('event_ttl positive event override can be longer than bus default', async () => {
+  const bus = ttlBus('EventTTLLongerOverrideBus', { max_history_size: null, event_ttl: 0.01 })
+
+  const event = await emitCompletedTTLProbe(bus, { event_ttl: 1 })
+  await delay(20)
+  await runNaturalHistoryTrimPass(bus)
+
+  assert.equal(bus.event_history.has(event.event_id), true)
+})
+
+test('event_result_ttl counts from event completion and supports shorter and longer event overrides', async () => {
+  const shorter_bus = ttlBus('EventResultTTLShorterOverrideBus', { max_history_size: null, event_ttl: -1, event_result_ttl: 1 })
+  const longer_bus = ttlBus('EventResultTTLLongerOverrideBus', { max_history_size: null, event_ttl: -1, event_result_ttl: 0.01 })
+  shorter_bus.on(TTLProbeEvent, async () => 'shorter')
+  longer_bus.on(TTLProbeEvent, async () => 'longer')
+
+  const shorter_event = await emitCompletedTTLProbe(shorter_bus, { event_result_ttl: 0.01 })
+  const longer_event = await emitCompletedTTLProbe(longer_bus, { event_result_ttl: 1 })
+
+  await delay(20)
+  await runNaturalHistoryTrimPass(shorter_bus)
+  await runNaturalHistoryTrimPass(longer_bus)
+
+  assert.equal(shorter_event.event_results.size, 0)
+  assert.equal(longer_event.event_results.size, 1)
+})
+
+test('event_ttl and event_result_ttl class defaults beat bus defaults', async () => {
+  const TTLClassDefaultEvent = BaseEvent.extend('TTLClassDefaultEvent', {
+    event_ttl: 0.01,
+    event_result_ttl: 0.01,
+  } as Record<string, unknown>)
+  const bus = ttlBus('TTLClassDefaultsBeatBusDefaultsBus', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: -1,
+  })
+  bus.on(TTLClassDefaultEvent, async () => 'result')
+
+  const event = bus.emit(TTLClassDefaultEvent({}))
+  await event.now()
+  await bus.waitUntilIdle()
+  assert.equal(bus.event_history.has(event.event_id), true)
+  assert.equal(event.event_results.size, 1)
+
+  await delay(20)
+  await runNaturalHistoryTrimPass(bus)
+
+  assert.equal(bus.event_history.has(event.event_id), false)
+  assert.equal(event.event_results.size, 0)
+})
+
+test('event_ttl and event_result_ttl instance -1 overrides class and bus scalar defaults', async () => {
+  const TTLClassDefaultEvent = BaseEvent.extend('TTLClassDefaultEventForInstanceNever', {
+    event_ttl: 0.01,
+    event_result_ttl: 0.01,
+  } as Record<string, unknown>)
+  const bus = ttlBus('TTLInstanceNeverBeatsClassAndBusBus', {
+    max_history_size: null,
+    event_ttl: 0,
+    event_result_ttl: 0,
+  })
+  bus.on(TTLClassDefaultEvent, async () => 'result')
+
+  const event = bus.emit(
+    TTLClassDefaultEvent({ event_ttl: -1, event_result_ttl: -1 } as ConstructorParameters<typeof TTLClassDefaultEvent>[0])
+  )
+  await event.now()
+  await bus.waitUntilIdle()
+  await delay(20)
+  await runNaturalHistoryTrimPass(bus)
+
+  assert.equal(bus.event_history.has(event.event_id), true)
+  assert.equal(event.event_results.size, 1)
+})
+
+test('event_ttl and event_result_ttl instance null inherits class scalar defaults', async () => {
+  const TTLClassDefaultEvent = BaseEvent.extend('TTLClassDefaultEventForInstanceNull', {
+    event_ttl: 0.01,
+    event_result_ttl: 0.01,
+  } as Record<string, unknown>)
+  const bus = ttlBus('TTLInstanceNullInheritsClassBus', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: -1,
+  })
+  bus.on(TTLClassDefaultEvent, async () => 'result')
+
+  const event = bus.emit(
+    TTLClassDefaultEvent({ event_ttl: null, event_result_ttl: null } as ConstructorParameters<typeof TTLClassDefaultEvent>[0])
+  )
+  await event.now()
+  await bus.waitUntilIdle()
+  await delay(20)
+  await runNaturalHistoryTrimPass(bus)
+
+  assert.equal(bus.event_history.has(event.event_id), false)
+  assert.equal(event.event_results.size, 0)
+})
+
+test('event_ttl and event_result_ttl instance zero overrides class never-delete defaults', async () => {
+  const TTLClassNeverEvent = BaseEvent.extend('TTLClassNeverEvent', {
+    event_ttl: -1,
+    event_result_ttl: -1,
+  } as Record<string, unknown>)
+  const bus = ttlBus('TTLInstanceZeroBeatsClassNeverBus', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: -1,
+  })
+  bus.on(TTLClassNeverEvent, async () => 'result')
+
+  const event = bus.emit(TTLClassNeverEvent({ event_ttl: 0, event_result_ttl: 0 } as ConstructorParameters<typeof TTLClassNeverEvent>[0]))
+  await event.now()
+  await bus.waitUntilIdle()
+  await runNaturalHistoryTrimPass(bus)
+
+  assert.equal(bus.event_history.has(event.event_id), false)
+  assert.equal(event.event_results.size, 0)
+})
+
+test('handler_result_ttl beats event and bus result ttl defaults for the shared result list', async () => {
+  const bus = ttlBus('HandlerResultTTLBeatsEventAndBusBus', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: -1,
+  })
+  const handler_options = { handler_result_ttl: 0 } as unknown as Parameters<EventBus['on']>[2]
+  bus.on(TTLProbeEvent, async () => 'result', handler_options)
+
+  const event = await emitCompletedTTLProbe(bus, { event_result_ttl: -1 })
+  assert.equal(event.event_results.size, 1)
+
+  await runNaturalHistoryTrimPass(bus)
+
+  assert.equal(bus.event_history.has(event.event_id), true)
+  assert.equal(event.event_results.size, 0)
+})
+
+test('handler_result_ttl -1 preserves results when event and bus result ttl defaults are scalar', async () => {
+  const bus = ttlBus('HandlerResultTTLNeverBeatsScalarsBus', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: 0,
+  })
+  const handler_options = { handler_result_ttl: -1 } as unknown as Parameters<EventBus['on']>[2]
+  bus.on(TTLProbeEvent, async () => 'result', handler_options)
+
+  const event = await emitCompletedTTLProbe(bus, { event_result_ttl: 0 })
+  await runNaturalHistoryTrimPass(bus)
+
+  assert.equal(bus.event_history.has(event.event_id), true)
+  assert.equal(event.event_results.size, 1)
+})
+
+test('handler_result_ttl null inherits event result ttl before bus result ttl', async () => {
+  const bus = ttlBus('HandlerResultTTLNullInheritsEventBus', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: -1,
+  })
+  const handler_options = { handler_result_ttl: null } as unknown as Parameters<EventBus['on']>[2]
+  bus.on(TTLProbeEvent, async () => 'result', handler_options)
+
+  const event = await emitCompletedTTLProbe(bus, { event_result_ttl: 0 })
+  await runNaturalHistoryTrimPass(bus)
+
+  assert.equal(bus.event_history.has(event.event_id), true)
+  assert.equal(event.event_results.size, 0)
+})
+
+test('event_ttl and event_result_ttl reject values below -1', () => {
+  assert.throws(() => ttlBus('BadEventTTLBus', { event_ttl: -2 }), /event_ttl/)
+  assert.throws(() => ttlBus('BadEventResultTTLBus', { event_result_ttl: -2 }), /event_result_ttl/)
+  assert.throws(() => ttlProbe({ event_ttl: -2 }), /event_ttl/)
+  assert.throws(() => ttlProbe({ event_result_ttl: -2 }), /event_result_ttl/)
 })
 
 test('multi-level timeout cascade with mixed cancellations', async () => {
