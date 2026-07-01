@@ -623,10 +623,14 @@ func (b *EventBus) EmitWithContext(ctx context.Context, input any) *BaseEvent {
 func (b *EventBus) Dispatch(event *BaseEvent) *BaseEvent { return b.Emit(event) }
 
 func (b *EventBus) completedEventAgeSeconds(event *BaseEvent) (float64, bool) {
-	if event.EventStatus != "completed" || event.EventCompletedAt == nil {
+	event.mu.Lock()
+	status := event.EventStatus
+	completedAtValue := event.EventCompletedAt
+	event.mu.Unlock()
+	if status != "completed" || completedAtValue == nil {
 		return 0, false
 	}
-	completedAt, err := time.Parse(time.RFC3339Nano, *event.EventCompletedAt)
+	completedAt, err := time.Parse(time.RFC3339Nano, *completedAtValue)
 	if err != nil {
 		return 0, false
 	}
