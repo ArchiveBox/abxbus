@@ -2652,9 +2652,19 @@ fn test_baseevent_reset_returns_a_fresh_pending_event_that_can_be_redispatched()
     assert!(reset.inner.lock().event_results.is_empty());
     assert_eq!(reset.inner.lock().event_type, "BaseEventResetEvent");
     // Unknown event fields are easy to access consistently from BaseEvent at runtime.
-    assert_eq!(reset.inner.lock().event_extra_payload.get("value"), Some(&json!(1)));
+    assert_eq!(
+        reset.inner.lock().event_extra_payload.get("value"),
+        Some(&json!(1))
+    );
+    let mut payload = reset.event_payload();
+    assert_eq!(payload.get("value"), Some(&json!(1)));
+    assert!(!payload.contains_key("event_id"));
+    assert!(!payload.contains_key("event_ttl"));
+    payload.insert("value".to_string(), json!(99));
+    assert_eq!(reset.event_payload().get("value"), Some(&json!(1)));
     // event_extra_payload is an in-memory escape hatch only; wire JSON must stay flat.
     assert!(reset.to_json_value().get("event_extra_payload").is_none());
+    assert!(reset.to_json_value().get("event_payload").is_none());
 }
 
 #[test]
@@ -2810,7 +2820,10 @@ fn test_attached_typed_event_mutations_sync_to_inner_event() {
 
     let inner = mutated._inner_event();
     let inner = inner.inner.lock();
-    assert_eq!(inner.event_extra_payload.get("value"), Some(&json!("after")));
+    assert_eq!(
+        inner.event_extra_payload.get("value"),
+        Some(&json!("after"))
+    );
     assert_eq!(inner.event_timeout, Some(2.0));
     drop(inner);
 
@@ -2831,12 +2844,32 @@ fn test_attached_typed_event_mutations_sync_to_inner_event() {
         typed_with_extra.to_json_value()["future_unrecognized_field"],
         json!({"nested": ["kept"]})
     );
+    let mut event_payload = typed_with_extra.event_payload();
+    assert_eq!(event_payload.get("value"), Some(&json!("known")));
+    assert_eq!(
+        event_payload.get("future_unrecognized_field"),
+        Some(&json!({"nested": ["kept"]}))
+    );
+    assert!(!event_payload.contains_key("event_id"));
+    assert!(!event_payload.contains_key("event_ttl"));
+    event_payload.insert("value".to_string(), json!("mutated"));
+    assert_eq!(
+        typed_with_extra.event_payload().get("value"),
+        Some(&json!("known"))
+    );
     assert!(
         typed_with_extra
             .to_json_value()
             .get("event_extra_payload")
             .is_none(),
         "event_extra_payload must never appear in wire JSON"
+    );
+    assert!(
+        typed_with_extra
+            .to_json_value()
+            .get("event_payload")
+            .is_none(),
+        "event_payload must never appear in wire JSON"
     );
 
     // Known fields still use the declared schema; preserving extras must not weaken validation.

@@ -35,6 +35,7 @@ type EventHandler struct {
 	HandlerFilePath     *string  `json:"handler_file_path"`
 	HandlerTimeout      *float64 `json:"handler_timeout"`
 	HandlerSlowTimeout  *float64 `json:"handler_slow_timeout"`
+	HandlerResultTTL    *float64 `json:"handler_result_ttl"`
 	HandlerRegisteredAt string   `json:"handler_registered_at"`
 
 	handler EventHandlerCallable

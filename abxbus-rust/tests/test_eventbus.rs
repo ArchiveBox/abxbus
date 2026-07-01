@@ -245,11 +245,13 @@ fn expected_base_event_json_keys(include_results: bool) -> BTreeSet<String> {
         "event_parent_id".to_string(),
         "event_path".to_string(),
         "event_pending_bus_count".to_string(),
+        "event_result_ttl".to_string(),
         "event_result_type".to_string(),
         "event_slow_timeout".to_string(),
         "event_started_at".to_string(),
         "event_status".to_string(),
         "event_timeout".to_string(),
+        "event_ttl".to_string(),
         "event_type".to_string(),
         "event_version".to_string(),
     ]);
@@ -267,6 +269,7 @@ fn expected_event_handler_json_keys() -> BTreeSet<String> {
         "handler_file_path".to_string(),
         "handler_name".to_string(),
         "handler_registered_at".to_string(),
+        "handler_result_ttl".to_string(),
         "handler_slow_timeout".to_string(),
         "handler_timeout".to_string(),
         "id".to_string(),
@@ -286,6 +289,7 @@ fn expected_event_result_json_keys() -> BTreeSet<String> {
         "handler_id".to_string(),
         "handler_name".to_string(),
         "handler_registered_at".to_string(),
+        "handler_result_ttl".to_string(),
         "handler_slow_timeout".to_string(),
         "handler_timeout".to_string(),
         "id".to_string(),
@@ -303,8 +307,10 @@ fn expected_event_bus_json_keys() -> BTreeSet<String> {
         "event_handler_detect_file_paths".to_string(),
         "event_handler_slow_timeout".to_string(),
         "event_history".to_string(),
+        "event_result_ttl".to_string(),
         "event_slow_timeout".to_string(),
         "event_timeout".to_string(),
+        "event_ttl".to_string(),
         "handlers".to_string(),
         "handlers_by_key".to_string(),
         "id".to_string(),
@@ -803,7 +809,10 @@ fn test_write_ahead_log_captures_all_events() {
         let event = runtime.get(event_id).expect("history event");
         let inner = event.inner.lock();
         assert_eq!(inner.event_type, "UserActionEvent");
-        assert_eq!(inner.event_extra_payload["action"], json!(format!("action_{index}")));
+        assert_eq!(
+            inner.event_extra_payload["action"],
+            json!(format!("action_{index}"))
+        );
         match inner.event_status {
             EventStatus::Completed => completed += 1,
             EventStatus::Pending => pending += 1,
@@ -1754,7 +1763,10 @@ fn test_event_version_defaults_and_overrides() {
     let restored = BaseEvent::from_json_value(dispatched.to_json_value());
     assert_eq!(restored.inner.lock().event_version, "1.2.3");
     assert_eq!(restored.inner.lock().event_type, "VersionedEvent");
-    assert_eq!(restored.inner.lock().event_extra_payload["data"], json!("queued"));
+    assert_eq!(
+        restored.inner.lock().event_extra_payload["data"],
+        json!("queued")
+    );
     bus.destroy();
 }
 
@@ -3278,6 +3290,8 @@ fn test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() {
             event_handler_completion: EventHandlerCompletionMode::First,
             event_timeout: Some(0.0),
             event_slow_timeout: Some(34.0),
+            event_ttl: None,
+            event_result_ttl: None,
             event_handler_slow_timeout: Some(12.0),
             event_handler_detect_file_paths: false,
             max_handler_recursion_depth: 2,

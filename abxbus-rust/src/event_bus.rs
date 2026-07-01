@@ -1,4 +1,5 @@
 use std::{
+    cmp::Reverse,
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -16,7 +17,7 @@ use serde::{Serialize, Serializer};
 use serde_json::{json, Map, Value};
 
 use crate::{
-    base_event::{now_iso, BaseEvent},
+    base_event::{now_iso, BaseEvent, BaseEventData},
     event_handler::{EventHandler, EventHandlerCallable, EventHandlerOptions},
     event_result::{EventResult, EventResultStatus},
     id::uuid_v7_string,
@@ -63,8 +64,15 @@ struct BusRuntime {
     history_order: Mutex<VecDeque<String>>,
     max_history_size: Option<usize>,
     max_history_drop: bool,
+    ttl_expiry_index: Mutex<BinaryHeap<Reverse<TtlExpiryEntry>>>,
     find_waiters: Mutex<Vec<FindWaiter>>,
     next_waiter_id: Mutex<u64>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct TtlExpiryEntry {
+    expires_at_ms: i64,
+    event_id: String,
 }
 
 type HandlerJob = Box<dyn FnOnce() + Send + 'static>;
@@ -189,9 +197,12 @@ impl SlowWarningScheduler {
 pub struct EventBus {
     pub name: String,
     pub id: String,
+    id_ref: Arc<str>,
     pub event_concurrency: EventConcurrencyMode,
     pub event_timeout: Option<f64>,
     pub event_slow_timeout: Option<f64>,
+    pub event_ttl: Option<f64>,
+    pub event_result_ttl: Option<f64>,
     pub event_handler_concurrency: EventHandlerConcurrencyMode,
     pub event_handler_completion: EventHandlerCompletionMode,
     pub event_handler_slow_timeout: Option<f64>,
@@ -220,6 +231,8 @@ pub struct EventBusOptions {
     pub event_concurrency: EventConcurrencyMode,
     pub event_timeout: Option<f64>,
     pub event_slow_timeout: Option<f64>,
+    pub event_ttl: Option<f64>,
+    pub event_result_ttl: Option<f64>,
     pub event_handler_concurrency: EventHandlerConcurrencyMode,
     pub event_handler_completion: EventHandlerCompletionMode,
     pub event_handler_slow_timeout: Option<f64>,
@@ -278,6 +291,8 @@ impl Default for EventBusOptions {
             event_concurrency: EventConcurrencyMode::BusSerial,
             event_timeout: Some(60.0),
             event_slow_timeout: Some(300.0),
+            event_ttl: None,
+            event_result_ttl: None,
             event_handler_concurrency: EventHandlerConcurrencyMode::Serial,
             event_handler_completion: EventHandlerCompletionMode::All,
             event_handler_slow_timeout: Some(30.0),
@@ -316,6 +331,20 @@ impl EventBus {
 
     fn handler_context_key(event_id: &str, handler_id: &str) -> String {
         format!("{event_id}\0{handler_id}")
+    }
+
+    fn has_completed_on_bus(&self, event: &Arc<BaseEvent>) -> bool {
+        let inner = event.inner.lock();
+        if inner.event_status != EventStatus::Completed {
+            return false;
+        }
+        // A completed forwarded event can already contain this bus in event_path before
+        // its local handlers have run. Local handler results are the reliable signal that
+        // this bus has actually processed the shared event instance.
+        inner
+            .event_results
+            .values()
+            .any(|result| result.handler.eventbus_id == self.id)
     }
 
     fn mark_handler_context_stale(event_id: &str, handler_id: &str) {
@@ -529,16 +558,22 @@ impl EventBus {
         enforce_unique_name: bool,
     ) -> Arc<Self> {
         if let Some(timeout) = options.event_timeout {
-            assert!(timeout >= 0.0, "event_timeout must be >= 0 or None");
+            assert!(timeout >= -1.0, "event_timeout must be >= -1 or None");
         }
         if let Some(timeout) = options.event_slow_timeout {
-            assert!(timeout >= 0.0, "event_slow_timeout must be >= 0 or None");
+            assert!(timeout >= -1.0, "event_slow_timeout must be >= -1 or None");
         }
         if let Some(timeout) = options.event_handler_slow_timeout {
             assert!(
-                timeout >= 0.0,
-                "event_handler_slow_timeout must be >= 0 or None"
+                timeout >= -1.0,
+                "event_handler_slow_timeout must be >= -1 or None"
             );
+        }
+        if let Some(ttl) = options.event_ttl {
+            assert!(ttl >= -1.0, "event_ttl must be >= -1 or None");
+        }
+        if let Some(ttl) = options.event_result_ttl {
+            assert!(ttl >= -1.0, "event_result_ttl must be >= -1 or None");
         }
         let event_timeout = Some(options.event_timeout.unwrap_or(60.0));
         let event_slow_timeout = Some(options.event_slow_timeout.unwrap_or(300.0));
@@ -567,10 +602,13 @@ impl EventBus {
         };
         let bus = Arc::new(Self {
             name: resolved_name,
+            id_ref: Arc::from(id.as_str()),
             id,
             event_concurrency: options.event_concurrency,
             event_timeout,
             event_slow_timeout,
+            event_ttl: options.event_ttl,
+            event_result_ttl: options.event_result_ttl,
             event_handler_concurrency: options.event_handler_concurrency,
             event_handler_completion: options.event_handler_completion,
             event_handler_slow_timeout,
@@ -592,6 +630,7 @@ impl EventBus {
                 history_order: Mutex::new(VecDeque::new()),
                 max_history_size: options.max_history_size,
                 max_history_drop: options.max_history_drop,
+                ttl_expiry_index: Mutex::new(BinaryHeap::new()),
                 find_waiters: Mutex::new(Vec::new()),
                 next_waiter_id: Mutex::new(0),
             }),
@@ -751,7 +790,7 @@ impl EventBus {
         if !removed {
             return;
         }
-        if event.inner.lock().event_status == EventStatus::Completed {
+        if self.has_completed_on_bus(&event) {
             self.runtime.active_event_ids.lock().remove(&event_id);
             return;
         }
@@ -914,6 +953,8 @@ impl EventBus {
             "event_concurrency": self.event_concurrency,
             "event_timeout": self.event_timeout,
             "event_slow_timeout": self.event_slow_timeout,
+            "event_ttl": self.event_ttl,
+            "event_result_ttl": self.event_result_ttl,
             "event_handler_concurrency": self.event_handler_concurrency,
             "event_handler_completion": self.event_handler_completion,
             "event_handler_slow_timeout": self.event_handler_slow_timeout,
@@ -1245,6 +1286,14 @@ impl EventBus {
                 Some(value) => value.as_f64(),
                 None => Some(300.0),
             },
+            event_ttl: match payload.get("event_ttl") {
+                Some(Value::Null) | None => None,
+                Some(value) => value.as_f64(),
+            },
+            event_result_ttl: match payload.get("event_result_ttl") {
+                Some(Value::Null) | None => None,
+                Some(value) => value.as_f64(),
+            },
             event_handler_concurrency: payload
                 .get("event_handler_concurrency")
                 .cloned()
@@ -1378,10 +1427,16 @@ impl EventBus {
     {
         self.raise_if_terminal_destroyed();
         if let Some(timeout) = options.handler_timeout {
-            assert!(timeout >= 0.0, "handler_timeout must be >= 0 or None");
+            assert!(timeout >= -1.0, "handler_timeout must be >= -1 or None");
         }
         if let Some(timeout) = options.handler_slow_timeout {
-            assert!(timeout >= 0.0, "handler_slow_timeout must be >= 0 or None");
+            assert!(
+                timeout >= -1.0,
+                "handler_slow_timeout must be >= -1 or None"
+            );
+        }
+        if let Some(ttl) = options.handler_result_ttl {
+            assert!(ttl >= -1.0, "handler_result_ttl must be >= -1 or None");
         }
         let detect_handler_file_path = options
             .detect_handler_file_path
@@ -1421,10 +1476,16 @@ impl EventBus {
     {
         self.raise_if_terminal_destroyed();
         if let Some(timeout) = options.handler_timeout {
-            assert!(timeout >= 0.0, "handler_timeout must be >= 0 or None");
+            assert!(timeout >= -1.0, "handler_timeout must be >= -1 or None");
         }
         if let Some(timeout) = options.handler_slow_timeout {
-            assert!(timeout >= 0.0, "handler_slow_timeout must be >= 0 or None");
+            assert!(
+                timeout >= -1.0,
+                "handler_slow_timeout must be >= -1 or None"
+            );
+        }
+        if let Some(ttl) = options.handler_result_ttl {
+            assert!(ttl >= -1.0, "handler_result_ttl must be >= -1 or None");
         }
         let detect_handler_file_path = options
             .detect_handler_file_path
@@ -1542,8 +1603,18 @@ impl EventBus {
         if event.inner.lock().event_path.contains(&bus_label) {
             return event;
         }
+        if self.completed_event_expired_for_history(&event) {
+            let event_id = event.inner.lock().event_id.clone();
+            self.runtime.events.lock().remove(&event_id);
+            self.runtime
+                .history_order
+                .lock()
+                .retain(|id| id != &event_id);
+            event.event_expires_at_by_bus.lock().remove(&self.id);
+            return event;
+        }
 
-        event.set_runtime_eventbus_id(Some(self.id.clone()));
+        event.set_runtime_eventbus_id(Some(self.id_ref.clone()));
 
         if !self.register_in_history(event.clone()) {
             panic!(
@@ -1795,15 +1866,8 @@ impl EventBus {
     ) {
         let runloop_pause = self.locks.request_runloop_pause();
         let event_id = event.inner.lock().event_id.clone();
-        {
-            let inner = event.inner.lock();
-            let already_processed_here = inner
-                .event_results
-                .values()
-                .any(|result| result.handler.eventbus_id == self.id);
-            if inner.event_status == EventStatus::Completed && already_processed_here {
-                return;
-            }
+        if self.has_completed_on_bus(&event) {
+            return;
         }
         if event
             .inner
@@ -1831,6 +1895,14 @@ impl EventBus {
                 false
             }
         };
+        if !removed {
+            let inner = event.inner.lock();
+            if inner.event_status == EventStatus::Completed
+                && inner.event_path.contains(&self.label())
+            {
+                return;
+            }
+        }
         if !removed && !bypass_event_lock {
             return;
         }
@@ -1860,6 +1932,7 @@ impl EventBus {
 
     fn register_in_history(&self, event: Arc<BaseEvent>) -> bool {
         let event_id = event.inner.lock().event_id.clone();
+        self.trim_event_history(true);
 
         if let Some(max_size) = self.runtime.max_history_size {
             if max_size > 0 {
@@ -1879,9 +1952,184 @@ impl EventBus {
                     .fetch_add(1, Ordering::SeqCst);
             }
         }
-        self.runtime.events.lock().insert(event_id.clone(), event);
+        self.runtime
+            .events
+            .lock()
+            .insert(event_id.clone(), event.clone());
         self.runtime.history_order.lock().push_back(event_id);
+        self.update_event_ttl_deadline(&event);
         true
+    }
+
+    fn now_epoch_seconds() -> f64 {
+        let now = chrono::Utc::now();
+        now.timestamp() as f64 + (now.timestamp_subsec_nanos() as f64 / 1_000_000_000.0)
+    }
+
+    fn now_epoch_millis() -> i64 {
+        chrono::Utc::now().timestamp_millis()
+    }
+
+    fn completed_at_epoch_seconds(event: &BaseEventData) -> Option<f64> {
+        if event.event_status != EventStatus::Completed {
+            return None;
+        }
+        let completed_at = event.event_completed_at.as_ref()?;
+        let completed_at = chrono::DateTime::parse_from_rfc3339(&completed_at).ok()?;
+        Some(
+            completed_at.timestamp() as f64
+                + (completed_at.timestamp_subsec_nanos() as f64 / 1_000_000_000.0),
+        )
+    }
+
+    fn completed_event_age_seconds(event: &Arc<BaseEvent>) -> Option<f64> {
+        let inner = event.inner.lock();
+        let completed_at = Self::completed_at_epoch_seconds(&inner)?;
+        Some((Self::now_epoch_seconds() - completed_at).max(0.0))
+    }
+
+    fn resolve_event_ttl(&self, event: &BaseEventData) -> Option<f64> {
+        event.event_ttl.or(self.event_ttl)
+    }
+
+    fn completed_event_expired_for_history(&self, event: &Arc<BaseEvent>) -> bool {
+        let inner = event.inner.lock();
+        let Some(event_ttl) = self.resolve_event_ttl(&inner).filter(|ttl| *ttl >= 0.0) else {
+            return false;
+        };
+        let Some(completed_at) = Self::completed_at_epoch_seconds(&inner) else {
+            return false;
+        };
+        event_ttl == 0.0 || Self::now_epoch_seconds() >= completed_at + event_ttl
+    }
+
+    fn resolve_event_result_ttl(&self, event: &BaseEventData, result: &EventResult) -> Option<f64> {
+        result
+            .handler
+            .handler_result_ttl
+            .or(event.event_result_ttl)
+            .or(self.event_result_ttl)
+    }
+
+    fn earliest_ttl_deadline_millis(&self, event: &BaseEventData) -> Option<i64> {
+        let completed_at = Self::completed_at_epoch_seconds(event)?;
+        let mut ttl: Option<f64> = self.resolve_event_ttl(event).filter(|ttl| *ttl >= 0.0);
+        for result in event.event_results.values() {
+            if result.handler.eventbus_id != self.id {
+                continue;
+            }
+            if let Some(result_ttl) = self
+                .resolve_event_result_ttl(event, result)
+                .filter(|ttl| *ttl >= 0.0)
+            {
+                ttl = Some(ttl.map_or(result_ttl, |current| current.min(result_ttl)));
+            }
+        }
+        ttl.map(|ttl| {
+            if ttl == 0.0 {
+                0
+            } else {
+                ((completed_at + ttl) * 1000.0).ceil() as i64
+            }
+        })
+    }
+
+    fn update_event_ttl_deadline(&self, event: &Arc<BaseEvent>) {
+        let (event_id, deadline) = {
+            let inner = event.inner.lock();
+            (
+                inner.event_id.clone(),
+                self.earliest_ttl_deadline_millis(&inner),
+            )
+        };
+        if let Some(deadline) = deadline {
+            event
+                .event_expires_at_by_bus
+                .lock()
+                .insert(self.id.clone(), deadline);
+            self.runtime
+                .ttl_expiry_index
+                .lock()
+                .push(Reverse(TtlExpiryEntry {
+                    expires_at_ms: deadline,
+                    event_id,
+                }));
+        } else {
+            event.event_expires_at_by_bus.lock().remove(&self.id);
+        }
+    }
+
+    fn trim_event_history(&self, include_ttl: bool) {
+        if let Some(max_size) = self.runtime.max_history_size {
+            self.trim_history_to_capacity(max_size, false);
+        }
+        if !include_ttl {
+            return;
+        }
+        let now_ms = Self::now_epoch_millis();
+        loop {
+            let entry = {
+                let mut index = self.runtime.ttl_expiry_index.lock();
+                let Some(Reverse(entry)) = index.peek().cloned() else {
+                    return;
+                };
+                if entry.expires_at_ms > now_ms {
+                    return;
+                }
+                index.pop();
+                entry
+            };
+            let Some(event) = self.runtime.events.lock().get(&entry.event_id).cloned() else {
+                continue;
+            };
+            let current_deadline = event.event_expires_at_by_bus.lock().get(&self.id).copied();
+            if current_deadline != Some(entry.expires_at_ms) {
+                continue;
+            }
+            let Some(age_seconds) = Self::completed_event_age_seconds(&event) else {
+                event.event_expires_at_by_bus.lock().remove(&self.id);
+                continue;
+            };
+            let mut inner = event.inner.lock();
+            let result_ids: Vec<String> = inner
+                .event_results
+                .iter()
+                .filter_map(|(result_id, result)| {
+                    if result.handler.eventbus_id != self.id {
+                        return None;
+                    }
+                    let result_ttl = self.resolve_event_result_ttl(&inner, result)?;
+                    (result_ttl >= 0.0 && age_seconds >= result_ttl).then(|| result_id.clone())
+                })
+                .collect();
+            for result_id in result_ids {
+                inner.event_results.remove(&result_id);
+                inner.event_result_order.retain(|id| id != &result_id);
+            }
+            let event_ttl = self.resolve_event_ttl(&inner);
+            drop(inner);
+            if event_ttl.is_none_or(|ttl| ttl < 0.0 || age_seconds < ttl) {
+                self.update_event_ttl_deadline(&event);
+                continue;
+            }
+            self.runtime.events.lock().remove(&entry.event_id);
+            event.event_expires_at_by_bus.lock().remove(&self.id);
+            self.runtime
+                .history_order
+                .lock()
+                .retain(|id| id != &entry.event_id);
+            if self
+                .runtime
+                .event_contexts
+                .lock()
+                .remove(&entry.event_id)
+                .is_some()
+            {
+                self.runtime
+                    .event_context_count
+                    .fetch_sub(1, Ordering::SeqCst);
+            }
+        }
     }
 
     fn trim_history_to_capacity(&self, max_size: usize, include_equal: bool) {
@@ -2397,13 +2645,7 @@ impl EventBus {
     }
 
     async fn process_event(&self, event: Arc<BaseEvent>) {
-        let already_processed_here = event
-            .inner
-            .lock()
-            .event_results
-            .values()
-            .any(|result| result.handler.eventbus_id == self.id);
-        if event.inner.lock().event_status == EventStatus::Completed && already_processed_here {
+        if self.has_completed_on_bus(&event) {
             return;
         }
         let event_id = event.inner.lock().event_id.clone();
@@ -2423,15 +2665,7 @@ impl EventBus {
                         return;
                     }
                 }
-                let already_processed_here = event
-                    .inner
-                    .lock()
-                    .event_results
-                    .values()
-                    .any(|result| result.handler.eventbus_id == self.id);
-                if event.inner.lock().event_status == EventStatus::Completed
-                    && already_processed_here
-                {
+                if self.has_completed_on_bus(&event) {
                     self.runtime.processing_event_ids.lock().remove(&event_id);
                     return;
                 }
@@ -2445,15 +2679,7 @@ impl EventBus {
                         return;
                     }
                 }
-                let already_processed_here = event
-                    .inner
-                    .lock()
-                    .event_results
-                    .values()
-                    .any(|result| result.handler.eventbus_id == self.id);
-                if event.inner.lock().event_status == EventStatus::Completed
-                    && already_processed_here
-                {
+                if self.has_completed_on_bus(&event) {
                     self.runtime.processing_event_ids.lock().remove(&event_id);
                     return;
                 }
@@ -2655,12 +2881,24 @@ impl EventBus {
                 .history_order
                 .lock()
                 .retain(|id| id != &event_id);
-        } else if let Some(max_size) = self.runtime.max_history_size {
-            self.trim_history_to_capacity(max_size, false);
+        } else if self.runtime.max_history_size.is_some() {
+            self.trim_event_history(false);
         }
 
         if should_complete {
             event.mark_completed();
+            let event_id = event.inner.lock().event_id.clone();
+            for bus in Self::live_instances() {
+                let has_event = bus
+                    .runtime
+                    .events
+                    .lock()
+                    .get(&event_id)
+                    .is_some_and(|candidate| Arc::ptr_eq(candidate, &event));
+                if has_event {
+                    bus.update_event_ttl_deadline(&event);
+                }
+            }
         }
     }
 

@@ -15,6 +15,7 @@ pub struct EventHandlerOptions {
     pub handler_file_path: Option<String>,
     pub handler_timeout: Option<f64>,
     pub handler_slow_timeout: Option<f64>,
+    pub handler_result_ttl: Option<f64>,
     pub handler_registered_at: Option<String>,
     pub detect_handler_file_path: Option<bool>,
 }
@@ -27,6 +28,7 @@ pub struct EventHandler {
     pub handler_file_path: Option<String>,
     pub handler_timeout: Option<f64>,
     pub handler_slow_timeout: Option<f64>,
+    pub handler_result_ttl: Option<f64>,
     pub handler_registered_at: String,
     pub eventbus_name: String,
     pub eventbus_id: String,
@@ -86,6 +88,7 @@ impl EventHandler {
             handler_file_path,
             handler_timeout: options.handler_timeout,
             handler_slow_timeout: options.handler_slow_timeout,
+            handler_result_ttl: options.handler_result_ttl,
             handler_registered_at,
             eventbus_name,
             eventbus_id,

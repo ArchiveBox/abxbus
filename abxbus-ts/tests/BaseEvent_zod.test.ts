@@ -151,7 +151,21 @@ test('BaseEvent.extend validates non-Zod shortcut defaults for builtin metadata 
   assert.throws(
     () =>
       BaseEvent.extend('BaseEventInvalidShortcutTimeoutEvent', {
-        event_timeout: -1,
+        event_timeout: -2,
+      }),
+    z.ZodError
+  )
+  assert.throws(
+    () =>
+      BaseEvent.extend('BaseEventInvalidShortcutTTLProbeEvent', {
+        event_ttl: -2,
+      }),
+    z.ZodError
+  )
+  assert.throws(
+    () =>
+      BaseEvent.extend('BaseEventInvalidShortcutResultTTLProbeEvent', {
+        event_result_ttl: -2,
       }),
     z.ZodError
   )

@@ -265,8 +265,9 @@ class EventHandler(BaseModel):
     handler: EventHandlerCallable | None = Field(default=None, exclude=True, repr=False)
     handler_name: str = 'anonymous'
     handler_file_path: str | None = None
-    handler_timeout: float | None = None
-    handler_slow_timeout: float | None = None
+    handler_timeout: float | None = Field(default=None, ge=-1)
+    handler_slow_timeout: float | None = Field(default=None, ge=-1)
+    handler_result_ttl: float | None = Field(default=None, ge=-1)
     handler_registered_at: str = Field(default_factory=monotonic_datetime)
     event_pattern: str = '*'
     eventbus_name: str = 'EventBus'
@@ -387,6 +388,7 @@ class EventHandler(BaseModel):
         handler_file_path: str | None = None,
         handler_timeout: float | None = None,
         handler_slow_timeout: float | None = None,
+        handler_result_ttl: float | None = None,
         handler_registered_at: str | datetime | None = None,
     ) -> 'EventHandler':
         resolved_file_path = handler_file_path
@@ -412,6 +414,8 @@ class EventHandler(BaseModel):
             handler_params['handler_timeout'] = handler_timeout
         if handler_slow_timeout is not None:
             handler_params['handler_slow_timeout'] = handler_slow_timeout
+        if handler_result_ttl is not None:
+            handler_params['handler_result_ttl'] = handler_result_ttl
 
         entry = cls(**handler_params)
         if not entry.id:

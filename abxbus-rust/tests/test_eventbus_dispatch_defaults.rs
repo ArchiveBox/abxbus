@@ -45,6 +45,8 @@ event! {
         event_slow_timeout: 30.0,
         event_handler_timeout: 3.0,
         event_handler_slow_timeout: 4.0,
+        event_ttl: 5.0,
+        event_result_ttl: 6.0,
         event_blocks_parent_completion: true,
     }
 }
@@ -251,6 +253,8 @@ fn test_typed_event_config_defaults_populate_base_event_fields() {
     assert_eq!(inner.event_slow_timeout, Some(30.0));
     assert_eq!(inner.event_handler_timeout, Some(3.0));
     assert_eq!(inner.event_handler_slow_timeout, Some(4.0));
+    assert_eq!(inner.event_ttl, Some(5.0));
+    assert_eq!(inner.event_result_ttl, Some(6.0));
     assert!(inner.event_blocks_parent_completion);
     drop(inner);
     bus.destroy();

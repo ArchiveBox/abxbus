@@ -297,6 +297,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             raw_handler_file_path = payload.pop('handler_file_path', None)
             raw_handler_timeout = payload.pop('handler_timeout', None)
             raw_handler_slow_timeout = payload.pop('handler_slow_timeout', None)
+            raw_handler_result_ttl = payload.pop('handler_result_ttl', None)
             raw_handler_registered_at = payload.pop('handler_registered_at', None)
             raw_handler_event_pattern = payload.pop('handler_event_pattern', None)
             raw_eventbus_name = payload.pop('eventbus_name', None)
@@ -310,6 +311,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                     raw_handler_file_path,
                     raw_handler_timeout,
                     raw_handler_slow_timeout,
+                    raw_handler_result_ttl,
                     raw_handler_registered_at,
                     raw_handler_event_pattern,
                     raw_eventbus_name,
@@ -331,6 +333,8 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                     handler_payload['handler_timeout'] = raw_handler_timeout
                 if raw_handler_slow_timeout is not None:
                     handler_payload['handler_slow_timeout'] = raw_handler_slow_timeout
+                if raw_handler_result_ttl is not None:
+                    handler_payload['handler_result_ttl'] = raw_handler_result_ttl
                 if raw_handler_registered_at is not None:
                     handler_payload['handler_registered_at'] = raw_handler_registered_at
                 payload['handler'] = handler_payload
@@ -388,6 +392,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             'handler_file_path': handler.handler_file_path,
             'handler_timeout': handler.handler_timeout,
             'handler_slow_timeout': handler.handler_slow_timeout,
+            'handler_result_ttl': handler.handler_result_ttl,
             'handler_registered_at': monotonic_datetime(handler.handler_registered_at),
             'handler_event_pattern': handler.event_pattern,
             'eventbus_id': self.eventbus_id,
@@ -785,10 +790,10 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         description='Event type version tag, defaults to LIBRARY_VERSION env var or "0.0.1" if not overridden',
     )
     event_timeout: float | None = Field(
-        default=None, description='Timeout in seconds for event to finish processing (bus default applied at dispatch)'
+        ge=-1, default=None, description='Timeout in seconds for event to finish processing (bus default applied at dispatch)'
     )
     event_slow_timeout: float | None = Field(
-        default=None, description='Optional per-event slow processing warning threshold in seconds'
+        ge=-1, default=None, description='Optional per-event slow processing warning threshold in seconds'
     )
     event_concurrency: EventConcurrencyMode | None = Field(
         default=None,
@@ -798,9 +803,15 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             'None defers to the bus default.'
         ),
     )
-    event_handler_timeout: float | None = Field(default=None, description='Optional per-event handler timeout cap in seconds')
+    event_handler_timeout: float | None = Field(
+        default=None, ge=-1, description='Optional per-event handler timeout cap in seconds'
+    )
     event_handler_slow_timeout: float | None = Field(
-        default=None, description='Optional per-event slow handler warning threshold in seconds'
+        default=None, ge=-1, description='Optional per-event slow handler warning threshold in seconds'
+    )
+    event_ttl: float | None = Field(default=None, ge=-1, description='Optional seconds to keep completed events in bus history')
+    event_result_ttl: float | None = Field(
+        default=None, ge=-1, description='Optional seconds to keep completed event results after event completion'
     )
     event_handler_concurrency: EventHandlerConcurrencyMode | None = Field(
         default=None,
@@ -878,10 +889,20 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     _event_completed_signal: asyncio.Event | None = PrivateAttr(default=None)
     _event_is_complete_flag: bool = PrivateAttr(default=False)
     _lock_for_event_handler: 'ReentrantLock | None' = PrivateAttr(default=None)
+    _event_expires_at_by_bus: dict[str, float] = PrivateAttr(default_factory=dict)
 
     # Dispatch-time context for ContextVar propagation to handlers
     # Captured when emit() is called, used when executing handlers via ctx.run()
     _event_dispatch_context: contextvars.Context | None = PrivateAttr(default=None)
+
+    def model_post_init(self, __context: Any) -> None:
+        for field_name in ('event_ttl', 'event_result_ttl'):
+            if getattr(self, field_name) is not None:
+                continue
+            field_info = self.__class__.model_fields.get(field_name)
+            class_default = getattr(field_info, 'default', None) if field_info is not None else None
+            if class_default is not None:
+                setattr(self, field_name, class_default)
 
     def __hash__(self) -> int:
         """Make events hashable using their unique event_id"""
@@ -903,6 +924,18 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
         bus_hint = self.event_path[-1] if self.event_path else '?'
         return f'{bus_hint}▶ {self.event_type}#{self.event_id[-4:]} {icon}'
+
+    def event_payload(self) -> dict[str, Any]:
+        """Return a fresh flat payload dict containing only non-event_* fields."""
+        base_event_fields = BaseEvent.model_fields
+        payload = {
+            field_name: getattr(self, field_name)
+            for field_name in self.__class__.model_fields
+            if field_name not in base_event_fields and not field_name.startswith('event_')
+        }
+        if isinstance(self.model_extra, dict):
+            payload.update({key: value for key, value in self.model_extra.items() if not key.startswith('event_')})
+        return payload
 
     def _remove_self_from_queue(self, bus: 'EventBus') -> bool:
         """Remove this event from the bus's queue if present. Returns True if removed."""

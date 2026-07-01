@@ -30,6 +30,8 @@ type EventBusOptions struct {
 	EventConcurrency            EventConcurrencyMode
 	EventTimeout                *float64
 	EventSlowTimeout            *float64
+	EventTTL                    *float64
+	EventResultTTL              *float64
 	EventHandlerConcurrency     EventHandlerConcurrencyMode
 	EventHandlerCompletion      EventHandlerCompletionMode
 	EventHandlerSlowTimeout     *float64
@@ -70,6 +72,8 @@ type EventBusJSON struct {
 	EventConcurrency            EventConcurrencyMode        `json:"event_concurrency"`
 	EventTimeout                *float64                    `json:"event_timeout"`
 	EventSlowTimeout            *float64                    `json:"event_slow_timeout"`
+	EventTTL                    *float64                    `json:"event_ttl"`
+	EventResultTTL              *float64                    `json:"event_result_ttl"`
 	EventHandlerConcurrency     EventHandlerConcurrencyMode `json:"event_handler_concurrency"`
 	EventHandlerCompletion      EventHandlerCompletionMode  `json:"event_handler_completion"`
 	EventHandlerSlowTimeout     *float64                    `json:"event_handler_slow_timeout"`
@@ -119,6 +123,8 @@ type EventBus struct {
 
 	EventHandlerSlowTimeout     *float64
 	EventSlowTimeout            *float64
+	EventTTL                    *float64
+	EventResultTTL              *float64
 	EventHandlerDetectFilePaths bool
 
 	handlers          map[string]*EventHandler
@@ -131,9 +137,15 @@ type EventBus struct {
 	findWaiters       []*findWaiter
 	middlewares       []EventBusMiddleware
 	destroyed         bool
+	ttlExpiryIndex    []ttlExpiryEntry
 
 	mu          sync.Mutex
 	global_lock *AsyncLock
+}
+
+type ttlExpiryEntry struct {
+	ExpiresAt time.Time
+	EventID   string
 }
 
 var ErrEventBusDestroyed = errors.New("event bus has been destroyed")
@@ -181,20 +193,28 @@ func NewEventBus(name string, options *EventBusOptions) *EventBus {
 	event_timeout := options.EventTimeout
 	if event_timeout == nil {
 		event_timeout = ptr(60.0)
-	} else if *event_timeout < 0 {
-		panic("event_timeout must be >= 0 or nil")
+	} else if *event_timeout < -1 {
+		panic("event_timeout must be >= -1 or nil")
 	}
 	event_slow_timeout := options.EventSlowTimeout
 	if event_slow_timeout == nil {
 		event_slow_timeout = ptr(300.0)
-	} else if *event_slow_timeout < 0 {
-		panic("event_slow_timeout must be >= 0 or nil")
+	} else if *event_slow_timeout < -1 {
+		panic("event_slow_timeout must be >= -1 or nil")
 	}
 	event_handler_slow_timeout := options.EventHandlerSlowTimeout
 	if event_handler_slow_timeout == nil {
 		event_handler_slow_timeout = ptr(30.0)
-	} else if *event_handler_slow_timeout < 0 {
-		panic("event_handler_slow_timeout must be >= 0 or nil")
+	} else if *event_handler_slow_timeout < -1 {
+		panic("event_handler_slow_timeout must be >= -1 or nil")
+	}
+	event_ttl := options.EventTTL
+	if event_ttl != nil && *event_ttl < -1 {
+		panic("event_ttl must be >= -1 or nil")
+	}
+	event_result_ttl := options.EventResultTTL
+	if event_result_ttl != nil && *event_result_ttl < -1 {
+		panic("event_result_ttl must be >= -1 or nil")
 	}
 	detect_handler_file_paths := true
 	if options.EventHandlerDetectFilePaths != nil {
@@ -208,6 +228,8 @@ func NewEventBus(name string, options *EventBusOptions) *EventBus {
 		EventHandlerCompletion:      options.EventHandlerCompletion,
 		EventHandlerSlowTimeout:     event_handler_slow_timeout,
 		EventSlowTimeout:            event_slow_timeout,
+		EventTTL:                    event_ttl,
+		EventResultTTL:              event_result_ttl,
 		EventHandlerDetectFilePaths: detect_handler_file_paths,
 		handlers:                    map[string]*EventHandler{},
 		handlersByKey:               map[string][]string{},
@@ -439,14 +461,18 @@ func (b *EventBus) registerHandler(event_pattern string, handler_name string, no
 		if options.HandlerRegisteredAt != "" {
 			h.HandlerRegisteredAt = options.HandlerRegisteredAt
 		}
-		if options.HandlerTimeout != nil && *options.HandlerTimeout < 0 {
-			panic("handler_timeout must be >= 0 or nil")
+		if options.HandlerTimeout != nil && *options.HandlerTimeout < -1 {
+			panic("handler_timeout must be >= -1 or nil")
 		}
-		if options.HandlerSlowTimeout != nil && *options.HandlerSlowTimeout < 0 {
-			panic("handler_slow_timeout must be >= 0 or nil")
+		if options.HandlerSlowTimeout != nil && *options.HandlerSlowTimeout < -1 {
+			panic("handler_slow_timeout must be >= -1 or nil")
+		}
+		if options.HandlerResultTTL != nil && *options.HandlerResultTTL < -1 {
+			panic("handler_result_ttl must be >= -1 or nil")
 		}
 		h.HandlerTimeout = options.HandlerTimeout
 		h.HandlerSlowTimeout = options.HandlerSlowTimeout
+		h.HandlerResultTTL = options.HandlerResultTTL
 		h.HandlerFilePath = options.HandlerFilePath
 	}
 	if !explicitID {
@@ -531,7 +557,18 @@ func (b *EventBus) EmitWithContext(ctx context.Context, input any) *BaseEvent {
 	if err != nil {
 		panic(err)
 	}
+	if event.EventTTL != nil && *event.EventTTL < -1 {
+		panic("event_ttl must be >= -1 or nil")
+	}
+	if event.EventResultTTL != nil && *event.EventResultTTL < -1 {
+		panic("event_result_ttl must be >= -1 or nil")
+	}
 	original_event := event
+	if b.completedEventExpiredForHistory(original_event) {
+		b.EventHistory.RemoveEvent(original_event.EventID)
+		b.clearEventTTLDeadline(original_event)
+		return original_event
+	}
 	original_event.mu.Lock()
 	if event.Bus == nil {
 		original_event.Bus = b
@@ -554,6 +591,7 @@ func (b *EventBus) EmitWithContext(ctx context.Context, input any) *BaseEvent {
 	original_event.EventPath = append(original_event.EventPath, b.Label())
 	original_event.EventPendingBusCount++
 	original_event.mu.Unlock()
+	b.trimEventHistory(true)
 	if b.EventHistory.MaxHistorySize != nil && *b.EventHistory.MaxHistorySize > 0 && !b.EventHistory.MaxHistoryDrop && b.EventHistory.Size() >= *b.EventHistory.MaxHistorySize {
 		panic(fmt.Sprintf("%s.emit(%s) rejected: history limit reached (%d/%d); set event_history.max_history_drop=true to drop old history instead.", b.Label(), original_event.EventType, b.EventHistory.Size(), *b.EventHistory.MaxHistorySize))
 	}
@@ -562,6 +600,8 @@ func (b *EventBus) EmitWithContext(ctx context.Context, input any) *BaseEvent {
 	b.resolveFindWaitersLocked(original_event)
 	b.pendingEventQueue = append(b.pendingEventQueue, original_event)
 	b.mu.Unlock()
+	b.updateEventTTLDeadline(original_event)
+	b.trimEventHistory(true)
 	b.notifyEventChange(original_event, "pending")
 	activeHandler := b.locks.getActiveHandlerResult()
 	if activeHandler == nil {
@@ -581,6 +621,194 @@ func (b *EventBus) EmitWithContext(ctx context.Context, input any) *BaseEvent {
 }
 
 func (b *EventBus) Dispatch(event *BaseEvent) *BaseEvent { return b.Emit(event) }
+
+func (b *EventBus) completedEventAgeSeconds(event *BaseEvent) (float64, bool) {
+	event.mu.Lock()
+	status := event.EventStatus
+	completedAtValue := event.EventCompletedAt
+	event.mu.Unlock()
+	if status != "completed" || completedAtValue == nil {
+		return 0, false
+	}
+	completedAt, err := time.Parse(time.RFC3339Nano, *completedAtValue)
+	if err != nil {
+		return 0, false
+	}
+	age := time.Since(completedAt).Seconds()
+	if age < 0 {
+		age = 0
+	}
+	return age, true
+}
+
+func (b *EventBus) resolveEventTTL(event *BaseEvent) *float64 {
+	if event.EventTTL != nil {
+		return event.EventTTL
+	}
+	return b.EventTTL
+}
+
+func (b *EventBus) completedEventExpiredForHistory(event *BaseEvent) bool {
+	event.mu.Lock()
+	defer event.mu.Unlock()
+	eventTTL := b.resolveEventTTL(event)
+	if eventTTL == nil || *eventTTL < 0 || event.EventStatus != "completed" || event.EventCompletedAt == nil {
+		return false
+	}
+	if *eventTTL == 0 {
+		return true
+	}
+	completedAt, err := time.Parse(time.RFC3339Nano, *event.EventCompletedAt)
+	return err == nil && !completedAt.Add(time.Duration(*eventTTL*float64(time.Second))).After(time.Now())
+}
+
+func (b *EventBus) resolveEventResultTTL(event *BaseEvent, result *EventResult) *float64 {
+	if result.Handler != nil && result.Handler.HandlerResultTTL != nil {
+		return result.Handler.HandlerResultTTL
+	}
+	if result.HandlerResultTTL != nil {
+		return result.HandlerResultTTL
+	}
+	if event.EventResultTTL != nil {
+		return event.EventResultTTL
+	}
+	return b.EventResultTTL
+}
+
+func (b *EventBus) earliestTTLDeadline(event *BaseEvent) (time.Time, bool) {
+	event.mu.Lock()
+	defer event.mu.Unlock()
+	if event.EventStatus != "completed" || event.EventCompletedAt == nil {
+		return time.Time{}, false
+	}
+	completedAt, err := time.Parse(time.RFC3339Nano, *event.EventCompletedAt)
+	if err != nil {
+		return time.Time{}, false
+	}
+	var ttl *float64
+	if event.EventTTL != nil {
+		ttl = event.EventTTL
+	} else {
+		ttl = b.EventTTL
+	}
+	bestTTL := 0.0
+	hasTTL := false
+	if ttl != nil && *ttl >= 0 {
+		bestTTL = *ttl
+		hasTTL = true
+	}
+	for _, result := range event.EventResults {
+		if result == nil || result.EventBusID != b.ID {
+			continue
+		}
+		resultTTL := b.resolveEventResultTTL(event, result)
+		if resultTTL == nil || *resultTTL < 0 {
+			continue
+		}
+		if !hasTTL || *resultTTL < bestTTL {
+			bestTTL = *resultTTL
+			hasTTL = true
+		}
+	}
+	if !hasTTL {
+		return time.Time{}, false
+	}
+	if bestTTL == 0 {
+		return time.Time{}, true
+	}
+	return completedAt.Add(time.Duration(bestTTL * float64(time.Second))), true
+}
+
+func (b *EventBus) updateEventTTLDeadline(event *BaseEvent) {
+	deadline, ok := b.earliestTTLDeadline(event)
+	event.mu.Lock()
+	if ok {
+		if event.eventExpiresAtByBus == nil {
+			event.eventExpiresAtByBus = map[string]time.Time{}
+		}
+		event.eventExpiresAtByBus[b.ID] = deadline
+	} else if event.eventExpiresAtByBus != nil {
+		delete(event.eventExpiresAtByBus, b.ID)
+	}
+	event.mu.Unlock()
+	if !ok {
+		return
+	}
+	b.mu.Lock()
+	b.ttlExpiryIndex = append(b.ttlExpiryIndex, ttlExpiryEntry{ExpiresAt: deadline, EventID: event.EventID})
+	sort.Slice(b.ttlExpiryIndex, func(i, j int) bool {
+		return b.ttlExpiryIndex[i].ExpiresAt.Before(b.ttlExpiryIndex[j].ExpiresAt)
+	})
+	b.mu.Unlock()
+}
+
+func (b *EventBus) nextEventTTLDeadline(event *BaseEvent) (time.Time, bool) {
+	event.mu.Lock()
+	defer event.mu.Unlock()
+	if event.eventExpiresAtByBus == nil {
+		return time.Time{}, false
+	}
+	deadline, ok := event.eventExpiresAtByBus[b.ID]
+	return deadline, ok
+}
+
+func (b *EventBus) clearEventTTLDeadline(event *BaseEvent) {
+	event.mu.Lock()
+	if event.eventExpiresAtByBus != nil {
+		delete(event.eventExpiresAtByBus, b.ID)
+	}
+	event.mu.Unlock()
+}
+
+func (b *EventBus) trimEventHistory(includeTTL bool) {
+	b.EventHistory.TrimEventHistory(nil)
+	if !includeTTL {
+		return
+	}
+	now := time.Now()
+	for {
+		b.mu.Lock()
+		if len(b.ttlExpiryIndex) == 0 || b.ttlExpiryIndex[0].ExpiresAt.After(now) {
+			b.mu.Unlock()
+			return
+		}
+		entry := b.ttlExpiryIndex[0]
+		b.ttlExpiryIndex = b.ttlExpiryIndex[1:]
+		b.mu.Unlock()
+		event := b.EventHistory.GetEvent(entry.EventID)
+		if event == nil {
+			continue
+		}
+		deadline, ok := b.nextEventTTLDeadline(event)
+		if !ok || !deadline.Equal(entry.ExpiresAt) {
+			continue
+		}
+		ageSeconds, ok := b.completedEventAgeSeconds(event)
+		if !ok {
+			b.clearEventTTLDeadline(event)
+			continue
+		}
+		event.mu.Lock()
+		for resultID, result := range event.EventResults {
+			if result == nil || result.EventBusID != b.ID {
+				continue
+			}
+			resultTTL := b.resolveEventResultTTL(event, result)
+			if resultTTL == nil || *resultTTL < 0 || ageSeconds < *resultTTL {
+				continue
+			}
+			delete(event.EventResults, resultID)
+		}
+		event.mu.Unlock()
+		eventTTL := b.resolveEventTTL(event)
+		if eventTTL == nil || *eventTTL < 0 || ageSeconds < *eventTTL {
+			b.updateEventTTLDeadline(event)
+			continue
+		}
+		b.EventHistory.RemoveEvent(event.EventID)
+		b.clearEventTTLDeadline(event)
+	}
+}
 
 func (b *EventBus) startParallelEventTaskFromQueue(event *BaseEvent) {
 	b.mu.Lock()
@@ -733,6 +961,11 @@ func eventHasRunningResults(event *BaseEvent) bool {
 
 func completeEventAcrossBuses(event *BaseEvent) {
 	if event.status() == "completed" {
+		for _, bus := range eventBusInstancesSnapshot() {
+			if bus.EventHistory.GetEvent(event.EventID) == event {
+				bus.updateEventTTLDeadline(event)
+			}
+		}
 		return
 	}
 	event.mu.Lock()
@@ -745,6 +978,7 @@ func completeEventAcrossBuses(event *BaseEvent) {
 		if bus.EventHistory.GetEvent(event.EventID) != event {
 			continue
 		}
+		bus.updateEventTTLDeadline(event)
 		bus.notifyEventChange(event, "completed")
 		bus.EventHistory.TrimEventHistory(nil)
 	}
@@ -902,17 +1136,23 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 			b.notifyEventResultChange(event, result, "pending")
 		}
 	}
-	if event.EventTimeout != nil && *event.EventTimeout < 0 {
-		panic("event_timeout must be >= 0 or nil")
+	if event.EventTimeout != nil && *event.EventTimeout < -1 {
+		panic("event_timeout must be >= -1 or nil")
 	}
-	if event.EventSlowTimeout != nil && *event.EventSlowTimeout < 0 {
-		panic("event_slow_timeout must be >= 0 or nil")
+	if event.EventSlowTimeout != nil && *event.EventSlowTimeout < -1 {
+		panic("event_slow_timeout must be >= -1 or nil")
 	}
-	if event.EventHandlerTimeout != nil && *event.EventHandlerTimeout < 0 {
-		panic("event_handler_timeout must be >= 0 or nil")
+	if event.EventHandlerTimeout != nil && *event.EventHandlerTimeout < -1 {
+		panic("event_handler_timeout must be >= -1 or nil")
 	}
-	if event.EventHandlerSlowTimeout != nil && *event.EventHandlerSlowTimeout < 0 {
-		panic("event_handler_slow_timeout must be >= 0 or nil")
+	if event.EventHandlerSlowTimeout != nil && *event.EventHandlerSlowTimeout < -1 {
+		panic("event_handler_slow_timeout must be >= -1 or nil")
+	}
+	if event.EventTTL != nil && *event.EventTTL < -1 {
+		panic("event_ttl must be >= -1 or nil")
+	}
+	if event.EventResultTTL != nil && *event.EventResultTTL < -1 {
+		panic("event_result_ttl must be >= -1 or nil")
 	}
 	resolved_event_timeout := event.EventTimeout
 	if resolved_event_timeout == nil {
@@ -976,10 +1216,7 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 	eventDone := event.EventPendingBusCount == 0
 	event.mu.Unlock()
 	if eventDone {
-		event.markCompleted()
-		b.notifyEventChange(event, "completed")
-		b.EventHistory.TrimEventHistory(nil)
-		event.signalCompleted()
+		completeEventAcrossBuses(event)
 	}
 	b.startRunloop()
 	return nil
@@ -1566,6 +1803,8 @@ func (b *EventBus) ToJSON() ([]byte, error) {
 		{key: "event_concurrency", value: b.EventConcurrency},
 		{key: "event_timeout", value: b.EventTimeout},
 		{key: "event_slow_timeout", value: b.EventSlowTimeout},
+		{key: "event_ttl", value: b.EventTTL},
+		{key: "event_result_ttl", value: b.EventResultTTL},
 		{key: "event_handler_concurrency", value: b.EventHandlerConcurrency},
 		{key: "event_handler_completion", value: b.EventHandlerCompletion},
 		{key: "event_handler_slow_timeout", value: b.EventHandlerSlowTimeout},
@@ -1602,6 +1841,8 @@ func EventBusFromJSON(data []byte) (*EventBus, error) {
 		EventConcurrency:            parsed.EventConcurrency,
 		EventTimeout:                eventTimeout,
 		EventSlowTimeout:            parsed.EventSlowTimeout,
+		EventTTL:                    parsed.EventTTL,
+		EventResultTTL:              parsed.EventResultTTL,
 		EventHandlerConcurrency:     parsed.EventHandlerConcurrency,
 		EventHandlerCompletion:      parsed.EventHandlerCompletion,
 		EventHandlerSlowTimeout:     parsed.EventHandlerSlowTimeout,

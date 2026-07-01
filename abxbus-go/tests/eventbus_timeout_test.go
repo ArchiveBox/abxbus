@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+func ttlPtr(value float64) *float64 { return &value }
+
 func TestTimeoutPrecedenceEventOverBus(t *testing.T) {
 	busTimeout := 5.0
 	eventTimeout := 0.01
@@ -48,6 +50,306 @@ func TestZeroTimeoutAllowsSlowHandler(t *testing.T) {
 	if err != nil || result != "ok" {
 		t.Fatalf("expected ok, got %#v err=%v", result, err)
 	}
+}
+
+func emitCompletedTTLProbe(t *testing.T, bus *abxbus.EventBus, event *abxbus.BaseEvent) *abxbus.BaseEvent {
+	t.Helper()
+	if event == nil {
+		event = abxbus.NewBaseEvent("TTLProbeEvent", nil)
+	}
+	if _, err := bus.Emit(event).Now(nil); err != nil {
+		t.Fatalf("ttl probe should complete: %v", err)
+	}
+	wait := 1.0
+	if !bus.WaitUntilIdle(&wait) {
+		t.Fatal("bus did not become idle")
+	}
+	return event
+}
+
+func runNaturalHistoryTrimPass(t *testing.T, bus *abxbus.EventBus) {
+	t.Helper()
+	if _, err := bus.Emit(abxbus.NewBaseEvent("TTLTouchEvent", nil)).Now(nil); err != nil {
+		t.Fatalf("ttl touch should complete: %v", err)
+	}
+	wait := 1.0
+	if !bus.WaitUntilIdle(&wait) {
+		t.Fatal("bus did not become idle")
+	}
+}
+
+func TestEventTTLZeroDeletesCompletedEventsOnNextNaturalTrimPass(t *testing.T) {
+	ttl := 0.0
+	bus := abxbus.NewEventBus("EventTTLZeroBus", &abxbus.EventBusOptions{MaxHistorySize: nil, EventTTL: &ttl})
+	defer bus.Destroy()
+	event := emitCompletedTTLProbe(t, bus, nil)
+	if !bus.EventHistory.Has(event.EventID) {
+		t.Fatal("event should remain until next natural trim pass")
+	}
+	runNaturalHistoryTrimPass(t, bus)
+	if bus.EventHistory.Has(event.EventID) {
+		t.Fatal("event_ttl=0 should delete completed event on next trim pass")
+	}
+}
+
+func TestEventResultTTLZeroClearsResultsWhileKeepingEvent(t *testing.T) {
+	never := -1.0
+	zero := 0.0
+	bus := abxbus.NewEventBus("EventResultTTLZeroBus", &abxbus.EventBusOptions{MaxHistorySize: nil, EventTTL: &never, EventResultTTL: &zero})
+	defer bus.Destroy()
+	bus.On("TTLProbeEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "result", nil
+	}, nil)
+	event := emitCompletedTTLProbe(t, bus, nil)
+	if len(event.EventResults) != 1 {
+		t.Fatalf("expected one result before trim, got %d", len(event.EventResults))
+	}
+	runNaturalHistoryTrimPass(t, bus)
+	if !bus.EventHistory.Has(event.EventID) {
+		t.Fatal("event_result_ttl should keep the event")
+	}
+	if len(event.EventResults) != 0 {
+		t.Fatalf("event_result_ttl=0 should clear results, got %d", len(event.EventResults))
+	}
+}
+
+func TestEventTTLAndEventResultTTLNilOrAbsentInheritBusDefaults(t *testing.T) {
+	zero := 0.0
+	bus := abxbus.NewEventBus("TTLNilAbsentInheritBus", &abxbus.EventBusOptions{EventTTL: &zero, EventResultTTL: &zero})
+	defer bus.Destroy()
+	bus.On("TTLProbeEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "result", nil
+	}, nil)
+
+	absent := emitCompletedTTLProbe(t, bus, nil)
+	explicitNil := abxbus.NewBaseEvent("TTLProbeEvent", nil)
+	explicitNil.EventTTL = nil
+	explicitNil.EventResultTTL = nil
+	explicitNil = emitCompletedTTLProbe(t, bus, explicitNil)
+
+	runNaturalHistoryTrimPass(t, bus)
+
+	if bus.EventHistory.Has(absent.EventID) || bus.EventHistory.Has(explicitNil.EventID) {
+		t.Fatal("nil and absent ttl values should inherit bus event_ttl=0")
+	}
+	if len(absent.EventResults) != 0 || len(explicitNil.EventResults) != 0 {
+		t.Fatalf("nil and absent result ttl values should inherit bus event_result_ttl=0, got %d/%d", len(absent.EventResults), len(explicitNil.EventResults))
+	}
+}
+
+func TestEventTTLMinusOneOverridesPositiveOrZeroBusDefaultsAndKeepsCompletedEvents(t *testing.T) {
+	zeroDefaultBus := abxbus.NewEventBus("EventTTLMinusOneOverridesZeroBus", &abxbus.EventBusOptions{EventTTL: ttlPtr(0)})
+	positiveDefaultBus := abxbus.NewEventBus("EventTTLMinusOneOverridesPositiveBus", &abxbus.EventBusOptions{EventTTL: ttlPtr(0.01)})
+	defer zeroDefaultBus.Destroy()
+	defer positiveDefaultBus.Destroy()
+
+	zeroDefaultEvent := abxbus.NewBaseEvent("TTLProbeEvent", nil)
+	zeroDefaultEvent.EventTTL = ttlPtr(-1)
+	positiveDefaultEvent := abxbus.NewBaseEvent("TTLProbeEvent", nil)
+	positiveDefaultEvent.EventTTL = ttlPtr(-1)
+
+	emitCompletedTTLProbe(t, zeroDefaultBus, zeroDefaultEvent)
+	emitCompletedTTLProbe(t, positiveDefaultBus, positiveDefaultEvent)
+	time.Sleep(20 * time.Millisecond)
+	runNaturalHistoryTrimPass(t, zeroDefaultBus)
+	runNaturalHistoryTrimPass(t, positiveDefaultBus)
+
+	if !zeroDefaultBus.EventHistory.Has(zeroDefaultEvent.EventID) || !positiveDefaultBus.EventHistory.Has(positiveDefaultEvent.EventID) {
+		t.Fatal("event_ttl=-1 should keep completed events despite scalar bus defaults")
+	}
+}
+
+func TestEventResultTTLMinusOneOverridesPositiveOrZeroBusDefaultsAndKeepsCompletedResults(t *testing.T) {
+	zeroDefaultBus := abxbus.NewEventBus("EventResultTTLMinusOneOverridesZeroBus", &abxbus.EventBusOptions{EventTTL: ttlPtr(-1), EventResultTTL: ttlPtr(0)})
+	positiveDefaultBus := abxbus.NewEventBus("EventResultTTLMinusOneOverridesPositiveBus", &abxbus.EventBusOptions{EventTTL: ttlPtr(-1), EventResultTTL: ttlPtr(0.01)})
+	defer zeroDefaultBus.Destroy()
+	defer positiveDefaultBus.Destroy()
+	zeroDefaultBus.On("TTLProbeEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "zero-default", nil
+	}, nil)
+	positiveDefaultBus.On("TTLProbeEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "positive-default", nil
+	}, nil)
+
+	zeroDefaultEvent := abxbus.NewBaseEvent("TTLProbeEvent", nil)
+	zeroDefaultEvent.EventResultTTL = ttlPtr(-1)
+	positiveDefaultEvent := abxbus.NewBaseEvent("TTLProbeEvent", nil)
+	positiveDefaultEvent.EventResultTTL = ttlPtr(-1)
+
+	emitCompletedTTLProbe(t, zeroDefaultBus, zeroDefaultEvent)
+	emitCompletedTTLProbe(t, positiveDefaultBus, positiveDefaultEvent)
+	time.Sleep(20 * time.Millisecond)
+	runNaturalHistoryTrimPass(t, zeroDefaultBus)
+	runNaturalHistoryTrimPass(t, positiveDefaultBus)
+
+	if len(zeroDefaultEvent.EventResults) != 1 || len(positiveDefaultEvent.EventResults) != 1 {
+		t.Fatalf("event_result_ttl=-1 should keep results, got %d/%d", len(zeroDefaultEvent.EventResults), len(positiveDefaultEvent.EventResults))
+	}
+}
+
+func TestEventTTLEventLevelZeroOverridesBusNeverDeleteDefault(t *testing.T) {
+	bus := abxbus.NewEventBus("EventTTLZeroOverridesNeverBus", &abxbus.EventBusOptions{EventTTL: ttlPtr(-1)})
+	defer bus.Destroy()
+	event := abxbus.NewBaseEvent("TTLProbeEvent", nil)
+	event.EventTTL = ttlPtr(0)
+	emitCompletedTTLProbe(t, bus, event)
+	runNaturalHistoryTrimPass(t, bus)
+	if bus.EventHistory.Has(event.EventID) {
+		t.Fatal("event_ttl=0 should override bus event_ttl=-1")
+	}
+}
+
+func TestEventResultTTLEventLevelZeroOverridesBusNeverDeleteDefault(t *testing.T) {
+	bus := abxbus.NewEventBus("EventResultTTLZeroOverridesNeverBus", &abxbus.EventBusOptions{EventTTL: ttlPtr(-1), EventResultTTL: ttlPtr(-1)})
+	defer bus.Destroy()
+	bus.On("TTLProbeEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "result", nil
+	}, nil)
+	event := abxbus.NewBaseEvent("TTLProbeEvent", nil)
+	event.EventResultTTL = ttlPtr(0)
+	emitCompletedTTLProbe(t, bus, event)
+	runNaturalHistoryTrimPass(t, bus)
+	if !bus.EventHistory.Has(event.EventID) {
+		t.Fatal("event_result_ttl should keep the event")
+	}
+	if len(event.EventResults) != 0 {
+		t.Fatalf("event_result_ttl=0 should override bus event_result_ttl=-1, got %d", len(event.EventResults))
+	}
+}
+
+func TestEventTTLPositiveEventOverrideCanBeShorterThanBusDefault(t *testing.T) {
+	bus := abxbus.NewEventBus("EventTTLShorterOverrideBus", &abxbus.EventBusOptions{EventTTL: ttlPtr(1)})
+	defer bus.Destroy()
+	event := abxbus.NewBaseEvent("TTLProbeEvent", nil)
+	event.EventTTL = ttlPtr(0.01)
+	emitCompletedTTLProbe(t, bus, event)
+	time.Sleep(20 * time.Millisecond)
+	runNaturalHistoryTrimPass(t, bus)
+	if bus.EventHistory.Has(event.EventID) {
+		t.Fatal("shorter event_ttl override should delete completed event")
+	}
+}
+
+func TestEventTTLPositiveEventOverrideCanBeLongerThanBusDefault(t *testing.T) {
+	bus := abxbus.NewEventBus("EventTTLLongerOverrideBus", &abxbus.EventBusOptions{EventTTL: ttlPtr(0.01)})
+	defer bus.Destroy()
+	event := abxbus.NewBaseEvent("TTLProbeEvent", nil)
+	event.EventTTL = ttlPtr(1)
+	emitCompletedTTLProbe(t, bus, event)
+	time.Sleep(20 * time.Millisecond)
+	runNaturalHistoryTrimPass(t, bus)
+	if !bus.EventHistory.Has(event.EventID) {
+		t.Fatal("longer event_ttl override should keep completed event")
+	}
+}
+
+func TestEventResultTTLCountsFromEventCompletionAndSupportsShorterAndLongerEventOverrides(t *testing.T) {
+	shorterBus := abxbus.NewEventBus("EventResultTTLShorterOverrideBus", &abxbus.EventBusOptions{EventTTL: ttlPtr(-1), EventResultTTL: ttlPtr(1)})
+	longerBus := abxbus.NewEventBus("EventResultTTLLongerOverrideBus", &abxbus.EventBusOptions{EventTTL: ttlPtr(-1), EventResultTTL: ttlPtr(0.01)})
+	defer shorterBus.Destroy()
+	defer longerBus.Destroy()
+	shorterBus.On("TTLProbeEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "shorter", nil
+	}, nil)
+	longerBus.On("TTLProbeEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "longer", nil
+	}, nil)
+	shorterEvent := abxbus.NewBaseEvent("TTLProbeEvent", nil)
+	shorterEvent.EventResultTTL = ttlPtr(0.01)
+	longerEvent := abxbus.NewBaseEvent("TTLProbeEvent", nil)
+	longerEvent.EventResultTTL = ttlPtr(1)
+
+	emitCompletedTTLProbe(t, shorterBus, shorterEvent)
+	emitCompletedTTLProbe(t, longerBus, longerEvent)
+	time.Sleep(20 * time.Millisecond)
+	runNaturalHistoryTrimPass(t, shorterBus)
+	runNaturalHistoryTrimPass(t, longerBus)
+
+	if len(shorterEvent.EventResults) != 0 {
+		t.Fatalf("shorter event_result_ttl should clear results, got %d", len(shorterEvent.EventResults))
+	}
+	if len(longerEvent.EventResults) != 1 {
+		t.Fatalf("longer event_result_ttl should keep results, got %d", len(longerEvent.EventResults))
+	}
+}
+
+func TestHandlerResultTTLOverridesEventAndBusResultTTL(t *testing.T) {
+	never := -1.0
+	zero := 0.0
+	bus := abxbus.NewEventBus("HandlerResultTTLBus", &abxbus.EventBusOptions{MaxHistorySize: nil, EventTTL: &never, EventResultTTL: &never})
+	defer bus.Destroy()
+	bus.On("TTLProbeEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "result", nil
+	}, &abxbus.EventHandler{HandlerResultTTL: &zero})
+	event := abxbus.NewBaseEvent("TTLProbeEvent", nil)
+	event.EventResultTTL = &never
+	emitCompletedTTLProbe(t, bus, event)
+	runNaturalHistoryTrimPass(t, bus)
+	if len(event.EventResults) != 0 {
+		t.Fatalf("handler_result_ttl=0 should clear result, got %d", len(event.EventResults))
+	}
+}
+
+func TestHandlerResultTTLMinusOnePreservesResultsWhenEventAndBusResultTTLDefaultsAreScalar(t *testing.T) {
+	bus := abxbus.NewEventBus("HandlerResultTTLNeverBeatsScalarsBus", &abxbus.EventBusOptions{EventTTL: ttlPtr(-1), EventResultTTL: ttlPtr(0)})
+	defer bus.Destroy()
+	bus.On("TTLProbeEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "result", nil
+	}, &abxbus.EventHandler{HandlerResultTTL: ttlPtr(-1)})
+	event := abxbus.NewBaseEvent("TTLProbeEvent", nil)
+	event.EventResultTTL = ttlPtr(0)
+	emitCompletedTTLProbe(t, bus, event)
+	runNaturalHistoryTrimPass(t, bus)
+	if !bus.EventHistory.Has(event.EventID) {
+		t.Fatal("event should remain")
+	}
+	if len(event.EventResults) != 1 {
+		t.Fatalf("handler_result_ttl=-1 should keep result, got %d", len(event.EventResults))
+	}
+}
+
+func TestHandlerResultTTLNilInheritsEventResultTTLBeforeBusResultTTL(t *testing.T) {
+	bus := abxbus.NewEventBus("HandlerResultTTLNilInheritsEventBus", &abxbus.EventBusOptions{EventTTL: ttlPtr(-1), EventResultTTL: ttlPtr(-1)})
+	defer bus.Destroy()
+	bus.On("TTLProbeEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "result", nil
+	}, &abxbus.EventHandler{HandlerResultTTL: nil})
+	event := abxbus.NewBaseEvent("TTLProbeEvent", nil)
+	event.EventResultTTL = ttlPtr(0)
+	emitCompletedTTLProbe(t, bus, event)
+	runNaturalHistoryTrimPass(t, bus)
+	if !bus.EventHistory.Has(event.EventID) {
+		t.Fatal("event should remain")
+	}
+	if len(event.EventResults) != 0 {
+		t.Fatalf("handler_result_ttl=nil should inherit event_result_ttl=0, got %d", len(event.EventResults))
+	}
+}
+
+func TestEventTTLAndEventResultTTLRejectValuesBelowMinusOne(t *testing.T) {
+	bad := -2.0
+	expectPanic := func(name string, fn func()) {
+		t.Helper()
+		defer func() {
+			if recover() == nil {
+				t.Fatalf("%s should panic", name)
+			}
+		}()
+		fn()
+	}
+	expectPanic("event_ttl", func() {
+		_ = abxbus.NewEventBus("BadEventTTLBus", &abxbus.EventBusOptions{EventTTL: &bad})
+	})
+	expectPanic("event_result_ttl", func() {
+		_ = abxbus.NewEventBus("BadEventResultTTLBus", &abxbus.EventBusOptions{EventResultTTL: &bad})
+	})
+	expectPanic("event field ttl", func() {
+		bus := abxbus.NewEventBus("BadEventFieldTTLBus", nil)
+		defer bus.Destroy()
+		event := abxbus.NewBaseEvent("TTLProbeEvent", nil)
+		event.EventTTL = &bad
+		_, _ = bus.Emit(event).Now(nil)
+	})
 }
 
 func TestWaitUntilIdleZeroTimeoutWaitsIndefinitely(t *testing.T) {

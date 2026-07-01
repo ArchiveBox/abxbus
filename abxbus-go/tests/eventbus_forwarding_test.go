@@ -2,6 +2,7 @@ package abxbus_test
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"sync"
 	"testing"
@@ -9,6 +10,20 @@ import (
 
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
 )
+
+type forwardingRecordingMiddleware struct {
+	events *[]string
+}
+
+func (m *forwardingRecordingMiddleware) OnEventChange(eventbus *abxbus.EventBus, event *abxbus.BaseEvent, status string) {
+}
+
+func (m *forwardingRecordingMiddleware) OnEventResultChange(eventbus *abxbus.EventBus, event *abxbus.BaseEvent, eventResult *abxbus.EventResult, status string) {
+	*m.events = append(*m.events, fmt.Sprintf("%s:%s:%s", event.EventID, eventResult.HandlerName, status))
+}
+
+func (m *forwardingRecordingMiddleware) OnBusHandlersChange(eventbus *abxbus.EventBus, handler *abxbus.EventHandler, registered bool) {
+}
 
 func TestEventsForwardBetweenBusesWithoutDuplication(t *testing.T) {
 	busA := abxbus.NewEventBus("BusA", nil)
@@ -59,6 +74,69 @@ func TestEventsForwardBetweenBusesWithoutDuplication(t *testing.T) {
 	}
 	if event.EventPendingBusCount != 0 {
 		t.Fatalf("event pending bus count should be zero, got %d", event.EventPendingBusCount)
+	}
+}
+
+func TestCompletedForwardedEventWithPrunedTargetResultsRemainsTerminal(t *testing.T) {
+	busA := abxbus.NewEventBus("PrunedTerminalA", nil)
+	middlewareEvents := []string{}
+	busB := abxbus.NewEventBus("PrunedTerminalB", &abxbus.EventBusOptions{
+		Middlewares: []abxbus.EventBusMiddleware{&forwardingRecordingMiddleware{events: &middlewareEvents}},
+	})
+	defer busA.Destroy()
+	defer busB.Destroy()
+
+	busBResultEvents := []string{}
+	busA.On("PingEvent", "forward_to_b_for_pruned_terminal", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		busB.Emit(event)
+		return "a", nil
+	}, nil)
+	busB.On("PingEvent", "target_for_pruned_terminal", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		busBResultEvents = append(busBResultEvents, event.EventID)
+		return "b", nil
+	}, nil)
+
+	event := busA.Emit(abxbus.NewBaseEvent("PingEvent", map[string]any{"value": 1}))
+	if _, err := event.Now(); err != nil {
+		t.Fatal(err)
+	}
+	waitAllIdle(t, busA, busB)
+
+	if event.EventStatus != "completed" || event.EventCompletedAt == nil {
+		t.Fatalf("event should be completed with completed_at, got status=%s completed_at=%v", event.EventStatus, event.EventCompletedAt)
+	}
+	if !reflect.DeepEqual(busBResultEvents, []string{event.EventID}) {
+		t.Fatalf("target handler should run once before pruning, got %v", busBResultEvents)
+	}
+	middlewareEventCount := len(middlewareEvents)
+	for handlerID, eventResult := range event.EventResults {
+		if eventResult.EventBusID == busB.ID {
+			delete(event.EventResults, handlerID)
+		}
+	}
+	for _, eventResult := range event.EventResults {
+		if eventResult.EventBusID == busB.ID {
+			t.Fatalf("expected target results to be pruned, got %#v", event.EventResults)
+		}
+	}
+
+	busB.Emit(event)
+	if _, err := event.Now(); err != nil {
+		t.Fatal(err)
+	}
+	waitAllIdle(t, busA, busB)
+
+	if event.EventStatus != "completed" || event.EventCompletedAt == nil {
+		t.Fatalf("event should stay completed with completed_at, got status=%s completed_at=%v", event.EventStatus, event.EventCompletedAt)
+	}
+	if !reflect.DeepEqual(busBResultEvents, []string{event.EventID}) {
+		t.Fatalf("target handler should not rerun after result pruning, got %v", busBResultEvents)
+	}
+	if len(middlewareEvents) != middlewareEventCount {
+		t.Fatalf("middleware should not observe rerun after pruning, before=%d after=%d", middlewareEventCount, len(middlewareEvents))
+	}
+	if busB.EventHistory.GetEvent(event.EventID) != event {
+		t.Fatal("target bus should still retain the completed event")
 	}
 }
 
@@ -457,6 +535,262 @@ func TestForwardedEventUsesProcessingBusDefaults(t *testing.T) {
 	}
 	if busBResults == 0 {
 		t.Fatal("expected busB handler results")
+	}
+}
+
+func runForwardingTTLTrimPass(t *testing.T, bus *abxbus.EventBus) {
+	t.Helper()
+	if _, err := bus.Emit(abxbus.NewBaseEvent("ForwardingTTLTouchEvent", nil)).Now(nil); err != nil {
+		t.Fatalf("ttl touch should complete: %v", err)
+	}
+	wait := 1.0
+	if !bus.WaitUntilIdle(&wait) {
+		t.Fatal("bus did not become idle")
+	}
+}
+
+func TestForwardedEventTTLAbsentUsesEachProcessingBusDefault(t *testing.T) {
+	zero := 0.0
+	never := -1.0
+	busA := abxbus.NewEventBus("ForwardTTLAbsentOriginDelete", &abxbus.EventBusOptions{EventTTL: &zero})
+	busB := abxbus.NewEventBus("ForwardTTLAbsentTargetKeep", &abxbus.EventBusOptions{EventTTL: &never})
+	defer busA.Destroy()
+	defer busB.Destroy()
+
+	busA.On("ForwardingTTLProbeEvent", "forward", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		busB.Emit(e)
+		return nil, nil
+	}, nil)
+	busB.On("ForwardingTTLProbeEvent", "target", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "target", nil
+	}, nil)
+
+	event := busA.Emit(abxbus.NewBaseEvent("ForwardingTTLProbeEvent", nil))
+	if _, err := event.Now(nil); err != nil {
+		t.Fatalf("event should complete: %v", err)
+	}
+	wait := 1.0
+	_ = busA.WaitUntilIdle(&wait)
+	_ = busB.WaitUntilIdle(&wait)
+	runForwardingTTLTrimPass(t, busA)
+	runForwardingTTLTrimPass(t, busB)
+
+	if busA.EventHistory.Has(event.EventID) {
+		t.Fatal("origin bus should delete event")
+	}
+	if !busB.EventHistory.Has(event.EventID) {
+		t.Fatal("target bus should keep event")
+	}
+}
+
+func TestForwardedEventTTLNilUsesEachProcessingBusDefault(t *testing.T) {
+	busA := abxbus.NewEventBus("ForwardTTLNilOriginKeep", &abxbus.EventBusOptions{EventTTL: ttlPtr(-1)})
+	busB := abxbus.NewEventBus("ForwardTTLNilTargetDelete", &abxbus.EventBusOptions{EventTTL: ttlPtr(0)})
+	defer busA.Destroy()
+	defer busB.Destroy()
+
+	busA.On("ForwardingTTLProbeEvent", "forward", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		busB.Emit(e)
+		return nil, nil
+	}, nil)
+	busB.On("ForwardingTTLProbeEvent", "target", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "target", nil
+	}, nil)
+
+	event := abxbus.NewBaseEvent("ForwardingTTLProbeEvent", nil)
+	event.EventTTL = nil
+	event = busA.Emit(event)
+	if _, err := event.Now(nil); err != nil {
+		t.Fatalf("event should complete: %v", err)
+	}
+	wait := 1.0
+	_ = busA.WaitUntilIdle(&wait)
+	_ = busB.WaitUntilIdle(&wait)
+	runForwardingTTLTrimPass(t, busA)
+	runForwardingTTLTrimPass(t, busB)
+
+	if !busA.EventHistory.Has(event.EventID) {
+		t.Fatal("origin bus should keep nil event_ttl")
+	}
+	if busB.EventHistory.Has(event.EventID) {
+		t.Fatal("target bus should delete nil event_ttl")
+	}
+}
+
+func TestForwardedEventTTLPositiveUsesShorterTargetDefaultWithoutMutatingSourceDefault(t *testing.T) {
+	busA := abxbus.NewEventBus("ForwardTTLPositiveOriginLong", &abxbus.EventBusOptions{EventTTL: ttlPtr(1)})
+	busB := abxbus.NewEventBus("ForwardTTLPositiveTargetShort", &abxbus.EventBusOptions{EventTTL: ttlPtr(0.01)})
+	defer busA.Destroy()
+	defer busB.Destroy()
+
+	busA.On("ForwardingTTLProbeEvent", "forward", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		busB.Emit(e)
+		return nil, nil
+	}, nil)
+	busB.On("ForwardingTTLProbeEvent", "target", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "target", nil
+	}, nil)
+
+	event := busA.Emit(abxbus.NewBaseEvent("ForwardingTTLProbeEvent", nil))
+	if _, err := event.Now(nil); err != nil {
+		t.Fatalf("event should complete: %v", err)
+	}
+	wait := 1.0
+	_ = busA.WaitUntilIdle(&wait)
+	_ = busB.WaitUntilIdle(&wait)
+	time.Sleep(20 * time.Millisecond)
+	runForwardingTTLTrimPass(t, busA)
+	runForwardingTTLTrimPass(t, busB)
+
+	if !busA.EventHistory.Has(event.EventID) {
+		t.Fatal("origin bus should keep event with longer default")
+	}
+	if busB.EventHistory.Has(event.EventID) {
+		t.Fatal("target bus should delete event with shorter default")
+	}
+}
+
+func TestForwardedEventTTLExplicitNeverOverridesBothBusDefaults(t *testing.T) {
+	busA := abxbus.NewEventBus("ForwardTTLExplicitNeverOrigin", &abxbus.EventBusOptions{EventTTL: ttlPtr(0)})
+	busB := abxbus.NewEventBus("ForwardTTLExplicitNeverTarget", &abxbus.EventBusOptions{EventTTL: ttlPtr(0.01)})
+	defer busA.Destroy()
+	defer busB.Destroy()
+
+	busA.On("ForwardingTTLProbeEvent", "forward", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		busB.Emit(e)
+		return nil, nil
+	}, nil)
+	busB.On("ForwardingTTLProbeEvent", "target", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "target", nil
+	}, nil)
+
+	event := abxbus.NewBaseEvent("ForwardingTTLProbeEvent", nil)
+	event.EventTTL = ttlPtr(-1)
+	event = busA.Emit(event)
+	if _, err := event.Now(nil); err != nil {
+		t.Fatalf("event should complete: %v", err)
+	}
+	wait := 1.0
+	_ = busA.WaitUntilIdle(&wait)
+	_ = busB.WaitUntilIdle(&wait)
+	time.Sleep(20 * time.Millisecond)
+	runForwardingTTLTrimPass(t, busA)
+	runForwardingTTLTrimPass(t, busB)
+
+	if !busA.EventHistory.Has(event.EventID) || !busB.EventHistory.Has(event.EventID) {
+		t.Fatal("event_ttl=-1 should keep forwarded event on both buses")
+	}
+}
+
+func TestForwardedEventTTLExplicitZeroOverridesBothBusDefaults(t *testing.T) {
+	busA := abxbus.NewEventBus("ForwardTTLExplicitZeroOrigin", &abxbus.EventBusOptions{EventTTL: ttlPtr(-1)})
+	busB := abxbus.NewEventBus("ForwardTTLExplicitZeroTarget", &abxbus.EventBusOptions{EventTTL: ttlPtr(-1)})
+	defer busA.Destroy()
+	defer busB.Destroy()
+
+	busA.On("ForwardingTTLProbeEvent", "forward", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		busB.Emit(e)
+		return nil, nil
+	}, nil)
+	busB.On("ForwardingTTLProbeEvent", "target", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "target", nil
+	}, nil)
+
+	event := abxbus.NewBaseEvent("ForwardingTTLProbeEvent", nil)
+	event.EventTTL = ttlPtr(0)
+	event = busA.Emit(event)
+	if _, err := event.Now(nil); err != nil {
+		t.Fatalf("event should complete: %v", err)
+	}
+	wait := 1.0
+	_ = busA.WaitUntilIdle(&wait)
+	_ = busB.WaitUntilIdle(&wait)
+	runForwardingTTLTrimPass(t, busA)
+	runForwardingTTLTrimPass(t, busB)
+
+	if busA.EventHistory.Has(event.EventID) || busB.EventHistory.Has(event.EventID) {
+		t.Fatal("event_ttl=0 should delete forwarded event on both buses")
+	}
+}
+
+func TestForwardedEventResultTTLPrunesOnlyProcessingBusResults(t *testing.T) {
+	never := -1.0
+	zero := 0.0
+	busA := abxbus.NewEventBus("ForwardResultTTLOriginKeep", &abxbus.EventBusOptions{EventTTL: &never, EventResultTTL: &never})
+	busB := abxbus.NewEventBus("ForwardResultTTLTargetClear", &abxbus.EventBusOptions{EventTTL: &never, EventResultTTL: &zero})
+	defer busA.Destroy()
+	defer busB.Destroy()
+
+	busA.On("ForwardingTTLProbeEvent", "forward", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		busB.Emit(e)
+		return nil, nil
+	}, nil)
+	busB.On("ForwardingTTLProbeEvent", "target", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "target", nil
+	}, nil)
+
+	event := busA.Emit(abxbus.NewBaseEvent("ForwardingTTLProbeEvent", nil))
+	if _, err := event.Now(nil); err != nil {
+		t.Fatalf("event should complete: %v", err)
+	}
+	wait := 1.0
+	_ = busA.WaitUntilIdle(&wait)
+	_ = busB.WaitUntilIdle(&wait)
+	runForwardingTTLTrimPass(t, busB)
+
+	hasA := false
+	hasB := false
+	for _, result := range event.EventResults {
+		if result.EventBusID == busA.ID {
+			hasA = true
+		}
+		if result.EventBusID == busB.ID {
+			hasB = true
+		}
+	}
+	if !hasA {
+		t.Fatal("origin result should remain")
+	}
+	if hasB {
+		t.Fatal("target result should be pruned")
+	}
+}
+
+func TestForwardedEventResultTTLExplicitNeverOverridesBothBusDefaults(t *testing.T) {
+	busA := abxbus.NewEventBus("ForwardResultTTLExplicitNeverOrigin", &abxbus.EventBusOptions{EventTTL: ttlPtr(-1), EventResultTTL: ttlPtr(0)})
+	busB := abxbus.NewEventBus("ForwardResultTTLExplicitNeverTarget", &abxbus.EventBusOptions{EventTTL: ttlPtr(-1), EventResultTTL: ttlPtr(0.01)})
+	defer busA.Destroy()
+	defer busB.Destroy()
+
+	busA.On("ForwardingTTLProbeEvent", "forward", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		busB.Emit(e)
+		return nil, nil
+	}, nil)
+	busB.On("ForwardingTTLProbeEvent", "target", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "target", nil
+	}, nil)
+
+	event := abxbus.NewBaseEvent("ForwardingTTLProbeEvent", nil)
+	event.EventResultTTL = ttlPtr(-1)
+	event = busA.Emit(event)
+	if _, err := event.Now(nil); err != nil {
+		t.Fatalf("event should complete: %v", err)
+	}
+	wait := 1.0
+	_ = busA.WaitUntilIdle(&wait)
+	_ = busB.WaitUntilIdle(&wait)
+	if len(event.EventResults) == 0 {
+		t.Fatal("expected shared results before trim")
+	}
+	time.Sleep(20 * time.Millisecond)
+	runForwardingTTLTrimPass(t, busA)
+	runForwardingTTLTrimPass(t, busB)
+
+	if !busA.EventHistory.Has(event.EventID) || !busB.EventHistory.Has(event.EventID) {
+		t.Fatal("event should remain on both buses")
+	}
+	if len(event.EventResults) == 0 {
+		t.Fatal("event_result_ttl=-1 should preserve shared results")
 	}
 }
 

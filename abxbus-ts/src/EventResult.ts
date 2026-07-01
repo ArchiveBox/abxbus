@@ -25,8 +25,9 @@ export const EventResultJSONSchema = z
     handler_id: z.string(),
     handler_name: z.string(),
     handler_file_path: z.string().nullable().optional(),
-    handler_timeout: z.number().nonnegative().nullable().optional(),
-    handler_slow_timeout: z.number().nonnegative().nullable().optional(),
+    handler_timeout: z.number().gte(-1).nullable().optional(),
+    handler_slow_timeout: z.number().gte(-1).nullable().optional(),
+    handler_result_ttl: z.number().gte(-1).nullable().optional(),
     handler_registered_at: z.string().datetime().optional(),
     handler_event_pattern: z.union([z.string(), z.literal('*')]).optional(),
     eventbus_name: z.string(),
@@ -437,6 +438,7 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
       handler_file_path: this.handler_file_path,
       handler_timeout: this.handler.handler_timeout,
       handler_slow_timeout: this.handler.handler_slow_timeout,
+      handler_result_ttl: this.handler.handler_result_ttl,
       handler_registered_at: this.handler.handler_registered_at,
       handler_event_pattern: this.handler.event_pattern,
       eventbus_name: this.eventbus_name,
@@ -460,6 +462,7 @@ export class EventResult<TEvent extends BaseEvent = BaseEvent> {
       handler_file_path: record.handler_file_path ?? null,
       handler_timeout: record.handler_timeout,
       handler_slow_timeout: record.handler_slow_timeout,
+      handler_result_ttl: record.handler_result_ttl,
       handler_registered_at: record.handler_registered_at ?? event.event_created_at,
     } as const
     const handler_stub = EventHandler.fromJSON(handler_record, (() => undefined) as EventHandlerCallable)

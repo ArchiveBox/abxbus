@@ -29,6 +29,8 @@ pub struct BaseEventData {
     pub event_concurrency: Option<EventConcurrencyMode>,
     pub event_handler_timeout: Option<f64>,
     pub event_handler_slow_timeout: Option<f64>,
+    pub event_ttl: Option<f64>,
+    pub event_result_ttl: Option<f64>,
     pub event_handler_concurrency: Option<EventHandlerConcurrencyMode>,
     pub event_handler_completion: Option<EventHandlerCompletionMode>,
     pub event_blocks_parent_completion: bool,
@@ -52,7 +54,8 @@ pub struct BaseEventData {
 pub struct BaseEvent {
     pub inner: Mutex<BaseEventData>,
     pub completed: Event,
-    runtime_eventbus_id: Mutex<Option<String>>,
+    runtime_eventbus_id: Mutex<Option<Arc<str>>>,
+    pub(crate) event_expires_at_by_bus: Mutex<HashMap<String, i64>>,
 }
 
 pub type EventResultInclude = Arc<dyn Fn(Option<&Value>, &EventResult) -> bool + Send + Sync>;
@@ -159,8 +162,8 @@ fn take_usize(payload: &mut Map<String, Value>, key: &str) -> Result<Option<usiz
 fn take_option_f64(payload: &mut Map<String, Value>, key: &str) -> Result<Option<f64>, String> {
     let value: Option<f64> = take_from_value(payload, key)?;
     if let Some(value) = value {
-        if value < 0.0 {
-            return Err(format!("Invalid {key}: must be >= 0 or null"));
+        if value < -1.0 {
+            return Err(format!("Invalid {key}: must be >= -1 or null"));
         }
     }
     Ok(value)
@@ -206,6 +209,8 @@ impl BaseEvent {
         let event_handler_timeout = take_option_f64(&mut payload, "event_handler_timeout")?;
         let event_handler_slow_timeout =
             take_option_f64(&mut payload, "event_handler_slow_timeout")?;
+        let event_ttl = take_option_f64(&mut payload, "event_ttl")?;
+        let event_result_ttl = take_option_f64(&mut payload, "event_result_ttl")?;
         let event_handler_concurrency =
             take_option_from_value(&mut payload, "event_handler_concurrency")?;
         let event_handler_completion =
@@ -239,6 +244,8 @@ impl BaseEvent {
                 event_concurrency,
                 event_handler_timeout,
                 event_handler_slow_timeout,
+                event_ttl,
+                event_result_ttl,
                 event_handler_concurrency,
                 event_handler_completion,
                 event_blocks_parent_completion,
@@ -258,6 +265,7 @@ impl BaseEvent {
             }),
             completed: Event::new(),
             runtime_eventbus_id: Mutex::new(None),
+            event_expires_at_by_bus: Mutex::new(HashMap::new()),
         }))
     }
 
@@ -269,12 +277,15 @@ impl BaseEvent {
         self.event_bus()
     }
 
-    pub(crate) fn set_runtime_eventbus_id(&self, eventbus_id: Option<String>) {
+    pub(crate) fn set_runtime_eventbus_id(&self, eventbus_id: Option<Arc<str>>) {
         *self.runtime_eventbus_id.lock() = eventbus_id;
     }
 
     pub(crate) fn runtime_eventbus_id(&self) -> Option<String> {
-        self.runtime_eventbus_id.lock().clone()
+        self.runtime_eventbus_id
+            .lock()
+            .as_ref()
+            .map(|eventbus_id| eventbus_id.to_string())
     }
 
     fn validate_event_type(event_type: &str) -> Result<(), String> {
@@ -737,6 +748,7 @@ impl BaseEvent {
             inner: Mutex::new(data),
             completed: Event::new(),
             runtime_eventbus_id: Mutex::new(None),
+            event_expires_at_by_bus: Mutex::new(HashMap::new()),
         })
     }
 
@@ -758,6 +770,16 @@ impl BaseEvent {
             }
         }
         value
+    }
+
+    pub fn event_payload(&self) -> Map<String, Value> {
+        self.inner
+            .lock()
+            .event_extra_payload
+            .iter()
+            .filter(|(key, _)| !key.starts_with("event_"))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
     }
 
     pub fn event_errors(&self) -> Vec<String> {
@@ -840,6 +862,8 @@ impl BaseEvent {
                 "event_concurrency",
                 "event_handler_timeout",
                 "event_handler_slow_timeout",
+                "event_ttl",
+                "event_result_ttl",
                 "event_handler_concurrency",
                 "event_handler_completion",
                 "event_result_type",
@@ -950,6 +974,7 @@ impl BaseEvent {
             inner: Mutex::new(parsed),
             completed: Event::new(),
             runtime_eventbus_id: Mutex::new(None),
+            event_expires_at_by_bus: Mutex::new(HashMap::new()),
         })
     }
 }

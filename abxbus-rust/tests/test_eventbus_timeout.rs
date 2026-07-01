@@ -2868,3 +2868,402 @@ fn _inner_event_no_slow_warning_child() {
     }
     run_slow_warning_event(Some(0.0), Some(0.0));
 }
+
+fn emit_completed_ttl_probe(bus: &Arc<EventBus>, event: Option<Arc<BaseEvent>>) -> Arc<BaseEvent> {
+    let event = event.unwrap_or_else(|| BaseEvent::new("TTLProbeEvent", serde_json::Map::new()));
+    let emitted = bus.emit_base(event.clone());
+    let _ = block_on(emitted.now());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+    emitted
+}
+
+fn run_natural_history_trim_pass(bus: &Arc<EventBus>) {
+    let touch = bus.emit_base(BaseEvent::new("TTLTouchEvent", serde_json::Map::new()));
+    let _ = block_on(touch.now());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+}
+
+#[test]
+fn test_event_ttl_zero_deletes_completed_events_on_the_next_natural_trim_pass() {
+    let bus = EventBus::new_with_options(
+        Some("EventTTLZeroBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let event = emit_completed_ttl_probe(&bus, None);
+    assert!(bus
+        .event_history_ids()
+        .contains(&event.inner.lock().event_id));
+    run_natural_history_trim_pass(&bus);
+    assert!(!bus
+        .event_history_ids()
+        .contains(&event.inner.lock().event_id));
+    bus.destroy();
+}
+
+#[test]
+fn test_event_result_ttl_zero_clears_completed_event_results_while_keeping_event() {
+    let bus = EventBus::new_with_options(
+        Some("EventResultTTLZeroBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(-1.0),
+            event_result_ttl: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    bus.on_raw_sync("TTLProbeEvent", "handler", |_event| Ok(json!("result")));
+    let event = emit_completed_ttl_probe(&bus, None);
+    assert_eq!(event.inner.lock().event_results.len(), 1);
+    run_natural_history_trim_pass(&bus);
+    assert!(bus
+        .event_history_ids()
+        .contains(&event.inner.lock().event_id));
+    assert_eq!(event.inner.lock().event_results.len(), 0);
+    bus.destroy();
+}
+
+#[test]
+fn test_event_ttl_and_event_result_ttl_none_or_absent_inherit_bus_defaults() {
+    let bus = EventBus::new_with_options(
+        Some("TTLNoneAbsentInheritBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(0.0),
+            event_result_ttl: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    bus.on_raw_sync("TTLProbeEvent", "handler", |_event| Ok(json!("result")));
+
+    let absent = emit_completed_ttl_probe(&bus, None);
+    let explicit_none = BaseEvent::new("TTLProbeEvent", serde_json::Map::new());
+    {
+        let mut inner = explicit_none.inner.lock();
+        inner.event_ttl = None;
+        inner.event_result_ttl = None;
+    }
+    let explicit_none = emit_completed_ttl_probe(&bus, Some(explicit_none));
+
+    run_natural_history_trim_pass(&bus);
+
+    let absent_id = absent.inner.lock().event_id.clone();
+    let explicit_none_id = explicit_none.inner.lock().event_id.clone();
+    assert!(!bus.event_history_ids().contains(&absent_id));
+    assert!(!bus.event_history_ids().contains(&explicit_none_id));
+    assert_eq!(absent.inner.lock().event_results.len(), 0);
+    assert_eq!(explicit_none.inner.lock().event_results.len(), 0);
+    bus.destroy();
+}
+
+#[test]
+fn test_event_ttl_minus_one_overrides_positive_or_zero_bus_defaults_and_keeps_completed_events() {
+    let zero_default_bus = EventBus::new_with_options(
+        Some("EventTTLMinusOneOverridesZeroBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let positive_default_bus = EventBus::new_with_options(
+        Some("EventTTLMinusOneOverridesPositiveBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(0.01),
+            ..EventBusOptions::default()
+        },
+    );
+    let zero_default_event = BaseEvent::new("TTLProbeEvent", serde_json::Map::new());
+    zero_default_event.inner.lock().event_ttl = Some(-1.0);
+    let positive_default_event = BaseEvent::new("TTLProbeEvent", serde_json::Map::new());
+    positive_default_event.inner.lock().event_ttl = Some(-1.0);
+
+    let zero_default_event = emit_completed_ttl_probe(&zero_default_bus, Some(zero_default_event));
+    let positive_default_event =
+        emit_completed_ttl_probe(&positive_default_bus, Some(positive_default_event));
+    thread::sleep(Duration::from_millis(20));
+    run_natural_history_trim_pass(&zero_default_bus);
+    run_natural_history_trim_pass(&positive_default_bus);
+
+    let zero_default_id = zero_default_event.inner.lock().event_id.clone();
+    let positive_default_id = positive_default_event.inner.lock().event_id.clone();
+    assert!(zero_default_bus
+        .event_history_ids()
+        .contains(&zero_default_id));
+    assert!(positive_default_bus
+        .event_history_ids()
+        .contains(&positive_default_id));
+    zero_default_bus.destroy();
+    positive_default_bus.destroy();
+}
+
+#[test]
+fn test_event_result_ttl_minus_one_overrides_positive_or_zero_bus_defaults_and_keeps_completed_results(
+) {
+    let zero_default_bus = EventBus::new_with_options(
+        Some("EventResultTTLMinusOneOverridesZeroBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(-1.0),
+            event_result_ttl: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let positive_default_bus = EventBus::new_with_options(
+        Some("EventResultTTLMinusOneOverridesPositiveBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(-1.0),
+            event_result_ttl: Some(0.01),
+            ..EventBusOptions::default()
+        },
+    );
+    zero_default_bus.on_raw_sync("TTLProbeEvent", "handler", |_event| {
+        Ok(json!("zero-default"))
+    });
+    positive_default_bus.on_raw_sync("TTLProbeEvent", "handler", |_event| {
+        Ok(json!("positive-default"))
+    });
+    let zero_default_event = BaseEvent::new("TTLProbeEvent", serde_json::Map::new());
+    zero_default_event.inner.lock().event_result_ttl = Some(-1.0);
+    let positive_default_event = BaseEvent::new("TTLProbeEvent", serde_json::Map::new());
+    positive_default_event.inner.lock().event_result_ttl = Some(-1.0);
+
+    let zero_default_event = emit_completed_ttl_probe(&zero_default_bus, Some(zero_default_event));
+    let positive_default_event =
+        emit_completed_ttl_probe(&positive_default_bus, Some(positive_default_event));
+    thread::sleep(Duration::from_millis(20));
+    run_natural_history_trim_pass(&zero_default_bus);
+    run_natural_history_trim_pass(&positive_default_bus);
+
+    assert_eq!(zero_default_event.inner.lock().event_results.len(), 1);
+    assert_eq!(positive_default_event.inner.lock().event_results.len(), 1);
+    zero_default_bus.destroy();
+    positive_default_bus.destroy();
+}
+
+#[test]
+fn test_event_ttl_event_level_zero_overrides_bus_never_delete_default() {
+    let bus = EventBus::new_with_options(
+        Some("EventTTLZeroOverridesNeverBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(-1.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let event = BaseEvent::new("TTLProbeEvent", serde_json::Map::new());
+    event.inner.lock().event_ttl = Some(0.0);
+    let event = emit_completed_ttl_probe(&bus, Some(event));
+    run_natural_history_trim_pass(&bus);
+    let event_id = event.inner.lock().event_id.clone();
+    assert!(!bus.event_history_ids().contains(&event_id));
+    bus.destroy();
+}
+
+#[test]
+fn test_event_result_ttl_event_level_zero_overrides_bus_never_delete_default() {
+    let bus = EventBus::new_with_options(
+        Some("EventResultTTLZeroOverridesNeverBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(-1.0),
+            event_result_ttl: Some(-1.0),
+            ..EventBusOptions::default()
+        },
+    );
+    bus.on_raw_sync("TTLProbeEvent", "handler", |_event| Ok(json!("result")));
+    let event = BaseEvent::new("TTLProbeEvent", serde_json::Map::new());
+    event.inner.lock().event_result_ttl = Some(0.0);
+    let event = emit_completed_ttl_probe(&bus, Some(event));
+    run_natural_history_trim_pass(&bus);
+    let event_id = event.inner.lock().event_id.clone();
+    assert!(bus.event_history_ids().contains(&event_id));
+    assert_eq!(event.inner.lock().event_results.len(), 0);
+    bus.destroy();
+}
+
+#[test]
+fn test_event_ttl_positive_event_override_can_be_shorter_than_bus_default() {
+    let bus = EventBus::new_with_options(
+        Some("EventTTLShorterOverrideBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(1.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let event = BaseEvent::new("TTLProbeEvent", serde_json::Map::new());
+    event.inner.lock().event_ttl = Some(0.01);
+    let event = emit_completed_ttl_probe(&bus, Some(event));
+    thread::sleep(Duration::from_millis(20));
+    run_natural_history_trim_pass(&bus);
+    let event_id = event.inner.lock().event_id.clone();
+    assert!(!bus.event_history_ids().contains(&event_id));
+    bus.destroy();
+}
+
+#[test]
+fn test_event_ttl_positive_event_override_can_be_longer_than_bus_default() {
+    let bus = EventBus::new_with_options(
+        Some("EventTTLLongerOverrideBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(0.01),
+            ..EventBusOptions::default()
+        },
+    );
+    let event = BaseEvent::new("TTLProbeEvent", serde_json::Map::new());
+    event.inner.lock().event_ttl = Some(1.0);
+    let event = emit_completed_ttl_probe(&bus, Some(event));
+    thread::sleep(Duration::from_millis(20));
+    run_natural_history_trim_pass(&bus);
+    let event_id = event.inner.lock().event_id.clone();
+    assert!(bus.event_history_ids().contains(&event_id));
+    bus.destroy();
+}
+
+#[test]
+fn test_event_result_ttl_counts_from_event_completion_and_supports_shorter_and_longer_event_overrides(
+) {
+    let shorter_bus = EventBus::new_with_options(
+        Some("EventResultTTLShorterOverrideBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(-1.0),
+            event_result_ttl: Some(1.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let longer_bus = EventBus::new_with_options(
+        Some("EventResultTTLLongerOverrideBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(-1.0),
+            event_result_ttl: Some(0.01),
+            ..EventBusOptions::default()
+        },
+    );
+    shorter_bus.on_raw_sync("TTLProbeEvent", "handler", |_event| Ok(json!("shorter")));
+    longer_bus.on_raw_sync("TTLProbeEvent", "handler", |_event| Ok(json!("longer")));
+    let shorter_event = BaseEvent::new("TTLProbeEvent", serde_json::Map::new());
+    shorter_event.inner.lock().event_result_ttl = Some(0.01);
+    let longer_event = BaseEvent::new("TTLProbeEvent", serde_json::Map::new());
+    longer_event.inner.lock().event_result_ttl = Some(1.0);
+
+    let shorter_event = emit_completed_ttl_probe(&shorter_bus, Some(shorter_event));
+    let longer_event = emit_completed_ttl_probe(&longer_bus, Some(longer_event));
+    thread::sleep(Duration::from_millis(20));
+    run_natural_history_trim_pass(&shorter_bus);
+    run_natural_history_trim_pass(&longer_bus);
+
+    assert_eq!(shorter_event.inner.lock().event_results.len(), 0);
+    assert_eq!(longer_event.inner.lock().event_results.len(), 1);
+    shorter_bus.destroy();
+    longer_bus.destroy();
+}
+
+#[test]
+fn test_handler_result_ttl_overrides_event_and_bus_result_ttl() {
+    let bus = EventBus::new_with_options(
+        Some("HandlerResultTTLBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(-1.0),
+            event_result_ttl: Some(-1.0),
+            ..EventBusOptions::default()
+        },
+    );
+    bus.on_raw_sync_with_options(
+        "TTLProbeEvent",
+        "handler",
+        EventHandlerOptions {
+            handler_result_ttl: Some(0.0),
+            ..EventHandlerOptions::default()
+        },
+        |_event| Ok(json!("result")),
+    );
+    let event = BaseEvent::new("TTLProbeEvent", serde_json::Map::new());
+    event.inner.lock().event_result_ttl = Some(-1.0);
+    let event = emit_completed_ttl_probe(&bus, Some(event));
+    run_natural_history_trim_pass(&bus);
+    assert_eq!(event.inner.lock().event_results.len(), 0);
+    bus.destroy();
+}
+
+#[test]
+fn test_handler_result_ttl_minus_one_preserves_results_when_event_and_bus_result_ttl_defaults_are_scalar(
+) {
+    let bus = EventBus::new_with_options(
+        Some("HandlerResultTTLNeverBeatsScalarsBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(-1.0),
+            event_result_ttl: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    bus.on_raw_sync_with_options(
+        "TTLProbeEvent",
+        "handler",
+        EventHandlerOptions {
+            handler_result_ttl: Some(-1.0),
+            ..EventHandlerOptions::default()
+        },
+        |_event| Ok(json!("result")),
+    );
+    let event = BaseEvent::new("TTLProbeEvent", serde_json::Map::new());
+    event.inner.lock().event_result_ttl = Some(0.0);
+    let event = emit_completed_ttl_probe(&bus, Some(event));
+    run_natural_history_trim_pass(&bus);
+    let event_id = event.inner.lock().event_id.clone();
+    assert!(bus.event_history_ids().contains(&event_id));
+    assert_eq!(event.inner.lock().event_results.len(), 1);
+    bus.destroy();
+}
+
+#[test]
+fn test_handler_result_ttl_none_inherits_event_result_ttl_before_bus_result_ttl() {
+    let bus = EventBus::new_with_options(
+        Some("HandlerResultTTLNoneInheritsEventBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(-1.0),
+            event_result_ttl: Some(-1.0),
+            ..EventBusOptions::default()
+        },
+    );
+    bus.on_raw_sync_with_options(
+        "TTLProbeEvent",
+        "handler",
+        EventHandlerOptions {
+            handler_result_ttl: None,
+            ..EventHandlerOptions::default()
+        },
+        |_event| Ok(json!("result")),
+    );
+    let event = BaseEvent::new("TTLProbeEvent", serde_json::Map::new());
+    event.inner.lock().event_result_ttl = Some(0.0);
+    let event = emit_completed_ttl_probe(&bus, Some(event));
+    run_natural_history_trim_pass(&bus);
+    let event_id = event.inner.lock().event_id.clone();
+    assert!(bus.event_history_ids().contains(&event_id));
+    assert_eq!(event.inner.lock().event_results.len(), 0);
+    bus.destroy();
+}
+
+#[test]
+#[should_panic(expected = "event_ttl")]
+fn test_event_ttl_rejects_values_below_minus_one() {
+    let _bus = EventBus::new_with_options(
+        Some("BadEventTTLBus".to_string()),
+        EventBusOptions {
+            event_ttl: Some(-2.0),
+            ..EventBusOptions::default()
+        },
+    );
+}
