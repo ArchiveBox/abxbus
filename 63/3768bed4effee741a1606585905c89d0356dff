@@ -1,0 +1,32 @@
+abxbus/event_bus.py
+  s_a2c12eeac87f96::t_a20092d726781a 1294,2168-2173,2201,2203,2205,2225,2229,2245
+  s_a2c12eeac87f96::t_71e31e497d158a 2209-2214
+tests/test_eventbus_forwarding.py
+  s_a2c12eeac87f96::t_8188c83f154bf5 2,6,122-128
+abxbus-rust/src/event_bus.rs
+  s_a2c12eeac87f96::t_ad8c60f3c46ef0 341-343,793
+  s_a2c12eeac87f96::t_6e0827f6ceb42a 1898-1899,1903-1905
+  s_a2c12eeac87f96::t_b72d1488430d32 1900-1902
+abxbus-ts/src/EventBus.ts
+  s_a2c12eeac87f96::t_1f54945c60d768 457-459
+abxbus/base_event.py
+  s_a2c12eeac87f96::t_71e31e497d158a 793,796,812
+abxbus-ts/src/BaseEvent.ts
+  s_a2c12eeac87f96::t_1f54945c60d768 185-187
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "633768bed4effee741a1606585905c89d0356dff",
+  "prompts": {},
+  "sessions": {
+    "s_a2c12eeac87f96": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e52bb-62ba-7172-8b0b-83d9aca9baec",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
