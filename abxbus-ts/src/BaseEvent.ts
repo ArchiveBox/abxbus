@@ -686,11 +686,14 @@ export class BaseEvent {
         ? (parsed as { event_emitted_by_handler_id: string }).event_emitted_by_handler_id
         : null
 
-    if (this.event_ttl === null && typeof (ctor as typeof BaseEvent & { event_ttl?: unknown }).event_ttl === 'number') {
+    if (
+      (this.event_ttl === null || this.event_ttl === undefined) &&
+      typeof (ctor as typeof BaseEvent & { event_ttl?: unknown }).event_ttl === 'number'
+    ) {
       this.event_ttl = (ctor as typeof BaseEvent & { event_ttl: number }).event_ttl
     }
     if (
-      this.event_result_ttl === null &&
+      (this.event_result_ttl === null || this.event_result_ttl === undefined) &&
       typeof (ctor as typeof BaseEvent & { event_result_ttl?: unknown }).event_result_ttl === 'number'
     ) {
       this.event_result_ttl = (ctor as typeof BaseEvent & { event_result_ttl: number }).event_result_ttl
