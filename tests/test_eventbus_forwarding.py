@@ -1,8 +1,9 @@
 import asyncio
+from typing import Any
 
 import pytest
 
-from abxbus import BaseEvent, EventBus, EventHandlerConcurrencyMode
+from abxbus import BaseEvent, EventBus, EventHandlerConcurrencyMode, EventResult
 from abxbus.middlewares import EventBusMiddleware
 
 
@@ -118,7 +119,13 @@ async def test_completed_forwarded_event_with_pruned_target_results_remains_term
     middleware_events: list[str] = []
 
     class RecordingMiddleware(EventBusMiddleware):
-        async def on_event_result_change(self, eventbus, event, event_result, status):
+        async def on_event_result_change(
+            self,
+            eventbus: EventBus,
+            event: BaseEvent[Any],
+            event_result: EventResult[Any],
+            status: str,
+        ) -> None:
             if event_result.eventbus_id == bus_b.id:
                 middleware_events.append(f'{event.event_id}:{event_result.handler_name}:{status}')
 

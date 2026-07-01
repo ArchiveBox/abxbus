@@ -790,12 +790,10 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         description='Event type version tag, defaults to LIBRARY_VERSION env var or "0.0.1" if not overridden',
     )
     event_timeout: float | None = Field(
-        ge=-1,
-        default=None, description='Timeout in seconds for event to finish processing (bus default applied at dispatch)'
+        ge=-1, default=None, description='Timeout in seconds for event to finish processing (bus default applied at dispatch)'
     )
     event_slow_timeout: float | None = Field(
-        ge=-1,
-        default=None, description='Optional per-event slow processing warning threshold in seconds'
+        ge=-1, default=None, description='Optional per-event slow processing warning threshold in seconds'
     )
     event_concurrency: EventConcurrencyMode | None = Field(
         default=None,
@@ -811,9 +809,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     event_handler_slow_timeout: float | None = Field(
         default=None, ge=-1, description='Optional per-event slow handler warning threshold in seconds'
     )
-    event_ttl: float | None = Field(
-        default=None, ge=-1, description='Optional seconds to keep completed events in bus history'
-    )
+    event_ttl: float | None = Field(default=None, ge=-1, description='Optional seconds to keep completed events in bus history')
     event_result_ttl: float | None = Field(
         default=None, ge=-1, description='Optional seconds to keep completed event results after event completion'
     )

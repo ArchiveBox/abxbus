@@ -338,12 +338,9 @@ impl EventBus {
         if inner.event_status != EventStatus::Completed {
             return false;
         }
-        if inner.event_status == EventStatus::Completed
-            && inner.event_completed_at.is_some()
-            && inner.event_path.contains(&self.label())
-        {
-            return true;
-        }
+        // A completed forwarded event can already contain this bus in event_path before
+        // its local handlers have run. Local handler results are the reliable signal that
+        // this bus has actually processed the shared event instance.
         inner
             .event_results
             .values()
@@ -793,7 +790,7 @@ impl EventBus {
         if !removed {
             return;
         }
-        if event.inner.lock().event_status == EventStatus::Completed {
+        if self.has_completed_on_bus(&event) {
             self.runtime.active_event_ids.lock().remove(&event_id);
             return;
         }
@@ -1898,6 +1895,14 @@ impl EventBus {
                 false
             }
         };
+        if !removed {
+            let inner = event.inner.lock();
+            if inner.event_status == EventStatus::Completed
+                && inner.event_path.contains(&self.label())
+            {
+                return;
+            }
+        }
         if !removed && !bypass_event_lock {
             return;
         }

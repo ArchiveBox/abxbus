@@ -454,7 +454,9 @@ export class EventBus {
   private _isCompletedEventExpiredForHistory(event: BaseEvent): boolean {
     const completed_at = this._completedEventDeadlineBaseMs(event)
     const event_ttl = this._resolveEventTTL(event)
-    return completed_at !== null && event_ttl !== null && event_ttl >= 0 && (event_ttl === 0 || completed_at + event_ttl * 1000 <= Date.now())
+    return (
+      completed_at !== null && event_ttl !== null && event_ttl >= 0 && (event_ttl === 0 || completed_at + event_ttl * 1000 <= Date.now())
+    )
   }
 
   private _resolveEventResultTTL(event: BaseEvent, result: EventResult): number | null {

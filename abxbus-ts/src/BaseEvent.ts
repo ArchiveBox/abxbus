@@ -182,8 +182,9 @@ type KnownEventPayloadFields<TEvent> = {
             : K
     : never]: TEvent[K]
 }
-export type EventPayloadFields<TEvent> =
-  keyof KnownEventPayloadFields<TEvent> extends never ? Record<string, unknown> : KnownEventPayloadFields<TEvent>
+export type EventPayloadFields<TEvent> = keyof KnownEventPayloadFields<TEvent> extends never
+  ? Record<string, unknown>
+  : KnownEventPayloadFields<TEvent>
 type EventClassMetadataFieldName =
   | 'fromJSON'
   | 'prototype'

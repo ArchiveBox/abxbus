@@ -1291,7 +1291,7 @@ class EventBus:
         _ = event.event_completed_signal
         if self._completed_event_expired_for_history(event):
             self.event_history.pop(event.event_id, None)
-            event._event_expires_at_by_bus.pop(self.id, None)
+            self._event_ttl_deadlines(event).pop(self.id, None)
             return event
 
         # Put event in queue synchronously using put_nowait
@@ -2165,6 +2165,12 @@ class EventBus:
             and (event_ttl == 0 or completed_at + event_ttl <= datetime.now(UTC).timestamp())
         )
 
+    @staticmethod
+    def _event_ttl_deadlines(event: BaseEvent[Any]) -> dict[str, float]:
+        # Runtime-only TTL index state lives on the shared event so each bus can
+        # reject stale candidate entries without adding another per-bus lookup.
+        return event._event_expires_at_by_bus  # pyright: ignore[reportPrivateUsage]
+
     def _resolve_event_result_ttl(self, event: BaseEvent[Any], result: EventResult[Any]) -> float | None:
         handler_ttl = result.handler.handler_result_ttl
         if handler_ttl is not None:
@@ -2192,22 +2198,20 @@ class EventBus:
 
     def _update_event_ttl_deadline(self, event: BaseEvent[Any]) -> None:
         deadline = self._earliest_ttl_deadline(event)
+        deadlines = self._event_ttl_deadlines(event)
         if deadline is None:
-            event._event_expires_at_by_bus.pop(self.id, None)
+            deadlines.pop(self.id, None)
             return
-        event._event_expires_at_by_bus[self.id] = deadline
+        deadlines[self.id] = deadline
         heapq.heappush(self._ttl_expiry_index, (deadline, event.event_id))
 
     def _trim_event_history_if_needed(self, *, include_ttl: bool = True) -> None:
-        if (
-            self.event_history.max_history_size is not None
-            and (
-                self.event_history.max_history_size == 0
-                or (
-                    self.event_history.max_history_size > 0
-                    and self.event_history.max_history_drop
-                    and len(self.event_history) > self.event_history.max_history_size
-                )
+        if self.event_history.max_history_size is not None and (
+            self.event_history.max_history_size == 0
+            or (
+                self.event_history.max_history_size > 0
+                and self.event_history.max_history_drop
+                and len(self.event_history) > self.event_history.max_history_size
             )
         ):
             self.event_history.trim_event_history(owner_label=str(self))
@@ -2218,11 +2222,11 @@ class EventBus:
         while self._ttl_expiry_index and self._ttl_expiry_index[0][0] <= now:
             expires_at, event_id = heapq.heappop(self._ttl_expiry_index)
             event = self.event_history.get(event_id)
-            if event is None or event._event_expires_at_by_bus.get(self.id) != expires_at:
+            if event is None or self._event_ttl_deadlines(event).get(self.id) != expires_at:
                 continue
             age_seconds = self._completed_event_age_seconds(event)
             if age_seconds is None:
-                event._event_expires_at_by_bus.pop(self.id, None)
+                self._event_ttl_deadlines(event).pop(self.id, None)
                 continue
 
             for result_id, result in list(event.event_results.items()):
@@ -2238,7 +2242,7 @@ class EventBus:
                 self._update_event_ttl_deadline(event)
                 continue
             self.event_history.pop(event_id, None)
-            event._event_expires_at_by_bus.pop(self.id, None)
+            self._event_ttl_deadlines(event).pop(self.id, None)
 
     async def _process_event(self, event: BaseEvent[Any], timeout: float | None = None) -> None:
         """
