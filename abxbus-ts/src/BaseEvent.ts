@@ -1649,13 +1649,17 @@ export class BaseEvent {
       void bus_for_hook.onEventChange(event_for_bus, 'completed')
     }
     original._setDispatchContext(null)
-    original._notifyDoneListeners()
+    if (!was_completed) {
+      original._notifyDoneListeners()
+    }
     if (original._event_completed_signal) {
       original._event_completed_signal.resolve(original)
       original._event_completed_signal = null
     }
-    original.dropFromZeroHistoryBuses()
-    if (notify_parents && original.event_bus) {
+    if (!was_completed) {
+      original.dropFromZeroHistoryBuses()
+    }
+    if (!was_completed && notify_parents && original.event_bus) {
       original._notifyEventParentsOfCompletion()
     }
   }

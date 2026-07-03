@@ -140,6 +140,51 @@ func TestCompletedForwardedEventWithPrunedTargetResultsRemainsTerminal(t *testin
 	}
 }
 
+func TestCompletedEventFirstEmittedToNewBusRunsTargetHandlers(t *testing.T) {
+	busA := abxbus.NewEventBus("CompletedReplaySource", nil)
+	busB := abxbus.NewEventBus("CompletedReplayTarget", nil)
+	defer busA.Destroy()
+	defer busB.Destroy()
+
+	seenA := []string{}
+	seenB := []string{}
+	busA.On("PingEvent", "source_seen", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		seenA = append(seenA, event.EventID)
+		return "a", nil
+	}, nil)
+	busB.On("PingEvent", "target_seen", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		seenB = append(seenB, event.EventID)
+		return "b", nil
+	}, nil)
+
+	event := busA.Emit(abxbus.NewBaseEvent("PingEvent", map[string]any{"value": 1}))
+	if _, err := event.Now(); err != nil {
+		t.Fatal(err)
+	}
+	waitAllIdle(t, busA)
+
+	if event.EventStatus != "completed" || event.EventCompletedAt == nil {
+		t.Fatalf("event should be completed with completed_at, got status=%s completed_at=%v", event.EventStatus, event.EventCompletedAt)
+	}
+	if !reflect.DeepEqual(seenA, []string{event.EventID}) || len(seenB) != 0 {
+		t.Fatalf("unexpected initial handler calls: A=%v B=%v", seenA, seenB)
+	}
+
+	busB.Emit(event)
+	waitAllIdle(t, busA, busB)
+
+	if !reflect.DeepEqual(seenB, []string{event.EventID}) {
+		t.Fatalf("target handler should run once on first target emit, got %v", seenB)
+	}
+	if event.EventStatus != "completed" || event.EventCompletedAt == nil {
+		t.Fatalf("event should stay completed with completed_at, got status=%s completed_at=%v", event.EventStatus, event.EventCompletedAt)
+	}
+	expectedPath := []string{busA.Label(), busB.Label()}
+	if !reflect.DeepEqual(event.EventPath, expectedPath) {
+		t.Fatalf("unexpected path after completed replay: got %v want %v", event.EventPath, expectedPath)
+	}
+}
+
 func TestTreeLevelHierarchyBubbling(t *testing.T) {
 	parentBus := abxbus.NewEventBus("ParentBus", nil)
 	childBus := abxbus.NewEventBus("ChildBus", nil)

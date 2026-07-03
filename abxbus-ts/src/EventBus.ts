@@ -767,6 +767,10 @@ export class EventBus {
     for (const event of bus.event_history.values()) {
       EventBus._linkEventResultHandlers(event, bus)
     }
+    bus.ttl_expiry_index = []
+    for (const event of bus.event_history.values()) {
+      bus._updateEventTTLDeadline(event)
+    }
 
     // Reset runtime execution state after restore. Queue/history/handlers are restored,
     // but lock internals should always restart from a clean default state.
@@ -1178,7 +1182,7 @@ export class EventBus {
         this._markEventCompletedIfNeeded(event)
         return
       }
-      if (event._shouldSkipHandlerExecution()) {
+      if (this._shouldSkipHandlerExecutionOnBus(event)) {
         this._markEventCompletedIfNeeded(event)
         return
       }
@@ -1442,14 +1446,21 @@ export class EventBus {
 
   // check if an event has been processed (and completed) by this bus
   _hasProcessedEvent(event: BaseEvent): boolean {
-    if (event.event_status === 'completed' && event.event_completed_at && event.event_path.includes(this.label)) {
-      return true
-    }
     const results = Array.from(event.event_results.values()).filter((result) => result.eventbus_id === this.id)
     if (results.length === 0) {
       return false
     }
     return results.every((result) => result.status === 'completed' || result.status === 'error')
+  }
+
+  private _shouldSkipHandlerExecutionOnBus(event: BaseEvent): boolean {
+    if (!event._shouldSkipHandlerExecution()) {
+      return false
+    }
+    if (event.event_path.length <= 1 && event.event_path.includes(this.label)) {
+      return true
+    }
+    return Array.from(event.event_results.values()).some((result) => result.eventbus_id === this.id)
   }
 
   // get a proxy wrapper around an Event that will automatically link emitted child events to this bus and handler

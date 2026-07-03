@@ -729,6 +729,10 @@ class EventBus:
         for event_result, child_ids in pending_child_links:
             event_result.event_children = [bus.event_history[child_id] for child_id in child_ids if child_id in bus.event_history]
 
+        bus._ttl_expiry_index.clear()
+        for event in bus.event_history.values():
+            bus._update_event_ttl_deadline(event)
+
         if pending_event_ids:
             queue = CleanShutdownQueue[BaseEvent[Any]](maxsize=0)
             for event_id in pending_event_ids:
@@ -831,6 +835,13 @@ class EventBus:
 
     def is_event_processing(self, event_id: str) -> bool:
         return event_id in self.processing_event_ids
+
+    def _should_skip_handler_execution_on_bus(self, event: BaseEvent[Any]) -> bool:
+        if not event._should_skip_handler_execution():  # pyright: ignore[reportPrivateUsage]
+            return False
+        if len(event.event_path) <= 1 and self.label in event.event_path:
+            return True
+        return any(event_result.eventbus_id == self.id for event_result in event.event_results.values())
 
     def _resolve_find_waiters(self, event: BaseEvent[Any]) -> None:
         if not self.find_waiters:
@@ -2054,7 +2065,7 @@ class EventBus:
         try:
             async with self.locks._run_with_event_lock(self, event):  # pyright: ignore[reportPrivateUsage]
                 # Process the event
-                if not event._should_skip_handler_execution():  # pyright: ignore[reportPrivateUsage]
+                if not self._should_skip_handler_execution_on_bus(event):
                     await self._process_event(event, timeout=timeout)
 
                 # Queue lifecycle:

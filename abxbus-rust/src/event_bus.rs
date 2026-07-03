@@ -1400,6 +1400,17 @@ impl EventBus {
                 bus.runtime.history_order.lock().push_back(event_id);
             }
         }
+        bus.runtime.ttl_expiry_index.lock().clear();
+        for event in bus
+            .runtime
+            .events
+            .lock()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+        {
+            bus.update_event_ttl_deadline(&event);
+        }
 
         bus.runtime.queue.lock().clear();
         if let Some(Value::Array(raw_pending_ids)) = payload.get("pending_event_queue") {

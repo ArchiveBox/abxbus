@@ -132,6 +132,41 @@ test('test_completed_forwarded_event_with_pruned_target_results_remains_terminal
   }
 })
 
+test('test_completed_event_first_emitted_to_new_bus_runs_target_handlers', async () => {
+  const bus_a = new EventBus('CompletedReplaySource')
+  const bus_b = new EventBus('CompletedReplayTarget')
+  const seen_a: string[] = []
+  const seen_b: string[] = []
+
+  try {
+    bus_a.on(PingEvent, (event) => {
+      seen_a.push(event.event_id)
+    })
+    bus_b.on(PingEvent, (event) => {
+      seen_b.push(event.event_id)
+    })
+
+    const event = bus_a.emit(PingEvent({ value: 1 }))
+    await event.now()
+    await bus_a.waitUntilIdle()
+
+    assert.equal(event.event_status, 'completed')
+    assert.ok(event.event_completed_at)
+    assert.deepEqual(seen_a, [event.event_id])
+    assert.deepEqual(seen_b, [])
+
+    bus_b.emit(event)
+    await Promise.all([bus_a.waitUntilIdle(), bus_b.waitUntilIdle()])
+
+    assert.deepEqual(seen_b, [event.event_id])
+    assert.equal(event.event_status, 'completed')
+    assert.ok(event.event_completed_at)
+    assert.deepEqual(event.event_path, [bus_a.label, bus_b.label])
+  } finally {
+    await Promise.all([bus_a.destroy(), bus_b.destroy()])
+  }
+})
+
 test('test_tree_level_hierarchy_bubbling', async () => {
   const parent_bus = new EventBus('ParentBus')
   const child_bus = new EventBus('ChildBus')

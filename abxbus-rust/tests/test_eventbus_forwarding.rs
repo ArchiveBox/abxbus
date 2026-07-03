@@ -253,6 +253,74 @@ fn test_completed_forwarded_event_with_pruned_target_results_remains_terminal() 
 }
 
 #[test]
+fn test_completed_event_first_emitted_to_new_bus_runs_target_handlers() {
+    let bus_a = EventBus::new(Some("CompletedReplaySource".to_string()));
+    let bus_b = EventBus::new(Some("CompletedReplayTarget".to_string()));
+
+    let seen_a = Arc::new(Mutex::new(Vec::new()));
+    let seen_b = Arc::new(Mutex::new(Vec::new()));
+
+    let seen_a_handler = seen_a.clone();
+    bus_a.on_raw("PingEvent", "source_seen", move |event| {
+        let seen = seen_a_handler.clone();
+        async move {
+            seen.lock()
+                .expect("seen_a lock")
+                .push(event.inner.lock().event_id.clone());
+            Ok(json!("a"))
+        }
+    });
+    let seen_b_handler = seen_b.clone();
+    bus_b.on_raw("PingEvent", "target_seen", move |event| {
+        let seen = seen_b_handler.clone();
+        async move {
+            seen.lock()
+                .expect("seen_b lock")
+                .push(event.inner.lock().event_id.clone());
+            Ok(json!("b"))
+        }
+    });
+
+    let event = bus_a.emit(PingEvent {
+        value: 1,
+        ..Default::default()
+    });
+    let _ = block_on(event.now());
+    block_on(bus_a.wait_until_idle(None));
+
+    let event_id = event.event_id.clone();
+    let original_event = event._inner_event();
+    {
+        let inner = original_event.inner.lock();
+        assert_eq!(inner.event_status, EventStatus::Completed);
+        assert!(inner.event_completed_at.is_some());
+    }
+    assert_eq!(
+        seen_a.lock().expect("seen_a lock").as_slice(),
+        std::slice::from_ref(&event_id)
+    );
+    assert!(seen_b.lock().expect("seen_b lock").is_empty());
+
+    bus_b.emit_base(original_event.clone());
+    block_on(bus_a.wait_until_idle(None));
+    block_on(bus_b.wait_until_idle(None));
+
+    assert_eq!(
+        seen_b.lock().expect("seen_b lock").as_slice(),
+        std::slice::from_ref(&event_id)
+    );
+    {
+        let inner = original_event.inner.lock();
+        assert_eq!(inner.event_status, EventStatus::Completed);
+        assert!(inner.event_completed_at.is_some());
+        assert_eq!(inner.event_path, vec![bus_a.label(), bus_b.label()]);
+    }
+
+    bus_a.destroy();
+    bus_b.destroy();
+}
+
+#[test]
 fn test_tree_level_hierarchy_bubbling() {
     let parent_bus = EventBus::new(Some("ParentBus".to_string()));
     let child_bus = EventBus::new(Some("ChildBus".to_string()));

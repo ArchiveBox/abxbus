@@ -10,6 +10,9 @@ const delay = (ms: number): Promise<void> =>
     setTimeout(resolve, ms)
   })
 
+const RestoreTTLProbeEvent = BaseEvent.extend('RestoreTTLProbeEvent', {})
+const RestoreTTLTouchEvent = BaseEvent.extend('RestoreTTLTouchEvent', {})
+
 test('EventBus toJSON/fromJSON roundtrip uses id-keyed structures', async () => {
   const bus = new EventBus('SerializableBus', {
     id: '018f8e40-1234-7000-8000-000000001234',
@@ -81,6 +84,48 @@ test('EventBus serialization preserves unbounded history null', () => {
     assert.equal(restored.event_history.max_history_size, null)
   } finally {
     bus.destroy()
+  }
+})
+
+test('EventBus.fromJSON rebuilds TTL indexes for restored completed history', async () => {
+  const result_source = new EventBus('RestoreResultTTLBus', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: 0,
+  })
+  result_source.on(RestoreTTLProbeEvent, () => 'ok')
+  const result_event = await result_source.emit(RestoreTTLProbeEvent({})).now()
+  const result_event_id = result_event.event_id
+  const result_json = result_source.toJSON()
+  await result_source.destroy()
+
+  const restored_results = EventBus.fromJSON(result_json)
+  try {
+    assert.equal(restored_results.event_history.get(result_event_id)!.event_results.size > 0, true)
+    await restored_results.emit(RestoreTTLTouchEvent({})).now()
+    assert.equal(restored_results.event_history.has(result_event_id), true)
+    assert.equal(restored_results.event_history.get(result_event_id)!.event_results.size, 0)
+  } finally {
+    await restored_results.destroy()
+  }
+
+  const event_source = new EventBus('RestoreEventTTLBus', {
+    max_history_size: null,
+    event_ttl: 0,
+  })
+  event_source.on(RestoreTTLProbeEvent, () => 'ok')
+  const expired_event = await event_source.emit(RestoreTTLProbeEvent({})).now()
+  const expired_event_id = expired_event.event_id
+  const expired_json = event_source.toJSON()
+  await event_source.destroy()
+
+  const restored_events = EventBus.fromJSON(expired_json)
+  try {
+    assert.equal(restored_events.event_history.has(expired_event_id), true)
+    await restored_events.emit(RestoreTTLTouchEvent({})).now()
+    assert.equal(restored_events.event_history.has(expired_event_id), false)
+  } finally {
+    await restored_events.destroy()
   }
 })
 

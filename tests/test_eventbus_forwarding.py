@@ -163,6 +163,39 @@ async def test_completed_forwarded_event_with_pruned_target_results_remains_term
 
 
 @pytest.mark.asyncio
+async def test_completed_event_first_emitted_to_new_bus_runs_target_handlers():
+    bus_a = EventBus(name='CompletedReplaySource')
+    bus_b = EventBus(name='CompletedReplayTarget')
+    seen_a: list[str] = []
+    seen_b: list[str] = []
+
+    bus_a.on(PingEvent, lambda event: seen_a.append(event.event_id))
+    bus_b.on(PingEvent, lambda event: seen_b.append(event.event_id))
+
+    try:
+        event = bus_a.emit(PingEvent(value=1))
+        await event.now()
+        await bus_a.wait_until_idle()
+
+        assert event.event_status == 'completed'
+        assert event.event_completed_at is not None
+        assert seen_a == [event.event_id]
+        assert seen_b == []
+
+        bus_b.emit(event)
+        await event.now()
+        await _wait_all_idle([bus_a, bus_b])
+
+        assert seen_b == [event.event_id]
+        assert event.event_status == 'completed'
+        assert event.event_completed_at is not None
+        assert event.event_path == [bus_a.label, bus_b.label]
+    finally:
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
+
+
+@pytest.mark.asyncio
 async def test_tree_level_hierarchy_bubbling():
     parent_bus = EventBus(name='ParentBus')
     child_bus = EventBus(name='ChildBus')

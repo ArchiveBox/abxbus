@@ -735,10 +735,13 @@ func (b *EventBus) updateEventTTLDeadline(event *BaseEvent) {
 		return
 	}
 	b.mu.Lock()
-	b.ttlExpiryIndex = append(b.ttlExpiryIndex, ttlExpiryEntry{ExpiresAt: deadline, EventID: event.EventID})
-	sort.Slice(b.ttlExpiryIndex, func(i, j int) bool {
-		return b.ttlExpiryIndex[i].ExpiresAt.Before(b.ttlExpiryIndex[j].ExpiresAt)
+	entry := ttlExpiryEntry{ExpiresAt: deadline, EventID: event.EventID}
+	index := sort.Search(len(b.ttlExpiryIndex), func(i int) bool {
+		return !b.ttlExpiryIndex[i].ExpiresAt.Before(entry.ExpiresAt)
 	})
+	b.ttlExpiryIndex = append(b.ttlExpiryIndex, ttlExpiryEntry{})
+	copy(b.ttlExpiryIndex[index+1:], b.ttlExpiryIndex[index:])
+	b.ttlExpiryIndex[index] = entry
 	b.mu.Unlock()
 }
 
@@ -1119,7 +1122,7 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 			return err
 		}
 		defer event_lock.Release()
-		if event.status() == "completed" {
+		if b.shouldSkipHandlerExecution(event) {
 			signalFirstHandlerStarted()
 			return nil
 		}
@@ -1954,6 +1957,10 @@ func EventBusFromJSON(data []byte) (*EventBus, error) {
 				addHistoryEvent(eventID, event)
 			}
 		}
+	}
+	bus.ttlExpiryIndex = nil
+	for _, event := range bus.EventHistory.Values() {
+		bus.updateEventTTLDeadline(event)
 	}
 
 	bus.pendingEventQueue = []*BaseEvent{}

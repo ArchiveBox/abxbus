@@ -151,6 +151,80 @@ func TestEventBusSerializationPreservesUnboundedHistoryNull(t *testing.T) {
 	}
 }
 
+func TestEventBusFromJSONRebuildsTTLIndexesForRestoredCompletedHistory(t *testing.T) {
+	resultSource := abxbus.NewEventBus("RestoreResultTTLBus", &abxbus.EventBusOptions{
+		MaxHistorySize: nil,
+		EventTTL:       ttlPtr(-1),
+		EventResultTTL: ttlPtr(0),
+	})
+	resultSource.EventHistory.MaxHistorySize = nil
+	resultSource.On("RestoreTTLProbeEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "ok", nil
+	}, nil)
+	resultEvent := resultSource.Emit(abxbus.NewBaseEvent("RestoreTTLProbeEvent", nil))
+	if _, err := resultEvent.Now(); err != nil {
+		t.Fatal(err)
+	}
+	resultData, err := resultSource.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultSource.Destroy()
+
+	restoredResults, err := abxbus.EventBusFromJSON(resultData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredResults.EventHistory.MaxHistorySize = nil
+	if len(restoredResults.EventHistory.GetEvent(resultEvent.EventID).EventResults) == 0 {
+		t.Fatal("restored completed event should keep results before TTL trim")
+	}
+	if _, err := restoredResults.Emit(abxbus.NewBaseEvent("RestoreTTLTouchEvent", nil)).Now(nil); err != nil {
+		t.Fatal(err)
+	}
+	if restoredResults.EventHistory.GetEvent(resultEvent.EventID) == nil {
+		t.Fatal("result TTL should keep the restored event")
+	}
+	if len(restoredResults.EventHistory.GetEvent(resultEvent.EventID).EventResults) != 0 {
+		t.Fatalf("restored result TTL should clear results, got %#v", restoredResults.EventHistory.GetEvent(resultEvent.EventID).EventResults)
+	}
+	restoredResults.Destroy()
+
+	eventSource := abxbus.NewEventBus("RestoreEventTTLBus", &abxbus.EventBusOptions{
+		MaxHistorySize: nil,
+		EventTTL:       ttlPtr(0),
+	})
+	eventSource.EventHistory.MaxHistorySize = nil
+	eventSource.On("RestoreTTLProbeEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "ok", nil
+	}, nil)
+	expiredEvent := eventSource.Emit(abxbus.NewBaseEvent("RestoreTTLProbeEvent", nil))
+	if _, err := expiredEvent.Now(); err != nil {
+		t.Fatal(err)
+	}
+	expiredData, err := eventSource.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventSource.Destroy()
+
+	restoredEvents, err := abxbus.EventBusFromJSON(expiredData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredEvents.EventHistory.MaxHistorySize = nil
+	if restoredEvents.EventHistory.GetEvent(expiredEvent.EventID) == nil {
+		t.Fatal("restored event should be present before TTL trim")
+	}
+	if _, err := restoredEvents.Emit(abxbus.NewBaseEvent("RestoreTTLTouchEvent", nil)).Now(nil); err != nil {
+		t.Fatal(err)
+	}
+	if restoredEvents.EventHistory.GetEvent(expiredEvent.EventID) != nil {
+		t.Fatal("restored event TTL should delete expired event on natural trim")
+	}
+	restoredEvents.Destroy()
+}
+
 func TestEventBusFromJSONNullEventTimeoutUsesDefault(t *testing.T) {
 	data := []byte(`{"id":"timeout-null-bus","name":"TimeoutNullBus","max_history_size":100,"max_history_drop":false,"event_concurrency":"bus-serial","event_timeout":null,"event_slow_timeout":null,"event_handler_concurrency":"serial","event_handler_completion":"all","event_handler_slow_timeout":null,"event_handler_detect_file_paths":false,"handlers":{},"handlers_by_key":{},"event_history":{},"pending_event_queue":[]}`)
 	restored, err := abxbus.EventBusFromJSON(data)

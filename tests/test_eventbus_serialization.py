@@ -18,6 +18,14 @@ class HandlerOrderEvent(BaseEvent[str]):
     value: str = 'order'
 
 
+class RestoreTTLProbeEvent(BaseEvent[str]):
+    pass
+
+
+class RestoreTTLTouchEvent(BaseEvent[None]):
+    pass
+
+
 JsonShape: TypeAlias = str | list['JsonShape'] | dict[str, 'JsonShape']
 
 
@@ -113,6 +121,40 @@ def test_eventbus_serialization_preserves_unbounded_history_null() -> None:
 
     restored = EventBus.validate(payload)
     assert restored.event_history.max_history_size is None
+
+
+@pytest.mark.asyncio
+async def test_eventbus_validate_rebuilds_ttl_indexes_for_restored_completed_history() -> None:
+    source = EventBus(name='RestoreResultTTLBus', max_history_size=None, event_ttl=-1, event_result_ttl=0)
+    source.on(RestoreTTLProbeEvent, lambda _event: 'ok')
+    result_event = await source.emit(RestoreTTLProbeEvent())
+    result_event_id = result_event.event_id
+    result_payload = source.model_dump()
+    await source.destroy(clear=True)
+
+    restored_results = EventBus.validate(result_payload)
+    try:
+        assert restored_results.event_history[result_event_id].event_results
+        await restored_results.emit(RestoreTTLTouchEvent())
+        assert result_event_id in restored_results.event_history
+        assert restored_results.event_history[result_event_id].event_results == {}
+    finally:
+        await restored_results.destroy(clear=True)
+
+    source = EventBus(name='RestoreEventTTLBus', max_history_size=None, event_ttl=0)
+    source.on(RestoreTTLProbeEvent, lambda _event: 'ok')
+    expired_event = await source.emit(RestoreTTLProbeEvent())
+    expired_event_id = expired_event.event_id
+    expired_payload = source.model_dump()
+    await source.destroy(clear=True)
+
+    restored_events = EventBus.validate(expired_payload)
+    try:
+        assert expired_event_id in restored_events.event_history
+        await restored_events.emit(RestoreTTLTouchEvent())
+        assert expired_event_id not in restored_events.event_history
+    finally:
+        await restored_events.destroy(clear=True)
 
 
 def test_eventbus_validate_null_event_timeout_uses_default() -> None:
