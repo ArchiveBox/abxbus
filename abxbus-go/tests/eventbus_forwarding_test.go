@@ -140,10 +140,9 @@ func TestCompletedForwardedEventWithPrunedTargetResultsRemainsTerminal(t *testin
 	}
 }
 
-func TestCompletedEventFirstEmittedToNewBusRunsTargetHandlers(t *testing.T) {
+func TestCompletedEventFirstEmittedToNewBusSkipsTargetHandlers(t *testing.T) {
 	busA := abxbus.NewEventBus("CompletedReplaySource", nil)
-	eventTTL := 0.0
-	busB := abxbus.NewEventBus("CompletedReplayTarget", &abxbus.EventBusOptions{EventTTL: &eventTTL})
+	busB := abxbus.NewEventBus("CompletedReplayTarget", nil)
 	defer busA.Destroy()
 	defer busB.Destroy()
 
@@ -174,8 +173,8 @@ func TestCompletedEventFirstEmittedToNewBusRunsTargetHandlers(t *testing.T) {
 	busB.Emit(event)
 	waitAllIdle(t, busA, busB)
 
-	if !reflect.DeepEqual(seenB, []string{event.EventID}) {
-		t.Fatalf("target handler should run once on first target emit, got %v", seenB)
+	if len(seenB) != 0 {
+		t.Fatalf("target handler should not run for sealed completed event, got %v", seenB)
 	}
 	if event.EventStatus != "completed" || event.EventCompletedAt == nil {
 		t.Fatalf("event should stay completed with completed_at, got status=%s completed_at=%v", event.EventStatus, event.EventCompletedAt)
@@ -183,6 +182,9 @@ func TestCompletedEventFirstEmittedToNewBusRunsTargetHandlers(t *testing.T) {
 	expectedPath := []string{busA.Label(), busB.Label()}
 	if !reflect.DeepEqual(event.EventPath, expectedPath) {
 		t.Fatalf("unexpected path after completed replay: got %v want %v", event.EventPath, expectedPath)
+	}
+	if busB.EventHistory.GetEvent(event.EventID) != event {
+		t.Fatal("target bus should record the sealed completed event")
 	}
 }
 

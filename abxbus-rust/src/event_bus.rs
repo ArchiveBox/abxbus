@@ -345,10 +345,7 @@ impl EventBus {
     }
 
     fn should_skip_handler_execution_on_bus(&self, event: &Arc<BaseEvent>) -> bool {
-        let inner = event.inner.lock();
-        (inner.event_status == EventStatus::Completed || inner.event_completed_at.is_some())
-            && inner.event_path.len() == 1
-            && inner.event_path.first() == Some(&self.label())
+        event.should_skip_handler_execution()
     }
 
     fn mark_handler_context_stale(event_id: &str, handler_id: &str) {

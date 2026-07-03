@@ -577,7 +577,7 @@ export class EventBus {
   }
 
   private _shouldSkipHandlerExecutionOnBus(event: BaseEvent): boolean {
-    return event._shouldSkipHandlerExecution() && event.event_path.length === 1 && event.event_path[0] === this.label
+    return event._shouldSkipHandlerExecution()
   }
 
   toJSON(): EventBusJSON {

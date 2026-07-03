@@ -837,7 +837,7 @@ class EventBus:
         return event_id in self.processing_event_ids
 
     def _should_skip_handler_execution_on_bus(self, event: BaseEvent[Any]) -> bool:
-        return event._should_skip_handler_execution() and event.event_path == [self.label]  # pyright: ignore[reportPrivateUsage]
+        return event._should_skip_handler_execution()  # pyright: ignore[reportPrivateUsage]
 
     def _resolve_find_waiters(self, event: BaseEvent[Any]) -> None:
         if not self.find_waiters:
