@@ -998,11 +998,17 @@ func completeEventAcrossBuses(event *BaseEvent) {
 	}
 	wasCompleted := event.EventStatus == "completed"
 	event.mu.Unlock()
-	event.markCompleted()
+
+	buses := []*EventBus{}
 	for _, bus := range eventBusInstancesSnapshot() {
 		if bus.EventHistory.GetEvent(event.EventID) != event {
 			continue
 		}
+		buses = append(buses, bus)
+	}
+
+	event.markCompleted()
+	for _, bus := range buses {
 		bus.updateEventTTLDeadline(event)
 		if !wasCompleted {
 			bus.notifyEventChange(event, "completed")
