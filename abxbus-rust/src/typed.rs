@@ -8,7 +8,9 @@ use crate::types::{EventConcurrencyMode, EventHandlerCompletionMode, EventHandle
 use crate::{
     base_event::{BaseEvent as RawBaseEvent, BaseEventData},
     event_bus::EventBus,
-    event_handler::{EventHandler, EventHandlerOptions},
+    event_handler::{
+        validate_optional_seconds_at_least_minus_one, EventHandler, EventHandlerOptions,
+    },
     event_result::EventResult,
 };
 
@@ -402,6 +404,11 @@ where
     let has_event_blocks_parent_completion =
         payload_map.contains_key("event_blocks_parent_completion");
     let has_event_result_type = payload_map.contains_key("event_result_type");
+
+    validate_optional_seconds_at_least_minus_one("event_ttl", E::event_ttl)
+        .expect("event_ttl must be >= -1 or None");
+    validate_optional_seconds_at_least_minus_one("event_result_ttl", E::event_result_ttl)
+        .expect("event_result_ttl must be >= -1 or None");
 
     let inner = RawBaseEvent::new(E::event_type, payload_map);
     {

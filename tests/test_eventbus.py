@@ -457,6 +457,14 @@ class TestEventEnqueueing:
         assert prior_same_bus_event.event_completed_at == provided_completed_at
         assert prior_same_bus_event.event_path == [other_bus_label, eventbus.label]
 
+        history_size = len(eventbus.event_history)
+        eventbus.dispatch(prior_same_bus_event)
+        await eventbus.wait_until_idle(timeout=1)
+
+        assert calls == 0
+        assert len(eventbus.event_history) == history_size
+        assert prior_same_bus_event.event_path == [other_bus_label, eventbus.label]
+
     def test_emit_sync(self):
         """Test sync event emission"""
         bus = EventBus()

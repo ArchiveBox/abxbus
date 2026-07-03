@@ -325,6 +325,14 @@ test('dispatching completed events with prior paths records bus once and skips h
   assert.equal(prior_same_bus_event.event_started_at, provided_started_at)
   assert.equal(prior_same_bus_event.event_completed_at, provided_completed_at)
   assert.deepEqual(prior_same_bus_event.event_path, [other_bus_label, bus.label])
+
+  const history_size = bus.event_history.size
+  bus.dispatch(prior_same_bus_event)
+  await bus.waitUntilIdle(1)
+
+  assert.equal(calls, 0)
+  assert.equal(bus.event_history.size, history_size)
+  assert.deepEqual(prior_same_bus_event.event_path, [other_bus_label, bus.label])
 })
 
 test('BaseEvent toJSON/fromJSON roundtrips runtime fields and event_results', async () => {

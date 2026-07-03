@@ -279,6 +279,21 @@ func TestDispatchingCompletedEventsWithPriorPathsRecordsBusOnceAndSkipsHandlers(
 	if !reflect.DeepEqual(priorSameBusEvent.EventPath, []string{otherBusLabel, bus.Label()}) {
 		t.Fatalf("prior-same-bus event_path should not duplicate bus label, got %#v", priorSameBusEvent.EventPath)
 	}
+
+	historySize := bus.EventHistory.Size()
+	bus.Dispatch(priorSameBusEvent)
+	if !bus.WaitUntilIdle(&wait) {
+		t.Fatal("bus did not become idle after re-dispatching prior-same-bus event")
+	}
+	if calls != 0 {
+		t.Fatalf("handler should not run for re-dispatched completed event, got %d calls", calls)
+	}
+	if bus.EventHistory.Size() != historySize {
+		t.Fatalf("re-dispatching completed event should not duplicate history entries: before=%d after=%d", historySize, bus.EventHistory.Size())
+	}
+	if !reflect.DeepEqual(priorSameBusEvent.EventPath, []string{otherBusLabel, bus.Label()}) {
+		t.Fatalf("re-dispatched completed event_path should not duplicate bus label, got %#v", priorSameBusEvent.EventPath)
+	}
 }
 
 func TestUnboundedHistoryDisablesHistoryRejection(t *testing.T) {

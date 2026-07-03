@@ -64,6 +64,20 @@ event! {
     }
 }
 event! {
+    struct BadTypedEventTTLDefaultEvent {
+        event_result_type: EmptyResult,
+        event_type: "bad_typed_event_ttl_default",
+        event_ttl: -2.0,
+    }
+}
+event! {
+    struct BadTypedEventResultTTLDefaultEvent {
+        event_result_type: EmptyResult,
+        event_type: "bad_typed_event_result_ttl_default",
+        event_result_ttl: -2.0,
+    }
+}
+event! {
     struct LateAfterTimeoutEvent {
         event_result_type: EmptyResult,
         event_type: "late_after_timeout",
@@ -3274,4 +3288,22 @@ fn test_event_ttl_rejects_values_below_minus_one() {
             ..EventBusOptions::default()
         },
     );
+}
+
+#[test]
+#[should_panic(expected = "event_ttl")]
+fn test_typed_event_ttl_default_rejects_values_below_minus_one() {
+    let event = BadTypedEventTTLDefaultEvent {
+        ..Default::default()
+    };
+    let _ = event._inner_event();
+}
+
+#[test]
+#[should_panic(expected = "event_result_ttl")]
+fn test_typed_event_result_ttl_default_rejects_values_below_minus_one() {
+    let event = BadTypedEventResultTTLDefaultEvent {
+        ..Default::default()
+    };
+    let _ = event._inner_event();
 }

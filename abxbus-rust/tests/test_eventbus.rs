@@ -11,7 +11,7 @@ use std::{
 
 use abxbus::{
     base_event::{BaseEvent, EventResultOptions, EventWaitOptions},
-    event_bus::{DestroyOptions, EventBus, EventBusOptions},
+    event_bus::{DestroyOptions, EventBus, EventBusOptions, FilterOptions},
     event_result::{EventResult, EventResultStatus},
     types::{
         EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventStatus,
@@ -533,6 +533,33 @@ fn test_dispatching_completed_events_with_prior_paths_records_bus_once_and_skips
     assert_eq!(inner.event_started_at, Some(provided_started_at));
     assert_eq!(inner.event_completed_at, Some(provided_completed_at));
     assert_eq!(inner.event_path, vec![other_bus_label, bus.label()]);
+    drop(inner);
+
+    let history_size = bus.event_history_size();
+    bus.emit_base(prior_same_bus_event.clone());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(bus.event_history_size(), history_size);
+    let redispatched_event_id = prior_same_bus_event.inner.lock().event_id.clone();
+    assert_eq!(
+        block_on(bus.filter_with_options(
+            "AlreadyCompletedPriorPathEvent",
+            FilterOptions {
+                where_predicate: Some(Arc::new(move |event| {
+                    event.inner.lock().event_id == redispatched_event_id
+                })),
+                ..FilterOptions::default()
+            },
+        ))
+        .len(),
+        1
+    );
+    let inner = prior_same_bus_event.inner.lock();
+    assert_eq!(
+        inner.event_path,
+        vec!["PriorCompletedBus#1234".to_string(), bus.label()]
+    );
 }
 
 #[test]

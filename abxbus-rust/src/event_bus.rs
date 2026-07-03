@@ -1967,6 +1967,31 @@ impl EventBus {
         let event_id = event.inner.lock().event_id.clone();
         self.trim_event_history(true);
 
+        if self.runtime.events.lock().contains_key(&event_id) {
+            self.runtime
+                .events
+                .lock()
+                .insert(event_id.clone(), event.clone());
+            let mut history_order = self.runtime.history_order.lock();
+            let mut seen = false;
+            history_order.retain(|id| {
+                if id != &event_id {
+                    return true;
+                }
+                if seen {
+                    return false;
+                }
+                seen = true;
+                true
+            });
+            if !seen {
+                history_order.push_back(event_id);
+            }
+            drop(history_order);
+            self.update_event_ttl_deadline(&event);
+            return true;
+        }
+
         if let Some(max_size) = self.runtime.max_history_size {
             if max_size > 0 {
                 let current_size = self.runtime.history_order.lock().len();
