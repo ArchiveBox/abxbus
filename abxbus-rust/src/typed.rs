@@ -1730,8 +1730,12 @@ macro_rules! _inner_event_parse {
             }
 
             pub fn event_reset(&self) -> Self {
+                self.event_reset_with_options($crate::base_event::EventResetOptions::default())
+            }
+
+            pub fn event_reset_with_options(&self, options: $crate::base_event::EventResetOptions) -> Self {
                 <Self as $crate::typed::TypedEventObject>::_from_inner_event(
-                    $crate::typed::TypedEventObject::_inner_event(self).event_reset()
+                    $crate::typed::TypedEventObject::_inner_event(self).event_reset_with_options(options)
                 )
             }
 

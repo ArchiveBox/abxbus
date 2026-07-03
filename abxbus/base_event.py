@@ -1803,15 +1803,36 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         # Clear dispatch context to avoid memory leaks (it holds references to ContextVars)
         self._event_dispatch_context = None
 
-    def _mark_pending(self) -> Self:
-        """Reset mutable runtime state so this event can be dispatched again as pending."""
-        self.event_status = EventStatus.PENDING
-        self.event_started_at = None
-        self._event_is_complete_flag = False
-        self.event_completed_at = None
-        self.event_results.clear()
+    def _reset_for_dispatch(
+        self,
+        *,
+        ids: bool = True,
+        status: bool = True,
+        timestamps: bool = True,
+        results: bool = True,
+    ) -> Self:
+        """Reset selected lifecycle fields on a copied event so it can be dispatched again."""
+        if ids:
+            self.event_id = uuid7str()
+            self.event_path = []
+            self.event_parent_id = None
+            self.event_emitted_by_handler_id = None
+            self.event_blocks_parent_completion = False
+        if status:
+            self.event_status = EventStatus.PENDING
+            self._event_is_complete_flag = False
+        else:
+            self._event_is_complete_flag = self.event_status == EventStatus.COMPLETED
+        if timestamps:
+            self.event_created_at = monotonic_datetime()
+            self.event_started_at = None
+            self.event_completed_at = None
+        if results:
+            self.event_results.clear()
+        self.event_pending_bus_count = 0
         self._lock_for_event_handler = None
         self._event_dispatch_context = None
+        self._event_expires_at_by_bus.clear()
         try:
             asyncio.get_running_loop()
             self._event_completed_signal = asyncio.Event()
@@ -1819,11 +1840,17 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             self._event_completed_signal = None
         return self
 
-    def event_reset(self) -> Self:
-        """Return a fresh copy of this event with pending runtime state."""
+    def event_reset(
+        self,
+        *,
+        ids: bool = True,
+        status: bool = True,
+        timestamps: bool = True,
+        results: bool = True,
+    ) -> Self:
+        """Return a copy with selected lifecycle fields reset for redispatch."""
         fresh_event = self.__class__.model_validate(self.model_dump(mode='python'))
-        fresh_event.event_id = uuid7str()
-        return fresh_event._mark_pending()
+        return fresh_event._reset_for_dispatch(ids=ids, status=status, timestamps=timestamps, results=results)
 
     def _get_handler_lock(self) -> 'ReentrantLock | None':
         return self._lock_for_event_handler

@@ -58,6 +58,25 @@ pub struct BaseEvent {
     pub(crate) event_expires_at_by_bus: Mutex<HashMap<String, i64>>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct EventResetOptions {
+    pub ids: bool,
+    pub status: bool,
+    pub timestamps: bool,
+    pub results: bool,
+}
+
+impl Default for EventResetOptions {
+    fn default() -> Self {
+        Self {
+            ids: true,
+            status: true,
+            timestamps: true,
+            results: true,
+        }
+    }
+}
+
 pub type EventResultInclude = Arc<dyn Fn(Option<&Value>, &EventResult) -> bool + Send + Sync>;
 
 #[derive(Clone, Debug, Default)]
@@ -747,14 +766,32 @@ impl BaseEvent {
     }
 
     pub fn event_reset(&self) -> Arc<Self> {
+        self.event_reset_with_options(EventResetOptions::default())
+    }
+
+    pub fn event_reset_with_options(&self, options: EventResetOptions) -> Arc<Self> {
         let mut data = self.inner.lock().clone();
-        data.event_id = uuid_v7_string();
-        data.event_status = EventStatus::Pending;
-        data.event_started_at = None;
-        data.event_completed_at = None;
+        // Bridges and event_reset share this lifecycle reset path so redispatch semantics stay aligned.
+        if options.ids {
+            data.event_id = uuid_v7_string();
+            data.event_path.clear();
+            data.event_parent_id = None;
+            data.event_emitted_by_handler_id = None;
+            data.event_blocks_parent_completion = false;
+        }
+        if options.status {
+            data.event_status = EventStatus::Pending;
+        }
+        if options.timestamps {
+            data.event_created_at = now_iso();
+            data.event_started_at = None;
+            data.event_completed_at = None;
+        }
         data.event_pending_bus_count = 0;
-        data.event_results.clear();
-        data.event_result_order.clear();
+        if options.results {
+            data.event_results.clear();
+            data.event_result_order.clear();
+        }
         Arc::new(Self {
             inner: Mutex::new(data),
             completed: Event::new(),

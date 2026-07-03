@@ -291,6 +291,12 @@ export type EventWaitOptions = {
   timeout?: number | null
   first_result?: boolean
 }
+export type EventResetOptions = {
+  ids?: boolean
+  status?: boolean
+  timestamps?: boolean
+  results?: boolean
+}
 export type EventWaitPromise<TEvent extends BaseEvent> = Promise<TEvent> & {
   eventResult(options?: EventResultOptions<TEvent>): Promise<EventResultType<TEvent> | undefined>
   eventResultsList(options?: EventResultOptions<TEvent>): Promise<Array<EventResultType<TEvent> | undefined>>
@@ -1592,26 +1598,46 @@ export class BaseEvent {
     }
   }
 
-  _markPending(): this {
+  _resetForDispatch(options: EventResetOptions = {}): this {
     const original = this._event_original ?? this
-    original.event_status = 'pending'
-    original.event_started_at = null
-    original.event_completed_at = null
-    original.event_results.clear()
+    const ids = options.ids ?? true
+    const status = options.status ?? true
+    const timestamps = options.timestamps ?? true
+    const results = options.results ?? true
+
+    // Keep this helper as the single lifecycle reset path for bridges and eventReset redispatch.
+    if (ids) {
+      original.event_id = uuidv7()
+      original.event_path = []
+      original.event_parent_id = null
+      original.event_emitted_by_handler_id = null
+      original.event_blocks_parent_completion = false
+    }
+    if (status) {
+      original.event_status = 'pending'
+    }
+    if (timestamps) {
+      original.event_created_at = monotonicDatetime()
+      original.event_started_at = null
+      original.event_completed_at = null
+    }
+    if (results) {
+      original.event_results.clear()
+    }
     original.event_pending_bus_count = 0
     original._setDispatchContext(undefined)
     original._event_completed_signal = null
     original._lock_for_event_handler = null
     original.event_bus = undefined
+    original._event_expires_at_by_bus.clear()
     return this
   }
 
-  eventReset(): this {
+  eventReset(options: EventResetOptions = {}): this {
     const original = this._event_original ?? this
     const ctor = original.constructor as typeof BaseEvent
     const fresh_event = ctor.fromJSON(original.toJSON()) as this
-    fresh_event.event_id = uuidv7()
-    return fresh_event._markPending()
+    return fresh_event._resetForDispatch(options)
   }
 
   _markStarted(started_at: string | null = null, notify_hook: boolean = true): void {

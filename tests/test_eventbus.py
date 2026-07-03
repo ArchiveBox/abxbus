@@ -2547,7 +2547,7 @@ async def test_event_reset_creates_fresh_pending_event_for_cross_bus_dispatch():
     assert forwarded.event_status == EventStatus.COMPLETED
     assert seen_a == ['hello']
     assert seen_b == ['hello']
-    assert any(path.startswith('ResetCoverageBusA#') for path in forwarded.event_path)
+    assert not any(path.startswith('ResetCoverageBusA#') for path in forwarded.event_path)
     assert any(path.startswith('ResetCoverageBusB#') for path in forwarded.event_path)
 
     await bus_a.destroy(clear=True)

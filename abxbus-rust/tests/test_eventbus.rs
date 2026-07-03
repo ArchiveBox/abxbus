@@ -3259,7 +3259,7 @@ fn test_reset_creates_a_fresh_pending_event_for_cross_bus_dispatch() {
     assert_eq!(forwarded.inner.lock().event_status, EventStatus::Completed);
     assert_eq!(forwarded.inner.lock().event_results.len(), 1);
     let event_path = forwarded.inner.lock().event_path.clone();
-    assert!(event_path.iter().any(|path| path.starts_with("ResetBusA#")));
+    assert!(!event_path.iter().any(|path| path.starts_with("ResetBusA#")));
     assert!(event_path.iter().any(|path| path.starts_with("ResetBusB#")));
     bus_a.destroy();
     bus_b.destroy();
@@ -4058,7 +4058,7 @@ mod folded_test_eventbus_edge_cases {
             &["hello".to_string()]
         );
         let event_path = forwarded.event_path.read();
-        assert!(event_path
+        assert!(!event_path
             .iter()
             .any(|path| path.starts_with("ResetCoverageBusA#")));
         assert!(event_path

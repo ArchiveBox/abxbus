@@ -59,6 +59,13 @@ type EventWaitOptions struct {
 	FirstResult bool
 }
 
+type EventResetOptions struct {
+	IDs        *bool
+	Status     *bool
+	Timestamps *bool
+	Results    *bool
+}
+
 type EventResultOptions struct {
 	Include     func(result any, event_result *EventResult) bool
 	RaiseIfAny  any
@@ -345,7 +352,7 @@ func BaseEventFromJSON(data []byte) (*BaseEvent, error) {
 	return &event, nil
 }
 
-func (e *BaseEvent) EventReset() (*BaseEvent, error) {
+func (e *BaseEvent) EventReset(options ...EventResetOptions) (*BaseEvent, error) {
 	data, err := e.ToJSON()
 	if err != nil {
 		return nil, err
@@ -354,9 +361,48 @@ func (e *BaseEvent) EventReset() (*BaseEvent, error) {
 	if err != nil {
 		return nil, err
 	}
-	fresh.EventID = newUUIDv7String()
-	resetInboundEvent(fresh)
+	resetOptions := EventResetOptions{}
+	if len(options) > 0 {
+		resetOptions = options[0]
+	}
+	resetBaseEventForDispatch(fresh, resetOptions)
 	return fresh, nil
+}
+
+func resetOption(value *bool) bool {
+	if value == nil {
+		return true
+	}
+	return *value
+}
+
+func resetBaseEventForDispatch(event *BaseEvent, options EventResetOptions) {
+	// Bridges and EventReset share this lifecycle reset path so redispatch semantics stay aligned.
+	if resetOption(options.IDs) {
+		event.EventID = newUUIDv7String()
+		event.EventPath = []string{}
+		event.EventParentID = nil
+		event.EventEmittedByHandlerID = nil
+		event.EventBlocksParentCompletion = false
+	}
+	if resetOption(options.Status) {
+		event.EventStatus = "pending"
+	}
+	if resetOption(options.Timestamps) {
+		event.EventCreatedAt = monotonicDatetime()
+		event.EventStartedAt = nil
+		event.EventCompletedAt = nil
+	}
+	if resetOption(options.Results) {
+		event.EventResults = map[string]*EventResult{}
+		event.eventResultOrder = nil
+	}
+	event.EventPendingBusCount = 0
+	event.Bus = nil
+	event.dispatchCtx = nil
+	event.eventExpiresAtByBus = nil
+	event.done_ch = make(chan struct{})
+	event.done_once = sync.Once{}
 }
 
 func (e *BaseEvent) EventResultUpdate(handler *EventHandler, options *BaseEventResultUpdateOptions) *EventResult {

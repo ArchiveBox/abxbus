@@ -10,7 +10,7 @@ use std::{
 };
 
 use abxbus::{
-    base_event::{now_iso, BaseEvent, EventResultOptions, EventWaitOptions},
+    base_event::{now_iso, BaseEvent, EventResetOptions, EventResultOptions, EventWaitOptions},
     event_bus::{EventBus, EventBusOptions},
     event_result::EventResultStatus,
     types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
@@ -2638,13 +2638,53 @@ fn test_python_serialized_at_fields_are_strings() {
 #[test]
 fn test_baseevent_reset_returns_a_fresh_pending_event_that_can_be_redispatched() {
     let _guard = test_guard();
-    let event = mk_event("BaseEventResetEvent");
-    event.mark_started();
-    event.mark_completed();
+    let bus_a = EventBus::new(Some("BaseEventResetBusA".to_string()));
+    let bus_b = EventBus::new(Some("BaseEventResetBusB".to_string()));
+    bus_a.on_raw("BaseEventResetEvent", "handler_a", |event| async move {
+        let label = event
+            .inner
+            .lock()
+            .event_extra_payload
+            .get("label")
+            .and_then(|value| value.as_str())
+            .expect("label")
+            .to_string();
+        Ok(json!(format!("a:{label}")))
+    });
+    bus_b.on_raw("BaseEventResetEvent", "handler_b", |event| async move {
+        let label = event
+            .inner
+            .lock()
+            .event_extra_payload
+            .get("label")
+            .and_then(|value| value.as_str())
+            .expect("label")
+            .to_string();
+        Ok(json!(format!("b:{label}")))
+    });
 
-    let reset = event.event_reset();
+    let mut event_payload = Map::new();
+    event_payload.insert("label".to_string(), json!("hello"));
+    event_payload.insert("value".to_string(), json!(1));
+    let completed = bus_a.emit_base(BaseEvent::new(
+        "BaseEventResetEvent".to_string(),
+        event_payload,
+    ));
+    let _ = block_on(completed.now());
+    {
+        let mut data = completed.inner.lock();
+        data.event_parent_id = Some("018f8e40-1234-7000-8000-000000000401".to_string());
+        data.event_emitted_by_handler_id = Some("018f8e40-1234-7000-8000-000000000402".to_string());
+        data.event_blocks_parent_completion = true;
+    }
 
-    assert_ne!(reset.inner.lock().event_id, event.inner.lock().event_id);
+    let reset = completed.event_reset();
+
+    assert_ne!(reset.inner.lock().event_id, completed.inner.lock().event_id);
+    assert_eq!(reset.inner.lock().event_path, Vec::<String>::new());
+    assert!(reset.inner.lock().event_parent_id.is_none());
+    assert!(reset.inner.lock().event_emitted_by_handler_id.is_none());
+    assert!(!reset.inner.lock().event_blocks_parent_completion);
     assert_eq!(reset.inner.lock().event_status, EventStatus::Pending);
     assert!(reset.inner.lock().event_started_at.is_none());
     assert!(reset.inner.lock().event_completed_at.is_none());
@@ -2665,6 +2705,111 @@ fn test_baseevent_reset_returns_a_fresh_pending_event_that_can_be_redispatched()
     // event_extra_payload is an in-memory escape hatch only; wire JSON must stay flat.
     assert!(reset.to_json_value().get("event_extra_payload").is_none());
     assert!(reset.to_json_value().get("event_payload").is_none());
+
+    let forwarded = bus_b.emit_base(reset);
+    let _ = block_on(forwarded.now());
+    assert_eq!(forwarded.inner.lock().event_status, EventStatus::Completed);
+    assert!(forwarded
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .any(|result| result.result == Some(json!("b:hello"))));
+    let event_path = forwarded.inner.lock().event_path.clone();
+    assert!(!event_path
+        .iter()
+        .any(|path| path.starts_with("BaseEventResetBusA#")));
+    assert!(event_path
+        .iter()
+        .any(|path| path.starts_with("BaseEventResetBusB#")));
+    bus_a.destroy();
+    bus_b.destroy();
+}
+
+#[test]
+fn test_baseevent_event_reset_options_control_ids_status_timestamps_and_results() {
+    let _guard = test_guard();
+    let bus = EventBus::new(Some("BaseEventResetOptionsBus".to_string()));
+    bus.on_raw(
+        "BaseEventResetOptionsEvent",
+        "handler",
+        |event| async move {
+            let label = event
+                .inner
+                .lock()
+                .event_extra_payload
+                .get("label")
+                .and_then(|value| value.as_str())
+                .expect("label")
+                .to_string();
+            Ok(json!(format!("done:{label}")))
+        },
+    );
+
+    let mut event_payload = Map::new();
+    event_payload.insert("label".to_string(), json!("hello"));
+    let completed = bus.emit_base(BaseEvent::new(
+        "BaseEventResetOptionsEvent".to_string(),
+        event_payload,
+    ));
+    let _ = block_on(completed.now());
+    {
+        let mut data = completed.inner.lock();
+        data.event_path = vec!["BaseEventResetOptionsSeedBus#1234".to_string()];
+        data.event_parent_id = Some("018f8e40-1234-7000-8000-000000000411".to_string());
+        data.event_emitted_by_handler_id = Some("018f8e40-1234-7000-8000-000000000412".to_string());
+        data.event_blocks_parent_completion = true;
+        data.event_pending_bus_count = 3;
+        data.event_created_at = "2025-01-02T03:04:05.000000000Z".to_string();
+        data.event_started_at = Some("2025-01-02T03:04:06.000000000Z".to_string());
+        data.event_completed_at = Some("2025-01-02T03:04:07.000000000Z".to_string());
+    }
+
+    let preserved = completed.event_reset_with_options(EventResetOptions {
+        ids: false,
+        status: false,
+        timestamps: false,
+        results: false,
+    });
+
+    let preserved_data = preserved.inner.lock();
+    let completed_data = completed.inner.lock();
+    assert_eq!(preserved_data.event_id, completed_data.event_id);
+    assert_eq!(preserved_data.event_path, completed_data.event_path);
+    assert_eq!(
+        preserved_data.event_parent_id,
+        completed_data.event_parent_id
+    );
+    assert_eq!(
+        preserved_data.event_emitted_by_handler_id,
+        completed_data.event_emitted_by_handler_id
+    );
+    assert!(preserved_data.event_blocks_parent_completion);
+    assert_eq!(preserved_data.event_status, EventStatus::Completed);
+    assert_eq!(
+        preserved_data.event_created_at,
+        "2025-01-02T03:04:05.000000000Z"
+    );
+    assert_eq!(
+        preserved_data.event_started_at.as_deref(),
+        Some("2025-01-02T03:04:06.000000000Z")
+    );
+    assert_eq!(
+        preserved_data.event_completed_at.as_deref(),
+        Some("2025-01-02T03:04:07.000000000Z")
+    );
+    assert_eq!(
+        preserved_data.event_results.len(),
+        completed_data.event_results.len()
+    );
+    assert!(preserved_data
+        .event_results
+        .values()
+        .any(|result| result.result == Some(json!("done:hello"))));
+    assert_eq!(preserved_data.event_pending_bus_count, 0);
+    drop(completed_data);
+    drop(preserved_data);
+    bus.destroy();
 }
 
 #[test]

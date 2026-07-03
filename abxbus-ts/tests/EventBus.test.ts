@@ -1310,7 +1310,7 @@ test('reset creates a fresh pending event for cross-bus dispatch', async () => {
   )
   assert.equal(
     forwarded.event_path.some((entry) => entry.startsWith('ResetCoverageBusA#')),
-    true
+    false
   )
   assert.equal(
     forwarded.event_path.some((entry) => entry.startsWith('ResetCoverageBusB#')),

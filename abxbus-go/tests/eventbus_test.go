@@ -694,15 +694,15 @@ func TestEventResetCreatesFreshPendingEventForCrossBusDispatch(t *testing.T) {
 	hasBusA := false
 	hasBusB := false
 	for _, entry := range forwarded.EventPath {
-		if len(entry) >= len("ResetCoverageBusA#") && entry[:len("ResetCoverageBusA#")] == "ResetCoverageBusA#" {
+		if strings.HasPrefix(entry, "ResetCoverageBusA#") {
 			hasBusA = true
 		}
-		if len(entry) >= len("ResetCoverageBusB#") && entry[:len("ResetCoverageBusB#")] == "ResetCoverageBusB#" {
+		if strings.HasPrefix(entry, "ResetCoverageBusB#") {
 			hasBusB = true
 		}
 	}
-	if !hasBusA || !hasBusB {
-		t.Fatalf("reset event should preserve previous path and append new bus path: %#v", forwarded.EventPath)
+	if hasBusA || !hasBusB {
+		t.Fatalf("reset event should record only the redispatch bus path: %#v", forwarded.EventPath)
 	}
 }
 
