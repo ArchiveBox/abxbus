@@ -1186,6 +1186,15 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 		b.mu.Unlock()
 		b.locks.notifyIdleListeners()
 	}()
+	if event.shouldSkipHandlerExecution() {
+		// A queue item can lose the race to an immediate .Now() path, or a caller
+		// can provide an already sealed event. In both cases this bus has consumed
+		// its processing slot but must not emit a second "started" lifecycle or run
+		// handlers; completion still flows through the shared skipped-handler path.
+		signalFirstHandlerStarted()
+		settleSkippedHandlerExecution(event, 1)
+		return nil
+	}
 	if b.eventHasLocalActiveResults(event) {
 		signalFirstHandlerStarted()
 		_, err := event.waitWithContext(ctx)
