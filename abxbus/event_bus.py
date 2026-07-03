@@ -2082,7 +2082,15 @@ class EventBus:
         self.processing_event_ids.add(event.event_id)
         try:
             async with self.locks._run_with_event_lock(self, event):  # pyright: ignore[reportPrivateUsage]
-                await self._process_event(event, timeout=timeout)
+                completed_signal = event.event_completed_signal
+                if completed_signal is not None and completed_signal.is_set():
+                    # The active await/queue-jump path may complete this exact
+                    # queue item after the runloop has claimed it but before it
+                    # acquires the event lock. Consume the claimed queue item
+                    # without running handlers or emitting a second lifecycle.
+                    pass
+                else:
+                    await self._process_event(event, timeout=timeout)
 
                 # Queue lifecycle:
                 # - `queue.get()` increments `_unfinished_tasks`.
