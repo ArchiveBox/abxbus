@@ -338,23 +338,6 @@ impl EventBus {
         if inner.event_status != EventStatus::Completed {
             return false;
         }
-        // A completed forwarded event can already contain this bus in event_path before
-        // its local handlers have run. Local handler results are the reliable signal that
-        // this bus has actually processed the shared event instance.
-        inner
-            .event_results
-            .values()
-            .any(|result| result.handler.eventbus_id == self.id)
-    }
-
-    fn should_skip_handler_execution_on_bus(&self, event: &Arc<BaseEvent>) -> bool {
-        if !event.should_skip_handler_execution() {
-            return false;
-        }
-        let inner = event.inner.lock();
-        if inner.event_path.len() <= 1 {
-            return true;
-        }
         inner
             .event_results
             .values()
@@ -1891,7 +1874,7 @@ impl EventBus {
     ) {
         let runloop_pause = self.locks.request_runloop_pause();
         let event_id = event.inner.lock().event_id.clone();
-        let completion_marked = self.should_skip_handler_execution_on_bus(&event);
+        let completion_marked = event.should_skip_handler_execution();
         if !completion_marked && self.has_completed_on_bus(&event) {
             return;
         }
@@ -1922,14 +1905,6 @@ impl EventBus {
                 false
             }
         };
-        if !removed {
-            let inner = event.inner.lock();
-            if (inner.event_status == EventStatus::Completed || inner.event_completed_at.is_some())
-                && inner.event_path.contains(&self.label())
-            {
-                return;
-            }
-        }
         if completion_marked {
             if removed {
                 self.runtime.active_event_ids.lock().remove(&event_id);
@@ -2679,7 +2654,7 @@ impl EventBus {
     }
 
     async fn process_event(&self, event: Arc<BaseEvent>) {
-        if self.should_skip_handler_execution_on_bus(&event) {
+        if event.should_skip_handler_execution() {
             self.complete_skipped_handler_execution(&event);
             return;
         }
@@ -2703,8 +2678,9 @@ impl EventBus {
                         return;
                     }
                 }
-                if self.has_completed_on_bus(&event) {
+                if event.should_skip_handler_execution() {
                     self.runtime.processing_event_ids.lock().remove(&event_id);
+                    self.complete_skipped_handler_execution(&event);
                     return;
                 }
                 self.process_event_inner(event).await;
@@ -2717,8 +2693,9 @@ impl EventBus {
                         return;
                     }
                 }
-                if self.has_completed_on_bus(&event) {
+                if event.should_skip_handler_execution() {
                     self.runtime.processing_event_ids.lock().remove(&event_id);
+                    self.complete_skipped_handler_execution(&event);
                     return;
                 }
                 self.process_event_inner(event).await;

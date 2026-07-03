@@ -1182,7 +1182,7 @@ export class EventBus {
         this._markEventCompletedIfNeeded(event)
         return
       }
-      if (this._shouldSkipHandlerExecutionOnBus(event)) {
+      if (event._shouldSkipHandlerExecution()) {
         this._markEventCompletedIfNeeded(event)
         return
       }
@@ -1451,16 +1451,6 @@ export class EventBus {
       return false
     }
     return results.every((result) => result.status === 'completed' || result.status === 'error')
-  }
-
-  private _shouldSkipHandlerExecutionOnBus(event: BaseEvent): boolean {
-    if (!event._shouldSkipHandlerExecution()) {
-      return false
-    }
-    if (event.event_path.length <= 1 && event.event_path.includes(this.label)) {
-      return true
-    }
-    return Array.from(event.event_results.values()).some((result) => result.eventbus_id === this.id)
   }
 
   // get a proxy wrapper around an Event that will automatically link emitted child events to this bus and handler

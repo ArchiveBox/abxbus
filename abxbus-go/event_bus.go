@@ -965,18 +965,7 @@ func eventHasRunningResults(event *BaseEvent) bool {
 func (b *EventBus) shouldSkipHandlerExecution(event *BaseEvent) bool {
 	event.mu.Lock()
 	defer event.mu.Unlock()
-	if event.EventStatus != "completed" && event.EventCompletedAt == nil {
-		return false
-	}
-	if len(event.EventPath) <= 1 {
-		return true
-	}
-	for _, result := range event.EventResults {
-		if result != nil && result.EventBusID == b.ID {
-			return true
-		}
-	}
-	return false
+	return event.EventStatus == "completed" || event.EventCompletedAt != nil
 }
 
 func completeEventAcrossBuses(event *BaseEvent) {

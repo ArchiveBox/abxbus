@@ -140,7 +140,7 @@ func TestCompletedForwardedEventWithPrunedTargetResultsRemainsTerminal(t *testin
 	}
 }
 
-func TestCompletedEventFirstEmittedToNewBusRunsTargetHandlers(t *testing.T) {
+func TestCompletedEventFirstEmittedToNewBusSkipsTargetHandlers(t *testing.T) {
 	busA := abxbus.NewEventBus("CompletedReplaySource", nil)
 	busB := abxbus.NewEventBus("CompletedReplayTarget", nil)
 	defer busA.Destroy()
@@ -173,8 +173,8 @@ func TestCompletedEventFirstEmittedToNewBusRunsTargetHandlers(t *testing.T) {
 	busB.Emit(event)
 	waitAllIdle(t, busA, busB)
 
-	if !reflect.DeepEqual(seenB, []string{event.EventID}) {
-		t.Fatalf("target handler should run once on first target emit, got %v", seenB)
+	if len(seenB) != 0 {
+		t.Fatalf("target handler should not run for completed event, got %v", seenB)
 	}
 	if event.EventStatus != "completed" || event.EventCompletedAt == nil {
 		t.Fatalf("event should stay completed with completed_at, got status=%s completed_at=%v", event.EventStatus, event.EventCompletedAt)
