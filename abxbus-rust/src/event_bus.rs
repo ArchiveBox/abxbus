@@ -1618,6 +1618,16 @@ impl EventBus {
         if event.inner.lock().event_path.contains(&bus_label) {
             return event;
         }
+        let (event_id, has_terminal_marker) = {
+            let inner = event.inner.lock();
+            (
+                inner.event_id.clone(),
+                inner.event_status == EventStatus::Completed || inner.event_completed_at.is_some(),
+            )
+        };
+        if has_terminal_marker && self.runtime.events.lock().contains_key(&event_id) {
+            return event;
+        }
         if self.completed_event_expired_for_history(&event) {
             let event_id = event.inner.lock().event_id.clone();
             self.runtime.events.lock().remove(&event_id);
