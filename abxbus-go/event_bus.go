@@ -692,17 +692,33 @@ func (b *EventBus) resolveEventResultTTL(event *BaseEvent, result *EventResult) 
 	return b.EventResultTTL
 }
 
+func (b *EventBus) hasTTLCleanupSources() bool {
+	if b.EventTTL != nil || b.EventResultTTL != nil {
+		return true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, handler := range b.handlers {
+		if handler != nil && handler.HandlerResultTTL != nil {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *EventBus) trimEventHistory(includeTTL bool) {
 	if b.EventHistory.MaxHistorySize != nil && (*b.EventHistory.MaxHistorySize == 0 || b.EventHistory.MaxHistoryDrop) {
 		b.EventHistory.TrimEventHistory(nil)
 	}
-	if !includeTTL {
+	if !includeTTL || !b.hasTTLCleanupSources() {
 		return
 	}
 
 	// TTL cleanup is tied to normal bus cleanup points rather than a timer.
 	// Scanning history here avoids per-event private deadline state while
-	// keeping pruning deterministic and per-bus.
+	// keeping pruning deterministic and per-bus. Buses with no TTL defaults
+	// or handler TTLs skip this full-history pass to keep unlimited history
+	// O(1) per emit in the common no-TTL case.
 	for _, event := range b.EventHistory.Values() {
 		ageSeconds, ok := b.completedEventAgeSeconds(event)
 		if !ok {

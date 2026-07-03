@@ -2042,17 +2042,29 @@ impl EventBus {
             .or(self.event_result_ttl)
     }
 
+    fn has_ttl_cleanup_sources(&self) -> bool {
+        self.event_ttl.is_some()
+            || self.event_result_ttl.is_some()
+            || self.handlers.lock().values().any(|handlers| {
+                handlers
+                    .iter()
+                    .any(|handler| handler.handler_result_ttl.is_some())
+            })
+    }
+
     fn trim_event_history(&self, include_ttl: bool) {
         if let Some(max_size) = self.runtime.max_history_size {
             self.trim_history_to_capacity(max_size, false);
         }
-        if !include_ttl {
+        if !include_ttl || !self.has_ttl_cleanup_sources() {
             return;
         }
 
         // TTL cleanup is tied to normal bus cleanup points rather than a timer.
         // Scanning history here avoids per-event private deadline state while
-        // keeping pruning deterministic and per-bus.
+        // keeping pruning deterministic and per-bus. Buses with no TTL defaults
+        // or handler TTLs skip this full-history pass to keep unlimited history
+        // O(1) per emit in the common no-TTL case.
         let events: Vec<Arc<BaseEvent>> = self.runtime.events.lock().values().cloned().collect();
         for event in events {
             let Some(age_seconds) = Self::completed_event_age_seconds(&event) else {

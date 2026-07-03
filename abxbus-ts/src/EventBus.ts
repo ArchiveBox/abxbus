@@ -453,6 +453,18 @@ export class EventBus {
     return result.handler.handler_result_ttl ?? event.event_result_ttl ?? this.event_result_ttl
   }
 
+  private _hasTTLCleanupSources(): boolean {
+    if (this.event_ttl !== null || this.event_result_ttl !== null) {
+      return true
+    }
+    for (const handler of this.handlers.values()) {
+      if (handler.handler_result_ttl !== null && handler.handler_result_ttl !== undefined) {
+        return true
+      }
+    }
+    return false
+  }
+
   private _trimEventHistory(include_ttl: boolean = true): void {
     if (
       this.event_history.max_history_size !== null &&
@@ -467,13 +479,15 @@ export class EventBus {
       })
     }
 
-    if (!include_ttl) {
+    if (!include_ttl || !this._hasTTLCleanupSources()) {
       return
     }
 
     // TTL cleanup is tied to normal bus cleanup points rather than a timer.
     // Scanning history here avoids per-event private deadline state while
-    // keeping pruning deterministic and per-bus.
+    // keeping pruning deterministic and per-bus. Buses with no TTL defaults
+    // or handler TTLs skip this full-history pass to keep unlimited history
+    // O(1) per emit in the common no-TTL case.
     for (const [event_id, event] of Array.from(this.event_history.entries())) {
       const age_seconds = this._completedEventAgeSeconds(event)
       if (age_seconds === null) {

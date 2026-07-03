@@ -2193,6 +2193,13 @@ class EventBus:
             return handler_ttl
         return event.event_result_ttl if event.event_result_ttl is not None else self.event_result_ttl
 
+    def _has_ttl_cleanup_sources(self) -> bool:
+        return (
+            self.event_ttl is not None
+            or self.event_result_ttl is not None
+            or any(handler.handler_result_ttl is not None for handler in self.handlers.values())
+        )
+
     def _trim_event_history_if_needed(self, *, include_ttl: bool = True) -> None:
         if self.event_history.max_history_size is not None and (
             self.event_history.max_history_size == 0
@@ -2203,12 +2210,14 @@ class EventBus:
             )
         ):
             self.event_history.trim_event_history(owner_label=str(self))
-        if not include_ttl:
+        if not include_ttl or not self._has_ttl_cleanup_sources():
             return
 
         # TTL cleanup is tied to normal bus cleanup points rather than a timer.
         # Scanning history here avoids per-event private deadline state while
-        # keeping pruning deterministic and per-bus.
+        # keeping pruning deterministic and per-bus. Buses with no TTL defaults
+        # or handler TTLs skip this full-history pass to keep unlimited history
+        # O(1) per emit in the common no-TTL case.
         for event_id, event in list(self.event_history.items()):
             age_seconds = self._completed_event_age_seconds(event)
             if age_seconds is None:
