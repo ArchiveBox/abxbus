@@ -1067,6 +1067,7 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 		}
 		event.mu.Unlock()
 		completeEventAcrossBuses(event)
+		b.startRunloop()
 		return nil
 	}
 	if b.eventHasLocalActiveResults(event) {
