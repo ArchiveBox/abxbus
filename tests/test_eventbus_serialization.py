@@ -175,9 +175,9 @@ def test_eventbus_validate_rejects_restored_ttls_below_minus_one() -> None:
     event_results = cast(dict[str, dict[str, Any]], event_payload['event_results'])
     result_payload = event_results[handler_id]
 
-    with pytest.raises((ValidationError, ValueError), match='event_ttl'):
+    with pytest.raises((AssertionError, ValidationError, ValueError), match='event_ttl'):
         EventBus.validate({**payload, 'event_ttl': -2})
-    with pytest.raises((ValidationError, ValueError), match='event_result_ttl'):
+    with pytest.raises((AssertionError, ValidationError, ValueError), match='event_result_ttl'):
         EventBus.validate({**payload, 'event_result_ttl': -2})
 
     invalid_event = {

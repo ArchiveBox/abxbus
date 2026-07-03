@@ -791,7 +791,9 @@ func (b *EventBus) clearEventTTLDeadline(event *BaseEvent) {
 }
 
 func (b *EventBus) trimEventHistory(includeTTL bool) {
-	b.EventHistory.TrimEventHistory(nil)
+	if b.EventHistory.MaxHistorySize != nil && (*b.EventHistory.MaxHistorySize == 0 || b.EventHistory.MaxHistoryDrop) {
+		b.EventHistory.TrimEventHistory(nil)
+	}
 	if !includeTTL {
 		return
 	}

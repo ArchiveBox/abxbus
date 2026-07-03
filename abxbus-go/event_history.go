@@ -191,9 +191,6 @@ func (h *EventHistory) trimLocked(is_event_complete func(event *BaseEvent) bool)
 		return 0
 	}
 	max := *h.MaxHistorySize
-	if max > 0 && !h.MaxHistoryDrop {
-		return 0
-	}
 	overage := len(h.events) - max
 	if overage <= 0 {
 		return 0
