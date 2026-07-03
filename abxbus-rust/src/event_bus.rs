@@ -1922,9 +1922,6 @@ impl EventBus {
                 false
             }
         };
-        if !removed && event.should_skip_handler_execution() {
-            return;
-        }
         if completion_marked {
             if removed {
                 self.runtime.active_event_ids.lock().remove(&event_id);
@@ -1933,6 +1930,9 @@ impl EventBus {
             return;
         }
         if !removed && !bypass_event_lock {
+            return;
+        }
+        if !removed && event.should_skip_handler_execution() {
             return;
         }
         if !removed {
