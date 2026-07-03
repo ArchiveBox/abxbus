@@ -2121,6 +2121,30 @@ impl EventBus {
         );
     }
 
+    fn track_completed_event_ttl_deadlines_across_buses(&self, event: &Arc<BaseEvent>) {
+        let (event_id, is_completed) = {
+            let inner = event.inner.lock();
+            (
+                inner.event_id.clone(),
+                inner.event_status == EventStatus::Completed,
+            )
+        };
+        if !is_completed {
+            return;
+        }
+        for bus in Self::live_instances() {
+            if bus
+                .runtime
+                .events
+                .lock()
+                .get(&event_id)
+                .is_some_and(|candidate| Arc::ptr_eq(candidate, event))
+            {
+                bus.track_event_ttl_deadline(event);
+            }
+        }
+    }
+
     fn trim_event_history(&self, include_ttl: bool) {
         if let Some(max_size) = self.runtime.max_history_size {
             self.trim_history_to_capacity(max_size, false);
@@ -2954,10 +2978,7 @@ impl EventBus {
 
         if should_complete {
             event.mark_completed();
-            let event_id = event.inner.lock().event_id.clone();
-            if self.runtime.events.lock().contains_key(&event_id) {
-                self.track_event_ttl_deadline(&event);
-            }
+            self.track_completed_event_ttl_deadlines_across_buses(&event);
         }
     }
 
@@ -2983,10 +3004,7 @@ impl EventBus {
         // completion hooks can observe the event.
         if should_complete {
             event.mark_completed();
-            let event_id = event.inner.lock().event_id.clone();
-            if self.runtime.events.lock().contains_key(&event_id) {
-                self.track_event_ttl_deadline(event);
-            }
+            self.track_completed_event_ttl_deadlines_across_buses(event);
         }
     }
 

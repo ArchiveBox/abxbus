@@ -352,7 +352,7 @@ export class EventBus {
 
     event.event_pending_bus_count = Math.max(0, event.event_pending_bus_count - 1)
     event._markCompleted()
-    this._trackEventTTLDeadline(event)
+    this._trackCompletedEventTTLDeadlinesAcrossBuses(event)
   }
 
   private _createEventTimeoutError(
@@ -514,6 +514,17 @@ export class EventBus {
     this.ttl_deadline_queue.splice(lo, 0, [deadline, event_id])
   }
 
+  private _trackCompletedEventTTLDeadlinesAcrossBuses(event: BaseEvent): void {
+    if (event.event_status !== 'completed') {
+      return
+    }
+    for (const bus of this.all_instances) {
+      if (bus.event_history.get(event.event_id) === event) {
+        bus._trackEventTTLDeadline(event)
+      }
+    }
+  }
+
   private _trimEventHistory(include_ttl: boolean = true): void {
     if (
       this.event_history.max_history_size !== null &&
@@ -588,9 +599,7 @@ export class EventBus {
     if (event.event_pending_bus_count === 0) {
       event._markCompleted(false)
     }
-    if (event.event_status === 'completed' && this.event_history.get(event.event_id) === event) {
-      this._trackEventTTLDeadline(event)
-    }
+    this._trackCompletedEventTTLDeadlinesAcrossBuses(event)
     this._trimEventHistory(false)
   }
 
