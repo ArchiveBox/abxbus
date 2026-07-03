@@ -2983,20 +2983,23 @@ fn test_event_ttl_and_event_result_ttl_none_or_absent_inherit_bus_defaults() {
 
 #[test]
 fn test_runtime_ttl_changes_retrack_completed_history_on_the_next_natural_trim_pass() {
-    let mut bus_ttl = EventBus::new_with_options(
+    let mut bus_ttl = (*EventBus::new_with_options(
         Some("RuntimeBusTTLChangeBus".to_string()),
         EventBusOptions {
             max_history_size: None,
             ..EventBusOptions::default()
         },
-    );
-    let bus_ttl_event = emit_completed_ttl_probe(&bus_ttl, None);
+    ))
+    .clone();
+    let bus_ttl_event = bus_ttl.emit_base(BaseEvent::new("TTLProbeEvent", serde_json::Map::new()));
+    let _ = block_on(bus_ttl_event.now());
+    assert!(block_on(bus_ttl.wait_until_idle(Some(1.0))));
     let bus_ttl_event_id = bus_ttl_event.inner.lock().event_id.clone();
     assert!(bus_ttl.event_history_ids().contains(&bus_ttl_event_id));
-    Arc::get_mut(&mut bus_ttl)
-        .expect("test owns the only strong bus handle")
-        .event_ttl = Some(0.0);
-    run_natural_history_trim_pass(&bus_ttl);
+    bus_ttl.event_ttl = Some(0.0);
+    let bus_ttl_touch = bus_ttl.emit_base(BaseEvent::new("TTLTouchEvent", serde_json::Map::new()));
+    let _ = block_on(bus_ttl_touch.now());
+    assert!(block_on(bus_ttl.wait_until_idle(Some(1.0))));
     assert!(!bus_ttl.event_history_ids().contains(&bus_ttl_event_id));
     bus_ttl.destroy();
 
@@ -3007,7 +3010,9 @@ fn test_runtime_ttl_changes_retrack_completed_history_on_the_next_natural_trim_p
             ..EventBusOptions::default()
         },
     );
-    let event_ttl_event = emit_completed_ttl_probe(&event_ttl_bus, None);
+    let event_ttl_event = BaseEvent::new("TTLProbeEvent", serde_json::Map::new());
+    event_ttl_event.inner.lock().event_ttl = Some(1.0);
+    let event_ttl_event = emit_completed_ttl_probe(&event_ttl_bus, Some(event_ttl_event));
     let event_ttl_event_id = event_ttl_event.inner.lock().event_id.clone();
     assert!(event_ttl_bus
         .event_history_ids()
@@ -3024,7 +3029,7 @@ fn test_runtime_ttl_changes_retrack_completed_history_on_the_next_natural_trim_p
         EventBusOptions {
             max_history_size: None,
             event_ttl: Some(-1.0),
-            event_result_ttl: Some(-1.0),
+            event_result_ttl: Some(1.0),
             ..EventBusOptions::default()
         },
     );

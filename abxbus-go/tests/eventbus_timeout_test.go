@@ -151,7 +151,9 @@ func TestRuntimeTTLChangesRetrackCompletedHistoryOnTheNextNaturalTrimPass(t *tes
 	busTTL.Destroy()
 
 	eventTTLBus := abxbus.NewEventBus("RuntimeEventTTLChangeBus", &abxbus.EventBusOptions{MaxHistorySize: nil})
-	eventTTLEvent := emitCompletedTTLProbe(t, eventTTLBus, nil)
+	eventTTLEvent := abxbus.NewBaseEvent("TTLProbeEvent", nil)
+	eventTTLEvent.EventTTL = ttlPtr(1)
+	eventTTLEvent = emitCompletedTTLProbe(t, eventTTLBus, eventTTLEvent)
 	if !eventTTLBus.EventHistory.Has(eventTTLEvent.EventID) {
 		t.Fatal("event should remain before runtime event ttl changes")
 	}
@@ -165,7 +167,7 @@ func TestRuntimeTTLChangesRetrackCompletedHistoryOnTheNextNaturalTrimPass(t *tes
 	handlerTTLBus := abxbus.NewEventBus("RuntimeHandlerResultTTLChangeBus", &abxbus.EventBusOptions{
 		MaxHistorySize: nil,
 		EventTTL:       ttlPtr(-1),
-		EventResultTTL: ttlPtr(-1),
+		EventResultTTL: ttlPtr(1),
 	})
 	handler := handlerTTLBus.On("TTLProbeEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "result", nil

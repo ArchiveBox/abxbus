@@ -2242,9 +2242,27 @@ class EventBus:
         bisect.insort(self._ttl_deadline_queue, (deadline, event_id))
 
     def _retrack_completed_history_ttl_deadlines(self) -> None:
-        for event in list(self.event_history.values()):
+        events = (
+            list(self.event_history.values())
+            if self._has_active_ttl_backfill_policy()
+            else [
+                self.event_history[event_id]
+                for event_id in list(self._ttl_deadlines_by_event_id)
+                if event_id in self.event_history
+            ]
+        )
+        for event in events:
             if event.event_status == EventStatus.COMPLETED:
                 self._track_event_ttl_deadline(event)
+
+    def _has_active_ttl_backfill_policy(self) -> bool:
+        if self.event_ttl is not None and self.event_ttl >= 0:
+            return True
+        if self.event_result_ttl is not None and self.event_result_ttl >= 0:
+            return True
+        return any(
+            handler.handler_result_ttl is not None and handler.handler_result_ttl >= 0 for handler in self.handlers.values()
+        )
 
     def _trim_event_history_if_needed(self, *, include_ttl: bool = True) -> None:
         if self.event_history.max_history_size is not None and (

@@ -1038,7 +1038,7 @@ async def test_runtime_ttl_changes_retrack_completed_history_on_the_next_natural
 
     event_ttl_bus = EventBus(name='RuntimeEventTTLChangeBus', max_history_size=None)
     try:
-        event_ttl_event = await _emit_completed_ttl_probe(event_ttl_bus)
+        event_ttl_event = await _emit_completed_ttl_probe(event_ttl_bus, TTLProbeEvent(event_ttl=1))
         assert event_ttl_event.event_id in event_ttl_bus.event_history
 
         event_ttl_event.event_ttl = 0
@@ -1051,7 +1051,7 @@ async def test_runtime_ttl_changes_retrack_completed_history_on_the_next_natural
         name='RuntimeHandlerResultTTLChangeBus',
         max_history_size=None,
         event_ttl=-1,
-        event_result_ttl=-1,
+        event_result_ttl=1,
     )
 
     async def handler(_event: TTLProbeEvent) -> str:

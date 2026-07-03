@@ -2159,13 +2159,40 @@ impl EventBus {
     }
 
     fn retrack_completed_history_ttl_deadlines(&self) {
-        let events: Vec<Arc<BaseEvent>> = self.runtime.events.lock().values().cloned().collect();
+        let events: Vec<Arc<BaseEvent>> = if self.has_active_ttl_backfill_policy() {
+            self.runtime.events.lock().values().cloned().collect()
+        } else {
+            let event_ids: Vec<String> = self
+                .runtime
+                .ttl_deadlines_by_event_id
+                .lock()
+                .keys()
+                .cloned()
+                .collect();
+            event_ids
+                .into_iter()
+                .filter_map(|event_id| self.runtime.events.lock().get(&event_id).cloned())
+                .collect()
+        };
         for event in events {
             let is_completed = event.inner.lock().event_status == EventStatus::Completed;
             if is_completed {
                 self.track_event_ttl_deadline(&event);
             }
         }
+    }
+
+    fn has_active_ttl_backfill_policy(&self) -> bool {
+        if self.event_ttl.is_some_and(|ttl| ttl >= 0.0)
+            || self.event_result_ttl.is_some_and(|ttl| ttl >= 0.0)
+        {
+            return true;
+        }
+        self.handlers.lock().values().any(|handlers| {
+            handlers
+                .iter()
+                .any(|handler| handler.handler_result_ttl.is_some_and(|ttl| ttl >= 0.0))
+        })
     }
 
     fn trim_event_history(&self, include_ttl: bool) {

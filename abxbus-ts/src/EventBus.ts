@@ -526,11 +526,28 @@ export class EventBus {
   }
 
   private _retrackCompletedHistoryTTLDeadlines(): void {
-    for (const event of this.event_history.values()) {
+    const events = this._hasActiveTTLBackfillPolicy()
+      ? Array.from(this.event_history.values())
+      : Array.from(this.ttl_deadlines_by_event_id.keys())
+          .map((event_id) => this.event_history.get(event_id))
+          .filter((event): event is BaseEvent => Boolean(event))
+    for (const event of events) {
       if (event.event_status === 'completed') {
         this._trackEventTTLDeadline(event)
       }
     }
+  }
+
+  private _hasActiveTTLBackfillPolicy(): boolean {
+    if ((this.event_ttl !== null && this.event_ttl >= 0) || (this.event_result_ttl !== null && this.event_result_ttl >= 0)) {
+      return true
+    }
+    for (const handler of this.handlers.values()) {
+      if (handler.handler_result_ttl !== null && handler.handler_result_ttl !== undefined && handler.handler_result_ttl >= 0) {
+        return true
+      }
+    }
+    return false
   }
 
   private _trimEventHistory(include_ttl: boolean = true): void {

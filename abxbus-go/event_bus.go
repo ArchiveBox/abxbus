@@ -805,7 +805,24 @@ func (b *EventBus) trackEventTTLDeadline(event *BaseEvent) {
 }
 
 func (b *EventBus) retrackCompletedHistoryTTLDeadlines() {
-	for _, event := range b.EventHistory.Values() {
+	var events []*BaseEvent
+	if b.hasActiveTTLBackfillPolicy() {
+		events = b.EventHistory.Values()
+	} else {
+		b.mu.Lock()
+		eventIDs := make([]string, 0, len(b.ttlDeadlinesByID))
+		for eventID := range b.ttlDeadlinesByID {
+			eventIDs = append(eventIDs, eventID)
+		}
+		b.mu.Unlock()
+		events = make([]*BaseEvent, 0, len(eventIDs))
+		for _, eventID := range eventIDs {
+			if event := b.EventHistory.GetEvent(eventID); event != nil {
+				events = append(events, event)
+			}
+		}
+	}
+	for _, event := range events {
 		event.mu.Lock()
 		completed := event.EventStatus == "completed"
 		event.mu.Unlock()
@@ -813,6 +830,23 @@ func (b *EventBus) retrackCompletedHistoryTTLDeadlines() {
 			b.trackEventTTLDeadline(event)
 		}
 	}
+}
+
+func (b *EventBus) hasActiveTTLBackfillPolicy() bool {
+	if b.EventTTL != nil && *b.EventTTL >= 0 {
+		return true
+	}
+	if b.EventResultTTL != nil && *b.EventResultTTL >= 0 {
+		return true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, handler := range b.handlers {
+		if handler != nil && handler.HandlerResultTTL != nil && *handler.HandlerResultTTL >= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *EventBus) trimEventHistory(includeTTL bool) {
