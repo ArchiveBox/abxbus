@@ -1003,10 +1003,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                         # event lock instead of waiting behind unrelated queued/running work.
                         bus.processing_event_ids.add(self.event_id)
                         try:
-                            if bus._should_skip_handler_execution_on_bus(self):  # pyright: ignore[reportPrivateUsage]
-                                bus._decrement_pending_bus_count(self)  # pyright: ignore[reportPrivateUsage]
-                            else:
-                                await bus._process_event(self)  # pyright: ignore[reportPrivateUsage]
+                            await bus._process_event(self)  # pyright: ignore[reportPrivateUsage]
                         finally:
                             await bus._finalize_local_event_processing(self)  # pyright: ignore[reportPrivateUsage]
                             bus.mark_pending_queue_task_done()
