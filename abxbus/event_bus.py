@@ -1247,7 +1247,8 @@ class EventBus:
             event._set_dispatch_context(contextvars.copy_context())  # pyright: ignore[reportPrivateUsage]
 
         # Add this EventBus label to the event_path if not already there
-        if self.label not in event.event_path:
+        already_in_event_path = self.label in event.event_path
+        if not already_in_event_path:
             # preserve identity of the original object instead of creating a new one, so that the original object remains awaitable to get the result
             # NOT: event = event.model_copy(update={'event_path': event.event_path + [self.name]})
             event.event_path.append(self.label)
@@ -1270,6 +1271,11 @@ class EventBus:
         ), f'Event.event_path must be a list of EventBus labels BusName#abcd, got: {event.event_path}'
 
         self._trim_event_history_if_needed()
+        if already_in_event_path and event._should_skip_handler_execution():  # pyright: ignore[reportPrivateUsage]
+            if not self._completed_event_expired_for_history(event):
+                self.event_history[event.event_id] = event
+                self._update_event_ttl_deadline(event)
+            return event
 
         # NOTE:
         # emit() is intentionally synchronous and runs on the same event-loop
