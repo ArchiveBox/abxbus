@@ -348,10 +348,10 @@ impl EventBus {
     }
 
     fn should_skip_handler_execution_on_bus(&self, event: &Arc<BaseEvent>) -> bool {
-        let inner = event.inner.lock();
-        if inner.event_status != EventStatus::Completed && inner.event_completed_at.is_none() {
+        if !event.should_skip_handler_execution() {
             return false;
         }
+        let inner = event.inner.lock();
         if inner.event_path.len() <= 1 {
             return true;
         }
@@ -1911,6 +1911,14 @@ impl EventBus {
                 false
             }
         };
+        if !removed {
+            let inner = event.inner.lock();
+            if (inner.event_status == EventStatus::Completed || inner.event_completed_at.is_some())
+                && inner.event_path.contains(&self.label())
+            {
+                return;
+            }
+        }
         if completion_marked {
             if removed {
                 self.runtime.active_event_ids.lock().remove(&event_id);
