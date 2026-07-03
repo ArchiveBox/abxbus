@@ -139,6 +139,7 @@ func TestEventTTLAndEventResultTTLNilOrAbsentInheritBusDefaults(t *testing.T) {
 
 func TestRuntimeTTLChangesRetrackCompletedHistoryOnTheNextNaturalTrimPass(t *testing.T) {
 	busTTL := abxbus.NewEventBus("RuntimeBusTTLChangeBus", &abxbus.EventBusOptions{MaxHistorySize: nil})
+	t.Cleanup(busTTL.Destroy)
 	busTTLEvent := emitCompletedTTLProbe(t, busTTL, nil)
 	if !busTTL.EventHistory.Has(busTTLEvent.EventID) {
 		t.Fatal("event should remain before runtime bus ttl changes")
@@ -148,9 +149,9 @@ func TestRuntimeTTLChangesRetrackCompletedHistoryOnTheNextNaturalTrimPass(t *tes
 	if busTTL.EventHistory.Has(busTTLEvent.EventID) {
 		t.Fatal("runtime bus event_ttl=0 should delete completed event on next trim pass")
 	}
-	busTTL.Destroy()
 
 	eventTTLBus := abxbus.NewEventBus("RuntimeEventTTLChangeBus", &abxbus.EventBusOptions{MaxHistorySize: nil})
+	t.Cleanup(eventTTLBus.Destroy)
 	eventTTLEvent := abxbus.NewBaseEvent("TTLProbeEvent", nil)
 	eventTTLEvent.EventTTL = ttlPtr(1)
 	eventTTLEvent = emitCompletedTTLProbe(t, eventTTLBus, eventTTLEvent)
@@ -162,13 +163,13 @@ func TestRuntimeTTLChangesRetrackCompletedHistoryOnTheNextNaturalTrimPass(t *tes
 	if eventTTLBus.EventHistory.Has(eventTTLEvent.EventID) {
 		t.Fatal("runtime event event_ttl=0 should delete completed event on next trim pass")
 	}
-	eventTTLBus.Destroy()
 
 	handlerTTLBus := abxbus.NewEventBus("RuntimeHandlerResultTTLChangeBus", &abxbus.EventBusOptions{
 		MaxHistorySize: nil,
 		EventTTL:       ttlPtr(-1),
 		EventResultTTL: ttlPtr(1),
 	})
+	t.Cleanup(handlerTTLBus.Destroy)
 	handler := handlerTTLBus.On("TTLProbeEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		return "result", nil
 	})
@@ -184,7 +185,6 @@ func TestRuntimeTTLChangesRetrackCompletedHistoryOnTheNextNaturalTrimPass(t *tes
 	if len(handlerTTLEvent.EventResults) != 0 {
 		t.Fatalf("runtime handler_result_ttl=0 should clear results, got %d", len(handlerTTLEvent.EventResults))
 	}
-	handlerTTLBus.Destroy()
 }
 
 func TestEventTTLMinusOneOverridesPositiveOrZeroBusDefaultsAndKeepsCompletedEvents(t *testing.T) {
