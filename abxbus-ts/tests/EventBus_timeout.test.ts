@@ -1181,12 +1181,22 @@ test('runtime ttl changes retrack completed history on the next natural trim pas
   assert.equal(bus_ttl.event_history.has(bus_ttl_event.event_id), false)
 
   const event_ttl_bus = ttlBus('RuntimeEventTTLChangeBus', { max_history_size: null })
-  const event_ttl_event = await emitCompletedTTLProbe(event_ttl_bus, { event_ttl: 1 })
+  const event_ttl_event = await emitCompletedTTLProbe(event_ttl_bus)
   assert.equal(event_ttl_bus.event_history.has(event_ttl_event.event_id), true)
 
   event_ttl_event.event_ttl = 0
   await runNaturalHistoryTrimPass(event_ttl_bus)
   assert.equal(event_ttl_bus.event_history.has(event_ttl_event.event_id), false)
+
+  const event_result_ttl_bus = ttlBus('RuntimeEventResultTTLChangeBus', { max_history_size: null, event_ttl: -1 })
+  event_result_ttl_bus.on(TTLProbeEvent, async () => 'result')
+  const event_result_ttl_event = await emitCompletedTTLProbe(event_result_ttl_bus)
+  assert.equal(event_result_ttl_event.event_results.size, 1)
+
+  event_result_ttl_event.event_result_ttl = 0
+  await runNaturalHistoryTrimPass(event_result_ttl_bus)
+  assert.equal(event_result_ttl_bus.event_history.has(event_result_ttl_event.event_id), true)
+  assert.equal(event_result_ttl_event.event_results.size, 0)
 
   const handler_ttl_bus = ttlBus('RuntimeHandlerResultTTLChangeBus', {
     max_history_size: null,

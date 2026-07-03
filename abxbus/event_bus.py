@@ -2242,15 +2242,25 @@ class EventBus:
         bisect.insort(self._ttl_deadline_queue, (deadline, event_id))
 
     def _retrack_completed_history_ttl_deadlines(self) -> None:
-        events = (
-            list(self.event_history.values())
-            if self._has_active_ttl_backfill_policy()
-            else [
-                self.event_history[event_id]
+        if self._has_active_ttl_backfill_policy():
+            events = list(self.event_history.values())
+        else:
+            events_by_id = {
+                event_id: self.event_history[event_id]
                 for event_id in list(self._ttl_deadlines_by_event_id)
                 if event_id in self.event_history
-            ]
-        )
+            }
+            # Indexed events cover normal TTL shortening; this scan catches
+            # completed events whose own TTL fields changed from unset/-1 after
+            # completion, before any deadline entry existed.
+            for event in self.event_history.values():
+                if event.event_id in events_by_id or event.event_status != EventStatus.COMPLETED:
+                    continue
+                has_event_ttl_override = event.event_ttl is not None and event.event_ttl >= 0
+                has_result_ttl_override = event.event_result_ttl is not None and event.event_result_ttl >= 0
+                if has_event_ttl_override or has_result_ttl_override:
+                    events_by_id[event.event_id] = event
+            events = list(events_by_id.values())
         for event in events:
             if event.event_status == EventStatus.COMPLETED:
                 self._track_event_ttl_deadline(event)

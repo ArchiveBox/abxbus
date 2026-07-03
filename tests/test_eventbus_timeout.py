@@ -1038,7 +1038,7 @@ async def test_runtime_ttl_changes_retrack_completed_history_on_the_next_natural
 
     event_ttl_bus = EventBus(name='RuntimeEventTTLChangeBus', max_history_size=None)
     try:
-        event_ttl_event = await _emit_completed_ttl_probe(event_ttl_bus, TTLProbeEvent(event_ttl=1))
+        event_ttl_event = await _emit_completed_ttl_probe(event_ttl_bus)
         assert event_ttl_event.event_id in event_ttl_bus.event_history
 
         event_ttl_event.event_ttl = 0
@@ -1046,6 +1046,23 @@ async def test_runtime_ttl_changes_retrack_completed_history_on_the_next_natural
         assert event_ttl_event.event_id not in event_ttl_bus.event_history
     finally:
         await event_ttl_bus.destroy()
+
+    event_result_ttl_bus = EventBus(name='RuntimeEventResultTTLChangeBus', max_history_size=None, event_ttl=-1)
+
+    async def result_ttl_handler(_event: TTLProbeEvent) -> str:
+        return 'result'
+
+    event_result_ttl_bus.on(TTLProbeEvent, result_ttl_handler)
+    try:
+        event_result_ttl_event = await _emit_completed_ttl_probe(event_result_ttl_bus)
+        assert len(event_result_ttl_event.event_results) == 1
+
+        event_result_ttl_event.event_result_ttl = 0
+        await _run_natural_history_trim_pass(event_result_ttl_bus)
+        assert event_result_ttl_event.event_id in event_result_ttl_bus.event_history
+        assert len(event_result_ttl_event.event_results) == 0
+    finally:
+        await event_result_ttl_bus.destroy()
 
     handler_ttl_bus = EventBus(
         name='RuntimeHandlerResultTTLChangeBus',

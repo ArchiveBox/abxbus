@@ -809,17 +809,38 @@ func (b *EventBus) retrackCompletedHistoryTTLDeadlines() {
 	if b.hasActiveTTLBackfillPolicy() {
 		events = b.EventHistory.Values()
 	} else {
+		eventsByID := map[string]*BaseEvent{}
 		b.mu.Lock()
 		eventIDs := make([]string, 0, len(b.ttlDeadlinesByID))
 		for eventID := range b.ttlDeadlinesByID {
 			eventIDs = append(eventIDs, eventID)
 		}
 		b.mu.Unlock()
-		events = make([]*BaseEvent, 0, len(eventIDs))
 		for _, eventID := range eventIDs {
 			if event := b.EventHistory.GetEvent(eventID); event != nil {
-				events = append(events, event)
+				eventsByID[eventID] = event
 			}
+		}
+		// Indexed events cover normal TTL shortening; this scan catches
+		// completed events whose own TTL fields changed from unset/-1 after
+		// completion, before any deadline entry existed.
+		for _, event := range b.EventHistory.Values() {
+			event.mu.Lock()
+			eventID := event.EventID
+			completed := event.EventStatus == "completed"
+			hasEventTTLOverride := event.EventTTL != nil && *event.EventTTL >= 0
+			hasResultTTLOverride := event.EventResultTTL != nil && *event.EventResultTTL >= 0
+			event.mu.Unlock()
+			if _, ok := eventsByID[eventID]; ok || !completed {
+				continue
+			}
+			if hasEventTTLOverride || hasResultTTLOverride {
+				eventsByID[eventID] = event
+			}
+		}
+		events = make([]*BaseEvent, 0, len(eventsByID))
+		for _, event := range eventsByID {
+			events = append(events, event)
 		}
 	}
 	for _, event := range events {

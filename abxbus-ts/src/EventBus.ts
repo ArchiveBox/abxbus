@@ -526,11 +526,32 @@ export class EventBus {
   }
 
   private _retrackCompletedHistoryTTLDeadlines(): void {
-    const events = this._hasActiveTTLBackfillPolicy()
-      ? Array.from(this.event_history.values())
-      : Array.from(this.ttl_deadlines_by_event_id.keys())
-          .map((event_id) => this.event_history.get(event_id))
-          .filter((event): event is BaseEvent => Boolean(event))
+    let events: BaseEvent[]
+    if (this._hasActiveTTLBackfillPolicy()) {
+      events = Array.from(this.event_history.values())
+    } else {
+      const events_by_id = new Map<string, BaseEvent>()
+      for (const event_id of this.ttl_deadlines_by_event_id.keys()) {
+        const event = this.event_history.get(event_id)
+        if (event) {
+          events_by_id.set(event_id, event)
+        }
+      }
+      // Indexed events cover normal TTL shortening; this scan catches
+      // completed events whose own TTL fields changed from unset/-1 after
+      // completion, before any deadline entry existed.
+      for (const event of this.event_history.values()) {
+        if (events_by_id.has(event.event_id) || event.event_status !== 'completed') {
+          continue
+        }
+        const has_event_ttl_override = event.event_ttl != null && event.event_ttl >= 0
+        const has_result_ttl_override = event.event_result_ttl != null && event.event_result_ttl >= 0
+        if (has_event_ttl_override || has_result_ttl_override) {
+          events_by_id.set(event.event_id, event)
+        }
+      }
+      events = Array.from(events_by_id.values())
+    }
     for (const event of events) {
       if (event.event_status === 'completed') {
         this._trackEventTTLDeadline(event)

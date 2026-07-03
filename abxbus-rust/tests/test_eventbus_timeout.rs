@@ -3011,7 +3011,6 @@ fn test_runtime_ttl_changes_retrack_completed_history_on_the_next_natural_trim_p
         },
     );
     let event_ttl_event = BaseEvent::new("TTLProbeEvent", serde_json::Map::new());
-    event_ttl_event.inner.lock().event_ttl = Some(1.0);
     let event_ttl_event = emit_completed_ttl_probe(&event_ttl_bus, Some(event_ttl_event));
     let event_ttl_event_id = event_ttl_event.inner.lock().event_id.clone();
     assert!(event_ttl_bus
@@ -3023,6 +3022,26 @@ fn test_runtime_ttl_changes_retrack_completed_history_on_the_next_natural_trim_p
         .event_history_ids()
         .contains(&event_ttl_event_id));
     event_ttl_bus.destroy();
+
+    let event_result_ttl_bus = EventBus::new_with_options(
+        Some("RuntimeEventResultTTLChangeBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(-1.0),
+            ..EventBusOptions::default()
+        },
+    );
+    event_result_ttl_bus.on_raw_sync("TTLProbeEvent", "handler", |_event| Ok(json!("result")));
+    let event_result_ttl_event = emit_completed_ttl_probe(&event_result_ttl_bus, None);
+    assert_eq!(event_result_ttl_event.inner.lock().event_results.len(), 1);
+    event_result_ttl_event.inner.lock().event_result_ttl = Some(0.0);
+    run_natural_history_trim_pass(&event_result_ttl_bus);
+    let event_result_ttl_event_id = event_result_ttl_event.inner.lock().event_id.clone();
+    assert!(event_result_ttl_bus
+        .event_history_ids()
+        .contains(&event_result_ttl_event_id));
+    assert_eq!(event_result_ttl_event.inner.lock().event_results.len(), 0);
+    event_result_ttl_bus.destroy();
 
     let handler_ttl_bus = EventBus::new_with_options(
         Some("RuntimeHandlerResultTTLChangeBus".to_string()),

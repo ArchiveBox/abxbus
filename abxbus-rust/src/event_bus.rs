@@ -2162,6 +2162,7 @@ impl EventBus {
         let events: Vec<Arc<BaseEvent>> = if self.has_active_ttl_backfill_policy() {
             self.runtime.events.lock().values().cloned().collect()
         } else {
+            let mut events_by_id: HashMap<String, Arc<BaseEvent>> = HashMap::new();
             let event_ids: Vec<String> = self
                 .runtime
                 .ttl_deadlines_by_event_id
@@ -2169,10 +2170,28 @@ impl EventBus {
                 .keys()
                 .cloned()
                 .collect();
-            event_ids
-                .into_iter()
-                .filter_map(|event_id| self.runtime.events.lock().get(&event_id).cloned())
-                .collect()
+            for event_id in event_ids {
+                if let Some(event) = self.runtime.events.lock().get(&event_id).cloned() {
+                    events_by_id.insert(event_id, event);
+                }
+            }
+            // Indexed events cover normal TTL shortening; this scan catches
+            // completed events whose own TTL fields changed from unset/-1 after
+            // completion, before any deadline entry existed.
+            for event in self.runtime.events.lock().values() {
+                let inner = event.inner.lock();
+                if events_by_id.contains_key(&inner.event_id)
+                    || inner.event_status != EventStatus::Completed
+                {
+                    continue;
+                }
+                let has_event_ttl_override = inner.event_ttl.is_some_and(|ttl| ttl >= 0.0);
+                let has_result_ttl_override = inner.event_result_ttl.is_some_and(|ttl| ttl >= 0.0);
+                if has_event_ttl_override || has_result_ttl_override {
+                    events_by_id.insert(inner.event_id.clone(), event.clone());
+                }
+            }
+            events_by_id.into_values().collect()
         };
         for event in events {
             let is_completed = event.inner.lock().event_status == EventStatus::Completed;
