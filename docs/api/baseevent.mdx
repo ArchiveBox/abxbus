@@ -348,7 +348,7 @@ event.event_result_update(
 
 ## Resetting an event
 
-You can create a fresh pending copy for re-emit. By default this regenerates ids/routing lineage, resets status and timestamps, clears handler results, and clears runtime attachment state. Pass a field group as `false` to preserve it on the returned copy.
+You can create a fresh pending copy for re-emit. By default this regenerates ids/routing lineage, resets status plus processing timestamps (`event_started_at`, `event_completed_at`), clears handler results, and clears runtime attachment state. `event_created_at` remains the original creation timestamp. Pass a field group as `false` to preserve it on the returned copy.
 
 <Tabs>
 <Tab title="Python">

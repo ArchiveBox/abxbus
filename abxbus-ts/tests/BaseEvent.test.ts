@@ -1482,6 +1482,7 @@ test('BaseEvent reset returns a fresh pending event that can be redispatched', a
   assert.equal(fresh.event_emitted_by_handler_id, null)
   assert.equal(fresh.event_blocks_parent_completion, false)
   assert.equal(fresh.event_status, 'pending')
+  assert.equal(fresh.event_created_at, completed.event_created_at)
   assert.equal(fresh.event_results.size, 0)
   assert.equal(fresh.event_started_at, null)
   assert.equal(fresh.event_completed_at, null)

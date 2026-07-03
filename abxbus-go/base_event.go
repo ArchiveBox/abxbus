@@ -389,7 +389,6 @@ func resetBaseEventForDispatch(event *BaseEvent, options EventResetOptions) {
 		event.EventStatus = "pending"
 	}
 	if resetOption(options.Timestamps) {
-		event.EventCreatedAt = monotonicDatetime()
 		event.EventStartedAt = nil
 		event.EventCompletedAt = nil
 	}

@@ -1824,7 +1824,6 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         else:
             self._event_is_complete_flag = self.event_status == EventStatus.COMPLETED
         if timestamps:
-            self.event_created_at = monotonic_datetime()
             self.event_started_at = None
             self.event_completed_at = None
         if results:
@@ -1850,6 +1849,10 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     ) -> Self:
         """Return a copy with selected lifecycle fields reset for redispatch."""
         fresh_event = self.__class__.model_validate(self.model_dump(mode='python'))
+        if not results:
+            fresh_event.event_results = EventResultsDict(
+                {handler_id: result.model_copy(deep=True) for handler_id, result in self.event_results.items()}
+            )
         return fresh_event._reset_for_dispatch(ids=ids, status=status, timestamps=timestamps, results=results)
 
     def _get_handler_lock(self) -> 'ReentrantLock | None':

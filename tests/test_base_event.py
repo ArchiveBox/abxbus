@@ -1357,6 +1357,7 @@ async def test_baseevent_reset_returns_a_fresh_pending_event_that_can_be_redispa
     assert fresh.event_emitted_by_handler_id is None
     assert fresh.event_blocks_parent_completion is False
     assert fresh.event_status == EventStatus.PENDING
+    assert fresh.event_created_at == completed.event_created_at
     assert fresh.event_started_at is None
     assert fresh.event_completed_at is None
     assert fresh.event_pending_bus_count == 0

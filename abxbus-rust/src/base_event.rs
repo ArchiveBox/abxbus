@@ -783,7 +783,6 @@ impl BaseEvent {
             data.event_status = EventStatus::Pending;
         }
         if options.timestamps {
-            data.event_created_at = now_iso();
             data.event_started_at = None;
             data.event_completed_at = None;
         }

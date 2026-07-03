@@ -2686,6 +2686,10 @@ fn test_baseevent_reset_returns_a_fresh_pending_event_that_can_be_redispatched()
     assert!(reset.inner.lock().event_emitted_by_handler_id.is_none());
     assert!(!reset.inner.lock().event_blocks_parent_completion);
     assert_eq!(reset.inner.lock().event_status, EventStatus::Pending);
+    assert_eq!(
+        reset.inner.lock().event_created_at,
+        completed.inner.lock().event_created_at
+    );
     assert!(reset.inner.lock().event_started_at.is_none());
     assert!(reset.inner.lock().event_completed_at.is_none());
     assert_eq!(reset.inner.lock().event_pending_bus_count, 0);

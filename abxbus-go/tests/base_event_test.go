@@ -94,6 +94,9 @@ func TestBaseEventResetReturnsAFreshPendingEventThatCanBeRedispatched(t *testing
 	if fresh.EventStatus != "pending" || fresh.EventStartedAt != nil || fresh.EventCompletedAt != nil {
 		t.Fatalf("reset event should be pending with no lifecycle timestamps: %#v", fresh)
 	}
+	if fresh.EventCreatedAt != completed.EventCreatedAt {
+		t.Fatalf("reset event should preserve event_created_at, got %s want %s", fresh.EventCreatedAt, completed.EventCreatedAt)
+	}
 	if len(fresh.EventResults) != 0 || fresh.EventPendingBusCount != 0 || fresh.Bus != nil {
 		t.Fatalf("reset event should clear runtime state: %#v", fresh)
 	}

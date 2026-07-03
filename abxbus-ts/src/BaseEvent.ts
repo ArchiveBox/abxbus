@@ -1617,7 +1617,6 @@ export class BaseEvent {
       original.event_status = 'pending'
     }
     if (timestamps) {
-      original.event_created_at = monotonicDatetime()
       original.event_started_at = null
       original.event_completed_at = null
     }
