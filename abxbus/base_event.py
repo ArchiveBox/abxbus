@@ -896,7 +896,10 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
     def model_post_init(self, __context: Any) -> None:
         for field_name in ('event_ttl', 'event_result_ttl'):
-            if getattr(self, field_name) is not None:
+            value = getattr(self, field_name)
+            if value is not None:
+                if value < -1:
+                    raise ValueError(f'{field_name} must be >= -1 or None')
                 continue
             field_info = self.__class__.model_fields.get(field_name)
             class_default = getattr(field_info, 'default', None) if field_info is not None else None
