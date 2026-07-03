@@ -2178,8 +2178,12 @@ impl EventBus {
             }
             // Indexed events cover normal TTL shortening; this scan catches
             // completed events whose own TTL fields changed from unset/-1 after
-            // completion, before any deadline entry existed.
-            for event in self.runtime.events.lock().values() {
+            // completion, before any deadline entry existed. Clone the history
+            // entries first so the bus history lock is never held while taking
+            // event locks; completion paths take those locks in the other order.
+            let history_events: Vec<Arc<BaseEvent>> =
+                self.runtime.events.lock().values().cloned().collect();
+            for event in history_events {
                 let inner = event.inner.lock();
                 if events_by_id.contains_key(&inner.event_id)
                     || inner.event_status != EventStatus::Completed
@@ -2311,11 +2315,9 @@ impl EventBus {
             let Some(oldest) = self.runtime.history_order.lock().front().cloned() else {
                 break;
             };
-            let is_active = self
-                .runtime
-                .events
-                .lock()
-                .get(&oldest)
+            let candidate = self.runtime.events.lock().get(&oldest).cloned();
+            let is_active = candidate
+                .as_ref()
                 .map(|event| {
                     let status = event.inner.lock().event_status;
                     status == EventStatus::Pending || status == EventStatus::Started
