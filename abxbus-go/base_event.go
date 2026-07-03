@@ -882,6 +882,12 @@ func (e *BaseEvent) raiseResultErrorsIfNeeded(options *resolvedEventResultOption
 	for _, result := range e.sortedEventResults() {
 		if result.Status == EventResultError {
 			handlerErrs = append(handlerErrs, errors.New(toErrorString(result.Error)))
+			continue
+		}
+		if result.Status == EventResultCompleted {
+			if err := e.validateResultValue(result.Result); err != nil {
+				handlerErrs = append(handlerErrs, err)
+			}
 		}
 	}
 	if len(handlerErrs) > 0 {
