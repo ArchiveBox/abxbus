@@ -1962,7 +1962,7 @@ impl EventBus {
 
     fn register_in_history(&self, event: Arc<BaseEvent>) -> bool {
         let event_id = event.inner.lock().event_id.clone();
-        self.trim_event_history(true);
+        self.trim_event_history(false);
 
         if self.runtime.events.lock().contains_key(&event_id) {
             self.runtime
@@ -2012,6 +2012,7 @@ impl EventBus {
             .lock()
             .insert(event_id.clone(), event.clone());
         self.runtime.history_order.lock().push_back(event_id);
+        self.trim_event_history(true);
         true
     }
 
