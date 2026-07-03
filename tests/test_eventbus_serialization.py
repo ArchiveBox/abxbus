@@ -189,7 +189,7 @@ def test_eventbus_validate_rejects_restored_ttls_below_minus_one() -> None:
             }
         },
     }
-    with pytest.raises(ValidationError, match='event_ttl'):
+    with pytest.raises((AssertionError, ValidationError, ValueError), match='event_ttl'):
         EventBus.validate(invalid_event)
 
     invalid_result = {
@@ -206,7 +206,7 @@ def test_eventbus_validate_rejects_restored_ttls_below_minus_one() -> None:
             }
         },
     }
-    with pytest.raises(ValidationError, match='handler_result_ttl'):
+    with pytest.raises((AssertionError, ValidationError, ValueError), match='handler_result_ttl'):
         EventBus.validate(invalid_result)
 
 

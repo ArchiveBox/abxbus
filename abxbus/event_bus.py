@@ -689,6 +689,9 @@ class EventBus:
                 raise TypeError('EventBus.validate() expects event_results to be an id-keyed object')
             if 'event_id' not in event_payload or not isinstance(event_payload.get('event_id'), str):
                 event_payload['event_id'] = event_id_hint
+            for field_name in ('event_ttl', 'event_result_ttl'):
+                if event_payload.get(field_name) is not None:
+                    cls._validate_optional_seconds(event_payload.get(field_name), field_name)
             try:
                 event = BaseEvent[Any].model_validate(event_payload)
             except Exception:
@@ -703,6 +706,8 @@ class EventBus:
                     continue
                 item = dict(result_payload)
                 item.setdefault('handler_id', str(raw_handler_id))
+                if item.get('handler_result_ttl') is not None:
+                    cls._validate_optional_seconds(item.get('handler_result_ttl'), 'handler_result_ttl')
                 result_items.append(item)
 
             for result_payload in result_items:
