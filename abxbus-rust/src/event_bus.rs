@@ -1694,6 +1694,12 @@ impl EventBus {
             });
         }
 
+        if has_terminal_marker {
+            self.notify_find_waiters(event.clone());
+            self.complete_skipped_handler_execution(&event);
+            return event;
+        }
+
         {
             let mut queue = self.runtime.queue.lock();
             if queue_jump {
@@ -1922,11 +1928,7 @@ impl EventBus {
                 false
             }
         };
-        if completion_marked {
-            if removed {
-                self.runtime.active_event_ids.lock().remove(&event_id);
-            }
-            self.complete_skipped_handler_execution(&event);
+        if completion_marked && !removed {
             return;
         }
         if !removed && !bypass_event_lock {
@@ -2674,10 +2676,6 @@ impl EventBus {
     }
 
     async fn process_event(&self, event: Arc<BaseEvent>) {
-        if self.should_skip_handler_execution_on_bus(&event) {
-            self.complete_skipped_handler_execution(&event);
-            return;
-        }
         if self.has_completed_on_bus(&event) {
             return;
         }
@@ -2698,11 +2696,6 @@ impl EventBus {
                         return;
                     }
                 }
-                if self.should_skip_handler_execution_on_bus(&event) {
-                    self.runtime.processing_event_ids.lock().remove(&event_id);
-                    self.complete_skipped_handler_execution(&event);
-                    return;
-                }
                 self.process_event_inner(event).await;
             }
             EventConcurrencyMode::BusSerial => {
@@ -2712,11 +2705,6 @@ impl EventBus {
                     if !processing.insert(event_id.clone()) {
                         return;
                     }
-                }
-                if self.should_skip_handler_execution_on_bus(&event) {
-                    self.runtime.processing_event_ids.lock().remove(&event_id);
-                    self.complete_skipped_handler_execution(&event);
-                    return;
                 }
                 self.process_event_inner(event).await;
             }
