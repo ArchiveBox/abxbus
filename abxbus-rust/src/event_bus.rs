@@ -2122,14 +2122,27 @@ impl EventBus {
     }
 
     fn track_completed_event_ttl_deadlines_across_buses(&self, event: &Arc<BaseEvent>) {
-        let (event_id, is_completed) = {
+        let (event_id, is_completed, event_path_len) = {
             let inner = event.inner.lock();
             (
                 inner.event_id.clone(),
                 inner.event_status == EventStatus::Completed,
+                inner.event_path.len(),
             )
         };
         if !is_completed {
+            return;
+        }
+        if event_path_len <= 1 {
+            if self
+                .runtime
+                .events
+                .lock()
+                .get(&event_id)
+                .is_some_and(|candidate| Arc::ptr_eq(candidate, event))
+            {
+                self.track_event_ttl_deadline(event);
+            }
             return;
         }
         for bus in Self::live_instances() {
