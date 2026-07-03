@@ -576,6 +576,10 @@ export class EventBus {
     this._trimEventHistory(false)
   }
 
+  private _shouldSkipHandlerExecutionOnBus(event: BaseEvent): boolean {
+    return event._shouldSkipHandlerExecution() && event.event_path.length === 1 && event.event_path[0] === this.label
+  }
+
   toJSON(): EventBusJSON {
     const handlers: Record<string, EventHandlerJSON> = {}
     for (const [handler_id, handler] of this.handlers.entries()) {
@@ -1182,7 +1186,7 @@ export class EventBus {
         this._markEventCompletedIfNeeded(event)
         return
       }
-      if (event._shouldSkipHandlerExecution()) {
+      if (this._shouldSkipHandlerExecutionOnBus(event)) {
         this._markEventCompletedIfNeeded(event)
         return
       }

@@ -1496,10 +1496,6 @@ fn test_multi_bus_timeout_is_recorded_on_target_bus() {
     let bus_a = EventBus::new(Some("MultiTimeoutA".to_string()));
     let bus_b = EventBus::new(Some("MultiTimeoutB".to_string()));
 
-    bus_a.on_raw("timeout", "source_slow_handler", |_event| async move {
-        thread::sleep(Duration::from_millis(50));
-        Ok(json!("source"))
-    });
     bus_b.on_raw("timeout", "slow_target_handler", |_event| async move {
         thread::sleep(Duration::from_millis(50));
         Ok(json!("slow"))

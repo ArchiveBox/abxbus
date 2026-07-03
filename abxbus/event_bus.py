@@ -836,6 +836,9 @@ class EventBus:
     def is_event_processing(self, event_id: str) -> bool:
         return event_id in self.processing_event_ids
 
+    def _should_skip_handler_execution_on_bus(self, event: BaseEvent[Any]) -> bool:
+        return event._should_skip_handler_execution() and event.event_path == [self.label]  # pyright: ignore[reportPrivateUsage]
+
     def _resolve_find_waiters(self, event: BaseEvent[Any]) -> None:
         if not self.find_waiters:
             return
@@ -2062,7 +2065,7 @@ class EventBus:
         try:
             async with self.locks._run_with_event_lock(self, event):  # pyright: ignore[reportPrivateUsage]
                 # Process the event
-                if event._should_skip_handler_execution():  # pyright: ignore[reportPrivateUsage]
+                if self._should_skip_handler_execution_on_bus(event):
                     self._decrement_pending_bus_count(event)
                 else:
                     await self._process_event(event, timeout=timeout)

@@ -132,7 +132,7 @@ test('test_completed_forwarded_event_with_pruned_target_results_remains_terminal
   }
 })
 
-test('test_completed_event_first_emitted_to_new_bus_skips_target_handlers', async () => {
+test('test_completed_event_first_emitted_to_new_bus_runs_target_handlers', async () => {
   const bus_a = new EventBus('CompletedReplaySource')
   const bus_b = new EventBus('CompletedReplayTarget')
   const seen_a: string[] = []
@@ -158,7 +158,7 @@ test('test_completed_event_first_emitted_to_new_bus_skips_target_handlers', asyn
     bus_b.emit(event)
     await Promise.all([bus_a.waitUntilIdle(), bus_b.waitUntilIdle()])
 
-    assert.deepEqual(seen_b, [])
+    assert.deepEqual(seen_b, [event.event_id])
     assert.equal(event.event_status, 'completed')
     assert.ok(event.event_completed_at)
     assert.deepEqual(event.event_path, [bus_a.label, bus_b.label])

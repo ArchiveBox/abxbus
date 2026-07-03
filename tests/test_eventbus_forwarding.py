@@ -163,7 +163,7 @@ async def test_completed_forwarded_event_with_pruned_target_results_remains_term
 
 
 @pytest.mark.asyncio
-async def test_completed_event_first_emitted_to_new_bus_skips_target_handlers():
+async def test_completed_event_first_emitted_to_new_bus_runs_target_handlers():
     bus_a = EventBus(name='CompletedReplaySource')
     bus_b = EventBus(name='CompletedReplayTarget')
     seen_a: list[str] = []
@@ -186,7 +186,7 @@ async def test_completed_event_first_emitted_to_new_bus_skips_target_handlers():
         await event.now()
         await _wait_all_idle([bus_a, bus_b])
 
-        assert seen_b == []
+        assert seen_b == [event.event_id]
         assert event.event_status == 'completed'
         assert event.event_completed_at is not None
         assert event.event_path == [bus_a.label, bus_b.label]

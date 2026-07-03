@@ -253,7 +253,7 @@ fn test_completed_forwarded_event_with_pruned_target_results_remains_terminal() 
 }
 
 #[test]
-fn test_completed_event_first_emitted_to_new_bus_skips_target_handlers() {
+fn test_completed_event_first_emitted_to_new_bus_runs_target_handlers() {
     let bus_a = EventBus::new(Some("CompletedReplaySource".to_string()));
     let bus_b = EventBus::new(Some("CompletedReplayTarget".to_string()));
 
@@ -305,7 +305,10 @@ fn test_completed_event_first_emitted_to_new_bus_skips_target_handlers() {
     block_on(bus_a.wait_until_idle(None));
     block_on(bus_b.wait_until_idle(None));
 
-    assert!(seen_b.lock().expect("seen_b lock").is_empty());
+    assert_eq!(
+        seen_b.lock().expect("seen_b lock").as_slice(),
+        std::slice::from_ref(&event_id)
+    );
     {
         let inner = original_event.inner.lock();
         assert_eq!(inner.event_status, EventStatus::Completed);
