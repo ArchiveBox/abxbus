@@ -211,6 +211,7 @@ export class EventBus {
   middlewares: EventBusMiddleware[]
   private ttl_deadline_queue: Array<[number, string]>
   private ttl_deadlines_by_event_id: Map<string, number>
+  private ttl_backfill_policy_signature: string
   private destroyed: boolean
 
   private static normalizeMiddlewares(middlewares?: EventBusMiddlewareInput[]): EventBusMiddleware[] {
@@ -258,6 +259,7 @@ export class EventBus {
     this.middlewares = EventBus.normalizeMiddlewares(options.middlewares)
     this.ttl_deadline_queue = []
     this.ttl_deadlines_by_event_id = new Map()
+    this.ttl_backfill_policy_signature = this._ttlBackfillPolicySignature()
     this.destroyed = false
 
     this.all_instances.add(this)
@@ -525,33 +527,43 @@ export class EventBus {
     }
   }
 
-  private _retrackCompletedHistoryTTLDeadlines(): void {
-    let events: BaseEvent[]
-    if (this._hasActiveTTLBackfillPolicy()) {
-      events = Array.from(this.event_history.values())
-    } else {
-      const events_by_id = new Map<string, BaseEvent>()
-      for (const event_id of this.ttl_deadlines_by_event_id.keys()) {
-        const event = this.event_history.get(event_id)
-        if (event) {
-          events_by_id.set(event_id, event)
-        }
+  _trackRuntimeTTLChange(event: BaseEvent): void {
+    this._trackCompletedEventTTLDeadlinesAcrossBuses(event)
+  }
+
+  private _ttlBackfillPolicySignature(): string {
+    const handler_ttls = Array.from(this.handlers.values(), (handler) => `${handler.id}:${handler.handler_result_ttl ?? ''}`).join('|')
+    return `${this.event_ttl ?? ''}|${this.event_result_ttl ?? ''}|${handler_ttls}`
+  }
+
+  private _ttlBackfillPolicyChanged(): boolean {
+    const signature = this._ttlBackfillPolicySignature()
+    if (signature === this.ttl_backfill_policy_signature) {
+      return false
+    }
+    this.ttl_backfill_policy_signature = signature
+    return true
+  }
+
+  private _retrackCompletedHistoryTTLDeadlines(include_policy_backfill: boolean): void {
+    const events_by_id = new Map<string, BaseEvent>()
+    for (const event_id of this.ttl_deadlines_by_event_id.keys()) {
+      const event = this.event_history.get(event_id)
+      if (event) {
+        events_by_id.set(event_id, event)
       }
-      // Indexed events cover normal TTL shortening; this scan catches
-      // completed events whose own TTL fields changed from unset/-1 after
-      // completion, before any deadline entry existed.
+    }
+    if (include_policy_backfill && this._hasActiveTTLBackfillPolicy()) {
+      // Runtime bus/handler TTL policy changes can make old completed events
+      // newly eligible before any deadline existed. Do this only when that
+      // policy changes; direct event-level TTL edits retrack the one changed event.
       for (const event of this.event_history.values()) {
-        if (events_by_id.has(event.event_id) || event.event_status !== 'completed') {
-          continue
-        }
-        const has_event_ttl_override = event.event_ttl != null && event.event_ttl >= 0
-        const has_result_ttl_override = event.event_result_ttl != null && event.event_result_ttl >= 0
-        if (has_event_ttl_override || has_result_ttl_override) {
+        if (event.event_status === 'completed') {
           events_by_id.set(event.event_id, event)
         }
       }
-      events = Array.from(events_by_id.values())
     }
+    const events = Array.from(events_by_id.values())
     for (const event of events) {
       if (event.event_status === 'completed') {
         this._trackEventTTLDeadline(event)
@@ -592,10 +604,11 @@ export class EventBus {
       return
     }
 
-    // TTL cleanup is tied to normal bus cleanup points rather than a timer,
-    // but it must only remove due candidates. Retracking first keeps runtime
-    // TTL edits observable without storing serialized TTL state on the event.
-    this._retrackCompletedHistoryTTLDeadlines()
+    // TTL cleanup is tied to normal bus cleanup points rather than a timer.
+    // Normal emits refresh indexed deadlines only. A full history backfill is
+    // reserved for bus/handler TTL policy changes, because direct event-level
+    // TTL edits retrack their own completed event through BaseEvent accessors.
+    this._retrackCompletedHistoryTTLDeadlines(this._ttlBackfillPolicyChanged())
     const now = Date.now()
     while (this.ttl_deadline_queue.length > 0 && this.ttl_deadline_queue[0]![0] <= now) {
       const [expires_at, event_id] = this.ttl_deadline_queue.shift()!

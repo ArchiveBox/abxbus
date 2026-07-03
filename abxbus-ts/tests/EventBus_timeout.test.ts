@@ -1070,66 +1070,11 @@ test('event_timeout null uses bus default timeout at execution', async () => {
   assert.ok(result.error instanceof EventHandlerAbortedError)
 })
 
-test('event_timeout -1 disables timeout like legacy zero', async () => {
-  const bus = new EventBus('TimeoutMinusOneDisabledBus', { event_timeout: 0.01 })
-
-  bus.on(TimeoutEvent, async () => {
-    await delay(20)
-    return 'ok'
-  })
-
-  const event = bus.emit(TimeoutEvent({ event_timeout: -1 }))
-  await event.now()
-
-  const result = Array.from(event.event_results.values())[0]
-  assert.equal(result.status, 'completed')
-  assert.equal(result.result, 'ok')
-})
-
-test('event_handler_timeout -1 disables handler timeout like legacy zero', async () => {
-  const bus = new EventBus('HandlerTimeoutMinusOneDisabledBus', { event_handler_concurrency: 'serial' })
-
-  bus.on(TimeoutEvent, async () => {
-    await delay(20)
-    return 'ok'
-  })
-
-  const event = bus.emit(TimeoutEvent({ event_timeout: 0.1, event_handler_timeout: -1 }))
-  await event.now()
-
-  const result = Array.from(event.event_results.values())[0]
-  assert.equal(result.status, 'completed')
-  assert.equal(result.result, 'ok')
-})
-
-test('slow timeout -1 disables slow warnings like legacy zero', async () => {
-  const bus = new EventBus('SlowTimeoutMinusOneDisabledBus', {
-    event_slow_timeout: 0.01,
-    event_handler_slow_timeout: 0.01,
-  })
-  const warnings: string[] = []
-  const original_warn = console.warn
-  console.warn = (message?: unknown, ...args: unknown[]) => {
-    warnings.push(String(message))
-    if (args.length > 0) {
-      warnings.push(args.map(String).join(' '))
-    }
-  }
-
-  try {
-    bus.on(TimeoutEvent, async () => {
-      await delay(25)
-      return 'ok'
-    })
-
-    const event = bus.emit(TimeoutEvent({ event_timeout: 0.1, event_slow_timeout: -1, event_handler_slow_timeout: -1 }))
-    await event.now()
-  } finally {
-    console.warn = original_warn
-  }
-
-  assert.ok(!warnings.some((message) => message.toLowerCase().includes('slow event processing')))
-  assert.ok(!warnings.some((message) => message.toLowerCase().includes('slow event handler')))
+test('execution timeout fields reject negative values because zero is the disable sentinel', () => {
+  assert.throws(() => TimeoutEvent({ event_timeout: -1 }), /event_timeout/)
+  assert.throws(() => TimeoutEvent({ event_handler_timeout: -1 }), /event_handler_timeout/)
+  assert.throws(() => TimeoutEvent({ event_slow_timeout: -1 }), /event_slow_timeout/)
+  assert.throws(() => TimeoutEvent({ event_handler_slow_timeout: -1 }), /event_handler_slow_timeout/)
 })
 
 test('event_ttl zero deletes completed events on the next natural trim pass regardless of max_history_size', async () => {

@@ -88,8 +88,8 @@ export const EventHandlerJSONSchema = z
     event_pattern: z.union([z.string(), z.literal('*')]),
     handler_name: z.string(),
     handler_file_path: z.string().nullable().optional(),
-    handler_timeout: z.number().gte(-1).nullable().optional(),
-    handler_slow_timeout: z.number().gte(-1).nullable().optional(),
+    handler_timeout: z.number().nonnegative().nullable().optional(),
+    handler_slow_timeout: z.number().nonnegative().nullable().optional(),
     handler_result_ttl: z.number().gte(-1).nullable().optional(),
     handler_registered_at: z.string().datetime(),
   })

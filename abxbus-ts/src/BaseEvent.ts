@@ -93,10 +93,10 @@ export const BaseEventSchema = z
     event_created_at: z.string().datetime(),
     event_type: z.string(),
     event_version: z.string().default('0.0.1'),
-    event_timeout: z.number().gte(-1).nullable(),
-    event_slow_timeout: z.number().gte(-1).nullable().optional(),
-    event_handler_timeout: z.number().gte(-1).nullable().optional(),
-    event_handler_slow_timeout: z.number().gte(-1).nullable().optional(),
+    event_timeout: z.number().nonnegative().nullable(),
+    event_slow_timeout: z.number().nonnegative().nullable().optional(),
+    event_handler_timeout: z.number().nonnegative().nullable().optional(),
+    event_handler_slow_timeout: z.number().nonnegative().nullable().optional(),
     event_ttl: z.number().gte(-1).nullable().optional(),
     event_result_ttl: z.number().gte(-1).nullable().optional(),
     event_blocks_parent_completion: z.boolean().optional(),
@@ -348,10 +348,10 @@ function baseEventDefaultShape(event_type: string): z.ZodRawShape {
     event_created_at: z.string().datetime(),
     event_type: z.string().default(event_type),
     event_version: z.string().default('0.0.1'),
-    event_timeout: z.number().gte(-1).nullable().default(null),
-    event_slow_timeout: z.number().gte(-1).nullable().optional(),
-    event_handler_timeout: z.number().gte(-1).nullable().optional(),
-    event_handler_slow_timeout: z.number().gte(-1).nullable().optional(),
+    event_timeout: z.number().nonnegative().nullable().default(null),
+    event_slow_timeout: z.number().nonnegative().nullable().optional(),
+    event_handler_timeout: z.number().nonnegative().nullable().optional(),
+    event_handler_slow_timeout: z.number().nonnegative().nullable().optional(),
     event_ttl: z.number().gte(-1).nullable().optional(),
     event_result_ttl: z.number().gte(-1).nullable().optional(),
     event_blocks_parent_completion: z.boolean().default(false),
@@ -592,8 +592,6 @@ export class BaseEvent {
   event_slow_timeout?: number | null // optional per-event slow warning threshold in seconds
   event_handler_timeout?: number | null // optional per-event handler timeout override in seconds
   event_handler_slow_timeout?: number | null // optional per-event slow handler warning threshold in seconds
-  event_ttl?: number | null // optional seconds to keep this event in each bus history after completion
-  event_result_ttl?: number | null // optional seconds to keep this event's handler results after completion
   event_blocks_parent_completion!: boolean // true only for children explicitly awaited via now()
   event_parent_id!: string | null // id of the parent event that triggered this event, if this event was emitted during handling of another event, else null
   event_path!: string[] // list of bus labels (name#id) that the event has been dispatched to, including the current bus
@@ -609,6 +607,8 @@ export class BaseEvent {
   event_handler_completion?: EventHandlerCompletionMode | null // completion strategy: 'all' (default) waits for every handler, 'first' returns earliest non-undefined result and cancels the rest
   event_schema?: z.ZodTypeAny
   _event_parse_schema?: z.ZodTypeAny
+  private _event_ttl_value?: number | null
+  private _event_result_ttl_value?: number | null
 
   static event_type?: string // class name of the event, e.g. BaseEvent.extend("MyEvent").event_type === "MyEvent"
   static event_version = '0.0.1'
@@ -722,6 +722,32 @@ export class BaseEvent {
   // "MyEvent#a48f"
   toString(): string {
     return `${this.event_type}#${this.event_id.slice(-4)}`
+  }
+
+  get event_ttl(): number | null | undefined {
+    return this._event_ttl_value
+  }
+
+  set event_ttl(value: number | null | undefined) {
+    this._event_ttl_value = value
+    this._trackRuntimeTTLChange()
+  }
+
+  get event_result_ttl(): number | null | undefined {
+    return this._event_result_ttl_value
+  }
+
+  set event_result_ttl(value: number | null | undefined) {
+    this._event_result_ttl_value = value
+    this._trackRuntimeTTLChange()
+  }
+
+  private _trackRuntimeTTLChange(): void {
+    const original = this._event_original ?? this
+    if (original.event_status !== 'completed' || !original.event_bus) {
+      return
+    }
+    original.event_bus._trackRuntimeTTLChange(original)
   }
 
   // main entry point for users to define their own event types
