@@ -394,6 +394,22 @@ test('BaseEvent toJSON uses shared JSON Schema fallback for transform event_resu
   assert.deepEqual(result_schema.required, ['count'])
 })
 
+test('BaseEvent toJSONArray uses shared JSON Schema fallback for transform event_result_type fields', () => {
+  const TransformResultEvent = BaseEvent.extend('BaseEventArrayTransformResultSchemaSerializationEvent', {
+    event_result_type: z.object({
+      count: z.string().transform(Number),
+    }),
+  })
+  const event = TransformResultEvent({})
+
+  const [json] = BaseEvent.toJSONArray([event]) as Record<string, unknown>[]
+  const result_schema = json.event_result_type as Record<string, unknown>
+  const properties = result_schema.properties as Record<string, unknown>
+
+  assert.equal((properties.count as Record<string, unknown>).type, 'string')
+  assert.deepEqual(result_schema.required, ['count'])
+})
+
 test('toJsonSchema falls back to Zod input JSON Schema for unidirectional transforms', () => {
   const schema = toJsonSchema(z.object({ count: z.string().transform(Number) })) as Record<string, unknown>
   const properties = schema.properties as Record<string, unknown>
