@@ -1399,11 +1399,36 @@ test('handler_result_ttl null inherits event result ttl before bus result ttl', 
   assert.equal(event.event_results.size, 0)
 })
 
-test('event_ttl and event_result_ttl reject values below -1', () => {
-  assert.throws(() => ttlBus('BadEventTTLBus', { event_ttl: -2 }), /event_ttl/)
-  assert.throws(() => ttlBus('BadEventResultTTLBus', { event_result_ttl: -2 }), /event_result_ttl/)
-  assert.throws(() => ttlProbe({ event_ttl: -2 }), /event_ttl/)
-  assert.throws(() => ttlProbe({ event_result_ttl: -2 }), /event_result_ttl/)
+test('event_ttl and event_result_ttl reject invalid ttl values', () => {
+  for (const invalid_ttl of [-2, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(() => ttlBus('BadEventTTLBus', { event_ttl: invalid_ttl }), /event_ttl/)
+    assert.throws(() => ttlBus('BadEventResultTTLBus', { event_result_ttl: invalid_ttl }), /event_result_ttl/)
+    assert.throws(() => ttlProbe({ event_ttl: invalid_ttl }), /event_ttl/)
+    assert.throws(() => ttlProbe({ event_result_ttl: invalid_ttl }), /event_result_ttl/)
+
+    const event = ttlProbe()
+    assert.throws(() => {
+      event.event_ttl = invalid_ttl
+    }, /event_ttl/)
+    assert.throws(() => {
+      event.event_result_ttl = invalid_ttl
+    }, /event_result_ttl/)
+  }
+})
+
+test('handler_result_ttl rejects invalid ttl values during registration and runtime edits', () => {
+  const bus = ttlBus('BadHandlerResultTTLBus', { max_history_size: null })
+
+  for (const invalid_ttl of [-2, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const handler_options = { handler_result_ttl: invalid_ttl } as unknown as Parameters<EventBus['on']>[2]
+    assert.throws(() => bus.on(TTLProbeEvent, async () => 'result', handler_options), /handler_result_ttl/)
+
+    const handler = bus.on(TTLProbeEvent, async () => 'result')
+    assert.throws(() => {
+      handler.handler_result_ttl = invalid_ttl
+    }, /handler_result_ttl/)
+    bus.off(TTLProbeEvent, handler)
+  }
 })
 
 test('event_ttl and event_result_ttl reject class defaults below -1', () => {

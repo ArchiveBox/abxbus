@@ -80,8 +80,11 @@ function compareIsoDatetime(left: string | null | undefined, right: string | nul
   return left_value < right_value ? -1 : 1
 }
 
-function validateOptionalSecondsAtLeastMinusOne(field_name: string, value: number): number {
-  if (!Number.isFinite(value) || value < -1) {
+export function validateOptionalSecondsAtLeastMinusOne(field_name: string, value: number | null | undefined): number | null | undefined {
+  if (value === null || value === undefined) {
+    return value
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < -1) {
     throw new Error(`${field_name} must be >= -1 or null, got: ${value}`)
   }
   return value
@@ -729,7 +732,7 @@ export class BaseEvent {
   }
 
   set event_ttl(value: number | null | undefined) {
-    this._event_ttl_value = value
+    this._event_ttl_value = validateOptionalSecondsAtLeastMinusOne('event_ttl', value)
     this._trackRuntimeTTLChange()
   }
 
@@ -738,7 +741,7 @@ export class BaseEvent {
   }
 
   set event_result_ttl(value: number | null | undefined) {
-    this._event_result_ttl_value = value
+    this._event_result_ttl_value = validateOptionalSecondsAtLeastMinusOne('event_result_ttl', value)
     this._trackRuntimeTTLChange()
   }
 

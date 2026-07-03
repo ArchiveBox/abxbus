@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { v5 as uuidv5 } from 'uuid'
 
 import { normalizeEventPattern, type EventHandlerCallable, type EventPattern } from './types.js'
-import { BaseEvent } from './BaseEvent.js'
+import { BaseEvent, validateOptionalSecondsAtLeastMinusOne } from './BaseEvent.js'
 import type { EventResult } from './EventResult.js'
 import { monotonicDatetime } from './helpers.js'
 
@@ -105,7 +105,7 @@ export class EventHandler {
   handler_file_path: string | null // ~/path/to/source/file.ts:123, or null when unknown
   handler_timeout?: number | null // maximum time in seconds that the handler is allowed to run before it is aborted, resolved at runtime if not set
   handler_slow_timeout?: number | null // warning threshold in seconds for slow handler execution
-  handler_result_ttl?: number | null // seconds to keep this handler's result after the parent event completes
+  private _handler_result_ttl_value?: number | null
   handler_registered_at: string // ISO datetime used in the deterministic handler-id seed
   event_pattern: string | '*' // event_type string to match against, or '*' to match all events
   eventbus_name: string // name of the event bus that the handler is registered on
@@ -144,6 +144,14 @@ export class EventHandler {
     this.event_pattern = params.event_pattern
     this.eventbus_name = params.eventbus_name
     this.eventbus_id = params.eventbus_id
+  }
+
+  get handler_result_ttl(): number | null | undefined {
+    return this._handler_result_ttl_value
+  }
+
+  set handler_result_ttl(value: number | null | undefined) {
+    this._handler_result_ttl_value = validateOptionalSecondsAtLeastMinusOne('handler_result_ttl', value)
   }
 
   get _handler_async(): EventHandlerCallable {

@@ -1,4 +1,4 @@
-import { BaseEvent, type BaseEventJSON } from './BaseEvent.js'
+import { BaseEvent, validateOptionalSecondsAtLeastMinusOne, type BaseEventJSON } from './BaseEvent.js'
 import { EventHistory } from './EventHistory.js'
 import { EventResult } from './EventResult.js'
 import { captureAsyncContext } from './async_context.js'
@@ -403,13 +403,7 @@ export class EventBus {
   }
 
   private static _validateOptionalSeconds(value: number | null | undefined, name: string): number | null {
-    if (value === undefined || value === null) {
-      return null
-    }
-    if (typeof value !== 'number' || !Number.isFinite(value) || value < -1) {
-      throw new Error(`${name} must be >= -1, null, or undefined`)
-    }
-    return value
+    return validateOptionalSecondsAtLeastMinusOne(name, value) ?? null
   }
 
   private _eventRetainedByAnyBus(event: BaseEvent): boolean {
