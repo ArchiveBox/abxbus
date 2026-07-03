@@ -119,8 +119,8 @@ func TestDispatchingCompletedStatusEventSkipsHandlersAndNormalizesCompletion(t *
 	if event.EventCompletedAt == nil {
 		t.Fatal("completed event should have event_completed_at")
 	}
-	if !containsString(event.EventPath, bus.Label()) {
-		t.Fatalf("event_path should include handling bus %s, got %#v", bus.Label(), event.EventPath)
+	if !reflect.DeepEqual(event.EventPath, []string{bus.Label()}) {
+		t.Fatalf("event_path should contain only handling bus %s, got %#v", bus.Label(), event.EventPath)
 	}
 	if event.EventResults[handler.ID] != pendingResult {
 		t.Fatal("pending event_result should be preserved")
@@ -171,14 +171,70 @@ func TestDispatchingCompletedAtEventSkipsHandlersAndPreservesTimestamp(t *testin
 	if event.EventCompletedAt == nil || *event.EventCompletedAt != providedCompletedAt {
 		t.Fatalf("event_completed_at should be preserved, got %#v", event.EventCompletedAt)
 	}
-	if !containsString(event.EventPath, bus.Label()) {
-		t.Fatalf("event_path should include handling bus %s, got %#v", bus.Label(), event.EventPath)
+	if !reflect.DeepEqual(event.EventPath, []string{bus.Label()}) {
+		t.Fatalf("event_path should contain only handling bus %s, got %#v", bus.Label(), event.EventPath)
 	}
 	if event.EventResults[handler.ID] != pendingResult {
 		t.Fatal("pending event_result should be preserved")
 	}
 	if pendingResult.Status != abxbus.EventResultPending || pendingResult.CompletedAt != nil || pendingResult.Result != nil {
 		t.Fatalf("pending event_result should be unchanged, got %#v", pendingResult)
+	}
+}
+
+func TestDispatchingCompletedEventsWithPriorPathsRecordsBusOnceAndSkipsHandlers(t *testing.T) {
+	bus := abxbus.NewEventBus("AlreadyCompletedPriorPathBus", nil)
+	otherBusLabel := "PriorCompletedBus#1234"
+	calls := 0
+	bus.On("AlreadyCompletedPriorPathEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		calls++
+		return "ran", nil
+	}, nil)
+
+	priorOtherBusEvent := abxbus.NewBaseEvent("AlreadyCompletedPriorPathEvent", map[string]any{"label": "prior-other-bus"})
+	priorOtherBusEvent.EventPath = []string{otherBusLabel}
+	priorOtherBusEvent.EventStatus = "completed"
+
+	bus.Dispatch(priorOtherBusEvent)
+	wait := 1.0
+	if !bus.WaitUntilIdle(&wait) {
+		t.Fatal("bus did not become idle after prior-other-bus dispatch")
+	}
+
+	if calls != 0 {
+		t.Fatalf("handler should not run for prior-other-bus completed event, got %d calls", calls)
+	}
+	if priorOtherBusEvent.EventStatus != "completed" || priorOtherBusEvent.EventStartedAt == nil || priorOtherBusEvent.EventCompletedAt == nil {
+		t.Fatalf("prior-other-bus event should be normalized to completed, got %#v", priorOtherBusEvent)
+	}
+	if !reflect.DeepEqual(priorOtherBusEvent.EventPath, []string{otherBusLabel, bus.Label()}) {
+		t.Fatalf("prior-other-bus event_path mismatch: %#v", priorOtherBusEvent.EventPath)
+	}
+
+	providedCompletedAt := "2025-01-02T03:04:05.000000000Z"
+	priorSameBusEvent := abxbus.NewBaseEvent("AlreadyCompletedPriorPathEvent", map[string]any{"label": "prior-same-bus"})
+	priorSameBusEvent.EventPath = []string{otherBusLabel, bus.Label()}
+	priorSameBusEvent.EventCompletedAt = &providedCompletedAt
+
+	bus.Dispatch(priorSameBusEvent)
+	if !bus.WaitUntilIdle(&wait) {
+		t.Fatal("bus did not become idle after prior-same-bus dispatch")
+	}
+
+	if calls != 0 {
+		t.Fatalf("handler should not run for prior-same-bus completed event, got %d calls", calls)
+	}
+	if priorSameBusEvent.EventStatus != "completed" {
+		t.Fatalf("expected prior-same-bus status completed, got %s", priorSameBusEvent.EventStatus)
+	}
+	if priorSameBusEvent.EventStartedAt == nil || *priorSameBusEvent.EventStartedAt != providedCompletedAt {
+		t.Fatalf("prior-same-bus event_started_at should use provided completed_at, got %#v", priorSameBusEvent.EventStartedAt)
+	}
+	if priorSameBusEvent.EventCompletedAt == nil || *priorSameBusEvent.EventCompletedAt != providedCompletedAt {
+		t.Fatalf("prior-same-bus event_completed_at should be preserved, got %#v", priorSameBusEvent.EventCompletedAt)
+	}
+	if !reflect.DeepEqual(priorSameBusEvent.EventPath, []string{otherBusLabel, bus.Label()}) {
+		t.Fatalf("prior-same-bus event_path should not duplicate bus label, got %#v", priorSameBusEvent.EventPath)
 	}
 }
 

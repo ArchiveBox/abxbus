@@ -579,6 +579,7 @@ func (b *EventBus) EmitWithContext(ctx context.Context, input any) *BaseEvent {
 		return original_event
 	}
 	original_event.mu.Lock()
+	hasTerminalMarker := original_event.EventStatus == "completed" || original_event.EventCompletedAt != nil
 	if event.Bus == nil {
 		original_event.Bus = b
 	}
@@ -594,6 +595,15 @@ func (b *EventBus) EmitWithContext(ctx context.Context, input any) *BaseEvent {
 	for _, label := range original_event.EventPath {
 		if label == b.Label() {
 			original_event.mu.Unlock()
+			if hasTerminalMarker {
+				b.mu.Lock()
+				b.EventHistory.AddEvent(original_event)
+				b.resolveFindWaitersLocked(original_event)
+				b.mu.Unlock()
+				b.updateEventTTLDeadline(original_event)
+				completeSkippedHandlerExecution(original_event, 0)
+				b.trimEventHistory(true)
+			}
 			return original_event
 		}
 	}
@@ -607,6 +617,14 @@ func (b *EventBus) EmitWithContext(ctx context.Context, input any) *BaseEvent {
 	b.mu.Lock()
 	b.EventHistory.AddEvent(original_event)
 	b.resolveFindWaitersLocked(original_event)
+	if hasTerminalMarker {
+		b.mu.Unlock()
+		b.updateEventTTLDeadline(original_event)
+		b.trimEventHistory(true)
+		b.notifyEventChange(original_event, "pending")
+		completeSkippedHandlerExecution(original_event, 1)
+		return original_event
+	}
 	b.pendingEventQueue = append(b.pendingEventQueue, original_event)
 	b.mu.Unlock()
 	b.updateEventTTLDeadline(original_event)
@@ -971,10 +989,6 @@ func eventHasRunningResults(event *BaseEvent) bool {
 	return false
 }
 
-func (b *EventBus) shouldSkipHandlerExecution(event *BaseEvent) bool {
-	return event.shouldSkipHandlerExecution()
-}
-
 func completeEventAcrossBuses(event *BaseEvent) {
 	event.mu.Lock()
 	if event.EventPendingBusCount < 0 {
@@ -1047,15 +1061,28 @@ func settleSkippedActiveBuses(event *BaseEvent, skipped int) {
 	if skipped <= 0 || eventHasRunningResults(event) || eventQueuedOrInFlightAcrossBuses(event) {
 		return
 	}
+	completeSkippedHandlerExecution(event, skipped)
+}
+
+func completeSkippedHandlerExecution(event *BaseEvent, skipped int) {
 	event.mu.Lock()
-	event.EventPendingBusCount -= skipped
-	if event.EventPendingBusCount < 0 {
-		event.EventPendingBusCount = 0
+	if skipped > 0 {
+		event.EventPendingBusCount -= skipped
+		if event.EventPendingBusCount < 0 {
+			event.EventPendingBusCount = 0
+		}
 	}
 	eventDone := event.EventPendingBusCount == 0
 	event.mu.Unlock()
 	if eventDone {
 		completeEventAcrossBuses(event)
+		return
+	}
+	event.markCompleted()
+	for _, bus := range eventBusInstancesSnapshot() {
+		if bus.EventHistory.GetEvent(event.EventID) == event {
+			bus.updateEventTTLDeadline(event)
+		}
 	}
 }
 
@@ -1074,18 +1101,6 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 		b.mu.Unlock()
 		b.locks.notifyIdleListeners()
 	}()
-	if b.shouldSkipHandlerExecution(event) {
-		signalFirstHandlerStarted()
-		event.mu.Lock()
-		event.EventPendingBusCount--
-		if event.EventPendingBusCount < 0 {
-			event.EventPendingBusCount = 0
-		}
-		event.mu.Unlock()
-		completeEventAcrossBuses(event)
-		b.startRunloop()
-		return nil
-	}
 	if b.eventHasLocalActiveResults(event) {
 		signalFirstHandlerStarted()
 		_, err := event.waitWithContext(ctx)
@@ -1118,10 +1133,6 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 			return err
 		}
 		defer event_lock.Release()
-		if b.shouldSkipHandlerExecution(event) {
-			signalFirstHandlerStarted()
-			return nil
-		}
 		if b.eventHasLocalActiveResults(event) {
 			signalFirstHandlerStarted()
 			_, err := event.waitWithContext(ctx)
@@ -1490,14 +1501,12 @@ func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, hand
 
 func (b *EventBus) processEventImmediately(ctx context.Context, event *BaseEvent, handler_result *EventResult) (*BaseEvent, error) {
 	original_event := event
-	if original_event.status() == "completed" {
-		_, err := original_event.waitWithContext(ctx)
-		return original_event, err
-	}
 	b.mu.Lock()
+	removed := false
 	for i, queued := range b.pendingEventQueue {
 		if queued == original_event {
 			b.pendingEventQueue = append(b.pendingEventQueue[:i], b.pendingEventQueue[i+1:]...)
+			removed = true
 			break
 		}
 	}
@@ -1507,6 +1516,11 @@ func (b *EventBus) processEventImmediately(ctx context.Context, event *BaseEvent
 			return nil, err
 		}
 		return original_event, nil
+	}
+	if original_event.status() == "completed" && !removed {
+		b.mu.Unlock()
+		_, err := original_event.waitWithContext(ctx)
+		return original_event, err
 	}
 	b.inFlightEventIDs[original_event.EventID] = true
 	b.mu.Unlock()
@@ -1524,7 +1538,7 @@ func (b *EventBus) processEventImmediately(ctx context.Context, event *BaseEvent
 
 func (b *EventBus) processEventImmediatelyAcrossBuses(ctx context.Context, event *BaseEvent) (*BaseEvent, error) {
 	originalEvent := event
-	if originalEvent.status() == "completed" {
+	if originalEvent.status() == "completed" && !eventQueuedOrInFlightAcrossBuses(originalEvent) {
 		_, err := originalEvent.waitWithContext(ctx)
 		return originalEvent, err
 	}

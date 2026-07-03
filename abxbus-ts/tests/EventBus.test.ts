@@ -220,7 +220,7 @@ test('dispatching completed status event skips handlers and normalizes completio
   assert.equal(event.event_status, 'completed')
   assert.equal(typeof event.event_started_at, 'string')
   assert.equal(typeof event.event_completed_at, 'string')
-  assert.ok(event.event_path.includes(bus.label))
+  assert.deepEqual(event.event_path, [bus.label])
   assert.equal(event.event_results.get(handler_entry.id), pending_result)
   assert.equal(pending_result.status, 'pending')
   assert.equal(pending_result.completed_at, null)
@@ -255,11 +255,51 @@ test('dispatching completed_at event skips handlers and preserves timestamp', as
   assert.equal(event.event_status, 'completed')
   assert.equal(event.event_started_at, provided_completed_at)
   assert.equal(event.event_completed_at, provided_completed_at)
-  assert.ok(event.event_path.includes(bus.label))
+  assert.deepEqual(event.event_path, [bus.label])
   assert.equal(event.event_results.get(handler_entry.id), pending_result)
   assert.equal(pending_result.status, 'pending')
   assert.equal(pending_result.completed_at, null)
   assert.equal(pending_result.result, undefined)
+})
+
+test('dispatching completed events with prior paths records bus once and skips handlers', async () => {
+  const AlreadyCompletedPriorPathEvent = BaseEvent.extend('AlreadyCompletedPriorPathEvent', {
+    label: z.string(),
+  })
+  const bus = new EventBus('AlreadyCompletedPriorPathBus')
+  const other_bus_label = 'PriorCompletedBus#1234'
+  let calls = 0
+  bus.on(AlreadyCompletedPriorPathEvent, (event) => {
+    calls += 1
+    return `ran:${event.label}`
+  })
+
+  const prior_other_bus_event = AlreadyCompletedPriorPathEvent({ label: 'prior-other-bus' })
+  prior_other_bus_event.event_path = [other_bus_label]
+  prior_other_bus_event.event_status = 'completed'
+
+  bus.dispatch(prior_other_bus_event)
+  await bus.waitUntilIdle(1)
+
+  assert.equal(calls, 0)
+  assert.equal(prior_other_bus_event.event_status, 'completed')
+  assert.equal(typeof prior_other_bus_event.event_started_at, 'string')
+  assert.equal(typeof prior_other_bus_event.event_completed_at, 'string')
+  assert.deepEqual(prior_other_bus_event.event_path, [other_bus_label, bus.label])
+
+  const provided_completed_at = '2025-01-02T03:04:05.000Z'
+  const prior_same_bus_event = AlreadyCompletedPriorPathEvent({ label: 'prior-same-bus' })
+  prior_same_bus_event.event_path = [other_bus_label, bus.label]
+  prior_same_bus_event.event_completed_at = provided_completed_at
+
+  bus.dispatch(prior_same_bus_event)
+  await bus.waitUntilIdle(1)
+
+  assert.equal(calls, 0)
+  assert.equal(prior_same_bus_event.event_status, 'completed')
+  assert.equal(prior_same_bus_event.event_started_at, provided_completed_at)
+  assert.equal(prior_same_bus_event.event_completed_at, provided_completed_at)
+  assert.deepEqual(prior_same_bus_event.event_path, [other_bus_label, bus.label])
 })
 
 test('BaseEvent toJSON/fromJSON roundtrips runtime fields and event_results', async () => {

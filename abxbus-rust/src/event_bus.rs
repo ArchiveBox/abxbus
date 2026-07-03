@@ -344,10 +344,6 @@ impl EventBus {
             .any(|result| result.handler.eventbus_id == self.id)
     }
 
-    fn should_skip_handler_execution_on_bus(&self, event: &Arc<BaseEvent>) -> bool {
-        event.should_skip_handler_execution()
-    }
-
     fn mark_handler_context_stale(event_id: &str, handler_id: &str) {
         Self::stale_handler_contexts()
             .lock()
@@ -1633,12 +1629,13 @@ impl EventBus {
             return event;
         }
         if already_in_event_path {
+            if has_terminal_marker {
+                self.register_in_history(event.clone());
+                self.notify_find_waiters(event.clone());
+                self.complete_previously_skipped_handler_execution(&event);
+            }
             return event;
         }
-        if has_terminal_marker && already_in_history {
-            return event;
-        }
-
         event.set_runtime_eventbus_id(Some(self.id_ref.clone()));
 
         if !self.register_in_history(event.clone()) {
@@ -1897,17 +1894,15 @@ impl EventBus {
     ) {
         let runloop_pause = self.locks.request_runloop_pause();
         let event_id = event.inner.lock().event_id.clone();
-        let completion_marked = self.should_skip_handler_execution_on_bus(&event);
-        if !completion_marked && self.has_completed_on_bus(&event) {
+        if self.has_completed_on_bus(&event) {
             return;
         }
-        if !completion_marked
-            && event
-                .inner
-                .lock()
-                .event_results
-                .values()
-                .any(|result| result.handler.eventbus_id == self.id)
+        if event
+            .inner
+            .lock()
+            .event_results
+            .values()
+            .any(|result| result.handler.eventbus_id == self.id)
         {
             return;
         }
@@ -1928,9 +1923,6 @@ impl EventBus {
                 false
             }
         };
-        if completion_marked && !removed {
-            return;
-        }
         if !removed && !bypass_event_lock {
             return;
         }
@@ -2924,6 +2916,11 @@ impl EventBus {
         if should_complete {
             Self::update_completed_event_ttl_on_live_buses(event);
         }
+    }
+
+    fn complete_previously_skipped_handler_execution(&self, event: &Arc<BaseEvent>) {
+        event.mark_completed();
+        Self::update_completed_event_ttl_on_live_buses(event);
     }
 
     fn update_completed_event_ttl_on_live_buses(event: &Arc<BaseEvent>) {

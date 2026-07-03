@@ -378,7 +378,7 @@ fn test_dispatching_completed_status_event_skips_handlers_and_normalizes_complet
     assert_eq!(inner.event_status, EventStatus::Completed);
     assert!(inner.event_started_at.is_some());
     assert!(inner.event_completed_at.is_some());
-    assert!(inner.event_path.contains(&bus.label()));
+    assert_eq!(inner.event_path, vec![bus.label()]);
     let result = inner
         .event_results
         .get(&handler.id)
@@ -433,7 +433,7 @@ fn test_dispatching_completed_at_event_skips_handlers_and_preserves_timestamp() 
     assert_eq!(inner.event_status, EventStatus::Completed);
     assert_eq!(inner.event_started_at, Some(provided_completed_at.clone()));
     assert_eq!(inner.event_completed_at, Some(provided_completed_at));
-    assert!(inner.event_path.contains(&bus.label()));
+    assert_eq!(inner.event_path, vec![bus.label()]);
     let result = inner
         .event_results
         .get(&handler.id)
@@ -441,6 +441,61 @@ fn test_dispatching_completed_at_event_skips_handlers_and_preserves_timestamp() 
     assert_eq!(result.status, EventResultStatus::Pending);
     assert!(result.completed_at.is_none());
     assert!(result.result.is_none());
+}
+
+#[test]
+fn test_dispatching_completed_events_with_prior_paths_records_bus_once_and_skips_handlers() {
+    let bus = EventBus::new(Some("AlreadyCompletedPriorPathBus".to_string()));
+    let other_bus_label = "PriorCompletedBus#1234".to_string();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let handler_calls = calls.clone();
+    bus.on_raw_sync("AlreadyCompletedPriorPathEvent", "handler", move |_event| {
+        handler_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(json!("ran"))
+    });
+
+    let prior_other_bus_event = base_event(
+        "AlreadyCompletedPriorPathEvent",
+        json!({"label": "prior-other-bus"}),
+    );
+    {
+        let mut inner = prior_other_bus_event.inner.lock();
+        inner.event_path = vec![other_bus_label.clone()];
+        inner.event_status = EventStatus::Completed;
+    }
+
+    bus.emit_base(prior_other_bus_event.clone());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    {
+        let inner = prior_other_bus_event.inner.lock();
+        assert_eq!(inner.event_status, EventStatus::Completed);
+        assert!(inner.event_started_at.is_some());
+        assert!(inner.event_completed_at.is_some());
+        assert_eq!(inner.event_path, vec![other_bus_label.clone(), bus.label()]);
+    }
+
+    let provided_completed_at = "2025-01-02T03:04:05.000000000Z".to_string();
+    let prior_same_bus_event = base_event(
+        "AlreadyCompletedPriorPathEvent",
+        json!({"label": "prior-same-bus"}),
+    );
+    {
+        let mut inner = prior_same_bus_event.inner.lock();
+        inner.event_path = vec![other_bus_label.clone(), bus.label()];
+        inner.event_completed_at = Some(provided_completed_at.clone());
+    }
+
+    bus.emit_base(prior_same_bus_event.clone());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let inner = prior_same_bus_event.inner.lock();
+    assert_eq!(inner.event_status, EventStatus::Completed);
+    assert_eq!(inner.event_started_at, Some(provided_completed_at.clone()));
+    assert_eq!(inner.event_completed_at, Some(provided_completed_at));
+    assert_eq!(inner.event_path, vec![other_bus_label, bus.label()]);
 }
 
 #[test]

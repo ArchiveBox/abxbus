@@ -355,7 +355,7 @@ class TestEventEnqueueing:
         assert event.event_status == 'completed'
         assert event.event_started_at is not None
         assert event.event_completed_at is not None
-        assert eventbus.label in event.event_path
+        assert event.event_path == [eventbus.label]
         assert event.event_results[handler_entry.id] is pending_result
         assert pending_result.status == 'pending'
         assert pending_result.completed_at is None
@@ -388,11 +388,49 @@ class TestEventEnqueueing:
         assert event.event_status == 'completed'
         assert event.event_started_at == provided_completed_at
         assert event.event_completed_at == provided_completed_at
-        assert eventbus.label in event.event_path
+        assert event.event_path == [eventbus.label]
         assert event.event_results[handler_entry.id] is pending_result
         assert pending_result.status == 'pending'
         assert pending_result.completed_at is None
         assert pending_result.result is None
+
+    async def test_dispatching_completed_events_with_prior_paths_records_bus_once_and_skips_handlers(self, eventbus):
+        calls = 0
+        other_bus_label = 'PriorCompletedBus#1234'
+
+        async def handler(event: AlreadyCompletedDispatchEvent) -> str:
+            nonlocal calls
+            calls += 1
+            return f'ran:{event.label}'
+
+        eventbus.on(AlreadyCompletedDispatchEvent, handler)
+
+        prior_other_bus_event = AlreadyCompletedDispatchEvent(label='prior-other-bus')
+        prior_other_bus_event.event_path = [other_bus_label]
+        prior_other_bus_event.event_status = EventStatus.COMPLETED
+
+        eventbus.dispatch(prior_other_bus_event)
+        await eventbus.wait_until_idle(timeout=1)
+
+        assert calls == 0
+        assert prior_other_bus_event.event_status == 'completed'
+        assert prior_other_bus_event.event_started_at is not None
+        assert prior_other_bus_event.event_completed_at is not None
+        assert prior_other_bus_event.event_path == [other_bus_label, eventbus.label]
+
+        provided_completed_at = monotonic_datetime('2025-01-02T03:04:05.000000000Z')
+        prior_same_bus_event = AlreadyCompletedDispatchEvent(label='prior-same-bus')
+        prior_same_bus_event.event_path = [other_bus_label, eventbus.label]
+        prior_same_bus_event.event_completed_at = provided_completed_at
+
+        eventbus.dispatch(prior_same_bus_event)
+        await eventbus.wait_until_idle(timeout=1)
+
+        assert calls == 0
+        assert prior_same_bus_event.event_status == 'completed'
+        assert prior_same_bus_event.event_started_at == provided_completed_at
+        assert prior_same_bus_event.event_completed_at == provided_completed_at
+        assert prior_same_bus_event.event_path == [other_bus_label, eventbus.label]
 
     def test_emit_sync(self):
         """Test sync event emission"""

@@ -836,9 +836,6 @@ class EventBus:
     def is_event_processing(self, event_id: str) -> bool:
         return event_id in self.processing_event_ids
 
-    def _should_skip_handler_execution_on_bus(self, event: BaseEvent[Any]) -> bool:
-        return event._should_skip_handler_execution()  # pyright: ignore[reportPrivateUsage]
-
     def _resolve_find_waiters(self, event: BaseEvent[Any]) -> None:
         if not self.find_waiters:
             return
@@ -1242,6 +1239,8 @@ class EventBus:
         if event._get_dispatch_context() is None:  # pyright: ignore[reportPrivateUsage]
             event._set_dispatch_context(contextvars.copy_context())  # pyright: ignore[reportPrivateUsage]
 
+        skip_handlers_at_emit = event._should_skip_handler_execution()  # pyright: ignore[reportPrivateUsage]
+
         # Add this EventBus label to the event_path if not already there
         already_in_event_path = self.label in event.event_path
         if not already_in_event_path:
@@ -1302,10 +1301,16 @@ class EventBus:
             self.event_history.pop(event.event_id, None)
             self._event_ttl_deadlines(event).pop(self.id, None)
             return event
-        if already_in_event_path and event._should_skip_handler_execution():  # pyright: ignore[reportPrivateUsage]
+        if already_in_event_path and skip_handlers_at_emit:
             self.event_history[event.event_id] = event
-            self._update_event_ttl_deadline(event)
             self._resolve_find_waiters(event)
+            self._settle_skipped_handler_execution(event)
+            self._trim_event_history_if_needed()
+            return event
+        if skip_handlers_at_emit:
+            self.event_history[event.event_id] = event
+            self._resolve_find_waiters(event)
+            self._settle_skipped_handler_execution(event)
             self._trim_event_history_if_needed()
             return event
 
@@ -1960,6 +1965,16 @@ class EventBus:
         # should not remain in this bus's active set.
         self.in_flight_event_ids.discard(event.event_id)
 
+        newly_completed_events = self._complete_event_tree_if_ready(event)
+        for completed_event in newly_completed_events:
+            await self.on_event_change(completed_event, EventStatus.COMPLETED)
+
+    def _settle_skipped_handler_execution(self, event: BaseEvent[Any]) -> None:
+        newly_completed_events = self._complete_event_tree_if_ready(event)
+        for completed_event in newly_completed_events:
+            asyncio.create_task(self.on_event_change(completed_event, EventStatus.COMPLETED))
+
+    def _complete_event_tree_if_ready(self, event: BaseEvent[Any]) -> list[BaseEvent[Any]]:
         newly_completed_events = self._mark_event_tree_complete_if_ready(event)
         completed_events_for_ttl = list(newly_completed_events)
         if event.event_status == EventStatus.COMPLETED and event not in completed_events_for_ttl:
@@ -1968,12 +1983,7 @@ class EventBus:
             for bus in list(type(self).all_instances):
                 if bus and bus.event_history.get(completed_event.event_id) is completed_event:
                     bus._update_event_ttl_deadline(completed_event)
-        for completed_event in newly_completed_events:
-            await self.on_event_change(completed_event, EventStatus.COMPLETED)
-
-    @staticmethod
-    def _decrement_pending_bus_count(event: BaseEvent[Any]) -> None:
-        event.event_pending_bus_count = max(0, event.event_pending_bus_count - 1)
+        return newly_completed_events
 
     def _mark_event_tree_complete_if_ready(self, root_event: BaseEvent[Any]) -> list[BaseEvent[Any]]:
         """
@@ -2072,11 +2082,7 @@ class EventBus:
         self.processing_event_ids.add(event.event_id)
         try:
             async with self.locks._run_with_event_lock(self, event):  # pyright: ignore[reportPrivateUsage]
-                # Process the event
-                if self._should_skip_handler_execution_on_bus(event):
-                    self._decrement_pending_bus_count(event)
-                else:
-                    await self._process_event(event, timeout=timeout)
+                await self._process_event(event, timeout=timeout)
 
                 # Queue lifecycle:
                 # - `queue.get()` increments `_unfinished_tasks`.
@@ -2290,8 +2296,8 @@ class EventBus:
 
             - **Event not in queue**: Works fine, handlers execute normally. This method
               does not interact with the queue at all.
-            - **Event already completed**: Handlers run AGAIN, ``_create_pending_handler_results()``
-              overwrites previous results. No guard against double-processing.
+            - **Event already completed**: Public dispatch settles these at emit-time before
+              they enter the queue. Direct internal calls can still overwrite results.
             - **Event in queue but not next**: Works fine for this call, but event stays
               in queue and will be processed again later by the run loop.
             - **Another event being processed (lock held elsewhere)**: If called without

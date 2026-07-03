@@ -564,7 +564,13 @@ export class EventBus {
   }
 
   private _markEventCompletedIfNeeded(event: BaseEvent): void {
-    event.event_pending_bus_count = Math.max(0, event.event_pending_bus_count - 1)
+    this._settleEventCompletion(event, true)
+  }
+
+  private _settleEventCompletion(event: BaseEvent, decrement_pending_bus_count: boolean): void {
+    if (decrement_pending_bus_count) {
+      event.event_pending_bus_count = Math.max(0, event.event_pending_bus_count - 1)
+    }
     event._markCompleted(false)
     if (event.event_status === 'completed') {
       for (const bus of this.all_instances) {
@@ -576,8 +582,16 @@ export class EventBus {
     this._trimEventHistory(false)
   }
 
-  private _shouldSkipHandlerExecutionOnBus(event: BaseEvent): boolean {
-    return event._shouldSkipHandlerExecution()
+  private _eventQueuedOrInFlightAcrossBuses(event: BaseEvent): boolean {
+    for (const bus of this.all_instances) {
+      if (bus.event_history.get(event.event_id) !== event) {
+        continue
+      }
+      if (bus.in_flight_event_ids.has(event.event_id) || bus.pending_event_queue.includes(event)) {
+        return true
+      }
+    }
+    return false
   }
 
   toJSON(): EventBusJSON {
@@ -955,6 +969,7 @@ export class EventBus {
       // because events may be handled async in a separate context than the emit site
       original_event._setDispatchContext(captureAsyncContext())
     }
+    const skip_handlers_at_emit = original_event._shouldSkipHandlerExecution()
     const already_in_event_path = original_event.event_path.includes(this.label)
     const already_processed_on_bus = this._hasProcessedEvent(original_event)
     const already_seen_on_bus = already_in_event_path || this.event_history.has(original_event.event_id) || already_processed_on_bus
@@ -965,6 +980,11 @@ export class EventBus {
       return this._getEventProxyScopedToThisBus(original_event) as T
     }
     if (already_in_event_path || already_processed_on_bus) {
+      if (skip_handlers_at_emit) {
+        this.event_history.addEvent(original_event)
+        this._resolveFindWaiters(original_event)
+        this._settleEventCompletion(original_event, false)
+      }
       return this._getEventProxyScopedToThisBus(original_event) as T
     }
 
@@ -995,6 +1015,12 @@ export class EventBus {
     this._updateEventTTLDeadline(original_event)
     this._trimEventHistory()
     this._resolveFindWaiters(original_event)
+
+    if (skip_handlers_at_emit) {
+      original_event.event_pending_bus_count += 1
+      this._settleEventCompletion(original_event, true)
+      return this._getEventProxyScopedToThisBus(original_event) as T
+    }
 
     original_event.event_pending_bus_count += 1
     this.pending_event_queue.push(original_event)
@@ -1093,6 +1119,9 @@ export class EventBus {
   // Weak idle check: only checks if handlers are idle, doesnt check that the queue is empty
   isIdle(): boolean {
     for (const event of this.event_history.values()) {
+      if (event.event_status === 'completed') {
+        continue
+      }
       for (const result of event.event_results.values()) {
         if (result.eventbus_id !== this.id) {
           continue
@@ -1186,10 +1215,6 @@ export class EventBus {
     }> = []
     try {
       if (this._hasProcessedEvent(event)) {
-        this._markEventCompletedIfNeeded(event)
-        return
-      }
-      if (this._shouldSkipHandlerExecutionOnBus(event)) {
         this._markEventCompletedIfNeeded(event)
         return
       }
@@ -1294,7 +1319,7 @@ export class EventBus {
     if (this.locks.getLockForEvent(original_event) !== null) {
       currently_active_event_result._ensureQueueJumpPause(this)
     }
-    if (original_event.event_status === 'completed') {
+    if (original_event.event_status === 'completed' && !this._eventQueuedOrInFlightAcrossBuses(original_event)) {
       return event
     }
 
@@ -1311,6 +1336,10 @@ export class EventBus {
   // Processes a queue-jumped event across all buses that have it emitted.
   // Called from _processEventImmediately after the parent handler's lock has been yielded.
   private async _processEventImmediatelyAcrossBuses(event: BaseEvent): Promise<void> {
+    if (event.event_status === 'completed' && !this._eventQueuedOrInFlightAcrossBuses(event)) {
+      return
+    }
+
     // Determine which event lock the initiating bus resolves to, so we can
     // detect when other buses share the same instance (global-serial).
     const initiating_event_lock = this.locks.getLockForEvent(event)
