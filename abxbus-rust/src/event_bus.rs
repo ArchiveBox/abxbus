@@ -555,22 +555,34 @@ impl EventBus {
         enforce_unique_name: bool,
     ) -> Arc<Self> {
         if let Some(timeout) = options.event_timeout {
-            assert!(timeout >= 0.0, "event_timeout must be >= 0 or None");
+            assert!(
+                timeout.is_finite() && timeout >= 0.0,
+                "event_timeout must be finite and >= 0 or None"
+            );
         }
         if let Some(timeout) = options.event_slow_timeout {
-            assert!(timeout >= 0.0, "event_slow_timeout must be >= 0 or None");
+            assert!(
+                timeout.is_finite() && timeout >= 0.0,
+                "event_slow_timeout must be finite and >= 0 or None"
+            );
         }
         if let Some(timeout) = options.event_handler_slow_timeout {
             assert!(
-                timeout >= 0.0,
-                "event_handler_slow_timeout must be >= 0 or None"
+                timeout.is_finite() && timeout >= 0.0,
+                "event_handler_slow_timeout must be finite and >= 0 or None"
             );
         }
         if let Some(ttl) = options.event_ttl {
-            assert!(ttl >= -1.0, "event_ttl must be >= -1 or None");
+            assert!(
+                ttl.is_finite() && ttl >= -1.0,
+                "event_ttl must be finite and >= -1 or None"
+            );
         }
         if let Some(ttl) = options.event_result_ttl {
-            assert!(ttl >= -1.0, "event_result_ttl must be >= -1 or None");
+            assert!(
+                ttl.is_finite() && ttl >= -1.0,
+                "event_result_ttl must be finite and >= -1 or None"
+            );
         }
         let event_timeout = Some(options.event_timeout.unwrap_or(60.0));
         let event_slow_timeout = Some(options.event_slow_timeout.unwrap_or(300.0));
@@ -1323,12 +1335,12 @@ impl EventBus {
             "event_ttl",
             options.event_ttl,
         )
-        .expect("event_ttl must be >= -1 or None");
+        .expect("event_ttl must be finite and >= -1 or None");
         crate::event_handler::validate_optional_seconds_at_least_minus_one(
             "event_result_ttl",
             options.event_result_ttl,
         )
-        .expect("event_result_ttl must be >= -1 or None");
+        .expect("event_result_ttl must be finite and >= -1 or None");
         let bus = Self::new_with_options_and_loop(name, options, false, false);
 
         let mut handlers_by_id = HashMap::new();
@@ -1442,13 +1454,22 @@ impl EventBus {
     {
         self.raise_if_terminal_destroyed();
         if let Some(timeout) = options.handler_timeout {
-            assert!(timeout >= 0.0, "handler_timeout must be >= 0 or None");
+            assert!(
+                timeout.is_finite() && timeout >= 0.0,
+                "handler_timeout must be finite and >= 0 or None"
+            );
         }
         if let Some(timeout) = options.handler_slow_timeout {
-            assert!(timeout >= 0.0, "handler_slow_timeout must be >= 0 or None");
+            assert!(
+                timeout.is_finite() && timeout >= 0.0,
+                "handler_slow_timeout must be finite and >= 0 or None"
+            );
         }
         if let Some(ttl) = options.handler_result_ttl {
-            assert!(ttl >= -1.0, "handler_result_ttl must be >= -1 or None");
+            assert!(
+                ttl.is_finite() && ttl >= -1.0,
+                "handler_result_ttl must be finite and >= -1 or None"
+            );
         }
         let detect_handler_file_path = options
             .detect_handler_file_path
@@ -1488,13 +1509,22 @@ impl EventBus {
     {
         self.raise_if_terminal_destroyed();
         if let Some(timeout) = options.handler_timeout {
-            assert!(timeout >= 0.0, "handler_timeout must be >= 0 or None");
+            assert!(
+                timeout.is_finite() && timeout >= 0.0,
+                "handler_timeout must be finite and >= 0 or None"
+            );
         }
         if let Some(timeout) = options.handler_slow_timeout {
-            assert!(timeout >= 0.0, "handler_slow_timeout must be >= 0 or None");
+            assert!(
+                timeout.is_finite() && timeout >= 0.0,
+                "handler_slow_timeout must be finite and >= 0 or None"
+            );
         }
         if let Some(ttl) = options.handler_result_ttl {
-            assert!(ttl >= -1.0, "handler_result_ttl must be >= -1 or None");
+            assert!(
+                ttl.is_finite() && ttl >= -1.0,
+                "handler_result_ttl must be finite and >= -1 or None"
+            );
         }
         let detect_handler_file_path = options
             .detect_handler_file_path
@@ -1592,18 +1622,27 @@ impl EventBus {
     fn validate_event_execution_timeout_fields(event: &BaseEvent) {
         let inner = event.inner.lock();
         if let Some(timeout) = inner.event_timeout {
-            assert!(timeout >= 0.0, "event_timeout must be >= 0 or None");
+            assert!(
+                timeout.is_finite() && timeout >= 0.0,
+                "event_timeout must be finite and >= 0 or None"
+            );
         }
         if let Some(timeout) = inner.event_slow_timeout {
-            assert!(timeout >= 0.0, "event_slow_timeout must be >= 0 or None");
+            assert!(
+                timeout.is_finite() && timeout >= 0.0,
+                "event_slow_timeout must be finite and >= 0 or None"
+            );
         }
         if let Some(timeout) = inner.event_handler_timeout {
-            assert!(timeout >= 0.0, "event_handler_timeout must be >= 0 or None");
+            assert!(
+                timeout.is_finite() && timeout >= 0.0,
+                "event_handler_timeout must be finite and >= 0 or None"
+            );
         }
         if let Some(timeout) = inner.event_handler_slow_timeout {
             assert!(
-                timeout >= 0.0,
-                "event_handler_slow_timeout must be >= 0 or None"
+                timeout.is_finite() && timeout >= 0.0,
+                "event_handler_slow_timeout must be finite and >= 0 or None"
             );
         }
     }

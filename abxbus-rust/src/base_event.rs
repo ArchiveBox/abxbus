@@ -183,8 +183,8 @@ fn take_option_f64_at_least_minus_one(
 ) -> Result<Option<f64>, String> {
     let value: Option<f64> = take_from_value(payload, key)?;
     if let Some(value) = value {
-        if value < -1.0 {
-            return Err(format!("Invalid {key}: must be >= -1 or null"));
+        if !value.is_finite() || value < -1.0 {
+            return Err(format!("Invalid {key}: must be finite and >= -1 or null"));
         }
     }
     Ok(value)
@@ -196,8 +196,8 @@ fn take_option_f64_nonnegative(
 ) -> Result<Option<f64>, String> {
     let value: Option<f64> = take_from_value(payload, key)?;
     if let Some(value) = value {
-        if value < 0.0 {
-            return Err(format!("Invalid {key}: must be >= 0 or null"));
+        if !value.is_finite() || value < 0.0 {
+            return Err(format!("Invalid {key}: must be finite and >= 0 or null"));
         }
     }
     Ok(value)
@@ -1025,9 +1025,9 @@ impl BaseEvent {
         let mut parsed: BaseEventData =
             serde_json::from_value(value).expect("invalid base_event json");
         validate_optional_seconds_at_least_minus_one("event_ttl", parsed.event_ttl)
-            .expect("event_ttl must be >= -1 or None");
+            .expect("event_ttl must be finite and >= -1 or None");
         validate_optional_seconds_at_least_minus_one("event_result_ttl", parsed.event_result_ttl)
-            .expect("event_result_ttl must be >= -1 or None");
+            .expect("event_result_ttl must be finite and >= -1 or None");
         parsed.event_result_order = event_result_order
             .into_iter()
             .filter(|handler_id| parsed.event_results.contains_key(handler_id))

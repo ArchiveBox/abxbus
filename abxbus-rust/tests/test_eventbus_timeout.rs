@@ -121,6 +121,15 @@ fn test_execution_timeout_fields_reject_negative_values_because_zero_disables_ti
             },
         );
     });
+    expect_panic("event_timeout nan", || {
+        let _bus = EventBus::new_with_options(
+            Some("BadBusEventTimeoutNaN".to_string()),
+            EventBusOptions {
+                event_timeout: Some(f64::NAN),
+                ..EventBusOptions::default()
+            },
+        );
+    });
     expect_panic("event field event_timeout", || {
         let bus = EventBus::new(Some("BadEventExecutionTimeoutBus".to_string()));
         let event = BaseEvent::new("BadEventExecutionTimeoutEvent", serde_json::Map::new());
@@ -145,6 +154,12 @@ fn test_execution_timeout_fields_reject_negative_values_because_zero_disables_ti
         event.inner.lock().event_handler_slow_timeout = Some(bad);
         bus.emit_base(event);
     });
+    expect_panic("event field event_slow_timeout infinite", || {
+        let bus = EventBus::new(Some("BadEventSlowTimeoutInfiniteBus".to_string()));
+        let event = BaseEvent::new("BadEventExecutionTimeoutEvent", serde_json::Map::new());
+        event.inner.lock().event_slow_timeout = Some(f64::INFINITY);
+        bus.emit_base(event);
+    });
     expect_panic("handler_timeout", || {
         let bus = EventBus::new(Some("BadHandlerTimeoutBus".to_string()));
         bus.on_raw_sync_with_options(
@@ -164,6 +179,18 @@ fn test_execution_timeout_fields_reject_negative_values_because_zero_disables_ti
             "bad_handler_slow_timeout",
             EventHandlerOptions {
                 handler_slow_timeout: Some(bad),
+                ..EventHandlerOptions::default()
+            },
+            |_event| Ok(json!("ok")),
+        );
+    });
+    expect_panic("handler_timeout infinite", || {
+        let bus = EventBus::new(Some("BadHandlerTimeoutInfiniteBus".to_string()));
+        bus.on_raw_sync_with_options(
+            "BadEventExecutionTimeoutEvent",
+            "bad_handler_timeout_infinite",
+            EventHandlerOptions {
+                handler_timeout: Some(f64::INFINITY),
                 ..EventHandlerOptions::default()
             },
             |_event| Ok(json!("ok")),

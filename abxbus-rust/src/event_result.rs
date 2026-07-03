@@ -452,14 +452,14 @@ impl EventResult {
             handler_timeout: {
                 let handler_timeout = record.get("handler_timeout").and_then(Value::as_f64);
                 validate_optional_seconds_nonnegative("handler_timeout", handler_timeout)
-                    .expect("handler_timeout must be >= 0 or None");
+                    .expect("handler_timeout must be finite and >= 0 or None");
                 handler_timeout
             },
             handler_slow_timeout: {
                 let handler_slow_timeout =
                     record.get("handler_slow_timeout").and_then(Value::as_f64);
                 validate_optional_seconds_nonnegative("handler_slow_timeout", handler_slow_timeout)
-                    .expect("handler_slow_timeout must be >= 0 or None");
+                    .expect("handler_slow_timeout must be finite and >= 0 or None");
                 handler_slow_timeout
             },
             handler_result_ttl: {
@@ -468,7 +468,7 @@ impl EventResult {
                     "handler_result_ttl",
                     handler_result_ttl,
                 )
-                .expect("handler_result_ttl must be >= -1 or None");
+                .expect("handler_result_ttl must be finite and >= -1 or None");
                 handler_result_ttl
             },
             handler_registered_at: record

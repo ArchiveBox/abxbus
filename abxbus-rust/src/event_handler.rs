@@ -24,8 +24,8 @@ pub(crate) fn validate_optional_seconds_at_least_minus_one(
     name: &str,
     value: Option<f64>,
 ) -> Result<(), String> {
-    if value.is_some_and(|ttl| ttl < -1.0) {
-        return Err(format!("{name} must be >= -1 or None"));
+    if value.is_some_and(|ttl| !ttl.is_finite() || ttl < -1.0) {
+        return Err(format!("{name} must be finite and >= -1 or None"));
     }
     Ok(())
 }
@@ -34,8 +34,8 @@ pub(crate) fn validate_optional_seconds_nonnegative(
     name: &str,
     value: Option<f64>,
 ) -> Result<(), String> {
-    if value.is_some_and(|timeout| timeout < 0.0) {
-        return Err(format!("{name} must be >= 0 or None"));
+    if value.is_some_and(|timeout| !timeout.is_finite() || timeout < 0.0) {
+        return Err(format!("{name} must be finite and >= 0 or None"));
     }
     Ok(())
 }

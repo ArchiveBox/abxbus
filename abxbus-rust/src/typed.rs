@@ -407,20 +407,20 @@ where
     let has_event_result_type = payload_map.contains_key("event_result_type");
 
     validate_optional_seconds_at_least_minus_one("event_ttl", E::event_ttl)
-        .expect("event_ttl must be >= -1 or None");
+        .expect("event_ttl must be finite and >= -1 or None");
     validate_optional_seconds_at_least_minus_one("event_result_ttl", E::event_result_ttl)
-        .expect("event_result_ttl must be >= -1 or None");
+        .expect("event_result_ttl must be finite and >= -1 or None");
     validate_optional_seconds_nonnegative("event_timeout", E::event_timeout)
-        .expect("event_timeout must be >= 0 or None");
+        .expect("event_timeout must be finite and >= 0 or None");
     validate_optional_seconds_nonnegative("event_slow_timeout", E::event_slow_timeout)
-        .expect("event_slow_timeout must be >= 0 or None");
+        .expect("event_slow_timeout must be finite and >= 0 or None");
     validate_optional_seconds_nonnegative("event_handler_timeout", E::event_handler_timeout)
-        .expect("event_handler_timeout must be >= 0 or None");
+        .expect("event_handler_timeout must be finite and >= 0 or None");
     validate_optional_seconds_nonnegative(
         "event_handler_slow_timeout",
         E::event_handler_slow_timeout,
     )
-    .expect("event_handler_slow_timeout must be >= 0 or None");
+    .expect("event_handler_slow_timeout must be finite and >= 0 or None");
 
     let inner = RawBaseEvent::new(E::event_type, payload_map);
     {
