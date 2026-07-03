@@ -1357,3 +1357,20 @@ def test_event_ttl_and_event_result_ttl_reject_values_below_minus_one() -> None:
         TTLProbeEvent(event_ttl=-2)
     with pytest.raises(ValueError):
         TTLProbeEvent(event_result_ttl=-2)
+
+
+def test_event_ttl_and_event_result_ttl_reject_class_defaults_below_minus_one() -> None:
+    class BadEventTTLDefaultEvent(BaseEvent[str]):
+        event_ttl: float | None = -2
+
+    class BadEventResultTTLDefaultEvent(BaseEvent[str]):
+        event_result_ttl: float | None = -2
+
+    with pytest.raises(ValueError, match='event_ttl'):
+        BadEventTTLDefaultEvent()
+    with pytest.raises(ValueError, match='event_ttl'):
+        BadEventTTLDefaultEvent(event_ttl=None)
+    with pytest.raises(ValueError, match='event_result_ttl'):
+        BadEventResultTTLDefaultEvent()
+    with pytest.raises(ValueError, match='event_result_ttl'):
+        BadEventResultTTLDefaultEvent(event_result_ttl=None)

@@ -1637,6 +1637,14 @@ export class BaseEvent {
     const original = this._event_original ?? this
     const ctor = original.constructor as typeof BaseEvent
     const fresh_event = ctor.fromJSON(original.toJSON()) as this
+    if ((options.results ?? true) === false) {
+      for (const [handler_id, result] of fresh_event.event_results.entries()) {
+        const original_result = original.event_results.get(handler_id)
+        if (original_result) {
+          result.event_children = [...original_result.event_children]
+        }
+      }
+    }
     return fresh_event._resetForDispatch(options)
   }
 

@@ -1513,11 +1513,20 @@ test('BaseEvent eventReset options control ids status timestamps and results', a
   const ResetOptionsEvent = BaseEvent.extend('BaseEventResetOptionsEvent', {
     label: z.string(),
   })
+  const ResetOptionsChildEvent = BaseEvent.extend('BaseEventResetOptionsChildEvent', {
+    label: z.string(),
+  })
 
   const bus = new EventBus('BaseEventResetOptionsBus')
-  bus.on(ResetOptionsEvent, (event) => `done:${event.label}`)
+  bus.on(ResetOptionsChildEvent, (event) => `child:${event.label}`)
+  bus.on(ResetOptionsEvent, async (event) => {
+    await event.emit(ResetOptionsChildEvent({ label: `child:${event.label}` })).now()
+    return `done:${event.label}`
+  })
 
   const completed = await bus.emit(ResetOptionsEvent({ label: 'hello' })).now()
+  const completed_child = completed.event_children[0]
+  assert.ok(completed_child)
   completed.event_path = ['BaseEventResetOptionsSeedBus#1234']
   completed.event_parent_id = '018f8e40-1234-7000-8000-000000000411'
   completed.event_emitted_by_handler_id = '018f8e40-1234-7000-8000-000000000412'
@@ -1539,7 +1548,17 @@ test('BaseEvent eventReset options control ids status timestamps and results', a
   assert.equal(preserved.event_started_at, '2025-01-02T03:04:06.000000000Z')
   assert.equal(preserved.event_completed_at, '2025-01-02T03:04:07.000000000Z')
   assert.deepEqual(Array.from(preserved.event_results.keys()), Array.from(completed.event_results.keys()))
-  assert.equal(Array.from(preserved.event_results.values())[0]?.result, 'done:hello')
+  const preserved_result = Array.from(preserved.event_results.values())[0]
+  assert.equal(preserved_result?.result, 'done:hello')
+  assert.deepEqual(
+    preserved_result?.event_children.map((child) => child.event_id),
+    [completed_child.event_id]
+  )
+  assert.deepEqual(
+    ((preserved.toJSON().event_results as Record<string, { event_children?: string[] }> | undefined) ?? {})[preserved_result!.handler_id]
+      ?.event_children,
+    [completed_child.event_id]
+  )
   assert.equal(preserved.event_pending_bus_count, 0)
 
   const redispatch = completed.eventReset({ ids: false, status: true, timestamps: false, results: true })
