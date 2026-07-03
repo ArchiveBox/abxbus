@@ -145,11 +145,6 @@ export class GlobalEventBusRegistry {
   }
 }
 
-type TTLExpiryEntry = {
-  expires_at: number
-  event_id: string
-}
-
 export class EventBus {
   private static _registry_by_constructor = new WeakMap<Function, GlobalEventBusRegistry>()
   private static _global_event_lock_by_constructor = new WeakMap<Function, AsyncLock>()
@@ -214,7 +209,6 @@ export class EventBus {
   locks: LockManager
   find_waiters: Set<EphemeralFindEventHandler> // set of EphemeralFindEventHandler objects that are waiting for a matching future event
   middlewares: EventBusMiddleware[]
-  private ttl_expiry_index: TTLExpiryEntry[]
   private destroyed: boolean
 
   private static normalizeMiddlewares(middlewares?: EventBusMiddlewareInput[]): EventBusMiddleware[] {
@@ -260,7 +254,6 @@ export class EventBus {
     this.in_flight_event_ids = new Set()
     this.locks = new LockManager(this)
     this.middlewares = EventBus.normalizeMiddlewares(options.middlewares)
-    this.ttl_expiry_index = []
     this.destroyed = false
 
     this.all_instances.add(this)
@@ -429,11 +422,8 @@ export class EventBus {
   }
 
   private _completedEventAgeSeconds(event: BaseEvent): number | null {
-    if (event.event_status !== 'completed' || !event.event_completed_at) {
-      return null
-    }
-    const completed_at = Date.parse(event.event_completed_at)
-    if (!Number.isFinite(completed_at)) {
+    const completed_at = this._completedEventDeadlineBaseMs(event)
+    if (completed_at === null) {
       return null
     }
     return Math.max(0, (Date.now() - completed_at) / 1000)
@@ -463,46 +453,6 @@ export class EventBus {
     return result.handler.handler_result_ttl ?? event.event_result_ttl ?? this.event_result_ttl
   }
 
-  private _earliestTTLDeadlineMs(event: BaseEvent): number | null {
-    const completed_at = this._completedEventDeadlineBaseMs(event)
-    if (completed_at === null) {
-      return null
-    }
-    let ttl: number | null = null
-    const event_ttl = this._resolveEventTTL(event)
-    if (event_ttl !== null && event_ttl >= 0) {
-      ttl = event_ttl
-    }
-    for (const result of event.event_results.values()) {
-      if (result.eventbus_id !== this.id) {
-        continue
-      }
-      const result_ttl = this._resolveEventResultTTL(event, result)
-      if (result_ttl !== null && result_ttl >= 0) {
-        ttl = ttl === null ? result_ttl : Math.min(ttl, result_ttl)
-      }
-    }
-    if (ttl === null) {
-      return null
-    }
-    return ttl === 0 ? 0 : completed_at + ttl * 1000
-  }
-
-  private _pushTTLExpiry(expires_at: number, event_id: string): void {
-    this.ttl_expiry_index.push({ expires_at, event_id })
-    this.ttl_expiry_index.sort((left, right) => right.expires_at - left.expires_at)
-  }
-
-  private _updateEventTTLDeadline(event: BaseEvent): void {
-    const deadline = this._earliestTTLDeadlineMs(event)
-    if (deadline === null) {
-      event._event_expires_at_by_bus.delete(this.id)
-      return
-    }
-    event._event_expires_at_by_bus.set(this.id, deadline)
-    this._pushTTLExpiry(deadline, event.event_id)
-  }
-
   private _trimEventHistory(include_ttl: boolean = true): void {
     if (
       this.event_history.max_history_size !== null &&
@@ -520,24 +470,13 @@ export class EventBus {
     if (!include_ttl) {
       return
     }
-    const first_due = this.ttl_expiry_index[this.ttl_expiry_index.length - 1]
-    if (first_due === undefined || first_due.expires_at > Date.now()) {
-      return
-    }
 
-    while (this.ttl_expiry_index.length > 0) {
-      const entry = this.ttl_expiry_index[this.ttl_expiry_index.length - 1]!
-      if (entry.expires_at > Date.now()) {
-        break
-      }
-      this.ttl_expiry_index.pop()
-      const event = this.event_history.get(entry.event_id)
-      if (!event || event._event_expires_at_by_bus.get(this.id) !== entry.expires_at) {
-        continue
-      }
+    // TTL cleanup is tied to normal bus cleanup points rather than a timer.
+    // Scanning history here avoids per-event private deadline state while
+    // keeping pruning deterministic and per-bus.
+    for (const [event_id, event] of Array.from(this.event_history.entries())) {
       const age_seconds = this._completedEventAgeSeconds(event)
       if (age_seconds === null) {
-        event._event_expires_at_by_bus.delete(this.id)
         continue
       }
 
@@ -554,30 +493,22 @@ export class EventBus {
 
       const event_ttl = this._resolveEventTTL(event)
       if (event_ttl === null || event_ttl < 0 || age_seconds < event_ttl) {
-        this._updateEventTTLDeadline(event)
         continue
       }
-      this.event_history.delete(entry.event_id)
-      event._event_expires_at_by_bus.delete(this.id)
+      this.event_history.delete(event_id)
       this._gcEventIfUnretained(event)
     }
   }
 
-  private _markEventCompletedIfNeeded(event: BaseEvent): void {
-    this._settleEventCompletion(event, true)
-  }
-
-  private _settleEventCompletion(event: BaseEvent, decrement_pending_bus_count: boolean): void {
-    if (decrement_pending_bus_count) {
-      event.event_pending_bus_count = Math.max(0, event.event_pending_bus_count - 1)
+  private _settleSkippedHandlerExecution(event: BaseEvent, pending_bus_count_decrement: number = 0): void {
+    // Events that skip handler execution still use the normal completion
+    // lifecycle so event_path, waiters, parent checks, pending counts, and
+    // per-bus TTL pruning stay predictable.
+    if (pending_bus_count_decrement > 0) {
+      event.event_pending_bus_count = Math.max(0, event.event_pending_bus_count - pending_bus_count_decrement)
     }
-    event._markCompleted(false)
-    if (event.event_status === 'completed') {
-      for (const bus of this.all_instances) {
-        if (bus.event_history.get(event.event_id) === event) {
-          bus._updateEventTTLDeadline(event)
-        }
-      }
+    if (event.event_pending_bus_count === 0) {
+      event._markCompleted(false)
     }
     this._trimEventHistory(false)
   }
@@ -785,11 +716,6 @@ export class EventBus {
     for (const event of bus.event_history.values()) {
       EventBus._linkEventResultHandlers(event, bus)
     }
-    bus.ttl_expiry_index = []
-    for (const event of bus.event_history.values()) {
-      bus._updateEventTTLDeadline(event)
-    }
-
     // Reset runtime execution state after restore. Queue/history/handlers are restored,
     // but lock internals should always restart from a clean default state.
     bus.in_flight_event_ids.clear()
@@ -969,7 +895,7 @@ export class EventBus {
       // because events may be handled async in a separate context than the emit site
       original_event._setDispatchContext(captureAsyncContext())
     }
-    const skip_handlers_at_emit = original_event._shouldSkipHandlerExecution()
+    const should_skip_handler_execution = original_event._shouldSkipHandlerExecution()
     const already_in_event_path = original_event.event_path.includes(this.label)
     const already_processed_on_bus = this._hasProcessedEvent(original_event)
     const history_event = this.event_history.get(original_event.event_id)
@@ -977,15 +903,14 @@ export class EventBus {
     const ttl_event = history_event ?? original_event
     if (already_seen_on_bus && this._isCompletedEventExpiredForHistory(ttl_event)) {
       this.event_history.delete(ttl_event.event_id)
-      ttl_event._event_expires_at_by_bus.delete(this.id)
       this._gcEventIfUnretained(ttl_event)
       return this._getEventProxyScopedToThisBus(original_event) as T
     }
     if (already_in_event_path || already_processed_on_bus) {
-      if (skip_handlers_at_emit) {
+      if (should_skip_handler_execution) {
         this.event_history.addEvent(original_event)
         this._resolveFindWaiters(original_event)
-        this._settleEventCompletion(original_event, false)
+        this._settleSkippedHandlerExecution(original_event, 0)
       }
       return this._getEventProxyScopedToThisBus(original_event) as T
     }
@@ -1014,13 +939,12 @@ export class EventBus {
     }
 
     this.event_history.addEvent(original_event)
-    this._updateEventTTLDeadline(original_event)
     this._trimEventHistory()
     this._resolveFindWaiters(original_event)
 
-    if (skip_handlers_at_emit) {
+    if (should_skip_handler_execution) {
       original_event.event_pending_bus_count += 1
-      this._settleEventCompletion(original_event, true)
+      this._settleSkippedHandlerExecution(original_event, 1)
       return this._getEventProxyScopedToThisBus(original_event) as T
     }
 
@@ -1217,7 +1141,7 @@ export class EventBus {
     }> = []
     try {
       if (this._hasProcessedEvent(event)) {
-        this._markEventCompletedIfNeeded(event)
+        this._settleSkippedHandlerExecution(event, 1)
         return
       }
       const scoped_event = this._getEventProxyScopedToThisBus(event)
@@ -1241,7 +1165,7 @@ export class EventBus {
           ),
         options
       )
-      this._markEventCompletedIfNeeded(event)
+      this._settleSkippedHandlerExecution(event, 1)
     } finally {
       if (options.pre_acquired_lock) {
         options.pre_acquired_lock.release()
@@ -1438,7 +1362,7 @@ export class EventBus {
         const original_event = next_event._event_original ?? next_event
         if (this._hasProcessedEvent(original_event)) {
           this.pending_event_queue.shift()
-          this._markEventCompletedIfNeeded(original_event)
+          this._settleSkippedHandlerExecution(original_event, 1)
           continue
         }
         let pre_acquired_lock: AsyncLock | null = null

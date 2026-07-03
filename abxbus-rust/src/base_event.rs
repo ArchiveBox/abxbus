@@ -55,7 +55,6 @@ pub struct BaseEvent {
     pub inner: Mutex<BaseEventData>,
     pub completed: Event,
     runtime_eventbus_id: Mutex<Option<Arc<str>>>,
-    pub(crate) event_expires_at_by_bus: Mutex<HashMap<String, i64>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -284,7 +283,6 @@ impl BaseEvent {
             }),
             completed: Event::new(),
             runtime_eventbus_id: Mutex::new(None),
-            event_expires_at_by_bus: Mutex::new(HashMap::new()),
         }))
     }
 
@@ -801,7 +799,6 @@ impl BaseEvent {
             inner: Mutex::new(data),
             completed: Event::new(),
             runtime_eventbus_id: Mutex::new(None),
-            event_expires_at_by_bus: Mutex::new(HashMap::new()),
         })
     }
 
@@ -1031,7 +1028,6 @@ impl BaseEvent {
             inner: Mutex::new(parsed),
             completed: Event::new(),
             runtime_eventbus_id: Mutex::new(None),
-            event_expires_at_by_bus: Mutex::new(HashMap::new()),
         })
     }
 }

@@ -100,9 +100,6 @@ func EventResultFromJSON(data []byte) (*EventResult, error) {
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		return nil, err
 	}
-	if err := validateOptionalSecondsAtLeastMinusOne("handler_result_ttl", parsed.HandlerResultTTL); err != nil {
-		return nil, err
-	}
 	if parsed.done_ch == nil {
 		parsed.done_ch = make(chan struct{})
 	}

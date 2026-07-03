@@ -889,7 +889,6 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     _event_completed_signal: asyncio.Event | None = PrivateAttr(default=None)
     _event_is_complete_flag: bool = PrivateAttr(default=False)
     _lock_for_event_handler: 'ReentrantLock | None' = PrivateAttr(default=None)
-    _event_expires_at_by_bus: dict[str, float] = PrivateAttr(default_factory=dict)
 
     # Dispatch-time context for ContextVar propagation to handlers
     # Captured when emit() is called, used when executing handlers via ctx.run()
@@ -897,14 +896,14 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
     def model_post_init(self, __context: Any) -> None:
         for field_name in ('event_ttl', 'event_result_ttl'):
-            value = getattr(self, field_name)
-            if value is not None:
-                if value < -1:
-                    raise ValueError(f'{field_name} must be >= -1 or None')
+            if getattr(self, field_name) is not None:
                 continue
             field_info = self.__class__.model_fields.get(field_name)
             class_default = getattr(field_info, 'default', None) if field_info is not None else None
             if class_default is not None:
+                # Pydantic validates normal init values via Field(ge=-1), but
+                # inherited subclass defaults can be copied here after model
+                # validation because lifecycle assignment validation is off.
                 if class_default < -1:
                     raise ValueError(f'{field_name} must be >= -1 or None')
                 setattr(self, field_name, class_default)
@@ -1837,7 +1836,6 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         self.event_pending_bus_count = 0
         self._lock_for_event_handler = None
         self._event_dispatch_context = None
-        self._event_expires_at_by_bus.clear()
         try:
             asyncio.get_running_loop()
             self._event_completed_signal = asyncio.Event()

@@ -614,7 +614,6 @@ export class BaseEvent {
   event_bus?: EventBus // bus that dispatched this event, also used by event.emit(child)
   _event_original?: BaseEvent // underlying event object that was dispatched, if this is a bus-scoped proxy wrapping it
   _event_dispatch_context?: unknown | null // captured AsyncLocalStorage context at dispatch site, used to restore that context when running handlers
-  _event_expires_at_by_bus: Map<string, number>
 
   _event_completed_signal: Deferred<this> | null
   _lock_for_event_handler: AsyncLock | null
@@ -667,8 +666,6 @@ export class BaseEvent {
     const parsed_path = (parsed as { event_path?: string[] }).event_path
     this.event_path = Array.isArray(parsed_path) ? [...parsed_path] : []
     this.event_created_at = monotonicDatetime(parsed.event_created_at)
-    this._event_expires_at_by_bus = new Map()
-
     // load event results from potentially raw objects from JSON to proper EventResult objects
     this.event_results = hydrateEventResults(this, (parsed as { event_results?: unknown }).event_results)
     this.event_pending_bus_count =
@@ -1629,7 +1626,6 @@ export class BaseEvent {
     original._event_completed_signal = null
     original._lock_for_event_handler = null
     original.event_bus = undefined
-    original._event_expires_at_by_bus.clear()
     return this
   }
 

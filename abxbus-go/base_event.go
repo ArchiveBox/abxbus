@@ -50,15 +50,14 @@ type BaseEvent struct {
 	// EventExtraPayload holds runtime payload fields that are not statically
 	// declared on a typed event. It is flattened by MarshalJSON and split back
 	// out by UnmarshalJSON; "event_extra_payload" must never appear on the wire.
-	EventExtraPayload   map[string]any          `json:"-"`
-	Bus                 *EventBus               `json:"-"`
-	EventResults        map[string]*EventResult `json:"-"`
-	eventResultOrder    []string
-	dispatchCtx         context.Context `json:"-"`
-	mu                  sync.Mutex
-	done_ch             chan struct{}
-	done_once           sync.Once
-	eventExpiresAtByBus map[string]time.Time
+	EventExtraPayload map[string]any          `json:"-"`
+	Bus               *EventBus               `json:"-"`
+	EventResults      map[string]*EventResult `json:"-"`
+	eventResultOrder  []string
+	dispatchCtx       context.Context `json:"-"`
+	mu                sync.Mutex
+	done_ch           chan struct{}
+	done_once         sync.Once
 }
 
 type EventWaitOptions struct {
@@ -418,7 +417,6 @@ func resetBaseEventForDispatch(event *BaseEvent, options EventResetOptions) {
 	event.EventPendingBusCount = 0
 	event.Bus = nil
 	event.dispatchCtx = nil
-	event.eventExpiresAtByBus = nil
 	event.done_ch = make(chan struct{})
 	event.done_once = sync.Once{}
 }

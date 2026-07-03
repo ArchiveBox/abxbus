@@ -1,6 +1,5 @@
 import asyncio
 import contextvars
-import heapq
 import inspect
 import json
 import logging
@@ -204,7 +203,6 @@ class EventBus:
     find_waiters: set[_FindWaiter]
     _lock_for_event_bus_serial: ReentrantLock
     locks: LockManagerProtocol
-    _ttl_expiry_index: list[tuple[float, str]]
     _destroyed: bool
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -302,7 +300,6 @@ class EventBus:
         self.locks = LockManager()
         self._parallel_event_tasks = set()
         self._pending_middleware_tasks = set()
-        self._ttl_expiry_index = []
         try:
             self.event_concurrency = EventConcurrencyMode(event_concurrency or EventConcurrencyMode.BUS_SERIAL)
         except ValueError as exc:
@@ -733,10 +730,6 @@ class EventBus:
 
         for event_result, child_ids in pending_child_links:
             event_result.event_children = [bus.event_history[child_id] for child_id in child_ids if child_id in bus.event_history]
-
-        bus._ttl_expiry_index.clear()
-        for event in bus.event_history.values():
-            bus._update_event_ttl_deadline(event)
 
         if pending_event_ids:
             queue = CleanShutdownQueue[BaseEvent[Any]](maxsize=0)
@@ -1244,7 +1237,7 @@ class EventBus:
         if event._get_dispatch_context() is None:  # pyright: ignore[reportPrivateUsage]
             event._set_dispatch_context(contextvars.copy_context())  # pyright: ignore[reportPrivateUsage]
 
-        skip_handlers_at_emit = event._should_skip_handler_execution()  # pyright: ignore[reportPrivateUsage]
+        should_skip_handler_execution = event._should_skip_handler_execution()  # pyright: ignore[reportPrivateUsage]
 
         # Add this EventBus label to the event_path if not already there
         already_in_event_path = self.label in event.event_path
@@ -1304,18 +1297,15 @@ class EventBus:
         already_in_history = event.event_id in self.event_history
         if (already_in_event_path or already_in_history) and self._completed_event_expired_for_history(event):
             self.event_history.pop(event.event_id, None)
-            self._event_ttl_deadlines(event).pop(self.id, None)
             return event
-        if already_in_event_path and skip_handlers_at_emit:
+        if should_skip_handler_execution:
             self.event_history[event.event_id] = event
             self._resolve_find_waiters(event)
-            self._settle_skipped_handler_execution(event)
-            self._trim_event_history_if_needed()
-            return event
-        if skip_handlers_at_emit:
-            self.event_history[event.event_id] = event
-            self._resolve_find_waiters(event)
-            self._settle_skipped_handler_execution(event)
+            pending_bus_count_decrement = 0
+            if not already_in_event_path:
+                event.event_pending_bus_count += 1
+                pending_bus_count_decrement = 1
+            self._settle_skipped_handler_execution(event, pending_bus_count_decrement)
             self._trim_event_history_if_needed()
             return event
 
@@ -1325,7 +1315,6 @@ class EventBus:
                 self.pending_event_queue.put_nowait(event)
                 # Only add to history after successfully queuing
                 self.event_history[event.event_id] = event
-                self._update_event_ttl_deadline(event)
                 self.in_flight_event_ids.add(event.event_id)
                 # Resolve future find waiters immediately on emit so callers
                 # don't wait for queue position or handler execution.
@@ -1974,21 +1963,21 @@ class EventBus:
         for completed_event in newly_completed_events:
             await self.on_event_change(completed_event, EventStatus.COMPLETED)
 
-    def _settle_skipped_handler_execution(self, event: BaseEvent[Any]) -> None:
+    def _settle_skipped_handler_execution(self, event: BaseEvent[Any], pending_bus_count_decrement: int = 0) -> None:
+        # Events that skip handler execution still use the normal completion
+        # lifecycle so event_path, waiters, parent checks, pending counts, and
+        # per-bus TTL pruning stay predictable.
+        if pending_bus_count_decrement:
+            event.event_pending_bus_count = max(0, event.event_pending_bus_count - pending_bus_count_decrement)
+        if event.event_pending_bus_count:
+            return
         newly_completed_events = self._complete_event_tree_if_ready(event)
         for completed_event in newly_completed_events:
-            asyncio.create_task(self.on_event_change(completed_event, EventStatus.COMPLETED))
+            task = asyncio.create_task(self.on_event_change(completed_event, EventStatus.COMPLETED))
+            self._schedule_middleware_task(task)
 
     def _complete_event_tree_if_ready(self, event: BaseEvent[Any]) -> list[BaseEvent[Any]]:
-        newly_completed_events = self._mark_event_tree_complete_if_ready(event)
-        completed_events_for_ttl = list(newly_completed_events)
-        if event.event_status == EventStatus.COMPLETED and event not in completed_events_for_ttl:
-            completed_events_for_ttl.append(event)
-        for completed_event in completed_events_for_ttl:
-            for bus in list(type(self).all_instances):
-                if bus and bus.event_history.get(completed_event.event_id) is completed_event:
-                    bus._update_event_ttl_deadline(completed_event)
-        return newly_completed_events
+        return self._mark_event_tree_complete_if_ready(event)
 
     def _mark_event_tree_complete_if_ready(self, root_event: BaseEvent[Any]) -> list[BaseEvent[Any]]:
         """
@@ -2136,7 +2125,6 @@ class EventBus:
         just_completed = (not was_complete) and event.event_status == EventStatus.COMPLETED
         if just_completed:
             self._mark_event_complete_on_all_buses(event)
-            self._update_event_ttl_deadline(event)
             await self.on_event_change(event, EventStatus.COMPLETED)
 
     async def _propagate_parent_completion(self, event: BaseEvent[Any]) -> None:
@@ -2163,22 +2151,16 @@ class EventBus:
             just_completed = (not was_complete) and parent_event.event_status == EventStatus.COMPLETED
             if parent_bus and just_completed:
                 self._mark_event_complete_on_all_buses(parent_event)
-                parent_bus._update_event_ttl_deadline(parent_event)
                 await parent_bus.on_event_change(parent_event, EventStatus.COMPLETED)
 
             current = parent_event
 
     @staticmethod
     def _completed_event_age_seconds(event: BaseEvent[Any]) -> float | None:
-        if event.event_status != EventStatus.COMPLETED or not event.event_completed_at:
+        completed_at = EventBus._event_completed_epoch_seconds(event)
+        if completed_at is None:
             return None
-        try:
-            completed_at = datetime.fromisoformat(event.event_completed_at.replace('Z', '+00:00'))
-        except ValueError:
-            return None
-        if completed_at.tzinfo is None:
-            completed_at = completed_at.replace(tzinfo=UTC)
-        return max(0.0, (datetime.now(UTC) - completed_at.astimezone(UTC)).total_seconds())
+        return max(0.0, datetime.now(UTC).timestamp() - completed_at)
 
     @staticmethod
     def _event_completed_epoch_seconds(event: BaseEvent[Any]) -> float | None:
@@ -2205,45 +2187,11 @@ class EventBus:
             and (event_ttl == 0 or completed_at + event_ttl <= datetime.now(UTC).timestamp())
         )
 
-    @staticmethod
-    def _event_ttl_deadlines(event: BaseEvent[Any]) -> dict[str, float]:
-        # Runtime-only TTL index state lives on the shared event so each bus can
-        # reject stale candidate entries without adding another per-bus lookup.
-        return event._event_expires_at_by_bus  # pyright: ignore[reportPrivateUsage]
-
     def _resolve_event_result_ttl(self, event: BaseEvent[Any], result: EventResult[Any]) -> float | None:
         handler_ttl = result.handler.handler_result_ttl
         if handler_ttl is not None:
             return handler_ttl
         return event.event_result_ttl if event.event_result_ttl is not None else self.event_result_ttl
-
-    def _earliest_ttl_deadline(self, event: BaseEvent[Any]) -> float | None:
-        completed_at = self._event_completed_epoch_seconds(event)
-        if completed_at is None:
-            return None
-        ttl = self._resolve_event_ttl(event)
-        best_ttl = ttl if ttl is not None and ttl >= 0 else None
-        for result in event.event_results.values():
-            if result.eventbus_id != self.id:
-                continue
-            result_ttl = self._resolve_event_result_ttl(event, result)
-            if result_ttl is None or result_ttl < 0:
-                continue
-            best_ttl = result_ttl if best_ttl is None else min(best_ttl, result_ttl)
-        if best_ttl is None:
-            return None
-        if best_ttl == 0:
-            return 0.0
-        return completed_at + best_ttl
-
-    def _update_event_ttl_deadline(self, event: BaseEvent[Any]) -> None:
-        deadline = self._earliest_ttl_deadline(event)
-        deadlines = self._event_ttl_deadlines(event)
-        if deadline is None:
-            deadlines.pop(self.id, None)
-            return
-        deadlines[self.id] = deadline
-        heapq.heappush(self._ttl_expiry_index, (deadline, event.event_id))
 
     def _trim_event_history_if_needed(self, *, include_ttl: bool = True) -> None:
         if self.event_history.max_history_size is not None and (
@@ -2258,15 +2206,12 @@ class EventBus:
         if not include_ttl:
             return
 
-        now = datetime.now(UTC).timestamp()
-        while self._ttl_expiry_index and self._ttl_expiry_index[0][0] <= now:
-            expires_at, event_id = heapq.heappop(self._ttl_expiry_index)
-            event = self.event_history.get(event_id)
-            if event is None or self._event_ttl_deadlines(event).get(self.id) != expires_at:
-                continue
+        # TTL cleanup is tied to normal bus cleanup points rather than a timer.
+        # Scanning history here avoids per-event private deadline state while
+        # keeping pruning deterministic and per-bus.
+        for event_id, event in list(self.event_history.items()):
             age_seconds = self._completed_event_age_seconds(event)
             if age_seconds is None:
-                self._event_ttl_deadlines(event).pop(self.id, None)
                 continue
 
             for result_id, result in list(event.event_results.items()):
@@ -2279,10 +2224,8 @@ class EventBus:
 
             event_ttl = self._resolve_event_ttl(event)
             if event_ttl is None or event_ttl < 0 or age_seconds < event_ttl:
-                self._update_event_ttl_deadline(event)
                 continue
             self.event_history.pop(event_id, None)
-            self._event_ttl_deadlines(event).pop(self.id, None)
 
     async def _process_event(self, event: BaseEvent[Any], timeout: float | None = None) -> None:
         """
