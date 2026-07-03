@@ -1274,7 +1274,7 @@ class EventBus:
             for entry in event.event_path
         ), f'Event.event_path must be a list of EventBus labels BusName#abcd, got: {event.event_path}'
 
-        self._trim_event_history_if_needed()
+        self._trim_event_history_if_needed(include_ttl=False)
 
         # NOTE:
         # emit() is intentionally synchronous and runs on the same event-loop

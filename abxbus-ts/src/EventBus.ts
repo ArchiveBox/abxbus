@@ -1072,7 +1072,7 @@ export class EventBus {
       }
     }
 
-    this._trimEventHistory()
+    this._trimEventHistory(false)
     if (
       this.event_history.max_history_size !== null &&
       this.event_history.max_history_size > 0 &&

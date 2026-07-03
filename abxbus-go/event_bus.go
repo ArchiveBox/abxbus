@@ -612,7 +612,7 @@ func (b *EventBus) EmitWithContext(ctx context.Context, input any) *BaseEvent {
 	original_event.EventPath = append(original_event.EventPath, b.Label())
 	original_event.EventPendingBusCount++
 	original_event.mu.Unlock()
-	b.trimEventHistory(true)
+	b.trimEventHistory(false)
 	if b.EventHistory.MaxHistorySize != nil && *b.EventHistory.MaxHistorySize > 0 && !b.EventHistory.MaxHistoryDrop && b.EventHistory.Size() >= *b.EventHistory.MaxHistorySize {
 		panic(fmt.Sprintf("%s.emit(%s) rejected: history limit reached (%d/%d); set event_history.max_history_drop=true to drop old history instead.", b.Label(), original_event.EventType, b.EventHistory.Size(), *b.EventHistory.MaxHistorySize))
 	}
