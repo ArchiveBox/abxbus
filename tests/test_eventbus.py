@@ -345,8 +345,10 @@ class TestEventEnqueueing:
         event = AlreadyCompletedDispatchEvent(label='status')
         pending_result = event.event_result_update(handler_entry, status='pending')
         started_result = event.event_result_update(started_handler_entry, status='started')
+        provided_started_at = monotonic_datetime('2025-01-02T03:04:04.000000000Z')
         provided_completed_at = monotonic_datetime('2025-01-02T03:04:05.000000000Z')
         event.event_status = EventStatus.COMPLETED
+        event.event_started_at = provided_started_at
         event.event_completed_at = provided_completed_at
 
         dispatched = eventbus.dispatch(event)
@@ -355,7 +357,7 @@ class TestEventEnqueueing:
         assert dispatched is event
         assert calls == 0
         assert event.event_status == 'completed'
-        assert event.event_started_at == provided_completed_at
+        assert event.event_started_at == provided_started_at
         assert event.event_completed_at == provided_completed_at
         assert event.event_path == [eventbus.label]
         assert event.event_results[handler_entry.id] is pending_result
@@ -379,7 +381,9 @@ class TestEventEnqueueing:
         handler_entry = eventbus.on(AlreadyCompletedDispatchEvent, handler)
         event = AlreadyCompletedDispatchEvent(label='timestamp')
         pending_result = event.event_result_update(handler_entry, status='pending')
+        provided_started_at = monotonic_datetime('2025-01-02T03:04:04.000000000Z')
         provided_completed_at = monotonic_datetime('2025-01-02T03:04:05.000000000Z')
+        event.event_started_at = provided_started_at
         event.event_completed_at = provided_completed_at
 
         dispatched = eventbus.dispatch(event)
@@ -388,13 +392,26 @@ class TestEventEnqueueing:
         assert dispatched is event
         assert calls == 0
         assert event.event_status == 'completed'
-        assert event.event_started_at == provided_completed_at
+        assert event.event_started_at == provided_started_at
         assert event.event_completed_at == provided_completed_at
         assert event.event_path == [eventbus.label]
         assert event.event_results[handler_entry.id] is pending_result
         assert pending_result.status == 'pending'
         assert pending_result.completed_at is None
         assert pending_result.result is None
+
+        fallback_completed_at = monotonic_datetime('2025-01-02T03:04:07.000000000Z')
+        fallback_event = AlreadyCompletedDispatchEvent(label='timestamp-fallback')
+        fallback_event.event_completed_at = fallback_completed_at
+
+        eventbus.dispatch(fallback_event)
+        await eventbus.wait_until_idle(timeout=1)
+
+        assert calls == 0
+        assert fallback_event.event_status == 'completed'
+        assert fallback_event.event_started_at == fallback_completed_at
+        assert fallback_event.event_completed_at == fallback_completed_at
+        assert fallback_event.event_path == [eventbus.label]
 
     async def test_dispatching_completed_events_with_prior_paths_records_bus_once_and_skips_handlers(self, eventbus):
         calls = 0
@@ -409,8 +426,10 @@ class TestEventEnqueueing:
 
         prior_other_bus_event = AlreadyCompletedDispatchEvent(label='prior-other-bus')
         prior_other_bus_event.event_path = [other_bus_label]
+        provided_prior_other_started_at = monotonic_datetime('2025-01-02T03:04:04.000000000Z')
         provided_prior_other_completed_at = monotonic_datetime('2025-01-02T03:04:06.000000000Z')
         prior_other_bus_event.event_status = EventStatus.COMPLETED
+        prior_other_bus_event.event_started_at = provided_prior_other_started_at
         prior_other_bus_event.event_completed_at = provided_prior_other_completed_at
 
         eventbus.dispatch(prior_other_bus_event)
@@ -418,13 +437,15 @@ class TestEventEnqueueing:
 
         assert calls == 0
         assert prior_other_bus_event.event_status == 'completed'
-        assert prior_other_bus_event.event_started_at == provided_prior_other_completed_at
+        assert prior_other_bus_event.event_started_at == provided_prior_other_started_at
         assert prior_other_bus_event.event_completed_at == provided_prior_other_completed_at
         assert prior_other_bus_event.event_path == [other_bus_label, eventbus.label]
 
         provided_completed_at = monotonic_datetime('2025-01-02T03:04:05.000000000Z')
+        provided_started_at = monotonic_datetime('2025-01-02T03:04:04.000000000Z')
         prior_same_bus_event = AlreadyCompletedDispatchEvent(label='prior-same-bus')
         prior_same_bus_event.event_path = [other_bus_label, eventbus.label]
+        prior_same_bus_event.event_started_at = provided_started_at
         prior_same_bus_event.event_completed_at = provided_completed_at
 
         eventbus.dispatch(prior_same_bus_event)
@@ -432,7 +453,7 @@ class TestEventEnqueueing:
 
         assert calls == 0
         assert prior_same_bus_event.event_status == 'completed'
-        assert prior_same_bus_event.event_started_at == provided_completed_at
+        assert prior_same_bus_event.event_started_at == provided_started_at
         assert prior_same_bus_event.event_completed_at == provided_completed_at
         assert prior_same_bus_event.event_path == [other_bus_label, eventbus.label]
 

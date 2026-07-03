@@ -96,8 +96,10 @@ func TestDispatchingCompletedStatusEventSkipsHandlersAndNormalizesCompletion(t *
 	startedResult := event.EventResultUpdate(startedHandler, &abxbus.BaseEventResultUpdateOptions{
 		EventResultUpdateOptions: abxbus.EventResultUpdateOptions{Status: abxbus.EventResultStarted},
 	})
+	providedStartedAt := "2025-01-02T03:04:04.000000000Z"
 	providedCompletedAt := "2025-01-02T03:04:05.000000000Z"
 	event.EventStatus = "completed"
+	event.EventStartedAt = &providedStartedAt
 	event.EventCompletedAt = &providedCompletedAt
 
 	dispatched := bus.Dispatch(event)
@@ -115,8 +117,8 @@ func TestDispatchingCompletedStatusEventSkipsHandlersAndNormalizesCompletion(t *
 	if event.EventStatus != "completed" {
 		t.Fatalf("expected completed status, got %s", event.EventStatus)
 	}
-	if event.EventStartedAt == nil || *event.EventStartedAt != providedCompletedAt {
-		t.Fatalf("event_started_at should use provided event_completed_at, got %#v", event.EventStartedAt)
+	if event.EventStartedAt == nil || *event.EventStartedAt != providedStartedAt {
+		t.Fatalf("event_started_at should be preserved, got %#v", event.EventStartedAt)
 	}
 	if event.EventCompletedAt == nil || *event.EventCompletedAt != providedCompletedAt {
 		t.Fatalf("event_completed_at should be preserved, got %#v", event.EventCompletedAt)
@@ -149,7 +151,9 @@ func TestDispatchingCompletedAtEventSkipsHandlersAndPreservesTimestamp(t *testin
 	pendingResult := event.EventResultUpdate(handler, &abxbus.BaseEventResultUpdateOptions{
 		EventResultUpdateOptions: abxbus.EventResultUpdateOptions{Status: abxbus.EventResultPending},
 	})
+	providedStartedAt := "2025-01-02T03:04:04.000000000Z"
 	providedCompletedAt := "2025-01-02T03:04:05.000000000Z"
+	event.EventStartedAt = &providedStartedAt
 	event.EventCompletedAt = &providedCompletedAt
 
 	dispatched := bus.Dispatch(event)
@@ -167,8 +171,8 @@ func TestDispatchingCompletedAtEventSkipsHandlersAndPreservesTimestamp(t *testin
 	if event.EventStatus != "completed" {
 		t.Fatalf("expected completed status, got %s", event.EventStatus)
 	}
-	if event.EventStartedAt == nil || *event.EventStartedAt != providedCompletedAt {
-		t.Fatalf("event_started_at should be normalized from event_completed_at, got %#v", event.EventStartedAt)
+	if event.EventStartedAt == nil || *event.EventStartedAt != providedStartedAt {
+		t.Fatalf("event_started_at should be preserved, got %#v", event.EventStartedAt)
 	}
 	if event.EventCompletedAt == nil || *event.EventCompletedAt != providedCompletedAt {
 		t.Fatalf("event_completed_at should be preserved, got %#v", event.EventCompletedAt)
@@ -181,6 +185,31 @@ func TestDispatchingCompletedAtEventSkipsHandlersAndPreservesTimestamp(t *testin
 	}
 	if pendingResult.Status != abxbus.EventResultPending || pendingResult.CompletedAt != nil || pendingResult.Result != nil {
 		t.Fatalf("pending event_result should be unchanged, got %#v", pendingResult)
+	}
+
+	fallbackCompletedAt := "2025-01-02T03:04:07.000000000Z"
+	fallbackEvent := abxbus.NewBaseEvent("AlreadyCompletedAtDispatchEvent", map[string]any{"label": "timestamp-fallback"})
+	fallbackEvent.EventCompletedAt = &fallbackCompletedAt
+
+	bus.Dispatch(fallbackEvent)
+	if !bus.WaitUntilIdle(&wait) {
+		t.Fatal("bus did not become idle after fallback completed_at dispatch")
+	}
+
+	if calls != 0 {
+		t.Fatalf("handler should not run for fallback completed_at event, got %d calls", calls)
+	}
+	if fallbackEvent.EventStatus != "completed" {
+		t.Fatalf("expected fallback status completed, got %s", fallbackEvent.EventStatus)
+	}
+	if fallbackEvent.EventStartedAt == nil || *fallbackEvent.EventStartedAt != fallbackCompletedAt {
+		t.Fatalf("fallback event_started_at should use completed_at, got %#v", fallbackEvent.EventStartedAt)
+	}
+	if fallbackEvent.EventCompletedAt == nil || *fallbackEvent.EventCompletedAt != fallbackCompletedAt {
+		t.Fatalf("fallback event_completed_at should be preserved, got %#v", fallbackEvent.EventCompletedAt)
+	}
+	if !reflect.DeepEqual(fallbackEvent.EventPath, []string{bus.Label()}) {
+		t.Fatalf("fallback event_path should contain only handling bus %s, got %#v", bus.Label(), fallbackEvent.EventPath)
 	}
 }
 
@@ -195,8 +224,10 @@ func TestDispatchingCompletedEventsWithPriorPathsRecordsBusOnceAndSkipsHandlers(
 
 	priorOtherBusEvent := abxbus.NewBaseEvent("AlreadyCompletedPriorPathEvent", map[string]any{"label": "prior-other-bus"})
 	priorOtherBusEvent.EventPath = []string{otherBusLabel}
+	providedPriorOtherStartedAt := "2025-01-02T03:04:04.000000000Z"
 	providedPriorOtherCompletedAt := "2025-01-02T03:04:06.000000000Z"
 	priorOtherBusEvent.EventStatus = "completed"
+	priorOtherBusEvent.EventStartedAt = &providedPriorOtherStartedAt
 	priorOtherBusEvent.EventCompletedAt = &providedPriorOtherCompletedAt
 
 	bus.Dispatch(priorOtherBusEvent)
@@ -211,8 +242,8 @@ func TestDispatchingCompletedEventsWithPriorPathsRecordsBusOnceAndSkipsHandlers(
 	if priorOtherBusEvent.EventStatus != "completed" {
 		t.Fatalf("expected prior-other-bus status completed, got %s", priorOtherBusEvent.EventStatus)
 	}
-	if priorOtherBusEvent.EventStartedAt == nil || *priorOtherBusEvent.EventStartedAt != providedPriorOtherCompletedAt {
-		t.Fatalf("prior-other-bus event_started_at should use provided completed_at, got %#v", priorOtherBusEvent.EventStartedAt)
+	if priorOtherBusEvent.EventStartedAt == nil || *priorOtherBusEvent.EventStartedAt != providedPriorOtherStartedAt {
+		t.Fatalf("prior-other-bus event_started_at should be preserved, got %#v", priorOtherBusEvent.EventStartedAt)
 	}
 	if priorOtherBusEvent.EventCompletedAt == nil || *priorOtherBusEvent.EventCompletedAt != providedPriorOtherCompletedAt {
 		t.Fatalf("prior-other-bus event_completed_at should be preserved, got %#v", priorOtherBusEvent.EventCompletedAt)
@@ -222,8 +253,10 @@ func TestDispatchingCompletedEventsWithPriorPathsRecordsBusOnceAndSkipsHandlers(
 	}
 
 	providedCompletedAt := "2025-01-02T03:04:05.000000000Z"
+	providedStartedAt := "2025-01-02T03:04:04.000000000Z"
 	priorSameBusEvent := abxbus.NewBaseEvent("AlreadyCompletedPriorPathEvent", map[string]any{"label": "prior-same-bus"})
 	priorSameBusEvent.EventPath = []string{otherBusLabel, bus.Label()}
+	priorSameBusEvent.EventStartedAt = &providedStartedAt
 	priorSameBusEvent.EventCompletedAt = &providedCompletedAt
 
 	bus.Dispatch(priorSameBusEvent)
@@ -237,8 +270,8 @@ func TestDispatchingCompletedEventsWithPriorPathsRecordsBusOnceAndSkipsHandlers(
 	if priorSameBusEvent.EventStatus != "completed" {
 		t.Fatalf("expected prior-same-bus status completed, got %s", priorSameBusEvent.EventStatus)
 	}
-	if priorSameBusEvent.EventStartedAt == nil || *priorSameBusEvent.EventStartedAt != providedCompletedAt {
-		t.Fatalf("prior-same-bus event_started_at should use provided completed_at, got %#v", priorSameBusEvent.EventStartedAt)
+	if priorSameBusEvent.EventStartedAt == nil || *priorSameBusEvent.EventStartedAt != providedStartedAt {
+		t.Fatalf("prior-same-bus event_started_at should be preserved, got %#v", priorSameBusEvent.EventStartedAt)
 	}
 	if priorSameBusEvent.EventCompletedAt == nil || *priorSameBusEvent.EventCompletedAt != providedCompletedAt {
 		t.Fatalf("prior-same-bus event_completed_at should be preserved, got %#v", priorSameBusEvent.EventCompletedAt)

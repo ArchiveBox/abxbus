@@ -358,6 +358,7 @@ fn test_dispatching_completed_status_event_skips_handlers_and_normalizes_complet
     let started_at = "2025-01-02T03:04:04.000000000Z".to_string();
     started_result.status = EventResultStatus::Started;
     started_result.started_at = Some(started_at.clone());
+    let provided_started_at = "2025-01-02T03:04:03.000000000Z".to_string();
     let provided_completed_at = "2025-01-02T03:04:05.000000000Z".to_string();
     {
         let mut inner = event.inner.lock();
@@ -368,6 +369,7 @@ fn test_dispatching_completed_status_event_skips_handlers_and_normalizes_complet
             .event_results
             .insert(started_handler.id.clone(), started_result);
         inner.event_status = EventStatus::Completed;
+        inner.event_started_at = Some(provided_started_at.clone());
         inner.event_completed_at = Some(provided_completed_at.clone());
     }
 
@@ -378,7 +380,7 @@ fn test_dispatching_completed_status_event_skips_handlers_and_normalizes_complet
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     let inner = event.inner.lock();
     assert_eq!(inner.event_status, EventStatus::Completed);
-    assert_eq!(inner.event_started_at, Some(provided_completed_at.clone()));
+    assert_eq!(inner.event_started_at, Some(provided_started_at));
     assert_eq!(inner.event_completed_at, Some(provided_completed_at));
     assert_eq!(inner.event_path, vec![bus.label()]);
     let result = inner
@@ -417,12 +419,14 @@ fn test_dispatching_completed_at_event_skips_handlers_and_preserves_timestamp() 
     );
     let pending_result =
         EventResult::new(event.inner.lock().event_id.clone(), handler.clone(), None);
+    let provided_started_at = "2025-01-02T03:04:04.000000000Z".to_string();
     let provided_completed_at = "2025-01-02T03:04:05.000000000Z".to_string();
     {
         let mut inner = event.inner.lock();
         inner
             .event_results
             .insert(handler.id.clone(), pending_result);
+        inner.event_started_at = Some(provided_started_at.clone());
         inner.event_completed_at = Some(provided_completed_at.clone());
     }
 
@@ -433,7 +437,7 @@ fn test_dispatching_completed_at_event_skips_handlers_and_preserves_timestamp() 
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     let inner = event.inner.lock();
     assert_eq!(inner.event_status, EventStatus::Completed);
-    assert_eq!(inner.event_started_at, Some(provided_completed_at.clone()));
+    assert_eq!(inner.event_started_at, Some(provided_started_at));
     assert_eq!(inner.event_completed_at, Some(provided_completed_at));
     assert_eq!(inner.event_path, vec![bus.label()]);
     let result = inner
@@ -443,6 +447,27 @@ fn test_dispatching_completed_at_event_skips_handlers_and_preserves_timestamp() 
     assert_eq!(result.status, EventResultStatus::Pending);
     assert!(result.completed_at.is_none());
     assert!(result.result.is_none());
+    drop(inner);
+
+    let fallback_completed_at = "2025-01-02T03:04:07.000000000Z".to_string();
+    let fallback_event = base_event(
+        "AlreadyCompletedAtDispatchEvent",
+        json!({"label": "timestamp-fallback"}),
+    );
+    {
+        let mut inner = fallback_event.inner.lock();
+        inner.event_completed_at = Some(fallback_completed_at.clone());
+    }
+
+    bus.emit_base(fallback_event.clone());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let inner = fallback_event.inner.lock();
+    assert_eq!(inner.event_status, EventStatus::Completed);
+    assert_eq!(inner.event_started_at, Some(fallback_completed_at.clone()));
+    assert_eq!(inner.event_completed_at, Some(fallback_completed_at));
+    assert_eq!(inner.event_path, vec![bus.label()]);
 }
 
 #[test]
@@ -463,6 +488,7 @@ fn test_dispatching_completed_events_with_prior_paths_records_bus_once_and_skips
     {
         let mut inner = prior_other_bus_event.inner.lock();
         inner.event_path = vec![other_bus_label.clone()];
+        inner.event_started_at = Some("2025-01-02T03:04:04.000000000Z".to_string());
         inner.event_completed_at = Some("2025-01-02T03:04:06.000000000Z".to_string());
         inner.event_status = EventStatus::Completed;
     }
@@ -476,7 +502,7 @@ fn test_dispatching_completed_events_with_prior_paths_records_bus_once_and_skips
         assert_eq!(inner.event_status, EventStatus::Completed);
         assert_eq!(
             inner.event_started_at.as_deref(),
-            Some("2025-01-02T03:04:06.000000000Z")
+            Some("2025-01-02T03:04:04.000000000Z")
         );
         assert_eq!(
             inner.event_completed_at.as_deref(),
@@ -485,6 +511,7 @@ fn test_dispatching_completed_events_with_prior_paths_records_bus_once_and_skips
         assert_eq!(inner.event_path, vec![other_bus_label.clone(), bus.label()]);
     }
 
+    let provided_started_at = "2025-01-02T03:04:04.000000000Z".to_string();
     let provided_completed_at = "2025-01-02T03:04:05.000000000Z".to_string();
     let prior_same_bus_event = base_event(
         "AlreadyCompletedPriorPathEvent",
@@ -493,6 +520,7 @@ fn test_dispatching_completed_events_with_prior_paths_records_bus_once_and_skips
     {
         let mut inner = prior_same_bus_event.inner.lock();
         inner.event_path = vec![other_bus_label.clone(), bus.label()];
+        inner.event_started_at = Some(provided_started_at.clone());
         inner.event_completed_at = Some(provided_completed_at.clone());
     }
 
@@ -502,7 +530,7 @@ fn test_dispatching_completed_events_with_prior_paths_records_bus_once_and_skips
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     let inner = prior_same_bus_event.inner.lock();
     assert_eq!(inner.event_status, EventStatus::Completed);
-    assert_eq!(inner.event_started_at, Some(provided_completed_at.clone()));
+    assert_eq!(inner.event_started_at, Some(provided_started_at));
     assert_eq!(inner.event_completed_at, Some(provided_completed_at));
     assert_eq!(inner.event_path, vec![other_bus_label, bus.label()]);
 }
