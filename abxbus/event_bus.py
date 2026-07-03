@@ -1,4 +1,5 @@
 import asyncio
+import bisect
 import contextvars
 import inspect
 import json
@@ -203,6 +204,8 @@ class EventBus:
     find_waiters: set[_FindWaiter]
     _lock_for_event_bus_serial: ReentrantLock
     locks: LockManagerProtocol
+    _ttl_deadline_queue: list[tuple[float, str]]
+    _ttl_deadlines_by_event_id: dict[str, float]
     _destroyed: bool
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -300,6 +303,8 @@ class EventBus:
         self.locks = LockManager()
         self._parallel_event_tasks = set()
         self._pending_middleware_tasks = set()
+        self._ttl_deadline_queue = []
+        self._ttl_deadlines_by_event_id = {}
         try:
             self.event_concurrency = EventConcurrencyMode(event_concurrency or EventConcurrencyMode.BUS_SERIAL)
         except ValueError as exc:
@@ -640,6 +645,8 @@ class EventBus:
         bus.handlers.clear()
         bus.handlers_by_key = defaultdict(list)
         bus.event_history.clear()
+        bus._ttl_deadline_queue.clear()
+        bus._ttl_deadlines_by_event_id.clear()
 
         raw_handlers = cls._normalize_json_object_required(
             payload.get('handlers', {}),
@@ -721,6 +728,7 @@ class EventBus:
 
             event.event_results = EventResultsDict(hydrated_results)
             bus.event_history[event.event_id] = event
+            bus._track_event_ttl_deadline(event)
 
         pending_event_ids: list[str] = []
         raw_pending_queue = cls._normalize_json_string_list(payload.get('pending_event_queue'))
@@ -1008,6 +1016,9 @@ class EventBus:
                     # max_history_size=0 means "keep only in-flight events".
                     # As soon as an event is completed, drop it from history.
                     bus.event_history.remove_event(event_id)
+                    bus._untrack_event_ttl_deadline(event_id)
+                elif event_id in bus.event_history:
+                    bus._track_event_ttl_deadline(event)
 
     @property
     def events_pending(self) -> list[BaseEvent[Any]]:
@@ -1297,6 +1308,7 @@ class EventBus:
         already_in_history = event.event_id in self.event_history
         if (already_in_event_path or already_in_history) and self._completed_event_expired_for_history(event):
             self.event_history.pop(event.event_id, None)
+            self._untrack_event_ttl_deadline(event.event_id)
             return event
         if should_skip_handler_execution:
             self.event_history[event.event_id] = event
@@ -1972,6 +1984,8 @@ class EventBus:
         if event.event_pending_bus_count:
             return
         newly_completed_events = self._complete_event_tree_if_ready(event)
+        if event.event_status == EventStatus.COMPLETED and event.event_id in self.event_history:
+            self._track_event_ttl_deadline(event)
         for completed_event in newly_completed_events:
             task = asyncio.create_task(self.on_event_change(completed_event, EventStatus.COMPLETED))
             self._schedule_middleware_task(task)
@@ -2187,18 +2201,45 @@ class EventBus:
             and (event_ttl == 0 or completed_at + event_ttl <= datetime.now(UTC).timestamp())
         )
 
+    def _untrack_event_ttl_deadline(self, event_id: str) -> None:
+        self._ttl_deadlines_by_event_id.pop(event_id, None)
+
     def _resolve_event_result_ttl(self, event: BaseEvent[Any], result: EventResult[Any]) -> float | None:
         handler_ttl = result.handler.handler_result_ttl
         if handler_ttl is not None:
             return handler_ttl
         return event.event_result_ttl if event.event_result_ttl is not None else self.event_result_ttl
 
-    def _has_ttl_cleanup_sources(self) -> bool:
-        return (
-            self.event_ttl is not None
-            or self.event_result_ttl is not None
-            or any(handler.handler_result_ttl is not None for handler in self.handlers.values())
-        )
+    def _earliest_ttl_deadline(self, event: BaseEvent[Any]) -> float | None:
+        completed_at = self._event_completed_epoch_seconds(event)
+        if completed_at is None:
+            return None
+        best_ttl = self._resolve_event_ttl(event)
+        if best_ttl is not None and best_ttl < 0:
+            best_ttl = None
+        for result in event.event_results.values():
+            if result.eventbus_id != self.id:
+                continue
+            result_ttl = self._resolve_event_result_ttl(event, result)
+            if result_ttl is None or result_ttl < 0:
+                continue
+            best_ttl = result_ttl if best_ttl is None else min(best_ttl, result_ttl)
+        if best_ttl is None:
+            return None
+        if best_ttl == 0:
+            return 0.0
+        return completed_at + best_ttl
+
+    def _track_event_ttl_deadline(self, event: BaseEvent[Any]) -> None:
+        deadline = self._earliest_ttl_deadline(event)
+        event_id = event.event_id
+        if deadline is None:
+            self._untrack_event_ttl_deadline(event_id)
+            return
+        if self._ttl_deadlines_by_event_id.get(event_id) == deadline:
+            return
+        self._ttl_deadlines_by_event_id[event_id] = deadline
+        bisect.insort(self._ttl_deadline_queue, (deadline, event_id))
 
     def _trim_event_history_if_needed(self, *, include_ttl: bool = True) -> None:
         if self.event_history.max_history_size is not None and (
@@ -2209,18 +2250,29 @@ class EventBus:
                 and len(self.event_history) > self.event_history.max_history_size
             )
         ):
-            self.event_history.trim_event_history(owner_label=str(self))
-        if not include_ttl or not self._has_ttl_cleanup_sources():
+            self.event_history.trim_event_history(
+                on_remove=lambda event: self._untrack_event_ttl_deadline(event.event_id),
+                owner_label=str(self),
+            )
+        if not include_ttl:
             return
 
-        # TTL cleanup is tied to normal bus cleanup points rather than a timer.
-        # Scanning history here avoids per-event private deadline state while
-        # keeping pruning deterministic and per-bus. Buses with no TTL defaults
-        # or handler TTLs skip this full-history pass to keep unlimited history
-        # O(1) per emit in the common no-TTL case.
-        for event_id, event in list(self.event_history.items()):
+        # TTL cleanup is tied to normal bus cleanup points rather than a timer,
+        # but it must only inspect due candidates. The queue is derived from the
+        # current event/result TTL fields, so stale candidates can be rejected
+        # without storing serialized TTL state on the event.
+        now = datetime.now(UTC).timestamp()
+        while self._ttl_deadline_queue and self._ttl_deadline_queue[0][0] <= now:
+            expires_at, event_id = self._ttl_deadline_queue.pop(0)
+            if self._ttl_deadlines_by_event_id.get(event_id) != expires_at:
+                continue
+            event = self.event_history.get(event_id)
+            if event is None:
+                self._untrack_event_ttl_deadline(event_id)
+                continue
             age_seconds = self._completed_event_age_seconds(event)
             if age_seconds is None:
+                self._untrack_event_ttl_deadline(event_id)
                 continue
 
             for result_id, result in list(event.event_results.items()):
@@ -2233,8 +2285,10 @@ class EventBus:
 
             event_ttl = self._resolve_event_ttl(event)
             if event_ttl is None or event_ttl < 0 or age_seconds < event_ttl:
+                self._track_event_ttl_deadline(event)
                 continue
             self.event_history.pop(event_id, None)
+            self._untrack_event_ttl_deadline(event_id)
 
     async def _process_event(self, event: BaseEvent[Any], timeout: float | None = None) -> None:
         """

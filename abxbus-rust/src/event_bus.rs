@@ -49,6 +49,12 @@ struct FindWaiter {
     sender: std_mpsc::Sender<Option<Arc<BaseEvent>>>,
 }
 
+#[derive(Clone)]
+struct TTLDeadlineEntry {
+    expires_at: f64,
+    event_id: String,
+}
+
 struct BusRuntime {
     queue: Mutex<VecDeque<Arc<BaseEvent>>>,
     queue_notify: Event,
@@ -63,6 +69,8 @@ struct BusRuntime {
     history_order: Mutex<VecDeque<String>>,
     max_history_size: Option<usize>,
     max_history_drop: bool,
+    ttl_deadline_queue: Mutex<VecDeque<TTLDeadlineEntry>>,
+    ttl_deadlines_by_event_id: Mutex<HashMap<String, f64>>,
     find_waiters: Mutex<Vec<FindWaiter>>,
     next_waiter_id: Mutex<u64>,
 }
@@ -619,6 +627,8 @@ impl EventBus {
                 history_order: Mutex::new(VecDeque::new()),
                 max_history_size: options.max_history_size,
                 max_history_drop: options.max_history_drop,
+                ttl_deadline_queue: Mutex::new(VecDeque::new()),
+                ttl_deadlines_by_event_id: Mutex::new(HashMap::new()),
                 find_waiters: Mutex::new(Vec::new()),
                 next_waiter_id: Mutex::new(0),
             }),
@@ -823,6 +833,8 @@ impl EventBus {
         if clear {
             self.runtime.events.lock().clear();
             self.runtime.history_order.lock().clear();
+            self.runtime.ttl_deadline_queue.lock().clear();
+            self.runtime.ttl_deadlines_by_event_id.lock().clear();
             self.handlers.lock().clear();
         }
     }
@@ -1358,6 +1370,8 @@ impl EventBus {
         bus.runtime.event_contexts.lock().clear();
         bus.runtime.event_context_count.store(0, Ordering::SeqCst);
         bus.runtime.history_order.lock().clear();
+        bus.runtime.ttl_deadline_queue.lock().clear();
+        bus.runtime.ttl_deadlines_by_event_id.lock().clear();
         if let Some(Value::Object(raw_event_history)) = payload.get("event_history") {
             for (event_id_hint, event_value) in raw_event_history {
                 let event = BaseEvent::from_json_value(event_value.clone());
@@ -1380,8 +1394,12 @@ impl EventBus {
                     }
                 }
                 let event_id = event.inner.lock().event_id.clone();
-                bus.runtime.events.lock().insert(event_id.clone(), event);
+                bus.runtime
+                    .events
+                    .lock()
+                    .insert(event_id.clone(), event.clone());
                 bus.runtime.history_order.lock().push_back(event_id);
+                bus.track_event_ttl_deadline(&event);
             }
         }
         bus.runtime.queue.lock().clear();
@@ -1610,6 +1628,7 @@ impl EventBus {
             && self.completed_event_expired_for_history(&event)
         {
             self.runtime.events.lock().remove(&event_id);
+            self.untrack_event_ttl_deadline(&event_id);
             self.runtime
                 .history_order
                 .lock()
@@ -2042,32 +2061,105 @@ impl EventBus {
             .or(self.event_result_ttl)
     }
 
-    fn has_ttl_cleanup_sources(&self) -> bool {
-        self.event_ttl.is_some()
-            || self.event_result_ttl.is_some()
-            || self.handlers.lock().values().any(|handlers| {
-                handlers
-                    .iter()
-                    .any(|handler| handler.handler_result_ttl.is_some())
-            })
+    fn untrack_event_ttl_deadline(&self, event_id: &str) {
+        self.runtime
+            .ttl_deadlines_by_event_id
+            .lock()
+            .remove(event_id);
+    }
+
+    fn earliest_ttl_deadline(&self, event: &Arc<BaseEvent>) -> Option<f64> {
+        let inner = event.inner.lock();
+        let completed_at = Self::completed_at_epoch_seconds(&inner)?;
+        let mut best_ttl = self.resolve_event_ttl(&inner).filter(|ttl| *ttl >= 0.0);
+        for result in inner.event_results.values() {
+            if result.handler.eventbus_id != self.id {
+                continue;
+            }
+            let Some(result_ttl) = self
+                .resolve_event_result_ttl(&inner, result)
+                .filter(|ttl| *ttl >= 0.0)
+            else {
+                continue;
+            };
+            best_ttl = Some(best_ttl.map_or(result_ttl, |best| best.min(result_ttl)));
+        }
+        let best_ttl = best_ttl?;
+        if best_ttl == 0.0 {
+            return Some(0.0);
+        }
+        Some(completed_at + best_ttl)
+    }
+
+    fn track_event_ttl_deadline(&self, event: &Arc<BaseEvent>) {
+        let event_id = event.inner.lock().event_id.clone();
+        let Some(deadline) = self.earliest_ttl_deadline(event) else {
+            self.untrack_event_ttl_deadline(&event_id);
+            return;
+        };
+        {
+            let mut deadlines = self.runtime.ttl_deadlines_by_event_id.lock();
+            if deadlines
+                .get(&event_id)
+                .is_some_and(|current| *current == deadline)
+            {
+                return;
+            }
+            deadlines.insert(event_id.clone(), deadline);
+        }
+        let mut queue = self.runtime.ttl_deadline_queue.lock();
+        let index = queue
+            .iter()
+            .position(|entry| entry.expires_at > deadline)
+            .unwrap_or(queue.len());
+        queue.insert(
+            index,
+            TTLDeadlineEntry {
+                expires_at: deadline,
+                event_id,
+            },
+        );
     }
 
     fn trim_event_history(&self, include_ttl: bool) {
         if let Some(max_size) = self.runtime.max_history_size {
             self.trim_history_to_capacity(max_size, false);
         }
-        if !include_ttl || !self.has_ttl_cleanup_sources() {
+        if !include_ttl {
             return;
         }
 
-        // TTL cleanup is tied to normal bus cleanup points rather than a timer.
-        // Scanning history here avoids per-event private deadline state while
-        // keeping pruning deterministic and per-bus. Buses with no TTL defaults
-        // or handler TTLs skip this full-history pass to keep unlimited history
-        // O(1) per emit in the common no-TTL case.
-        let events: Vec<Arc<BaseEvent>> = self.runtime.events.lock().values().cloned().collect();
-        for event in events {
+        // TTL cleanup is tied to normal bus cleanup points rather than a timer,
+        // but it must only inspect due candidates. The queue is derived from the
+        // current event/result TTL fields, so stale candidates can be rejected
+        // without storing serialized TTL state on the event.
+        let now = Self::now_epoch_seconds();
+        loop {
+            let Some(entry) = ({
+                let mut queue = self.runtime.ttl_deadline_queue.lock();
+                if queue.front().is_none_or(|entry| entry.expires_at > now) {
+                    None
+                } else {
+                    queue.pop_front()
+                }
+            }) else {
+                break;
+            };
+            if self
+                .runtime
+                .ttl_deadlines_by_event_id
+                .lock()
+                .get(&entry.event_id)
+                .is_none_or(|current| *current != entry.expires_at)
+            {
+                continue;
+            }
+            let Some(event) = self.runtime.events.lock().get(&entry.event_id).cloned() else {
+                self.untrack_event_ttl_deadline(&entry.event_id);
+                continue;
+            };
             let Some(age_seconds) = Self::completed_event_age_seconds(&event) else {
+                self.untrack_event_ttl_deadline(&entry.event_id);
                 continue;
             };
             let mut inner = event.inner.lock();
@@ -2090,9 +2182,11 @@ impl EventBus {
             let event_ttl = self.resolve_event_ttl(&inner);
             drop(inner);
             if event_ttl.is_none_or(|ttl| ttl < 0.0 || age_seconds < ttl) {
+                self.track_event_ttl_deadline(&event);
                 continue;
             }
             self.runtime.events.lock().remove(&event_id);
+            self.untrack_event_ttl_deadline(&event_id);
             self.runtime
                 .history_order
                 .lock()
@@ -2138,6 +2232,7 @@ impl EventBus {
             }
             self.runtime.history_order.lock().pop_front();
             self.runtime.events.lock().remove(&oldest);
+            self.untrack_event_ttl_deadline(&oldest);
             if self.runtime.event_contexts.lock().remove(&oldest).is_some() {
                 self.runtime
                     .event_context_count
@@ -2837,6 +2932,7 @@ impl EventBus {
         if self.runtime.max_history_size == Some(0) {
             let event_id = event.inner.lock().event_id.clone();
             self.runtime.events.lock().remove(&event_id);
+            self.untrack_event_ttl_deadline(&event_id);
             if self
                 .runtime
                 .event_contexts
@@ -2858,6 +2954,10 @@ impl EventBus {
 
         if should_complete {
             event.mark_completed();
+            let event_id = event.inner.lock().event_id.clone();
+            if self.runtime.events.lock().contains_key(&event_id) {
+                self.track_event_ttl_deadline(&event);
+            }
         }
     }
 
@@ -2883,6 +2983,10 @@ impl EventBus {
         // completion hooks can observe the event.
         if should_complete {
             event.mark_completed();
+            let event_id = event.inner.lock().event_id.clone();
+            if self.runtime.events.lock().contains_key(&event_id) {
+                self.track_event_ttl_deadline(event);
+            }
         }
     }
 

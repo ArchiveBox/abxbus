@@ -209,6 +209,8 @@ export class EventBus {
   locks: LockManager
   find_waiters: Set<EphemeralFindEventHandler> // set of EphemeralFindEventHandler objects that are waiting for a matching future event
   middlewares: EventBusMiddleware[]
+  private ttl_deadline_queue: Array<[number, string]>
+  private ttl_deadlines_by_event_id: Map<string, number>
   private destroyed: boolean
 
   private static normalizeMiddlewares(middlewares?: EventBusMiddlewareInput[]): EventBusMiddleware[] {
@@ -254,6 +256,8 @@ export class EventBus {
     this.in_flight_event_ids = new Set()
     this.locks = new LockManager(this)
     this.middlewares = EventBus.normalizeMiddlewares(options.middlewares)
+    this.ttl_deadline_queue = []
+    this.ttl_deadlines_by_event_id = new Map()
     this.destroyed = false
 
     this.all_instances.add(this)
@@ -348,6 +352,7 @@ export class EventBus {
 
     event.event_pending_bus_count = Math.max(0, event.event_pending_bus_count - 1)
     event._markCompleted()
+    this._trackEventTTLDeadline(event)
   }
 
   private _createEventTimeoutError(
@@ -453,16 +458,60 @@ export class EventBus {
     return result.handler.handler_result_ttl ?? event.event_result_ttl ?? this.event_result_ttl
   }
 
-  private _hasTTLCleanupSources(): boolean {
-    if (this.event_ttl !== null || this.event_result_ttl !== null) {
-      return true
+  private _untrackEventTTLDeadline(event_id: string): void {
+    this.ttl_deadlines_by_event_id.delete(event_id)
+  }
+
+  private _earliestTTLDeadline(event: BaseEvent): number | null {
+    const completed_at = this._completedEventDeadlineBaseMs(event)
+    if (completed_at === null) {
+      return null
     }
-    for (const handler of this.handlers.values()) {
-      if (handler.handler_result_ttl !== null && handler.handler_result_ttl !== undefined) {
-        return true
+    let best_ttl = this._resolveEventTTL(event)
+    if (best_ttl !== null && best_ttl < 0) {
+      best_ttl = null
+    }
+    for (const result of event.event_results.values()) {
+      if (result.eventbus_id !== this.id) {
+        continue
+      }
+      const result_ttl = this._resolveEventResultTTL(event, result)
+      if (result_ttl === null || result_ttl < 0) {
+        continue
+      }
+      best_ttl = best_ttl === null ? result_ttl : Math.min(best_ttl, result_ttl)
+    }
+    if (best_ttl === null) {
+      return null
+    }
+    if (best_ttl === 0) {
+      return 0
+    }
+    return completed_at + best_ttl * 1000
+  }
+
+  private _trackEventTTLDeadline(event: BaseEvent): void {
+    const deadline = this._earliestTTLDeadline(event)
+    const event_id = event.event_id
+    if (deadline === null) {
+      this._untrackEventTTLDeadline(event_id)
+      return
+    }
+    if (this.ttl_deadlines_by_event_id.get(event_id) === deadline) {
+      return
+    }
+    this.ttl_deadlines_by_event_id.set(event_id, deadline)
+    let lo = 0
+    let hi = this.ttl_deadline_queue.length
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi) / 2)
+      if (this.ttl_deadline_queue[mid]![0] <= deadline) {
+        lo = mid + 1
+      } else {
+        hi = mid
       }
     }
-    return false
+    this.ttl_deadline_queue.splice(lo, 0, [deadline, event_id])
   }
 
   private _trimEventHistory(include_ttl: boolean = true): void {
@@ -472,25 +521,38 @@ export class EventBus {
     ) {
       this.event_history.trimEventHistory({
         is_event_complete: (candidate_event) => candidate_event.event_status === 'completed',
-        on_remove: (candidate_event) => this._gcEventIfUnretained(candidate_event),
+        on_remove: (candidate_event) => {
+          this._untrackEventTTLDeadline(candidate_event.event_id)
+          this._gcEventIfUnretained(candidate_event)
+        },
         owner_label: this.toString(),
         max_history_size: this.event_history.max_history_size,
         max_history_drop: this.event_history.max_history_drop,
       })
     }
 
-    if (!include_ttl || !this._hasTTLCleanupSources()) {
+    if (!include_ttl) {
       return
     }
 
-    // TTL cleanup is tied to normal bus cleanup points rather than a timer.
-    // Scanning history here avoids per-event private deadline state while
-    // keeping pruning deterministic and per-bus. Buses with no TTL defaults
-    // or handler TTLs skip this full-history pass to keep unlimited history
-    // O(1) per emit in the common no-TTL case.
-    for (const [event_id, event] of Array.from(this.event_history.entries())) {
+    // TTL cleanup is tied to normal bus cleanup points rather than a timer,
+    // but it must only inspect due candidates. The queue is derived from the
+    // current event/result TTL fields, so stale candidates can be rejected
+    // without storing serialized TTL state on the event.
+    const now = Date.now()
+    while (this.ttl_deadline_queue.length > 0 && this.ttl_deadline_queue[0]![0] <= now) {
+      const [expires_at, event_id] = this.ttl_deadline_queue.shift()!
+      if (this.ttl_deadlines_by_event_id.get(event_id) !== expires_at) {
+        continue
+      }
+      const event = this.event_history.get(event_id)
+      if (!event) {
+        this._untrackEventTTLDeadline(event_id)
+        continue
+      }
       const age_seconds = this._completedEventAgeSeconds(event)
       if (age_seconds === null) {
+        this._untrackEventTTLDeadline(event_id)
         continue
       }
 
@@ -507,9 +569,11 @@ export class EventBus {
 
       const event_ttl = this._resolveEventTTL(event)
       if (event_ttl === null || event_ttl < 0 || age_seconds < event_ttl) {
+        this._trackEventTTLDeadline(event)
         continue
       }
       this.event_history.delete(event_id)
+      this._untrackEventTTLDeadline(event_id)
       this._gcEventIfUnretained(event)
     }
   }
@@ -523,6 +587,9 @@ export class EventBus {
     }
     if (event.event_pending_bus_count === 0) {
       event._markCompleted(false)
+    }
+    if (event.event_status === 'completed' && this.event_history.get(event.event_id) === event) {
+      this._trackEventTTLDeadline(event)
     }
     this._trimEventHistory(false)
   }
@@ -711,6 +778,7 @@ export class EventBus {
       })
       event.event_bus = bus
       bus.event_history.set(event.event_id, event)
+      bus._trackEventTTLDeadline(event)
     }
 
     if (!Array.isArray(record.pending_event_queue)) {
@@ -773,7 +841,11 @@ export class EventBus {
   }
 
   removeEventFromHistory(event_id: string): boolean {
-    return this.event_history.delete(event_id)
+    const removed = this.event_history.delete(event_id)
+    if (removed) {
+      this._untrackEventTTLDeadline(event_id)
+    }
+    return removed
   }
 
   private _raiseIfDestroyed(): void {
@@ -792,6 +864,8 @@ export class EventBus {
         this.handlers.clear()
         this.handlers_by_key.clear()
         this.event_history.clear()
+        this.ttl_deadline_queue.length = 0
+        this.ttl_deadlines_by_event_id.clear()
         this.middlewares.length = 0
       }
       return Promise.resolve()
@@ -816,6 +890,8 @@ export class EventBus {
       this.handlers.clear()
       this.handlers_by_key.clear()
       this.event_history.clear()
+      this.ttl_deadline_queue.length = 0
+      this.ttl_deadlines_by_event_id.clear()
       this.middlewares.length = 0
     }
     finish()
@@ -917,6 +993,7 @@ export class EventBus {
     const ttl_event = history_event ?? original_event
     if (already_seen_on_bus && this._isCompletedEventExpiredForHistory(ttl_event)) {
       this.event_history.delete(ttl_event.event_id)
+      this._untrackEventTTLDeadline(ttl_event.event_id)
       this._gcEventIfUnretained(ttl_event)
       return this._getEventProxyScopedToThisBus(original_event) as T
     }

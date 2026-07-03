@@ -64,6 +64,11 @@ type findWaiter struct {
 	Resolve      func(event *BaseEvent)
 }
 
+type ttlDeadlineEntry struct {
+	expiresAt float64
+	eventID   string
+}
+
 type EventBusJSON struct {
 	ID                          string                      `json:"id"`
 	Name                        string                      `json:"name"`
@@ -136,6 +141,8 @@ type EventBus struct {
 	locks             *LockManager
 	findWaiters       []*findWaiter
 	middlewares       []EventBusMiddleware
+	ttlDeadlineQueue  []ttlDeadlineEntry
+	ttlDeadlinesByID  map[string]float64
 	destroyed         bool
 
 	mu          sync.Mutex
@@ -232,6 +239,8 @@ func NewEventBus(name string, options *EventBusOptions) *EventBus {
 		inFlightEventIDs:            map[string]bool{},
 		findWaiters:                 []*findWaiter{},
 		middlewares:                 append([]EventBusMiddleware{}, options.Middlewares...),
+		ttlDeadlineQueue:            []ttlDeadlineEntry{},
+		ttlDeadlinesByID:            map[string]float64{},
 		global_lock:                 shared_global_event_lock,
 	}
 	if bus.EventConcurrency == "" {
@@ -569,6 +578,7 @@ func (b *EventBus) EmitWithContext(ctx context.Context, input any) *BaseEvent {
 	original_event.mu.Unlock()
 	if alreadySeenOnBus && b.completedEventExpiredForHistory(original_event) {
 		b.EventHistory.RemoveEvent(original_event.EventID)
+		b.untrackEventTTLDeadline(original_event.EventID)
 		return original_event
 	}
 	original_event.mu.Lock()
@@ -692,36 +702,144 @@ func (b *EventBus) resolveEventResultTTL(event *BaseEvent, result *EventResult) 
 	return b.EventResultTTL
 }
 
-func (b *EventBus) hasTTLCleanupSources() bool {
-	if b.EventTTL != nil || b.EventResultTTL != nil {
-		return true
+func (b *EventBus) untrackEventTTLDeadline(eventID string) {
+	b.mu.Lock()
+	delete(b.ttlDeadlinesByID, eventID)
+	b.mu.Unlock()
+}
+
+func (b *EventBus) pruneMissingTTLDeadlines() {
+	b.mu.Lock()
+	eventIDs := make([]string, 0, len(b.ttlDeadlinesByID))
+	for eventID := range b.ttlDeadlinesByID {
+		eventIDs = append(eventIDs, eventID)
+	}
+	b.mu.Unlock()
+	for _, eventID := range eventIDs {
+		if !b.EventHistory.Has(eventID) {
+			b.untrackEventTTLDeadline(eventID)
+		}
+	}
+}
+
+func (b *EventBus) earliestTTLDeadline(event *BaseEvent) *float64 {
+	event.mu.Lock()
+	if event.EventStatus != "completed" || event.EventCompletedAt == nil {
+		event.mu.Unlock()
+		return nil
+	}
+	completedAtValue := *event.EventCompletedAt
+	bestTTL := event.EventTTL
+	if bestTTL == nil {
+		bestTTL = b.EventTTL
+	}
+	eventResultTTL := event.EventResultTTL
+	results := make([]*EventResult, 0, len(event.EventResults))
+	for _, result := range event.EventResults {
+		results = append(results, result)
+	}
+	event.mu.Unlock()
+	completedAt, err := time.Parse(time.RFC3339Nano, completedAtValue)
+	if err != nil {
+		return nil
+	}
+	best := (*float64)(nil)
+	if bestTTL != nil && *bestTTL >= 0 {
+		value := *bestTTL
+		best = &value
+	}
+	for _, result := range results {
+		if result == nil || result.EventBusID != b.ID {
+			continue
+		}
+		resultTTL := result.HandlerResultTTL
+		if result.Handler != nil && result.Handler.HandlerResultTTL != nil {
+			resultTTL = result.Handler.HandlerResultTTL
+		}
+		if resultTTL == nil {
+			resultTTL = eventResultTTL
+		}
+		if resultTTL == nil {
+			resultTTL = b.EventResultTTL
+		}
+		if resultTTL == nil || *resultTTL < 0 {
+			continue
+		}
+		if best == nil || *resultTTL < *best {
+			value := *resultTTL
+			best = &value
+		}
+	}
+	if best == nil {
+		return nil
+	}
+	if *best == 0 {
+		zero := 0.0
+		return &zero
+	}
+	deadlineFloat := float64(completedAt.UnixNano())/float64(time.Second) + *best
+	return &deadlineFloat
+}
+
+func (b *EventBus) trackEventTTLDeadline(event *BaseEvent) {
+	event.mu.Lock()
+	eventID := event.EventID
+	event.mu.Unlock()
+	deadline := b.earliestTTLDeadline(event)
+	if deadline == nil {
+		b.untrackEventTTLDeadline(eventID)
+		return
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for _, handler := range b.handlers {
-		if handler != nil && handler.HandlerResultTTL != nil {
-			return true
-		}
+	if current, ok := b.ttlDeadlinesByID[eventID]; ok && current == *deadline {
+		return
 	}
-	return false
+	b.ttlDeadlinesByID[eventID] = *deadline
+	index := sort.Search(len(b.ttlDeadlineQueue), func(i int) bool {
+		return b.ttlDeadlineQueue[i].expiresAt > *deadline
+	})
+	b.ttlDeadlineQueue = append(b.ttlDeadlineQueue, ttlDeadlineEntry{})
+	copy(b.ttlDeadlineQueue[index+1:], b.ttlDeadlineQueue[index:])
+	b.ttlDeadlineQueue[index] = ttlDeadlineEntry{expiresAt: *deadline, eventID: eventID}
 }
 
 func (b *EventBus) trimEventHistory(includeTTL bool) {
 	if b.EventHistory.MaxHistorySize != nil && (*b.EventHistory.MaxHistorySize == 0 || b.EventHistory.MaxHistoryDrop) {
-		b.EventHistory.TrimEventHistory(nil)
+		if b.EventHistory.TrimEventHistory(nil) > 0 {
+			b.pruneMissingTTLDeadlines()
+		}
 	}
-	if !includeTTL || !b.hasTTLCleanupSources() {
+	if !includeTTL {
 		return
 	}
 
-	// TTL cleanup is tied to normal bus cleanup points rather than a timer.
-	// Scanning history here avoids per-event private deadline state while
-	// keeping pruning deterministic and per-bus. Buses with no TTL defaults
-	// or handler TTLs skip this full-history pass to keep unlimited history
-	// O(1) per emit in the common no-TTL case.
-	for _, event := range b.EventHistory.Values() {
+	// TTL cleanup is tied to normal bus cleanup points rather than a timer,
+	// but it must only inspect due candidates. The queue is derived from the
+	// current event/result TTL fields, so stale candidates can be rejected
+	// without storing serialized TTL state on the event.
+	now := float64(time.Now().UnixNano()) / float64(time.Second)
+	for {
+		b.mu.Lock()
+		if len(b.ttlDeadlineQueue) == 0 || b.ttlDeadlineQueue[0].expiresAt > now {
+			b.mu.Unlock()
+			break
+		}
+		entry := b.ttlDeadlineQueue[0]
+		b.ttlDeadlineQueue = b.ttlDeadlineQueue[1:]
+		current, ok := b.ttlDeadlinesByID[entry.eventID]
+		b.mu.Unlock()
+		if !ok || current != entry.expiresAt {
+			continue
+		}
+		event := b.EventHistory.GetEvent(entry.eventID)
+		if event == nil {
+			b.untrackEventTTLDeadline(entry.eventID)
+			continue
+		}
 		ageSeconds, ok := b.completedEventAgeSeconds(event)
 		if !ok {
+			b.untrackEventTTLDeadline(entry.eventID)
 			continue
 		}
 		event.mu.Lock()
@@ -736,11 +854,19 @@ func (b *EventBus) trimEventHistory(includeTTL bool) {
 			delete(event.EventResults, resultID)
 		}
 		event.mu.Unlock()
-		eventTTL := b.resolveEventTTL(event)
-		if eventTTL == nil || *eventTTL < 0 || ageSeconds < *eventTTL {
+		event.mu.Lock()
+		var eventTTLValue *float64
+		if eventTTL := b.resolveEventTTL(event); eventTTL != nil {
+			value := *eventTTL
+			eventTTLValue = &value
+		}
+		event.mu.Unlock()
+		if eventTTLValue == nil || *eventTTLValue < 0 || ageSeconds < *eventTTLValue {
+			b.trackEventTTLDeadline(event)
 			continue
 		}
 		b.EventHistory.RemoveEvent(event.EventID)
+		b.untrackEventTTLDeadline(event.EventID)
 	}
 }
 
@@ -914,7 +1040,15 @@ func completeEventAcrossBuses(event *BaseEvent) {
 		if !wasCompleted {
 			bus.notifyEventChange(event, "completed")
 		}
-		bus.EventHistory.TrimEventHistory(nil)
+		if bus.EventHistory.MaxHistorySize != nil && *bus.EventHistory.MaxHistorySize == 0 {
+			bus.EventHistory.RemoveEvent(event.EventID)
+			bus.untrackEventTTLDeadline(event.EventID)
+		} else {
+			bus.trackEventTTLDeadline(event)
+			if bus.EventHistory.TrimEventHistory(nil) > 0 {
+				bus.pruneMissingTTLDeadlines()
+			}
+		}
 	}
 	event.signalCompleted()
 }
@@ -1857,6 +1991,7 @@ func EventBusFromJSON(data []byte) (*EventBus, error) {
 			}
 		}
 		bus.EventHistory.AddEvent(event)
+		bus.trackEventTTLDeadline(event)
 	}
 
 	if orderedHistory, ok, err := orderedJSONRawObjectEntries(rawPayload.EventHistory); err != nil {
@@ -2284,6 +2419,8 @@ func (b *EventBus) DestroyWithOptions(options *EventBusDestroyOptions) {
 			b.handlers = map[string]*EventHandler{}
 			b.handlersByKey = map[string][]string{}
 			b.EventHistory.Clear()
+			b.ttlDeadlineQueue = []ttlDeadlineEntry{}
+			b.ttlDeadlinesByID = map[string]float64{}
 		}
 		b.mu.Unlock()
 		for _, waiter := range waiters {
@@ -2299,6 +2436,8 @@ func (b *EventBus) DestroyWithOptions(options *EventBusDestroyOptions) {
 		b.handlers = map[string]*EventHandler{}
 		b.handlersByKey = map[string][]string{}
 		b.EventHistory.Clear()
+		b.ttlDeadlineQueue = []ttlDeadlineEntry{}
+		b.ttlDeadlinesByID = map[string]float64{}
 	}
 	b.pendingEventQueue = []*BaseEvent{}
 	b.inFlightEventIDs = map[string]bool{}
