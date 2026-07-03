@@ -210,7 +210,9 @@ test('dispatching completed status event skips handlers and normalizes completio
   const event = AlreadyCompletedDispatchEvent({ label: 'status' })
   const pending_result = event.eventResultUpdate(handler_entry, { status: 'pending' })
   const started_result = event.eventResultUpdate(started_handler_entry, { status: 'started' })
+  const provided_completed_at = '2025-01-02T03:04:05.000Z'
   event.event_status = 'completed'
+  event.event_completed_at = provided_completed_at
 
   const dispatched = bus.dispatch(event)
   await bus.waitUntilIdle(1)
@@ -218,8 +220,8 @@ test('dispatching completed status event skips handlers and normalizes completio
   assert.equal(dispatched._event_original ?? dispatched, event)
   assert.equal(calls, 0)
   assert.equal(event.event_status, 'completed')
-  assert.equal(typeof event.event_started_at, 'string')
-  assert.equal(typeof event.event_completed_at, 'string')
+  assert.equal(event.event_started_at, provided_completed_at)
+  assert.equal(event.event_completed_at, provided_completed_at)
   assert.deepEqual(event.event_path, [bus.label])
   assert.equal(event.event_results.get(handler_entry.id), pending_result)
   assert.equal(pending_result.status, 'pending')
@@ -276,15 +278,17 @@ test('dispatching completed events with prior paths records bus once and skips h
 
   const prior_other_bus_event = AlreadyCompletedPriorPathEvent({ label: 'prior-other-bus' })
   prior_other_bus_event.event_path = [other_bus_label]
+  const provided_prior_other_completed_at = '2025-01-02T03:04:06.000Z'
   prior_other_bus_event.event_status = 'completed'
+  prior_other_bus_event.event_completed_at = provided_prior_other_completed_at
 
   bus.dispatch(prior_other_bus_event)
   await bus.waitUntilIdle(1)
 
   assert.equal(calls, 0)
   assert.equal(prior_other_bus_event.event_status, 'completed')
-  assert.equal(typeof prior_other_bus_event.event_started_at, 'string')
-  assert.equal(typeof prior_other_bus_event.event_completed_at, 'string')
+  assert.equal(prior_other_bus_event.event_started_at, provided_prior_other_completed_at)
+  assert.equal(prior_other_bus_event.event_completed_at, provided_prior_other_completed_at)
   assert.deepEqual(prior_other_bus_event.event_path, [other_bus_label, bus.label])
 
   const provided_completed_at = '2025-01-02T03:04:05.000Z'

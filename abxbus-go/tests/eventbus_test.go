@@ -96,7 +96,9 @@ func TestDispatchingCompletedStatusEventSkipsHandlersAndNormalizesCompletion(t *
 	startedResult := event.EventResultUpdate(startedHandler, &abxbus.BaseEventResultUpdateOptions{
 		EventResultUpdateOptions: abxbus.EventResultUpdateOptions{Status: abxbus.EventResultStarted},
 	})
+	providedCompletedAt := "2025-01-02T03:04:05.000000000Z"
 	event.EventStatus = "completed"
+	event.EventCompletedAt = &providedCompletedAt
 
 	dispatched := bus.Dispatch(event)
 	wait := 1.0
@@ -113,11 +115,11 @@ func TestDispatchingCompletedStatusEventSkipsHandlersAndNormalizesCompletion(t *
 	if event.EventStatus != "completed" {
 		t.Fatalf("expected completed status, got %s", event.EventStatus)
 	}
-	if event.EventStartedAt == nil {
-		t.Fatal("completed event should have event_started_at")
+	if event.EventStartedAt == nil || *event.EventStartedAt != providedCompletedAt {
+		t.Fatalf("event_started_at should use provided event_completed_at, got %#v", event.EventStartedAt)
 	}
-	if event.EventCompletedAt == nil {
-		t.Fatal("completed event should have event_completed_at")
+	if event.EventCompletedAt == nil || *event.EventCompletedAt != providedCompletedAt {
+		t.Fatalf("event_completed_at should be preserved, got %#v", event.EventCompletedAt)
 	}
 	if !reflect.DeepEqual(event.EventPath, []string{bus.Label()}) {
 		t.Fatalf("event_path should contain only handling bus %s, got %#v", bus.Label(), event.EventPath)
@@ -193,7 +195,9 @@ func TestDispatchingCompletedEventsWithPriorPathsRecordsBusOnceAndSkipsHandlers(
 
 	priorOtherBusEvent := abxbus.NewBaseEvent("AlreadyCompletedPriorPathEvent", map[string]any{"label": "prior-other-bus"})
 	priorOtherBusEvent.EventPath = []string{otherBusLabel}
+	providedPriorOtherCompletedAt := "2025-01-02T03:04:06.000000000Z"
 	priorOtherBusEvent.EventStatus = "completed"
+	priorOtherBusEvent.EventCompletedAt = &providedPriorOtherCompletedAt
 
 	bus.Dispatch(priorOtherBusEvent)
 	wait := 1.0
@@ -204,8 +208,14 @@ func TestDispatchingCompletedEventsWithPriorPathsRecordsBusOnceAndSkipsHandlers(
 	if calls != 0 {
 		t.Fatalf("handler should not run for prior-other-bus completed event, got %d calls", calls)
 	}
-	if priorOtherBusEvent.EventStatus != "completed" || priorOtherBusEvent.EventStartedAt == nil || priorOtherBusEvent.EventCompletedAt == nil {
-		t.Fatalf("prior-other-bus event should be normalized to completed, got %#v", priorOtherBusEvent)
+	if priorOtherBusEvent.EventStatus != "completed" {
+		t.Fatalf("expected prior-other-bus status completed, got %s", priorOtherBusEvent.EventStatus)
+	}
+	if priorOtherBusEvent.EventStartedAt == nil || *priorOtherBusEvent.EventStartedAt != providedPriorOtherCompletedAt {
+		t.Fatalf("prior-other-bus event_started_at should use provided completed_at, got %#v", priorOtherBusEvent.EventStartedAt)
+	}
+	if priorOtherBusEvent.EventCompletedAt == nil || *priorOtherBusEvent.EventCompletedAt != providedPriorOtherCompletedAt {
+		t.Fatalf("prior-other-bus event_completed_at should be preserved, got %#v", priorOtherBusEvent.EventCompletedAt)
 	}
 	if !reflect.DeepEqual(priorOtherBusEvent.EventPath, []string{otherBusLabel, bus.Label()}) {
 		t.Fatalf("prior-other-bus event_path mismatch: %#v", priorOtherBusEvent.EventPath)

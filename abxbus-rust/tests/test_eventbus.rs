@@ -358,6 +358,7 @@ fn test_dispatching_completed_status_event_skips_handlers_and_normalizes_complet
     let started_at = "2025-01-02T03:04:04.000000000Z".to_string();
     started_result.status = EventResultStatus::Started;
     started_result.started_at = Some(started_at.clone());
+    let provided_completed_at = "2025-01-02T03:04:05.000000000Z".to_string();
     {
         let mut inner = event.inner.lock();
         inner
@@ -367,6 +368,7 @@ fn test_dispatching_completed_status_event_skips_handlers_and_normalizes_complet
             .event_results
             .insert(started_handler.id.clone(), started_result);
         inner.event_status = EventStatus::Completed;
+        inner.event_completed_at = Some(provided_completed_at.clone());
     }
 
     let dispatched = bus.emit_base(event.clone());
@@ -376,8 +378,8 @@ fn test_dispatching_completed_status_event_skips_handlers_and_normalizes_complet
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     let inner = event.inner.lock();
     assert_eq!(inner.event_status, EventStatus::Completed);
-    assert!(inner.event_started_at.is_some());
-    assert!(inner.event_completed_at.is_some());
+    assert_eq!(inner.event_started_at, Some(provided_completed_at.clone()));
+    assert_eq!(inner.event_completed_at, Some(provided_completed_at));
     assert_eq!(inner.event_path, vec![bus.label()]);
     let result = inner
         .event_results
@@ -461,6 +463,7 @@ fn test_dispatching_completed_events_with_prior_paths_records_bus_once_and_skips
     {
         let mut inner = prior_other_bus_event.inner.lock();
         inner.event_path = vec![other_bus_label.clone()];
+        inner.event_completed_at = Some("2025-01-02T03:04:06.000000000Z".to_string());
         inner.event_status = EventStatus::Completed;
     }
 
@@ -471,8 +474,14 @@ fn test_dispatching_completed_events_with_prior_paths_records_bus_once_and_skips
     {
         let inner = prior_other_bus_event.inner.lock();
         assert_eq!(inner.event_status, EventStatus::Completed);
-        assert!(inner.event_started_at.is_some());
-        assert!(inner.event_completed_at.is_some());
+        assert_eq!(
+            inner.event_started_at.as_deref(),
+            Some("2025-01-02T03:04:06.000000000Z")
+        );
+        assert_eq!(
+            inner.event_completed_at.as_deref(),
+            Some("2025-01-02T03:04:06.000000000Z")
+        );
         assert_eq!(inner.event_path, vec![other_bus_label.clone(), bus.label()]);
     }
 
