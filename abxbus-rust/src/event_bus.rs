@@ -2158,6 +2158,16 @@ impl EventBus {
         }
     }
 
+    fn retrack_completed_history_ttl_deadlines(&self) {
+        let events: Vec<Arc<BaseEvent>> = self.runtime.events.lock().values().cloned().collect();
+        for event in events {
+            let is_completed = event.inner.lock().event_status == EventStatus::Completed;
+            if is_completed {
+                self.track_event_ttl_deadline(&event);
+            }
+        }
+    }
+
     fn trim_event_history(&self, include_ttl: bool) {
         if let Some(max_size) = self.runtime.max_history_size {
             self.trim_history_to_capacity(max_size, false);
@@ -2167,9 +2177,9 @@ impl EventBus {
         }
 
         // TTL cleanup is tied to normal bus cleanup points rather than a timer,
-        // but it must only inspect due candidates. The queue is derived from the
-        // current event/result TTL fields, so stale candidates can be rejected
-        // without storing serialized TTL state on the event.
+        // but it must only remove due candidates. Retracking first keeps runtime
+        // TTL edits observable without storing serialized TTL state on the event.
+        self.retrack_completed_history_ttl_deadlines();
         let now = Self::now_epoch_seconds();
         loop {
             let Some(entry) = ({

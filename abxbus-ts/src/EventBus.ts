@@ -525,6 +525,14 @@ export class EventBus {
     }
   }
 
+  private _retrackCompletedHistoryTTLDeadlines(): void {
+    for (const event of this.event_history.values()) {
+      if (event.event_status === 'completed') {
+        this._trackEventTTLDeadline(event)
+      }
+    }
+  }
+
   private _trimEventHistory(include_ttl: boolean = true): void {
     if (
       this.event_history.max_history_size !== null &&
@@ -547,9 +555,9 @@ export class EventBus {
     }
 
     // TTL cleanup is tied to normal bus cleanup points rather than a timer,
-    // but it must only inspect due candidates. The queue is derived from the
-    // current event/result TTL fields, so stale candidates can be rejected
-    // without storing serialized TTL state on the event.
+    // but it must only remove due candidates. Retracking first keeps runtime
+    // TTL edits observable without storing serialized TTL state on the event.
+    this._retrackCompletedHistoryTTLDeadlines()
     const now = Date.now()
     while (this.ttl_deadline_queue.length > 0 && this.ttl_deadline_queue[0]![0] <= now) {
       const [expires_at, event_id] = this.ttl_deadline_queue.shift()!
@@ -787,7 +795,6 @@ export class EventBus {
       })
       event.event_bus = bus
       bus.event_history.set(event.event_id, event)
-      bus._trackEventTTLDeadline(event)
     }
 
     if (!Array.isArray(record.pending_event_queue)) {
@@ -806,6 +813,7 @@ export class EventBus {
 
     for (const event of bus.event_history.values()) {
       EventBus._linkEventResultHandlers(event, bus)
+      bus._trackEventTTLDeadline(event)
     }
     // Reset runtime execution state after restore. Queue/history/handlers are restored,
     // but lock internals should always restart from a clean default state.

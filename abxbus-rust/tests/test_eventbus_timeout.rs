@@ -2982,6 +2982,74 @@ fn test_event_ttl_and_event_result_ttl_none_or_absent_inherit_bus_defaults() {
 }
 
 #[test]
+fn test_runtime_ttl_changes_retrack_completed_history_on_the_next_natural_trim_pass() {
+    let mut bus_ttl = EventBus::new_with_options(
+        Some("RuntimeBusTTLChangeBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_ttl_event = emit_completed_ttl_probe(&bus_ttl, None);
+    let bus_ttl_event_id = bus_ttl_event.inner.lock().event_id.clone();
+    assert!(bus_ttl.event_history_ids().contains(&bus_ttl_event_id));
+    Arc::get_mut(&mut bus_ttl)
+        .expect("test owns the only strong bus handle")
+        .event_ttl = Some(0.0);
+    run_natural_history_trim_pass(&bus_ttl);
+    assert!(!bus_ttl.event_history_ids().contains(&bus_ttl_event_id));
+    bus_ttl.destroy();
+
+    let event_ttl_bus = EventBus::new_with_options(
+        Some("RuntimeEventTTLChangeBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            ..EventBusOptions::default()
+        },
+    );
+    let event_ttl_event = emit_completed_ttl_probe(&event_ttl_bus, None);
+    let event_ttl_event_id = event_ttl_event.inner.lock().event_id.clone();
+    assert!(event_ttl_bus
+        .event_history_ids()
+        .contains(&event_ttl_event_id));
+    event_ttl_event.inner.lock().event_ttl = Some(0.0);
+    run_natural_history_trim_pass(&event_ttl_bus);
+    assert!(!event_ttl_bus
+        .event_history_ids()
+        .contains(&event_ttl_event_id));
+    event_ttl_bus.destroy();
+
+    let handler_ttl_bus = EventBus::new_with_options(
+        Some("RuntimeHandlerResultTTLChangeBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(-1.0),
+            event_result_ttl: Some(-1.0),
+            ..EventBusOptions::default()
+        },
+    );
+    handler_ttl_bus.on_raw_sync("TTLProbeEvent", "handler", |_event| Ok(json!("result")));
+    let handler_ttl_event = emit_completed_ttl_probe(&handler_ttl_bus, None);
+    assert_eq!(handler_ttl_event.inner.lock().event_results.len(), 1);
+    {
+        let mut inner = handler_ttl_event.inner.lock();
+        let result = inner
+            .event_results
+            .values_mut()
+            .next()
+            .expect("expected handler result");
+        result.handler.handler_result_ttl = Some(0.0);
+    }
+    run_natural_history_trim_pass(&handler_ttl_bus);
+    let handler_ttl_event_id = handler_ttl_event.inner.lock().event_id.clone();
+    assert!(handler_ttl_bus
+        .event_history_ids()
+        .contains(&handler_ttl_event_id));
+    assert_eq!(handler_ttl_event.inner.lock().event_results.len(), 0);
+    handler_ttl_bus.destroy();
+}
+
+#[test]
 fn test_event_ttl_minus_one_overrides_positive_or_zero_bus_defaults_and_keeps_completed_events() {
     let zero_default_bus = EventBus::new_with_options(
         Some("EventTTLMinusOneOverridesZeroBus".to_string()),

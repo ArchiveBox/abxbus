@@ -127,6 +127,34 @@ test('EventBus.fromJSON rebuilds TTL indexes for restored completed history', as
   } finally {
     await restored_events.destroy()
   }
+
+  const linked_source = new EventBus('RestoreLinkedHandlerTTLBus', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: -1,
+  })
+  const linked_handler = linked_source.on(RestoreTTLProbeEvent, () => 'ok', { handler_result_ttl: -1 } as unknown as Parameters<
+    EventBus['on']
+  >[2])
+  const linked_event = await linked_source.emit(RestoreTTLProbeEvent({})).now()
+  const linked_event_id = linked_event.event_id
+  const linked_json = linked_source.toJSON()
+  linked_json.handlers[linked_handler.id]!.handler_result_ttl = 0
+  const linked_result_json = linked_json.event_history[linked_event_id]!.event_results![linked_handler.id] as {
+    handler_result_ttl?: number | null
+  }
+  linked_result_json.handler_result_ttl = -1
+  await linked_source.destroy()
+
+  const restored_linked = EventBus.fromJSON(linked_json)
+  try {
+    assert.equal(restored_linked.event_history.get(linked_event_id)!.event_results.size, 1)
+    await restored_linked.emit(RestoreTTLTouchEvent({})).now()
+    assert.equal(restored_linked.event_history.has(linked_event_id), true)
+    assert.equal(restored_linked.event_history.get(linked_event_id)!.event_results.size, 0)
+  } finally {
+    await restored_linked.destroy()
+  }
 })
 
 test('EventBus.fromJSON null event_timeout uses default', () => {

@@ -2241,6 +2241,11 @@ class EventBus:
         self._ttl_deadlines_by_event_id[event_id] = deadline
         bisect.insort(self._ttl_deadline_queue, (deadline, event_id))
 
+    def _retrack_completed_history_ttl_deadlines(self) -> None:
+        for event in list(self.event_history.values()):
+            if event.event_status == EventStatus.COMPLETED:
+                self._track_event_ttl_deadline(event)
+
     def _trim_event_history_if_needed(self, *, include_ttl: bool = True) -> None:
         if self.event_history.max_history_size is not None and (
             self.event_history.max_history_size == 0
@@ -2258,9 +2263,9 @@ class EventBus:
             return
 
         # TTL cleanup is tied to normal bus cleanup points rather than a timer,
-        # but it must only inspect due candidates. The queue is derived from the
-        # current event/result TTL fields, so stale candidates can be rejected
-        # without storing serialized TTL state on the event.
+        # but it must only remove due candidates. Retracking first keeps runtime
+        # TTL edits observable without storing serialized TTL state on the event.
+        self._retrack_completed_history_ttl_deadlines()
         now = datetime.now(UTC).timestamp()
         while self._ttl_deadline_queue and self._ttl_deadline_queue[0][0] <= now:
             expires_at, event_id = self._ttl_deadline_queue.pop(0)

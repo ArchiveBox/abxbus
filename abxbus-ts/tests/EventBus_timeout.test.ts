@@ -1171,6 +1171,38 @@ test('event_ttl and event_result_ttl null or undefined inherit bus defaults', as
   assert.equal(explicit_null.event_results.size, 0)
 })
 
+test('runtime ttl changes retrack completed history on the next natural trim pass', async () => {
+  const bus_ttl = ttlBus('RuntimeBusTTLChangeBus', { max_history_size: null })
+  const bus_ttl_event = await emitCompletedTTLProbe(bus_ttl)
+  assert.equal(bus_ttl.event_history.has(bus_ttl_event.event_id), true)
+
+  bus_ttl.event_ttl = 0
+  await runNaturalHistoryTrimPass(bus_ttl)
+  assert.equal(bus_ttl.event_history.has(bus_ttl_event.event_id), false)
+
+  const event_ttl_bus = ttlBus('RuntimeEventTTLChangeBus', { max_history_size: null })
+  const event_ttl_event = await emitCompletedTTLProbe(event_ttl_bus)
+  assert.equal(event_ttl_bus.event_history.has(event_ttl_event.event_id), true)
+
+  event_ttl_event.event_ttl = 0
+  await runNaturalHistoryTrimPass(event_ttl_bus)
+  assert.equal(event_ttl_bus.event_history.has(event_ttl_event.event_id), false)
+
+  const handler_ttl_bus = ttlBus('RuntimeHandlerResultTTLChangeBus', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: -1,
+  })
+  const handler = handler_ttl_bus.on(TTLProbeEvent, async () => 'result')
+  const handler_ttl_event = await emitCompletedTTLProbe(handler_ttl_bus)
+  assert.equal(handler_ttl_event.event_results.size, 1)
+
+  handler.handler_result_ttl = 0
+  await runNaturalHistoryTrimPass(handler_ttl_bus)
+  assert.equal(handler_ttl_bus.event_history.has(handler_ttl_event.event_id), true)
+  assert.equal(handler_ttl_event.event_results.size, 0)
+})
+
 test('event_ttl -1 overrides positive or zero bus defaults and keeps completed events', async () => {
   const zero_default_bus = ttlBus('EventTTLMinusOneOverridesZeroBus', { max_history_size: null, event_ttl: 0 })
   const positive_default_bus = ttlBus('EventTTLMinusOneOverridesPositiveBus', { max_history_size: null, event_ttl: 0.01 })

@@ -137,6 +137,54 @@ func TestEventTTLAndEventResultTTLNilOrAbsentInheritBusDefaults(t *testing.T) {
 	}
 }
 
+func TestRuntimeTTLChangesRetrackCompletedHistoryOnTheNextNaturalTrimPass(t *testing.T) {
+	busTTL := abxbus.NewEventBus("RuntimeBusTTLChangeBus", &abxbus.EventBusOptions{MaxHistorySize: nil})
+	busTTLEvent := emitCompletedTTLProbe(t, busTTL, nil)
+	if !busTTL.EventHistory.Has(busTTLEvent.EventID) {
+		t.Fatal("event should remain before runtime bus ttl changes")
+	}
+	busTTL.EventTTL = ttlPtr(0)
+	runNaturalHistoryTrimPass(t, busTTL)
+	if busTTL.EventHistory.Has(busTTLEvent.EventID) {
+		t.Fatal("runtime bus event_ttl=0 should delete completed event on next trim pass")
+	}
+	busTTL.Destroy()
+
+	eventTTLBus := abxbus.NewEventBus("RuntimeEventTTLChangeBus", &abxbus.EventBusOptions{MaxHistorySize: nil})
+	eventTTLEvent := emitCompletedTTLProbe(t, eventTTLBus, nil)
+	if !eventTTLBus.EventHistory.Has(eventTTLEvent.EventID) {
+		t.Fatal("event should remain before runtime event ttl changes")
+	}
+	eventTTLEvent.EventTTL = ttlPtr(0)
+	runNaturalHistoryTrimPass(t, eventTTLBus)
+	if eventTTLBus.EventHistory.Has(eventTTLEvent.EventID) {
+		t.Fatal("runtime event event_ttl=0 should delete completed event on next trim pass")
+	}
+	eventTTLBus.Destroy()
+
+	handlerTTLBus := abxbus.NewEventBus("RuntimeHandlerResultTTLChangeBus", &abxbus.EventBusOptions{
+		MaxHistorySize: nil,
+		EventTTL:       ttlPtr(-1),
+		EventResultTTL: ttlPtr(-1),
+	})
+	handler := handlerTTLBus.On("TTLProbeEvent", "handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "result", nil
+	})
+	handlerTTLEvent := emitCompletedTTLProbe(t, handlerTTLBus, nil)
+	if len(handlerTTLEvent.EventResults) != 1 {
+		t.Fatalf("expected one result before runtime handler ttl changes, got %d", len(handlerTTLEvent.EventResults))
+	}
+	handler.HandlerResultTTL = ttlPtr(0)
+	runNaturalHistoryTrimPass(t, handlerTTLBus)
+	if !handlerTTLBus.EventHistory.Has(handlerTTLEvent.EventID) {
+		t.Fatal("handler_result_ttl should keep the event")
+	}
+	if len(handlerTTLEvent.EventResults) != 0 {
+		t.Fatalf("runtime handler_result_ttl=0 should clear results, got %d", len(handlerTTLEvent.EventResults))
+	}
+	handlerTTLBus.Destroy()
+}
+
 func TestEventTTLMinusOneOverridesPositiveOrZeroBusDefaultsAndKeepsCompletedEvents(t *testing.T) {
 	zeroDefaultBus := abxbus.NewEventBus("EventTTLMinusOneOverridesZeroBus", &abxbus.EventBusOptions{EventTTL: ttlPtr(0)})
 	positiveDefaultBus := abxbus.NewEventBus("EventTTLMinusOneOverridesPositiveBus", &abxbus.EventBusOptions{EventTTL: ttlPtr(0.01)})

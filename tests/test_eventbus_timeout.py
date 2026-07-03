@@ -1024,6 +1024,53 @@ async def test_event_ttl_and_event_result_ttl_null_or_absent_inherit_bus_default
 
 
 @pytest.mark.asyncio
+async def test_runtime_ttl_changes_retrack_completed_history_on_the_next_natural_trim_pass() -> None:
+    bus_ttl = EventBus(name='RuntimeBusTTLChangeBus', max_history_size=None)
+    try:
+        bus_ttl_event = await _emit_completed_ttl_probe(bus_ttl)
+        assert bus_ttl_event.event_id in bus_ttl.event_history
+
+        bus_ttl.event_ttl = 0
+        await _run_natural_history_trim_pass(bus_ttl)
+        assert bus_ttl_event.event_id not in bus_ttl.event_history
+    finally:
+        await bus_ttl.destroy()
+
+    event_ttl_bus = EventBus(name='RuntimeEventTTLChangeBus', max_history_size=None)
+    try:
+        event_ttl_event = await _emit_completed_ttl_probe(event_ttl_bus)
+        assert event_ttl_event.event_id in event_ttl_bus.event_history
+
+        event_ttl_event.event_ttl = 0
+        await _run_natural_history_trim_pass(event_ttl_bus)
+        assert event_ttl_event.event_id not in event_ttl_bus.event_history
+    finally:
+        await event_ttl_bus.destroy()
+
+    handler_ttl_bus = EventBus(
+        name='RuntimeHandlerResultTTLChangeBus',
+        max_history_size=None,
+        event_ttl=-1,
+        event_result_ttl=-1,
+    )
+
+    async def handler(_event: TTLProbeEvent) -> str:
+        return 'result'
+
+    handler_entry = handler_ttl_bus.on(TTLProbeEvent, handler)
+    try:
+        handler_ttl_event = await _emit_completed_ttl_probe(handler_ttl_bus)
+        assert len(handler_ttl_event.event_results) == 1
+
+        handler_entry.handler_result_ttl = 0
+        await _run_natural_history_trim_pass(handler_ttl_bus)
+        assert handler_ttl_event.event_id in handler_ttl_bus.event_history
+        assert len(handler_ttl_event.event_results) == 0
+    finally:
+        await handler_ttl_bus.destroy()
+
+
+@pytest.mark.asyncio
 async def test_event_ttl_minus_one_overrides_positive_or_zero_bus_defaults_and_keeps_completed_events() -> None:
     zero_default_bus = EventBus(name='EventTTLMinusOneOverridesZeroBus', max_history_size=None, event_ttl=0)
     positive_default_bus = EventBus(name='EventTTLMinusOneOverridesPositiveBus', max_history_size=None, event_ttl=0.01)

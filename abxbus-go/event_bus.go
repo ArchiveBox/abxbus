@@ -804,6 +804,17 @@ func (b *EventBus) trackEventTTLDeadline(event *BaseEvent) {
 	b.ttlDeadlineQueue[index] = ttlDeadlineEntry{expiresAt: *deadline, eventID: eventID}
 }
 
+func (b *EventBus) retrackCompletedHistoryTTLDeadlines() {
+	for _, event := range b.EventHistory.Values() {
+		event.mu.Lock()
+		completed := event.EventStatus == "completed"
+		event.mu.Unlock()
+		if completed {
+			b.trackEventTTLDeadline(event)
+		}
+	}
+}
+
 func (b *EventBus) trimEventHistory(includeTTL bool) {
 	if b.EventHistory.MaxHistorySize != nil && (*b.EventHistory.MaxHistorySize == 0 || b.EventHistory.MaxHistoryDrop) {
 		if b.EventHistory.TrimEventHistory(nil) > 0 {
@@ -815,9 +826,9 @@ func (b *EventBus) trimEventHistory(includeTTL bool) {
 	}
 
 	// TTL cleanup is tied to normal bus cleanup points rather than a timer,
-	// but it must only inspect due candidates. The queue is derived from the
-	// current event/result TTL fields, so stale candidates can be rejected
-	// without storing serialized TTL state on the event.
+	// but it must only remove due candidates. Retracking first keeps runtime
+	// TTL edits observable without storing serialized TTL state on the event.
+	b.retrackCompletedHistoryTTLDeadlines()
 	now := float64(time.Now().UnixNano()) / float64(time.Second)
 	for {
 		b.mu.Lock()
