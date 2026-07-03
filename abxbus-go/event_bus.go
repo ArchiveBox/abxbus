@@ -564,7 +564,16 @@ func (b *EventBus) EmitWithContext(ctx context.Context, input any) *BaseEvent {
 		panic("event_result_ttl must be >= -1 or nil")
 	}
 	original_event := event
-	if b.completedEventExpiredForHistory(original_event) {
+	alreadySeenOnBus := b.EventHistory.Has(original_event.EventID) || b.eventHasLocalSettledResults(original_event)
+	original_event.mu.Lock()
+	for _, label := range original_event.EventPath {
+		if label == b.Label() {
+			alreadySeenOnBus = true
+			break
+		}
+	}
+	original_event.mu.Unlock()
+	if alreadySeenOnBus && b.completedEventExpiredForHistory(original_event) {
 		b.EventHistory.RemoveEvent(original_event.EventID)
 		b.clearEventTTLDeadline(original_event)
 		return original_event

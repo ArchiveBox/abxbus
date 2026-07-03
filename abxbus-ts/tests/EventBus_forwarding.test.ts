@@ -134,7 +134,7 @@ test('test_completed_forwarded_event_with_pruned_target_results_remains_terminal
 
 test('test_completed_event_first_emitted_to_new_bus_runs_target_handlers', async () => {
   const bus_a = new EventBus('CompletedReplaySource')
-  const bus_b = new EventBus('CompletedReplayTarget')
+  const bus_b = new EventBus('CompletedReplayTarget', { event_ttl: 0 })
   const seen_a: string[] = []
   const seen_b: string[] = []
 

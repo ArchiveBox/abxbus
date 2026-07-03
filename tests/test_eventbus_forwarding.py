@@ -165,7 +165,7 @@ async def test_completed_forwarded_event_with_pruned_target_results_remains_term
 @pytest.mark.asyncio
 async def test_completed_event_first_emitted_to_new_bus_runs_target_handlers():
     bus_a = EventBus(name='CompletedReplaySource')
-    bus_b = EventBus(name='CompletedReplayTarget')
+    bus_b = EventBus(name='CompletedReplayTarget', event_ttl=0)
     seen_a: list[str] = []
     seen_b: list[str] = []
 

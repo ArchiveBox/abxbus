@@ -955,17 +955,20 @@ export class EventBus {
       // because events may be handled async in a separate context than the emit site
       original_event._setDispatchContext(captureAsyncContext())
     }
-    if (original_event.event_path.includes(this.label) || this._hasProcessedEvent(original_event)) {
-      return this._getEventProxyScopedToThisBus(original_event) as T
-    }
-    if (this._isCompletedEventExpiredForHistory(original_event)) {
+    const already_in_event_path = original_event.event_path.includes(this.label)
+    const already_processed_on_bus = this._hasProcessedEvent(original_event)
+    const already_seen_on_bus = already_in_event_path || this.event_history.has(original_event.event_id) || already_processed_on_bus
+    if (already_seen_on_bus && this._isCompletedEventExpiredForHistory(original_event)) {
       this.event_history.delete(original_event.event_id)
       original_event._event_expires_at_by_bus.delete(this.id)
       this._gcEventIfUnretained(original_event)
       return this._getEventProxyScopedToThisBus(original_event) as T
     }
+    if (already_in_event_path || already_processed_on_bus) {
+      return this._getEventProxyScopedToThisBus(original_event) as T
+    }
 
-    if (!original_event.event_path.includes(this.label)) {
+    if (!already_in_event_path) {
       original_event.event_path.push(this.label)
     }
 

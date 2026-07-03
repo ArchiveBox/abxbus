@@ -142,7 +142,8 @@ func TestCompletedForwardedEventWithPrunedTargetResultsRemainsTerminal(t *testin
 
 func TestCompletedEventFirstEmittedToNewBusRunsTargetHandlers(t *testing.T) {
 	busA := abxbus.NewEventBus("CompletedReplaySource", nil)
-	busB := abxbus.NewEventBus("CompletedReplayTarget", nil)
+	eventTTL := 0.0
+	busB := abxbus.NewEventBus("CompletedReplayTarget", &abxbus.EventBusOptions{EventTTL: &eventTTL})
 	defer busA.Destroy()
 	defer busB.Destroy()
 

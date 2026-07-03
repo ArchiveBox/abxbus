@@ -1297,7 +1297,8 @@ class EventBus:
         # Ensure every emitted event has a completion signal tied to this loop.
         # Completion logic always sets this signal; consumers like event_results_* await it.
         _ = event.event_completed_signal
-        if self._completed_event_expired_for_history(event):
+        already_in_history = event.event_id in self.event_history
+        if (already_in_event_path or already_in_history) and self._completed_event_expired_for_history(event):
             self.event_history.pop(event.event_id, None)
             self._event_ttl_deadlines(event).pop(self.id, None)
             return event

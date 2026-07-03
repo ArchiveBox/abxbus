@@ -1615,27 +1615,30 @@ impl EventBus {
         let emitted_inside_active_handler = current_handler_context.is_some();
 
         let bus_label = self.label();
-        if event.inner.lock().event_path.contains(&bus_label) {
-            return event;
-        }
-        let (event_id, has_terminal_marker) = {
+        let (event_id, already_in_event_path, has_terminal_marker) = {
             let inner = event.inner.lock();
             (
                 inner.event_id.clone(),
+                inner.event_path.contains(&bus_label),
                 inner.event_status == EventStatus::Completed || inner.event_completed_at.is_some(),
             )
         };
-        if has_terminal_marker && self.runtime.events.lock().contains_key(&event_id) {
-            return event;
-        }
-        if self.completed_event_expired_for_history(&event) {
-            let event_id = event.inner.lock().event_id.clone();
+        let already_in_history = self.runtime.events.lock().contains_key(&event_id);
+        if (already_in_event_path || already_in_history)
+            && self.completed_event_expired_for_history(&event)
+        {
             self.runtime.events.lock().remove(&event_id);
             self.runtime
                 .history_order
                 .lock()
                 .retain(|id| id != &event_id);
             event.event_expires_at_by_bus.lock().remove(&self.id);
+            return event;
+        }
+        if already_in_event_path {
+            return event;
+        }
+        if has_terminal_marker && already_in_history {
             return event;
         }
 

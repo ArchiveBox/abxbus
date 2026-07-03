@@ -255,7 +255,13 @@ fn test_completed_forwarded_event_with_pruned_target_results_remains_terminal() 
 #[test]
 fn test_completed_event_first_emitted_to_new_bus_runs_target_handlers() {
     let bus_a = EventBus::new(Some("CompletedReplaySource".to_string()));
-    let bus_b = EventBus::new(Some("CompletedReplayTarget".to_string()));
+    let bus_b = EventBus::new_with_options(
+        Some("CompletedReplayTarget".to_string()),
+        EventBusOptions {
+            event_ttl: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
 
     let seen_a = Arc::new(Mutex::new(Vec::new()));
     let seen_b = Arc::new(Mutex::new(Vec::new()));
