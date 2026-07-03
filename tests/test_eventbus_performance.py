@@ -757,12 +757,26 @@ async def test_basic_throughput_floor_regression_guard(event_handler_concurrency
 async def test_event_handler_concurrency_mode_improves_io_bound_fanout():
     """
     For I/O-bound workloads with multiple handlers per event, parallel mode should
-    provide a meaningful speedup versus serial mode.
+    provide a meaningful speedup versus serial mode. Keep the workload large
+    enough that CI scheduler jitter cannot erase the real handler fanout signal.
     """
-    serial_handled, serial_duration = await run_io_fanout_benchmark(event_handler_concurrency='serial')
-    parallel_handled, parallel_duration = await run_io_fanout_benchmark(event_handler_concurrency='parallel')
+    total_events = 300
+    handlers_per_event = 8
+    sleep_seconds = 0.003
+    serial_handled, serial_duration = await run_io_fanout_benchmark(
+        event_handler_concurrency='serial',
+        total_events=total_events,
+        handlers_per_event=handlers_per_event,
+        sleep_seconds=sleep_seconds,
+    )
+    parallel_handled, parallel_duration = await run_io_fanout_benchmark(
+        event_handler_concurrency='parallel',
+        total_events=total_events,
+        handlers_per_event=handlers_per_event,
+        sleep_seconds=sleep_seconds,
+    )
 
-    expected_total = 400 * 4
+    expected_total = total_events * handlers_per_event
     assert serial_handled == expected_total
     assert parallel_handled == expected_total
     assert parallel_duration < serial_duration * 0.8, (
