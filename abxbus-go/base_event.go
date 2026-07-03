@@ -447,6 +447,9 @@ func normalizeEventResultTypeSchema(value any) any {
 func (e *BaseEvent) markStarted() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.EventCompletedAt != nil {
+		return
+	}
 	if e.EventStatus == "pending" {
 		e.EventStatus = "started"
 		now := monotonicDatetime()
@@ -458,13 +461,24 @@ func (e *BaseEvent) markCompleted() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.EventStatus = "completed"
-	now := monotonicDatetime()
-	e.EventCompletedAt = &now
+	if e.EventCompletedAt == nil {
+		now := monotonicDatetime()
+		e.EventCompletedAt = &now
+	}
+	if e.EventStartedAt == nil {
+		e.EventStartedAt = e.EventCompletedAt
+	}
 }
 
 func (e *BaseEvent) signalCompleted() {
 	doneCh := e.doneChan()
 	e.done_once.Do(func() { close(doneCh) })
+}
+
+func (e *BaseEvent) shouldSkipHandlerExecution() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.EventStatus == "completed" || e.EventCompletedAt != nil
 }
 
 func (e *BaseEvent) doneChan() chan struct{} {

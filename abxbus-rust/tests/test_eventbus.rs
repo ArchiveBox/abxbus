@@ -74,6 +74,7 @@ event! {
         event_type: "UserActionEvent",
     }
 }
+
 #[test]
 fn test_eventbus_exposes_locks_api_surface() {
     let bus = EventBus::new(Some("GateSurfaceBus".to_string()));
@@ -326,6 +327,120 @@ fn base_event(event_type: &str, payload: Value) -> Arc<BaseEvent> {
         panic!("test payload must be an object");
     };
     BaseEvent::new(event_type, payload)
+}
+
+#[test]
+fn test_dispatching_completed_status_event_skips_handlers_and_normalizes_completion() {
+    let bus = EventBus::new(Some("AlreadyCompletedStatusBus".to_string()));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let handler_calls = calls.clone();
+    let handler = bus.on_raw_sync("AlreadyCompletedDispatchEvent", "handler", move |_event| {
+        handler_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(json!("ran"))
+    });
+    let started_handler_calls = calls.clone();
+    let started_handler = bus.on_raw_sync(
+        "AlreadyCompletedDispatchEvent",
+        "started_handler",
+        move |_event| {
+            started_handler_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(json!("started"))
+        },
+    );
+    let event = base_event("AlreadyCompletedDispatchEvent", json!({"label": "status"}));
+    let pending_result =
+        EventResult::new(event.inner.lock().event_id.clone(), handler.clone(), None);
+    let mut started_result = EventResult::new(
+        event.inner.lock().event_id.clone(),
+        started_handler.clone(),
+        None,
+    );
+    let started_at = "2025-01-02T03:04:04.000000000Z".to_string();
+    started_result.status = EventResultStatus::Started;
+    started_result.started_at = Some(started_at.clone());
+    {
+        let mut inner = event.inner.lock();
+        inner
+            .event_results
+            .insert(handler.id.clone(), pending_result);
+        inner
+            .event_results
+            .insert(started_handler.id.clone(), started_result);
+        inner.event_status = EventStatus::Completed;
+    }
+
+    let dispatched = bus.emit_base(event.clone());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert!(Arc::ptr_eq(&dispatched, &event));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let inner = event.inner.lock();
+    assert_eq!(inner.event_status, EventStatus::Completed);
+    assert!(inner.event_started_at.is_some());
+    assert!(inner.event_completed_at.is_some());
+    assert!(inner.event_path.contains(&bus.label()));
+    let result = inner
+        .event_results
+        .get(&handler.id)
+        .expect("pending event_result should be preserved");
+    assert_eq!(result.status, EventResultStatus::Pending);
+    assert!(result.completed_at.is_none());
+    assert!(result.result.is_none());
+    let started = inner
+        .event_results
+        .get(&started_handler.id)
+        .expect("started event_result should be preserved");
+    assert_eq!(started.status, EventResultStatus::Started);
+    assert_eq!(started.started_at, Some(started_at));
+    assert!(started.completed_at.is_none());
+    assert!(started.result.is_none());
+}
+
+#[test]
+fn test_dispatching_completed_at_event_skips_handlers_and_preserves_timestamp() {
+    let bus = EventBus::new(Some("AlreadyCompletedAtBus".to_string()));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let handler_calls = calls.clone();
+    let handler = bus.on_raw_sync(
+        "AlreadyCompletedAtDispatchEvent",
+        "handler",
+        move |_event| {
+            handler_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(json!("ran"))
+        },
+    );
+    let event = base_event(
+        "AlreadyCompletedAtDispatchEvent",
+        json!({"label": "timestamp"}),
+    );
+    let pending_result =
+        EventResult::new(event.inner.lock().event_id.clone(), handler.clone(), None);
+    let provided_completed_at = "2025-01-02T03:04:05.000000000Z".to_string();
+    {
+        let mut inner = event.inner.lock();
+        inner
+            .event_results
+            .insert(handler.id.clone(), pending_result);
+        inner.event_completed_at = Some(provided_completed_at.clone());
+    }
+
+    let dispatched = bus.emit_base(event.clone());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert!(Arc::ptr_eq(&dispatched, &event));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let inner = event.inner.lock();
+    assert_eq!(inner.event_status, EventStatus::Completed);
+    assert_eq!(inner.event_started_at, Some(provided_completed_at.clone()));
+    assert_eq!(inner.event_completed_at, Some(provided_completed_at));
+    assert!(inner.event_path.contains(&bus.label()));
+    let result = inner
+        .event_results
+        .get(&handler.id)
+        .expect("pending event_result should be preserved");
+    assert_eq!(result.status, EventResultStatus::Pending);
+    assert!(result.completed_at.is_none());
+    assert!(result.result.is_none());
 }
 
 #[test]

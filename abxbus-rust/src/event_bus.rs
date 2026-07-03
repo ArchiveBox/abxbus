@@ -1866,15 +1866,17 @@ impl EventBus {
     ) {
         let runloop_pause = self.locks.request_runloop_pause();
         let event_id = event.inner.lock().event_id.clone();
-        if self.has_completed_on_bus(&event) {
+        let completion_marked = event.should_skip_handler_execution();
+        if !completion_marked && self.has_completed_on_bus(&event) {
             return;
         }
-        if event
-            .inner
-            .lock()
-            .event_results
-            .values()
-            .any(|result| result.handler.eventbus_id == self.id)
+        if !completion_marked
+            && event
+                .inner
+                .lock()
+                .event_results
+                .values()
+                .any(|result| result.handler.eventbus_id == self.id)
         {
             return;
         }
@@ -1895,13 +1897,12 @@ impl EventBus {
                 false
             }
         };
-        if !removed {
-            let inner = event.inner.lock();
-            if inner.event_status == EventStatus::Completed
-                && inner.event_path.contains(&self.label())
-            {
-                return;
+        if completion_marked {
+            if removed {
+                self.runtime.active_event_ids.lock().remove(&event_id);
             }
+            self.complete_skipped_handler_execution(&event);
+            return;
         }
         if !removed && !bypass_event_lock {
             return;
@@ -2645,6 +2646,10 @@ impl EventBus {
     }
 
     async fn process_event(&self, event: Arc<BaseEvent>) {
+        if event.should_skip_handler_execution() {
+            self.complete_skipped_handler_execution(&event);
+            return;
+        }
         if self.has_completed_on_bus(&event) {
             return;
         }
@@ -2887,17 +2892,33 @@ impl EventBus {
 
         if should_complete {
             event.mark_completed();
-            let event_id = event.inner.lock().event_id.clone();
-            for bus in Self::live_instances() {
-                let has_event = bus
-                    .runtime
-                    .events
-                    .lock()
-                    .get(&event_id)
-                    .is_some_and(|candidate| Arc::ptr_eq(candidate, &event));
-                if has_event {
-                    bus.update_event_ttl_deadline(&event);
-                }
+            Self::update_completed_event_ttl_on_live_buses(&event);
+        }
+    }
+
+    fn complete_skipped_handler_execution(&self, event: &Arc<BaseEvent>) {
+        let should_complete = {
+            let mut inner = event.inner.lock();
+            inner.event_pending_bus_count = inner.event_pending_bus_count.saturating_sub(1);
+            inner.event_pending_bus_count == 0
+        };
+        event.mark_completed();
+        if should_complete {
+            Self::update_completed_event_ttl_on_live_buses(event);
+        }
+    }
+
+    fn update_completed_event_ttl_on_live_buses(event: &Arc<BaseEvent>) {
+        let event_id = event.inner.lock().event_id.clone();
+        for bus in Self::live_instances() {
+            let has_event = bus
+                .runtime
+                .events
+                .lock()
+                .get(&event_id)
+                .is_some_and(|candidate| Arc::ptr_eq(candidate, event));
+            if has_event {
+                bus.update_event_ttl_deadline(event);
             }
         }
     }

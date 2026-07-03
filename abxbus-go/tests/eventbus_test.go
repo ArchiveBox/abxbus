@@ -18,6 +18,15 @@ import (
 	"time"
 )
 
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func TestEmitAndDispatchUseDefaultBehavior(t *testing.T) {
 	bus := abxbus.NewEventBus("DefaultsBus", nil)
 	if bus.EventHistory.MaxHistorySize == nil || *bus.EventHistory.MaxHistorySize != abxbus.DefaultMaxHistorySize {
@@ -66,6 +75,110 @@ func TestEmitAndDispatchUseDefaultBehavior(t *testing.T) {
 	}
 	if values[0] != "first" || !reflect.DeepEqual(values[1], map[string]any{"user_id": "abc"}) {
 		t.Fatalf("unexpected result values/order: %#v", values)
+	}
+}
+
+func TestDispatchingCompletedStatusEventSkipsHandlersAndNormalizesCompletion(t *testing.T) {
+	bus := abxbus.NewEventBus("AlreadyCompletedStatusBus", nil)
+	calls := 0
+	handler := bus.On("AlreadyCompletedDispatchEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		calls++
+		return "ran", nil
+	}, nil)
+	startedHandler := bus.On("AlreadyCompletedDispatchEvent", "started_handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		calls++
+		return "started", nil
+	}, nil)
+	event := abxbus.NewBaseEvent("AlreadyCompletedDispatchEvent", map[string]any{"label": "status"})
+	pendingResult := event.EventResultUpdate(handler, &abxbus.BaseEventResultUpdateOptions{
+		EventResultUpdateOptions: abxbus.EventResultUpdateOptions{Status: abxbus.EventResultPending},
+	})
+	startedResult := event.EventResultUpdate(startedHandler, &abxbus.BaseEventResultUpdateOptions{
+		EventResultUpdateOptions: abxbus.EventResultUpdateOptions{Status: abxbus.EventResultStarted},
+	})
+	event.EventStatus = "completed"
+
+	dispatched := bus.Dispatch(event)
+	wait := 1.0
+	if !bus.WaitUntilIdle(&wait) {
+		t.Fatal("bus did not become idle")
+	}
+
+	if dispatched != event {
+		t.Fatal("dispatch should preserve event identity")
+	}
+	if calls != 0 {
+		t.Fatalf("handler should not run for completed event, got %d calls", calls)
+	}
+	if event.EventStatus != "completed" {
+		t.Fatalf("expected completed status, got %s", event.EventStatus)
+	}
+	if event.EventStartedAt == nil {
+		t.Fatal("completed event should have event_started_at")
+	}
+	if event.EventCompletedAt == nil {
+		t.Fatal("completed event should have event_completed_at")
+	}
+	if !containsString(event.EventPath, bus.Label()) {
+		t.Fatalf("event_path should include handling bus %s, got %#v", bus.Label(), event.EventPath)
+	}
+	if event.EventResults[handler.ID] != pendingResult {
+		t.Fatal("pending event_result should be preserved")
+	}
+	if pendingResult.Status != abxbus.EventResultPending || pendingResult.CompletedAt != nil || pendingResult.Result != nil {
+		t.Fatalf("pending event_result should be unchanged, got %#v", pendingResult)
+	}
+	if event.EventResults[startedHandler.ID] != startedResult {
+		t.Fatal("started event_result should be preserved")
+	}
+	if startedResult.Status != abxbus.EventResultStarted || startedResult.StartedAt == nil || startedResult.CompletedAt != nil || startedResult.Result != nil {
+		t.Fatalf("started event_result should be unchanged, got %#v", startedResult)
+	}
+}
+
+func TestDispatchingCompletedAtEventSkipsHandlersAndPreservesTimestamp(t *testing.T) {
+	bus := abxbus.NewEventBus("AlreadyCompletedAtBus", nil)
+	calls := 0
+	handler := bus.On("AlreadyCompletedAtDispatchEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		calls++
+		return "ran", nil
+	}, nil)
+	event := abxbus.NewBaseEvent("AlreadyCompletedAtDispatchEvent", map[string]any{"label": "timestamp"})
+	pendingResult := event.EventResultUpdate(handler, &abxbus.BaseEventResultUpdateOptions{
+		EventResultUpdateOptions: abxbus.EventResultUpdateOptions{Status: abxbus.EventResultPending},
+	})
+	providedCompletedAt := "2025-01-02T03:04:05.000000000Z"
+	event.EventCompletedAt = &providedCompletedAt
+
+	dispatched := bus.Dispatch(event)
+	wait := 1.0
+	if !bus.WaitUntilIdle(&wait) {
+		t.Fatal("bus did not become idle")
+	}
+
+	if dispatched != event {
+		t.Fatal("dispatch should preserve event identity")
+	}
+	if calls != 0 {
+		t.Fatalf("handler should not run for completed_at event, got %d calls", calls)
+	}
+	if event.EventStatus != "completed" {
+		t.Fatalf("expected completed status, got %s", event.EventStatus)
+	}
+	if event.EventStartedAt == nil || *event.EventStartedAt != providedCompletedAt {
+		t.Fatalf("event_started_at should be normalized from event_completed_at, got %#v", event.EventStartedAt)
+	}
+	if event.EventCompletedAt == nil || *event.EventCompletedAt != providedCompletedAt {
+		t.Fatalf("event_completed_at should be preserved, got %#v", event.EventCompletedAt)
+	}
+	if !containsString(event.EventPath, bus.Label()) {
+		t.Fatalf("event_path should include handling bus %s, got %#v", bus.Label(), event.EventPath)
+	}
+	if event.EventResults[handler.ID] != pendingResult {
+		t.Fatal("pending event_result should be preserved")
+	}
+	if pendingResult.Status != abxbus.EventResultPending || pendingResult.CompletedAt != nil || pendingResult.Result != nil {
+		t.Fatalf("pending event_result should be unchanged, got %#v", pendingResult)
 	}
 }
 

@@ -564,10 +564,8 @@ export class EventBus {
   }
 
   private _markEventCompletedIfNeeded(event: BaseEvent): void {
-    if (event.event_status !== 'completed') {
-      event.event_pending_bus_count = Math.max(0, event.event_pending_bus_count - 1)
-      event._markCompleted(false)
-    }
+    event.event_pending_bus_count = Math.max(0, event.event_pending_bus_count - 1)
+    event._markCompleted(false)
     if (event.event_status === 'completed') {
       for (const bus of this.all_instances) {
         if (bus.event_history.get(event.event_id) === event) {
@@ -1177,6 +1175,11 @@ export class EventBus {
     }> = []
     try {
       if (this._hasProcessedEvent(event)) {
+        this._markEventCompletedIfNeeded(event)
+        return
+      }
+      if (event._shouldSkipHandlerExecution()) {
+        this._markEventCompletedIfNeeded(event)
         return
       }
       const scoped_event = this._getEventProxyScopedToThisBus(event)
@@ -1393,6 +1396,7 @@ export class EventBus {
         const original_event = next_event._event_original ?? next_event
         if (this._hasProcessedEvent(original_event)) {
           this.pending_event_queue.shift()
+          this._markEventCompletedIfNeeded(original_event)
           continue
         }
         let pre_acquired_lock: AsyncLock | null = null

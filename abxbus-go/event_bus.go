@@ -960,18 +960,11 @@ func eventHasRunningResults(event *BaseEvent) bool {
 }
 
 func completeEventAcrossBuses(event *BaseEvent) {
-	if event.status() == "completed" {
-		for _, bus := range eventBusInstancesSnapshot() {
-			if bus.EventHistory.GetEvent(event.EventID) == event {
-				bus.updateEventTTLDeadline(event)
-			}
-		}
-		return
-	}
 	event.mu.Lock()
 	if event.EventPendingBusCount < 0 {
 		event.EventPendingBusCount = 0
 	}
+	wasCompleted := event.EventStatus == "completed"
 	event.mu.Unlock()
 	event.markCompleted()
 	for _, bus := range eventBusInstancesSnapshot() {
@@ -979,14 +972,17 @@ func completeEventAcrossBuses(event *BaseEvent) {
 			continue
 		}
 		bus.updateEventTTLDeadline(event)
-		bus.notifyEventChange(event, "completed")
+		if !wasCompleted {
+			bus.notifyEventChange(event, "completed")
+		}
 		bus.EventHistory.TrimEventHistory(nil)
 	}
 	event.signalCompleted()
 }
 
 func completeIdleEventAcrossBuses(event *BaseEvent) bool {
-	if event.status() == "completed" {
+	if event.shouldSkipHandlerExecution() {
+		completeEventAcrossBuses(event)
 		return true
 	}
 	event.mu.Lock()
@@ -1062,8 +1058,15 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 		b.mu.Unlock()
 		b.locks.notifyIdleListeners()
 	}()
-	if event.status() == "completed" {
+	if event.shouldSkipHandlerExecution() {
 		signalFirstHandlerStarted()
+		event.mu.Lock()
+		event.EventPendingBusCount--
+		if event.EventPendingBusCount < 0 {
+			event.EventPendingBusCount = 0
+		}
+		event.mu.Unlock()
+		completeEventAcrossBuses(event)
 		return nil
 	}
 	if b.eventHasLocalActiveResults(event) {

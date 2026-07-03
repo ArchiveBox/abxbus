@@ -1616,7 +1616,7 @@ export class BaseEvent {
 
   _markStarted(started_at: string | null = null, notify_hook: boolean = true): void {
     const original = this._event_original ?? this
-    if (original.event_status !== 'pending') {
+    if (original.event_status !== 'pending' || original._shouldSkipHandlerExecution()) {
       return
     }
     original.event_status = 'started'
@@ -1630,10 +1630,9 @@ export class BaseEvent {
 
   _markCompleted(force: boolean = true, notify_parents: boolean = true): void {
     const original = this._event_original ?? this
-    if (original.event_status === 'completed') {
-      return
-    }
-    if (!force) {
+    const was_completed = original.event_status === 'completed'
+    const completion_marked = original._shouldSkipHandlerExecution()
+    if (!force && !completion_marked) {
       if (original.event_pending_bus_count > 0) {
         return
       }
@@ -1642,20 +1641,28 @@ export class BaseEvent {
       }
     }
     original.event_status = 'completed'
-    original.event_completed_at = monotonicDatetime()
-    if (original.event_bus) {
+    original.event_completed_at = original.event_completed_at ?? monotonicDatetime()
+    original.event_started_at = original.event_started_at ?? original.event_completed_at
+    if (!was_completed && original.event_bus) {
       const bus_for_hook = original.event_bus
       const event_for_bus = bus_for_hook._getEventProxyScopedToThisBus(original)
       void bus_for_hook.onEventChange(event_for_bus, 'completed')
     }
     original._setDispatchContext(null)
     original._notifyDoneListeners()
-    original._event_completed_signal!.resolve(original)
-    original._event_completed_signal = null
+    if (original._event_completed_signal) {
+      original._event_completed_signal.resolve(original)
+      original._event_completed_signal = null
+    }
     original.dropFromZeroHistoryBuses()
     if (notify_parents && original.event_bus) {
       original._notifyEventParentsOfCompletion()
     }
+  }
+
+  _shouldSkipHandlerExecution(): boolean {
+    const original = this._event_original ?? this
+    return original.event_status === 'completed' || original.event_completed_at !== null
   }
 
   private dropFromZeroHistoryBuses(): void {

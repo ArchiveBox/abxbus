@@ -2017,8 +2017,8 @@ class EventBus:
             Passing an event directly (bypassing the queue) is for advanced use only, be aware if:
 
             - **Event not in queue**: Works fine, handlers execute normally.
-            - **Event already completed**: Handlers will run AGAIN, overwriting previous
-              results. No guard against double-processing.
+            - **Event already completed**: Handler execution is skipped, but local
+              completion bookkeeping still runs.
             - **Event in queue but not next**: Event processes immediately, but STAYS
               in queue. The run loop will process it again later (double-processing).
 
@@ -2054,7 +2054,7 @@ class EventBus:
         try:
             async with self.locks._run_with_event_lock(self, event):  # pyright: ignore[reportPrivateUsage]
                 # Process the event
-                if event.event_status != EventStatus.COMPLETED:
+                if not event._should_skip_handler_execution():  # pyright: ignore[reportPrivateUsage]
                     await self._process_event(event, timeout=timeout)
 
                 # Queue lifecycle:

@@ -193,6 +193,75 @@ test('BaseEvent lifecycle methods are callable and preserve lifecycle behavior',
   assert.equal(dispatched.event_status, 'completed')
 })
 
+test('dispatching completed status event skips handlers and normalizes completion', async () => {
+  const AlreadyCompletedDispatchEvent = BaseEvent.extend('AlreadyCompletedDispatchEvent', {
+    label: z.string(),
+  })
+  const bus = new EventBus('AlreadyCompletedStatusBus')
+  let calls = 0
+  const handler_entry = bus.on(AlreadyCompletedDispatchEvent, (event) => {
+    calls += 1
+    return `ran:${event.label}`
+  })
+  const started_handler_entry = bus.on(AlreadyCompletedDispatchEvent, (event) => {
+    calls += 1
+    return `started:${event.label}`
+  })
+  const event = AlreadyCompletedDispatchEvent({ label: 'status' })
+  const pending_result = event.eventResultUpdate(handler_entry, { status: 'pending' })
+  const started_result = event.eventResultUpdate(started_handler_entry, { status: 'started' })
+  event.event_status = 'completed'
+
+  const dispatched = bus.dispatch(event)
+  await bus.waitUntilIdle(1)
+
+  assert.equal(dispatched._event_original ?? dispatched, event)
+  assert.equal(calls, 0)
+  assert.equal(event.event_status, 'completed')
+  assert.equal(typeof event.event_started_at, 'string')
+  assert.equal(typeof event.event_completed_at, 'string')
+  assert.ok(event.event_path.includes(bus.label))
+  assert.equal(event.event_results.get(handler_entry.id), pending_result)
+  assert.equal(pending_result.status, 'pending')
+  assert.equal(pending_result.completed_at, null)
+  assert.equal(pending_result.result, undefined)
+  assert.equal(event.event_results.get(started_handler_entry.id), started_result)
+  assert.equal(started_result.status, 'started')
+  assert.equal(typeof started_result.started_at, 'string')
+  assert.equal(started_result.completed_at, null)
+  assert.equal(started_result.result, undefined)
+})
+
+test('dispatching completed_at event skips handlers and preserves timestamp', async () => {
+  const AlreadyCompletedAtDispatchEvent = BaseEvent.extend('AlreadyCompletedAtDispatchEvent', {
+    label: z.string(),
+  })
+  const bus = new EventBus('AlreadyCompletedAtBus')
+  let calls = 0
+  const handler_entry = bus.on(AlreadyCompletedAtDispatchEvent, (event) => {
+    calls += 1
+    return `ran:${event.label}`
+  })
+  const event = AlreadyCompletedAtDispatchEvent({ label: 'timestamp' })
+  const pending_result = event.eventResultUpdate(handler_entry, { status: 'pending' })
+  const provided_completed_at = '2025-01-02T03:04:05.000Z'
+  event.event_completed_at = provided_completed_at
+
+  const dispatched = bus.dispatch(event)
+  await bus.waitUntilIdle(1)
+
+  assert.equal(dispatched._event_original ?? dispatched, event)
+  assert.equal(calls, 0)
+  assert.equal(event.event_status, 'completed')
+  assert.equal(event.event_started_at, provided_completed_at)
+  assert.equal(event.event_completed_at, provided_completed_at)
+  assert.ok(event.event_path.includes(bus.label))
+  assert.equal(event.event_results.get(handler_entry.id), pending_result)
+  assert.equal(pending_result.status, 'pending')
+  assert.equal(pending_result.completed_at, null)
+  assert.equal(pending_result.result, undefined)
+})
+
 test('BaseEvent toJSON/fromJSON roundtrips runtime fields and event_results', async () => {
   const RuntimeEvent = BaseEvent.extend('RuntimeSerializationEvent', {
     event_result_type: z.string(),

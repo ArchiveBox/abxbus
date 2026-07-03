@@ -1003,7 +1003,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                         # event lock instead of waiting behind unrelated queued/running work.
                         bus.processing_event_ids.add(self.event_id)
                         try:
-                            if self.event_status != EventStatus.COMPLETED:
+                            if not self._should_skip_handler_execution():
                                 await bus._process_event(self)  # pyright: ignore[reportPrivateUsage]
                         finally:
                             await bus._finalize_local_event_processing(self)  # pyright: ignore[reportPrivateUsage]
@@ -1306,7 +1306,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
     def _mark_started(self, started_at: str | datetime | None = None) -> None:
         """Mark event runtime state as started, preserving the earliest start timestamp."""
-        if self.event_status == EventStatus.COMPLETED:
+        if self._should_skip_handler_execution():
             return
 
         if isinstance(started_at, datetime):
@@ -1517,12 +1517,15 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
     def _is_unattached_pending_event(self) -> bool:
         return (
-            self.event_status != EventStatus.COMPLETED
+            not self._should_skip_handler_execution()
             and not self._event_is_complete_flag
             and not self.event_path
             and self.event_pending_bus_count == 0
             and not self.event_results
         )
+
+    def _should_skip_handler_execution(self) -> bool:
+        return self.event_status == EventStatus.COMPLETED or self.event_completed_at is not None
 
     def _collect_handler_errors(
         self,
@@ -1729,6 +1732,17 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     def _mark_completed(self, current_bus: 'EventBus | None' = None) -> None:
         """Check if all handlers are done and signal completion"""
         completed_signal = self._event_completed_signal
+        if self._should_skip_handler_execution():
+            self.event_completed_at = self.event_completed_at or monotonic_datetime()
+            if self.event_started_at is None:
+                self.event_started_at = self.event_completed_at
+            self.event_status = EventStatus.COMPLETED
+            self._event_is_complete_flag = True
+            if completed_signal is not None:
+                completed_signal.set()
+            self._event_dispatch_context = None
+            return
+
         if completed_signal is not None and completed_signal.is_set():
             self._event_is_complete_flag = True
             if self.event_completed_at is None:

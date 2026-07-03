@@ -712,6 +712,9 @@ impl BaseEvent {
 
     pub fn mark_started(&self) {
         let mut event = self.inner.lock();
+        if event.event_status == EventStatus::Completed || event.event_completed_at.is_some() {
+            return;
+        }
         if event.event_started_at.is_none() {
             event.event_started_at = Some(now_iso());
         }
@@ -729,6 +732,14 @@ impl BaseEvent {
         if event.event_completed_at.is_none() {
             event.event_completed_at = Some(now_iso());
         }
+        if event.event_started_at.is_none() {
+            event.event_started_at = event.event_completed_at.clone();
+        }
+    }
+
+    pub(crate) fn should_skip_handler_execution(&self) -> bool {
+        let event = self.inner.lock();
+        event.event_status == EventStatus::Completed || event.event_completed_at.is_some()
     }
 
     pub(crate) fn notify_completed(&self) {
