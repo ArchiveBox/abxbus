@@ -80,6 +80,13 @@ function compareIsoDatetime(left: string | null | undefined, right: string | nul
   return left_value < right_value ? -1 : 1
 }
 
+function validateOptionalSecondsAtLeastMinusOne(field_name: string, value: number): number {
+  if (!Number.isFinite(value) || value < -1) {
+    throw new Error(`${field_name} must be >= -1 or null, got: ${value}`)
+  }
+  return value
+}
+
 export const BaseEventSchema = z
   .object({
     event_id: z.string().uuid(),
@@ -693,13 +700,16 @@ export class BaseEvent {
       (this.event_ttl === null || this.event_ttl === undefined) &&
       typeof (ctor as typeof BaseEvent & { event_ttl?: unknown }).event_ttl === 'number'
     ) {
-      this.event_ttl = (ctor as typeof BaseEvent & { event_ttl: number }).event_ttl
+      this.event_ttl = validateOptionalSecondsAtLeastMinusOne('event_ttl', (ctor as typeof BaseEvent & { event_ttl: number }).event_ttl)
     }
     if (
       (this.event_result_ttl === null || this.event_result_ttl === undefined) &&
       typeof (ctor as typeof BaseEvent & { event_result_ttl?: unknown }).event_result_ttl === 'number'
     ) {
-      this.event_result_ttl = (ctor as typeof BaseEvent & { event_result_ttl: number }).event_result_ttl
+      this.event_result_ttl = validateOptionalSecondsAtLeastMinusOne(
+        'event_result_ttl',
+        (ctor as typeof BaseEvent & { event_result_ttl: number }).event_result_ttl
+      )
     }
 
     this.event_result_type = normalizeEventResultType(parsed.event_result_type ?? event_result_type)

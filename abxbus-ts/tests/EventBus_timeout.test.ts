@@ -1419,6 +1419,24 @@ test('event_ttl and event_result_ttl reject values below -1', () => {
   assert.throws(() => ttlProbe({ event_result_ttl: -2 }), /event_result_ttl/)
 })
 
+test('event_ttl and event_result_ttl reject class defaults below -1', () => {
+  const BadEventTTLDefaultEvent = BaseEvent.extend('BadEventTTLDefaultEvent', {})
+  const BadEventResultTTLDefaultEvent = BaseEvent.extend('BadEventResultTTLDefaultEvent', {})
+  ;(BadEventTTLDefaultEvent as unknown as typeof BaseEvent & { event_ttl: number }).event_ttl = -2
+  ;(BadEventResultTTLDefaultEvent as unknown as typeof BaseEvent & { event_result_ttl: number }).event_result_ttl = -2
+
+  assert.throws(() => BadEventTTLDefaultEvent({}), /event_ttl/)
+  assert.throws(() => BadEventTTLDefaultEvent({ event_ttl: null } as ConstructorParameters<typeof BadEventTTLDefaultEvent>[0]), /event_ttl/)
+  assert.throws(() => BadEventResultTTLDefaultEvent({}), /event_result_ttl/)
+  assert.throws(
+    () =>
+      BadEventResultTTLDefaultEvent({
+        event_result_ttl: null,
+      } as ConstructorParameters<typeof BadEventResultTTLDefaultEvent>[0]),
+    /event_result_ttl/
+  )
+})
+
 test('expired same-id history cleanup clears the stored event object', async () => {
   const bus = ttlBus('SameIDExpiredHistoryBus', { max_history_size: null, event_ttl: 0 })
   bus.on(TTLProbeEvent, () => 'result')
