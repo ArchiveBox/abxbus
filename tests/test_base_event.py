@@ -1407,6 +1407,15 @@ async def test_baseevent_event_reset_options_control_ids_status_timestamps_and_r
     assert next(iter(preserved.event_results.values())).result == 'done:hello'
     assert preserved.event_pending_bus_count == 0
 
+    redispatch = completed.event_reset(ids=False, status=True, timestamps=False, results=True)
+    assert redispatch.event_status == EventStatus.PENDING
+    assert redispatch.event_started_at == '2025-01-02T03:04:06.000000000Z'
+    assert redispatch.event_completed_at is None
+
+    with_results = completed.event_reset(results=False)
+    assert with_results.event_id != completed.event_id
+    assert all(result.event_id == with_results.event_id for result in with_results.event_results.values())
+
     await bus.destroy(clear=True)
 
 

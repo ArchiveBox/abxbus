@@ -1316,6 +1316,16 @@ impl EventBus {
             .get("name")
             .and_then(Value::as_str)
             .map(ToString::to_string);
+        crate::event_handler::validate_optional_seconds_at_least_minus_one(
+            "event_ttl",
+            options.event_ttl,
+        )
+        .expect("event_ttl must be >= -1 or None");
+        crate::event_handler::validate_optional_seconds_at_least_minus_one(
+            "event_result_ttl",
+            options.event_result_ttl,
+        )
+        .expect("event_result_ttl must be >= -1 or None");
         let bus = Self::new_with_options_and_loop(name, options, false, false);
 
         let mut handlers_by_id = HashMap::new();
@@ -1963,7 +1973,9 @@ impl EventBus {
                 if current_size >= max_size && !self.runtime.max_history_drop {
                     return false;
                 }
-                self.trim_history_to_capacity(max_size, true);
+                if self.runtime.max_history_drop {
+                    self.trim_history_to_capacity(max_size, true);
+                }
             }
         }
 
@@ -2084,7 +2096,9 @@ impl EventBus {
 
     fn trim_event_history(&self, include_ttl: bool) {
         if let Some(max_size) = self.runtime.max_history_size {
-            self.trim_history_to_capacity(max_size, false);
+            if max_size == 0 || self.runtime.max_history_drop {
+                self.trim_history_to_capacity(max_size, false);
+            }
         }
         if !include_ttl {
             return;

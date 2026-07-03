@@ -972,11 +972,13 @@ export class EventBus {
     const skip_handlers_at_emit = original_event._shouldSkipHandlerExecution()
     const already_in_event_path = original_event.event_path.includes(this.label)
     const already_processed_on_bus = this._hasProcessedEvent(original_event)
-    const already_seen_on_bus = already_in_event_path || this.event_history.has(original_event.event_id) || already_processed_on_bus
-    if (already_seen_on_bus && this._isCompletedEventExpiredForHistory(original_event)) {
-      this.event_history.delete(original_event.event_id)
-      original_event._event_expires_at_by_bus.delete(this.id)
-      this._gcEventIfUnretained(original_event)
+    const history_event = this.event_history.get(original_event.event_id)
+    const already_seen_on_bus = already_in_event_path || history_event !== undefined || already_processed_on_bus
+    const ttl_event = history_event ?? original_event
+    if (already_seen_on_bus && this._isCompletedEventExpiredForHistory(ttl_event)) {
+      this.event_history.delete(ttl_event.event_id)
+      ttl_event._event_expires_at_by_bus.delete(this.id)
+      this._gcEventIfUnretained(ttl_event)
       return this._getEventProxyScopedToThisBus(original_event) as T
     }
     if (already_in_event_path || already_processed_on_bus) {

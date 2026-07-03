@@ -167,6 +167,49 @@ def test_eventbus_validate_null_event_timeout_uses_default() -> None:
     assert restored.model_dump()['event_timeout'] == 60.0
 
 
+def test_eventbus_validate_rejects_restored_ttls_below_minus_one() -> None:
+    bus, event, handler_id = _make_bus_with_pending_event()
+    payload = bus.model_dump()
+    history = cast(dict[str, dict[str, Any]], payload['event_history'])
+    event_payload = history[event.event_id]
+    event_results = cast(dict[str, dict[str, Any]], event_payload['event_results'])
+    result_payload = event_results[handler_id]
+
+    with pytest.raises((ValidationError, ValueError), match='event_ttl'):
+        EventBus.validate({**payload, 'event_ttl': -2})
+    with pytest.raises((ValidationError, ValueError), match='event_result_ttl'):
+        EventBus.validate({**payload, 'event_result_ttl': -2})
+
+    invalid_event = {
+        **payload,
+        'event_history': {
+            event.event_id: {
+                **event_payload,
+                'event_ttl': -2,
+            }
+        },
+    }
+    with pytest.raises(ValidationError, match='event_ttl'):
+        EventBus.validate(invalid_event)
+
+    invalid_result = {
+        **payload,
+        'event_history': {
+            event.event_id: {
+                **event_payload,
+                'event_results': {
+                    handler_id: {
+                        **result_payload,
+                        'handler_result_ttl': -2,
+                    }
+                },
+            }
+        },
+    }
+    with pytest.raises(ValidationError, match='handler_result_ttl'):
+        EventBus.validate(invalid_result)
+
+
 @pytest.mark.asyncio
 async def test_eventbus_validate_defaults_missing_handler_maps() -> None:
     bus = EventBus(name='MissingHandlerMaps')

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
@@ -240,6 +241,29 @@ func TestEventBusFromJSONNullEventTimeoutUsesDefault(t *testing.T) {
 	}
 	if !bytes.Contains(roundtripped, []byte(`"event_timeout":60`)) {
 		t.Fatalf("expected event_timeout default to survive roundtrip: %s", string(roundtripped))
+	}
+}
+
+func TestEventBusFromJSONRejectsRestoredTTLsBelowMinusOne(t *testing.T) {
+	cases := map[string]string{
+		"event_ttl":          `{"id":"bad-ttl-bus","name":"BadTTLBus","max_history_size":100,"max_history_drop":false,"event_concurrency":"bus-serial","event_timeout":60,"event_slow_timeout":null,"event_ttl":-2,"event_handler_concurrency":"serial","event_handler_completion":"all","event_handler_slow_timeout":null,"event_handler_detect_file_paths":false,"handlers":{},"handlers_by_key":{},"event_history":{},"pending_event_queue":[]}`,
+		"event_result_ttl":   `{"id":"bad-ttl-bus","name":"BadTTLBus","max_history_size":100,"max_history_drop":false,"event_concurrency":"bus-serial","event_timeout":60,"event_slow_timeout":null,"event_result_ttl":-2,"event_handler_concurrency":"serial","event_handler_completion":"all","event_handler_slow_timeout":null,"event_handler_detect_file_paths":false,"handlers":{},"handlers_by_key":{},"event_history":{},"pending_event_queue":[]}`,
+		"handler_result_ttl": `{"id":"bad-ttl-bus","name":"BadTTLBus","max_history_size":100,"max_history_drop":false,"event_concurrency":"bus-serial","event_timeout":60,"event_slow_timeout":null,"event_handler_concurrency":"serial","event_handler_completion":"all","event_handler_slow_timeout":null,"event_handler_detect_file_paths":false,"handlers":{"h":{"id":"h","eventbus_name":"BadTTLBus","eventbus_id":"bad-ttl-bus","event_pattern":"Evt","handler_name":"h","handler_file_path":null,"handler_timeout":null,"handler_slow_timeout":null,"handler_result_ttl":-2,"handler_registered_at":"2025-01-02T03:04:05.000000000Z"}},"handlers_by_key":{"Evt":["h"]},"event_history":{},"pending_event_queue":[]}`,
+	}
+	for name, raw := range cases {
+		if _, err := abxbus.EventBusFromJSON([]byte(raw)); err == nil || !strings.Contains(err.Error(), name) {
+			t.Fatalf("expected %s restore error, got %v", name, err)
+		}
+	}
+
+	data := []byte(`{"id":"bad-event-ttl-bus","name":"BadEventTTLBus","max_history_size":100,"max_history_drop":false,"event_concurrency":"bus-serial","event_timeout":60,"event_slow_timeout":null,"event_handler_concurrency":"serial","event_handler_completion":"all","event_handler_slow_timeout":null,"event_handler_detect_file_paths":false,"handlers":{},"handlers_by_key":{},"event_history":{"evt-1":{"event_id":"evt-1","event_created_at":"2025-01-02T03:04:05.000000000Z","event_type":"Evt","event_version":"0.0.1","event_timeout":null,"event_ttl":-2,"event_status":"completed","event_completed_at":"2025-01-02T03:04:06.000000000Z","event_path":[],"event_pending_bus_count":0,"event_blocks_parent_completion":false,"event_results":{}}},"pending_event_queue":[]}`)
+	if _, err := abxbus.EventBusFromJSON(data); err == nil || !strings.Contains(err.Error(), "event_ttl") {
+		t.Fatalf("expected restored event_ttl error, got %v", err)
+	}
+
+	resultData := []byte(`{"id":"bad-result-ttl-bus","name":"BadResultTTLBus","max_history_size":100,"max_history_drop":false,"event_concurrency":"bus-serial","event_timeout":60,"event_slow_timeout":null,"event_handler_concurrency":"serial","event_handler_completion":"all","event_handler_slow_timeout":null,"event_handler_detect_file_paths":false,"handlers":{},"handlers_by_key":{},"event_history":{"evt-1":{"event_id":"evt-1","event_created_at":"2025-01-02T03:04:05.000000000Z","event_type":"Evt","event_version":"0.0.1","event_timeout":null,"event_status":"completed","event_completed_at":"2025-01-02T03:04:06.000000000Z","event_path":[],"event_pending_bus_count":0,"event_blocks_parent_completion":false,"event_results":{"h":{"id":"r","status":"completed","event_id":"evt-1","handler_id":"h","handler_name":"h","handler_file_path":null,"handler_timeout":null,"handler_slow_timeout":null,"handler_result_ttl":-2,"handler_registered_at":"2025-01-02T03:04:05.000000000Z","handler_event_pattern":"Evt","eventbus_name":"BadResultTTLBus","eventbus_id":"bad-result-ttl-bus","started_at":null,"completed_at":"2025-01-02T03:04:06.000000000Z","result":"ok","error":null,"event_children":[]}}}},"pending_event_queue":[]}`)
+	if _, err := abxbus.EventBusFromJSON(resultData); err == nil || !strings.Contains(err.Error(), "handler_result_ttl") {
+		t.Fatalf("expected restored handler_result_ttl error, got %v", err)
 	}
 }
 

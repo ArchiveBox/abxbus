@@ -1871,6 +1871,12 @@ func EventBusFromJSON(data []byte) (*EventBus, error) {
 		maxHistorySize = ptr(DefaultMaxHistorySize)
 	}
 	eventTimeout := parsed.EventTimeout
+	if err := validateOptionalSecondsAtLeastMinusOne("event_ttl", parsed.EventTTL); err != nil {
+		return nil, err
+	}
+	if err := validateOptionalSecondsAtLeastMinusOne("event_result_ttl", parsed.EventResultTTL); err != nil {
+		return nil, err
+	}
 	bus := NewEventBus(parsed.Name, &EventBusOptions{
 		ID:                          parsed.ID,
 		MaxHistorySize:              maxHistorySize,
@@ -1919,6 +1925,7 @@ func EventBusFromJSON(data []byte) (*EventBus, error) {
 					HandlerFilePath:     result.HandlerFilePath,
 					HandlerTimeout:      result.HandlerTimeout,
 					HandlerSlowTimeout:  result.HandlerSlowTimeout,
+					HandlerResultTTL:    result.HandlerResultTTL,
 					HandlerRegisteredAt: result.HandlerRegisteredAt,
 				}
 				if handler.EventBusName == "" {

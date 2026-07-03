@@ -2813,6 +2813,36 @@ fn test_baseevent_event_reset_options_control_ids_status_timestamps_and_results(
     assert_eq!(preserved_data.event_pending_bus_count, 0);
     drop(completed_data);
     drop(preserved_data);
+
+    let redispatch = completed.event_reset_with_options(EventResetOptions {
+        ids: false,
+        status: true,
+        timestamps: false,
+        results: true,
+    });
+    {
+        let redispatch_data = redispatch.inner.lock();
+        assert_eq!(redispatch_data.event_status, EventStatus::Pending);
+        assert_eq!(
+            redispatch_data.event_started_at.as_deref(),
+            Some("2025-01-02T03:04:06.000000000Z")
+        );
+        assert_eq!(redispatch_data.event_completed_at, None);
+    }
+
+    let with_results = completed.event_reset_with_options(EventResetOptions {
+        results: false,
+        ..EventResetOptions::default()
+    });
+    {
+        let with_results_data = with_results.inner.lock();
+        let completed_data = completed.inner.lock();
+        assert_ne!(with_results_data.event_id, completed_data.event_id);
+        assert!(with_results_data
+            .event_results
+            .values()
+            .all(|result| result.event_id == with_results_data.event_id));
+    }
     bus.destroy();
 }
 

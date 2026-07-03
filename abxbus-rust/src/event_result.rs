@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 
 use crate::{
     base_event::{now_iso, BaseEvent},
-    event_handler::EventHandler,
+    event_handler::{validate_optional_seconds_at_least_minus_one, EventHandler},
     id::uuid_v7_string,
     lock_manager::{LockManager, OwnedRunloopPauseGuard},
 };
@@ -448,7 +448,15 @@ impl EventResult {
                 .map(ToString::to_string),
             handler_timeout: record.get("handler_timeout").and_then(Value::as_f64),
             handler_slow_timeout: record.get("handler_slow_timeout").and_then(Value::as_f64),
-            handler_result_ttl: record.get("handler_result_ttl").and_then(Value::as_f64),
+            handler_result_ttl: {
+                let handler_result_ttl = record.get("handler_result_ttl").and_then(Value::as_f64);
+                validate_optional_seconds_at_least_minus_one(
+                    "handler_result_ttl",
+                    handler_result_ttl,
+                )
+                .expect("handler_result_ttl must be >= -1 or None");
+                handler_result_ttl
+            },
             handler_registered_at: record
                 .get("handler_registered_at")
                 .and_then(Value::as_str)

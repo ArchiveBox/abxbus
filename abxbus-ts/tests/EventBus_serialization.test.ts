@@ -143,6 +143,54 @@ test('EventBus.fromJSON null event_timeout uses default', () => {
   }
 })
 
+test('EventBus.fromJSON rejects restored TTLs below -1', async () => {
+  const bus = new EventBus('BadRestoredTTLSourceBus', {
+    event_handler_detect_file_paths: false,
+  })
+  const RestoredTTLEvent = BaseEvent.extend('BadRestoredTTLSourceEvent', {})
+  bus.on(RestoredTTLEvent, () => 'ok')
+  const event = await bus.emit(RestoredTTLEvent({})).now()
+  const handler_id = Array.from(event.event_results.keys())[0]
+  assert.ok(handler_id)
+  const json = bus.toJSON()
+
+  assert.throws(() => EventBus.fromJSON({ ...json, event_ttl: -2 }), /event_ttl/)
+  assert.throws(() => EventBus.fromJSON({ ...json, event_result_ttl: -2 }), /event_result_ttl/)
+  assert.throws(
+    () =>
+      EventBus.fromJSON({
+        ...json,
+        event_history: {
+          [event.event_id]: {
+            ...json.event_history[event.event_id],
+            event_ttl: -2,
+          },
+        },
+      }),
+    /event_ttl/
+  )
+  assert.throws(
+    () =>
+      EventBus.fromJSON({
+        ...json,
+        event_history: {
+          [event.event_id]: {
+            ...json.event_history[event.event_id],
+            event_results: {
+              [handler_id]: {
+                ...(json.event_history[event.event_id]!.event_results as Record<string, Record<string, unknown>>)[handler_id],
+                handler_result_ttl: -2,
+              },
+            },
+          },
+        },
+      }),
+    /handler_result_ttl/
+  )
+
+  await bus.destroy()
+})
+
 test('EventBus.fromJSON defaults missing handler maps', async () => {
   const json = new EventBus('MissingHandlerMaps').toJSON()
   delete (json as Partial<typeof json>).handlers

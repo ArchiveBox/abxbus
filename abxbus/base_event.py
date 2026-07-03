@@ -1817,6 +1817,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             self.event_blocks_parent_completion = False
         if status:
             self.event_status = EventStatus.PENDING
+            self.event_completed_at = None
             self._event_is_complete_flag = False
         else:
             self._event_is_complete_flag = self.event_status == EventStatus.COMPLETED
@@ -1825,6 +1826,9 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             self.event_completed_at = None
         if results:
             self.event_results.clear()
+        elif ids:
+            for result in self.event_results.values():
+                result.event_id = self.event_id
         self.event_pending_bus_count = 0
         self._lock_for_event_handler = None
         self._event_dispatch_context = None

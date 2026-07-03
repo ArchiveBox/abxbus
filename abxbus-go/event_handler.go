@@ -86,8 +86,44 @@ func EventHandlerFromJSON(data []byte, handler EventHandlerCallable) (*EventHand
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		return nil, err
 	}
+	if err := validateOptionalSecondsAtLeastMinusOne("handler_result_ttl", parsed.HandlerResultTTL); err != nil {
+		return nil, err
+	}
 	parsed.handler = handler
 	return &parsed, nil
+}
+
+func (h *EventHandler) UnmarshalJSON(data []byte) error {
+	type eventHandlerJSON struct {
+		ID                  string   `json:"id"`
+		EventBusName        string   `json:"eventbus_name"`
+		EventBusID          string   `json:"eventbus_id"`
+		EventPattern        string   `json:"event_pattern"`
+		HandlerName         string   `json:"handler_name"`
+		HandlerFilePath     *string  `json:"handler_file_path"`
+		HandlerTimeout      *float64 `json:"handler_timeout"`
+		HandlerSlowTimeout  *float64 `json:"handler_slow_timeout"`
+		HandlerResultTTL    *float64 `json:"handler_result_ttl"`
+		HandlerRegisteredAt string   `json:"handler_registered_at"`
+	}
+	var parsed eventHandlerJSON
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	if err := validateOptionalSecondsAtLeastMinusOne("handler_result_ttl", parsed.HandlerResultTTL); err != nil {
+		return err
+	}
+	h.ID = parsed.ID
+	h.EventBusName = parsed.EventBusName
+	h.EventBusID = parsed.EventBusID
+	h.EventPattern = parsed.EventPattern
+	h.HandlerName = parsed.HandlerName
+	h.HandlerFilePath = parsed.HandlerFilePath
+	h.HandlerTimeout = parsed.HandlerTimeout
+	h.HandlerSlowTimeout = parsed.HandlerSlowTimeout
+	h.HandlerResultTTL = parsed.HandlerResultTTL
+	h.HandlerRegisteredAt = parsed.HandlerRegisteredAt
+	return nil
 }
 
 func (h *EventHandler) Handle(ctx context.Context, event *BaseEvent) (any, error) {

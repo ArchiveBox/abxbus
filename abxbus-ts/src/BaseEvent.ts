@@ -1615,6 +1615,7 @@ export class BaseEvent {
     }
     if (status) {
       original.event_status = 'pending'
+      original.event_completed_at = null
     }
     if (timestamps) {
       original.event_started_at = null

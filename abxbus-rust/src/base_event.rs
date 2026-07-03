@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Map, Value};
 
 use crate::{
-    event_handler::EventHandler,
+    event_handler::{validate_optional_seconds_at_least_minus_one, EventHandler},
     event_result::{EventResult, EventResultStatus},
     id::uuid_v7_string,
     jsonschema::{normalize_json_schema, validate_json_schema_value},
@@ -781,6 +781,7 @@ impl BaseEvent {
         }
         if options.status {
             data.event_status = EventStatus::Pending;
+            data.event_completed_at = None;
         }
         if options.timestamps {
             data.event_started_at = None;
@@ -790,6 +791,11 @@ impl BaseEvent {
         if options.results {
             data.event_results.clear();
             data.event_result_order.clear();
+        } else if options.ids {
+            let event_id = data.event_id.clone();
+            for result in data.event_results.values_mut() {
+                result.event_id = event_id.clone();
+            }
         }
         Arc::new(Self {
             inner: Mutex::new(data),
@@ -1003,6 +1009,10 @@ impl BaseEvent {
 
         let mut parsed: BaseEventData =
             serde_json::from_value(value).expect("invalid base_event json");
+        validate_optional_seconds_at_least_minus_one("event_ttl", parsed.event_ttl)
+            .expect("event_ttl must be >= -1 or None");
+        validate_optional_seconds_at_least_minus_one("event_result_ttl", parsed.event_result_ttl)
+            .expect("event_result_ttl must be >= -1 or None");
         parsed.event_result_order = event_result_order
             .into_iter()
             .filter(|handler_id| parsed.event_results.contains_key(handler_id))

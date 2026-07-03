@@ -1419,6 +1419,26 @@ test('event_ttl and event_result_ttl reject values below -1', () => {
   assert.throws(() => ttlProbe({ event_result_ttl: -2 }), /event_result_ttl/)
 })
 
+test('expired same-id history cleanup clears the stored event object', async () => {
+  const bus = ttlBus('SameIDExpiredHistoryBus', { max_history_size: null, event_ttl: 0 })
+  bus.on(TTLProbeEvent, () => 'result')
+
+  const stored_event = await emitCompletedTTLProbe(bus)
+  assert.equal(stored_event.event_results.size, 1)
+
+  const replacement = ttlProbe()
+  replacement.event_id = stored_event.event_id
+  replacement.event_status = 'completed'
+  replacement.event_completed_at = stored_event.event_completed_at
+  bus.emit(replacement)
+
+  assert.equal(bus.event_history.has(stored_event.event_id), false)
+  assert.equal(stored_event.event_results.size, 0)
+  assert.equal(replacement.event_results.size, 0)
+
+  await bus.destroy()
+})
+
 test('multi-level timeout cascade with mixed cancellations', async () => {
   const TopEvent = BaseEvent.extend('TimeoutCascadeTop', {})
   const QueuedChildEvent = BaseEvent.extend('TimeoutCascadeQueuedChild', {})

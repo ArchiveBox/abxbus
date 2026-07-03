@@ -16,6 +16,13 @@ import (
 
 const jsonSchemaDraft202012 = jsonschema.Draft202012
 
+func validateOptionalSecondsAtLeastMinusOne(name string, value *float64) error {
+	if value != nil && *value < -1 {
+		return fmt.Errorf("%s must be >= -1 or nil", name)
+	}
+	return nil
+}
+
 type BaseEvent struct {
 	EventID                     string                      `json:"event_id"`
 	EventCreatedAt              string                      `json:"event_created_at"`
@@ -244,6 +251,12 @@ func (e *BaseEvent) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return err
 	}
+	if err := validateOptionalSecondsAtLeastMinusOne("event_ttl", m.EventTTL); err != nil {
+		return err
+	}
+	if err := validateOptionalSecondsAtLeastMinusOne("event_result_ttl", m.EventResultTTL); err != nil {
+		return err
+	}
 	e.EventID = m.EventID
 	e.EventCreatedAt = m.EventCreatedAt
 	e.EventType = m.EventType
@@ -387,6 +400,7 @@ func resetBaseEventForDispatch(event *BaseEvent, options EventResetOptions) {
 	}
 	if resetOption(options.Status) {
 		event.EventStatus = "pending"
+		event.EventCompletedAt = nil
 	}
 	if resetOption(options.Timestamps) {
 		event.EventStartedAt = nil
@@ -395,6 +409,11 @@ func resetBaseEventForDispatch(event *BaseEvent, options EventResetOptions) {
 	if resetOption(options.Results) {
 		event.EventResults = map[string]*EventResult{}
 		event.eventResultOrder = nil
+	} else if resetOption(options.IDs) {
+		for _, result := range event.EventResults {
+			result.EventID = event.EventID
+			result.Event = event
+		}
 	}
 	event.EventPendingBusCount = 0
 	event.Bus = nil

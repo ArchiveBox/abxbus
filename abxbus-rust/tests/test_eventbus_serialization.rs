@@ -220,6 +220,48 @@ fn test_eventbus_from_json_null_event_timeout_uses_default() {
 }
 
 #[test]
+fn test_eventbus_from_json_rejects_restored_ttls_below_minus_one() {
+    let bus = EventBus::new(Some("BadRestoredTTLSourceBus".to_string()));
+    bus.on_raw_sync("BadRestoredTTLSourceEvent", "handler", |_event| {
+        Ok(json!("ok"))
+    });
+    let event = bus.emit_base(BaseEvent::new(
+        "BadRestoredTTLSourceEvent",
+        serde_json::Map::new(),
+    ));
+    let _ = block_on(event.now());
+    let event_id = event.inner.lock().event_id.clone();
+    let handler_id = event
+        .inner
+        .lock()
+        .event_results
+        .keys()
+        .next()
+        .expect("handler result")
+        .clone();
+    let payload = bus.to_json_value();
+
+    let mut bad_bus_ttl = payload.clone();
+    bad_bus_ttl["event_ttl"] = json!(-2.0);
+    assert!(std::panic::catch_unwind(|| EventBus::from_json_value(bad_bus_ttl)).is_err());
+
+    let mut bad_bus_result_ttl = payload.clone();
+    bad_bus_result_ttl["event_result_ttl"] = json!(-2.0);
+    assert!(std::panic::catch_unwind(|| EventBus::from_json_value(bad_bus_result_ttl)).is_err());
+
+    let mut bad_event_ttl = payload.clone();
+    bad_event_ttl["event_history"][event_id.as_str()]["event_ttl"] = json!(-2.0);
+    assert!(std::panic::catch_unwind(|| EventBus::from_json_value(bad_event_ttl)).is_err());
+
+    let mut bad_result_ttl = payload.clone();
+    bad_result_ttl["event_history"][event_id.as_str()]["event_results"][handler_id.as_str()]
+        ["handler_result_ttl"] = json!(-2.0);
+    assert!(std::panic::catch_unwind(|| EventBus::from_json_value(bad_result_ttl)).is_err());
+
+    bus.destroy();
+}
+
+#[test]
 fn test_eventbus_from_json_defaults_missing_handler_maps() {
     let bus = EventBus::new(Some("MissingHandlerMaps".to_string()));
     let mut payload = bus.to_json_value();

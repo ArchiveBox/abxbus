@@ -1542,6 +1542,11 @@ test('BaseEvent eventReset options control ids status timestamps and results', a
   assert.equal(Array.from(preserved.event_results.values())[0]?.result, 'done:hello')
   assert.equal(preserved.event_pending_bus_count, 0)
 
+  const redispatch = completed.eventReset({ ids: false, status: true, timestamps: false, results: true })
+  assert.equal(redispatch.event_status, 'pending')
+  assert.equal(redispatch.event_started_at, '2025-01-02T03:04:06.000000000Z')
+  assert.equal(redispatch.event_completed_at, null)
+
   bus.destroy()
 })
 

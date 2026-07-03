@@ -187,6 +187,33 @@ func TestBaseEventResetOptionsControlIDsStatusTimestampsAndResults(t *testing.T)
 	if preserved.EventPendingBusCount != 0 {
 		t.Fatalf("runtime queue attachment should always reset, got %d", preserved.EventPendingBusCount)
 	}
+
+	enabled := true
+	redispatch, err := completed.EventReset(abxbus.EventResetOptions{
+		IDs:        &disabled,
+		Status:     &enabled,
+		Timestamps: &disabled,
+		Results:    &enabled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if redispatch.EventStatus != "pending" || redispatch.EventCompletedAt != nil || redispatch.EventStartedAt == nil || *redispatch.EventStartedAt != startedAt {
+		t.Fatalf("status reset should clear terminal completion while preserving non-reset timestamps: %#v", redispatch)
+	}
+
+	withResults, err := completed.EventReset(abxbus.EventResetOptions{Results: &disabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withResults.EventID == completed.EventID {
+		t.Fatal("default ID reset should regenerate the event_id")
+	}
+	for _, result := range withResults.EventResults {
+		if result.EventID != withResults.EventID {
+			t.Fatalf("preserved result should point at reset event_id, got %s want %s", result.EventID, withResults.EventID)
+		}
+	}
 }
 
 func TestBaseEventNowInsideHandlerNoArgs(t *testing.T) {

@@ -1,6 +1,6 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 use crate::{base_event::BaseEvent, id::compute_handler_id};
@@ -20,6 +20,26 @@ pub struct EventHandlerOptions {
     pub detect_handler_file_path: Option<bool>,
 }
 
+pub(crate) fn validate_optional_seconds_at_least_minus_one(
+    name: &str,
+    value: Option<f64>,
+) -> Result<(), String> {
+    if value.is_some_and(|ttl| ttl < -1.0) {
+        return Err(format!("{name} must be >= -1 or None"));
+    }
+    Ok(())
+}
+
+fn deserialize_handler_result_ttl<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<f64>::deserialize(deserializer)?;
+    validate_optional_seconds_at_least_minus_one("handler_result_ttl", value)
+        .map_err(serde::de::Error::custom)?;
+    Ok(value)
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct EventHandler {
     pub id: String,
@@ -28,6 +48,7 @@ pub struct EventHandler {
     pub handler_file_path: Option<String>,
     pub handler_timeout: Option<f64>,
     pub handler_slow_timeout: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_handler_result_ttl")]
     pub handler_result_ttl: Option<f64>,
     pub handler_registered_at: String,
     pub eventbus_name: String,
