@@ -1496,6 +1496,14 @@ fn test_multi_bus_timeout_is_recorded_on_target_bus() {
     let bus_a = EventBus::new(Some("MultiTimeoutA".to_string()));
     let bus_b = EventBus::new(Some("MultiTimeoutB".to_string()));
 
+    let bus_b_for_forward = bus_b.clone();
+    bus_a.on_raw("timeout", "forward_to_b", move |event| {
+        let bus_b = bus_b_for_forward.clone();
+        async move {
+            bus_b.emit_base(event);
+            Ok(json!("forwarded"))
+        }
+    });
     bus_b.on_raw("timeout", "slow_target_handler", |_event| async move {
         thread::sleep(Duration::from_millis(50));
         Ok(json!("slow"))
@@ -1506,7 +1514,7 @@ fn test_multi_bus_timeout_is_recorded_on_target_bus() {
     };
     event.event_timeout = Some(0.01);
     let event = bus_a.emit(event);
-    bus_b.emit(event.clone());
+    let _ = block_on(event.now());
     assert!(block_on(bus_b.wait_until_idle(Some(2.0))));
 
     let results = event.event_results.read();

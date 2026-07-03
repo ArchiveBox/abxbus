@@ -483,23 +483,27 @@ async def test_event_timeout_does_not_relabel_preexisting_handler_timeout() -> N
 
 @pytest.mark.asyncio
 async def test_multi_bus_timeout_is_recorded_on_target_bus():
-    """Closest Python equivalent: same event dispatched to two buses, timeout on target bus is captured."""
+    """Forwarded live event timeout on the target bus is captured."""
     bus_a = EventBus(name='MultiTimeoutA')
     bus_b = EventBus(name='MultiTimeoutB')
 
     class MultiBusTimeoutEvent(BaseEvent[str]):
         event_timeout: float | None = 0.01
 
+    async def forward_to_b(event: MultiBusTimeoutEvent) -> str:
+        bus_b.emit(event)
+        return 'forwarded'
+
     async def slow_target_handler(event: MultiBusTimeoutEvent) -> str:
         await asyncio.sleep(0.05)
         return 'slow'
 
+    bus_a.on(MultiBusTimeoutEvent, forward_to_b)
     bus_b.on(MultiBusTimeoutEvent, slow_target_handler)
 
     try:
-        event = MultiBusTimeoutEvent()
-        bus_a.emit(event)
-        bus_b.emit(event)
+        event = bus_a.emit(MultiBusTimeoutEvent())
+        await event
         await bus_b.wait_until_idle()
 
         bus_b_result = next((r for r in event.event_results.values() if r.eventbus_name == bus_b.name), None)
