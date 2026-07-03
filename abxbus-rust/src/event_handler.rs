@@ -30,6 +30,36 @@ pub(crate) fn validate_optional_seconds_at_least_minus_one(
     Ok(())
 }
 
+pub(crate) fn validate_optional_seconds_nonnegative(
+    name: &str,
+    value: Option<f64>,
+) -> Result<(), String> {
+    if value.is_some_and(|timeout| timeout < 0.0) {
+        return Err(format!("{name} must be >= 0 or None"));
+    }
+    Ok(())
+}
+
+fn deserialize_handler_timeout<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<f64>::deserialize(deserializer)?;
+    validate_optional_seconds_nonnegative("handler_timeout", value)
+        .map_err(serde::de::Error::custom)?;
+    Ok(value)
+}
+
+fn deserialize_handler_slow_timeout<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<f64>::deserialize(deserializer)?;
+    validate_optional_seconds_nonnegative("handler_slow_timeout", value)
+        .map_err(serde::de::Error::custom)?;
+    Ok(value)
+}
+
 fn deserialize_handler_result_ttl<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
 where
     D: Deserializer<'de>,
@@ -46,7 +76,9 @@ pub struct EventHandler {
     pub event_pattern: String,
     pub handler_name: String,
     pub handler_file_path: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_handler_timeout")]
     pub handler_timeout: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_handler_slow_timeout")]
     pub handler_slow_timeout: Option<f64>,
     #[serde(default, deserialize_with = "deserialize_handler_result_ttl")]
     pub handler_result_ttl: Option<f64>,

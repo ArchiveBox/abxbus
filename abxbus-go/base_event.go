@@ -23,6 +23,13 @@ func validateOptionalSecondsAtLeastMinusOne(name string, value *float64) error {
 	return nil
 }
 
+func validateOptionalSecondsNonNegative(name string, value *float64) error {
+	if value != nil && *value < 0 {
+		return fmt.Errorf("%s must be >= 0 or nil", name)
+	}
+	return nil
+}
+
 type BaseEvent struct {
 	EventID                     string                      `json:"event_id"`
 	EventCreatedAt              string                      `json:"event_created_at"`
@@ -254,6 +261,18 @@ func (e *BaseEvent) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	if err := validateOptionalSecondsAtLeastMinusOne("event_result_ttl", m.EventResultTTL); err != nil {
+		return err
+	}
+	if err := validateOptionalSecondsNonNegative("event_timeout", m.EventTimeout); err != nil {
+		return err
+	}
+	if err := validateOptionalSecondsNonNegative("event_slow_timeout", m.EventSlowTimeout); err != nil {
+		return err
+	}
+	if err := validateOptionalSecondsNonNegative("event_handler_timeout", m.EventHandlerTimeout); err != nil {
+		return err
+	}
+	if err := validateOptionalSecondsNonNegative("event_handler_slow_timeout", m.EventHandlerSlowTimeout); err != nil {
 		return err
 	}
 	e.EventID = m.EventID

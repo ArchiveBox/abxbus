@@ -274,6 +274,12 @@ func (r *EventResult) UnmarshalJSON(data []byte) error {
 	if err := validateOptionalSecondsAtLeastMinusOne("handler_result_ttl", parsed.HandlerResultTTL); err != nil {
 		return err
 	}
+	if err := validateOptionalSecondsNonNegative("handler_timeout", parsed.HandlerTimeout); err != nil {
+		return err
+	}
+	if err := validateOptionalSecondsNonNegative("handler_slow_timeout", parsed.HandlerSlowTimeout); err != nil {
+		return err
+	}
 	r.ID = parsed.ID
 	r.Status = parsed.Status
 	r.EventID = parsed.EventID

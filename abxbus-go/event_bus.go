@@ -194,20 +194,20 @@ func NewEventBus(name string, options *EventBusOptions) *EventBus {
 	event_timeout := options.EventTimeout
 	if event_timeout == nil {
 		event_timeout = ptr(60.0)
-	} else if *event_timeout < -1 {
-		panic("event_timeout must be >= -1 or nil")
+	} else if *event_timeout < 0 {
+		panic("event_timeout must be >= 0 or nil")
 	}
 	event_slow_timeout := options.EventSlowTimeout
 	if event_slow_timeout == nil {
 		event_slow_timeout = ptr(300.0)
-	} else if *event_slow_timeout < -1 {
-		panic("event_slow_timeout must be >= -1 or nil")
+	} else if *event_slow_timeout < 0 {
+		panic("event_slow_timeout must be >= 0 or nil")
 	}
 	event_handler_slow_timeout := options.EventHandlerSlowTimeout
 	if event_handler_slow_timeout == nil {
 		event_handler_slow_timeout = ptr(30.0)
-	} else if *event_handler_slow_timeout < -1 {
-		panic("event_handler_slow_timeout must be >= -1 or nil")
+	} else if *event_handler_slow_timeout < 0 {
+		panic("event_handler_slow_timeout must be >= 0 or nil")
 	}
 	event_ttl := options.EventTTL
 	if event_ttl != nil && *event_ttl < -1 {
@@ -464,11 +464,11 @@ func (b *EventBus) registerHandler(event_pattern string, handler_name string, no
 		if options.HandlerRegisteredAt != "" {
 			h.HandlerRegisteredAt = options.HandlerRegisteredAt
 		}
-		if options.HandlerTimeout != nil && *options.HandlerTimeout < -1 {
-			panic("handler_timeout must be >= -1 or nil")
+		if options.HandlerTimeout != nil && *options.HandlerTimeout < 0 {
+			panic("handler_timeout must be >= 0 or nil")
 		}
-		if options.HandlerSlowTimeout != nil && *options.HandlerSlowTimeout < -1 {
-			panic("handler_slow_timeout must be >= -1 or nil")
+		if options.HandlerSlowTimeout != nil && *options.HandlerSlowTimeout < 0 {
+			panic("handler_slow_timeout must be >= 0 or nil")
 		}
 		if options.HandlerResultTTL != nil && *options.HandlerResultTTL < -1 {
 			panic("handler_result_ttl must be >= -1 or nil")
@@ -565,6 +565,18 @@ func (b *EventBus) EmitWithContext(ctx context.Context, input any) *BaseEvent {
 	}
 	if event.EventResultTTL != nil && *event.EventResultTTL < -1 {
 		panic("event_result_ttl must be >= -1 or nil")
+	}
+	if event.EventTimeout != nil && *event.EventTimeout < 0 {
+		panic("event_timeout must be >= 0 or nil")
+	}
+	if event.EventSlowTimeout != nil && *event.EventSlowTimeout < 0 {
+		panic("event_slow_timeout must be >= 0 or nil")
+	}
+	if event.EventHandlerTimeout != nil && *event.EventHandlerTimeout < 0 {
+		panic("event_handler_timeout must be >= 0 or nil")
+	}
+	if event.EventHandlerSlowTimeout != nil && *event.EventHandlerSlowTimeout < 0 {
+		panic("event_handler_slow_timeout must be >= 0 or nil")
 	}
 	original_event := event
 	alreadySeenOnBus := b.EventHistory.Has(original_event.EventID) || b.eventHasLocalSettledResults(original_event)
@@ -1282,17 +1294,17 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 			b.notifyEventResultChange(event, result, "pending")
 		}
 	}
-	if event.EventTimeout != nil && *event.EventTimeout < -1 {
-		panic("event_timeout must be >= -1 or nil")
+	if event.EventTimeout != nil && *event.EventTimeout < 0 {
+		panic("event_timeout must be >= 0 or nil")
 	}
-	if event.EventSlowTimeout != nil && *event.EventSlowTimeout < -1 {
-		panic("event_slow_timeout must be >= -1 or nil")
+	if event.EventSlowTimeout != nil && *event.EventSlowTimeout < 0 {
+		panic("event_slow_timeout must be >= 0 or nil")
 	}
-	if event.EventHandlerTimeout != nil && *event.EventHandlerTimeout < -1 {
-		panic("event_handler_timeout must be >= -1 or nil")
+	if event.EventHandlerTimeout != nil && *event.EventHandlerTimeout < 0 {
+		panic("event_handler_timeout must be >= 0 or nil")
 	}
-	if event.EventHandlerSlowTimeout != nil && *event.EventHandlerSlowTimeout < -1 {
-		panic("event_handler_slow_timeout must be >= -1 or nil")
+	if event.EventHandlerSlowTimeout != nil && *event.EventHandlerSlowTimeout < 0 {
+		panic("event_handler_slow_timeout must be >= 0 or nil")
 	}
 	if event.EventTTL != nil && *event.EventTTL < -1 {
 		panic("event_ttl must be >= -1 or nil")

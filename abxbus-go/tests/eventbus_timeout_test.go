@@ -11,6 +11,62 @@ import (
 
 func ttlPtr(value float64) *float64 { return &value }
 
+func expectPanic(t *testing.T, name string, fn func()) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Fatalf("%s should panic", name)
+		}
+	}()
+	fn()
+}
+
+func TestExecutionTimeoutFieldsRejectNegativeValuesBecauseZeroDisablesTimeouts(t *testing.T) {
+	bad := -0.5
+	expectPanic(t, "event_timeout", func() {
+		_ = abxbus.NewEventBus("BadBusEventTimeout", &abxbus.EventBusOptions{EventTimeout: &bad})
+	})
+	expectPanic(t, "event_slow_timeout", func() {
+		_ = abxbus.NewEventBus("BadBusEventSlowTimeout", &abxbus.EventBusOptions{EventSlowTimeout: &bad})
+	})
+	expectPanic(t, "event_handler_slow_timeout", func() {
+		_ = abxbus.NewEventBus("BadBusHandlerSlowTimeout", &abxbus.EventBusOptions{EventHandlerSlowTimeout: &bad})
+	})
+
+	bus := abxbus.NewEventBus("BadEventExecutionTimeoutBus", nil)
+	t.Cleanup(bus.Destroy)
+	expectPanic(t, "event field event_timeout", func() {
+		event := abxbus.NewBaseEvent("BadEventExecutionTimeoutEvent", nil)
+		event.EventTimeout = &bad
+		bus.Emit(event)
+	})
+	expectPanic(t, "event field event_slow_timeout", func() {
+		event := abxbus.NewBaseEvent("BadEventExecutionTimeoutEvent", nil)
+		event.EventSlowTimeout = &bad
+		bus.Emit(event)
+	})
+	expectPanic(t, "event field event_handler_timeout", func() {
+		event := abxbus.NewBaseEvent("BadEventExecutionTimeoutEvent", nil)
+		event.EventHandlerTimeout = &bad
+		bus.Emit(event)
+	})
+	expectPanic(t, "event field event_handler_slow_timeout", func() {
+		event := abxbus.NewBaseEvent("BadEventExecutionTimeoutEvent", nil)
+		event.EventHandlerSlowTimeout = &bad
+		bus.Emit(event)
+	})
+	expectPanic(t, "handler_timeout", func() {
+		bus.On("BadEventExecutionTimeoutEvent", "bad_handler_timeout", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+			return "ok", nil
+		}, &abxbus.EventHandler{HandlerTimeout: &bad})
+	})
+	expectPanic(t, "handler_slow_timeout", func() {
+		bus.On("BadEventExecutionTimeoutEvent", "bad_handler_slow_timeout", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+			return "ok", nil
+		}, &abxbus.EventHandler{HandlerSlowTimeout: &bad})
+	})
+}
+
 func TestTimeoutPrecedenceEventOverBus(t *testing.T) {
 	busTimeout := 5.0
 	eventTimeout := 0.01

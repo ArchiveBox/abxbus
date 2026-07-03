@@ -177,11 +177,27 @@ fn take_usize(payload: &mut Map<String, Value>, key: &str) -> Result<Option<usiz
     take_from_value(payload, key)
 }
 
-fn take_option_f64(payload: &mut Map<String, Value>, key: &str) -> Result<Option<f64>, String> {
+fn take_option_f64_at_least_minus_one(
+    payload: &mut Map<String, Value>,
+    key: &str,
+) -> Result<Option<f64>, String> {
     let value: Option<f64> = take_from_value(payload, key)?;
     if let Some(value) = value {
         if value < -1.0 {
             return Err(format!("Invalid {key}: must be >= -1 or null"));
+        }
+    }
+    Ok(value)
+}
+
+fn take_option_f64_nonnegative(
+    payload: &mut Map<String, Value>,
+    key: &str,
+) -> Result<Option<f64>, String> {
+    let value: Option<f64> = take_from_value(payload, key)?;
+    if let Some(value) = value {
+        if value < 0.0 {
+            return Err(format!("Invalid {key}: must be >= 0 or null"));
         }
     }
     Ok(value)
@@ -221,14 +237,16 @@ impl BaseEvent {
 
         let event_version =
             take_string(&mut payload, "event_version")?.unwrap_or_else(|| "0.0.1".to_string());
-        let event_timeout = take_option_f64(&mut payload, "event_timeout")?;
-        let event_slow_timeout = take_option_f64(&mut payload, "event_slow_timeout")?;
+        let event_timeout = take_option_f64_nonnegative(&mut payload, "event_timeout")?;
+        let event_slow_timeout = take_option_f64_nonnegative(&mut payload, "event_slow_timeout")?;
         let event_concurrency = take_option_from_value(&mut payload, "event_concurrency")?;
-        let event_handler_timeout = take_option_f64(&mut payload, "event_handler_timeout")?;
+        let event_handler_timeout =
+            take_option_f64_nonnegative(&mut payload, "event_handler_timeout")?;
         let event_handler_slow_timeout =
-            take_option_f64(&mut payload, "event_handler_slow_timeout")?;
-        let event_ttl = take_option_f64(&mut payload, "event_ttl")?;
-        let event_result_ttl = take_option_f64(&mut payload, "event_result_ttl")?;
+            take_option_f64_nonnegative(&mut payload, "event_handler_slow_timeout")?;
+        let event_ttl = take_option_f64_at_least_minus_one(&mut payload, "event_ttl")?;
+        let event_result_ttl =
+            take_option_f64_at_least_minus_one(&mut payload, "event_result_ttl")?;
         let event_handler_concurrency =
             take_option_from_value(&mut payload, "event_handler_concurrency")?;
         let event_handler_completion =

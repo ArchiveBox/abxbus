@@ -265,8 +265,8 @@ class EventHandler(BaseModel):
     handler: EventHandlerCallable | None = Field(default=None, exclude=True, repr=False)
     handler_name: str = 'anonymous'
     handler_file_path: str | None = None
-    handler_timeout: float | None = Field(default=None, ge=-1)
-    handler_slow_timeout: float | None = Field(default=None, ge=-1)
+    handler_timeout: float | None = Field(default=None, ge=0)
+    handler_slow_timeout: float | None = Field(default=None, ge=0)
     handler_result_ttl: float | None = Field(default=None, ge=-1)
     handler_registered_at: str = Field(default_factory=monotonic_datetime)
     event_pattern: str = '*'

@@ -9,7 +9,8 @@ use crate::{
     base_event::{BaseEvent as RawBaseEvent, BaseEventData},
     event_bus::EventBus,
     event_handler::{
-        validate_optional_seconds_at_least_minus_one, EventHandler, EventHandlerOptions,
+        validate_optional_seconds_at_least_minus_one, validate_optional_seconds_nonnegative,
+        EventHandler, EventHandlerOptions,
     },
     event_result::EventResult,
 };
@@ -409,6 +410,17 @@ where
         .expect("event_ttl must be >= -1 or None");
     validate_optional_seconds_at_least_minus_one("event_result_ttl", E::event_result_ttl)
         .expect("event_result_ttl must be >= -1 or None");
+    validate_optional_seconds_nonnegative("event_timeout", E::event_timeout)
+        .expect("event_timeout must be >= 0 or None");
+    validate_optional_seconds_nonnegative("event_slow_timeout", E::event_slow_timeout)
+        .expect("event_slow_timeout must be >= 0 or None");
+    validate_optional_seconds_nonnegative("event_handler_timeout", E::event_handler_timeout)
+        .expect("event_handler_timeout must be >= 0 or None");
+    validate_optional_seconds_nonnegative(
+        "event_handler_slow_timeout",
+        E::event_handler_slow_timeout,
+    )
+    .expect("event_handler_slow_timeout must be >= 0 or None");
 
     let inner = RawBaseEvent::new(E::event_type, payload_map);
     {

@@ -8,6 +8,7 @@ import pytest
 from abxbus import (
     BaseEvent,
     EventBus,
+    EventHandler,
     EventHandlerAbortedError,
     EventHandlerCancelledError,
     EventHandlerTimeoutError,
@@ -38,6 +39,45 @@ class GrandchildEvent(BaseEvent[str]):
     success: bool = True
 
     event_timeout: float | None = 1
+
+
+def test_execution_timeout_fields_reject_negative_values_because_zero_disables_timeouts() -> None:
+    with pytest.raises(AssertionError, match='event_timeout'):
+        EventBus(name='BadBusEventTimeout', event_timeout=-0.5)
+    with pytest.raises(AssertionError, match='event_slow_timeout'):
+        EventBus(name='BadBusEventSlowTimeout', event_slow_timeout=-0.5)
+    with pytest.raises(AssertionError, match='event_handler_slow_timeout'):
+        EventBus(name='BadBusHandlerSlowTimeout', event_handler_slow_timeout=-0.5)
+    with pytest.raises(ValueError, match='event_timeout'):
+        BaseEvent(event_timeout=-0.5)
+    with pytest.raises(ValueError, match='event_slow_timeout'):
+        BaseEvent(event_slow_timeout=-0.5)
+    with pytest.raises(ValueError, match='event_handler_timeout'):
+        BaseEvent(event_handler_timeout=-0.5)
+    with pytest.raises(ValueError, match='event_handler_slow_timeout'):
+        BaseEvent(event_handler_slow_timeout=-0.5)
+    with pytest.raises(ValueError, match='handler_timeout'):
+        EventHandler(handler_timeout=-0.5)
+    with pytest.raises(ValueError, match='handler_slow_timeout'):
+        EventHandler(handler_slow_timeout=-0.5)
+
+
+@pytest.mark.asyncio
+async def test_mutated_execution_timeout_fields_reject_negative_values_before_emit() -> None:
+    bus = EventBus(name='BadMutatedExecutionTimeoutBus')
+    try:
+        for field_name in (
+            'event_timeout',
+            'event_slow_timeout',
+            'event_handler_timeout',
+            'event_handler_slow_timeout',
+        ):
+            event = BaseEvent()
+            setattr(event, field_name, -0.5)
+            with pytest.raises(AssertionError, match=field_name):
+                bus.emit(event)
+    finally:
+        await bus.destroy()
 
 
 # Watchdog classes

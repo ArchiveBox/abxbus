@@ -8,7 +8,10 @@ use serde_json::{json, Value};
 
 use crate::{
     base_event::{now_iso, BaseEvent},
-    event_handler::{validate_optional_seconds_at_least_minus_one, EventHandler},
+    event_handler::{
+        validate_optional_seconds_at_least_minus_one, validate_optional_seconds_nonnegative,
+        EventHandler,
+    },
     id::uuid_v7_string,
     lock_manager::{LockManager, OwnedRunloopPauseGuard},
 };
@@ -446,8 +449,19 @@ impl EventResult {
                 .get("handler_file_path")
                 .and_then(Value::as_str)
                 .map(ToString::to_string),
-            handler_timeout: record.get("handler_timeout").and_then(Value::as_f64),
-            handler_slow_timeout: record.get("handler_slow_timeout").and_then(Value::as_f64),
+            handler_timeout: {
+                let handler_timeout = record.get("handler_timeout").and_then(Value::as_f64);
+                validate_optional_seconds_nonnegative("handler_timeout", handler_timeout)
+                    .expect("handler_timeout must be >= 0 or None");
+                handler_timeout
+            },
+            handler_slow_timeout: {
+                let handler_slow_timeout =
+                    record.get("handler_slow_timeout").and_then(Value::as_f64);
+                validate_optional_seconds_nonnegative("handler_slow_timeout", handler_slow_timeout)
+                    .expect("handler_slow_timeout must be >= 0 or None");
+                handler_slow_timeout
+            },
             handler_result_ttl: {
                 let handler_result_ttl = record.get("handler_result_ttl").and_then(Value::as_f64);
                 validate_optional_seconds_at_least_minus_one(

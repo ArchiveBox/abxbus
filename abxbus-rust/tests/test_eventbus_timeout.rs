@@ -1,5 +1,6 @@
 use abxbus::event;
 use std::{
+    panic::{catch_unwind, AssertUnwindSafe},
     process::Command,
     sync::{mpsc, Arc, Mutex},
     thread,
@@ -83,6 +84,93 @@ event! {
         event_type: "late_after_timeout",
     }
 }
+fn expect_panic(name: &str, f: impl FnOnce()) {
+    assert!(
+        catch_unwind(AssertUnwindSafe(f)).is_err(),
+        "{name} should panic"
+    );
+}
+
+#[test]
+fn test_execution_timeout_fields_reject_negative_values_because_zero_disables_timeouts() {
+    let bad = -0.5;
+    expect_panic("event_timeout", || {
+        let _bus = EventBus::new_with_options(
+            Some("BadBusEventTimeout".to_string()),
+            EventBusOptions {
+                event_timeout: Some(bad),
+                ..EventBusOptions::default()
+            },
+        );
+    });
+    expect_panic("event_slow_timeout", || {
+        let _bus = EventBus::new_with_options(
+            Some("BadBusEventSlowTimeout".to_string()),
+            EventBusOptions {
+                event_slow_timeout: Some(bad),
+                ..EventBusOptions::default()
+            },
+        );
+    });
+    expect_panic("event_handler_slow_timeout", || {
+        let _bus = EventBus::new_with_options(
+            Some("BadBusHandlerSlowTimeout".to_string()),
+            EventBusOptions {
+                event_handler_slow_timeout: Some(bad),
+                ..EventBusOptions::default()
+            },
+        );
+    });
+    expect_panic("event field event_timeout", || {
+        let bus = EventBus::new(Some("BadEventExecutionTimeoutBus".to_string()));
+        let event = BaseEvent::new("BadEventExecutionTimeoutEvent", serde_json::Map::new());
+        event.inner.lock().event_timeout = Some(bad);
+        bus.emit_base(event);
+    });
+    expect_panic("event field event_slow_timeout", || {
+        let bus = EventBus::new(Some("BadEventSlowTimeoutBus".to_string()));
+        let event = BaseEvent::new("BadEventExecutionTimeoutEvent", serde_json::Map::new());
+        event.inner.lock().event_slow_timeout = Some(bad);
+        bus.emit_base(event);
+    });
+    expect_panic("event field event_handler_timeout", || {
+        let bus = EventBus::new(Some("BadEventHandlerTimeoutBus".to_string()));
+        let event = BaseEvent::new("BadEventExecutionTimeoutEvent", serde_json::Map::new());
+        event.inner.lock().event_handler_timeout = Some(bad);
+        bus.emit_base(event);
+    });
+    expect_panic("event field event_handler_slow_timeout", || {
+        let bus = EventBus::new(Some("BadEventHandlerSlowTimeoutBus".to_string()));
+        let event = BaseEvent::new("BadEventExecutionTimeoutEvent", serde_json::Map::new());
+        event.inner.lock().event_handler_slow_timeout = Some(bad);
+        bus.emit_base(event);
+    });
+    expect_panic("handler_timeout", || {
+        let bus = EventBus::new(Some("BadHandlerTimeoutBus".to_string()));
+        bus.on_raw_sync_with_options(
+            "BadEventExecutionTimeoutEvent",
+            "bad_handler_timeout",
+            EventHandlerOptions {
+                handler_timeout: Some(bad),
+                ..EventHandlerOptions::default()
+            },
+            |_event| Ok(json!("ok")),
+        );
+    });
+    expect_panic("handler_slow_timeout", || {
+        let bus = EventBus::new(Some("BadHandlerSlowTimeoutBus".to_string()));
+        bus.on_raw_sync_with_options(
+            "BadEventExecutionTimeoutEvent",
+            "bad_handler_slow_timeout",
+            EventHandlerOptions {
+                handler_slow_timeout: Some(bad),
+                ..EventHandlerOptions::default()
+            },
+            |_event| Ok(json!("ok")),
+        );
+    });
+}
+
 fn wait_until_completed(event: &ParentEvent, timeout_ms: u64) {
     let started = std::time::Instant::now();
     while started.elapsed() < Duration::from_millis(timeout_ms) {

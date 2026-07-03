@@ -555,15 +555,15 @@ impl EventBus {
         enforce_unique_name: bool,
     ) -> Arc<Self> {
         if let Some(timeout) = options.event_timeout {
-            assert!(timeout >= -1.0, "event_timeout must be >= -1 or None");
+            assert!(timeout >= 0.0, "event_timeout must be >= 0 or None");
         }
         if let Some(timeout) = options.event_slow_timeout {
-            assert!(timeout >= -1.0, "event_slow_timeout must be >= -1 or None");
+            assert!(timeout >= 0.0, "event_slow_timeout must be >= 0 or None");
         }
         if let Some(timeout) = options.event_handler_slow_timeout {
             assert!(
-                timeout >= -1.0,
-                "event_handler_slow_timeout must be >= -1 or None"
+                timeout >= 0.0,
+                "event_handler_slow_timeout must be >= 0 or None"
             );
         }
         if let Some(ttl) = options.event_ttl {
@@ -1442,13 +1442,10 @@ impl EventBus {
     {
         self.raise_if_terminal_destroyed();
         if let Some(timeout) = options.handler_timeout {
-            assert!(timeout >= -1.0, "handler_timeout must be >= -1 or None");
+            assert!(timeout >= 0.0, "handler_timeout must be >= 0 or None");
         }
         if let Some(timeout) = options.handler_slow_timeout {
-            assert!(
-                timeout >= -1.0,
-                "handler_slow_timeout must be >= -1 or None"
-            );
+            assert!(timeout >= 0.0, "handler_slow_timeout must be >= 0 or None");
         }
         if let Some(ttl) = options.handler_result_ttl {
             assert!(ttl >= -1.0, "handler_result_ttl must be >= -1 or None");
@@ -1491,13 +1488,10 @@ impl EventBus {
     {
         self.raise_if_terminal_destroyed();
         if let Some(timeout) = options.handler_timeout {
-            assert!(timeout >= -1.0, "handler_timeout must be >= -1 or None");
+            assert!(timeout >= 0.0, "handler_timeout must be >= 0 or None");
         }
         if let Some(timeout) = options.handler_slow_timeout {
-            assert!(
-                timeout >= -1.0,
-                "handler_slow_timeout must be >= -1 or None"
-            );
+            assert!(timeout >= 0.0, "handler_slow_timeout must be >= 0 or None");
         }
         if let Some(ttl) = options.handler_result_ttl {
             assert!(ttl >= -1.0, "handler_result_ttl must be >= -1 or None");
@@ -1595,6 +1589,25 @@ impl EventBus {
         self.enqueue_base_with_relation(event, queue_jump, true)
     }
 
+    fn validate_event_execution_timeout_fields(event: &BaseEvent) {
+        let inner = event.inner.lock();
+        if let Some(timeout) = inner.event_timeout {
+            assert!(timeout >= 0.0, "event_timeout must be >= 0 or None");
+        }
+        if let Some(timeout) = inner.event_slow_timeout {
+            assert!(timeout >= 0.0, "event_slow_timeout must be >= 0 or None");
+        }
+        if let Some(timeout) = inner.event_handler_timeout {
+            assert!(timeout >= 0.0, "event_handler_timeout must be >= 0 or None");
+        }
+        if let Some(timeout) = inner.event_handler_slow_timeout {
+            assert!(
+                timeout >= 0.0,
+                "event_handler_slow_timeout must be >= 0 or None"
+            );
+        }
+    }
+
     fn enqueue_base_with_relation(
         &self,
         event: Arc<BaseEvent>,
@@ -1605,6 +1618,7 @@ impl EventBus {
         if Self::current_handler_context_is_stale() {
             return event;
         }
+        Self::validate_event_execution_timeout_fields(&event);
         let current_handler_context = Self::current_handler_context();
         let emitted_from_active_handler =
             current_handler_context
@@ -2861,6 +2875,7 @@ impl EventBus {
     }
 
     async fn process_event_inner(&self, event: Arc<BaseEvent>) {
+        Self::validate_event_execution_timeout_fields(&event);
         event.mark_started();
         let started_at = Instant::now();
         let mut event_timeout = event.inner.lock().event_timeout.or(self.event_timeout);

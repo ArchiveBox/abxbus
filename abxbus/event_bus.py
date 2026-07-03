@@ -243,6 +243,26 @@ class EventBus:
         assert seconds >= -1, f'{field_name} must be >= -1 or None, got: {value!r}'
         return seconds
 
+    @staticmethod
+    def _validate_optional_timeout_seconds(value: float | None, field_name: str) -> float | None:
+        if value is None:
+            return None
+        seconds = float(value)
+        assert seconds >= 0, f'{field_name} must be >= 0 or None, got: {value!r}'
+        return seconds
+
+    @classmethod
+    def _validate_event_execution_timeout_fields(cls, event: BaseEvent[Any]) -> None:
+        cls._validate_optional_timeout_seconds(event.event_timeout, 'event_timeout')
+        cls._validate_optional_timeout_seconds(event.event_slow_timeout, 'event_slow_timeout')
+        cls._validate_optional_timeout_seconds(event.event_handler_timeout, 'event_handler_timeout')
+        cls._validate_optional_timeout_seconds(event.event_handler_slow_timeout, 'event_handler_slow_timeout')
+
+    @classmethod
+    def _validate_handler_execution_timeout_fields(cls, handler: EventHandler) -> None:
+        cls._validate_optional_timeout_seconds(handler.handler_timeout, 'handler_timeout')
+        cls._validate_optional_timeout_seconds(handler.handler_slow_timeout, 'handler_slow_timeout')
+
     def __init__(
         self,
         name: PythonIdentifierStr | None = None,
@@ -323,23 +343,24 @@ class EventBus:
             self.event_handler_completion = EventHandlerCompletionMode(event_handler_completion or EventHandlerCompletionMode.ALL)
         except ValueError as exc:
             raise AssertionError(f'event_handler_completion must be "all" or "first", got: {event_handler_completion!r}') from exc
-        self.event_timeout = 60.0 if event_timeout is None else event_timeout
-        self.event_slow_timeout = 300.0 if event_slow_timeout is None else event_slow_timeout
+        self.event_timeout = (
+            60.0 if event_timeout is None else self._validate_optional_timeout_seconds(event_timeout, 'event_timeout')
+        )
+        self.event_slow_timeout = (
+            300.0
+            if event_slow_timeout is None
+            else self._validate_optional_timeout_seconds(event_slow_timeout, 'event_slow_timeout')
+        )
         self.event_ttl = self._validate_optional_seconds(event_ttl, 'event_ttl')
         self.event_result_ttl = self._validate_optional_seconds(event_result_ttl, 'event_result_ttl')
-        self.event_handler_slow_timeout = 30.0 if event_handler_slow_timeout is None else event_handler_slow_timeout
+        self.event_handler_slow_timeout = (
+            30.0
+            if event_handler_slow_timeout is None
+            else self._validate_optional_timeout_seconds(event_handler_slow_timeout, 'event_handler_slow_timeout')
+        )
         self.event_handler_detect_file_paths = bool(event_handler_detect_file_paths)
         self.warn_on_duplicate_handler_names = bool(warn_on_duplicate_handler_names)
         self.max_handler_recursion_depth = int(max_handler_recursion_depth)
-        assert self.event_timeout is None or self.event_timeout >= -1, (
-            f'event_timeout must be >= -1 or None, got: {self.event_timeout!r}'
-        )
-        assert self.event_slow_timeout is None or self.event_slow_timeout >= -1, (
-            f'event_slow_timeout must be >= -1 or None, got: {self.event_slow_timeout!r}'
-        )
-        assert self.event_handler_slow_timeout is None or self.event_handler_slow_timeout >= -1, (
-            f'event_handler_slow_timeout must be >= -1 or None, got: {self.event_handler_slow_timeout!r}'
-        )
         assert self.max_handler_recursion_depth >= 0, (
             f'max_handler_recursion_depth must be >= 0, got: {self.max_handler_recursion_depth!r}'
         )
@@ -1239,6 +1260,7 @@ class EventBus:
         assert event.event_id, 'Missing event.event_id: UUIDStr = uuid7str()'
         assert event.event_created_at, 'Missing event.event_created_at: str = monotonic_datetime()'
         assert event.event_type and event.event_type.isidentifier(), 'Missing event.event_type: str'
+        self._validate_event_execution_timeout_fields(event)
 
         if current_handler_context_is_stale():
             return event
@@ -2364,7 +2386,10 @@ class EventBus:
             emit: Queues an event for async processing (recommended)
         """
         # Get applicable handlers
+        self._validate_event_execution_timeout_fields(event)
         applicable_handlers = self._get_handlers_for_event(event)
+        for handler in applicable_handlers.values():
+            self._validate_handler_execution_timeout_fields(handler)
         slow_event_monitor_factory = self._create_slow_event_warning_timer(event)
         resolved_event_timeout = timeout if timeout is not None else event.event_timeout
         if resolved_event_timeout is None:
