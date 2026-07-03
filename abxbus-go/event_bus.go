@@ -959,6 +959,23 @@ func eventHasRunningResults(event *BaseEvent) bool {
 	return false
 }
 
+func (b *EventBus) shouldSkipHandlerExecution(event *BaseEvent) bool {
+	event.mu.Lock()
+	defer event.mu.Unlock()
+	if event.EventStatus != "completed" && event.EventCompletedAt == nil {
+		return false
+	}
+	if len(event.EventPath) <= 1 {
+		return true
+	}
+	for _, result := range event.EventResults {
+		if result != nil && result.EventBusID == b.ID {
+			return true
+		}
+	}
+	return false
+}
+
 func completeEventAcrossBuses(event *BaseEvent) {
 	event.mu.Lock()
 	if event.EventPendingBusCount < 0 {
@@ -1058,7 +1075,7 @@ func (b *EventBus) processEvent(ctx context.Context, event *BaseEvent, bypass_ev
 		b.mu.Unlock()
 		b.locks.notifyIdleListeners()
 	}()
-	if event.shouldSkipHandlerExecution() {
+	if b.shouldSkipHandlerExecution(event) {
 		signalFirstHandlerStarted()
 		event.mu.Lock()
 		event.EventPendingBusCount--
@@ -1689,6 +1706,9 @@ func (b *EventBus) WaitUntilIdle(timeout *float64) bool { return b.locks.waitFor
 
 func (b *EventBus) IsIdle() bool {
 	for _, event := range b.EventHistory.Values() {
+		if event.status() == "completed" {
+			continue
+		}
 		for _, result := range event.eventResultsSnapshot() {
 			if result.EventBusID != b.ID {
 				continue

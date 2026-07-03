@@ -347,6 +347,20 @@ impl EventBus {
             .any(|result| result.handler.eventbus_id == self.id)
     }
 
+    fn should_skip_handler_execution_on_bus(&self, event: &Arc<BaseEvent>) -> bool {
+        let inner = event.inner.lock();
+        if inner.event_status != EventStatus::Completed && inner.event_completed_at.is_none() {
+            return false;
+        }
+        if inner.event_path.len() <= 1 {
+            return true;
+        }
+        inner
+            .event_results
+            .values()
+            .any(|result| result.handler.eventbus_id == self.id)
+    }
+
     fn mark_handler_context_stale(event_id: &str, handler_id: &str) {
         Self::stale_handler_contexts()
             .lock()
@@ -1866,7 +1880,7 @@ impl EventBus {
     ) {
         let runloop_pause = self.locks.request_runloop_pause();
         let event_id = event.inner.lock().event_id.clone();
-        let completion_marked = event.should_skip_handler_execution();
+        let completion_marked = self.should_skip_handler_execution_on_bus(&event);
         if !completion_marked && self.has_completed_on_bus(&event) {
             return;
         }
@@ -2646,7 +2660,7 @@ impl EventBus {
     }
 
     async fn process_event(&self, event: Arc<BaseEvent>) {
-        if event.should_skip_handler_execution() {
+        if self.should_skip_handler_execution_on_bus(&event) {
             self.complete_skipped_handler_execution(&event);
             return;
         }
