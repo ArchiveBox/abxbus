@@ -52,8 +52,7 @@ It's async native, has proper automatic nested event tracking, and powerful conc
 
 Install abxbus and get started with a simple event-driven application:
 
-<!--pytest.mark.skip(reason="package installation command")-->
-```bash
+```console
 pip install abxbus      # see ./abxbus-ts/README.md for JS instructions
 ```
 
@@ -1671,8 +1670,7 @@ uv run ruff format
 uv run pyright
 ```
 
-<!--pytest.mark.skip(reason="pytest invocation")-->
-```bash
+```console
 # Run all tests
 uv run pytest -vxs --full-trace tests/
 

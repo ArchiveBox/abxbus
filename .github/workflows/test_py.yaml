@@ -33,6 +33,8 @@ jobs:
       - run: uv run ruff format --check
       - run: uv run ruff check
       - run: uv run pyright
+      - name: Run documentation code blocks
+        run: uv run pytest -vv --tb=long README.md AGENTS.md skills docs
 
   find_py_tests:
     runs-on: ubuntu-latest

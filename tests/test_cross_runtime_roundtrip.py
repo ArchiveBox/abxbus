@@ -1551,72 +1551,62 @@ def _make_listener_bridge(kind: str, config: dict[str, Any], *, low_latency: boo
 
 
 async def _measure_warm_latency_ms(kind: str, config: dict[str, Any]) -> float:
-    attempts = 3
-    last_error: BaseException | None = None
+    sender = _make_sender_bridge(kind, config, low_latency=True)
+    receiver = _make_listener_bridge(kind, config, low_latency=True)
 
-    for _attempt in range(attempts):
-        sender = _make_sender_bridge(kind, config, low_latency=True)
-        receiver = _make_listener_bridge(kind, config, low_latency=True)
+    run_suffix = uuid7str()[-8:]
+    warmup_prefix = f'warmup_{run_suffix}_'
+    measured_prefix = f'measured_{run_suffix}_'
+    warmup_count_target = 5
+    measured_count_target = 1000
 
-        run_suffix = uuid7str()[-8:]
-        warmup_prefix = f'warmup_{run_suffix}_'
-        measured_prefix = f'measured_{run_suffix}_'
-        warmup_count_target = 5
-        measured_count_target = 1000
+    warmup_seen_count = 0
+    measured_seen_count = 0
+    warmup_seen = asyncio.Event()
+    measured_seen = asyncio.Event()
 
-        warmup_seen_count = 0
-        measured_seen_count = 0
-        warmup_seen = asyncio.Event()
-        measured_seen = asyncio.Event()
+    async def _on_event(event: BaseEvent[Any]) -> None:
+        nonlocal warmup_seen_count, measured_seen_count
+        label = getattr(event, 'label', '')
+        if not isinstance(label, str):
+            return
+        if label.startswith(warmup_prefix):
+            warmup_seen_count += 1
+            if warmup_seen_count >= warmup_count_target:
+                warmup_seen.set()
+            return
+        if label.startswith(measured_prefix):
+            measured_seen_count += 1
+            if measured_seen_count >= measured_count_target:
+                measured_seen.set()
 
-        async def _on_event(event: BaseEvent[Any]) -> None:
-            nonlocal warmup_seen_count, measured_seen_count
-            label = getattr(event, 'label', '')
-            if not isinstance(label, str):
-                return
-            if label.startswith(warmup_prefix):
-                warmup_seen_count += 1
-                if warmup_seen_count >= warmup_count_target:
-                    warmup_seen.set()
-                return
-            if label.startswith(measured_prefix):
-                measured_seen_count += 1
-                if measured_seen_count >= measured_count_target:
-                    measured_seen.set()
+    try:
+        await sender.start()
+        await receiver.start()
+        receiver.on('IPCPingEvent', _on_event)
+        await asyncio.sleep(0.1)
 
-        try:
-            await sender.start()
-            await receiver.start()
-            receiver.on('IPCPingEvent', _on_event)
-            await asyncio.sleep(0.1)
-
-            for index in range(warmup_count_target):
-                await sender.emit(
-                    IPCPingEvent(
-                        label=f'{warmup_prefix}{index}',
-                    )
+        for index in range(warmup_count_target):
+            await sender.emit(
+                IPCPingEvent(
+                    label=f'{warmup_prefix}{index}',
                 )
-            await asyncio.wait_for(warmup_seen.wait(), timeout=60.0)
+            )
+        await asyncio.wait_for(warmup_seen.wait(), timeout=60.0)
 
-            start_ns = time.perf_counter_ns()
-            for index in range(measured_count_target):
-                await sender.emit(
-                    IPCPingEvent(
-                        label=f'{measured_prefix}{index}',
-                    )
+        start_ns = time.perf_counter_ns()
+        for index in range(measured_count_target):
+            await sender.emit(
+                IPCPingEvent(
+                    label=f'{measured_prefix}{index}',
                 )
-            await asyncio.wait_for(measured_seen.wait(), timeout=600.0)
-            elapsed_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
-            return elapsed_ms / measured_count_target
-        except TimeoutError as exc:
-            last_error = exc
-        finally:
-            await sender.close()
-            await receiver.close()
-
-        await asyncio.sleep(0.2)
-
-    raise RuntimeError(f'bridge latency measurement timed out after {attempts} attempts: {kind}') from last_error
+            )
+        await asyncio.wait_for(measured_seen.wait(), timeout=600.0)
+        elapsed_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0
+        return elapsed_ms / measured_count_target
+    finally:
+        await sender.close()
+        await receiver.close()
 
 
 async def _assert_roundtrip(kind: str, config: dict[str, Any]) -> None:
