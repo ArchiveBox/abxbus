@@ -20,6 +20,13 @@ const RUST_PROCESS_TIMEOUT_MS = 120_000
 const GO_PROCESS_TIMEOUT_MS = 120_000
 const EVENT_WAIT_TIMEOUT_MS = 15_000
 
+const requiredBinary = (env_key: string): string => {
+  const binary = process.env[env_key]
+  assert.ok(binary, `${env_key} must be exported by abxpkg before running cross-runtime tests`)
+  assert.ok(existsSync(binary), `${env_key} does not point to a file: ${binary}`)
+  return binary
+}
+
 const jsonSafe = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 const jsonShape = (value: unknown): unknown => {
@@ -467,39 +474,13 @@ type PythonRunner = {
 }
 
 const resolvePython = (): PythonRunner | null => {
-  if (process.env.ABXBUS_PYTHON_BIN) {
-    const probe = runCommand(process.env.ABXBUS_PYTHON_BIN, ['--version'])
-    if (probe.status === 0) {
-      return { command: process.env.ABXBUS_PYTHON_BIN, args_prefix: [], label: process.env.ABXBUS_PYTHON_BIN }
-    }
-  }
-
-  const uv_probe = runCommand('uv', ['--version'])
-  if (uv_probe.status === 0) {
-    const uv_python_probe = runCommand('uv', ['run', 'python', '--version'])
-    if (uv_python_probe.status === 0) {
-      return { command: 'uv', args_prefix: ['run', 'python'], label: 'uv run python' }
-    }
-  }
-
-  const candidates = [
-    resolve(repo_root, '.venv', 'bin', 'python'),
-    resolve(repo_root, '.venv', 'Scripts', 'python.exe'),
-    'python3',
-    'python',
-  ].filter((candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0)
-
-  for (const candidate of candidates) {
-    if ((candidate.includes('/') || candidate.includes('\\')) && !existsSync(candidate)) {
-      continue
-    }
-    const probe = runCommand(candidate, ['--version'])
-    if (probe.status === 0) {
-      return { command: candidate, args_prefix: [], label: candidate }
-    }
-  }
-
-  return null
+  const binary = requiredBinary('ABXBUS_PYTHON_BIN')
+  const python_path = process.env.ABXBUS_PYTHONPATH
+  assert.ok(python_path, 'ABXBUS_PYTHONPATH must be exported with ABXBUS_PYTHON_BIN')
+  process.env.PYTHONPATH = python_path
+  const probe = runCommand(binary, ['--version'])
+  assertProcessSucceeded(probe, 'abxpkg-resolved Python probe')
+  return { command: binary, args_prefix: [], label: binary }
 }
 
 const runPythonCommand = (
@@ -624,7 +605,8 @@ with open(output_path, 'w', encoding='utf-8') as f:
 }
 
 const runRustRoundtrip = <T extends Array<Record<string, unknown>> | Record<string, unknown>>(mode: 'events' | 'bus', payload: T): T => {
-  const cargo_probe = runCommand('cargo', ['--version'])
+  const cargo_bin = requiredBinary('ABXBUS_CARGO_BIN')
+  const cargo_probe = runCommand(cargo_bin, ['--version'])
   assertProcessSucceeded(cargo_probe, 'cargo probe')
 
   const temp_dir = mkdtempSync(join(tmpdir(), `abxbus-ts-${mode}-to-rust-`))
@@ -635,7 +617,7 @@ const runRustRoundtrip = <T extends Array<Record<string, unknown>> | Record<stri
   try {
     writeFileSync(input_path, JSON.stringify(payload, null, 2), 'utf8')
     const proc = runCommand(
-      'cargo',
+      cargo_bin,
       ['run', '--quiet', '--manifest-path', rust_manifest, '--bin', 'abxbus-rust-roundtrip', '--', mode, input_path, output_path],
       repo_root,
       RUST_PROCESS_TIMEOUT_MS
@@ -651,7 +633,8 @@ const runRustRoundtrip = <T extends Array<Record<string, unknown>> | Record<stri
 }
 
 const runGoRoundtrip = <T extends Array<Record<string, unknown>> | Record<string, unknown>>(mode: 'events' | 'bus', payload: T): T => {
-  const go_probe = runCommand('go', ['version'])
+  const go_bin = requiredBinary('ABXBUS_GO_BIN')
+  const go_probe = runCommand(go_bin, ['version'])
   assertProcessSucceeded(go_probe, 'go probe')
 
   const temp_dir = mkdtempSync(join(tmpdir(), `abxbus-ts-${mode}-to-go-`))
@@ -661,7 +644,7 @@ const runGoRoundtrip = <T extends Array<Record<string, unknown>> | Record<string
 
   try {
     writeFileSync(input_path, JSON.stringify(payload, null, 2), 'utf8')
-    const proc = runCommand('go', ['run', './tests/roundtrip_cli', mode, input_path, output_path], go_root, GO_PROCESS_TIMEOUT_MS)
+    const proc = runCommand(go_bin, ['run', './tests/roundtrip_cli', mode, input_path, output_path], go_root, GO_PROCESS_TIMEOUT_MS)
 
     assertProcessSucceeded(proc, `go ${mode} roundtrip`)
     assert.ok(existsSync(output_path), `go ${mode} roundtrip did not produce output payload`)
@@ -1571,7 +1554,7 @@ test('RedisEventBridge roundtrip between processes', async () => {
   const temp_dir = makeTempDir('abxbus-redis')
   const port = await getFreePort()
   const redis = spawn(
-    'redis-server',
+    requiredBinary('ABXBUS_REDIS_SERVER_BIN'),
     ['--save', '', '--appendonly', 'no', '--bind', '127.0.0.1', '--port', String(port), '--dir', temp_dir],
     { stdio: ['ignore', 'pipe', 'pipe'] }
   )
@@ -1589,7 +1572,9 @@ test('RedisEventBridge roundtrip between processes', async () => {
 
 test('NATSEventBridge roundtrip between processes', async () => {
   const port = await getFreePort()
-  const nats = spawn('nats-server', ['-a', '127.0.0.1', '-p', String(port)], { stdio: ['ignore', 'pipe', 'pipe'] })
+  const nats = spawn(requiredBinary('ABXBUS_NATS_SERVER_BIN'), ['-a', '127.0.0.1', '-p', String(port)], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
   try {
     await waitForPort(port)
     const config = { server: `nats://127.0.0.1:${port}`, subject: 'abxbus_events' }
@@ -1621,9 +1606,9 @@ test('TachyonEventBridge roundtrip between processes', async () => {
 test('PostgresEventBridge roundtrip between processes', async () => {
   const temp_dir = makeTempDir('abxbus-postgres')
   const data_dir = join(temp_dir, 'pgdata')
-  runChecked('initdb', ['-D', data_dir, '-A', 'trust', '-U', 'postgres'])
+  runChecked(requiredBinary('ABXBUS_INITDB_BIN'), ['-D', data_dir, '-A', 'trust', '-U', 'postgres'])
   const port = await getFreePort()
-  const postgres = spawn('postgres', ['-D', data_dir, '-h', '127.0.0.1', '-p', String(port), '-k', '/tmp'], {
+  const postgres = spawn(requiredBinary('ABXBUS_POSTGRES_BIN'), ['-D', data_dir, '-h', '127.0.0.1', '-p', String(port), '-k', '/tmp'], {
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   try {

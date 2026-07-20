@@ -23,20 +23,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: abxbus-ts/pnpm-lock.yaml
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
           activate-environment: true
 
       - run: uv sync --dev --all-extras --no-extra tachyon
+      - name: Resolve documentation runtime with abxpkg
+        run: |
+          eval "$(tests/resolve_binaries.sh node_binary)"
+          printf 'ABXBUS_NODE_BIN=%s\n' "$ABXBUS_NODE_BIN" >> "$GITHUB_ENV"
+          if [[ -n "${ABXBUS_NODE_BIN:-}" ]]; then
+            printf '%s\n' "$(dirname "$ABXBUS_NODE_BIN")" >> "$GITHUB_PATH"
+          fi
       - run: uv pip install fastapi
       - run: uv run ruff format --check
       - run: uv run ruff check
@@ -115,18 +114,6 @@ jobs:
           enable-cache: true
           activate-environment: true
 
-      - uses: pnpm/action-setup@v4
-        if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v4
-        if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: abxbus-ts/pnpm-lock.yaml
-
       - name: Install native TypeScript build tools
         if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
         uses: awalsh128/cache-apt-pkgs-action@latest
@@ -143,34 +130,28 @@ jobs:
           cmake --version
           gcc-14 --version
 
-      - name: Install bridge service binaries
-        if: matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: redis-server nats-server postgresql sqlite3 gcc-14 g++-14
-          version: bridge-service-binaries-v1
-          execute_install_scripts: true
+      - run: uv sync --dev --all-extras --no-extra tachyon
 
-      - name: Configure bridge service binaries
+      - name: Resolve test binaries with abxpkg
         if: matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
         run: |
-          PG_INITDB_PATH="$(find /usr/lib/postgresql -type f -name initdb | head -n 1)"
-          PG_BINDIR="$(dirname "${PG_INITDB_PATH}")"
-          if [[ -z "${PG_BINDIR}" || ! -x "${PG_BINDIR}/initdb" || ! -x "${PG_BINDIR}/postgres" ]]; then
-            echo "Failed to locate PostgreSQL binaries (initdb/postgres)" > /dev/stderr
-            exit 1
+          sections=(bridge_binaries)
+          if [[ "${{ matrix.task.name }}" == "test_cross_runtime_roundtrip" ]]; then
+            sections+=(cross_runtime_binaries)
           fi
-          echo "${PG_BINDIR}" >> "${GITHUB_PATH}"
-          export PATH="${PG_BINDIR}:${PATH}"
-
-          redis-server --version
-          nats-server --version
-          initdb --version
-          postgres --version
-          sqlite3 --version
+          eval "$(tests/resolve_binaries.sh "${sections[@]}")"
+          while IFS= read -r name; do
+            printf '%s=%s\n' "$name" "${!name}" >> "$GITHUB_ENV"
+          done < <(compgen -A variable ABXBUS_)
+          if [[ -n "${ABXBUS_NODE_BIN:-}" ]]; then
+            printf '%s\n' "$(dirname "$ABXBUS_NODE_BIN")" >> "$GITHUB_PATH"
+          fi
+          "$ABXBUS_REDIS_SERVER_BIN" --version
+          "$ABXBUS_NATS_SERVER_BIN" --version
+          "$ABXBUS_INITDB_BIN" --version
+          "$ABXBUS_POSTGRES_BIN" --version
+          "$ABXBUS_SQLITE3_BIN" --version
           gcc-14 --version
-
-      - run: uv sync --dev --all-extras --no-extra tachyon
 
       - name: Install Tachyon (compiled with gcc-14) for the bridges roundtrip test
         if: matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
@@ -182,8 +163,8 @@ jobs:
       - name: Build TypeScript ESM bundle for cross-runtime roundtrip tests
         if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
         run: |
-          pnpm --dir abxbus-ts install --frozen-lockfile
-          pnpm --dir abxbus-ts run build
+          uv run abxpkg run --install --binproviders=pnpm pnpm --dir abxbus-ts install --frozen-lockfile
+          uv run abxpkg run --install --binproviders=pnpm pnpm --dir abxbus-ts run build
 
       - name: Verify bridge optional Python deps
         if: matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
@@ -305,7 +286,7 @@ jobs:
       - name: Export Python perf stats
         id: export_perf
         run: |
-          python - <<'PY'
+          uv run python - <<'PY'
           import json
           import os
           import re

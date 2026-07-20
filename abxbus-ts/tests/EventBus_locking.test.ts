@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -2909,27 +2908,14 @@ test('retry sync: semaphore_scope=multiprocess serializes across JS processes', 
 })
 
 test('retry: semaphore_scope=multiprocess contends with Python retry() using the same semaphore name', async () => {
-  const local_venv_python = resolve(
-    repo_root,
-    '.venv',
-    process.platform === 'win32' ? 'Scripts' : 'bin',
-    process.platform === 'win32' ? 'python.exe' : 'python'
-  )
-  const candidates = [
-    ...(existsSync(local_venv_python) ? [{ executable: local_venv_python, args: [] as string[] }] : []),
-    ...(spawnSync('uv', ['--version'], { stdio: 'ignore' }).status === 0 ? [{ executable: 'uv', args: ['run', 'python'] }] : []),
-    ...(spawnSync('python3', ['-c', 'print("ok")'], { stdio: 'ignore' }).status === 0
-      ? [{ executable: 'python3', args: [] as string[] }]
-      : []),
-    { executable: 'python', args: [] as string[] },
-  ]
-  const python = candidates.find((candidate) => {
-    const probe = spawnSync(candidate.executable, [...candidate.args, '-c', 'import abxbus.retry'], { cwd: repo_root, stdio: 'ignore' })
-    return probe.status === 0
-  })
-  if (!python) {
-    throw new Error('python abxbus runtime is unavailable for cross-language multiprocess test')
-  }
+  const python_executable = process.env.ABXBUS_PYTHON_BIN
+  assert.ok(python_executable, 'ABXBUS_PYTHON_BIN must be exported by abxpkg before running cross-runtime tests')
+  const python_path = process.env.ABXBUS_PYTHONPATH
+  assert.ok(python_path, 'ABXBUS_PYTHONPATH must be exported with ABXBUS_PYTHON_BIN')
+  const python = { executable: python_executable, args: [] as string[] }
+  const python_env = { ...process.env, PYTHONPATH: python_path }
+  const probe = spawnSync(python.executable, ['-c', 'import abxbus.retry'], { cwd: repo_root, env: python_env, stdio: 'ignore' })
+  assert.equal(probe.status, 0, `abxpkg-resolved Python cannot import abxbus.retry: ${python.executable}`)
 
   const semaphore_name = `retry-crosslang-${Date.now()}-${Math.random().toString(16).slice(2)}`
   const python_lock = spawn(
@@ -2955,6 +2941,7 @@ asyncio.run(hold_lock())
     ],
     {
       cwd: repo_root,
+      env: python_env,
       stdio: ['ignore', 'pipe', 'pipe'],
     }
   )

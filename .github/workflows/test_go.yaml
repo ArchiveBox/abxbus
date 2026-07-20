@@ -94,40 +94,10 @@ jobs:
             exit 1
           fi
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: abxbus-go/go.mod
-          cache: true
-          cache-dependency-path: abxbus-go/go.sum
-
-      - name: Set up Rust for cross-runtime roundtrip tests
-        if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Cargo for cross-runtime roundtrip tests
-        if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: abxbus-rust -> target
-
       - uses: astral-sh/setup-uv@v6
-        if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
         with:
           enable-cache: true
           activate-environment: true
-
-      - uses: pnpm/action-setup@v4
-        if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v4
-        if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
       - name: Install native TypeScript build tools
         if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
@@ -145,12 +115,27 @@ jobs:
           cmake --version
           gcc-14 --version
 
-      - name: Install Go cross-runtime test dependencies
-        if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
+      - name: Resolve Go test runtimes with abxpkg
+        working-directory: .
         run: |
-          cd ..
-          uv sync --dev --all-extras --no-extra tachyon
-          pnpm --dir abxbus-ts install --frozen-lockfile
+          sections=(go_binary)
+          if [[ "${{ matrix.task.kind }}" == "test" && "${{ matrix.task.name }}" == "cross_runtime_roundtrip" ]]; then
+            uv sync --dev --all-extras --no-extra tachyon
+            sections=(cross_runtime_binaries)
+          fi
+          eval "$(tests/resolve_binaries.sh "${sections[@]}")"
+          while IFS= read -r name; do
+            printf '%s=%s\n' "$name" "${!name}" >> "$GITHUB_ENV"
+          done < <(compgen -A variable ABXBUS_)
+          printf '%s\n' "$(dirname "$ABXBUS_GO_BIN")" >> "$GITHUB_PATH"
+
+      - name: Install TypeScript cross-runtime dependencies
+        if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
+        working-directory: .
+        run: |
+          export PATH="$(dirname "$ABXBUS_NODE_BIN"):$PATH"
+          uv run abxpkg run --install --binproviders=pnpm pnpm --dir abxbus-ts install --frozen-lockfile
 
       - name: Run Go test file
-        run: go test ${{ matrix.task.package }} -run '${{ matrix.task.test_regex }}' -p 1 -count=1 -timeout=600s
+        run: |
+          "$ABXBUS_GO_BIN" test ${{ matrix.task.package }} -run '${{ matrix.task.test_regex }}' -p 1 -count=1 -timeout=600s

@@ -1,7 +1,6 @@
 import asyncio
 import json
 import os
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +19,15 @@ RUST_SUBPROCESS_TIMEOUT_SECONDS = 120
 GO_SUBPROCESS_TIMEOUT_SECONDS = 120
 EVENT_WAIT_TIMEOUT_SECONDS = 15
 JsonShape: TypeAlias = str | list['JsonShape'] | dict[str, 'JsonShape']
+
+
+def _required_binary(env_key: str) -> str:
+    binary = os.environ.get(env_key)
+    assert binary, f'{env_key} must be exported by abxpkg before running cross-runtime tests'
+    path = Path(binary)
+    assert path.is_file(), f'{env_key} does not point to a file: {path}'
+    assert os.access(path, os.X_OK), f'{env_key} is not executable: {path}'
+    return str(path)
 
 
 class ScreenshotRegion(BaseModel):
@@ -487,8 +495,7 @@ def _build_python_roundtrip_cases() -> list[RoundtripCase]:
 
 
 def _ts_roundtrip_events(payload: list[dict[str, Any]], tmp_path: Path) -> list[dict[str, Any]]:
-    node_bin = shutil.which('node')
-    assert node_bin is not None, 'node is required for python<->ts roundtrip tests'
+    node_bin = _required_binary('ABXBUS_NODE_BIN')
 
     repo_root = Path(__file__).resolve().parents[1]
     ts_root = repo_root / 'abxbus-ts'
@@ -539,8 +546,7 @@ writeFileSync(outputPath, JSON.stringify(roundtripped, null, 2), 'utf8')
 
 
 def _ts_roundtrip_bus(payload: dict[str, Any], tmp_path: Path) -> dict[str, Any]:
-    node_bin = shutil.which('node')
-    assert node_bin is not None, 'node is required for python<->ts roundtrip tests'
+    node_bin = _required_binary('ABXBUS_NODE_BIN')
 
     repo_root = Path(__file__).resolve().parents[1]
     ts_root = repo_root / 'abxbus-ts'
@@ -591,8 +597,7 @@ writeFileSync(outputPath, JSON.stringify(roundtripped, null, 2), 'utf8')
 
 
 def _rust_roundtrip(mode: str, payload: list[dict[str, Any]] | dict[str, Any], tmp_path: Path) -> Any:
-    cargo_bin = shutil.which('cargo')
-    assert cargo_bin is not None, 'cargo is required for python<->rust roundtrip tests'
+    cargo_bin = _required_binary('ABXBUS_CARGO_BIN')
 
     repo_root = Path(__file__).resolve().parents[1]
     rust_root = repo_root / 'abxbus-rust'
@@ -640,8 +645,7 @@ def _rust_roundtrip_bus(payload: dict[str, Any], tmp_path: Path) -> dict[str, An
 
 
 def _go_roundtrip(mode: str, payload: list[dict[str, Any]] | dict[str, Any], tmp_path: Path) -> Any:
-    go_bin = shutil.which('go')
-    assert go_bin is not None, 'go is required for python<->go roundtrip tests'
+    go_bin = _required_binary('ABXBUS_GO_BIN')
 
     repo_root = Path(__file__).resolve().parents[1]
     go_root = repo_root / 'abxbus-go'
@@ -1737,7 +1741,7 @@ async def test_redis_event_bridge_roundtrip_between_processes() -> None:
     try:
         port = _free_tcp_port()
         command = [
-            'redis-server',
+            _required_binary('ABXBUS_REDIS_SERVER_BIN'),
             '--save',
             '',
             '--appendonly',
@@ -1762,7 +1766,7 @@ async def test_redis_event_bridge_roundtrip_between_processes() -> None:
 @pytest.mark.asyncio
 async def test_nats_event_bridge_roundtrip_between_processes() -> None:
     port = _free_tcp_port()
-    command = ['nats-server', '-a', '127.0.0.1', '-p', str(port)]
+    command = [_required_binary('ABXBUS_NATS_SERVER_BIN'), '-a', '127.0.0.1', '-p', str(port)]
     async with _running_process(command) as nats_process:
         await _wait_for_port(port)
         await _assert_roundtrip('nats', {'server': f'nats://127.0.0.1:{port}', 'subject': 'abxbus_events'})
@@ -1792,7 +1796,7 @@ async def test_postgres_event_bridge_roundtrip_between_processes() -> None:
     try:
         data_dir = temp_dir / 'pgdata'
         initdb = subprocess.run(
-            ['initdb', '-D', str(data_dir), '-A', 'trust', '-U', 'postgres'],
+            [_required_binary('ABXBUS_INITDB_BIN'), '-D', str(data_dir), '-A', 'trust', '-U', 'postgres'],
             capture_output=True,
             text=True,
             check=False,
@@ -1800,7 +1804,17 @@ async def test_postgres_event_bridge_roundtrip_between_processes() -> None:
         assert initdb.returncode == 0, f'initdb failed\nstdout:\n{initdb.stdout}\nstderr:\n{initdb.stderr}'
 
         port = _free_tcp_port()
-        command = ['postgres', '-D', str(data_dir), '-h', '127.0.0.1', '-p', str(port), '-k', '/tmp']
+        command = [
+            _required_binary('ABXBUS_POSTGRES_BIN'),
+            '-D',
+            str(data_dir),
+            '-h',
+            '127.0.0.1',
+            '-p',
+            str(port),
+            '-k',
+            '/tmp',
+        ]
         async with _running_process(command) as postgres_process:
             await _wait_for_port(port)
             await _assert_roundtrip('postgres', {'url': f'postgresql://postgres@127.0.0.1:{port}/postgres/abxbus_events'})

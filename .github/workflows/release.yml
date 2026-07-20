@@ -22,27 +22,22 @@ jobs:
           ref: ${{ github.ref_name }}
           token: ${{ secrets.RELEASE_GH_TOKEN || github.token }}
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: abxbus-ts/pnpm-lock.yaml
+      - name: Resolve Node runtime with abxpkg
+        run: |
+          eval "$(tests/resolve_binaries.sh node_binary)"
+          printf 'ABXBUS_NODE_BIN=%s\n' "$ABXBUS_NODE_BIN" >> "$GITHUB_ENV"
+          printf '%s\n' "$(dirname "$ABXBUS_NODE_BIN")" >> "$GITHUB_PATH"
 
       - name: Use npm with trusted publishing support
-        run: |
-          npm install -g npm@latest
+        run: >-
+          uv run abxpkg run --install
+          --binproviders=env,brew
+          --min-version=11.5.1
+          --overrides='{"brew":{"install_args":["node"]}}'
           npm --version
 
       - name: Install native build tools

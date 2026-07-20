@@ -24,15 +24,6 @@ jobs:
       - run: uv sync --all-extras --all-groups --no-extra tachyon
       - run: uv pip install fastapi
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: abxbus-ts/pnpm-lock.yaml
-
       - name: Install native TypeScript build tools
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
@@ -47,6 +38,12 @@ jobs:
           cmake --version
           gcc-14 --version
 
-      - run: pnpm --dir abxbus-ts install --frozen-lockfile
+      - name: Resolve Node runtime with abxpkg
+        run: |
+          eval "$(tests/resolve_binaries.sh node_binary)"
+          printf 'ABXBUS_NODE_BIN=%s\n' "$ABXBUS_NODE_BIN" >> "$GITHUB_ENV"
+          printf '%s\n' "$(dirname "$ABXBUS_NODE_BIN")" >> "$GITHUB_PATH"
+
+      - run: uv run abxpkg run --install --binproviders=pnpm pnpm --dir abxbus-ts install --frozen-lockfile
 
       - run: uv run prek run --all-files

@@ -20,15 +20,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: astral-sh/setup-uv@v6
         with:
-          version: 10
+          enable-cache: true
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: abxbus-ts/pnpm-lock.yaml
+      - name: Resolve TypeScript runtime with abxpkg
+        working-directory: .
+        run: |
+          eval "$(tests/resolve_binaries.sh node_binary)"
+          printf 'ABXBUS_NODE_BIN=%s\n' "$ABXBUS_NODE_BIN" >> "$GITHUB_ENV"
+          printf '%s\n' "$(dirname "$ABXBUS_NODE_BIN")" >> "$GITHUB_PATH"
 
       - name: Install native TypeScript build tools
         uses: awalsh128/cache-apt-pkgs-action@latest
@@ -44,10 +45,10 @@ jobs:
           cmake --version
           gcc-14 --version
 
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec prettier --check .
-      - run: pnpm exec eslint .
-      - run: pnpm run typecheck
+      - run: uv run --project .. abxpkg run --install --binproviders=pnpm pnpm install --frozen-lockfile
+      - run: uv run --project .. abxpkg run --install --binproviders=pnpm pnpm exec prettier --check .
+      - run: uv run --project .. abxpkg run --install --binproviders=pnpm pnpm exec eslint .
+      - run: uv run --project .. abxpkg run --install --binproviders=pnpm pnpm run typecheck
 
   find_ts_tests:
     runs-on: ubuntu-latest
@@ -116,42 +117,17 @@ jobs:
             exit 1
           fi
 
-      - uses: pnpm/action-setup@v4
+      - uses: astral-sh/setup-uv@v6
         with:
-          version: 10
+          enable-cache: true
+          activate-environment: true
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: abxbus-ts/pnpm-lock.yaml
-
-      - name: Install bridge service binaries
-        if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: redis-server nats-server postgresql sqlite3 gcc-14 g++-14
-          version: bridge-service-binaries-v1
-          execute_install_scripts: true
-
-      - name: Configure bridge service binaries
-        if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')
+      - name: Resolve TypeScript runtime with abxpkg
+        working-directory: .
         run: |
-          PG_INITDB_PATH="$(find /usr/lib/postgresql -type f -name initdb | head -n 1)"
-          PG_BINDIR="$(dirname "${PG_INITDB_PATH}")"
-          if [[ -z "${PG_BINDIR}" || ! -x "${PG_BINDIR}/initdb" || ! -x "${PG_BINDIR}/postgres" ]]; then
-            echo "Failed to locate PostgreSQL binaries (initdb/postgres)" > /dev/stderr
-            exit 1
-          fi
-          echo "${PG_BINDIR}" >> "${GITHUB_PATH}"
-          export PATH="${PG_BINDIR}:${PATH}"
-
-          redis-server --version
-          nats-server --version
-          initdb --version
-          postgres --version
-          sqlite3 --version
-          gcc-14 --version
+          eval "$(tests/resolve_binaries.sh node_binary)"
+          printf 'ABXBUS_NODE_BIN=%s\n' "$ABXBUS_NODE_BIN" >> "$GITHUB_ENV"
+          printf '%s\n' "$(dirname "$ABXBUS_NODE_BIN")" >> "$GITHUB_PATH"
 
       - name: Install native TypeScript build tools
         uses: awalsh128/cache-apt-pkgs-action@latest
@@ -167,7 +143,7 @@ jobs:
           cmake --version
           gcc-14 --version
 
-      - run: pnpm install --frozen-lockfile
+      - run: uv run --project .. abxpkg run --install --binproviders=pnpm pnpm install --frozen-lockfile
 
       - name: Build @tachyon-ipc/core native binding
         if: matrix.task.kind == 'test' && matrix.task.name == 'bridges'
@@ -178,18 +154,12 @@ jobs:
           # pnpm doesn't run @tachyon-ipc/core's `install` lifecycle script by default
           # (onlyBuiltDependencies gate), so build it manually and copy the native
           # binding to the path bus.js expects (`@tachyon-ipc/build/Release/...`).
-          TACHYON_PKG_DIR="$(node -p "path.dirname(require.resolve('@tachyon-ipc/core/package.json'))")"
+          TACHYON_PKG_DIR="$("$ABXBUS_NODE_BIN" -p "path.dirname(require.resolve('@tachyon-ipc/core/package.json'))")"
           TACHYON_PARENT_DIR="$(dirname "${TACHYON_PKG_DIR}")"
-          (cd "${TACHYON_PKG_DIR}" && npx --yes cmake-js compile)
+          (cd "${TACHYON_PKG_DIR}" && uv run --project "$GITHUB_WORKSPACE" abxpkg run --install --binproviders=pnpm pnpm exec cmake-js compile)
           mkdir -p "${TACHYON_PARENT_DIR}/build/Release"
           cp "${TACHYON_PKG_DIR}/build/Release/tachyon_node.node" "${TACHYON_PARENT_DIR}/build/Release/tachyon_node.node"
-          node -e "const m = require('@tachyon-ipc/core'); console.log('tachyon-ipc loaded:', typeof m.Bus)"
-
-      - uses: astral-sh/setup-uv@v6
-        if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'EventBus_locking')
-        with:
-          enable-cache: true
-          activate-environment: true
+          "$ABXBUS_NODE_BIN" -e "const m = require('@tachyon-ipc/core'); console.log('tachyon-ipc loaded:', typeof m.Bus)"
 
       - name: Install Python deps for cross-runtime tests
         if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'EventBus_locking')
@@ -197,10 +167,27 @@ jobs:
           cd ..
           uv sync --dev --all-extras --no-extra tachyon
 
+      - name: Resolve test binaries with abxpkg
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'EventBus_locking')
+        working-directory: .
+        run: |
+          sections=()
+          if [[ "${{ matrix.task.name }}" == "bridges" ]]; then
+            sections+=(bridge_binaries)
+          elif [[ "${{ matrix.task.name }}" == "cross_runtime_roundtrip" ]]; then
+            sections+=(bridge_binaries cross_runtime_binaries)
+          else
+            sections+=(python_binary)
+          fi
+          eval "$(tests/resolve_binaries.sh "${sections[@]}")"
+          while IFS= read -r name; do
+            printf '%s=%s\n' "$name" "${!name}" >> "$GITHUB_ENV"
+          done < <(compgen -A variable ABXBUS_)
+
       - name: Verify bridge optional Node deps
         if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')
         run: |
-          node - <<'NODE'
+          "$ABXBUS_NODE_BIN" - <<'NODE'
           const required = ['ioredis', 'nats', 'pg']
           for (const pkg of required) {
             require.resolve(pkg)
@@ -213,10 +200,10 @@ jobs:
           mkdir -p .v8-coverage
       - name: Run test with coverage
         if: matrix.task.kind == 'test'
-        run: NODE_V8_COVERAGE=.v8-coverage NODE_OPTIONS='--expose-gc' node --expose-gc --test --experimental-test-coverage --import tsx tests/${{ matrix.task.name }}.test.ts
+        run: NODE_V8_COVERAGE=.v8-coverage NODE_OPTIONS='--expose-gc' "$ABXBUS_NODE_BIN" --expose-gc --test --experimental-test-coverage --import tsx tests/${{ matrix.task.name }}.test.ts
       - name: Run example
         if: matrix.task.kind == 'example'
-        run: NODE_V8_COVERAGE=.v8-coverage NODE_OPTIONS='--expose-gc' node --expose-gc --import tsx examples/${{ matrix.task.name }}.ts
+        run: NODE_V8_COVERAGE=.v8-coverage NODE_OPTIONS='--expose-gc' "$ABXBUS_NODE_BIN" --expose-gc --import tsx examples/${{ matrix.task.name }}.ts
       - name: Upload raw coverage data
         uses: actions/upload-artifact@v4
         with:
@@ -234,15 +221,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: astral-sh/setup-uv@v6
         with:
-          version: 10
+          enable-cache: true
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: abxbus-ts/pnpm-lock.yaml
+      - name: Resolve TypeScript runtime with abxpkg
+        run: |
+          eval "$(tests/resolve_binaries.sh node_binary)"
+          printf 'ABXBUS_NODE_BIN=%s\n' "$ABXBUS_NODE_BIN" >> "$GITHUB_ENV"
+          printf '%s\n' "$(dirname "$ABXBUS_NODE_BIN")" >> "$GITHUB_PATH"
 
       - name: Install native TypeScript build tools
         uses: awalsh128/cache-apt-pkgs-action@latest
@@ -258,7 +245,7 @@ jobs:
           cmake --version
           gcc-14 --version
 
-      - run: cd abxbus-ts && pnpm install --frozen-lockfile
+      - run: uv run abxpkg run --install --binproviders=pnpm pnpm --dir abxbus-ts install --frozen-lockfile
 
       - name: Download all coverage data
         uses: actions/download-artifact@v4
@@ -286,7 +273,7 @@ jobs:
           cd abxbus-ts
           set -o pipefail
           mkdir -p coverage
-          pnpm dlx c8 report \
+          uv run --project .. abxpkg run --install --binproviders=pnpm pnpm dlx c8 report \
             --temp-directory .v8-coverage-merged \
             --report-dir coverage \
             --reporter=html \
@@ -297,7 +284,7 @@ jobs:
             -x 'src/bridge*.ts' \
             -x 'src/optional_deps.ts' | tee coverage/text-report.txt
 
-          node <<'NODE'
+          "$ABXBUS_NODE_BIN" <<'NODE'
           const fs = require('fs');
           const summaryPath = 'coverage/coverage-summary.json';
           const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
@@ -333,7 +320,7 @@ jobs:
       - name: Fail if TypeScript coverage is <50%
         run: |
           cd abxbus-ts
-          pnpm dlx c8 report \
+          uv run --project .. abxpkg run --install --binproviders=pnpm pnpm dlx c8 report \
             --temp-directory .v8-coverage-merged \
             --reporter=text-summary \
             --exclude-after-remap \
@@ -368,21 +355,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: astral-sh/setup-uv@v6
         with:
-          version: 10
+          enable-cache: true
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: abxbus-ts/pnpm-lock.yaml
-
-      - uses: oven-sh/setup-bun@v2
-
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
+      - name: Resolve TypeScript performance runtimes with abxpkg
+        working-directory: .
+        run: |
+          eval "$(tests/resolve_binaries.sh typescript_perf_binaries)"
+          while IFS= read -r name; do
+            printf '%s=%s\n' "$name" "${!name}" >> "$GITHUB_ENV"
+            printf '%s\n' "$(dirname "${!name}")" >> "$GITHUB_PATH"
+          done < <(compgen -A variable ABXBUS_)
 
       - name: Install native TypeScript build tools
         uses: awalsh128/cache-apt-pkgs-action@latest
@@ -398,13 +382,13 @@ jobs:
           cmake --version
           gcc-14 --version
 
-      - run: pnpm install --frozen-lockfile
+      - run: uv run --project .. abxpkg run --install --binproviders=pnpm pnpm install --frozen-lockfile
       - name: Run TypeScript runtime perf
-        run: pnpm run perf | tee ts_perf.log
+        run: uv run --project .. abxpkg run --install --binproviders=pnpm pnpm run perf | tee ts_perf.log
       - name: Export TypeScript perf stats
         id: export_perf
         run: |
-          python - <<'PY'
+          uv run --project .. python - <<'PY'
           import os
           import re
           from pathlib import Path

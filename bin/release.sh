@@ -10,6 +10,14 @@ TAG_PREFIX=""
 PYPI_PACKAGE="abxbus"
 NPM_PACKAGE="abxbus"
 
+npm_cmd() {
+    uv run --project "${REPO_DIR}" abxpkg run --install \
+        --binproviders=env,brew \
+        --min-version=11.5.1 \
+        --overrides='{"brew":{"install_args":["node"]}}' \
+        npm "$@"
+}
+
 source_optional_env() {
     if [[ -f "${REPO_DIR}/.env" ]]; then
         set -a
@@ -20,7 +28,7 @@ source_optional_env() {
 }
 
 repo_slug() {
-    python3 - <<'PY'
+    uv run --project "${REPO_DIR}" python - <<'PY'
 import re
 import subprocess
 
@@ -57,7 +65,7 @@ default_branch() {
 }
 
 current_version() {
-    python3 - <<'PY'
+    uv run --project "${REPO_DIR}" python - <<'PY'
 from pathlib import Path
 import json
 import re
@@ -94,7 +102,7 @@ PY
 }
 
 bump_version() {
-    python3 - <<'PY'
+    uv run --project "${REPO_DIR}" python - <<'PY'
 from pathlib import Path
 import json
 import re
@@ -169,7 +177,7 @@ PY
 }
 
 compare_versions() {
-    python3 - "$1" "$2" <<'PY'
+    uv run --project "${REPO_DIR}" python - "$1" "$2" <<'PY'
 import re
 import sys
 
@@ -194,7 +202,7 @@ latest_release_version() {
     local slug="$1"
     local raw_tags
     raw_tags="$(gh api "repos/${slug}/releases?per_page=100" --jq '.[].tag_name' || true)"
-    RELEASE_TAGS="${raw_tags}" python3 - <<'PY'
+    RELEASE_TAGS="${raw_tags}" uv run --project "${REPO_DIR}" python - <<'PY'
 import os
 import re
 
@@ -268,7 +276,7 @@ wait_for_npm() {
     local published_version
 
     while :; do
-        published_version="$(npm view "${package_name}" version --silent 2>/dev/null || true)"
+        published_version="$(npm_cmd view "${package_name}" version --silent 2>/dev/null || true)"
         if [[ "${published_version}" == "${expected_version}" ]]; then
             return 0
         fi
@@ -283,9 +291,9 @@ wait_for_npm() {
 
 run_checks() {
     uv sync --all-extras --all-groups --no-cache --upgrade
-    pnpm --dir abxbus-ts install --no-frozen-lockfile
+    uv run abxpkg run --install --binproviders=pnpm pnpm --dir abxbus-ts install --no-frozen-lockfile
     uv run prek run --all-files
-    pnpm --dir abxbus-ts run build
+    uv run abxpkg run --install --binproviders=pnpm pnpm --dir abxbus-ts run build
     uv build
 }
 
@@ -376,12 +384,12 @@ publish_artifacts() {
         uv publish --trusted-publishing always dist/*
     fi
 
-    if npm view "${NPM_PACKAGE}@${version}" version --silent >/dev/null 2>&1; then
+    if npm_cmd view "${NPM_PACKAGE}@${version}" version --silent >/dev/null 2>&1; then
         echo "${NPM_PACKAGE} ${version} already published on npm"
     else
         (
             cd abxbus-ts
-            npm publish --access public
+            npm_cmd publish --access public
         )
     fi
 

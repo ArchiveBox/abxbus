@@ -1,0 +1,125 @@
+{
+  "properties": {
+    "ABXBUS_NODE_BIN": {"default": "node"},
+    "ABXBUS_BUN_BIN": {"default": "bun"},
+    "ABXBUS_DENO_BIN": {"default": "deno"},
+    "ABXBUS_CARGO_BIN": {"default": "cargo"},
+    "ABXBUS_GO_BIN": {"default": "go"},
+    "ABXBUS_PYTHON_BIN": {"default": "python"},
+    "ABXBUS_REDIS_SERVER_BIN": {"default": "redis-server"},
+    "ABXBUS_NATS_SERVER_BIN": {"default": "nats-server"},
+    "ABXBUS_PG_CONFIG_BIN": {"default": "pg_config"},
+    "ABXBUS_INITDB_BIN": {"default": "initdb"},
+    "ABXBUS_POSTGRES_BIN": {"default": "postgres"},
+    "ABXBUS_SQLITE3_BIN": {"default": "sqlite3"},
+    "ABXBUS_PLAYWRIGHT_BIN": {"default": "playwright"},
+    "ABXBUS_CHROMIUM_BIN": {"default": "chromium"}
+  },
+  "cross_runtime_binaries": [
+    {
+      "name": "{ABXBUS_NODE_BIN}",
+      "binproviders": ["env", "brew", "apt"],
+      "min_version": "22.0.0",
+      "overrides": {"apt": {"install_args": ["nodejs"]}, "brew": {"install_args": ["node"]}}
+    },
+    {
+      "name": "{ABXBUS_CARGO_BIN}",
+      "binproviders": ["env", "brew", "apt"],
+      "min_version": "1.85.0",
+      "overrides": {"apt": {"install_args": ["cargo"]}, "brew": {"install_args": ["rust"]}}
+    },
+    {
+      "name": "{ABXBUS_GO_BIN}",
+      "binproviders": ["env", "brew", "apt"],
+      "overrides": {"apt": {"install_args": ["golang-go"]}, "brew": {"install_args": ["go"]}}
+    },
+    {"name": "{ABXBUS_PYTHON_BIN}", "binproviders": ["env"]}
+  ],
+  "python_binary": [
+    {"name": "{ABXBUS_PYTHON_BIN}", "binproviders": ["env"]}
+  ],
+  "node_binary": [
+    {
+      "name": "{ABXBUS_NODE_BIN}",
+      "binproviders": ["env", "brew", "apt"],
+      "min_version": "22.0.0",
+      "overrides": {"apt": {"install_args": ["nodejs"]}, "brew": {"install_args": ["node"]}}
+    }
+  ],
+  "typescript_perf_binaries": [
+    {
+      "name": "{ABXBUS_NODE_BIN}",
+      "binproviders": ["env", "brew", "apt"],
+      "min_version": "22.0.0",
+      "overrides": {"apt": {"install_args": ["nodejs"]}, "brew": {"install_args": ["node"]}}
+    },
+    {
+      "name": "{ABXBUS_BUN_BIN}",
+      "binproviders": ["env", "brew"],
+      "overrides": {"brew": {"install_args": ["bun"]}}
+    },
+    {
+      "name": "{ABXBUS_DENO_BIN}",
+      "binproviders": ["env", "brew"],
+      "overrides": {"brew": {"install_args": ["deno"]}}
+    }
+  ],
+  "go_binary": [
+    {
+      "name": "{ABXBUS_GO_BIN}",
+      "binproviders": ["env", "brew", "apt"],
+      "overrides": {"apt": {"install_args": ["golang-go"]}, "brew": {"install_args": ["go"]}}
+    }
+  ],
+  "rust_binary": [
+    {
+      "name": "{ABXBUS_CARGO_BIN}",
+      "binproviders": ["env", "brew", "apt"],
+      "min_version": "1.85.0",
+      "overrides": {"apt": {"install_args": ["cargo"]}, "brew": {"install_args": ["rust"]}}
+    }
+  ],
+  "bridge_binaries": [
+    {
+      "name": "{ABXBUS_REDIS_SERVER_BIN}",
+      "binproviders": ["env", "apt", "brew"],
+      "overrides": {"apt": {"install_args": ["redis-server"]}, "brew": {"install_args": ["redis"]}}
+    },
+    {
+      "name": "{ABXBUS_NATS_SERVER_BIN}",
+      "binproviders": ["env", "apt", "brew"],
+      "overrides": {"apt": {"install_args": ["nats-server"]}, "brew": {"install_args": ["nats-server"]}}
+    },
+    {
+      "name": "{ABXBUS_PG_CONFIG_BIN}",
+      "binproviders": ["env", "apt", "brew"],
+      "overrides": {
+        "apt": {"install_args": ["postgresql", "libpq-dev"]},
+        "brew": {"install_args": ["postgresql@14"]}
+      }
+    },
+    {
+      "name": "{ABXBUS_SQLITE3_BIN}",
+      "binproviders": ["env", "apt", "brew"],
+      "overrides": {"apt": {"install_args": ["sqlite3"]}, "brew": {"install_args": ["sqlite"]}}
+    }
+  ],
+  "postgres_binaries": [
+    {"name": "{ABXBUS_INITDB_BIN}", "binproviders": ["env"]},
+    {"name": "{ABXBUS_POSTGRES_BIN}", "binproviders": ["env"]}
+  ],
+  "browser_binaries": [
+    {
+      "name": "{ABXBUS_PLAYWRIGHT_BIN}",
+      "binproviders": ["env", "pnpm"],
+      "postinstall_scripts": true,
+      "min_release_age": 0
+    },
+    {
+      "name": "{ABXBUS_CHROMIUM_BIN}",
+      "binproviders": ["env", "playwright"],
+      "postinstall_scripts": true,
+      "min_release_age": 0
+    }
+  ]
+}
