@@ -141,7 +141,7 @@ testpaths = [
     "docs",
 ]
 python_files = ["test_*.py", "*_test.py"]
-addopts = "-svx --strict-markers --tb=short --dist=loadscope --codeblocks"
+addopts = "-sv --strict-markers --tb=short --dist=loadscope --codeblocks"
 log_cli = true
 log_cli_format = "%(levelname)-8s [%(name)s] %(message)s"
 filterwarnings = [

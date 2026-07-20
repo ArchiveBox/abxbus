@@ -1387,79 +1387,67 @@ const waitForEvent = async (event: Promise<void>, timeout_ms: number): Promise<v
 }
 
 const measureWarmLatencyMs = async (kind: string, config: Record<string, string>): Promise<number> => {
-  const attempts = 3
-  let last_error: unknown
+  const sender = makeSenderBridge(kind, config, true)
+  const receiver = makeListenerBridge(kind, config, true)
 
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const sender = makeSenderBridge(kind, config, true)
-    const receiver = makeListenerBridge(kind, config, true)
+  const run_suffix = Math.random().toString(36).slice(2, 10)
+  const warmup_prefix = `warmup_${run_suffix}_`
+  const measured_prefix = `measured_${run_suffix}_`
+  const warmup_count_target = 5
+  const measured_count_target = 1000
 
-    const run_suffix = Math.random().toString(36).slice(2, 10)
-    const warmup_prefix = `warmup_${run_suffix}_`
-    const measured_prefix = `measured_${run_suffix}_`
-    const warmup_count_target = 5
-    const measured_count_target = 1000
+  let warmup_seen_count = 0
+  let measured_seen_count = 0
+  let warmup_resolve: (() => void) | null = null
+  let measured_resolve: (() => void) | null = null
+  const warmup_seen = new Promise<void>((resolve) => {
+    warmup_resolve = resolve
+  })
+  const measured_seen = new Promise<void>((resolve) => {
+    measured_resolve = resolve
+  })
 
-    let warmup_seen_count = 0
-    let measured_seen_count = 0
-    let warmup_resolve: (() => void) | null = null
-    let measured_resolve: (() => void) | null = null
-    const warmup_seen = new Promise<void>((resolve) => {
-      warmup_resolve = resolve
-    })
-    const measured_seen = new Promise<void>((resolve) => {
-      measured_resolve = resolve
-    })
-
-    const onEvent = (event: { label?: unknown }): void => {
-      const label = typeof event.label === 'string' ? event.label : ''
-      if (label.startsWith(warmup_prefix)) {
-        warmup_seen_count += 1
-        if (warmup_seen_count >= warmup_count_target) {
-          warmup_resolve?.()
-          warmup_resolve = null
-        }
-        return
+  const onEvent = (event: { label?: unknown }): void => {
+    const label = typeof event.label === 'string' ? event.label : ''
+    if (label.startsWith(warmup_prefix)) {
+      warmup_seen_count += 1
+      if (warmup_seen_count >= warmup_count_target) {
+        warmup_resolve?.()
+        warmup_resolve = null
       }
-      if (label.startsWith(measured_prefix)) {
-        measured_seen_count += 1
-        if (measured_seen_count >= measured_count_target) {
-          measured_resolve?.()
-          measured_resolve = null
-        }
+      return
+    }
+    if (label.startsWith(measured_prefix)) {
+      measured_seen_count += 1
+      if (measured_seen_count >= measured_count_target) {
+        measured_resolve?.()
+        measured_resolve = null
       }
     }
-
-    const emitBatch = async (prefix: string, count: number): Promise<void> => {
-      for (let i = 0; i < count; i += 1) {
-        await sender.emit(IPCPingEvent({ label: `${prefix}${i}` }))
-      }
-    }
-
-    try {
-      await sender.start()
-      await receiver.start()
-      receiver.on('IPCPingEvent', onEvent)
-      await sleep(100)
-
-      await emitBatch(warmup_prefix, warmup_count_target)
-      await waitForEvent(warmup_seen, 60000)
-
-      const start_ms = performance.now()
-      await emitBatch(measured_prefix, measured_count_target)
-      await waitForEvent(measured_seen, 120000)
-      return (performance.now() - start_ms) / measured_count_target
-    } catch (error: unknown) {
-      last_error = error
-    } finally {
-      await sender.close()
-      await receiver.close()
-    }
-
-    await sleep(200)
   }
 
-  throw new Error(`bridge latency measurement timed out after ${attempts} attempts: ${kind} (${String(last_error)})`)
+  const emitBatch = async (prefix: string, count: number): Promise<void> => {
+    for (let i = 0; i < count; i += 1) {
+      await sender.emit(IPCPingEvent({ label: `${prefix}${i}` }))
+    }
+  }
+
+  try {
+    await sender.start()
+    await receiver.start()
+    receiver.on('IPCPingEvent', onEvent)
+
+    await emitBatch(warmup_prefix, warmup_count_target)
+    await waitForEvent(warmup_seen, 60000)
+
+    const start_ms = performance.now()
+    await emitBatch(measured_prefix, measured_count_target)
+    await waitForEvent(measured_seen, 120000)
+    return (performance.now() - start_ms) / measured_count_target
+  } finally {
+    await sender.close()
+    await receiver.close()
+  }
 }
 
 const assertRoundtrip = async (kind: string, config: Record<string, string>): Promise<void> => {
