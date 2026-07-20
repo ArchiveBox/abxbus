@@ -1,0 +1,63 @@
+.github/workflows/test_ts.yaml
+  s_f8414d52051f83::t_16539d03c0f48e 119
+  s_f8414d52051f83::t_b726d8e52dcc35 23,25,27,29-31,33-36,105,107-113,115-118,120-124,126-139,142,145-146,150,152-153,155,157-161,164,166,170-176,187,200,203,221,223,225,227-229,231,259,270,306,341,343,345,347-349,351-355,357,359,363
+.github/workflows/test_go.yaml
+  s_f8414d52051f83::t_d220c0be64e4da 97-113,115,120,123,125,127-130,132,135-137,140
+.github/workflows/pre-commit-hooks.yaml
+  s_f8414d52051f83::t_d220c0be64e4da 27,29-34,36
+AGENTS.md
+  s_f8414d52051f83::t_57c79b1ddfeb4b 60
+skills/abxbus/SKILL.md
+  s_f8414d52051f83::t_57c79b1ddfeb4b 64
+.gitignore
+  s_f8414d52051f83::t_403a54e07d8a78 3
+README.md
+  s_f8414d52051f83::t_57c79b1ddfeb4b 1750-1752,1777
+  s_f8414d52051f83::t_9bcb45b38f6fb2 1783
+abxbus-ts/pnpm-workspace.yaml
+  s_f8414d52051f83::t_ec52473d32f11a 1-2
+.github/workflows/test_py.yaml
+  s_f8414d52051f83::t_d220c0be64e4da 26-33,118,121,123,125-128,130-136,138,141-145,147-158,165-166,288
+.github/workflows/release.yml
+  s_f8414d52051f83::t_7aca874d8d375e 25-28,33-35,37,39-41,43,45-46
+.github/workflows/test_rust.yaml
+  s_f8414d52051f83::t_b72302ee194c63 87-88,95-102,105,109,113
+.pre-commit-config.yaml
+  s_f8414d52051f83::t_fd3e1829c74da1 51,58,64
+abxbus-go/tests/cross_runtime_roundtrip_test.go
+  s_f8414d52051f83::t_4e661fd819019f 56,171,174,177-178,181,864
+abxbus-rust/tests/test_cross_runtime_roundtrip.rs
+  s_f8414d52051f83::t_82c7486ad85572 123
+abxbus-ts/pnpm-lock.yaml
+  s_f8414d52051f83::t_515aed7485e289 4
+abxbus-ts/scripts/run_browser_perf.sh
+  s_f8414d52051f83::t_a887e292341d53 7-15
+abxbus-ts/tests/EventBus_locking.test.ts
+  s_f8414d52051f83::t_9e83137110f553 3,2912-2932
+abxbus-ts/tests/cross_runtime_roundtrip.test.ts
+  s_f8414d52051f83::t_241ee78c0e4d83 470-502,627,638,654,664,1574,1592,1624,1626
+bin/release.sh
+  s_f8414d52051f83::t_c86cbec08e32d0 23,60,97,172,197,271,286,288,379,384
+bin/setup_monorepo.sh
+  s_f8414d52051f83::t_46352838af17ed 194
+test.sh
+  s_f8414d52051f83::t_2e6b8b10a3a359 4,15,26,38,49,52
+tests/test_cross_runtime_roundtrip.py
+  s_f8414d52051f83::t_79c8b2d3dbd493 4,490-491,542-543,594-595,643-644,1740,1765,1795,1803
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "e9bcc1ff94b815a47c422c936e0b01c77d6f27ae",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
