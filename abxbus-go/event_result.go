@@ -24,6 +24,7 @@ type EventResult struct {
 	HandlerFilePath     *string           `json:"handler_file_path,omitempty"`
 	HandlerTimeout      *float64          `json:"handler_timeout,omitempty"`
 	HandlerSlowTimeout  *float64          `json:"handler_slow_timeout,omitempty"`
+	HandlerResultTTL    *float64          `json:"handler_result_ttl,omitempty"`
 	HandlerRegisteredAt string            `json:"handler_registered_at"`
 	HandlerEventPattern string            `json:"handler_event_pattern"`
 	EventBusName        string            `json:"eventbus_name"`
@@ -61,6 +62,7 @@ type eventResultJSON struct {
 	HandlerFilePath     *string           `json:"handler_file_path"`
 	HandlerTimeout      *float64          `json:"handler_timeout"`
 	HandlerSlowTimeout  *float64          `json:"handler_slow_timeout"`
+	HandlerResultTTL    *float64          `json:"handler_result_ttl"`
 	HandlerRegisteredAt string            `json:"handler_registered_at"`
 	HandlerEventPattern string            `json:"handler_event_pattern"`
 	EventBusName        string            `json:"eventbus_name"`
@@ -82,6 +84,7 @@ func NewEventResult(event *BaseEvent, handler *EventHandler) *EventResult {
 		HandlerFilePath:     handler.HandlerFilePath,
 		HandlerTimeout:      handler.HandlerTimeout,
 		HandlerSlowTimeout:  handler.HandlerSlowTimeout,
+		HandlerResultTTL:    handler.HandlerResultTTL,
 		HandlerRegisteredAt: handler.HandlerRegisteredAt,
 		HandlerEventPattern: handler.EventPattern,
 		EventBusName:        handler.EventBusName,
@@ -249,6 +252,7 @@ func (r *EventResult) MarshalJSON() ([]byte, error) {
 		HandlerFilePath:     r.HandlerFilePath,
 		HandlerTimeout:      r.HandlerTimeout,
 		HandlerSlowTimeout:  r.HandlerSlowTimeout,
+		HandlerResultTTL:    r.HandlerResultTTL,
 		HandlerRegisteredAt: r.HandlerRegisteredAt,
 		HandlerEventPattern: r.HandlerEventPattern,
 		EventBusName:        r.EventBusName,
@@ -267,6 +271,15 @@ func (r *EventResult) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		return err
 	}
+	if err := validateOptionalSecondsAtLeastMinusOne("handler_result_ttl", parsed.HandlerResultTTL); err != nil {
+		return err
+	}
+	if err := validateOptionalSecondsNonNegative("handler_timeout", parsed.HandlerTimeout); err != nil {
+		return err
+	}
+	if err := validateOptionalSecondsNonNegative("handler_slow_timeout", parsed.HandlerSlowTimeout); err != nil {
+		return err
+	}
 	r.ID = parsed.ID
 	r.Status = parsed.Status
 	r.EventID = parsed.EventID
@@ -275,6 +288,7 @@ func (r *EventResult) UnmarshalJSON(data []byte) error {
 	r.HandlerFilePath = parsed.HandlerFilePath
 	r.HandlerTimeout = parsed.HandlerTimeout
 	r.HandlerSlowTimeout = parsed.HandlerSlowTimeout
+	r.HandlerResultTTL = parsed.HandlerResultTTL
 	r.HandlerRegisteredAt = parsed.HandlerRegisteredAt
 	r.HandlerEventPattern = parsed.HandlerEventPattern
 	r.EventBusName = parsed.EventBusName

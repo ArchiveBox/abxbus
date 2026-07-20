@@ -80,6 +80,16 @@ function compareIsoDatetime(left: string | null | undefined, right: string | nul
   return left_value < right_value ? -1 : 1
 }
 
+export function validateOptionalSecondsAtLeastMinusOne(field_name: string, value: number | null | undefined): number | null | undefined {
+  if (value === null || value === undefined) {
+    return value
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < -1) {
+    throw new Error(`${field_name} must be >= -1 or null, got: ${value}`)
+  }
+  return value
+}
+
 export const BaseEventSchema = z
   .object({
     event_id: z.string().uuid(),
@@ -90,6 +100,8 @@ export const BaseEventSchema = z
     event_slow_timeout: z.number().nonnegative().nullable().optional(),
     event_handler_timeout: z.number().nonnegative().nullable().optional(),
     event_handler_slow_timeout: z.number().nonnegative().nullable().optional(),
+    event_ttl: z.number().gte(-1).nullable().optional(),
+    event_result_ttl: z.number().gte(-1).nullable().optional(),
     event_blocks_parent_completion: z.boolean().optional(),
     event_parent_id: z.string().uuid().nullable().optional(),
     event_path: z.array(z.string()).optional(),
@@ -130,6 +142,8 @@ type BaseEventFieldName =
   | 'event_slow_timeout'
   | 'event_handler_timeout'
   | 'event_handler_slow_timeout'
+  | 'event_ttl'
+  | 'event_result_ttl'
   | 'event_blocks_parent_completion'
   | 'event_parent_id'
   | 'event_path'
@@ -154,6 +168,33 @@ type EventPayloadShape<TShape extends z.ZodRawShape> = {
 }
 type EventPayload<TShape extends z.ZodRawShape> =
   EventPayloadShape<TShape> extends Record<string, never> ? {} : z.infer<z.ZodObject<EventPayloadShape<TShape>>>
+type EventPayloadRuntimeFieldName =
+  | 'bus'
+  | 'emit'
+  | 'now'
+  | 'wait'
+  | 'toString'
+  | 'toJSON'
+  | 'fromJSON'
+  | 'eventResult'
+  | 'eventResultsList'
+type AnyFunction = (...args: any[]) => unknown
+type KnownEventPayloadFields<TEvent> = {
+  [K in keyof TEvent as K extends string
+    ? K extends `event_${string}`
+      ? never
+      : K extends `_${string}`
+        ? never
+        : K extends EventPayloadRuntimeFieldName
+          ? never
+          : TEvent[K] extends AnyFunction
+            ? never
+            : K
+    : never]: TEvent[K]
+}
+export type EventPayloadFields<TEvent> = keyof KnownEventPayloadFields<TEvent> extends never
+  ? Record<string, unknown>
+  : KnownEventPayloadFields<TEvent>
 type EventClassMetadataFieldName =
   | 'fromJSON'
   | 'prototype'
@@ -260,6 +301,12 @@ export type EventWaitOptions = {
   timeout?: number | null
   first_result?: boolean
 }
+export type EventResetOptions = {
+  ids?: boolean
+  status?: boolean
+  timestamps?: boolean
+  results?: boolean
+}
 export type EventWaitPromise<TEvent extends BaseEvent> = Promise<TEvent> & {
   eventResult(options?: EventResultOptions<TEvent>): Promise<EventResultType<TEvent> | undefined>
   eventResultsList(options?: EventResultOptions<TEvent>): Promise<Array<EventResultType<TEvent> | undefined>>
@@ -308,6 +355,8 @@ function baseEventDefaultShape(event_type: string): z.ZodRawShape {
     event_slow_timeout: z.number().nonnegative().nullable().optional(),
     event_handler_timeout: z.number().nonnegative().nullable().optional(),
     event_handler_slow_timeout: z.number().nonnegative().nullable().optional(),
+    event_ttl: z.number().gte(-1).nullable().optional(),
+    event_result_ttl: z.number().gte(-1).nullable().optional(),
     event_blocks_parent_completion: z.boolean().default(false),
     event_parent_id: z.string().uuid().nullable().optional(),
     event_path: z.array(z.string()).optional(),
@@ -561,6 +610,8 @@ export class BaseEvent {
   event_handler_completion?: EventHandlerCompletionMode | null // completion strategy: 'all' (default) waits for every handler, 'first' returns earliest non-undefined result and cancels the rest
   event_schema?: z.ZodTypeAny
   _event_parse_schema?: z.ZodTypeAny
+  private _event_ttl_value?: number | null
+  private _event_result_ttl_value?: number | null
 
   static event_type?: string // class name of the event, e.g. BaseEvent.extend("MyEvent").event_type === "MyEvent"
   static event_version = '0.0.1'
@@ -573,7 +624,6 @@ export class BaseEvent {
   event_bus?: EventBus // bus that dispatched this event, also used by event.emit(child)
   _event_original?: BaseEvent // underlying event object that was dispatched, if this is a bus-scoped proxy wrapping it
   _event_dispatch_context?: unknown | null // captured AsyncLocalStorage context at dispatch site, used to restore that context when running handlers
-  _event_fields_set?: Set<string>
 
   _event_completed_signal: Deferred<this> | null
   _lock_for_event_handler: AsyncLock | null
@@ -587,7 +637,6 @@ export class BaseEvent {
       event_schema?: AnyEventSchema
       _event_parse_schema?: AnyEventSchema
     }
-    const explicit_event_fields = new Set(Object.keys(data ?? {}))
     const merged_data = { ...data } as BaseEventInit<Record<string, unknown>>
     const event_type = merged_data.event_type ?? ctor.event_type ?? ctor.name
     const event_version = merged_data.event_version ?? ctor.event_version ?? '0.0.1'
@@ -624,16 +673,9 @@ export class BaseEvent {
       enumerable: false,
       configurable: true,
     })
-    Object.defineProperty(this, '_event_fields_set', {
-      value: explicit_event_fields,
-      writable: true,
-      enumerable: false,
-      configurable: true,
-    })
     const parsed_path = (parsed as { event_path?: string[] }).event_path
     this.event_path = Array.isArray(parsed_path) ? [...parsed_path] : []
     this.event_created_at = monotonicDatetime(parsed.event_created_at)
-
     // load event results from potentially raw objects from JSON to proper EventResult objects
     this.event_results = hydrateEventResults(this, (parsed as { event_results?: unknown }).event_results)
     this.event_pending_bus_count =
@@ -657,6 +699,22 @@ export class BaseEvent {
         ? (parsed as { event_emitted_by_handler_id: string }).event_emitted_by_handler_id
         : null
 
+    if (
+      (this.event_ttl === null || this.event_ttl === undefined) &&
+      typeof (ctor as typeof BaseEvent & { event_ttl?: unknown }).event_ttl === 'number'
+    ) {
+      this.event_ttl = validateOptionalSecondsAtLeastMinusOne('event_ttl', (ctor as typeof BaseEvent & { event_ttl: number }).event_ttl)
+    }
+    if (
+      (this.event_result_ttl === null || this.event_result_ttl === undefined) &&
+      typeof (ctor as typeof BaseEvent & { event_result_ttl?: unknown }).event_result_ttl === 'number'
+    ) {
+      this.event_result_ttl = validateOptionalSecondsAtLeastMinusOne(
+        'event_result_ttl',
+        (ctor as typeof BaseEvent & { event_result_ttl: number }).event_result_ttl
+      )
+    }
+
     this.event_result_type = normalizeEventResultType(parsed.event_result_type ?? event_result_type)
 
     this._event_completed_signal = null
@@ -667,6 +725,32 @@ export class BaseEvent {
   // "MyEvent#a48f"
   toString(): string {
     return `${this.event_type}#${this.event_id.slice(-4)}`
+  }
+
+  get event_ttl(): number | null | undefined {
+    return this._event_ttl_value
+  }
+
+  set event_ttl(value: number | null | undefined) {
+    this._event_ttl_value = validateOptionalSecondsAtLeastMinusOne('event_ttl', value)
+    this._trackRuntimeTTLChange()
+  }
+
+  get event_result_ttl(): number | null | undefined {
+    return this._event_result_ttl_value
+  }
+
+  set event_result_ttl(value: number | null | undefined) {
+    this._event_result_ttl_value = validateOptionalSecondsAtLeastMinusOne('event_result_ttl', value)
+    this._trackRuntimeTTLChange()
+  }
+
+  private _trackRuntimeTTLChange(): void {
+    const original = this._event_original ?? this
+    if (original.event_status !== 'completed' || !original.event_bus) {
+      return
+    }
+    original.event_bus._trackRuntimeTTLChange(original)
   }
 
   // main entry point for users to define their own event types
@@ -842,6 +926,8 @@ export class BaseEvent {
       event_handler_completion: this.event_handler_completion,
       event_handler_slow_timeout: this.event_handler_slow_timeout,
       event_handler_timeout: this.event_handler_timeout,
+      event_ttl: this.event_ttl,
+      event_result_ttl: this.event_result_ttl,
       event_blocks_parent_completion: this.event_blocks_parent_completion,
 
       // mutable parent/child/bus tracking runtime state
@@ -875,6 +961,8 @@ export class BaseEvent {
       event_handler_completion: this.event_handler_completion,
       event_handler_slow_timeout: this.event_handler_slow_timeout,
       event_handler_timeout: this.event_handler_timeout,
+      event_ttl: this.event_ttl,
+      event_result_ttl: this.event_result_ttl,
       event_blocks_parent_completion: this.event_blocks_parent_completion,
 
       // mutable parent/child/bus tracking runtime state
@@ -892,6 +980,10 @@ export class BaseEvent {
       // mutable result state
       ...(Object.keys(event_results).length > 0 ? { event_results } : {}),
     }
+  }
+
+  event_payload(): EventPayloadFields<this> {
+    return Object.fromEntries(Object.entries(this.toJSON()).filter(([key]) => !key.startsWith('event_'))) as EventPayloadFields<this>
   }
 
   _createSlowEventWarningTimer(
@@ -1542,12 +1634,32 @@ export class BaseEvent {
     }
   }
 
-  _markPending(): this {
+  _resetForDispatch(options: EventResetOptions = {}): this {
     const original = this._event_original ?? this
-    original.event_status = 'pending'
-    original.event_started_at = null
-    original.event_completed_at = null
-    original.event_results.clear()
+    const ids = options.ids ?? true
+    const status = options.status ?? true
+    const timestamps = options.timestamps ?? true
+    const results = options.results ?? true
+
+    // Keep this helper as the single lifecycle reset path for bridges and eventReset redispatch.
+    if (ids) {
+      original.event_id = uuidv7()
+      original.event_path = []
+      original.event_parent_id = null
+      original.event_emitted_by_handler_id = null
+      original.event_blocks_parent_completion = false
+    }
+    if (status) {
+      original.event_status = 'pending'
+      original.event_completed_at = null
+    }
+    if (timestamps) {
+      original.event_started_at = null
+      original.event_completed_at = null
+    }
+    if (results) {
+      original.event_results.clear()
+    }
     original.event_pending_bus_count = 0
     original._setDispatchContext(undefined)
     original._event_completed_signal = null
@@ -1556,17 +1668,24 @@ export class BaseEvent {
     return this
   }
 
-  eventReset(): this {
+  eventReset(options: EventResetOptions = {}): this {
     const original = this._event_original ?? this
     const ctor = original.constructor as typeof BaseEvent
     const fresh_event = ctor.fromJSON(original.toJSON()) as this
-    fresh_event.event_id = uuidv7()
-    return fresh_event._markPending()
+    if ((options.results ?? true) === false) {
+      for (const [handler_id, result] of fresh_event.event_results.entries()) {
+        const original_result = original.event_results.get(handler_id)
+        if (original_result) {
+          result.event_children = [...original_result.event_children]
+        }
+      }
+    }
+    return fresh_event._resetForDispatch(options)
   }
 
   _markStarted(started_at: string | null = null, notify_hook: boolean = true): void {
     const original = this._event_original ?? this
-    if (original.event_status !== 'pending') {
+    if (original.event_status !== 'pending' || original._shouldSkipHandlerExecution()) {
       return
     }
     original.event_status = 'started'
@@ -1580,10 +1699,9 @@ export class BaseEvent {
 
   _markCompleted(force: boolean = true, notify_parents: boolean = true): void {
     const original = this._event_original ?? this
-    if (original.event_status === 'completed') {
-      return
-    }
-    if (!force) {
+    const was_completed = original.event_status === 'completed'
+    const completion_marked = original._shouldSkipHandlerExecution()
+    if (!force && !completion_marked) {
       if (original.event_pending_bus_count > 0) {
         return
       }
@@ -1592,20 +1710,32 @@ export class BaseEvent {
       }
     }
     original.event_status = 'completed'
-    original.event_completed_at = monotonicDatetime()
-    if (original.event_bus) {
+    original.event_completed_at = original.event_completed_at ?? monotonicDatetime()
+    original.event_started_at = original.event_started_at ?? original.event_completed_at
+    if (!was_completed && original.event_bus) {
       const bus_for_hook = original.event_bus
       const event_for_bus = bus_for_hook._getEventProxyScopedToThisBus(original)
       void bus_for_hook.onEventChange(event_for_bus, 'completed')
     }
     original._setDispatchContext(null)
-    original._notifyDoneListeners()
-    original._event_completed_signal!.resolve(original)
-    original._event_completed_signal = null
-    original.dropFromZeroHistoryBuses()
-    if (notify_parents && original.event_bus) {
+    if (!was_completed) {
+      original._notifyDoneListeners()
+    }
+    if (original._event_completed_signal) {
+      original._event_completed_signal.resolve(original)
+      original._event_completed_signal = null
+    }
+    if (!was_completed) {
+      original.dropFromZeroHistoryBuses()
+    }
+    if (!was_completed && notify_parents && original.event_bus) {
       original._notifyEventParentsOfCompletion()
     }
+  }
+
+  _shouldSkipHandlerExecution(): boolean {
+    const original = this._event_original ?? this
+    return original.event_status === 'completed' || original.event_completed_at !== null
   }
 
   private dropFromZeroHistoryBuses(): void {

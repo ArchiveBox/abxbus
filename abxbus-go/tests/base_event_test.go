@@ -58,6 +58,164 @@ func TestBaseEventNowAllowsCompletedRestoredEventWithoutBus(t *testing.T) {
 	}
 }
 
+func TestBaseEventResetReturnsAFreshPendingEventThatCanBeRedispatched(t *testing.T) {
+	busA := abxbus.NewEventBus("BaseEventResetBusA", nil)
+	defer busA.Destroy()
+	busB := abxbus.NewEventBus("BaseEventResetBusB", nil)
+	defer busB.Destroy()
+
+	busA.On("BaseEventResetEvent", "handler_a", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "a:" + event.EventExtraPayload["label"].(string), nil
+	}, nil)
+	busB.On("BaseEventResetEvent", "handler_b", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "b:" + event.EventExtraPayload["label"].(string), nil
+	}, nil)
+
+	completed := busA.Emit(abxbus.NewBaseEvent("BaseEventResetEvent", map[string]any{"label": "hello"}))
+	if _, err := completed.Now(); err != nil {
+		t.Fatal(err)
+	}
+	parentID := "018f8e40-1234-7000-8000-000000000401"
+	handlerID := "018f8e40-1234-7000-8000-000000000402"
+	completed.EventParentID = &parentID
+	completed.EventEmittedByHandlerID = &handlerID
+	completed.EventBlocksParentCompletion = true
+
+	fresh, err := completed.EventReset()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.EventID == completed.EventID {
+		t.Fatal("reset event should have a fresh event_id")
+	}
+	if len(fresh.EventPath) != 0 || fresh.EventParentID != nil || fresh.EventEmittedByHandlerID != nil || fresh.EventBlocksParentCompletion {
+		t.Fatalf("reset event should clear routing lineage: %#v", fresh)
+	}
+	if fresh.EventStatus != "pending" || fresh.EventStartedAt != nil || fresh.EventCompletedAt != nil {
+		t.Fatalf("reset event should be pending with no lifecycle timestamps: %#v", fresh)
+	}
+	if fresh.EventCreatedAt != completed.EventCreatedAt {
+		t.Fatalf("reset event should preserve event_created_at, got %s want %s", fresh.EventCreatedAt, completed.EventCreatedAt)
+	}
+	if len(fresh.EventResults) != 0 || fresh.EventPendingBusCount != 0 || fresh.Bus != nil {
+		t.Fatalf("reset event should clear runtime state: %#v", fresh)
+	}
+	if fresh.EventType != "BaseEventResetEvent" || fresh.EventExtraPayload["label"] != "hello" {
+		t.Fatalf("reset event should preserve payload fields: %#v", fresh)
+	}
+
+	forwarded := busB.Emit(fresh)
+	if _, err := forwarded.Now(); err != nil {
+		t.Fatal(err)
+	}
+	if forwarded.EventStatus != "completed" {
+		t.Fatalf("expected forwarded reset event to complete, got %s", forwarded.EventStatus)
+	}
+	hasBusA := false
+	hasBusB := false
+	for _, entry := range forwarded.EventPath {
+		if strings.HasPrefix(entry, "BaseEventResetBusA#") {
+			hasBusA = true
+		}
+		if strings.HasPrefix(entry, "BaseEventResetBusB#") {
+			hasBusB = true
+		}
+	}
+	if hasBusA || !hasBusB {
+		t.Fatalf("reset event should record only the redispatch bus path: %#v", forwarded.EventPath)
+	}
+}
+
+func TestBaseEventResetOptionsControlIDsStatusTimestampsAndResults(t *testing.T) {
+	bus := abxbus.NewEventBus("BaseEventResetOptionsBus", nil)
+	defer bus.Destroy()
+	bus.On("BaseEventResetOptionsEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		return "done:" + event.EventExtraPayload["label"].(string), nil
+	}, nil)
+
+	completed := bus.Emit(abxbus.NewBaseEvent("BaseEventResetOptionsEvent", map[string]any{"label": "hello"}))
+	if _, err := completed.Now(); err != nil {
+		t.Fatal(err)
+	}
+	parentID := "018f8e40-1234-7000-8000-000000000411"
+	handlerID := "018f8e40-1234-7000-8000-000000000412"
+	startedAt := "2025-01-02T03:04:06.000000000Z"
+	completedAt := "2025-01-02T03:04:07.000000000Z"
+	completed.EventPath = []string{"BaseEventResetOptionsSeedBus#1234"}
+	completed.EventParentID = &parentID
+	completed.EventEmittedByHandlerID = &handlerID
+	completed.EventBlocksParentCompletion = true
+	completed.EventPendingBusCount = 3
+	completed.EventCreatedAt = "2025-01-02T03:04:05.000000000Z"
+	completed.EventStartedAt = &startedAt
+	completed.EventCompletedAt = &completedAt
+
+	disabled := false
+	preserved, err := completed.EventReset(abxbus.EventResetOptions{
+		IDs:        &disabled,
+		Status:     &disabled,
+		Timestamps: &disabled,
+		Results:    &disabled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if preserved.EventID != completed.EventID {
+		t.Fatalf("event_id should be preserved when IDs=false: %s != %s", preserved.EventID, completed.EventID)
+	}
+	if !reflect.DeepEqual(preserved.EventPath, completed.EventPath) || preserved.EventParentID == nil || *preserved.EventParentID != parentID {
+		t.Fatalf("routing lineage should be preserved when IDs=false: %#v", preserved)
+	}
+	if preserved.EventEmittedByHandlerID == nil || *preserved.EventEmittedByHandlerID != handlerID || !preserved.EventBlocksParentCompletion {
+		t.Fatalf("handler lineage should be preserved when IDs=false: %#v", preserved)
+	}
+	if preserved.EventStatus != "completed" {
+		t.Fatalf("status should be preserved when Status=false, got %s", preserved.EventStatus)
+	}
+	if preserved.EventCreatedAt != "2025-01-02T03:04:05.000000000Z" || preserved.EventStartedAt == nil || *preserved.EventStartedAt != startedAt || preserved.EventCompletedAt == nil || *preserved.EventCompletedAt != completedAt {
+		t.Fatalf("timestamps should be preserved when Timestamps=false: %#v", preserved)
+	}
+	if len(preserved.EventResults) != len(completed.EventResults) || len(preserved.EventResults) != 1 {
+		t.Fatalf("results should be preserved when Results=false: %#v", preserved.EventResults)
+	}
+	for _, result := range preserved.EventResults {
+		if result.Result != "done:hello" {
+			t.Fatalf("preserved result payload mismatch: %#v", result)
+		}
+	}
+	if preserved.EventPendingBusCount != 0 {
+		t.Fatalf("runtime queue attachment should always reset, got %d", preserved.EventPendingBusCount)
+	}
+
+	enabled := true
+	redispatch, err := completed.EventReset(abxbus.EventResetOptions{
+		IDs:        &disabled,
+		Status:     &enabled,
+		Timestamps: &disabled,
+		Results:    &enabled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if redispatch.EventStatus != "pending" || redispatch.EventCompletedAt != nil || redispatch.EventStartedAt == nil || *redispatch.EventStartedAt != startedAt {
+		t.Fatalf("status reset should clear terminal completion while preserving non-reset timestamps: %#v", redispatch)
+	}
+
+	withResults, err := completed.EventReset(abxbus.EventResetOptions{Results: &disabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withResults.EventID == completed.EventID {
+		t.Fatal("default ID reset should regenerate the event_id")
+	}
+	for _, result := range withResults.EventResults {
+		if result.EventID != withResults.EventID {
+			t.Fatalf("preserved result should point at reset event_id, got %s want %s", result.EventID, withResults.EventID)
+		}
+	}
+}
+
 func TestBaseEventNowInsideHandlerNoArgs(t *testing.T) {
 	bus := abxbus.NewEventBus("BaseEventNowInsideNoArgsBus", &abxbus.EventBusOptions{
 		EventConcurrency:        abxbus.EventConcurrencyBusSerial,
@@ -903,6 +1061,9 @@ func TestBaseEventJSONFlattenedPayload(t *testing.T) {
 	if _, ok := obj["event_extra_payload"]; ok {
 		t.Fatal("event_extra_payload must not be emitted")
 	}
+	if _, ok := obj["event_payload"]; ok {
+		t.Fatal("event_payload must not be emitted")
+	}
 	if obj["x"].(float64) != 1 {
 		t.Fatal("payload key x missing")
 	}
@@ -919,6 +1080,30 @@ func TestBaseEventJSONFlattenedPayload(t *testing.T) {
 	// Unknown event fields are easy to access consistently from BaseEvent at runtime.
 	if !reflect.DeepEqual(restored.EventExtraPayload["future_unrecognized_field"], map[string]any{"nested": []any{"kept"}}) {
 		t.Fatalf("future field did not hydrate: %#v", restored.EventExtraPayload)
+	}
+	eventPayload, err := restored.EventPayload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eventPayload["x"].(float64) != 1 {
+		t.Fatalf("known payload field missing from EventPayload: %#v", eventPayload)
+	}
+	if !reflect.DeepEqual(eventPayload["future_unrecognized_field"], map[string]any{"nested": []any{"kept"}}) {
+		t.Fatalf("future field missing from EventPayload: %#v", eventPayload)
+	}
+	if _, ok := eventPayload["event_id"]; ok {
+		t.Fatalf("EventPayload must exclude event_id: %#v", eventPayload)
+	}
+	if _, ok := eventPayload["event_ttl"]; ok {
+		t.Fatalf("EventPayload must exclude event_ttl: %#v", eventPayload)
+	}
+	eventPayload["x"] = float64(99)
+	freshPayload, err := restored.EventPayload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if freshPayload["x"].(float64) != 1 {
+		t.Fatalf("EventPayload should return a fresh map: %#v", freshPayload)
 	}
 	typed, err := abxbus.EventPayloadAs[struct {
 		X                 int            `json:"x"`

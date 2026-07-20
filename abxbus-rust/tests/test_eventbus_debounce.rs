@@ -252,7 +252,8 @@ fn test_dispatches_new_when_stale() {
         FindOptions {
             past: true,
             where_predicate: Some(Arc::new(|event| {
-                event.inner.lock().event_extra_payload.get("target_id") == Some(&json!(TARGET_ID_1)) && false
+                event.inner.lock().event_extra_payload.get("target_id") == Some(&json!(TARGET_ID_1))
+                    && false
             })),
             ..FindOptions::default()
         },

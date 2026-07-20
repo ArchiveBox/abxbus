@@ -11,7 +11,7 @@ use std::{
 
 use abxbus::{
     base_event::{BaseEvent, EventResultOptions, EventWaitOptions},
-    event_bus::{DestroyOptions, EventBus, EventBusOptions},
+    event_bus::{DestroyOptions, EventBus, EventBusOptions, FilterOptions},
     event_result::{EventResult, EventResultStatus},
     types::{
         EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventStatus,
@@ -74,6 +74,7 @@ event! {
         event_type: "UserActionEvent",
     }
 }
+
 #[test]
 fn test_eventbus_exposes_locks_api_surface() {
     let bus = EventBus::new(Some("GateSurfaceBus".to_string()));
@@ -245,11 +246,13 @@ fn expected_base_event_json_keys(include_results: bool) -> BTreeSet<String> {
         "event_parent_id".to_string(),
         "event_path".to_string(),
         "event_pending_bus_count".to_string(),
+        "event_result_ttl".to_string(),
         "event_result_type".to_string(),
         "event_slow_timeout".to_string(),
         "event_started_at".to_string(),
         "event_status".to_string(),
         "event_timeout".to_string(),
+        "event_ttl".to_string(),
         "event_type".to_string(),
         "event_version".to_string(),
     ]);
@@ -267,6 +270,7 @@ fn expected_event_handler_json_keys() -> BTreeSet<String> {
         "handler_file_path".to_string(),
         "handler_name".to_string(),
         "handler_registered_at".to_string(),
+        "handler_result_ttl".to_string(),
         "handler_slow_timeout".to_string(),
         "handler_timeout".to_string(),
         "id".to_string(),
@@ -286,6 +290,7 @@ fn expected_event_result_json_keys() -> BTreeSet<String> {
         "handler_id".to_string(),
         "handler_name".to_string(),
         "handler_registered_at".to_string(),
+        "handler_result_ttl".to_string(),
         "handler_slow_timeout".to_string(),
         "handler_timeout".to_string(),
         "id".to_string(),
@@ -303,8 +308,10 @@ fn expected_event_bus_json_keys() -> BTreeSet<String> {
         "event_handler_detect_file_paths".to_string(),
         "event_handler_slow_timeout".to_string(),
         "event_history".to_string(),
+        "event_result_ttl".to_string(),
         "event_slow_timeout".to_string(),
         "event_timeout".to_string(),
+        "event_ttl".to_string(),
         "handlers".to_string(),
         "handlers_by_key".to_string(),
         "id".to_string(),
@@ -320,6 +327,239 @@ fn base_event(event_type: &str, payload: Value) -> Arc<BaseEvent> {
         panic!("test payload must be an object");
     };
     BaseEvent::new(event_type, payload)
+}
+
+#[test]
+fn test_dispatching_completed_status_event_skips_handlers_and_normalizes_completion() {
+    let bus = EventBus::new(Some("AlreadyCompletedStatusBus".to_string()));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let handler_calls = calls.clone();
+    let handler = bus.on_raw_sync("AlreadyCompletedDispatchEvent", "handler", move |_event| {
+        handler_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(json!("ran"))
+    });
+    let started_handler_calls = calls.clone();
+    let started_handler = bus.on_raw_sync(
+        "AlreadyCompletedDispatchEvent",
+        "started_handler",
+        move |_event| {
+            started_handler_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(json!("started"))
+        },
+    );
+    let event = base_event("AlreadyCompletedDispatchEvent", json!({"label": "status"}));
+    let pending_result =
+        EventResult::new(event.inner.lock().event_id.clone(), handler.clone(), None);
+    let mut started_result = EventResult::new(
+        event.inner.lock().event_id.clone(),
+        started_handler.clone(),
+        None,
+    );
+    let started_at = "2025-01-02T03:04:04.000000000Z".to_string();
+    started_result.status = EventResultStatus::Started;
+    started_result.started_at = Some(started_at.clone());
+    let provided_started_at = "2025-01-02T03:04:03.000000000Z".to_string();
+    let provided_completed_at = "2025-01-02T03:04:05.000000000Z".to_string();
+    {
+        let mut inner = event.inner.lock();
+        inner
+            .event_results
+            .insert(handler.id.clone(), pending_result);
+        inner
+            .event_results
+            .insert(started_handler.id.clone(), started_result);
+        inner.event_status = EventStatus::Completed;
+        inner.event_started_at = Some(provided_started_at.clone());
+        inner.event_completed_at = Some(provided_completed_at.clone());
+    }
+
+    let dispatched = bus.emit_base(event.clone());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert!(Arc::ptr_eq(&dispatched, &event));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let inner = event.inner.lock();
+    assert_eq!(inner.event_status, EventStatus::Completed);
+    assert_eq!(inner.event_started_at, Some(provided_started_at));
+    assert_eq!(inner.event_completed_at, Some(provided_completed_at));
+    assert_eq!(inner.event_path, vec![bus.label()]);
+    let result = inner
+        .event_results
+        .get(&handler.id)
+        .expect("pending event_result should be preserved");
+    assert_eq!(result.status, EventResultStatus::Pending);
+    assert!(result.completed_at.is_none());
+    assert!(result.result.is_none());
+    let started = inner
+        .event_results
+        .get(&started_handler.id)
+        .expect("started event_result should be preserved");
+    assert_eq!(started.status, EventResultStatus::Started);
+    assert_eq!(started.started_at, Some(started_at));
+    assert!(started.completed_at.is_none());
+    assert!(started.result.is_none());
+}
+
+#[test]
+fn test_dispatching_completed_at_event_skips_handlers_and_preserves_timestamp() {
+    let bus = EventBus::new(Some("AlreadyCompletedAtBus".to_string()));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let handler_calls = calls.clone();
+    let handler = bus.on_raw_sync(
+        "AlreadyCompletedAtDispatchEvent",
+        "handler",
+        move |_event| {
+            handler_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(json!("ran"))
+        },
+    );
+    let event = base_event(
+        "AlreadyCompletedAtDispatchEvent",
+        json!({"label": "timestamp"}),
+    );
+    let pending_result =
+        EventResult::new(event.inner.lock().event_id.clone(), handler.clone(), None);
+    let provided_started_at = "2025-01-02T03:04:04.000000000Z".to_string();
+    let provided_completed_at = "2025-01-02T03:04:05.000000000Z".to_string();
+    {
+        let mut inner = event.inner.lock();
+        inner
+            .event_results
+            .insert(handler.id.clone(), pending_result);
+        inner.event_started_at = Some(provided_started_at.clone());
+        inner.event_completed_at = Some(provided_completed_at.clone());
+    }
+
+    let dispatched = bus.emit_base(event.clone());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert!(Arc::ptr_eq(&dispatched, &event));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let inner = event.inner.lock();
+    assert_eq!(inner.event_status, EventStatus::Completed);
+    assert_eq!(inner.event_started_at, Some(provided_started_at));
+    assert_eq!(inner.event_completed_at, Some(provided_completed_at));
+    assert_eq!(inner.event_path, vec![bus.label()]);
+    let result = inner
+        .event_results
+        .get(&handler.id)
+        .expect("pending event_result should be preserved");
+    assert_eq!(result.status, EventResultStatus::Pending);
+    assert!(result.completed_at.is_none());
+    assert!(result.result.is_none());
+    drop(inner);
+
+    let fallback_completed_at = "2025-01-02T03:04:07.000000000Z".to_string();
+    let fallback_event = base_event(
+        "AlreadyCompletedAtDispatchEvent",
+        json!({"label": "timestamp-fallback"}),
+    );
+    {
+        let mut inner = fallback_event.inner.lock();
+        inner.event_completed_at = Some(fallback_completed_at.clone());
+    }
+
+    bus.emit_base(fallback_event.clone());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let inner = fallback_event.inner.lock();
+    assert_eq!(inner.event_status, EventStatus::Completed);
+    assert_eq!(inner.event_started_at, Some(fallback_completed_at.clone()));
+    assert_eq!(inner.event_completed_at, Some(fallback_completed_at));
+    assert_eq!(inner.event_path, vec![bus.label()]);
+}
+
+#[test]
+fn test_dispatching_completed_events_with_prior_paths_records_bus_once_and_skips_handlers() {
+    let bus = EventBus::new(Some("AlreadyCompletedPriorPathBus".to_string()));
+    let other_bus_label = "PriorCompletedBus#1234".to_string();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let handler_calls = calls.clone();
+    bus.on_raw_sync("AlreadyCompletedPriorPathEvent", "handler", move |_event| {
+        handler_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(json!("ran"))
+    });
+
+    let prior_other_bus_event = base_event(
+        "AlreadyCompletedPriorPathEvent",
+        json!({"label": "prior-other-bus"}),
+    );
+    {
+        let mut inner = prior_other_bus_event.inner.lock();
+        inner.event_path = vec![other_bus_label.clone()];
+        inner.event_started_at = Some("2025-01-02T03:04:04.000000000Z".to_string());
+        inner.event_completed_at = Some("2025-01-02T03:04:06.000000000Z".to_string());
+        inner.event_status = EventStatus::Completed;
+    }
+
+    bus.emit_base(prior_other_bus_event.clone());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    {
+        let inner = prior_other_bus_event.inner.lock();
+        assert_eq!(inner.event_status, EventStatus::Completed);
+        assert_eq!(
+            inner.event_started_at.as_deref(),
+            Some("2025-01-02T03:04:04.000000000Z")
+        );
+        assert_eq!(
+            inner.event_completed_at.as_deref(),
+            Some("2025-01-02T03:04:06.000000000Z")
+        );
+        assert_eq!(inner.event_path, vec![other_bus_label.clone(), bus.label()]);
+    }
+
+    let provided_started_at = "2025-01-02T03:04:04.000000000Z".to_string();
+    let provided_completed_at = "2025-01-02T03:04:05.000000000Z".to_string();
+    let prior_same_bus_event = base_event(
+        "AlreadyCompletedPriorPathEvent",
+        json!({"label": "prior-same-bus"}),
+    );
+    {
+        let mut inner = prior_same_bus_event.inner.lock();
+        inner.event_path = vec![other_bus_label.clone(), bus.label()];
+        inner.event_started_at = Some(provided_started_at.clone());
+        inner.event_completed_at = Some(provided_completed_at.clone());
+    }
+
+    bus.emit_base(prior_same_bus_event.clone());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let inner = prior_same_bus_event.inner.lock();
+    assert_eq!(inner.event_status, EventStatus::Completed);
+    assert_eq!(inner.event_started_at, Some(provided_started_at));
+    assert_eq!(inner.event_completed_at, Some(provided_completed_at));
+    assert_eq!(inner.event_path, vec![other_bus_label, bus.label()]);
+    drop(inner);
+
+    let history_size = bus.event_history_size();
+    bus.emit_base(prior_same_bus_event.clone());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(bus.event_history_size(), history_size);
+    let redispatched_event_id = prior_same_bus_event.inner.lock().event_id.clone();
+    assert_eq!(
+        block_on(bus.filter_with_options(
+            "AlreadyCompletedPriorPathEvent",
+            FilterOptions {
+                where_predicate: Some(Arc::new(move |event| {
+                    event.inner.lock().event_id == redispatched_event_id
+                })),
+                ..FilterOptions::default()
+            },
+        ))
+        .len(),
+        1
+    );
+    let inner = prior_same_bus_event.inner.lock();
+    assert_eq!(
+        inner.event_path,
+        vec!["PriorCompletedBus#1234".to_string(), bus.label()]
+    );
 }
 
 #[test]
@@ -803,7 +1043,10 @@ fn test_write_ahead_log_captures_all_events() {
         let event = runtime.get(event_id).expect("history event");
         let inner = event.inner.lock();
         assert_eq!(inner.event_type, "UserActionEvent");
-        assert_eq!(inner.event_extra_payload["action"], json!(format!("action_{index}")));
+        assert_eq!(
+            inner.event_extra_payload["action"],
+            json!(format!("action_{index}"))
+        );
         match inner.event_status {
             EventStatus::Completed => completed += 1,
             EventStatus::Pending => pending += 1,
@@ -1754,7 +1997,10 @@ fn test_event_version_defaults_and_overrides() {
     let restored = BaseEvent::from_json_value(dispatched.to_json_value());
     assert_eq!(restored.inner.lock().event_version, "1.2.3");
     assert_eq!(restored.inner.lock().event_type, "VersionedEvent");
-    assert_eq!(restored.inner.lock().event_extra_payload["data"], json!("queued"));
+    assert_eq!(
+        restored.inner.lock().event_extra_payload["data"],
+        json!("queued")
+    );
     bus.destroy();
 }
 
@@ -3132,7 +3378,7 @@ fn test_reset_creates_a_fresh_pending_event_for_cross_bus_dispatch() {
     assert_eq!(forwarded.inner.lock().event_status, EventStatus::Completed);
     assert_eq!(forwarded.inner.lock().event_results.len(), 1);
     let event_path = forwarded.inner.lock().event_path.clone();
-    assert!(event_path.iter().any(|path| path.starts_with("ResetBusA#")));
+    assert!(!event_path.iter().any(|path| path.starts_with("ResetBusA#")));
     assert!(event_path.iter().any(|path| path.starts_with("ResetBusB#")));
     bus_a.destroy();
     bus_b.destroy();
@@ -3278,6 +3524,8 @@ fn test_eventbus_model_dump_json_roundtrip_uses_id_keyed_structures() {
             event_handler_completion: EventHandlerCompletionMode::First,
             event_timeout: Some(0.0),
             event_slow_timeout: Some(34.0),
+            event_ttl: None,
+            event_result_ttl: None,
             event_handler_slow_timeout: Some(12.0),
             event_handler_detect_file_paths: false,
             max_handler_recursion_depth: 2,
@@ -3929,7 +4177,7 @@ mod folded_test_eventbus_edge_cases {
             &["hello".to_string()]
         );
         let event_path = forwarded.event_path.read();
-        assert!(event_path
+        assert!(!event_path
             .iter()
             .any(|path| path.starts_with("ResetCoverageBusA#")));
         assert!(event_path

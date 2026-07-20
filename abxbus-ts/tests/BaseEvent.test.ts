@@ -1412,6 +1412,15 @@ test('BaseEvent toJSON/fromJSON roundtrips runtime fields and event_results', as
   assert.equal(json.label, 'known-field')
   assert.deepEqual(json.future_unrecognized_field, { nested: ['kept'] })
   assert.equal('event_extra_payload' in json, false)
+  assert.equal('event_payload' in json, false)
+  assert.deepEqual(event.event_payload(), {
+    label: 'known-field',
+    future_unrecognized_field: { nested: ['kept'] },
+  })
+  event.event_payload()['label'] = 'mutated'
+  assert.equal(event.event_payload()['label'], 'known-field')
+  assert.equal('event_id' in event.event_payload(), false)
+  assert.equal('event_ttl' in event.event_payload(), false)
   assert.equal(json.event_status, 'completed')
   assert.equal(typeof json.event_created_at, 'string')
   assert.equal(typeof json.event_started_at, 'string')
@@ -1462,13 +1471,24 @@ test('BaseEvent reset returns a fresh pending event that can be redispatched', a
   bus_b.on(ResetEvent, (event) => `b:${event.label}`)
 
   const completed = await bus_a.emit(ResetEvent({ label: 'hello' })).now()
+  completed.event_parent_id = '018f8e40-1234-7000-8000-000000000401'
+  completed.event_emitted_by_handler_id = '018f8e40-1234-7000-8000-000000000402'
+  completed.event_blocks_parent_completion = true
   const fresh = completed.eventReset()
 
   assert.notEqual(fresh.event_id, completed.event_id)
+  assert.deepEqual(fresh.event_path, [])
+  assert.equal(fresh.event_parent_id, null)
+  assert.equal(fresh.event_emitted_by_handler_id, null)
+  assert.equal(fresh.event_blocks_parent_completion, false)
   assert.equal(fresh.event_status, 'pending')
+  assert.equal(fresh.event_created_at, completed.event_created_at)
   assert.equal(fresh.event_results.size, 0)
   assert.equal(fresh.event_started_at, null)
   assert.equal(fresh.event_completed_at, null)
+  assert.equal(fresh.event_pending_bus_count, 0)
+  assert.equal(fresh.event_type, 'BaseEventResetEvent')
+  assert.equal(fresh.label, 'hello')
 
   const forwarded = await bus_b.emit(fresh).now()
   assert.equal(forwarded.event_status, 'completed')
@@ -1476,9 +1496,77 @@ test('BaseEvent reset returns a fresh pending event that can be redispatched', a
     Array.from(forwarded.event_results.values()).some((result) => result.result === 'b:hello'),
     true
   )
+  assert.equal(
+    forwarded.event_path.some((entry) => entry.startsWith('BaseEventResetBusA#')),
+    false
+  )
+  assert.equal(
+    forwarded.event_path.some((entry) => entry.startsWith('BaseEventResetBusB#')),
+    true
+  )
 
   bus_a.destroy()
   bus_b.destroy()
+})
+
+test('BaseEvent eventReset options control ids status timestamps and results', async () => {
+  const ResetOptionsEvent = BaseEvent.extend('BaseEventResetOptionsEvent', {
+    label: z.string(),
+  })
+  const ResetOptionsChildEvent = BaseEvent.extend('BaseEventResetOptionsChildEvent', {
+    label: z.string(),
+  })
+
+  const bus = new EventBus('BaseEventResetOptionsBus')
+  bus.on(ResetOptionsChildEvent, (event) => `child:${event.label}`)
+  bus.on(ResetOptionsEvent, async (event) => {
+    await event.emit(ResetOptionsChildEvent({ label: `child:${event.label}` })).now()
+    return `done:${event.label}`
+  })
+
+  const completed = await bus.emit(ResetOptionsEvent({ label: 'hello' })).now()
+  const completed_child = completed.event_children[0]
+  assert.ok(completed_child)
+  completed.event_path = ['BaseEventResetOptionsSeedBus#1234']
+  completed.event_parent_id = '018f8e40-1234-7000-8000-000000000411'
+  completed.event_emitted_by_handler_id = '018f8e40-1234-7000-8000-000000000412'
+  completed.event_blocks_parent_completion = true
+  completed.event_pending_bus_count = 3
+  completed.event_created_at = '2025-01-02T03:04:05.000000000Z'
+  completed.event_started_at = '2025-01-02T03:04:06.000000000Z'
+  completed.event_completed_at = '2025-01-02T03:04:07.000000000Z'
+
+  const preserved = completed.eventReset({ ids: false, status: false, timestamps: false, results: false })
+
+  assert.equal(preserved.event_id, completed.event_id)
+  assert.deepEqual(preserved.event_path, completed.event_path)
+  assert.equal(preserved.event_parent_id, completed.event_parent_id)
+  assert.equal(preserved.event_emitted_by_handler_id, completed.event_emitted_by_handler_id)
+  assert.equal(preserved.event_blocks_parent_completion, true)
+  assert.equal(preserved.event_status, 'completed')
+  assert.equal(preserved.event_created_at, '2025-01-02T03:04:05.000000000Z')
+  assert.equal(preserved.event_started_at, '2025-01-02T03:04:06.000000000Z')
+  assert.equal(preserved.event_completed_at, '2025-01-02T03:04:07.000000000Z')
+  assert.deepEqual(Array.from(preserved.event_results.keys()), Array.from(completed.event_results.keys()))
+  const preserved_result = Array.from(preserved.event_results.values())[0]
+  assert.equal(preserved_result?.result, 'done:hello')
+  assert.deepEqual(
+    preserved_result?.event_children.map((child) => child.event_id),
+    [completed_child.event_id]
+  )
+  assert.deepEqual(
+    ((preserved.toJSON().event_results as Record<string, { event_children?: string[] }> | undefined) ?? {})[preserved_result!.handler_id]
+      ?.event_children,
+    [completed_child.event_id]
+  )
+  assert.equal(preserved.event_pending_bus_count, 0)
+
+  const redispatch = completed.eventReset({ ids: false, status: true, timestamps: false, results: true })
+  assert.equal(redispatch.event_status, 'pending')
+  assert.equal(redispatch.event_started_at, '2025-01-02T03:04:06.000000000Z')
+  assert.equal(redispatch.event_completed_at, null)
+
+  bus.destroy()
 })
 
 test('BaseEvent fromJSON preserves nullable parent/emitted metadata', () => {

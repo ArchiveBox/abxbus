@@ -8,7 +8,10 @@ use crate::types::{EventConcurrencyMode, EventHandlerCompletionMode, EventHandle
 use crate::{
     base_event::{BaseEvent as RawBaseEvent, BaseEventData},
     event_bus::EventBus,
-    event_handler::{EventHandler, EventHandlerOptions},
+    event_handler::{
+        validate_optional_seconds_at_least_minus_one, validate_optional_seconds_nonnegative,
+        EventHandler, EventHandlerOptions,
+    },
     event_result::EventResult,
 };
 
@@ -286,6 +289,8 @@ pub trait EventSpec: Send + Sync + 'static {
     const event_concurrency: Option<EventConcurrencyMode> = None;
     const event_handler_timeout: Option<f64> = None;
     const event_handler_slow_timeout: Option<f64> = None;
+    const event_ttl: Option<f64> = None;
+    const event_result_ttl: Option<f64> = None;
     const event_handler_concurrency: Option<EventHandlerConcurrencyMode> = None;
     const event_handler_completion: Option<EventHandlerCompletionMode> = None;
     const event_blocks_parent_completion: bool = false;
@@ -393,11 +398,29 @@ where
     let has_event_concurrency = payload_map.contains_key("event_concurrency");
     let has_event_handler_timeout = payload_map.contains_key("event_handler_timeout");
     let has_event_handler_slow_timeout = payload_map.contains_key("event_handler_slow_timeout");
+    let has_event_ttl = payload_map.contains_key("event_ttl");
+    let has_event_result_ttl = payload_map.contains_key("event_result_ttl");
     let has_event_handler_concurrency = payload_map.contains_key("event_handler_concurrency");
     let has_event_handler_completion = payload_map.contains_key("event_handler_completion");
     let has_event_blocks_parent_completion =
         payload_map.contains_key("event_blocks_parent_completion");
     let has_event_result_type = payload_map.contains_key("event_result_type");
+
+    validate_optional_seconds_at_least_minus_one("event_ttl", E::event_ttl)
+        .expect("event_ttl must be finite and >= -1 or None");
+    validate_optional_seconds_at_least_minus_one("event_result_ttl", E::event_result_ttl)
+        .expect("event_result_ttl must be finite and >= -1 or None");
+    validate_optional_seconds_nonnegative("event_timeout", E::event_timeout)
+        .expect("event_timeout must be finite and >= 0 or None");
+    validate_optional_seconds_nonnegative("event_slow_timeout", E::event_slow_timeout)
+        .expect("event_slow_timeout must be finite and >= 0 or None");
+    validate_optional_seconds_nonnegative("event_handler_timeout", E::event_handler_timeout)
+        .expect("event_handler_timeout must be finite and >= 0 or None");
+    validate_optional_seconds_nonnegative(
+        "event_handler_slow_timeout",
+        E::event_handler_slow_timeout,
+    )
+    .expect("event_handler_slow_timeout must be finite and >= 0 or None");
 
     let inner = RawBaseEvent::new(E::event_type, payload_map);
     {
@@ -419,6 +442,12 @@ where
         }
         if !has_event_handler_slow_timeout {
             event.event_handler_slow_timeout = E::event_handler_slow_timeout;
+        }
+        if !has_event_ttl {
+            event.event_ttl = E::event_ttl;
+        }
+        if !has_event_result_ttl {
+            event.event_result_ttl = E::event_result_ttl;
         }
         if !has_event_handler_concurrency {
             event.event_handler_concurrency = E::event_handler_concurrency;
@@ -451,6 +480,8 @@ where
     current.event_concurrency = updated.event_concurrency;
     current.event_handler_timeout = updated.event_handler_timeout;
     current.event_handler_slow_timeout = updated.event_handler_slow_timeout;
+    current.event_ttl = updated.event_ttl;
+    current.event_result_ttl = updated.event_result_ttl;
     current.event_handler_concurrency = updated.event_handler_concurrency;
     current.event_handler_completion = updated.event_handler_completion;
     current.event_blocks_parent_completion = updated.event_blocks_parent_completion;
@@ -483,6 +514,11 @@ pub fn payload_value_from_inner_event(event: &Arc<RawBaseEvent>) -> Value {
     payload.insert(
         "event_handler_slow_timeout".to_string(),
         json!(event.event_handler_slow_timeout),
+    );
+    payload.insert("event_ttl".to_string(), json!(event.event_ttl));
+    payload.insert(
+        "event_result_ttl".to_string(),
+        json!(event.event_result_ttl),
     );
     payload.insert(
         "event_handler_concurrency".to_string(),
@@ -642,6 +678,8 @@ macro_rules! event {
             event_concurrency[]
             event_handler_timeout[]
             event_handler_slow_timeout[]
+            event_ttl[]
+            event_result_ttl[]
             event_handler_concurrency[]
             event_handler_completion[]
             event_blocks_parent_completion[]
@@ -668,6 +706,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -690,6 +730,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -711,6 +753,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -733,6 +777,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -754,6 +800,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -776,6 +824,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -797,6 +847,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -819,6 +871,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -840,6 +894,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -862,6 +918,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -883,6 +941,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -905,6 +965,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -926,6 +988,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -948,6 +1012,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$next_mode]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -969,6 +1035,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -991,6 +1059,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$next_timeout]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -1012,6 +1082,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -1034,6 +1106,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$next_timeout]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -1055,6 +1129,102 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        event_ttl: $next_ttl:literal,
+        $($rest:tt)*
+    ) => {
+        $crate::_inner_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
+            result[$($result)*]
+            event_type[$($event_type)*]
+            event_version[$($event_version)*]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$next_ttl]
+            event_result_ttl[$($event_result_ttl)*]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        event_result_ttl: $next_ttl:literal,
+        $($rest:tt)*
+    ) => {
+        $crate::_inner_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
+            result[$($result)*]
+            event_type[$($event_type)*]
+            event_version[$($event_version)*]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$next_ttl]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -1077,6 +1247,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$next_mode]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -1098,6 +1270,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -1120,6 +1294,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$next_mode]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -1141,6 +1317,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -1163,6 +1341,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$next_blocks]
@@ -1184,6 +1364,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -1206,6 +1388,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -1227,6 +1411,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -1249,6 +1435,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -1270,6 +1458,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -1292,6 +1482,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -1313,6 +1505,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -1336,6 +1530,10 @@ macro_rules! _inner_event_parse {
             pub event_handler_timeout: Option<f64>,
             #[serde(default, skip_serializing_if = "Option::is_none")]
             pub event_handler_slow_timeout: Option<f64>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub event_ttl: Option<f64>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub event_result_ttl: Option<f64>,
             #[serde(default, skip_serializing_if = "Option::is_none")]
             pub event_handler_concurrency: Option<$crate::types::EventHandlerConcurrencyMode>,
             #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1382,6 +1580,8 @@ macro_rules! _inner_event_parse {
                     event_concurrency: None,
                     event_handler_timeout: None,
                     event_handler_slow_timeout: None,
+                    event_ttl: None,
+                    event_result_ttl: None,
                     event_handler_concurrency: None,
                     event_handler_completion: None,
                     event_blocks_parent_completion: false,
@@ -1415,6 +1615,8 @@ macro_rules! _inner_event_parse {
                 pub event_concurrency: $crate::typed::ModelField<Option<$crate::types::EventConcurrencyMode>, Option<$crate::types::EventConcurrencyMode>>,
                 pub event_handler_timeout: $crate::typed::ModelField<Option<f64>, Option<f64>>,
                 pub event_handler_slow_timeout: $crate::typed::ModelField<Option<f64>, Option<f64>>,
+                pub event_ttl: $crate::typed::ModelField<Option<f64>, Option<f64>>,
+                pub event_result_ttl: $crate::typed::ModelField<Option<f64>, Option<f64>>,
                 pub event_handler_concurrency: $crate::typed::ModelField<Option<$crate::types::EventHandlerConcurrencyMode>, Option<$crate::types::EventHandlerConcurrencyMode>>,
                 pub event_handler_completion: $crate::typed::ModelField<Option<$crate::types::EventHandlerCompletionMode>, Option<$crate::types::EventHandlerCompletionMode>>,
                 pub event_blocks_parent_completion: $crate::typed::ModelField<bool, bool>,
@@ -1434,6 +1636,8 @@ macro_rules! _inner_event_parse {
                         event_concurrency: $crate::typed::ModelField::new("event_concurrency", <$name as $crate::typed::EventSpec>::event_concurrency),
                         event_handler_timeout: $crate::typed::ModelField::new("event_handler_timeout", <$name as $crate::typed::EventSpec>::event_handler_timeout),
                         event_handler_slow_timeout: $crate::typed::ModelField::new("event_handler_slow_timeout", <$name as $crate::typed::EventSpec>::event_handler_slow_timeout),
+                        event_ttl: $crate::typed::ModelField::new("event_ttl", <$name as $crate::typed::EventSpec>::event_ttl),
+                        event_result_ttl: $crate::typed::ModelField::new("event_result_ttl", <$name as $crate::typed::EventSpec>::event_result_ttl),
                         event_handler_concurrency: $crate::typed::ModelField::new("event_handler_concurrency", <$name as $crate::typed::EventSpec>::event_handler_concurrency),
                         event_handler_completion: $crate::typed::ModelField::new("event_handler_completion", <$name as $crate::typed::EventSpec>::event_handler_completion),
                         event_blocks_parent_completion: $crate::typed::ModelField::new("event_blocks_parent_completion", <$name as $crate::typed::EventSpec>::event_blocks_parent_completion),
@@ -1480,6 +1684,10 @@ macro_rules! _inner_event_parse {
 
             pub fn to_json_value(&self) -> $crate::serde_json::Value {
                 $crate::typed::TypedEventObject::_inner_event(self).to_json_value()
+            }
+
+            pub fn event_payload(&self) -> $crate::serde_json::Map<String, $crate::serde_json::Value> {
+                $crate::typed::TypedEventObject::_inner_event(self).event_payload()
             }
 
             pub async fn now(&self) -> Result<Self, String> {
@@ -1541,8 +1749,12 @@ macro_rules! _inner_event_parse {
             }
 
             pub fn event_reset(&self) -> Self {
+                self.event_reset_with_options($crate::base_event::EventResetOptions::default())
+            }
+
+            pub fn event_reset_with_options(&self, options: $crate::base_event::EventResetOptions) -> Self {
                 <Self as $crate::typed::TypedEventObject>::_from_inner_event(
-                    $crate::typed::TypedEventObject::_inner_event(self).event_reset()
+                    $crate::typed::TypedEventObject::_inner_event(self).event_reset_with_options(options)
                 )
             }
 
@@ -1581,6 +1793,10 @@ macro_rules! _inner_event_parse {
                 $crate::_inner_event_optional_f64!($($event_handler_timeout)*);
             const event_handler_slow_timeout: Option<f64> =
                 $crate::_inner_event_optional_f64!($($event_handler_slow_timeout)*);
+            const event_ttl: Option<f64> =
+                $crate::_inner_event_optional_f64!($($event_ttl)*);
+            const event_result_ttl: Option<f64> =
+                $crate::_inner_event_optional_f64!($($event_result_ttl)*);
             const event_handler_concurrency: Option<$crate::types::EventHandlerConcurrencyMode> =
                 $crate::_inner_event_handler_concurrency!($($event_handler_concurrency)*);
             const event_handler_completion: Option<$crate::types::EventHandlerCompletionMode> =

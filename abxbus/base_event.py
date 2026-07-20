@@ -297,6 +297,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             raw_handler_file_path = payload.pop('handler_file_path', None)
             raw_handler_timeout = payload.pop('handler_timeout', None)
             raw_handler_slow_timeout = payload.pop('handler_slow_timeout', None)
+            raw_handler_result_ttl = payload.pop('handler_result_ttl', None)
             raw_handler_registered_at = payload.pop('handler_registered_at', None)
             raw_handler_event_pattern = payload.pop('handler_event_pattern', None)
             raw_eventbus_name = payload.pop('eventbus_name', None)
@@ -310,6 +311,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                     raw_handler_file_path,
                     raw_handler_timeout,
                     raw_handler_slow_timeout,
+                    raw_handler_result_ttl,
                     raw_handler_registered_at,
                     raw_handler_event_pattern,
                     raw_eventbus_name,
@@ -331,6 +333,8 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                     handler_payload['handler_timeout'] = raw_handler_timeout
                 if raw_handler_slow_timeout is not None:
                     handler_payload['handler_slow_timeout'] = raw_handler_slow_timeout
+                if raw_handler_result_ttl is not None:
+                    handler_payload['handler_result_ttl'] = raw_handler_result_ttl
                 if raw_handler_registered_at is not None:
                     handler_payload['handler_registered_at'] = raw_handler_registered_at
                 payload['handler'] = handler_payload
@@ -388,6 +392,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             'handler_file_path': handler.handler_file_path,
             'handler_timeout': handler.handler_timeout,
             'handler_slow_timeout': handler.handler_slow_timeout,
+            'handler_result_ttl': handler.handler_result_ttl,
             'handler_registered_at': monotonic_datetime(handler.handler_registered_at),
             'handler_event_pattern': handler.event_pattern,
             'eventbus_id': self.eventbus_id,
@@ -785,10 +790,10 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         description='Event type version tag, defaults to LIBRARY_VERSION env var or "0.0.1" if not overridden',
     )
     event_timeout: float | None = Field(
-        default=None, description='Timeout in seconds for event to finish processing (bus default applied at dispatch)'
+        ge=0, default=None, description='Timeout in seconds for event to finish processing (bus default applied at dispatch)'
     )
     event_slow_timeout: float | None = Field(
-        default=None, description='Optional per-event slow processing warning threshold in seconds'
+        ge=0, default=None, description='Optional per-event slow processing warning threshold in seconds'
     )
     event_concurrency: EventConcurrencyMode | None = Field(
         default=None,
@@ -798,9 +803,15 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             'None defers to the bus default.'
         ),
     )
-    event_handler_timeout: float | None = Field(default=None, description='Optional per-event handler timeout cap in seconds')
+    event_handler_timeout: float | None = Field(
+        default=None, ge=0, description='Optional per-event handler timeout cap in seconds'
+    )
     event_handler_slow_timeout: float | None = Field(
-        default=None, description='Optional per-event slow handler warning threshold in seconds'
+        default=None, ge=0, description='Optional per-event slow handler warning threshold in seconds'
+    )
+    event_ttl: float | None = Field(default=None, ge=-1, description='Optional seconds to keep completed events in bus history')
+    event_result_ttl: float | None = Field(
+        default=None, ge=-1, description='Optional seconds to keep completed event results after event completion'
     )
     event_handler_concurrency: EventHandlerConcurrencyMode | None = Field(
         default=None,
@@ -883,6 +894,23 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     # Captured when emit() is called, used when executing handlers via ctx.run()
     _event_dispatch_context: contextvars.Context | None = PrivateAttr(default=None)
 
+    def model_post_init(self, __context: Any) -> None:
+        for field_name in ('event_ttl', 'event_result_ttl'):
+            value = getattr(self, field_name)
+            if value is not None:
+                if value < -1:
+                    raise ValueError(f'{field_name} must be >= -1 or None')
+                continue
+            field_info = self.__class__.model_fields.get(field_name)
+            class_default = getattr(field_info, 'default', None) if field_info is not None else None
+            if class_default is not None:
+                # Pydantic validates normal init values via Field(ge=-1), but
+                # inherited subclass defaults can be copied here after model
+                # validation because lifecycle assignment validation is off.
+                if class_default < -1:
+                    raise ValueError(f'{field_name} must be >= -1 or None')
+                setattr(self, field_name, class_default)
+
     def __hash__(self) -> int:
         """Make events hashable using their unique event_id"""
         return hash(self.event_id)
@@ -903,6 +931,18 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
         bus_hint = self.event_path[-1] if self.event_path else '?'
         return f'{bus_hint}▶ {self.event_type}#{self.event_id[-4:]} {icon}'
+
+    def event_payload(self) -> dict[str, Any]:
+        """Return a fresh flat payload dict containing only non-event_* fields."""
+        base_event_fields = BaseEvent.model_fields
+        payload = {
+            field_name: getattr(self, field_name)
+            for field_name in self.__class__.model_fields
+            if field_name not in base_event_fields and not field_name.startswith('event_')
+        }
+        if isinstance(self.model_extra, dict):
+            payload.update({key: value for key, value in self.model_extra.items() if not key.startswith('event_')})
+        return payload
 
     def _remove_self_from_queue(self, bus: 'EventBus') -> bool:
         """Remove this event from the bus's queue if present. Returns True if removed."""
@@ -970,8 +1010,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                         # event lock instead of waiting behind unrelated queued/running work.
                         bus.processing_event_ids.add(self.event_id)
                         try:
-                            if self.event_status != EventStatus.COMPLETED:
-                                await bus._process_event(self)  # pyright: ignore[reportPrivateUsage]
+                            await bus._process_event(self)  # pyright: ignore[reportPrivateUsage]
                         finally:
                             await bus._finalize_local_event_processing(self)  # pyright: ignore[reportPrivateUsage]
                             bus.mark_pending_queue_task_done()
@@ -1273,7 +1312,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
     def _mark_started(self, started_at: str | datetime | None = None) -> None:
         """Mark event runtime state as started, preserving the earliest start timestamp."""
-        if self.event_status == EventStatus.COMPLETED:
+        if self._should_skip_handler_execution():
             return
 
         if isinstance(started_at, datetime):
@@ -1484,12 +1523,15 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
     def _is_unattached_pending_event(self) -> bool:
         return (
-            self.event_status != EventStatus.COMPLETED
+            not self._should_skip_handler_execution()
             and not self._event_is_complete_flag
             and not self.event_path
             and self.event_pending_bus_count == 0
             and not self.event_results
         )
+
+    def _should_skip_handler_execution(self) -> bool:
+        return self.event_status == EventStatus.COMPLETED or self.event_completed_at is not None
 
     def _collect_handler_errors(
         self,
@@ -1696,6 +1738,17 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     def _mark_completed(self, current_bus: 'EventBus | None' = None) -> None:
         """Check if all handlers are done and signal completion"""
         completed_signal = self._event_completed_signal
+        if self._should_skip_handler_execution():
+            self.event_completed_at = self.event_completed_at or monotonic_datetime()
+            if self.event_started_at is None:
+                self.event_started_at = self.event_completed_at
+            self.event_status = EventStatus.COMPLETED
+            self._event_is_complete_flag = True
+            if completed_signal is not None:
+                completed_signal.set()
+            self._event_dispatch_context = None
+            return
+
         if completed_signal is not None and completed_signal.is_set():
             self._event_is_complete_flag = True
             if self.event_completed_at is None:
@@ -1754,13 +1807,36 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         # Clear dispatch context to avoid memory leaks (it holds references to ContextVars)
         self._event_dispatch_context = None
 
-    def _mark_pending(self) -> Self:
-        """Reset mutable runtime state so this event can be dispatched again as pending."""
-        self.event_status = EventStatus.PENDING
-        self.event_started_at = None
-        self._event_is_complete_flag = False
-        self.event_completed_at = None
-        self.event_results.clear()
+    def _reset_for_dispatch(
+        self,
+        *,
+        ids: bool = True,
+        status: bool = True,
+        timestamps: bool = True,
+        results: bool = True,
+    ) -> Self:
+        """Reset selected lifecycle fields on a copied event so it can be dispatched again."""
+        if ids:
+            self.event_id = uuid7str()
+            self.event_path = []
+            self.event_parent_id = None
+            self.event_emitted_by_handler_id = None
+            self.event_blocks_parent_completion = False
+        if status:
+            self.event_status = EventStatus.PENDING
+            self.event_completed_at = None
+            self._event_is_complete_flag = False
+        else:
+            self._event_is_complete_flag = self.event_status == EventStatus.COMPLETED
+        if timestamps:
+            self.event_started_at = None
+            self.event_completed_at = None
+        if results:
+            self.event_results.clear()
+        elif ids:
+            for result in self.event_results.values():
+                result.event_id = self.event_id
+        self.event_pending_bus_count = 0
         self._lock_for_event_handler = None
         self._event_dispatch_context = None
         try:
@@ -1770,11 +1846,21 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             self._event_completed_signal = None
         return self
 
-    def event_reset(self) -> Self:
-        """Return a fresh copy of this event with pending runtime state."""
+    def event_reset(
+        self,
+        *,
+        ids: bool = True,
+        status: bool = True,
+        timestamps: bool = True,
+        results: bool = True,
+    ) -> Self:
+        """Return a copy with selected lifecycle fields reset for redispatch."""
         fresh_event = self.__class__.model_validate(self.model_dump(mode='python'))
-        fresh_event.event_id = uuid7str()
-        return fresh_event._mark_pending()
+        if not results:
+            fresh_event.event_results = EventResultsDict(
+                {handler_id: result.model_copy(deep=True) for handler_id, result in self.event_results.items()}
+            )
+        return fresh_event._reset_for_dispatch(ids=ids, status=status, timestamps=timestamps, results=results)
 
     def _get_handler_lock(self) -> 'ReentrantLock | None':
         return self._lock_for_event_handler

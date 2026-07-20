@@ -1444,14 +1444,16 @@ completed_event = await event.wait()
 first_result_event = await event.wait(first_result=True)
 ```
 
-##### `reset() -> Self`
+##### `event_reset(ids=True, status=True, timestamps=True, results=True) -> Self`
 
 Return a fresh event copy with runtime processing state reset back to pending.
 
 - Intended for re-emitting an already-seen event as a fresh event (for example after crossing a bridge boundary).
 - The original event object is not mutated, it returns a new copy with some fields reset.
-- A new UUIDv7 `event_id` is generated for the returned copy (to allow it to process as a separate event it needs a new unique uuid)
-- Runtime completion state is cleared (`event_results`, completion signal/flags, processed timestamp, emit context).
+- By default, a new UUIDv7 `event_id` is generated and routing lineage is cleared (`event_path`, parent/emitting handler ids, parent-completion blocking).
+- By default, lifecycle status and processing timestamps (`event_started_at`, `event_completed_at`) are reset to pending, handler results are cleared, and runtime attachment state is cleared. `event_created_at` remains the original creation timestamp.
+- Pass `ids=False`, `status=False`, `timestamps=False`, or `results=False` to preserve that specific field group on the returned copy.
+- Older snippets may refer to this operation as `reset()`; update those callers to `event_reset(...)` (or the language-native `eventReset` / `EventReset` spelling).
 
 ##### `event_result_update(handler, eventbus: EventBus | None=None, **kwargs) -> EventResult`
 

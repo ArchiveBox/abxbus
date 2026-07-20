@@ -538,16 +538,17 @@ eventResultUpdate(
   - `const seeded = event.eventResultUpdate(handler_entry, { eventbus: bus, status: 'pending' })`
   - `seeded.update({ status: 'completed', result: 'seeded' })`
 
-#### `reset()`
+#### `eventReset(options?)`
 
 ```ts
-reset(): this
+eventReset(options?: { ids?: boolean; status?: boolean; timestamps?: boolean; results?: boolean }): this
 ```
 
 - Returns a fresh event copy with runtime state reset to pending so it can be emitted again safely.
 - Original event object is unchanged.
-- Generates a new UUIDv7 `event_id` for the returned copy.
-- Clears runtime completion state (`event_results`, status/timestamps, captured async context, done signal, local bus binding).
+- By default, generates a new UUIDv7 `event_id` and clears routing lineage (`event_path`, parent/emitting handler ids, parent-completion blocking).
+- By default, resets lifecycle status and processing timestamps (`event_started_at`, `event_completed_at`) to pending, clears handler results, and clears runtime attachment state. `event_created_at` remains the original creation timestamp.
+- Set `ids`, `status`, `timestamps`, or `results` to `false` to preserve that specific field group on the returned copy.
 
 #### `toString()` / `toJSON()` / `fromJSON()`
 
