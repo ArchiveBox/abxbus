@@ -1,6 +1,6 @@
 [package]
 name = "abxbus"
-version = "2.5.32"
+version = "2.5.33"
 edition = "2021"
 license = "MIT"
 description = "Rust implementation of the abxbus Event Bus library"
