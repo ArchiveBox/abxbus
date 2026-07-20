@@ -13,13 +13,16 @@ on:
       - main
       - stable
       - 'releases/**'
-    tags:
-      - '*'
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint_py:
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main' || startsWith(github.event.head_commit.message, 'release:')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +48,7 @@ jobs:
         run: uv run pytest -vv --tb=long README.md AGENTS.md skills docs
 
   find_py_tests:
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main' || startsWith(github.event.head_commit.message, 'release:')
     runs-on: ubuntu-latest
     outputs:
       PY_TASKS: ${{ steps.lsgrep.outputs.PY_TASKS }}
@@ -269,6 +273,7 @@ jobs:
           echo "[Download Python HTML coverage artifact (coverage-report)](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts/${{ steps.upload_py_coverage_report.outputs.artifact-id }})" >> "$GITHUB_STEP_SUMMARY"
 
   perf:
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main' || startsWith(github.event.head_commit.message, 'release:')
     runs-on: ubuntu-latest
     outputs:
       perf_stats: ${{ steps.export_perf.outputs.perf_stats }}

@@ -6,13 +6,16 @@ on:
       - main
       - stable
       - 'releases/**'
-    tags:
-      - '*'
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint_ts:
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main' || startsWith(github.event.head_commit.message, 'release:')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -36,6 +39,7 @@ jobs:
       - run: pnpm run typecheck
 
   find_ts_tests:
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main' || startsWith(github.event.head_commit.message, 'release:')
     runs-on: ubuntu-latest
     outputs:
       TS_TASKS: ${{ steps.lsgrep.outputs.TS_TASKS }}
@@ -330,6 +334,7 @@ jobs:
           echo "[Download TypeScript HTML coverage artifact (ts-coverage-report)](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts/${{ steps.upload_ts_coverage_report.outputs.artifact-id }})" >> "$GITHUB_STEP_SUMMARY"
 
   perf:
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main' || startsWith(github.event.head_commit.message, 'release:')
     runs-on: ubuntu-latest
     outputs:
       perf_stats: ${{ steps.export_perf.outputs.perf_stats }}

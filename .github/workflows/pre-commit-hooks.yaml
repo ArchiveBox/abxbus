@@ -6,13 +6,16 @@ on:
       - main
       - stable
       - 'releases/**'
-    tags:
-      - '*'
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   pre-commit-hooks:
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main' || startsWith(github.event.head_commit.message, 'release:')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
