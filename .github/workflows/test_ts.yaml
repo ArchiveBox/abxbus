@@ -142,17 +142,18 @@ jobs:
         if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: cmake clang-18
-          version: native-typescript-clang-tools-v1
+          packages: cmake gcc-14 g++-14
+          version: native-typescript-gcc14-tools-v1
           execute_install_scripts: true
 
       - name: Configure native TypeScript build tools
         if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')
         run: |
-          echo "CC=clang-18" >> "$GITHUB_ENV"
-          echo "CXX=clang++-18" >> "$GITHUB_ENV"
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
           cmake --version
-          clang++-18 --version
+          gcc-14 --version
+          g++-14 --version
 
       - run: pnpm install --frozen-lockfile
 
