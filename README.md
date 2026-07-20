@@ -1775,8 +1775,9 @@ uv sync --dev --all-extras --no-extra tachyon
 Recommended once per clone:
 
 ```bash
-prek install           # install pre-commit hooks
-prek run --all-files   # run pre-commit hooks on all files manually
+git config --local core.hooksPath .git/hooks
+uv run prek install           # install pre-commit hooks
+uv run prek run --all-files   # run pre-commit hooks on all files manually
 ```
 
 ```bash
@@ -1786,9 +1787,9 @@ uv run ruff format --check
 uv run pyright
 ```
 
-```console
+```bash
 # Run all tests
-uv run pytest -vxs --full-trace tests/
+uv run pytest -vs --full-trace tests/
 
 # Run specific test file
 uv run pytest tests/test_eventbus.py
