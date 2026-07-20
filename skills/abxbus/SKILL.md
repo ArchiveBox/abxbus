@@ -21,8 +21,8 @@ description: Use this when working on typed events, event bus execution, event h
 
 ## Development Setup
 
-```console
-uv sync
+```bash
+uv sync --dev --all-extras --no-extra tachyon
 uv run pytest --collect-only -q
 ```
 
@@ -59,10 +59,17 @@ asyncio.run(main())
 
 ## Verification
 
-```console
-uv run pytest tests -q
-uv run pytest tests/test_event_bus.py -q
+```bash
+uv run pytest -n auto --dist loadfile \
+    --ignore=tests/test_cross_runtime_roundtrip.py \
+    --ignore=tests/test_eventbus_performance.py \
+    tests -q
+uv run pytest tests/test_eventbus.py -q
 uv run prek run --all-files
 ```
+
+Dedicated CI jobs run `tests/test_cross_runtime_roundtrip.py` with all required
+native tools and bridge services, and `tests/test_eventbus_performance.py` with
+isolated performance thresholds.
 
 Keep event ordering and replay behavior deterministic.

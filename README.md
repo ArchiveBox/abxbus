@@ -52,8 +52,12 @@ It's async native, has proper automatic nested event tracking, and powerful conc
 
 Install abxbus and get started with a simple event-driven application:
 
-```console
-pip install abxbus      # see ./abxbus-ts/README.md for JS instructions
+```bash
+project_dir="$(mktemp -d)"
+trap 'rm -rf "$project_dir"' EXIT
+uv init --bare "$project_dir"
+uv add --project "$project_dir" --editable "$PWD"  # see ./abxbus-ts/README.md for JS instructions
+uv run --project "$project_dir" python -c 'import abxbus'
 ```
 
 ```python
@@ -1776,7 +1780,7 @@ Recommended once per clone:
 
 ```bash
 git config --local core.hooksPath .git/hooks
-uv run prek install           # install pre-commit hooks
+env -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 uv run prek install
 uv run prek run --all-files   # run pre-commit hooks on all files manually
 ```
 
@@ -1788,12 +1792,19 @@ uv run pyright
 ```
 
 ```bash
-# Run all tests
-uv run pytest -vs --full-trace tests/
+# Run the portable Python suite in parallel
+uv run pytest -vs -n auto --dist loadfile --full-trace \
+    --ignore=tests/test_cross_runtime_roundtrip.py \
+    --ignore=tests/test_eventbus_performance.py \
+    tests/
 
 # Run specific test file
 uv run pytest tests/test_eventbus.py
 ```
+
+Mandatory dedicated CI jobs run `tests/test_cross_runtime_roundtrip.py` with its
+native tools and bridge services, and `tests/test_eventbus_performance.py` with
+isolated performance thresholds.
 
 The cross-runtime performance commands are listed in [Performance](#-performance).
 Run `./test.sh` for the entire lint, test, example, and optional performance suite;
