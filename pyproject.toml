@@ -51,7 +51,6 @@ NPM = "https://www.npmjs.com/package/abxbus"
 
 [dependency-groups]
 dev = [
-    "abxpkg>=1.11.266 ; python_version >= '3.12'",
     "ruff>=0.15.12",
     "build>=1.5.0",
     "pytest>=8.3.3,<9",  # pytest-codeblocks 0.17.0 still uses the pre-pytest-9 collect hook signature.

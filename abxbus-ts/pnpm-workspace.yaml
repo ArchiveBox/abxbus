@@ -1,3 +1,5 @@
+autoInstallPeers: false
+
 overrides:
   flatted: 3.4.2
   tar: 7.5.16

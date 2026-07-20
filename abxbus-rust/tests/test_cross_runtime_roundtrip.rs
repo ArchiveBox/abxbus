@@ -120,9 +120,7 @@ fn run_go_roundtrip(mode: &str, payload: &Value) -> Value {
     )
     .expect("write input payload");
 
-    let go_binary = env::var("ABXBUS_GO_BIN")
-        .expect("ABXBUS_GO_BIN must be exported by abxpkg before running cross-runtime tests");
-    let output = Command::new(go_binary)
+    let output = Command::new("go")
         .args([
             "run",
             "./tests/roundtrip_cli",

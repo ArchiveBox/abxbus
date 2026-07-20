@@ -1747,9 +1747,9 @@ The raw callable is stored on `handler`, but is excluded from JSON serialization
 
 ```bash
 uv run tests/performance_runtime.py --no-json
-uv run abxpkg run --install --binproviders=pnpm pnpm --dir abxbus-ts run perf:node
-uv run abxpkg run --install cargo -- test --manifest-path abxbus-rust/Cargo.toml --release --test test_eventbus_performance -- --nocapture
-(cd abxbus-go && uv run --project .. abxpkg run --install go -- test ./tests -run TestPerformance -count=1 -timeout=180s -v)
+pnpm --dir abxbus-ts run perf:node
+cargo test --manifest-path abxbus-rust/Cargo.toml --release --test test_eventbus_performance -- --nocapture
+(cd abxbus-go && go test ./tests -run TestPerformance -count=1 -timeout=180s -v)
 ```
 
 | Runtime | 1 bus x 50k events x 1 handler   | 500 buses x 100 events x 1 handler | 1 bus x 1 event x 50k parallel handlers | 1 bus x 50k events x 50k one-off handlers | Worst case (N buses x N events x N handlers) |
@@ -1774,13 +1774,13 @@ Set up the python development environment using `uv`:
 ```bash
 # From an abxbus checkout, install all development dependencies.
 uv sync --dev --all-extras --no-extra tachyon
-CI=true uv run abxpkg run --install --binproviders=pnpm pnpm --dir abxbus-ts install --frozen-lockfile
+pnpm --dir abxbus-ts install --frozen-lockfile
 ```
 
 Recommended once per clone:
 
 ```bash
-git config --local core.hooksPath .git/hooks
+git config --local core.hooksPath "$(git rev-parse --git-dir)/hooks"
 env -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 uv run prek install
 env -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 uv run prek run --all-files
 ```

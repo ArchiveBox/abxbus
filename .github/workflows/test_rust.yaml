@@ -84,39 +84,30 @@ jobs:
             exit 1
           fi
 
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-
-      - name: Resolve Rust test runtimes with abxpkg
-        working-directory: .
-        run: |
-          sections=(rust_binary)
-          if [[ "${{ matrix.task.kind }}" == "test" && "${{ matrix.task.name }}" == "test_cross_runtime_roundtrip" ]]; then
-            sections+=(go_binary)
-          fi
-          eval "$(tests/resolve_binaries.sh "${sections[@]}")"
-          while IFS= read -r name; do
-            printf '%s=%s\n' "$name" "${!name}" >> "$GITHUB_ENV"
-          done < <(compgen -A variable ABXBUS_)
-          printf '%s\n' "$(dirname "$ABXBUS_CARGO_BIN")" >> "$GITHUB_PATH"
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: abxbus-rust -> target
 
+      - name: Set up Go for cross-runtime roundtrip tests
+        if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: abxbus-go/go.mod
+          cache: true
+          cache-dependency-path: abxbus-go/go.sum
+
       - name: Run Rust library tests
         if: matrix.task.kind == 'lib'
-        run: |
-          "$ABXBUS_CARGO_BIN" test --locked --all-features --lib -- --nocapture
+        run: cargo test --locked --all-features --lib -- --nocapture
 
       - name: Run Rust integration test
         if: matrix.task.kind == 'test'
-        run: |
-          "$ABXBUS_CARGO_BIN" test --locked --all-features --test ${{ matrix.task.name }} -- --nocapture
+        run: cargo test --locked --all-features --test ${{ matrix.task.name }} -- --nocapture
 
       - name: Run Rust binary tests
         if: matrix.task.kind == 'bin'
-        run: |
-          "$ABXBUS_CARGO_BIN" test --locked --all-features --bin ${{ matrix.task.name }} -- --nocapture
+        run: cargo test --locked --all-features --bin ${{ matrix.task.name }} -- --nocapture

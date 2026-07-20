@@ -185,14 +185,13 @@ uv venv --allow-existing "$ROOT_DIR/.venv"
 source "$ROOT_DIR/.venv/bin/activate"
 ensure_ldap_build_deps
 sync_workspace
-eval "$("$ROOT_DIR/abxbus/tests/resolve_binaries.sh" node_binary)"
 echo
 echo
 echo "[√] Monorepo setup complete, cloned and pulled: ${REPO_NAMES[*]}"
 echo "    MONOREPO_ROOT=$ROOT_DIR"
 echo "    VIRTUAL_ENV=$VIRTUAL_ENV"
 echo "    PYTHON_BIN=$VIRTUAL_ENV/bin/python"
-echo "    NODE_BIN=$ABXBUS_NODE_BIN"
+echo "    NODE_BIN=$(which node)"
 echo
 echo "TIPS:"
 echo " - Always use 'uv run ...' within each subrepo, never in the root & never run 'python ...' directly"

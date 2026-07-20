@@ -57,6 +57,7 @@ asyncio.run(main())
 ## Basic Usage
 
 ```bash
+uv run pytest -n auto --dist loadfile tests -q
 uv run pytest tests/test_eventbus.py -q
 env -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 uv run prek run --all-files
 ```

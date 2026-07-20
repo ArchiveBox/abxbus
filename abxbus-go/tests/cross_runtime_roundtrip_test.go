@@ -20,31 +20,6 @@ import (
 
 var schemaAssertionEventID atomic.Uint64
 
-func requiredBinary(t *testing.T, envKey string) string {
-	t.Helper()
-	path := os.Getenv(envKey)
-	if path == "" {
-		t.Fatalf("%s must be exported by abxpkg before running cross-runtime tests", envKey)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("%s does not point to a file: %v", envKey, err)
-	}
-	if info.Mode()&0o111 == 0 {
-		t.Fatalf("%s is not executable: %s", envKey, path)
-	}
-	return path
-}
-
-func requiredEnv(t *testing.T, envKey string) string {
-	t.Helper()
-	value := os.Getenv(envKey)
-	if value == "" {
-		t.Fatalf("%s must be exported by the abxpkg resolver", envKey)
-	}
-	return value
-}
-
 func TestGoRoundtripCLIPreservesEventJSONShape(t *testing.T) {
 	tempDir := t.TempDir()
 	inputPath := filepath.Join(tempDir, "events.json")
@@ -78,7 +53,7 @@ func TestGoRoundtripCLIPreservesEventJSONShape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command(requiredBinary(t, "ABXBUS_GO_BIN"), "run", "./roundtrip_cli", "events", inputPath, outputPath)
+	cmd := exec.Command("go", "run", "./roundtrip_cli", "events", inputPath, outputPath)
 	cmd.Dir = "."
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go roundtrip CLI failed: %v\n%s", err, string(output))
@@ -193,18 +168,17 @@ func runRuntimeRoundtrip(t *testing.T, runtime string, mode string, payload any)
 	var cmd *exec.Cmd
 	switch runtime {
 	case "go":
-		cmd = exec.Command(requiredBinary(t, "ABXBUS_GO_BIN"), "run", "./tests/roundtrip_cli", mode, inputPath, outputPath)
+		cmd = exec.Command("go", "run", "./tests/roundtrip_cli", mode, inputPath, outputPath)
 		cmd.Dir = filepath.Join(repoRoot, "abxbus-go")
 	case "python":
-		cmd = exec.Command(requiredBinary(t, "ABXBUS_PYTHON_BIN"), "-c", pythonRoundtripScript, mode, inputPath, outputPath)
+		cmd = exec.Command("uv", "run", "python", "-c", pythonRoundtripScript, mode, inputPath, outputPath)
 		cmd.Dir = repoRoot
-		cmd.Env = append(os.Environ(), "PYTHONPATH="+requiredEnv(t, "ABXBUS_PYTHONPATH"))
 	case "ts":
-		cmd = exec.Command(requiredBinary(t, "ABXBUS_NODE_BIN"), "--import", "tsx", "-e", tsRoundtripScript, mode, inputPath, outputPath)
-		cmd.Dir = filepath.Join(repoRoot, "abxbus-ts")
+		cmd = exec.Command("pnpm", "--dir", filepath.Join(repoRoot, "abxbus-ts"), "exec", "node", "--import", "tsx", "-e", tsRoundtripScript, mode, inputPath, outputPath)
+		cmd.Dir = repoRoot
 	case "rust":
 		rustRoot := filepath.Join(repoRoot, "abxbus-rust")
-		cmd = exec.Command(requiredBinary(t, "ABXBUS_CARGO_BIN"), "run", "--quiet", "--manifest-path", filepath.Join(rustRoot, "Cargo.toml"), "--target-dir", filepath.Join(tempDir, "rust-target"), "--bin", "abxbus-rust-roundtrip", "--", mode, inputPath, outputPath)
+		cmd = exec.Command("cargo", "run", "--quiet", "--manifest-path", filepath.Join(rustRoot, "Cargo.toml"), "--target-dir", filepath.Join(tempDir, "rust-target"), "--bin", "abxbus-rust-roundtrip", "--", mode, inputPath, outputPath)
 		cmd.Dir = repoRoot
 	default:
 		t.Fatalf("unknown runtime %q", runtime)
@@ -887,7 +861,7 @@ type bridgeWorkerProcess struct {
 
 func startBridgeWorker(t *testing.T, configPath string) *bridgeWorkerProcess {
 	t.Helper()
-	cmd := exec.Command(requiredBinary(t, "ABXBUS_GO_BIN"), "run", "./roundtrip_cli", "jsonl-listener", configPath)
+	cmd := exec.Command("go", "run", "./roundtrip_cli", "jsonl-listener", configPath)
 	worker := &bridgeWorkerProcess{cmd: cmd, done: make(chan error, 1)}
 	cmd.Stdout = &worker.stdout
 	cmd.Stderr = &worker.stderr

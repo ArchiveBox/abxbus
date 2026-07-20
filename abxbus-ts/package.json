@@ -78,7 +78,6 @@
     "@opentelemetry/exporter-trace-otlp-http": "^0.217.0",
     "@opentelemetry/resources": "^2.7.1",
     "@opentelemetry/sdk-trace-base": "^2.7.1",
-    "@tachyon-ipc/core": "^0.5.0",
     "@types/node": "^25.6.1",
     "@typescript-eslint/eslint-plugin": "^8.59.2",
     "@typescript-eslint/parser": "^8.59.2",
