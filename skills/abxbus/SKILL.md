@@ -29,12 +29,16 @@ uv run pytest --collect-only -q
 ## User-Facing Setup
 
 ```bash
-uv add abxbus
+project_dir="$(mktemp -d)"
+trap 'rm -rf "$project_dir"' EXIT
+uv init --bare "$project_dir"
+uv add --project "$project_dir" abxbus
 ```
 
 ## Basic Usage
 
 ```python
+import asyncio
 from abxbus import EventBus, BaseEvent
 
 class UserEvent(BaseEvent[str]):
@@ -43,9 +47,14 @@ class UserEvent(BaseEvent[str]):
 async def handle_user(event: UserEvent) -> str:
     return event.username
 
-bus = EventBus()
-bus.on(UserEvent, handle_user)
-result = await bus.emit(UserEvent(username="alice")).result()
+async def main():
+    bus = EventBus()
+    bus.on(UserEvent, handle_user)
+    event = await bus.emit(UserEvent(username="alice")).now()
+    assert await event.event_result() == "alice"
+    await bus.destroy()
+
+asyncio.run(main())
 ```
 
 ## Verification

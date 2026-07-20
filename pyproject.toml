@@ -36,6 +36,9 @@ bridges = [
     "nats-py>=2.14.0",
     "redis>=7.4.0",
 ]
+otel = [
+    "opentelemetry-api>=1.44.0",
+]
 
 [project.urls]
 Homepage = "https://abxbus.archivebox.io"
