@@ -48,20 +48,20 @@ repos:
         pass_filenames: false
       - id: ts-prettier
         name: ts-prettier
-        entry: pnpm --dir abxbus-ts run prettier
+        entry: uv run abxpkg run --install --binproviders=pnpm pnpm --dir abxbus-ts run prettier
         language: system
         files: ^abxbus-ts/
         exclude: \.sh$
         pass_filenames: false
       - id: ts-eslint
         name: ts-eslint
-        entry: pnpm --dir abxbus-ts run eslint
+        entry: uv run abxpkg run --install --binproviders=pnpm pnpm --dir abxbus-ts run eslint
         language: system
         files: ^abxbus-ts/.*\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$
         pass_filenames: false
       - id: ts-typecheck
         name: ts-typecheck
-        entry: pnpm --dir abxbus-ts run typecheck
+        entry: uv run abxpkg run --install --binproviders=pnpm pnpm --dir abxbus-ts run typecheck
         language: system
         files: ^abxbus-ts/.*\.(ts|tsx|mts|cts)$
         pass_filenames: false

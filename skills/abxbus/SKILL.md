@@ -61,10 +61,6 @@ asyncio.run(main())
 ## Verification
 
 ```bash
-uv run pytest -n auto --dist loadfile \
-    --ignore=tests/test_cross_runtime_roundtrip.py \
-    --ignore=tests/test_eventbus_performance.py \
-    tests -q
 uv run pytest tests/test_eventbus.py -q
 env -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 uv run prek run --all-files
 ```

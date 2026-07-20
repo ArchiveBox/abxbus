@@ -11,7 +11,7 @@ json_to_exports() {
 }
 
 resolve_section() {
-  uv run --project "$REPO_ROOT" --with abxpkg==1.11.265 abxpkg env --install --json \
+  uv run --project "$REPO_ROOT" --with abxpkg==1.11.266 abxpkg env --install --json \
     --deps-from="$CONFIG_PATH:$1" \
     | json_to_exports
 }

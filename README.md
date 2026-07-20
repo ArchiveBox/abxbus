@@ -1747,9 +1747,9 @@ The raw callable is stored on `handler`, but is excluded from JSON serialization
 
 ```bash
 uv run tests/performance_runtime.py --no-json
-pnpm --dir abxbus-ts run perf:node
-cargo test --manifest-path abxbus-rust/Cargo.toml --release --test test_eventbus_performance -- --nocapture
-(cd abxbus-go && go test ./tests -run TestPerformance -count=1 -timeout=180s -v)
+uv run abxpkg run --install --binproviders=pnpm pnpm --dir abxbus-ts run perf:node
+uv run abxpkg run --install cargo -- test --manifest-path abxbus-rust/Cargo.toml --release --test test_eventbus_performance -- --nocapture
+(cd abxbus-go && uv run --project .. abxpkg run --install go -- test ./tests -run TestPerformance -count=1 -timeout=180s -v)
 ```
 
 | Runtime | 1 bus x 50k events x 1 handler   | 500 buses x 100 events x 1 handler | 1 bus x 1 event x 50k parallel handlers | 1 bus x 50k events x 50k one-off handlers | Worst case (N buses x N events x N handlers) |
@@ -1774,7 +1774,7 @@ Set up the python development environment using `uv`:
 ```bash
 # From an abxbus checkout, install all development dependencies.
 uv sync --dev --all-extras --no-extra tachyon
-pnpm --dir abxbus-ts install --frozen-lockfile
+CI=true uv run abxpkg run --install --binproviders=pnpm pnpm --dir abxbus-ts install --frozen-lockfile
 ```
 
 Recommended once per clone:
@@ -1795,8 +1795,6 @@ uv run pyright
 ```bash
 # Run the portable Python suite in parallel
 uv run pytest -vs -n auto --dist loadfile --full-trace \
-    --ignore=tests/test_cross_runtime_roundtrip.py \
-    --ignore=tests/test_eventbus_performance.py \
     tests/
 
 # Run specific test file
