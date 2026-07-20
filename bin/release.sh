@@ -282,7 +282,7 @@ wait_for_npm() {
 }
 
 run_checks() {
-    uv sync --all-extras --all-groups --no-cache --upgrade
+    uv sync --all-extras --all-groups --no-extra tachyon --no-cache --upgrade
     pnpm --dir abxbus-ts install --no-frozen-lockfile
     uv run prek run --all-files
     pnpm --dir abxbus-ts run build
