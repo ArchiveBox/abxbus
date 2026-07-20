@@ -1,0 +1,30 @@
+AGENTS.md
+  s_f8414d52051f83::t_1c9fee2aadb015 59-62,67-69
+  s_f8414d52051f83::t_2277bef3a6f590 20-21,58,63
+  s_f8414d52051f83::t_3d471e328e2856 70
+skills/abxbus/SKILL.md
+  s_f8414d52051f83::t_1c9fee2aadb015 63-66,71-73
+  s_f8414d52051f83::t_2277bef3a6f590 24-25,62,67
+  s_f8414d52051f83::t_89e829eefca676 74
+README.md
+  s_f8414d52051f83::t_1c9fee2aadb015 55-60,1783,1795-1799,1805-1807
+  s_f8414d52051f83::t_c3380e80606d0a 1808
+abxbus-go/tests/comprehensive_patterns_test.go
+  s_f8414d52051f83::t_f2cf27204652bf 308-309,313-314,338,341
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "faed3e1453c3e535d6f0cc136a6c541c9d7a4222",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
