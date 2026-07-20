@@ -1781,7 +1781,7 @@ Recommended once per clone:
 ```bash
 git config --local core.hooksPath .git/hooks
 env -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 uv run prek install
-uv run prek run --all-files   # run pre-commit hooks on all files manually
+env -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 uv run prek run --all-files
 ```
 
 ```bash

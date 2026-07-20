@@ -65,7 +65,7 @@ uv run pytest -n auto --dist loadfile \
     --ignore=tests/test_eventbus_performance.py \
     tests -q
 uv run pytest tests/test_eventbus.py -q
-uv run prek run --all-files
+env -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 uv run prek run --all-files
 ```
 
 Dedicated CI jobs run `tests/test_cross_runtime_roundtrip.py` with all required
