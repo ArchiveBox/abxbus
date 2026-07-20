@@ -131,8 +131,8 @@ jobs:
         if: matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: redis-server nats-server postgresql sqlite3
-          version: bridge-service-binaries-v1
+          packages: redis-server nats-server postgresql sqlite3 gcc-14 g++-14
+          version: bridge-service-binaries-gcc14-v1
           execute_install_scripts: true
 
       - name: Configure bridge service binaries
@@ -152,12 +152,14 @@ jobs:
           initdb --version
           postgres --version
           sqlite3 --version
+          gcc-14 --version
+          g++-14 --version
 
       - run: uv sync --dev --all-extras --no-extra tachyon
 
       - name: Install optional Tachyon peer for bridge tests
         if: matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
-        run: uv pip install tachyon-ipc
+        run: CC=gcc-14 CXX=g++-14 uv pip install tachyon-ipc
 
       - name: Build TypeScript ESM bundle for cross-runtime roundtrip tests
         if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
