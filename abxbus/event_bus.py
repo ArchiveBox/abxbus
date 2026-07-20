@@ -2143,6 +2143,12 @@ class EventBus:
             assert resolved_event_timeout is not None
             await self._finalize_event_timeout(event, resolved_event_timeout)
 
+        # Timeout diagnostics can traverse and render the entire event tree. Keep
+        # that synchronous reporting work outside the event's execution deadline
+        # so it cannot consume the budget of handlers that have not run yet.
+        for event_result in event.event_results.values():
+            event_result._log_timeout_diagnostic_if_needed(event)  # pyright: ignore[reportPrivateUsage]
+
         await self._mark_event_complete_if_ready(event)
         await self._propagate_parent_completion(event)
         self._trim_event_history_if_needed()

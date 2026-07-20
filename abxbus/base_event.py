@@ -206,6 +206,8 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
 
     # Completion signal
     _handler_completed_signal: asyncio.Event | None = PrivateAttr(default=None)
+    _handler_timeout_expired: bool = PrivateAttr(default=False)
+    _timeout_diagnostic_logged: bool = PrivateAttr(default=False)
 
     # Child events emitted during handler execution
     event_children: list['BaseEvent[Any]'] = Field(default_factory=lambda: [])
@@ -636,13 +638,25 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         timeout_error = EventHandlerTimeoutError(
             f'Event handler {self.handler.label}({event}) timed out after {self.timeout}s{children}'
         )
+        self._handler_timeout_expired = True
         self.update(error=timeout_error)
         event._cancel_pending_child_processing(timeout_error)  # pyright: ignore[reportPrivateUsage]
+        return timeout_error
+
+    def _log_timeout_diagnostic_if_needed(self, event: 'BaseEvent[T_EventResultType]') -> None:
+        """Render timeout diagnostics after timed execution has finished."""
+        if not self._handler_timeout_expired or self._timeout_diagnostic_logged:
+            return
 
         from abxbus.logging import log_timeout_tree
 
         log_timeout_tree(event, self)
-        return timeout_error
+        self._timeout_diagnostic_logged = True
+
+    def _reset_timeout_diagnostic_state(self) -> None:
+        """Reset transient timeout diagnostics when reusing a handler result."""
+        self._handler_timeout_expired = False
+        self._timeout_diagnostic_logged = False
 
     def _on_handler_error(
         self,
@@ -1321,6 +1335,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             event_result.status = 'pending'
             event_result.timeout = timeout if timeout is not None and timeout > 0 else None
             event_result.result_type = self.event_result_type
+            event_result._reset_timeout_diagnostic_state()  # pyright: ignore[reportPrivateUsage]
             pending_results[handler_id] = event_result
         return pending_results
 

@@ -187,7 +187,7 @@ async def test_nested_timeout_scenario_from_issue():
 
 
 @pytest.mark.asyncio
-async def test_handler_timeout_marks_error_and_other_handlers_still_complete():
+async def test_handler_timeout_marks_error_and_other_handlers_still_complete(caplog: pytest.LogCaptureFixture):
     """Focused timeout behavior: one handler times out, another still completes."""
     bus = EventBus(name='TimeoutFocusedBus')
 
@@ -225,6 +225,9 @@ async def test_handler_timeout_marks_error_and_other_handlers_still_complete():
         assert fast_result.status == 'completed'
         assert fast_result.result == 'fast'
         assert 'fast_start' in execution_order
+
+        fast_handler_diagnostics = [record.getMessage() for record in caplog.records if 'fast_handler' in record.getMessage()]
+        assert any('☑️' in message for message in fast_handler_diagnostics)
     finally:
         await bus.destroy(clear=True)
 
