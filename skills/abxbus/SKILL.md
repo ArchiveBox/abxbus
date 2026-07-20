@@ -23,6 +23,7 @@ description: Use this when working on typed events, event bus execution, event h
 
 ```bash
 uv sync --dev --all-extras --no-extra tachyon
+pnpm --dir abxbus-ts install --frozen-lockfile
 uv run pytest --collect-only -q
 ```
 

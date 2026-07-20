@@ -19,6 +19,7 @@
 
 ```bash
 uv sync --dev --all-extras --no-extra tachyon
+pnpm --dir abxbus-ts install --frozen-lockfile
 uv run pytest --collect-only -q
 ```
 

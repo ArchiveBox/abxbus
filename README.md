@@ -1774,6 +1774,7 @@ Set up the python development environment using `uv`:
 ```bash
 # From an abxbus checkout, install all development dependencies.
 uv sync --dev --all-extras --no-extra tachyon
+pnpm --dir abxbus-ts install --frozen-lockfile
 ```
 
 Recommended once per clone:
