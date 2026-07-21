@@ -1,0 +1,36 @@
+.github/workflows/claude.yml
+  s_f8414d52051f83::t_a32e0f65ce4adb 17,26,32
+.github/workflows/test_rust.yaml
+  s_f8414d52051f83::t_1d7371e7ceadb0 13,21,28,64,80,90,93,99
+.github/workflows/pre-commit-hooks.yaml
+  s_f8414d52051f83::t_1d7371e7ceadb0 13,18,20,22,30,32-33
+  s_f8414d52051f83::t_2ed8b2f18ec0f7 24
+.github/workflows/test_py.yaml
+  s_f8414d52051f83::t_1d7371e7ceadb0 20,25,27-28,30-31,36,51,58,95,115-116,122,125,127,136,203,215,217,219,228,260,275,279,281
+  s_f8414d52051f83::t_2ed8b2f18ec0f7 38,118,221,283
+  s_f8414d52051f83::t_e5198013f9cf2b 196-198,200,236,239-240,246-248,250-254,256
+.github/workflows/test_go.yaml
+  s_f8414d52051f83::t_2ed8b2f18ec0f7 119
+  s_f8414d52051f83::t_1d7371e7ceadb0 13,21,28,76,90,100,108,112,116,123,126,128
+.github/workflows/release.yml
+  s_f8414d52051f83::t_2ed8b2f18ec0f7 25,32,37,41,43,46,48,50,60
+.github/workflows/test_ts.yaml
+  s_f8414d52051f83::t_1d7371e7ceadb0 13,18,23,25,27,29,41,48,84,98,107,109,111,119,145,175,209,221,223,225,227,229,238,322,336,343,345,347,349,355,357
+  s_f8414d52051f83::t_2ed8b2f18ec0f7 178
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "3578d48e2ecdefe60c420663fb48bf43ae2ac3ec",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
