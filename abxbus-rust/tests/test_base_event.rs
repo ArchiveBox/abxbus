@@ -1461,7 +1461,7 @@ fn test_now_on_already_executing_event_waits_without_duplicate_execution() {
             run_count.fetch_add(1, Ordering::SeqCst);
             started.store(true, Ordering::SeqCst);
             while !release.load(Ordering::SeqCst) {
-                thread::sleep(Duration::from_millis(1));
+                futures_timer::Delay::new(Duration::from_millis(1)).await;
             }
             Ok(json!("done"))
         }
