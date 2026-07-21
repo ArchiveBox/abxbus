@@ -1,34 +1,42 @@
-name: Release State
+name: Release
 
 on:
   push:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Full commit SHA on main to release
+        required: true
+        type: string
 
 permissions:
+  actions: read
   contents: write
   id-token: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: release-main
   cancel-in-progress: false
 
 jobs:
-  release-state:
-    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'release:')
+  publish:
     runs-on: ubuntu-latest
     environment: pypi
+    timeout-minutes: 45
+    env:
+      RELEASE_SHA: ${{ github.event_name == 'push' && github.sha || inputs.release_sha }}
+      RELEASE_BRANCH: main
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.ref_name }}
-          token: ${{ secrets.RELEASE_GH_TOKEN || github.token }}
+          ref: ${{ env.RELEASE_SHA }}
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.12'
 
       - uses: astral-sh/setup-uv@v6
         with:
@@ -45,17 +53,21 @@ jobs:
           cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
       - name: Use npm with trusted publishing support
-        run: |
-          npm install -g npm@latest
-          npm --version
+        run: npm install -g npm@latest
 
-      - name: Configure git identity
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Install native build tools
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: cmake gcc-14 g++-14
+          version: native-release-build-tools-v1
+          execute_install_scripts: true
 
-      - name: Run release script
+      - name: Configure native build tools
+        run: |
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+
+      - name: Publish tested commit
         env:
-          DEFAULT_BRANCH: main
           GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN || github.token }}
         run: ./bin/release.sh
