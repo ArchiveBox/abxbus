@@ -593,6 +593,71 @@ func TestEventResultsListStartsNeverStartedEventAndReturnsAllResults(t *testing.
 	close(releaseBlocker)
 }
 
+func TestEventResultHelpersWaitForStartedEvent(t *testing.T) {
+	noTimeout := 0.0
+	bus := abxbus.NewEventBus("EventResultHelpersStartedBus", &abxbus.EventBusOptions{
+		EventConcurrency:        abxbus.EventConcurrencyParallel,
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
+		EventTimeout:            &noTimeout,
+	})
+	t.Cleanup(bus.Destroy)
+
+	handlerStarted := make(chan struct{})
+	releaseHandler := make(chan struct{})
+	bus.On("EventResultHelpersStartedEvent", "slow", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		close(handlerStarted)
+		<-releaseHandler
+		return "settled", nil
+	}, nil)
+
+	event := bus.Emit(abxbus.NewBaseEvent("EventResultHelpersStartedEvent", nil))
+	<-handlerStarted
+	if event.EventStatus != "started" {
+		t.Fatalf("expected started event, got %s", event.EventStatus)
+	}
+
+	resultCallStarted := make(chan struct{})
+	resultCh := make(chan any, 1)
+	resultErrCh := make(chan error, 1)
+	go func() {
+		close(resultCallStarted)
+		result, err := event.EventResult(&abxbus.EventResultOptions{RaiseIfNone: false})
+		resultCh <- result
+		resultErrCh <- err
+	}()
+
+	resultsCallStarted := make(chan struct{})
+	resultsCh := make(chan []any, 1)
+	resultsErrCh := make(chan error, 1)
+	go func() {
+		close(resultsCallStarted)
+		results, err := event.EventResultsList(&abxbus.EventResultOptions{RaiseIfNone: false})
+		resultsCh <- results
+		resultsErrCh <- err
+	}()
+
+	<-resultCallStarted
+	<-resultsCallStarted
+	close(releaseHandler)
+
+	if err := <-resultErrCh; err != nil {
+		t.Fatal(err)
+	}
+	if result := <-resultCh; result != "settled" {
+		t.Fatalf("expected settled result, got %#v", result)
+	}
+	if err := <-resultsErrCh; err != nil {
+		t.Fatal(err)
+	}
+	results := <-resultsCh
+	if len(results) != 1 || results[0] != "settled" {
+		t.Fatalf("expected settled results, got %#v", results)
+	}
+	if event.EventStatus != "completed" {
+		t.Fatalf("expected completed event, got %s", event.EventStatus)
+	}
+}
+
 func TestNowOnAlreadyExecutingEventWaitsWithoutDuplicateExecution(t *testing.T) {
 	noTimeout := 0.0
 	bus := abxbus.NewEventBus("NowAlreadyExecutingBus", &abxbus.EventBusOptions{
