@@ -684,6 +684,11 @@ impl EventBus {
                     let listener = bus.runtime.queue_notify.listen();
                     let next_event = {
                         let mut queue = bus.runtime.queue.lock();
+                        if bus.locks.is_paused() {
+                            drop(queue);
+                            drop(listener);
+                            continue;
+                        }
                         let next_event = queue.pop_front();
                         if let Some(event) = &next_event {
                             let event_id = event.inner.lock().event_id.clone();
@@ -710,7 +715,6 @@ impl EventBus {
                                         .lock()
                                         .remove(&event_id);
                                 });
-                                thread::sleep(Duration::from_millis(1));
                             }
                             EventConcurrencyMode::GlobalSerial
                             | EventConcurrencyMode::BusSerial => {
@@ -1814,12 +1818,14 @@ impl EventBus {
             return;
         }
 
+        let mut runloop_pause = None;
         let removed = {
             let mut queue = self.runtime.queue.lock();
             if let Some(index) = queue
                 .iter()
                 .position(|queued| queued.inner.lock().event_id == event_id)
             {
+                runloop_pause = Some(self.locks.request_runloop_pause());
                 queue.remove(index);
                 self.runtime
                     .active_event_ids
@@ -1833,7 +1839,9 @@ impl EventBus {
         if !removed && !bypass_event_lock {
             return;
         }
-        let runloop_pause = self.locks.request_runloop_pause();
+        if runloop_pause.is_none() {
+            runloop_pause = Some(self.locks.request_runloop_pause());
+        }
         if !removed {
             self.runtime
                 .active_event_ids
