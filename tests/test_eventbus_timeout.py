@@ -85,25 +85,7 @@ class MainClass0:
 
         # Dispatch and wait for ChildEvent
         child_event = self.bus.emit(ChildEvent())
-        try:
-            await child_event  # This will timeout after 10s
-        except Exception as e:
-            print(f'DEBUG: Parent caught child error: {type(e).__name__}: {e}')
-
-            import threading
-
-            all_tasks = asyncio.all_tasks()
-            print(f'\nOutstanding asyncio tasks ({len(all_tasks)}):')
-            for task in all_tasks:
-                print(f'  - {task.get_name()}: {task._state} - {task.get_coro()}')
-
-            # List all threads
-            all_threads = threading.enumerate()
-            print(f'\nActive threads ({len(all_threads)}):')
-            for thread in all_threads:
-                print(f'  - {thread.name}: {thread.is_alive()}')
-
-            raise
+        await child_event
 
         # Would continue but won't get here due to timeout
         return 'MainClass0.on_TopmostEvent completed after all child events'
@@ -124,7 +106,6 @@ class MainClass0:
 
     async def on_GrandchildEvent(self, event: GrandchildEvent) -> str:
         """Completes in 5 seconds"""
-        # print('GRANDCHILD EVENT HANDLING STARTED')
         await asyncio.sleep(2)
         return 'MainClass0.on_GrandchildEvent completed after 2s'
 
@@ -167,21 +148,13 @@ async def test_nested_timeout_scenario_from_issue():
     # Dispatch the root event
     navigate_event = bus.emit(TopmostEvent())
 
-    # Wait for it to complete (will fail due to timeout)
-    # with pytest.raises((RuntimeError, TimeoutError)) as exc_info:
-    try:
-        await (
-            navigate_event
-        )  # .event_result(raise_if_any=True, raise_if_none=True, timeout=20)  # The event should complete with an error
-    except Exception as e:
-        print(f'Exception caught: {type(e).__name__}: {e}')
-        raise
+    await navigate_event
 
-    # import ipdb; ipdb.set_trace()
-
-    # print('-----------------------------------------------------')
-    # print(f"Exception caught: {type(exc_info.value).__name__}: {exc_info.value}")
-    # # assert 'ChildEvent' in str(exc_info.value) or 'ChildEvent' in str(exc_info.value)
+    grandchild_event = next(event for event in bus.event_history.values() if event.event_type == 'GrandchildEvent')
+    grandchild_results = list(grandchild_event.event_results.values())
+    assert grandchild_event.event_status == 'completed'
+    assert isinstance(grandchild_results[0].error, EventHandlerAbortedError)
+    assert all(isinstance(result.error, EventHandlerCancelledError) for result in grandchild_results[1:])
 
     await bus.destroy(clear=True)
 

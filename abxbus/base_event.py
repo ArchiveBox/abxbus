@@ -1858,7 +1858,6 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                 continue
             for result in child_event.event_results.values():
                 if result.status == 'pending':
-                    # print('CANCELLING CHILD HANDLER', result, 'due to', error)
                     result.update(error=error)
             child_event._cancel_pending_child_processing(error)
 

@@ -1017,11 +1017,6 @@ class EventBus:
         handler: ContravariantEventHandlerCallable[T_OnEvent],
     ) -> EventHandler: ...
 
-    # I dont think this is needed, but leaving it here for now
-    # 9. Coroutine[Any, Any, Any] - direct coroutine
-    # @overload
-    # def on(self, event_pattern: EventPatternType, handler: Coroutine[Any, Any, Any]) -> None: ...
-
     def on(
         self,
         event_pattern: EventPatternType,
@@ -1604,8 +1599,6 @@ class EventBus:
         if self.pending_event_queue:
             self.pending_event_queue.shutdown(immediate=True)
             self.pending_event_queue._queue.clear()  # pyright: ignore[reportPrivateUsage]
-
-        # print('DESTROYING', self.event_history)
 
         if self._runloop_task and not self._runloop_task.done():
             try:
