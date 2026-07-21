@@ -1515,7 +1515,7 @@ fn test_now_timeout_limits_caller_wait_and_background_processing_continues() {
         async move {
             started.store(true, Ordering::SeqCst);
             while !release.load(Ordering::SeqCst) {
-                thread::sleep(Duration::from_millis(1));
+                futures_timer::Delay::new(Duration::from_millis(1)).await;
             }
             handler_done.store(true, Ordering::SeqCst);
             Ok(json!("done"))
