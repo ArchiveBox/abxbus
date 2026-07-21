@@ -29,51 +29,8 @@ jobs:
       - name: Run documentation code blocks
         run: uv run pytest -vv --tb=long README.md AGENTS.md skills docs
 
-  find_py_tests:
-    runs-on: ubuntu-24.04
-    outputs:
-      PY_TASKS: ${{ steps.lsgrep.outputs.PY_TASKS }}
-      # [{ "kind": "test" | "example", "name": "test_eventbus" }, ...]
-      PY_TEST_TASKS: ${{ steps.lsgrep.outputs.PY_TEST_TASKS }}
-      # [{ "kind": "test", "name": "test_eventbus" }, ...]
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - id: lsgrep
-        run: |
-          PY_TEST_TASKS="$(
-            find tests -maxdepth 1 -type f -name 'test_*.py' ! -name 'test_eventbus_performance.py' \
-              | sort \
-              | sed 's|^tests/||' \
-              | sed 's|\.py$||' \
-              | jq -R -s -c 'split("\n")[:-1] | map({kind: "test", name: .})'
-          )"
-          PY_EXAMPLE_TASKS="$(
-            (
-              if [[ -d examples ]]; then
-                find examples -maxdepth 1 -type f -name '*.py' | sort
-              fi
-            ) \
-              | sed 's|^examples/||' \
-              | sed 's|\.py$||' \
-              | jq -R -s -c 'split("\n")[:-1] | map({kind: "example", name: .})'
-          )"
-          PY_TASKS="$(jq -cn --argjson tests "$PY_TEST_TASKS" --argjson examples "$PY_EXAMPLE_TASKS" '$tests + $examples')"
-
-          echo "PY_TEST_TASKS=${PY_TEST_TASKS}" >> "$GITHUB_OUTPUT"
-          echo "PY_TASKS=${PY_TASKS}" >> "$GITHUB_OUTPUT"
-          echo "$PY_TASKS"
-        # https://code.dblock.org/2021/09/03/generating-task-matrix-by-looping-over-repo-files-with-github-actions.html
-      - name: Check that at least one test file is found
-        run: |
-          if [[ -z "${{ steps.lsgrep.outputs.PY_TEST_TASKS }}" || "${{ steps.lsgrep.outputs.PY_TEST_TASKS }}" == "[]" ]]; then
-            echo "Failed to find any test_*.py files in tests/ folder!" > /dev/stderr
-            exit 1
-          fi
-
   tests:
-    needs:
-      - docs_py
-      - find_py_tests
+    needs: docs_py
     runs-on: ${{ matrix.target.os }}
     strategy:
       fail-fast: false
@@ -103,20 +60,8 @@ jobs:
           - os: macos-15
             os_name: macOS
             python: "3.14.6"
-        task: ${{ fromJson(needs.find_py_tests.outputs.PY_TASKS || '[{"kind":"error","name":"FAILED_TO_DISCOVER_TASKS"}]') }}
-        # autodiscovers files in tests/test_*.py and examples/*.py
-        # - { kind: "test", name: "test_eventbus" }
-        # - { kind: "example", name: "quickstart" }
-        # ... and more
-    name: ${{ matrix.target.os_name }}-py${{ matrix.target.python }}-${{ matrix.task.kind }}-${{ matrix.task.name }}
+    name: ${{ matrix.target.os_name }}-py${{ matrix.target.python }}-all-tests-and-examples
     steps:
-      - name: Check that the previous step managed to find some tasks for us to run
-        run: |
-          if [[ "${{ matrix.task.kind }}" == "error" ]]; then
-            echo "Failed get list of tasks in tests/test_*.py and examples/*.py from find_py_tests job" > /dev/stderr
-            exit 1
-          fi
-
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
@@ -128,19 +73,17 @@ jobs:
           activate-environment: true
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
-        if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
         with:
           version: 10.33.2
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
       - name: Install bridge service binaries
-        if: runner.os == 'Linux' && matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
+        if: runner.os == 'Linux'
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: redis-server nats-server postgresql sqlite3 gcc-14 g++-14
@@ -148,11 +91,10 @@ jobs:
           execute_install_scripts: true
 
       - name: Install bridge service binaries
-        if: runner.os == 'macOS' && matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
+        if: runner.os == 'macOS'
         run: brew install redis nats-server postgresql@17 sqlite gcc@14
 
       - name: Configure bridge service binaries
-        if: matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
         run: |
           if [[ "${{ runner.os }}" == "macOS" ]]; then
             PG_BINDIR="$(brew --prefix postgresql@17)/bin"
@@ -178,17 +120,14 @@ jobs:
       - run: uv sync --dev --all-extras --no-extra tachyon
 
       - name: Install optional Tachyon peer for bridge tests
-        if: matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
         run: CC=gcc-14 CXX=g++-14 uv pip install tachyon-ipc
 
       - name: Build TypeScript ESM bundle for cross-runtime roundtrip tests
-        if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
         run: |
           pnpm --dir abxbus-ts install --frozen-lockfile
           pnpm --dir abxbus-ts run build
 
       - name: Verify bridge optional Python deps
-        if: matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
         run: |
           uv run python - <<'PY'
           import importlib
@@ -198,13 +137,22 @@ jobs:
           print('optional bridge deps import OK')
           PY
 
-      - name: Run test with coverage
-        if: matrix.task.kind == 'test'
-        run: uv run coverage run --parallel-mode --source=abxbus -m pytest tests/${{ matrix.task.name }}.py
-
-      - name: Run example
-        if: matrix.task.kind == 'example'
-        run: uv run coverage run --parallel-mode --source=abxbus examples/${{ matrix.task.name }}.py
+      - name: Run every test and example with coverage
+        run: |
+          tests=()
+          while IFS= read -r test_file; do
+            tests+=("$test_file")
+          done < <(find tests -maxdepth 1 -type f -name 'test_*.py' ! -name 'test_eventbus_performance.py' | sort)
+          examples=()
+          while IFS= read -r example_file; do
+            examples+=("$example_file")
+          done < <(find examples -maxdepth 1 -type f -name '*.py' | sort)
+          [[ "${#tests[@]}" -gt 0 ]]
+          [[ "${#examples[@]}" -gt 0 ]]
+          uv run coverage run --parallel-mode --source=abxbus -m pytest "${tests[@]}"
+          for example in "${examples[@]}"; do
+            uv run coverage run --parallel-mode --source=abxbus "$example"
+          done
 
       - name: Check coverage files
         if: always()
@@ -219,7 +167,7 @@ jobs:
       - name: Upload coverage data
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: coverage-${{ matrix.target.os_name }}-py${{ matrix.target.python }}-${{ matrix.task.kind }}-${{ matrix.task.name }}
+          name: coverage-${{ matrix.target.os_name }}-py${{ matrix.target.python }}
           path: |
             .coverage*
             pyproject.toml
