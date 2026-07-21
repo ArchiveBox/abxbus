@@ -1525,6 +1525,7 @@ fn test_now_timeout_limits_caller_wait_and_background_processing_continues() {
     let event = bus.emit(NowTimeoutCallerWaitEvent {
         ..Default::default()
     });
+    wait_until_bool(&started);
     let error = match block_on(event.now_with_options(EventWaitOptions {
         timeout: Some(0.01),
         first_result: false,
@@ -1533,7 +1534,6 @@ fn test_now_timeout_limits_caller_wait_and_background_processing_continues() {
         Err(error) => error,
     };
     assert!(error.contains("Timed out waiting"));
-    wait_until_bool(&started);
     assert_ne!(event.event_status.read(), EventStatus::Completed);
     assert!(!handler_done.load(Ordering::SeqCst));
 

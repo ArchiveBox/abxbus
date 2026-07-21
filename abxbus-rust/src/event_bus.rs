@@ -1793,7 +1793,6 @@ impl EventBus {
         event: Arc<BaseEvent>,
         bypass_event_lock: bool,
     ) {
-        let runloop_pause = self.locks.request_runloop_pause();
         let event_id = event.inner.lock().event_id.clone();
         {
             let inner = event.inner.lock();
@@ -1834,6 +1833,7 @@ impl EventBus {
         if !removed && !bypass_event_lock {
             return;
         }
+        let runloop_pause = self.locks.request_runloop_pause();
         if !removed {
             self.runtime
                 .active_event_ids
