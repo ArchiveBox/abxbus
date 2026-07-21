@@ -59,8 +59,6 @@ def test_log_history_tree_single_event(capsys: Any) -> None:
 
     captured_str = bus.log_tree()
 
-    # captured = capsys.readouterr()
-    # captured_str = captured.out + captured.err
     assert '└──' in captured_str and 'RootEvent' in captured_str
     # Should show start time and duration
     assert '[' in captured_str and ']' in captured_str

@@ -98,12 +98,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        python: ["3.11.15", "3.12.13", "3.13.14", "3.14.6"]
         task: ${{ fromJson(needs.find_py_tests.outputs.PY_TASKS || '[{"kind":"error","name":"FAILED_TO_DISCOVER_TASKS"}]') }}
         # autodiscovers files in tests/test_*.py and examples/*.py
         # - { kind: "test", name: "test_eventbus" }
         # - { kind: "example", name: "quickstart" }
         # ... and more
-    name: ${{ matrix.task.kind }}-${{ matrix.task.name }}
+    name: py${{ matrix.python }}-${{ matrix.task.kind }}-${{ matrix.task.name }}
     steps:
       - name: Check that the previous step managed to find some tasks for us to run
         run: |
@@ -113,6 +114,9 @@ jobs:
           fi
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python }}
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: "0.10.6"
@@ -202,7 +206,7 @@ jobs:
       - name: Upload coverage data
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: coverage-${{ matrix.task.kind }}-${{ matrix.task.name }}
+          name: coverage-py${{ matrix.python }}-${{ matrix.task.kind }}-${{ matrix.task.name }}
           path: |
             .coverage*
             pyproject.toml

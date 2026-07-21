@@ -382,17 +382,6 @@ def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any
         else:
             col6_elapsed = f'{elapsed:2d}s'
 
-        # col7_slash = '/'
-        # col8_max = f'{round(evt.event_timeout or 1) * len(evt.event_results):2d}s'
-        # if evt.event_status == 'completed':
-        #     col8_max = f'{green}{col8_max}{reset}'
-        # elif evt.event_status == 'error':
-        #     col8_max = f'{red}{col8_max}{reset}'
-        # elif evt.event_status == 'started':
-        #     col8_max = f'{yellow}{col8_max}{reset}'
-        # else:
-        #     col8_max = f'{col8_max}{reset}'
-
         # Assemble and print
         logger.warning(f'{left_part}{col4_padding}{col5_timing_icon}    {col6_elapsed}')
 
