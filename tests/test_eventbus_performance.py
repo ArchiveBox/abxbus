@@ -139,55 +139,6 @@ async def run_mode_throughput_benchmark(
     return processed, throughput
 
 
-async def run_io_fanout_benchmark(
-    *,
-    event_handler_concurrency: Literal['serial', 'parallel'],
-    total_events: int = 400,
-    handlers_per_event: int = 4,
-    sleep_seconds: float = 0.002,
-    batch_size: int = 25,
-) -> tuple[int, float]:
-    """Benchmark I/O-bound fanout to compare serial vs parallel handler mode."""
-    bus = EventBus(
-        name=f'Fanout_{event_handler_concurrency}',
-        event_concurrency='bus-serial',
-        event_handler_concurrency=event_handler_concurrency,
-        middlewares=[],
-        max_history_drop=True,
-    )
-
-    handled = 0
-
-    for index in range(handlers_per_event):
-
-        async def handler(event: SimpleEvent) -> None:
-            nonlocal handled
-            await asyncio.sleep(sleep_seconds)
-            handled += 1
-
-        handler.__name__ = f'fanout_handler_{index}'
-        bus.on(SimpleEvent, handler)
-
-    pending: list[BaseEvent[Any]] = []
-    start = time.time()
-    try:
-        for _ in range(total_events):
-            pending.append(bus.emit(SimpleEvent()))
-            if len(pending) >= batch_size:
-                await asyncio.gather(*pending)
-                pending.clear()
-
-        if pending:
-            await asyncio.gather(*pending)
-
-        await bus.wait_until_idle()
-    finally:
-        await bus.destroy(clear=True)
-
-    duration = time.time() - start
-    return handled, duration
-
-
 def throughput_floor_for_mode(event_handler_concurrency: Literal['serial', 'parallel']) -> int:
     """
     Conservative per-mode floor to catch severe regressions while avoiding CI flakiness.
@@ -754,24 +705,6 @@ async def test_basic_throughput_floor_regression_guard(event_handler_concurrency
 
 
 @pytest.mark.asyncio
-async def test_event_handler_concurrency_mode_improves_io_bound_fanout():
-    """
-    For I/O-bound workloads with multiple handlers per event, parallel mode should
-    provide a meaningful speedup versus serial mode.
-    """
-    serial_handled, serial_duration = await run_io_fanout_benchmark(event_handler_concurrency='serial')
-    parallel_handled, parallel_duration = await run_io_fanout_benchmark(event_handler_concurrency='parallel')
-
-    expected_total = 400 * 4
-    assert serial_handled == expected_total
-    assert parallel_handled == expected_total
-    assert parallel_duration < serial_duration * 0.8, (
-        f'Expected parallel handler mode to be faster for I/O fanout; '
-        f'serial={serial_duration:.2f}s parallel={parallel_duration:.2f}s'
-    )
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     'event_handler_concurrency',
     ['serial', 'parallel'],
@@ -873,41 +806,83 @@ async def test_global_lock_contention_multi_bus_matrix(event_handler_concurrency
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     'handlers_per_event',
-    [10, 30],
-    ids=['fanout_10_handlers', 'fanout_30_handlers'],
+    [4, 10, 30],
+    ids=['fanout_4_handlers', 'fanout_10_handlers', 'fanout_30_handlers'],
 )
-async def test_event_handler_concurrency_mode_scales_with_high_fanout(handlers_per_event: int):
+async def test_event_handler_concurrency_mode_controls_fanout_overlap(handlers_per_event: int):
     """
-    High fanout benchmark to catch regressions in parallel handler scheduling.
+    Handler concurrency contract: serial handlers do not overlap; parallel handlers all overlap.
     """
-    total_events = 250 if handlers_per_event == 10 else 200
-    sleep_seconds = 0.002 if handlers_per_event == 10 else 0.004
 
-    serial_handled, serial_duration = await run_io_fanout_benchmark(
-        event_handler_concurrency='serial',
-        total_events=total_events,
-        handlers_per_event=handlers_per_event,
-        sleep_seconds=sleep_seconds,
-        batch_size=25,
-    )
-    parallel_handled, parallel_duration = await run_io_fanout_benchmark(
-        event_handler_concurrency='parallel',
-        total_events=total_events,
-        handlers_per_event=handlers_per_event,
-        sleep_seconds=sleep_seconds,
-        batch_size=25,
-    )
+    async def run_overlap_probe(
+        event_handler_concurrency: Literal['serial', 'parallel'],
+    ) -> tuple[list[int], int, int, list[Any]]:
+        bus = EventBus(
+            name=f'FanoutOverlap_{event_handler_concurrency}',
+            event_concurrency='bus-serial',
+            event_handler_concurrency=event_handler_concurrency,
+            middlewares=[],
+            max_history_drop=True,
+        )
+        release_handlers = asyncio.Event()
+        expected_active = handlers_per_event if event_handler_concurrency == 'parallel' else 1
+        expected_active_reached = asyncio.Event()
+        handled: list[int] = []
+        active = 0
+        max_active = 0
+        results: list[Any] = []
 
-    expected_total = total_events * handlers_per_event
-    speedup = serial_duration / max(parallel_duration, 1e-9)
-    minimum_speedup = 1.2 if handlers_per_event == 10 else 1.5
+        if event_handler_concurrency == 'serial':
+            release_handlers.set()
 
-    assert serial_handled == expected_total
-    assert parallel_handled == expected_total
-    assert speedup >= minimum_speedup, (
-        f'Parallel fanout speedup too small for {handlers_per_event} handlers/event: '
-        f'{speedup:.2f}x (expected >= {minimum_speedup:.2f}x)'
-    )
+        def make_handler(index: int):
+            async def handler(event: SimpleEvent) -> int:
+                nonlocal active, max_active
+                active += 1
+                max_active = max(max_active, active)
+                if active == expected_active:
+                    expected_active_reached.set()
+                try:
+                    await release_handlers.wait()
+                    handled.append(index)
+                    return index
+                finally:
+                    active -= 1
+
+            handler.__name__ = f'fanout_handler_{index}'
+            return handler
+
+        for index in range(handlers_per_event):
+            bus.on(SimpleEvent, make_handler(index))
+
+        event = bus.emit(SimpleEvent())
+        try:
+            await asyncio.wait_for(expected_active_reached.wait(), timeout=10.0)
+            release_handlers.set()
+            await event
+            results = list(event.event_results.values())
+        finally:
+            release_handlers.set()
+            await bus.destroy(clear=True)
+
+        return handled, max_active, active, results
+
+    serial_handled, serial_max_active, serial_active, serial_results = await run_overlap_probe('serial')
+    parallel_handled, parallel_max_active, parallel_active, parallel_results = await run_overlap_probe('parallel')
+
+    expected_results = list(range(handlers_per_event))
+    assert sorted(serial_handled) == expected_results
+    assert sorted(parallel_handled) == expected_results
+    assert serial_active == 0
+    assert parallel_active == 0
+    assert serial_max_active == 1
+    assert parallel_max_active == handlers_per_event
+    assert len(serial_results) == handlers_per_event
+    assert len(parallel_results) == handlers_per_event
+    assert all(result.status == 'completed' for result in serial_results)
+    assert all(result.status == 'completed' for result in parallel_results)
+    assert sorted(result.result for result in serial_results) == expected_results
+    assert sorted(result.result for result in parallel_results) == expected_results
 
 
 @pytest.mark.asyncio
