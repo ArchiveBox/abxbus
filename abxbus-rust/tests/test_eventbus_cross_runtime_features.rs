@@ -7,6 +7,7 @@ use std::{
 };
 
 use abxbus::{
+    base_event::EventWaitOptions,
     event_bus::{EventBus, EventBusOptions, FindOptions},
     types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
 };
@@ -363,7 +364,34 @@ fn test_zero_history_backpressure_with_find_future_still_resolves_new_events() {
         ..Default::default()
     });
     let first_id = first.event_id.clone();
-    let _ = block_on(first.now());
+    let completed_first = block_on(first.now_with_options(EventWaitOptions {
+        timeout: Some(2.0),
+        first_result: false,
+    }))
+    .expect("first zero-history event should complete");
+    assert!(Arc::ptr_eq(
+        &first._inner_event(),
+        &completed_first._inner_event()
+    ));
+    assert!(Arc::ptr_eq(
+        &first.event_bus().expect("first event bus"),
+        &bus
+    ));
+    assert_eq!(first.event_status.read(), EventStatus::Completed);
+    let first_result = first
+        ._inner_event()
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("first zero-history result");
+    assert_eq!(
+        first_result.status,
+        abxbus::event_result::EventResultStatus::Completed
+    );
+    assert_eq!(first_result.result, Some(json!("ok:first")));
     assert!(!bus.event_history_ids().contains(&first_id));
     assert!(block_on(bus.find("ZeroHistoryEvent", true, None, None)).is_none());
 

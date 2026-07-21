@@ -89,6 +89,11 @@ where
         }
         *self.fallback.lock() = value;
     }
+
+    #[doc(hidden)]
+    pub fn source_event(&self) -> Option<Arc<RawBaseEvent>> {
+        self.source.clone()
+    }
 }
 
 impl<T> Default for Live<T>
@@ -349,7 +354,7 @@ pub trait TypedEventObject:
         let Value::Object(payload_map) = value else {
             panic!("event payload must serialize to a JSON object");
         };
-        if let Some(event) = Self::attached_inner_event_from_payload(&payload_map) {
+        if let Some(event) = self._attached_inner_event() {
             sync_inner_event_from_payload::<Self>(&event, payload_map);
             return event;
         }
@@ -1460,7 +1465,13 @@ macro_rules! _inner_event_parse {
 
         impl $name {
             pub fn event_bus(&self) -> Option<std::sync::Arc<$crate::event_bus::EventBus>> {
-                $crate::event_bus::EventBus::event_bus_for_event_id(&self.event_id)
+                $crate::typed::TypedEventObject::_attached_inner_event(self)
+                    .and_then(|event| {
+                        $crate::event_bus::EventBus::event_bus_for_event(&event)
+                    })
+                    .or_else(|| {
+                        $crate::event_bus::EventBus::event_bus_for_event_id(&self.event_id)
+                    })
             }
 
             pub fn bus(&self) -> Option<std::sync::Arc<$crate::event_bus::EventBus>> {
@@ -1592,6 +1603,14 @@ macro_rules! _inner_event_parse {
         }
 
         impl $crate::typed::TypedEventObject for $name {
+            fn _attached_inner_event(
+                &self,
+            ) -> Option<std::sync::Arc<$crate::base_event::BaseEvent>> {
+                self.event_status.source_event().or_else(|| {
+                    $crate::event_bus::EventBus::event_for_event_id(&self.event_id)
+                })
+            }
+
             fn _from_inner_event(event: std::sync::Arc<$crate::base_event::BaseEvent>) -> Self {
                 let mut typed: Self = $crate::serde_json::from_value(
                     $crate::typed::payload_value_from_inner_event(&event),
