@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -18,14 +18,14 @@ permissions:
 
 jobs:
   find_rust_tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       RUST_TASKS: ${{ steps.lsgrep.outputs.RUST_TASKS }}
       # [{ "kind": "lib" | "test" | "bin", "name": "test_eventbus" }, ...]
       RUST_TEST_TASKS: ${{ steps.lsgrep.outputs.RUST_TEST_TASKS }}
       # [{ "kind": "test", "name": "test_eventbus" }, ...]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: lsgrep
         run: |
           RUST_LIB_TASKS="$(jq -cn '[{kind: "lib", name: "lib"}]')"
@@ -61,7 +61,7 @@ jobs:
   tests:
     needs:
       - find_rust_tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -77,7 +77,7 @@ jobs:
       run:
         working-directory: abxbus-rust
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Check that the previous step managed to find some tasks for us to run
         run: |
@@ -87,16 +87,16 @@ jobs:
           fi
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: abxbus-rust -> target
 
       - name: Set up Go for cross-runtime roundtrip tests
         if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: abxbus-go/go.mod
           cache: true
