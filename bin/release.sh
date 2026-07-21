@@ -9,13 +9,6 @@ cd "${REPO_DIR}"
 TAG_PREFIX=""
 PYPI_PACKAGE="abxbus"
 NPM_PACKAGE="abxbus"
-REQUIRED_WORKFLOWS=(
-    "pre-commit-hooks.yaml|pre-commit-hooks"
-    "test_py.yaml|test-py"
-    "test_ts.yaml|test-ts"
-    "test_go.yaml|test-go"
-    "test_rust.yaml|test-rust"
-)
 
 source_optional_env() {
     if [[ -f "${REPO_DIR}/.env" ]]; then
@@ -141,128 +134,83 @@ require_clean_exact_checkout() {
     fi
 }
 
-require_successful_workflows() {
-    local slug="$1"
-    local release_sha="$2"
-    local workflow_spec workflow_file workflow_name runs state run_id attempts final_state
+require_tested_artifacts() {
+    local artifact_dir="$1"
+    local version="$2"
+    local release_sha="$3"
+    local python_dir="${artifact_dir}/python"
+    local npm_dir="${artifact_dir}/npm"
 
-    for workflow_spec in "${REQUIRED_WORKFLOWS[@]}"; do
-        workflow_file="${workflow_spec%%|*}"
-        workflow_name="${workflow_spec#*|}"
-        attempts=0
-
-        while :; do
-            runs="$(env -u GH_FORCE_TTY GH_PROMPT_DISABLED=1 GH_PAGER=cat NO_COLOR=1 gh run list \
-                --repo "${slug}" \
-                --workflow "${workflow_file}" \
-                --event push \
-                --commit "${release_sha}" \
-                --limit 10 \
-                --json databaseId,workflowName,headSha,status,conclusion,event)"
-            state="$(jq -r --arg name "${workflow_name}" --arg sha "${release_sha}" '
-                [.[] | select(.workflowName == $name and .headSha == $sha and .event == "push")]
-                | if length == 1
-                  then (.[0] | [.databaseId, .status, (.conclusion // "")] | @tsv)
-                  elif length == 0 then "missing"
-                  else "ambiguous"
-                  end
-            ' <<<"${runs}")"
-
-            case "${state}" in
-                missing)
-                    ;;
-                ambiguous)
-                    echo "Found multiple ${workflow_name} push runs for ${release_sha}; refusing an ambiguous release gate" >&2
-                    return 1
-                    ;;
-                *)
-                    IFS=$'\t' read -r run_id _ _ <<<"${state}"
-                    break
-                    ;;
-            esac
-
-            attempts=$((attempts + 1))
-            if [[ "${attempts}" -ge 12 ]]; then
-                echo "Required workflow ${workflow_name} did not start for ${release_sha} within 60 seconds" >&2
-                return 1
-            fi
-            sleep 5
-        done
-
-        env -u GH_FORCE_TTY GH_PROMPT_DISABLED=1 GH_PAGER=cat NO_COLOR=1 \
-            gh run watch "${run_id}" --repo "${slug}" --exit-status
-        final_state="$(env -u GH_FORCE_TTY GH_PROMPT_DISABLED=1 GH_PAGER=cat NO_COLOR=1 \
-            gh run view "${run_id}" --repo "${slug}" \
-            --json workflowName,headSha,status,conclusion,event \
-            --jq '[.workflowName, .headSha, .event, .status, (.conclusion // "")] | @tsv')"
-        if [[ "${final_state}" != "${workflow_name}"$'\t'"${release_sha}"$'\tpush\tcompleted\tsuccess' ]]; then
-            echo "Required workflow ${workflow_name} was not a successful exact-SHA push run: ${final_state}" >&2
-            return 1
-        fi
-        echo "Required workflow passed: ${workflow_name} (${run_id})"
-    done
-}
-
-wait_for_pypi() {
-    local version="$1"
-    local attempts=0
-    until curl -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | jq -e --arg version "${version}" '.releases[$version] | length > 0' >/dev/null; do
-        attempts=$((attempts + 1))
-        if [[ "${attempts}" -ge 30 ]]; then
-            echo "Timed out waiting for ${PYPI_PACKAGE}==${version} on PyPI" >&2
-            return 1
-        fi
-        sleep 10
-    done
-}
-
-wait_for_npm() {
-    local version="$1"
-    local attempts=0
-    until [[ "$(npm view "${NPM_PACKAGE}@${version}" version --silent 2>/dev/null || true)" == "${version}" ]]; do
-        attempts=$((attempts + 1))
-        if [[ "${attempts}" -ge 30 ]]; then
-            echo "Timed out waiting for ${NPM_PACKAGE}@${version} on npm" >&2
-            return 1
-        fi
-        sleep 10
-    done
-}
-
-build_artifacts() {
-    local version="$1"
-
-    rm -rf "${REPO_DIR}/dist" "${REPO_DIR}/abxbus-ts/dist"
-    uv build --out-dir "${REPO_DIR}/dist"
-    pnpm --dir abxbus-ts install --frozen-lockfile
-    pnpm --dir abxbus-ts run build
-    if ! compgen -G "${REPO_DIR}/dist/${PYPI_PACKAGE}-${version}*" >/dev/null; then
-        echo "Missing build artifacts for ${PYPI_PACKAGE}==${version}" >&2
+    [[ -d "${python_dir}" ]] || { echo "Missing tested Python artifact directory: ${python_dir}" >&2; return 1; }
+    [[ -d "${npm_dir}" ]] || { echo "Missing tested npm artifact directory: ${npm_dir}" >&2; return 1; }
+    [[ -f "${artifact_dir}/SHA256SUMS" ]] || { echo "Missing tested artifact checksums" >&2; return 1; }
+    (
+        cd "${artifact_dir}"
+        sha256sum --check SHA256SUMS
+    )
+    [[ "$(<"${artifact_dir}/COMMIT_SHA")" == "${release_sha}" ]] || {
+        echo "Tested artifacts are not from release SHA ${release_sha}" >&2
         return 1
-    fi
-    if [[ ! -d "${REPO_DIR}/abxbus-ts/dist" ]]; then
-        echo "Missing npm build artifacts for ${NPM_PACKAGE}@${version}" >&2
+    }
+
+    shopt -s nullglob
+    local wheels=("${python_dir}"/abxbus-*.whl)
+    local sdists=("${python_dir}"/abxbus-*.tar.gz)
+    local npm_packages=("${npm_dir}"/abxbus-*.tgz)
+    [[ "${#wheels[@]}" -eq 1 ]] || { echo "Expected one tested wheel, found ${#wheels[@]}" >&2; return 1; }
+    [[ "${#sdists[@]}" -eq 1 ]] || { echo "Expected one tested sdist, found ${#sdists[@]}" >&2; return 1; }
+    [[ "${#npm_packages[@]}" -eq 1 ]] || { echo "Expected one tested npm package, found ${#npm_packages[@]}" >&2; return 1; }
+    [[ "$(find "${python_dir}" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 2 ]] || {
+        echo "Unexpected files in tested Python artifact directory" >&2
         return 1
-    fi
+    }
+    [[ "$(find "${npm_dir}" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 1 ]] || {
+        echo "Unexpected files in tested npm artifact directory" >&2
+        return 1
+    }
+
+    TESTED_VERSION="${version}" TESTED_WHEEL="${wheels[0]}" TESTED_SDIST="${sdists[0]}" TESTED_NPM_PACKAGE="${npm_packages[0]}" \
+        uv run --no-project python - <<'PY'
+import json
+import os
+import re
+import tarfile
+from pathlib import Path
+
+version = os.environ["TESTED_VERSION"]
+normalized = re.escape(version.replace("-", "_"))
+for variable in ("TESTED_WHEEL", "TESTED_SDIST"):
+    name = Path(os.environ[variable]).name
+    if not re.match(rf"abxbus-{normalized}(?:-|\.)", name):
+        raise SystemExit(f"{name} does not contain release version {version}")
+
+npm_package = Path(os.environ["TESTED_NPM_PACKAGE"])
+with tarfile.open(npm_package, "r:gz") as archive:
+    package = json.load(archive.extractfile("package/package.json"))
+if package.get("name") != "abxbus" or package.get("version") != version:
+    raise SystemExit(f"Unexpected npm package identity: {package.get('name')}@{package.get('version')}")
+PY
 }
 
 publish_artifacts() {
     local version="$1"
+    local artifact_dir="$2"
+    shopt -s nullglob
+    local wheels=("${artifact_dir}"/python/abxbus-*.whl)
+    local sdists=("${artifact_dir}"/python/abxbus-*.tar.gz)
+    local npm_packages=("${artifact_dir}"/npm/abxbus-*.tgz)
 
     if curl -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | jq -e --arg version "${version}" '.releases[$version] | length > 0' >/dev/null 2>&1; then
         echo "${PYPI_PACKAGE} ${version} already published on PyPI"
     else
-        uv publish --trusted-publishing always "${REPO_DIR}/dist/"*
+        uv publish --trusted-publishing always "${wheels[@]}" "${sdists[@]}"
     fi
 
     if npm view "${NPM_PACKAGE}@${version}" version --silent >/dev/null 2>&1; then
         echo "${NPM_PACKAGE} ${version} already published on npm"
     else
-        (cd abxbus-ts && npm publish --access public)
+        npm publish --access public "${npm_packages[0]}"
     fi
-
-    wait_for_pypi "${version}"
-    wait_for_npm "${version}"
 }
 
 create_release() {
@@ -316,12 +264,13 @@ create_go_module_tags() {
 }
 
 main() {
-    local slug release_sha release_branch version latest candidate relation released_tag registry release_target pypi_exists npm_exists github_release_exists
+    local slug release_sha release_branch artifact_dir version latest candidate relation released_tag registry release_target pypi_exists npm_exists github_release_exists
 
     source_optional_env
     slug="$(repo_slug)"
     release_sha="${RELEASE_SHA:-$(git rev-parse HEAD)}"
     release_branch="${RELEASE_BRANCH:-main}"
+    artifact_dir="${RELEASE_ARTIFACT_DIR:-}"
     require_clean_exact_checkout "${release_sha}" "${release_branch}"
 
     version="$(current_version)"
@@ -364,10 +313,16 @@ main() {
         return 1
     fi
 
-    require_successful_workflows "${slug}" "${release_sha}"
-    build_artifacts "${version}"
+    [[ -n "${artifact_dir}" ]] || { echo "RELEASE_ARTIFACT_DIR must point to exact tested artifacts" >&2; return 1; }
+    require_tested_artifacts "${artifact_dir}" "${version}" "${release_sha}"
     create_release "${slug}" "${version}" "${release_sha}"
-    publish_artifacts "${version}"
+    publish_artifacts "${version}" "${artifact_dir}"
+    gh release upload "${TAG_PREFIX}${version}" --repo "${slug}" \
+        "${artifact_dir}"/python/abxbus-*.whl \
+        "${artifact_dir}"/python/abxbus-*.tar.gz \
+        "${artifact_dir}"/npm/abxbus-*.tgz \
+        "${artifact_dir}"/SHA256SUMS \
+        --clobber
     create_go_module_tags "${version}" "${release_sha}"
 
     released_tag="$(gh release view "${TAG_PREFIX}${version}" --repo "${slug}" --json tagName,targetCommitish --jq '[.tagName, .targetCommitish] | @tsv')"

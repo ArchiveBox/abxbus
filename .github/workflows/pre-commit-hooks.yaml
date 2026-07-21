@@ -1,17 +1,7 @@
 name: pre-commit-hooks
 
 on:
-  push:
-    branches:
-      - main
-      - stable
-      - 'releases/**'
-  pull_request:
-  workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+  workflow_call:
 
 jobs:
   pre-commit-hooks:

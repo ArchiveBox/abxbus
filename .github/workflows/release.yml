@@ -1,15 +1,10 @@
 name: Release
 
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
-    inputs:
-      release_sha:
-        description: Full commit SHA on main to release
-        required: true
-        type: string
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
 
 permissions:
   actions: read
@@ -22,12 +17,14 @@ concurrency:
 
 jobs:
   publish:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-24.04
     environment: pypi
     timeout-minutes: 45
     env:
-      RELEASE_SHA: ${{ github.event_name == 'push' && github.sha || inputs.release_sha }}
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
       RELEASE_BRANCH: main
+      RELEASE_ARTIFACT_DIR: ${{ github.workspace }}/release-artifacts
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -56,17 +53,13 @@ jobs:
       - name: Use npm with trusted publishing support
         run: npm install -g npm@12.0.1
 
-      - name: Install native build tools
-        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+      - name: Download exact tested release artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          packages: cmake gcc-14 g++-14
-          version: native-release-build-tools-v1
-          execute_install_scripts: true
-
-      - name: Configure native build tools
-        run: |
-          echo "CC=gcc-14" >> "$GITHUB_ENV"
-          echo "CXX=g++-14" >> "$GITHUB_ENV"
+          name: release-artifacts-${{ env.RELEASE_SHA }}
+          path: ${{ env.RELEASE_ARTIFACT_DIR }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
 
       - name: Publish tested commit
         env:

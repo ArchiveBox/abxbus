@@ -1,27 +1,12 @@
 name: test-py
 permissions:
-  actions: read
-  contents: write
-  pull-requests: write  # Allow writing comments on PRs
-  issues: write         # Allow writing comments on issues
-  statuses: write       # Allow writing statuses on PRs
-  discussions: write
+  contents: read
 
 on:
-  push:
-    branches:
-      - main
-      - stable
-      - 'releases/**'
-  pull_request:
-  workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+  workflow_call:
 
 jobs:
-  lint_py:
+  docs_py:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -41,9 +26,6 @@ jobs:
 
       - run: uv sync --dev --all-extras --no-extra tachyon
       - run: uv pip install fastapi
-      - run: uv run ruff format --check
-      - run: uv run ruff check
-      - run: uv run pyright
       - name: Run documentation code blocks
         run: uv run pytest -vv --tb=long README.md AGENTS.md skills docs
 
@@ -90,21 +72,43 @@ jobs:
 
   tests:
     needs:
-      - lint_py
+      - docs_py
       - find_py_tests
-    runs-on: ubuntu-24.04
-    env:
-      IN_DOCKER: 'True'
+    runs-on: ${{ matrix.target.os }}
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11.15", "3.12.13", "3.13.14", "3.14.6"]
+        target:
+          - os: ubuntu-24.04
+            os_name: linux
+            python: "3.11.15"
+          - os: ubuntu-24.04
+            os_name: linux
+            python: "3.12.13"
+          - os: ubuntu-24.04
+            os_name: linux
+            python: "3.13.14"
+          - os: ubuntu-24.04
+            os_name: linux
+            python: "3.14.6"
+          - os: macos-15
+            os_name: macOS
+            python: "3.11.15"
+          - os: macos-15
+            os_name: macOS
+            python: "3.12.13"
+          - os: macos-15
+            os_name: macOS
+            python: "3.13.14"
+          - os: macos-15
+            os_name: macOS
+            python: "3.14.6"
         task: ${{ fromJson(needs.find_py_tests.outputs.PY_TASKS || '[{"kind":"error","name":"FAILED_TO_DISCOVER_TASKS"}]') }}
         # autodiscovers files in tests/test_*.py and examples/*.py
         # - { kind: "test", name: "test_eventbus" }
         # - { kind: "example", name: "quickstart" }
         # ... and more
-    name: py${{ matrix.python }}-${{ matrix.task.kind }}-${{ matrix.task.name }}
+    name: ${{ matrix.target.os_name }}-py${{ matrix.target.python }}-${{ matrix.task.kind }}-${{ matrix.task.name }}
     steps:
       - name: Check that the previous step managed to find some tasks for us to run
         run: |
@@ -116,7 +120,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: ${{ matrix.target.python }}
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: "0.10.6"
@@ -136,18 +140,26 @@ jobs:
           cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
       - name: Install bridge service binaries
-        if: matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
+        if: runner.os == 'Linux' && matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: redis-server nats-server postgresql sqlite3 gcc-14 g++-14
           version: bridge-service-binaries-gcc14-v1
           execute_install_scripts: true
 
+      - name: Install bridge service binaries
+        if: runner.os == 'macOS' && matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
+        run: brew install redis nats-server postgresql@17 sqlite gcc@14
+
       - name: Configure bridge service binaries
         if: matrix.task.kind == 'test' && (matrix.task.name == 'test_bridges' || matrix.task.name == 'test_cross_runtime_roundtrip')
         run: |
-          PG_INITDB_PATH="$(find /usr/lib/postgresql -type f -name initdb | head -n 1)"
-          PG_BINDIR="$(dirname "${PG_INITDB_PATH}")"
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            PG_BINDIR="$(brew --prefix postgresql@17)/bin"
+          else
+            PG_INITDB_PATH="$(find /usr/lib/postgresql -type f -name initdb | head -n 1)"
+            PG_BINDIR="$(dirname "${PG_INITDB_PATH}")"
+          fi
           if [[ -z "${PG_BINDIR}" || ! -x "${PG_BINDIR}/initdb" || ! -x "${PG_BINDIR}/postgres" ]]; then
             echo "Failed to locate PostgreSQL binaries (initdb/postgres)" > /dev/stderr
             exit 1
@@ -197,7 +209,8 @@ jobs:
       - name: Check coverage files
         if: always()
         run: |
-          mapfile -t coverage_files < <(find . -maxdepth 1 -type f -name '.coverage*' -print)
+          shopt -s nullglob
+          coverage_files=(.coverage*)
           [[ "${#coverage_files[@]}" -gt 0 ]]
           for coverage_file in "${coverage_files[@]}"; do
             echo "Found coverage file ($coverage_file), size: $(stat -f%z "$coverage_file" 2>/dev/null || stat -c%s "$coverage_file") bytes"
@@ -206,7 +219,7 @@ jobs:
       - name: Upload coverage data
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: coverage-py${{ matrix.python }}-${{ matrix.task.kind }}-${{ matrix.task.name }}
+          name: coverage-${{ matrix.target.os_name }}-py${{ matrix.target.python }}-${{ matrix.task.kind }}-${{ matrix.task.name }}
           path: |
             .coverage*
             pyproject.toml
