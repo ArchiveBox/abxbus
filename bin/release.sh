@@ -144,7 +144,7 @@ require_clean_exact_checkout() {
 require_successful_workflows() {
     local slug="$1"
     local release_sha="$2"
-    local workflow_spec workflow_file workflow_name runs state conclusion run_id attempts
+    local workflow_spec workflow_file workflow_name runs state run_id attempts final_state
 
     for workflow_spec in "${REQUIRED_WORKFLOWS[@]}"; do
         workflow_file="${workflow_spec%%|*}"
@@ -176,26 +176,30 @@ require_successful_workflows() {
                     return 1
                     ;;
                 *)
-                    IFS=$'\t' read -r run_id state conclusion <<<"${state}"
-                    if [[ "${state}" == "completed" ]]; then
-                        if [[ "${conclusion}" != "success" ]]; then
-                            echo "Required workflow ${workflow_name} concluded ${conclusion} for ${release_sha}" >&2
-                            gh run view "${run_id}" --repo "${slug}"
-                            return 1
-                        fi
-                        echo "Required workflow passed: ${workflow_name} (${run_id})"
-                        break
-                    fi
+                    IFS=$'\t' read -r run_id _ _ <<<"${state}"
+                    break
                     ;;
             esac
 
             attempts=$((attempts + 1))
-            if [[ "${attempts}" -ge 180 ]]; then
-                echo "Timed out waiting for required workflow ${workflow_name} on ${release_sha}" >&2
+            if [[ "${attempts}" -ge 12 ]]; then
+                echo "Required workflow ${workflow_name} did not start for ${release_sha} within 60 seconds" >&2
                 return 1
             fi
-            sleep 10
+            sleep 5
         done
+
+        env -u GH_FORCE_TTY GH_PROMPT_DISABLED=1 GH_PAGER=cat NO_COLOR=1 \
+            gh run watch "${run_id}" --repo "${slug}" --exit-status
+        final_state="$(env -u GH_FORCE_TTY GH_PROMPT_DISABLED=1 GH_PAGER=cat NO_COLOR=1 \
+            gh run view "${run_id}" --repo "${slug}" \
+            --json workflowName,headSha,status,conclusion,event \
+            --jq '[.workflowName, .headSha, .event, .status, (.conclusion // "")] | @tsv')"
+        if [[ "${final_state}" != "${workflow_name}"$'\t'"${release_sha}"$'\tpush\tcompleted\tsuccess' ]]; then
+            echo "Required workflow ${workflow_name} was not a successful exact-SHA push run: ${final_state}" >&2
+            return 1
+        fi
+        echo "Required workflow passed: ${workflow_name} (${run_id})"
     done
 }
 
