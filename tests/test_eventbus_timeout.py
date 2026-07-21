@@ -192,7 +192,7 @@ async def test_handler_timeout_marks_error_and_other_handlers_still_complete(cap
     bus = EventBus(name='TimeoutFocusedBus')
 
     class TimeoutFocusedEvent(BaseEvent[str]):
-        event_timeout: float | None = 0.2
+        event_timeout: float | None = 0
         event_handler_timeout: float | None = 0.01
 
     execution_order: list[str] = []
