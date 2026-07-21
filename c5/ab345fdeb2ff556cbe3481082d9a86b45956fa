@@ -1,0 +1,20 @@
+.github/workflows/test_py.yaml
+  s_f8414d52051f83::t_4588a92c033a7a 33,63,86,94,140-141,150-155,170
+  s_f8414d52051f83::t_f0580deed74576 142-149
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "c5ab345fdeb2ff556cbe3481082d9a86b45956fa",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
