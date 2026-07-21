@@ -11,9 +11,9 @@ on:
   push:
     branches:
       - main
-      - stable
-      - 'releases/**'
   pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 concurrency:
