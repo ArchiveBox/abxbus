@@ -753,8 +753,16 @@ func optionalBoolOption(value any, name string, defaultValue bool) bool {
 }
 
 func (e *BaseEvent) ensureResultsReady(ctx context.Context, firstResult bool) error {
-	if e.status() != "pending" || e.hasAnySettledResult() {
+	status := e.status()
+	if status == "completed" || e.hasAnySettledResult() {
 		return nil
+	}
+	if status == "started" {
+		if firstResult {
+			return e.waitForFirstResultOrCompletion(ctx)
+		}
+		_, err := e.waitWithContext(ctx)
+		return err
 	}
 	if firstResult {
 		_, err := e.nowWithContext(ctx, &EventWaitOptions{FirstResult: true})

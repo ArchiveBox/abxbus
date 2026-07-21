@@ -34,6 +34,39 @@ func TestTimeoutPrecedenceEventOverBus(t *testing.T) {
 	}
 }
 
+func TestEventResultWaitsForAlreadyStartedHandlerTimeout(t *testing.T) {
+	eventTimeout := 0.01
+	handlerStarted := make(chan struct{})
+	bus := abxbus.NewEventBus("StartedBeforeEventResultBus", nil)
+	t.Cleanup(bus.Destroy)
+	bus.On("Evt", "slow", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		close(handlerStarted)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}, nil)
+
+	event := abxbus.NewBaseEvent("Evt", nil)
+	event.EventTimeout = &eventTimeout
+	emitted := bus.Emit(event)
+	<-handlerStarted
+
+	result, err := emitted.EventResult()
+	if err == nil {
+		t.Fatalf("expected timeout after handler started, got result %#v", result)
+	}
+	if emitted.EventStatus != "completed" {
+		t.Fatalf("expected completed event, got %s", emitted.EventStatus)
+	}
+	if len(emitted.EventResults) != 1 {
+		t.Fatalf("expected one handler result, got %d", len(emitted.EventResults))
+	}
+	for _, eventResult := range emitted.EventResults {
+		if eventResult.Status != abxbus.EventResultError || eventResult.Error == nil {
+			t.Fatalf("expected settled timeout error result, got status=%s error=%#v", eventResult.Status, eventResult.Error)
+		}
+	}
+}
+
 func TestZeroTimeoutAllowsSlowHandler(t *testing.T) {
 	busTimeout := 0.01
 	bus := abxbus.NewEventBus("NoTimeoutBus", &abxbus.EventBusOptions{EventTimeout: &busTimeout})
