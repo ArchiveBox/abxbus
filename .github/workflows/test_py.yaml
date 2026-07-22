@@ -18,6 +18,20 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: abxbus-ts/pnpm-lock.yaml
+      - name: Set up Go for documented performance commands
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: abxbus-go/go.mod
+          cache: true
+          cache-dependency-path: abxbus-go/go.sum
+      - name: Set up Rust for documented performance commands
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.97.1
+      - name: Cache Cargo for documented performance commands
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: abxbus-rust -> target
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: "0.10.6"
