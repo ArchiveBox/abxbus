@@ -1,7 +1,5 @@
 import asyncio
-import functools
 import gc
-import inspect
 import logging
 import math
 import os
@@ -13,8 +11,6 @@ from typing import Any, Literal
 import psutil
 import pytest
 
-import abxbus.base_event as base_event_module
-import abxbus.event_bus as event_bus_module
 from abxbus import BaseEvent, EventBus, EventHandlerAbortedError, EventHandlerCancelledError, EventHandlerTimeoutError
 
 pytestmark = pytest.mark.timeout(120, method='thread')
@@ -158,77 +154,6 @@ def throughput_regression_floor(
     Scenario+mode regression threshold using same-run baseline + absolute safety floor.
     """
     return max(hard_floor, first_run_throughput * min_fraction)
-
-
-class MethodProfiler:
-    """Lightweight monkeypatch profiler for selected class methods."""
-
-    def __init__(self) -> None:
-        self.stats: dict[str, dict[str, float]] = {}
-        self._restore: list[tuple[type[Any], str, Any]] = []
-
-    def instrument(
-        self,
-        owner: type[Any],
-        method_name_or_ref: str | Callable[..., Any],
-        label: str | None = None,
-    ) -> None:
-        if isinstance(method_name_or_ref, str):
-            method_name = method_name_or_ref
-        else:
-            method_name = getattr(method_name_or_ref, '__name__', '')
-            if not method_name:
-                raise ValueError('method_name_or_ref callable must define __name__')
-        original = getattr(owner, method_name)
-        metric_name = label or f'{owner.__name__}.{method_name}'
-        wrapped_method: Any
-
-        if inspect.iscoroutinefunction(original):
-
-            @functools.wraps(original)
-            async def wrapped_async(*args: Any, **kwargs: Any) -> Any:
-                started = time.perf_counter()
-                try:
-                    return await original(*args, **kwargs)
-                finally:
-                    elapsed = time.perf_counter() - started
-                    metric = self.stats.setdefault(metric_name, {'calls': 0.0, 'total_s': 0.0})
-                    metric['calls'] += 1.0
-                    metric['total_s'] += elapsed
-
-            wrapped_method = wrapped_async
-        else:
-
-            @functools.wraps(original)
-            def wrapped_sync(*args: Any, **kwargs: Any) -> Any:
-                started = time.perf_counter()
-                try:
-                    return original(*args, **kwargs)
-                finally:
-                    elapsed = time.perf_counter() - started
-                    metric = self.stats.setdefault(metric_name, {'calls': 0.0, 'total_s': 0.0})
-                    metric['calls'] += 1.0
-                    metric['total_s'] += elapsed
-
-            wrapped_method = wrapped_sync
-
-        self._restore.append((owner, method_name, original))
-        setattr(owner, method_name, wrapped_method)
-
-    def restore(self) -> None:
-        for owner, method_name, original in reversed(self._restore):
-            setattr(owner, method_name, original)
-        self._restore.clear()
-
-    def top_lines(self, limit: int = 12) -> list[str]:
-        ranked = sorted(self.stats.items(), key=lambda item: item[1]['total_s'], reverse=True)
-        lines: list[str] = []
-        for name, metric in ranked[:limit]:
-            calls = int(metric['calls'])
-            total_s = metric['total_s']
-            avg_us = (total_s * 1_000_000.0) / max(calls, 1)
-            lines.append(f'{name}: calls={calls:,} total={total_s:.3f}s avg={avg_us:.1f}us')
-        return lines
 
 
 async def run_contention_round(
@@ -1321,23 +1246,11 @@ async def test_max_history_none_forwarding_chain_stress_matrix(event_handler_con
 
 
 @pytest.mark.asyncio
-async def test_perf_debug_hot_path_breakdown() -> None:
+async def test_perf_forwarding_and_queue_jump_measurements() -> None:
     """
-    Debug-only perf test:
-    profiles key hot-path methods to confirm where time is spent before optimizing.
+    Measure the real forwarding and nested queue-jump paths without mutating
+    production methods during the measurement.
     """
-    profiler = MethodProfiler()
-    instrumented: list[tuple[type[Any], str]] = [
-        (event_bus_module.ReentrantLock, '__aenter__'),
-        (event_bus_module.ReentrantLock, '__aexit__'),
-        (event_bus_module.EventBus, '_get_handlers_for_event'),
-        (event_bus_module.EventBus, '_process_event'),
-        (event_bus_module.EventBus, '_run_handler'),
-        (event_bus_module.EventHistory, 'trim_event_history'),
-        (base_event_module.BaseEvent, '_create_pending_handler_results'),
-    ]
-    for owner, method_ref in instrumented:
-        profiler.instrument(owner, method_ref)
 
     class DebugParentEvent(BaseEvent):
         idx: int = 0
@@ -1390,7 +1303,6 @@ async def test_perf_debug_hot_path_breakdown() -> None:
     finally:
         await bus_a.destroy(clear=True)
         await bus_b.destroy(clear=True)
-        profiler.restore()
     elapsed = time.perf_counter() - start
     done_mb = get_memory_usage_mb()
     gc.collect()
@@ -1406,9 +1318,13 @@ async def test_perf_debug_hot_path_breakdown() -> None:
     )
     print(f'[perf-debug] memory_mb before={before_mb:.1f} done={done_mb:.1f} gc={gc_mb:.1f}')
     print(f'[perf-debug] forwarded_simple_count={forwarded_simple_count:,} child_count={child_count:,}')
-    print('[perf-debug] hot_path_top_total_time:')
-    for line in profiler.top_lines(limit=14):
-        print(f'[perf-debug]   {line}')
-
     assert forwarded_simple_count == 2_000
     assert child_count == 600
+    assert simple_metrics[0] >= 130.0
+    assert parent_metrics[0] >= 100.0
+    assert simple_metrics[2] < 45.0
+    assert parent_metrics[2] < 45.0
+    assert simple_metrics[4] < 300.0
+    assert parent_metrics[4] < 300.0
+    assert done_mb - before_mb < 320.0
+    assert gc_mb - before_mb < 280.0

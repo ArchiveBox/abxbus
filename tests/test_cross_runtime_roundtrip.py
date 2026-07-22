@@ -1462,7 +1462,7 @@ async def _running_process(command: list[str], *, cwd: Path | None = None) -> As
         command,
         cwd=str(cwd) if cwd else None,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
     )
     try:
@@ -1477,29 +1477,18 @@ async def _running_process(command: list[str], *, cwd: Path | None = None) -> As
                 process.wait(timeout=5)
 
 
-async def _wait_for_port(port: int, timeout: float = 30.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            _, writer = await asyncio.open_connection('127.0.0.1', port)
-            writer.close()
-            await writer.wait_closed()
-            return
-        except OSError:
-            await asyncio.sleep(0.05)
-    raise TimeoutError(f'port did not open in time: {port}')
+async def _read_process_line(process: subprocess.Popen[str]) -> str:
+    assert process.stdout is not None
+    line = await asyncio.to_thread(process.stdout.readline)
+    if line:
+        return line.rstrip('\n')
+    returncode = process.wait()
+    raise AssertionError(f'process exited before readiness/result ({returncode})')
 
 
-async def _wait_for_path(path: Path, *, process: subprocess.Popen[str], timeout: float = 30.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if path.exists():
-            return
-        if process.poll() is not None:
-            stdout, stderr = process.communicate()
-            raise AssertionError(f'worker exited early ({process.returncode})\nstdout:\n{stdout}\nstderr:\n{stderr}')
-        await asyncio.sleep(0.05)
-    raise TimeoutError(f'path did not appear in time: {path}')
+async def _wait_for_process_output(process: subprocess.Popen[str], marker: str) -> None:
+    while marker not in await _read_process_line(process):
+        pass
 
 
 def _make_sender_bridge(kind: str, config: dict[str, Any], *, low_latency: bool = False) -> Any:
@@ -1613,13 +1602,9 @@ async def _assert_roundtrip(kind: str, config: dict[str, Any]) -> None:
     temp_path = _make_temp_dir(f'abxbus-bridge-{kind}')
     try:
         worker_config_path = temp_path / 'worker_config.json'
-        worker_ready_path = temp_path / 'worker_ready'
-        received_event_path = temp_path / 'received_event.json'
         worker_config = {
             **config,
             'kind': kind,
-            'ready_path': str(worker_ready_path),
-            'output_path': str(received_event_path),
         }
         worker_config_path.write_text(json.dumps(worker_config), encoding='utf-8')
 
@@ -1632,7 +1617,7 @@ async def _assert_roundtrip(kind: str, config: dict[str, Any]) -> None:
             text=True,
         )
         try:
-            await _wait_for_path(worker_ready_path, process=worker)
+            assert json.loads(await _read_process_line(worker)) == {'ready': True}
             if kind == 'postgres':
                 await sender.start()
             outbound = IPCPingEvent(
@@ -1650,8 +1635,8 @@ async def _assert_roundtrip(kind: str, config: dict[str, Any]) -> None:
                 },
             )
             await sender.emit(outbound)
-            await _wait_for_path(received_event_path, process=worker)
-            received_payload = json.loads(received_event_path.read_text(encoding='utf-8'))
+            received_message = json.loads(await _read_process_line(worker))
+            received_payload = received_message['event']
             assert 'event_status' in received_payload
             assert 'event_started_at' in received_payload
             assert _normalize_roundtrip_payload(received_payload) == _normalize_roundtrip_payload(
@@ -1750,7 +1735,7 @@ async def test_redis_event_bridge_roundtrip_between_processes() -> None:
             str(temp_dir),
         ]
         async with _running_process(command) as redis_process:
-            await _wait_for_port(port)
+            await _wait_for_process_output(redis_process, 'Ready to accept connections')
             await _assert_roundtrip('redis', {'url': f'redis://127.0.0.1:{port}/1/abxbus_events'})
             latency_ms = await _measure_warm_latency_ms('redis', {'url': f'redis://127.0.0.1:{port}/1/abxbus_events'})
             print(f'LATENCY python redis {latency_ms:.3f}ms')
@@ -1764,7 +1749,7 @@ async def test_nats_event_bridge_roundtrip_between_processes() -> None:
     port = _free_tcp_port()
     command = ['nats-server', '-a', '127.0.0.1', '-p', str(port)]
     async with _running_process(command) as nats_process:
-        await _wait_for_port(port)
+        await _wait_for_process_output(nats_process, 'Server is ready')
         await _assert_roundtrip('nats', {'server': f'nats://127.0.0.1:{port}', 'subject': 'abxbus_events'})
         latency_ms = await _measure_warm_latency_ms('nats', {'server': f'nats://127.0.0.1:{port}', 'subject': 'abxbus_events'})
         print(f'LATENCY python nats {latency_ms:.3f}ms')
@@ -1802,7 +1787,7 @@ async def test_postgres_event_bridge_roundtrip_between_processes() -> None:
         port = _free_tcp_port()
         command = ['postgres', '-D', str(data_dir), '-h', '127.0.0.1', '-p', str(port), '-k', '/tmp']
         async with _running_process(command) as postgres_process:
-            await _wait_for_port(port)
+            await _wait_for_process_output(postgres_process, 'database system is ready to accept connections')
             await _assert_roundtrip('postgres', {'url': f'postgresql://postgres@127.0.0.1:{port}/postgres/abxbus_events'})
 
             asyncpg = __import__('asyncpg')

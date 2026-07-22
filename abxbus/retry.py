@@ -516,7 +516,7 @@ async def _execute_with_retries(
 
             if attempt < max_attempts:
                 # Calculate wait time with backoff
-                current_wait = retry_after * (retry_backoff_factor ** (attempt - 1))
+                current_wait = retry_delay(retry_after, retry_backoff_factor, attempt)
 
                 # Only log warning on the final retry attempt (second-to-last overall attempt)
                 if attempt == max_attempts - 1:
@@ -555,6 +555,11 @@ def inspect_isawaitable(value: object) -> bool:
     return hasattr(value, '__await__')
 
 
+def retry_delay(retry_after: float, retry_backoff_factor: float, attempt: int) -> float:
+    """Return the configured delay after a failed one-indexed attempt."""
+    return retry_after * (retry_backoff_factor ** (attempt - 1))
+
+
 async def _execute_awaitable_with_retries(
     first_result: Awaitable[T],
     func: Callable[..., Any],
@@ -591,7 +596,7 @@ async def _execute_awaitable_with_retries(
                 raise
 
             if attempt < max_attempts:
-                current_wait = retry_after * (retry_backoff_factor ** (attempt - 1))
+                current_wait = retry_delay(retry_after, retry_backoff_factor, attempt)
                 if attempt == max_attempts - 1:
                     logger.warning(
                         f'{func_name} failed (attempt {attempt}/{max_attempts}): '
@@ -657,7 +662,7 @@ def _execute_with_retries_sync(
                 raise
 
             if attempt < max_attempts:
-                current_wait = retry_after * (retry_backoff_factor ** (attempt - 1))
+                current_wait = retry_delay(retry_after, retry_backoff_factor, attempt)
                 if attempt == max_attempts - 1:
                     logger.warning(
                         f'{func_name} failed (attempt {attempt}/{max_attempts}): '

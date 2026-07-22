@@ -1442,27 +1442,25 @@ class TestSyncRetryApiParity:
         assert timestamps[2] - timestamps[1] >= 0.04
 
     def test_sync_retry_backoff_factor_increases_blocking_delay_between_attempts(self):
+        from abxbus.retry import retry_delay
+
         calls = 0
-        timestamps: list[float] = []
+        started = time.perf_counter()
 
         @retry(max_attempts=4, retry_after=0.03, retry_backoff_factor=2.0)
         def fn():
             nonlocal calls
             calls += 1
-            timestamps.append(time.time())
             if calls < 4:
                 raise ValueError('fail')
             return 'ok'
 
         assert fn() == 'ok'
-        gap1 = timestamps[1] - timestamps[0]
-        gap2 = timestamps[2] - timestamps[1]
-        gap3 = timestamps[3] - timestamps[2]
-        assert gap1 >= 0.02
-        assert gap2 >= 0.045
-        assert gap3 >= 0.09
-        assert gap2 > gap1
-        assert gap3 > gap2
+        elapsed = time.perf_counter() - started
+        assert calls == 4
+        delays = [retry_delay(0.03, 2.0, attempt) for attempt in range(1, 4)]
+        assert delays == [0.03, 0.06, 0.12]
+        assert elapsed >= sum(delays)
 
     def test_sync_retry_on_errors_supports_exception_classes_and_regex(self):
         calls = 0

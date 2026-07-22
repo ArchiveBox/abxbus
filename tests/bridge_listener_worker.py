@@ -38,19 +38,17 @@ def _make_listener_bridge(config: dict[str, Any]) -> Any:
 
 async def _main(config_path: str) -> None:
     config = json.loads(await asyncio.to_thread(Path(config_path).read_text, encoding='utf-8'))
-    ready_path = Path(str(config['ready_path']))
-    output_path = Path(str(config['output_path']))
     done = asyncio.Event()
 
     bridge = _make_listener_bridge(config)
 
     async def _on_event(event: Any) -> None:
-        await asyncio.to_thread(output_path.write_text, json.dumps(event.model_dump(mode='json')), encoding='utf-8')
+        print(json.dumps({'event': event.model_dump(mode='json')}), flush=True)
         done.set()
 
     bridge.on('IPCPingEvent', _on_event)
     await bridge.start()
-    await asyncio.to_thread(ready_path.write_text, 'ready', encoding='utf-8')
+    print(json.dumps({'ready': True}), flush=True)
     try:
         await asyncio.wait_for(done.wait(), timeout=30.0)
     finally:

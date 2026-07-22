@@ -3736,27 +3736,17 @@ class TestNameConflictGC:
         for i in range(30):
             refs.append(await create_and_fill_bus(i))
 
-        # Encourage GC/finalization first (best effort without explicit destroy()).
-        for _ in range(20):
-            gc.collect()
-            await asyncio.sleep(0.02)
-
-        alive_buses = [ref() for ref in refs if ref() is not None]
-        still_live = [bus for bus in alive_buses if bus is not None]
+        gc.collect()
+        still_live = [live_bus for live_bus in (ref() for ref in refs) if live_bus is not None]
 
         # Deterministically clean up anything still alive.
         for bus in still_live:
             await bus.destroy(clear=True)
-        # Loop variable keeps a strong ref to the last bus in CPython.
         if still_live:
             del bus
         del still_live
-        del alive_buses
-
-        # Final GC and WeakSet purge.
-        for _ in range(10):
-            gc.collect()
-            await asyncio.sleep(0.01)
+        await asyncio.sleep(0)
+        gc.collect()
         _ = list(EventBus.all_instances)
 
         assert all(ref() is None for ref in refs), 'all buses should be collectable after cleanup'
@@ -3787,11 +3777,8 @@ class TestNameConflictGC:
         for i in range(20):
             refs.append(await create_and_fill_bus(i))
 
-        for _ in range(80):
-            gc.collect()
-            await asyncio.sleep(0.02)
-            if all(ref() is None for ref in refs):
-                break
+        await asyncio.sleep(0)
+        gc.collect()
 
         # Force WeakSet iteration to purge any dead refs.
         _ = list(EventBus.all_instances)
@@ -3826,10 +3813,7 @@ class TestNameConflictGC:
         assert lock_ref is not None
         assert bus_ref is not None
 
-        for _ in range(500):
-            gc.collect()
-            if subclass_ref() is None and registry_ref() is None and lock_ref() is None and bus_ref() is None:
-                break
+        gc.collect()
 
         assert bus_ref() is None, 'subclass bus instance should be collectable'
         assert subclass_ref() is None, 'subclass type should be collectable'

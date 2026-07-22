@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
+import { once } from 'node:events'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { createConnection, createServer as createNetServer } from 'node:net'
+import { createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1246,8 +1247,6 @@ const getFreePort = async (): Promise<number> =>
     })
   })
 
-const sleep = async (ms: number): Promise<void> => await new Promise((resolve) => setTimeout(resolve, ms))
-
 const importDynamicModule = async (module_name: string): Promise<any> => {
   const dynamic_import = Function('module_name', 'return import(module_name)') as (module_name: string) => Promise<unknown>
   return dynamic_import(module_name) as Promise<any>
@@ -1299,48 +1298,43 @@ const normalizeRoundtripPayload = (payload: Record<string, unknown>): Record<str
   return normalized
 }
 
-const waitForPort = async (port: number, timeout_ms = 30000): Promise<void> => {
-  const started = Date.now()
-  while (Date.now() - started < timeout_ms) {
-    const ok = await new Promise<boolean>((resolve) => {
-      const socket = createConnection({ host: '127.0.0.1', port }, () => {
-        socket.end()
-        resolve(true)
-      })
-      socket.once('error', () => resolve(false))
-    })
-    if (ok) return
-    await sleep(50)
-  }
-  throw new Error(`port did not open in time: ${port}`)
-}
-
-const waitForPath = async (
-  path: string,
-  worker: ChildProcess,
-  stdout_log: { value: string },
-  stderr_log: { value: string },
-  timeout_ms = 30000
-): Promise<void> => {
-  const started = Date.now()
-  while (Date.now() - started < timeout_ms) {
-    if (existsSync(path)) return
-    if (worker.exitCode !== null) {
-      throw new Error(`worker exited early (${worker.exitCode})\nstdout:\n${stdout_log.value}\nstderr:\n${stderr_log.value}`)
+const waitForProcessLine = async (proc: ChildProcess, predicate: (line: string) => boolean): Promise<string> =>
+  await new Promise<string>((resolve, reject) => {
+    let stdout_buffer = ''
+    let stderr_buffer = ''
+    const inspect = (stream: 'stdout' | 'stderr', chunk: unknown): void => {
+      const previous = stream === 'stdout' ? stdout_buffer : stderr_buffer
+      const lines = `${previous}${String(chunk)}`.split('\n')
+      if (stream === 'stdout') stdout_buffer = lines.pop() ?? ''
+      else stderr_buffer = lines.pop() ?? ''
+      for (const line of lines) {
+        if (predicate(line)) {
+          cleanup()
+          resolve(line)
+          return
+        }
+      }
     }
-    await sleep(50)
-  }
-  throw new Error(`path did not appear in time: ${path}`)
-}
+    const on_stdout = (chunk: unknown): void => inspect('stdout', chunk)
+    const on_stderr = (chunk: unknown): void => inspect('stderr', chunk)
+    const on_exit = (code: number | null): void => {
+      cleanup()
+      reject(new Error(`process exited before readiness/result (${code})\nstdout:\n${stdout_buffer}\nstderr:\n${stderr_buffer}`))
+    }
+    const cleanup = (): void => {
+      proc.stdout?.off('data', on_stdout)
+      proc.stderr?.off('data', on_stderr)
+      proc.off('exit', on_exit)
+    }
+    proc.stdout?.on('data', on_stdout)
+    proc.stderr?.on('data', on_stderr)
+    proc.once('exit', on_exit)
+  })
 
 const stopProcess = async (proc: ChildProcess): Promise<void> => {
   if (proc.exitCode !== null) return
   proc.kill('SIGTERM')
-  await sleep(250)
-  if (proc.exitCode === null) {
-    proc.kill('SIGKILL')
-    await sleep(250)
-  }
+  await once(proc, 'exit')
 }
 
 const runChecked = (cmd: string, args: string[], cwd?: string): void => {
@@ -1452,14 +1446,10 @@ const measureWarmLatencyMs = async (kind: string, config: Record<string, string>
 
 const assertRoundtrip = async (kind: string, config: Record<string, string>): Promise<void> => {
   const temp_dir = makeTempDir(`abxbus-bridge-${kind}`)
-  const ready_path = join(temp_dir, 'worker.ready')
-  const output_path = join(temp_dir, 'received.json')
   const config_path = join(temp_dir, 'worker_config.json')
   const worker_payload = {
     ...config,
     kind,
-    ready_path,
-    output_path,
   }
   writeFileSync(config_path, JSON.stringify(worker_payload), 'utf8')
 
@@ -1469,24 +1459,16 @@ const assertRoundtrip = async (kind: string, config: Record<string, string>): Pr
     cwd: tests_dir,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  const worker_stdout = { value: '' }
-  const worker_stderr = { value: '' }
-  worker.stdout?.on('data', (chunk) => {
-    worker_stdout.value += String(chunk)
-  })
-  worker.stderr?.on('data', (chunk) => {
-    worker_stderr.value += String(chunk)
-  })
-
   try {
-    await waitForPath(ready_path, worker, worker_stdout, worker_stderr)
+    const ready_line = await waitForProcessLine(worker, (line) => line === '{"ready":true}')
+    assert.deepEqual(JSON.parse(ready_line), { ready: true })
     if (kind === 'postgres') {
       await sender.start()
     }
     const outbound = IPCPingEvent({ label: `${kind}_ok` })
+    const received_line = waitForProcessLine(worker, (line) => line.startsWith('{"event":'))
     await sender.emit(outbound)
-    await waitForPath(output_path, worker, worker_stdout, worker_stderr)
-    const received_payload = JSON.parse(readFileSync(output_path, 'utf8')) as Record<string, unknown>
+    const received_payload = (JSON.parse(await received_line) as { event: Record<string, unknown> }).event
     assert.deepEqual(normalizeRoundtripPayload(received_payload), normalizeRoundtripPayload(outbound.toJSON() as Record<string, unknown>))
   } finally {
     await sender.close()
@@ -1576,7 +1558,7 @@ test('RedisEventBridge roundtrip between processes', async () => {
     { stdio: ['ignore', 'pipe', 'pipe'] }
   )
   try {
-    await waitForPort(port)
+    await waitForProcessLine(redis, (line) => line.includes('Ready to accept connections'))
     const config = { url: `redis://127.0.0.1:${port}/1/abxbus_events` }
     await assertRoundtrip('redis', config)
     const latency_ms = await measureWarmLatencyMs('redis', config)
@@ -1591,7 +1573,7 @@ test('NATSEventBridge roundtrip between processes', async () => {
   const port = await getFreePort()
   const nats = spawn('nats-server', ['-a', '127.0.0.1', '-p', String(port)], { stdio: ['ignore', 'pipe', 'pipe'] })
   try {
-    await waitForPort(port)
+    await waitForProcessLine(nats, (line) => line.includes('Server is ready'))
     const config = { server: `nats://127.0.0.1:${port}`, subject: 'abxbus_events' }
     await assertRoundtrip('nats', config)
     const latency_ms = await measureWarmLatencyMs('nats', config)
@@ -1627,7 +1609,7 @@ test('PostgresEventBridge roundtrip between processes', async () => {
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   try {
-    await waitForPort(port)
+    await waitForProcessLine(postgres, (line) => line.includes('database system is ready to accept connections'))
     const config = { url: `postgresql://postgres@127.0.0.1:${port}/postgres/abxbus_events` }
     await assertRoundtrip('postgres', config)
 
