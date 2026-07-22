@@ -1835,8 +1835,12 @@ class TestSyncRetryApiParity:
         active = 0
         max_active = 0
         lock = threading.Lock()
+        both_keys_entered = threading.Barrier(2)
+        resolved_args: list[tuple[str, str]] = []
 
         def _semaphore_key(a: str, b: str) -> str:
+            with lock:
+                resolved_args.append((a, b))
             return f'{a}-{b}'
 
         @retry(max_attempts=1, semaphore_limit=1, semaphore_scope='global', semaphore_name=_semaphore_key)
@@ -1845,25 +1849,17 @@ class TestSyncRetryApiParity:
             with lock:
                 active += 1
                 max_active = max(max_active, active)
-            time.sleep(0.05)
+            both_keys_entered.wait()
             with lock:
                 active -= 1
 
-        max_active = 0
-        threads = [threading.Thread(target=keyed, args=('same', 'key')) for _ in range(2)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
-        assert max_active == 1
-
-        max_active = 0
         threads = [threading.Thread(target=keyed, args=args) for args in [('a', '1'), ('b', '2')]]
         for thread in threads:
             thread.start()
         for thread in threads:
             thread.join()
-        assert max_active >= 2
+        assert max_active == 2
+        assert set(resolved_args) == {('a', '1'), ('b', '2')}
 
 
 if __name__ == '__main__':
