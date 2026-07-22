@@ -1,0 +1,76 @@
+.github/workflows/test_py.yaml
+  s_f8414d52051f83::t_d1011e41ac1bf7 44
+pyproject.toml
+  s_f8414d52051f83::t_d1011e41ac1bf7 139-140
+  s_f8414d52051f83::t_b2a05b455cc2ad 5
+abxbus-rust/tests/test_eventbus.rs
+  s_f8414d52051f83::t_def0a51acec63f 523-525,534,570
+  s_f8414d52051f83::t_06e72107749e71 46-48,3044,3082,4109
+abxbus-rust/tests/test_eventbus_error_handling.rs
+  s_f8414d52051f83::t_def0a51acec63f 468-469,471,475,481,485
+abxbus-rust/tests/test_eventbus_locking.rs
+  s_f8414d52051f83::t_42f776b2150431 539-540,544,558,573,582
+abxbus-go/tests/event_handler_first_test.go
+  s_f8414d52051f83::t_ec3629758c651c 89,97,110,134-135,159,171,196-199,729,739,750-753
+abxbus-go/README.md
+  s_f8414d52051f83::t_9cb3e2178284ab 28,31-32,65-66
+  s_f8414d52051f83::t_5f72c0296e762f 36
+  s_f8414d52051f83::t_9de7ec945dc8f0 39-40
+  s_f8414d52051f83::t_1e285d45c3281c 33
+  s_f8414d52051f83::t_c089ff0a1ea6c2 45,51,57,60
+abxbus-rust/src/lock_manager.rs
+  s_f8414d52051f83::t_06e72107749e71 25,52,62,87,110,137-146
+  s_f8414d52051f83::t_f247214dfc46a8 147
+abxbus-ts/README.md
+  s_f8414d52051f83::t_9cb3e2178284ab 15-25,73,79-80,704,706
+  s_f8414d52051f83::t_ad1defe9beef8f 56-57,61
+  s_f8414d52051f83::t_c089ff0a1ea6c2 705,707
+abxbus-ts/tests/LockManager.test.ts
+  s_f8414d52051f83::t_d1011e41ac1bf7 141,149
+  s_f8414d52051f83::t_4e28a556f1a11e 131-134
+abxbus-ts/tests/EventBus_log_tree.test.ts
+  s_f8414d52051f83::t_d1011e41ac1bf7 180-183,190,197
+abxbus-rust/tests/test_base_event.rs
+  s_f8414d52051f83::t_7b8e9954d9a9fd 1595,1616,1660,1676,1683,1693,1761,1786,1800,1828
+  s_f8414d52051f83::t_4dca9409f16435 1079,1093,1124,1126,1141-1142,1157-1158,1189,1191-1192
+  s_f8414d52051f83::t_0ae6ee4ee55477 1366-1367,1374-1375,1381,1423,1439-1440,1451-1452,1458,1468,1492-1493,1503-1504,1513,1525
+  s_f8414d52051f83::t_66cf14eadaf9b0 1210-1211,1224-1225,1244,1262,1278-1279,1292-1293,1320,1350
+  s_f8414d52051f83::t_7fb4d299ed386f 2332,2366,2381-2382,2419-2422,2437-2438,2452,2461,2470,2475-2477,2521,2526,2543
+  s_f8414d52051f83::t_441c9e5d849172 6,293-313
+  s_f8414d52051f83::t_b254849eb3b6a5 797-798,809-810,828,840,866-867,881-882,905,918,944-945,956-957,972,986,1011-1012,1023-1024,1039,1058
+abxbus-rust/tests/test_eventbus_log_tree.rs
+  s_f8414d52051f83::t_42f776b2150431 4
+  s_f8414d52051f83::t_def0a51acec63f 247-248,255,271
+tests/test_eventbus_performance.py
+  s_f8414d52051f83::t_d1011e41ac1bf7 915-916,921,924-929,932-938
+abxbus-ts/tests/EventResult.test.ts
+  s_f8414d52051f83::t_d1011e41ac1bf7 426,429-430,439,446,460,469,479
+abxbus-rust/tests/test_lock_manager.rs
+  s_f8414d52051f83::t_def0a51acec63f 190
+  s_f8414d52051f83::t_3e5a0dc5fd1bae 178,183
+  s_f8414d52051f83::t_06e72107749e71 58,62,65,71,161,187
+abxbus-go/version.go
+  s_f8414d52051f83::t_a863aba8c32bbd 3
+abxbus-rust/Cargo.lock
+  s_f8414d52051f83::t_3333682343a4ee 7
+abxbus-rust/Cargo.toml
+  s_f8414d52051f83::t_46a5c1e2f78bed 3
+abxbus-ts/package.json
+  s_f8414d52051f83::t_ed18326974b9f3 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "d4d64102743d74322cb949294e9e5bff9b3d720a",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
