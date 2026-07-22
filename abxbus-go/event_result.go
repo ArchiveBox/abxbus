@@ -147,13 +147,7 @@ func (r *EventResult) markError(err error) bool {
 }
 
 func (r *EventResult) Wait() error {
-	ctx := context.Background()
-	if r.Event != nil {
-		if activeCtx := r.Event.activeOperationContext(); activeCtx != nil {
-			ctx = activeCtx
-		}
-	}
-	return r.waitWithContext(ctx)
+	return r.waitWithContext(context.Background())
 }
 
 func (r *EventResult) waitWithContext(ctx context.Context) error {

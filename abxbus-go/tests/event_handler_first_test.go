@@ -86,7 +86,6 @@ func TestEventParallelFirstRacesAndCancelsNonWinners(t *testing.T) {
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
 	})
 	var slowStarted atomic.Bool
-	losersCancelled := make(chan struct{}, 2)
 
 	bus.On("CompletionParallelFirstEvent", "slow_handler_started", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		slowStarted.Store(true)
@@ -94,7 +93,6 @@ func TestEventParallelFirstRacesAndCancelsNonWinners(t *testing.T) {
 		case <-time.After(500 * time.Millisecond):
 			return "slow-started", nil
 		case <-ctx.Done():
-			losersCancelled <- struct{}{}
 			return nil, ctx.Err()
 		}
 	}, nil)
@@ -107,7 +105,6 @@ func TestEventParallelFirstRacesAndCancelsNonWinners(t *testing.T) {
 		case <-time.After(500 * time.Millisecond):
 			return "slow-other", nil
 		case <-ctx.Done():
-			losersCancelled <- struct{}{}
 			return nil, ctx.Err()
 		}
 	}, nil)
@@ -131,8 +128,10 @@ func TestEventParallelFirstRacesAndCancelsNonWinners(t *testing.T) {
 	if _, err := emitted.Wait(&abxbus.EventWaitOptions{Timeout: &timeout}); err != nil {
 		t.Fatal(err)
 	}
-	for range 2 {
-		<-losersCancelled
+	for _, loser := range firstSliceEventResultsExceptHandlerName(emitted, "fast_winner") {
+		if err := loser.Wait(); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	winnerResult := firstSliceEventResultByHandlerName(t, emitted, "fast_winner")

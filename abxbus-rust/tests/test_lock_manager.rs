@@ -68,6 +68,7 @@ fn test_async_lock_1_releasing_to_a_queued_waiter_does_not_allow_a_new_acquire_t
     waiter_acquired_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("queued waiter should receive the handoff first");
+    lock.wait_until_waiters(1);
     assert!(contender_acquired_rx.try_recv().is_err());
     assert_eq!(lock.waiters_len(), 1);
 
