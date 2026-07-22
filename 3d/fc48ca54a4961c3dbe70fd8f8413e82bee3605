@@ -1,0 +1,39 @@
+abxbus/retry.py
+  s_f8414d52051f83::t_10bb85feed2701 519,558,599,665
+  s_f8414d52051f83::t_33a7089b1eda9f 559-562
+abxbus-ts/tests/EventBridge_listener_worker.ts
+  s_f8414d52051f83::t_d29b2222834a1f 1,39,46-47
+tests/bridge_listener_worker.py
+  s_f8414d52051f83::t_8c5cbfd78e50c3 46,51
+tests/test_eventbus.py
+  s_f8414d52051f83::t_c07e9a8b9d3abe 3740
+  s_f8414d52051f83::t_09619c035dc97c 3739,3748-3749,3780-3781,3816
+tests/test_cross_runtime_roundtrip.py
+  s_f8414d52051f83::t_8c5cbfd78e50c3 1465,1480-1486,1489-1491,1620,1638-1639,1738,1752,1790
+tests/test_eventbus_performance.py
+  s_f8414d52051f83::t_8c5cbfd78e50c3 1249,1251-1252,1323-1330
+.github/workflows/test_py.yaml
+  s_f8414d52051f83::t_40cfa0e7280a97 69-76
+abxbus-ts/tests/cross_runtime_roundtrip.test.ts
+  s_f8414d52051f83::t_d29b2222834a1f 3,1301-1316,1318-1332,1337,1463-1464,1469,1471,1561,1576,1612
+  s_f8414d52051f83::t_09619c035dc97c 5
+tests/test_eventbus_locking.py
+  s_f8414d52051f83::t_33a7089b1eda9f 1446,1448,1459-1460,1462-1463
+  s_f8414d52051f83::t_10bb85feed2701 1445,1461
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "3dfc48ca54a4961c3dbe70fd8f8413e82bee3605",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
