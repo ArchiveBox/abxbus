@@ -477,6 +477,7 @@ import subprocess
 import sys
 import threading
 import time
+from multiprocessing.queues import Queue as MultiprocessingQueue
 from multiprocessing.sharedctypes import Synchronized
 from multiprocessing.synchronize import Event as MultiprocessingEvent
 from multiprocessing.synchronize import Lock as MultiprocessingLock
@@ -489,11 +490,11 @@ import abxbus.retry as retry_helpers
 def worker_acquire_semaphore(
     worker_id: int,
     start_time: float,
-    results_queue: 'multiprocessing.Queue[Any]',
+    results_queue: MultiprocessingQueue[Any],
     release_event: MultiprocessingEvent,
     timeout: float = 5.0,
-    active_count: Synchronized[int] | None = None,
-    max_active: Synchronized[int] | None = None,
+    active_count: 'Synchronized[int] | None' = None,
+    max_active: 'Synchronized[int] | None' = None,
     state_lock: MultiprocessingLock | None = None,
 ):
     """Worker process that tries to acquire a semaphore."""
@@ -550,13 +551,13 @@ def worker_acquire_semaphore(
 def worker_acquire_semaphore_sync(
     worker_id: int,
     start_time: float,
-    results_queue: 'multiprocessing.Queue[Any]',
+    results_queue: MultiprocessingQueue[Any],
     release_event: MultiprocessingEvent,
     timeout: float = 5.0,
     semaphore_limit: int = 3,
     semaphore_name: str = 'test_multiprocess_sync_sem',
-    active_count: Synchronized[int] | None = None,
-    max_active: Synchronized[int] | None = None,
+    active_count: 'Synchronized[int] | None' = None,
+    max_active: 'Synchronized[int] | None' = None,
     state_lock: MultiprocessingLock | None = None,
 ):
     """Worker process that tries to acquire a semaphore from a sync retry wrapper."""
@@ -600,7 +601,7 @@ def worker_acquire_semaphore_sync(
 def worker_that_dies(
     worker_id: int,
     start_time: float,
-    results_queue: 'multiprocessing.Queue[Any]',
+    results_queue: MultiprocessingQueue[Any],
     acquired_event: MultiprocessingEvent,
 ):
     """Worker process that acquires semaphore then dies without releasing."""
@@ -633,7 +634,7 @@ def worker_that_dies(
 def worker_death_test_normal(
     worker_id: int,
     start_time: float,
-    results_queue: 'multiprocessing.Queue[Any]',
+    results_queue: MultiprocessingQueue[Any],
 ):
     """Worker for death test that uses the same semaphore."""
 
@@ -664,7 +665,7 @@ def worker_death_test_normal(
 def worker_with_custom_limit(
     worker_id: int,
     start_time: float,
-    results_queue: 'multiprocessing.Queue[Any]',
+    results_queue: MultiprocessingQueue[Any],
     release_event: MultiprocessingEvent,
     timeout: float = 5.0,
     semaphore_limit: int = 2,
@@ -759,7 +760,7 @@ asyncio.run(main())
 
     def test_basic_multiprocess_semaphore(self):
         """Test that semaphore limits work across processes."""
-        results_queue: multiprocessing.Queue[Any] = multiprocessing.Queue()
+        results_queue: MultiprocessingQueue[Any] = multiprocessing.Queue()
         start_time = time.time()
         processes: list[multiprocessing.Process] = []
         releases = [multiprocessing.Event() for _ in range(6)]
@@ -832,7 +833,7 @@ asyncio.run(main())
 
     def test_basic_multiprocess_semaphore_sync_wrapper(self):
         """Test that sync retry wrappers enforce semaphore limits across processes."""
-        results_queue: multiprocessing.Queue[Any] = multiprocessing.Queue()
+        results_queue: MultiprocessingQueue[Any] = multiprocessing.Queue()
         start_time = time.time()
         semaphore_name = f'test_multiprocess_sync_sem_{time.time_ns()}'
         processes: list[multiprocessing.Process] = []
@@ -889,7 +890,7 @@ asyncio.run(main())
 
     def test_semaphore_timeout(self):
         """Test that semaphore timeout works correctly."""
-        results_queue: multiprocessing.Queue[Any] = multiprocessing.Queue()
+        results_queue: MultiprocessingQueue[Any] = multiprocessing.Queue()
         start_time = time.time()
         processes: list[multiprocessing.Process] = []
         releases = [multiprocessing.Event() for _ in range(4)]
@@ -940,7 +941,7 @@ asyncio.run(main())
 
     def test_process_death_releases_semaphore(self):
         """Test that killing a process releases its semaphore slot."""
-        results_queue: multiprocessing.Queue[Any] = multiprocessing.Queue()
+        results_queue: MultiprocessingQueue[Any] = multiprocessing.Queue()
         start_time = time.time()
 
         # Start 2 processes that will die (limit is 2)
@@ -989,7 +990,7 @@ asyncio.run(main())
 
     def test_concurrent_acquisition_order(self):
         """Test that all blocked processes eventually acquire a semaphore slot."""
-        results_queue: multiprocessing.Queue[Any] = multiprocessing.Queue()
+        results_queue: MultiprocessingQueue[Any] = multiprocessing.Queue()
         start_time = time.time()
         processes: list[multiprocessing.Process] = []
         releases = [multiprocessing.Event() for _ in range(5)]
@@ -1059,7 +1060,7 @@ asyncio.run(main())
 
     def test_semaphore_persistence_across_runs(self):
         """Test that semaphore state persists correctly across process runs."""
-        results_queue: multiprocessing.Queue[Any] = multiprocessing.Queue()
+        results_queue: MultiprocessingQueue[Any] = multiprocessing.Queue()
         start_time = time.time()
         releases = [multiprocessing.Event() for _ in range(7)]
 
@@ -1854,7 +1855,7 @@ class TestSyncRetryApiParity:
         active = 0
         max_active = 0
         lock = threading.Lock()
-        entered: 'queue.Queue[None]' = queue.Queue()
+        entered: queue.Queue[None] = queue.Queue()
         release = threading.Event()
 
         class Worker:
@@ -1919,7 +1920,7 @@ class TestSyncRetryApiParity:
         active = 0
         max_active = 0
         lock = threading.Lock()
-        entered: 'queue.Queue[None]' = queue.Queue()
+        entered: queue.Queue[None] = queue.Queue()
         release = threading.Event()
 
         class Worker:
