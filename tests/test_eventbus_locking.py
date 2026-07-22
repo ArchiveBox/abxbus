@@ -490,7 +490,7 @@ import abxbus.retry as retry_helpers
 def worker_acquire_semaphore(
     worker_id: int,
     start_time: float,
-    results_queue: MultiprocessingQueue[Any],
+    results_queue: 'MultiprocessingQueue[Any]',
     release_event: MultiprocessingEvent,
     timeout: float = 5.0,
     active_count: 'Synchronized[int] | None' = None,
@@ -551,7 +551,7 @@ def worker_acquire_semaphore(
 def worker_acquire_semaphore_sync(
     worker_id: int,
     start_time: float,
-    results_queue: MultiprocessingQueue[Any],
+    results_queue: 'MultiprocessingQueue[Any]',
     release_event: MultiprocessingEvent,
     timeout: float = 5.0,
     semaphore_limit: int = 3,
@@ -601,7 +601,7 @@ def worker_acquire_semaphore_sync(
 def worker_that_dies(
     worker_id: int,
     start_time: float,
-    results_queue: MultiprocessingQueue[Any],
+    results_queue: 'MultiprocessingQueue[Any]',
     acquired_event: MultiprocessingEvent,
 ):
     """Worker process that acquires semaphore then dies without releasing."""
@@ -634,7 +634,7 @@ def worker_that_dies(
 def worker_death_test_normal(
     worker_id: int,
     start_time: float,
-    results_queue: MultiprocessingQueue[Any],
+    results_queue: 'MultiprocessingQueue[Any]',
 ):
     """Worker for death test that uses the same semaphore."""
 
@@ -665,7 +665,7 @@ def worker_death_test_normal(
 def worker_with_custom_limit(
     worker_id: int,
     start_time: float,
-    results_queue: MultiprocessingQueue[Any],
+    results_queue: 'MultiprocessingQueue[Any]',
     release_event: MultiprocessingEvent,
     timeout: float = 5.0,
     semaphore_limit: int = 2,
