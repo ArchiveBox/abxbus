@@ -912,34 +912,30 @@ async def test_forwarding_chain_perf_matrix_by_mode(event_handler_concurrency: L
     )
 
     sink_count = 0
+    middle_slots = asyncio.Semaphore(100)
+    sink_slots = asyncio.Semaphore(100)
 
     async def sink_handler(event: SimpleEvent) -> None:
         nonlocal sink_count
         sink_count += 1
+        sink_slots.release()
 
     async def forward_to_middle(event: BaseEvent[Any]) -> None:
-        while True:
-            try:
-                middle_bus.emit(event)
-                return
-            except asyncio.QueueFull:
-                await asyncio.sleep(0)
-            except RuntimeError as exc:
-                if 'history limit reached' not in str(exc):
-                    raise
-                await asyncio.sleep(0)
+        await middle_slots.acquire()
+        try:
+            middle_bus.emit(event)
+        except BaseException:
+            middle_slots.release()
+            raise
 
     async def forward_to_sink(event: BaseEvent[Any]) -> None:
-        while True:
-            try:
-                sink_bus.emit(event)
-                return
-            except asyncio.QueueFull:
-                await asyncio.sleep(0)
-            except RuntimeError as exc:
-                if 'history limit reached' not in str(exc):
-                    raise
-                await asyncio.sleep(0)
+        middle_slots.release()
+        await sink_slots.acquire()
+        try:
+            sink_bus.emit(event)
+        except BaseException:
+            sink_slots.release()
+            raise
 
     source_bus.on('*', forward_to_middle)
     middle_bus.on('*', forward_to_sink)

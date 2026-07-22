@@ -17,17 +17,6 @@ class ValueError extends Error {
   }
 }
 
-const waitForStartedResult = async (event: BaseEvent, timeout_ms = 1000): Promise<void> => {
-  const started_by = Date.now() + timeout_ms
-  while (Date.now() < started_by) {
-    if (Array.from(event.event_results.values()).some((result) => result.status === 'started')) {
-      return
-    }
-    await delay(5)
-  }
-  throw new Error(`Timed out waiting for started handler result on ${event.event_type}#${event.event_id.slice(-4)}`)
-}
-
 test('logTree: single event', async () => {
   const bus = new EventBus('SingleBus')
   try {
@@ -188,19 +177,24 @@ test('logTree: timing info', async () => {
 
 test('logTree: running handler', async () => {
   const bus = new EventBus('RunningBus')
+  let handler_started!: () => void
+  const handler_has_started = new Promise<void>((resolve) => {
+    handler_started = resolve
+  })
   let release_handler!: () => void
   const block_handler = new Promise<void>((resolve) => {
     release_handler = resolve
   })
   try {
     async function running_handler(_event: InstanceType<typeof RootEvent>): Promise<string> {
+      handler_started()
       await block_handler
       return 'done'
     }
 
     bus.on(RootEvent, running_handler)
     const event = bus.emit(RootEvent({}))
-    await waitForStartedResult(event)
+    await handler_has_started
     const output = bus.logTree()
     assert.ok(output.includes(`${bus.label}.running_handler#`))
     assert.ok(output.includes('🏃 RootEvent#'))

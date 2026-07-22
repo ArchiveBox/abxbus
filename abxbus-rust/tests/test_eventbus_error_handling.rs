@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
     thread,
@@ -466,25 +465,24 @@ fn test_parallel_first_started_loser_uses_aborted_error_class() {
             ..EventBusOptions::default()
         },
     );
-    let slow_started = Arc::new(AtomicBool::new(false));
+    let (slow_started_tx, slow_started_rx) = std::sync::mpsc::channel();
+    let slow_started_rx = Arc::new(std::sync::Mutex::new(slow_started_rx));
 
-    let slow_started_for_slow = slow_started.clone();
+    let slow_started_for_slow = slow_started_tx.clone();
     bus.on_raw("TaxonomyEvent", "slow_loser", move |_event| {
         let slow_started = slow_started_for_slow.clone();
         async move {
-            slow_started.store(true, Ordering::SeqCst);
+            slow_started.send(()).expect("signal slow handler start");
             thread::sleep(Duration::from_millis(200));
             Ok(json!("slow"))
         }
     });
 
-    let slow_started_for_fast = slow_started.clone();
+    let slow_started_for_fast = slow_started_rx.clone();
     bus.on_raw("TaxonomyEvent", "fast_winner", move |_event| {
         let slow_started = slow_started_for_fast.clone();
         async move {
-            while !slow_started.load(Ordering::SeqCst) {
-                thread::sleep(Duration::from_millis(1));
-            }
+            slow_started.lock().expect("slow start lock").recv().expect("slow handler start");
             Ok(json!("winner"))
         }
     });

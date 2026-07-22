@@ -1,8 +1,7 @@
 use abxbus::event;
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc, Arc,
+        mpsc, Arc, Mutex,
     },
     thread,
     time::Duration,
@@ -245,17 +244,15 @@ fn test_log_tree_timing_info() {
 fn test_log_tree_running_handler() {
     let bus = EventBus::new(Some("RunningBus".to_string()));
     let (started_tx, started_rx) = mpsc::channel();
-    let release_handler = Arc::new(AtomicBool::new(false));
-    let release_handler_for_handler = release_handler.clone();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_handler_for_handler = Arc::new(Mutex::new(release_rx));
 
     bus.on_raw("RootEvent", "running_handler", move |_event| {
         let started_tx = started_tx.clone();
         let release_handler = release_handler_for_handler.clone();
         async move {
             let _ = started_tx.send(());
-            while !release_handler.load(Ordering::SeqCst) {
-                thread::sleep(Duration::from_millis(5));
-            }
+            release_handler.lock().expect("release lock").recv().expect("release handler");
             Ok(json!("done"))
         }
     });
@@ -271,7 +268,7 @@ fn test_log_tree_running_handler() {
     let output = bus.log_tree();
     assert!(output.contains(&format!("{}.running_handler#", bus.label())));
     assert!(output.contains("🏃 RootEvent#"));
-    release_handler.store(true, Ordering::SeqCst);
+    release_tx.send(()).expect("release handler");
     let _ = block_on(event.now());
     bus.destroy();
 }

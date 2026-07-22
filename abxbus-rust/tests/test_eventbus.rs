@@ -43,18 +43,9 @@ event! {
         event_type: "ModelFieldsDefaultEvent",
     }
 }
-fn wait_for_eventbus_weak_refs_to_drop(refs: &[Weak<EventBus>]) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        EventBus::all_instances_len();
-        if refs.iter().all(|weak_ref| weak_ref.upgrade().is_none()) {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        thread::sleep(Duration::from_millis(1));
-    }
+fn eventbus_weak_refs_dropped(refs: &[Weak<EventBus>]) -> bool {
+    EventBus::all_instances_len();
+    refs.iter().all(|weak_ref| weak_ref.upgrade().is_none())
 }
 
 fn panic_message(result: std::thread::Result<()>) -> String {
@@ -529,8 +520,9 @@ fn test_destroy_is_immediate_and_rejects_late_handler_emits() {
     let bus = EventBus::new(Some("DestroyImmediateBus".to_string()));
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let (late_tx, late_rx) = std::sync::mpsc::channel();
-    let release_handler = Arc::new(AtomicBool::new(false));
-    let release_for_handler = release_handler.clone();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let release_rx = Arc::new(std::sync::Mutex::new(release_rx));
+    let release_for_handler = release_rx.clone();
     let bus_for_handler = bus.clone();
     bus.on_raw("UserActionEvent", "slow_handler", move |_event| {
         let started_tx = started_tx.clone();
@@ -539,9 +531,7 @@ fn test_destroy_is_immediate_and_rejects_late_handler_emits() {
         let bus = bus_for_handler.clone();
         async move {
             let _ = started_tx.send(());
-            while !release_handler.load(Ordering::SeqCst) {
-                thread::sleep(Duration::from_millis(1));
-            }
+            release_handler.lock().expect("release lock").recv().expect("release handler");
             let late_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 bus.emit(UserActionEvent {
                     ..Default::default()
@@ -577,7 +567,7 @@ fn test_destroy_is_immediate_and_rejects_late_handler_emits() {
     }));
     assert!(panic_message(outside_result).contains("has been destroyed"));
 
-    release_handler.store(true, Ordering::SeqCst);
+    release_tx.send(()).expect("release handler");
     assert!(late_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("late handler emit should report rejection"));
@@ -3051,7 +3041,7 @@ fn test_unreferenced_eventbus_can_be_garbage_collected_not_retained_by_all_insta
     };
 
     assert!(
-        wait_for_eventbus_weak_refs_to_drop(&[weak_ref]),
+        eventbus_weak_refs_dropped(&[weak_ref]),
         "all_instances must not hold a strong reference to an unreferenced bus"
     );
     assert!(
@@ -3089,7 +3079,7 @@ fn test_unreferenced_buses_with_event_history_are_garbage_collected_without_dest
     }
 
     assert!(
-        wait_for_eventbus_weak_refs_to_drop(&refs),
+        eventbus_weak_refs_dropped(&refs),
         "all_instances must not retain buses after their last Arc handle is dropped"
     );
     assert!(
@@ -4099,7 +4089,6 @@ mod folded_test_eventbus_name_conflict_gc {
             Arc, Barrier, Weak,
         },
         thread,
-        time::{Duration, Instant},
     };
 
     use abxbus::event_bus::{EventBus, EventBusOptions};
@@ -4117,11 +4106,7 @@ mod folded_test_eventbus_name_conflict_gc {
     }
 
     fn assert_eventually_collected(weak_ref: &Weak<EventBus>) {
-        let deadline = Instant::now() + Duration::from_millis(500);
-        while weak_ref.upgrade().is_some() && Instant::now() < deadline {
-            thread::yield_now();
-            thread::sleep(Duration::from_millis(1));
-        }
+        EventBus::all_instances_len();
         assert!(weak_ref.upgrade().is_none());
     }
 

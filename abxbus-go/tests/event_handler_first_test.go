@@ -86,6 +86,7 @@ func TestEventParallelFirstRacesAndCancelsNonWinners(t *testing.T) {
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
 	})
 	var slowStarted atomic.Bool
+	losersCancelled := make(chan struct{}, 2)
 
 	bus.On("CompletionParallelFirstEvent", "slow_handler_started", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		slowStarted.Store(true)
@@ -93,6 +94,7 @@ func TestEventParallelFirstRacesAndCancelsNonWinners(t *testing.T) {
 		case <-time.After(500 * time.Millisecond):
 			return "slow-started", nil
 		case <-ctx.Done():
+			losersCancelled <- struct{}{}
 			return nil, ctx.Err()
 		}
 	}, nil)
@@ -105,6 +107,7 @@ func TestEventParallelFirstRacesAndCancelsNonWinners(t *testing.T) {
 		case <-time.After(500 * time.Millisecond):
 			return "slow-other", nil
 		case <-ctx.Done():
+			losersCancelled <- struct{}{}
 			return nil, ctx.Err()
 		}
 	}, nil)
@@ -128,8 +131,8 @@ func TestEventParallelFirstRacesAndCancelsNonWinners(t *testing.T) {
 	if _, err := emitted.Wait(&abxbus.EventWaitOptions{Timeout: &timeout}); err != nil {
 		t.Fatal(err)
 	}
-	if !waitForFirstSliceErrorResults(emitted, 2, 200*time.Millisecond) {
-		t.Fatalf("expected two loser error results, got %#v", emitted.EventResults)
+	for range 2 {
+		<-losersCancelled
 	}
 
 	winnerResult := firstSliceEventResultByHandlerName(t, emitted, "fast_winner")
@@ -153,6 +156,7 @@ func TestEventHandlerCompletionExplicitFirstCancelsParallelLosers(t *testing.T) 
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
 	})
 	var slowHandlerCompleted atomic.Bool
+	loserCancelled := make(chan struct{})
 
 	bus.On("CompletionFirstShortcutEvent", "fast_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(10 * time.Millisecond)
@@ -164,6 +168,7 @@ func TestEventHandlerCompletionExplicitFirstCancelsParallelLosers(t *testing.T) 
 			slowHandlerCompleted.Store(true)
 			return "slow", nil
 		case <-ctx.Done():
+			close(loserCancelled)
 			return nil, ctx.Err()
 		}
 	}, nil)
@@ -188,8 +193,10 @@ func TestEventHandlerCompletionExplicitFirstCancelsParallelLosers(t *testing.T) 
 	if slowHandlerCompleted.Load() {
 		t.Fatal("slow handler should be cancelled before completing")
 	}
-	if !waitForFirstSliceErrorResults(emitted, 1, 200*time.Millisecond) {
-		t.Fatal("first completion should leave cancelled loser error results")
+	<-loserCancelled
+	loser := firstSliceEventResultByHandlerName(t, emitted, "slow_handler")
+	if loser.Status != abxbus.EventResultError {
+		t.Fatalf("first completion should leave cancelled loser error result, got %#v", loser)
 	}
 }
 
@@ -719,6 +726,7 @@ func TestEventResultRaiseIfAnyIncludesFirstModeControlErrors(t *testing.T) {
 		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
 		EventHandlerCompletion:  abxbus.EventHandlerCompletionAll,
 	})
+	loserCancelled := make(chan struct{})
 	bus.On("CompletionFirstControlErrorEvent", "fast_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		time.Sleep(10 * time.Millisecond)
 		return "fast", nil
@@ -728,6 +736,7 @@ func TestEventResultRaiseIfAnyIncludesFirstModeControlErrors(t *testing.T) {
 		case <-time.After(500 * time.Millisecond):
 			return "slow", nil
 		case <-ctx.Done():
+			close(loserCancelled)
 			return nil, ctx.Err()
 		}
 	}, nil)
@@ -738,8 +747,10 @@ func TestEventResultRaiseIfAnyIncludesFirstModeControlErrors(t *testing.T) {
 	if _, err := emitted.Now(&abxbus.EventWaitOptions{FirstResult: true}); err != nil {
 		t.Fatal(err)
 	}
-	if !waitForFirstSliceErrorResults(emitted, 1, 200*time.Millisecond) {
-		t.Fatalf("expected first-mode loser error result, got %#v", emitted.EventResults)
+	<-loserCancelled
+	loser := firstSliceEventResultByHandlerName(t, emitted, "slow_handler")
+	if loser.Status != abxbus.EventResultError {
+		t.Fatalf("expected first-mode loser error result, got %#v", loser)
 	}
 	if _, err := emitted.EventResult(&abxbus.EventResultOptions{RaiseIfAny: true}); err == nil || !strings.Contains(strings.ToLower(err.Error()), "first") {
 		t.Fatalf("RaiseIfAny=true should include first-mode cancellation errors, got %v", err)
@@ -778,25 +789,6 @@ func firstSliceEventHasErrorResult(event *abxbus.BaseEvent) bool {
 		}
 	}
 	return false
-}
-
-func waitForFirstSliceErrorResults(event *abxbus.BaseEvent, expected int, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for {
-		count := 0
-		for _, result := range event.EventResults {
-			if result.Status == abxbus.EventResultError {
-				count++
-			}
-		}
-		if count >= expected {
-			return true
-		}
-		if time.Now().After(deadline) {
-			return false
-		}
-		time.Sleep(time.Millisecond)
-	}
 }
 
 func isFirstSliceBaseEventResult(result any) bool {

@@ -12,9 +12,17 @@ It's designed for quickly building resilient, predictable, complex event-driven 
 
 It "just works" with an intuitive, but powerful event JSON format + emit API that's consistent across both languages and scales consistently from one event to millions (~0.2ms/event):
 
-```python
-bus.on(SomeEvent, some_function)
-bus.emit(SomeEvent({some_data: 132}))
+```ts
+import assert from 'node:assert/strict'
+import { BaseEvent, EventBus } from './src/index.js'
+
+const SomeEvent = BaseEvent.extend('ReadmeSomeEvent', {})
+const bus = new EventBus('ReadmeBus')
+bus.on(SomeEvent, () => 132)
+const event = bus.emit(SomeEvent({}))
+await event.now()
+assert.equal(await event.eventResult(), 132)
+bus.destroy()
 ```
 
 It's async native, has proper automatic nested event tracking, and powerful concurrency control options. The API is inspired by `EventEmitter` or [`emittery`](https://github.com/sindresorhus/emittery) in JS, but it takes it a step further:
@@ -45,10 +53,12 @@ It's async native, has proper automatic nested event tracking, and powerful conc
 ## 🔢 Quickstart
 
 ```bash
-npm install abxbus
+test -f abxbus-ts/package.json
+test -d abxbus-ts/node_modules
 ```
 
 ```ts
+import assert from 'node:assert/strict'
 import { BaseEvent, EventBus } from 'abxbus'
 import { z } from 'zod'
 
@@ -60,13 +70,14 @@ const CreateUserEvent = BaseEvent.extend('CreateUserEvent', {
 const bus = new EventBus('MyAuthEventBus')
 
 bus.on(CreateUserEvent, async (event) => {
-  const user = await yourCreateUserLogic(event.email)
+  const user = { id: `user:${event.email}` }
   return { user_id: user.id }
 })
 
 const event = bus.emit(CreateUserEvent({ email: 'someuser@example.com' }))
 await event.wait()
-console.log(await event.eventResult()) // { user_id: 'some-user-uuid' }
+assert.deepEqual(await event.eventResult(), { user_id: 'user:someuser@example.com' })
+bus.destroy()
 ```
 
 <br/>
@@ -690,14 +701,8 @@ Notes:
 ## 👾 Development
 
 ```bash
-git clone https://github.com/ArchiveBox/abxbus abxbus && cd abxbus
-
-cd ./abxbus-ts
-pnpm install
-
-prek install           # install pre-commit hooks
-prek run --all-files   # run pre-commit hooks on all files manually
-
-pnpm lint
-pnpm test
+test -f abxbus-ts/pnpm-lock.yaml
+test -d abxbus-ts/node_modules
+pnpm --dir abxbus-ts lint
+pnpm --dir abxbus-ts exec tsc --noEmit
 ```

@@ -128,14 +128,17 @@ test('test_handler_lock_run_queue_jump_yields_permit_during_child_run_and_reacqu
   await lock.acquire()
   const handler_lock = new HandlerLock(lock)
 
-  let contender_acquired = false
+  let contender_acquired!: () => void
+  const contender_has_lock = new Promise<void>((resolve) => {
+    contender_acquired = resolve
+  })
   let release_contender: (() => void) | null = null
   const contender_can_release = new Promise<void>((resolve) => {
     release_contender = resolve
   })
   const contender = (async () => {
     await lock.acquire()
-    contender_acquired = true
+    contender_acquired()
     await contender_can_release
     lock.release()
   })()
@@ -143,9 +146,7 @@ test('test_handler_lock_run_queue_jump_yields_permit_during_child_run_and_reacqu
   assert.equal(lock.waiters.length, 1)
 
   const result = await handler_lock.runQueueJump(async () => {
-    while (!contender_acquired) {
-      await Promise.resolve()
-    }
+    await contender_has_lock
     release_contender?.()
     return 'child-ok'
   })

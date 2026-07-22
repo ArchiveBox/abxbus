@@ -55,24 +55,20 @@ fn test_async_lock_1_releasing_to_a_queued_waiter_does_not_allow_a_new_acquire_t
         release_waiter_rx.recv().expect("release waiter");
     });
 
-    while lock.waiters_len() != 1 {
-        thread::sleep(Duration::from_millis(1));
-    }
+    lock.wait_until_waiters(1);
     drop(initial_holder);
 
     let contender_lock = lock.clone();
-    let contender_acquired = Arc::new(AtomicBool::new(false));
-    let contender_acquired_for_thread = contender_acquired.clone();
+    let (contender_acquired_tx, contender_acquired_rx) = mpsc::channel();
     let contender = thread::spawn(move || {
         let _guard = contender_lock.acquire();
-        contender_acquired_for_thread.store(true, Ordering::SeqCst);
+        contender_acquired_tx.send(()).expect("contender acquired");
     });
 
     waiter_acquired_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("queued waiter should receive the handoff first");
-    thread::sleep(Duration::from_millis(20));
-    assert!(!contender_acquired.load(Ordering::SeqCst));
+    assert!(contender_acquired_rx.try_recv().is_err());
     assert_eq!(lock.waiters_len(), 1);
 
     release_waiter_tx.send(()).expect("release waiter send");
@@ -162,9 +158,7 @@ fn test_handler_lock_reclaim_handler_lock_if_running_releases_reclaimed_permit_i
     reclaim_started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("reclaim starts");
-    while lock.waiters_len() != 1 {
-        thread::sleep(Duration::from_millis(1));
-    }
+    lock.wait_until_waiters(1);
 
     handler_lock.exit_handler_run();
     drop(occupying_guard);
@@ -181,24 +175,19 @@ fn test_handler_lock_run_queue_jump_yields_permit_during_child_run_and_reacquire
     let guard = lock.acquire();
     let handler_lock = HandlerLock::new_held(lock.clone(), guard);
 
-    let contender_acquired = Arc::new(AtomicBool::new(false));
-    let contender_acquired_for_thread = contender_acquired.clone();
+    let (contender_acquired_tx, contender_acquired_rx) = mpsc::channel();
     let (release_contender_tx, release_contender_rx) = mpsc::channel();
     let contender_lock = lock.clone();
     let contender = thread::spawn(move || {
         let _guard = contender_lock.acquire();
-        contender_acquired_for_thread.store(true, Ordering::SeqCst);
+        contender_acquired_tx.send(()).expect("contender acquired");
         release_contender_rx.recv().expect("release contender");
     });
 
-    while lock.waiters_len() != 1 {
-        thread::sleep(Duration::from_millis(1));
-    }
+    lock.wait_until_waiters(1);
 
     let result = handler_lock.run_queue_jump(|| {
-        while !contender_acquired.load(Ordering::SeqCst) {
-            thread::sleep(Duration::from_millis(1));
-        }
+        contender_acquired_rx.recv().expect("contender acquired");
         release_contender_tx.send(()).expect("release contender");
         "child-ok"
     });

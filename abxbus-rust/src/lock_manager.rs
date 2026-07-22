@@ -22,6 +22,7 @@ pub struct AsyncLock {
 struct AsyncLockInner {
     size: Option<usize>,
     state: StdMutex<AsyncLockState>,
+    waiters_changed: Condvar,
 }
 
 #[derive(Default)]
@@ -48,6 +49,7 @@ impl AsyncLock {
             inner: Arc::new(AsyncLockInner {
                 size: Some(size),
                 state: StdMutex::new(AsyncLockState::default()),
+                waiters_changed: Condvar::new(),
             }),
         }
     }
@@ -57,6 +59,7 @@ impl AsyncLock {
             inner: Arc::new(AsyncLockInner {
                 size: None,
                 state: StdMutex::new(AsyncLockState::default()),
+                waiters_changed: Condvar::new(),
             }),
         }
     }
@@ -81,6 +84,7 @@ impl AsyncLock {
 
             let waiter = Arc::new(AsyncLockWaiter::default());
             state.waiters.push_back(waiter.clone());
+            self.inner.waiters_changed.notify_all();
             waiter
         };
 
@@ -103,6 +107,7 @@ impl AsyncLock {
         let next_waiter = {
             let mut state = self.inner.state.lock().expect("async lock state");
             if let Some(waiter) = state.waiters.pop_front() {
+                self.inner.waiters_changed.notify_all();
                 Some(waiter)
             } else {
                 state.in_use = state.in_use.saturating_sub(1);
@@ -128,6 +133,17 @@ impl AsyncLock {
             .expect("async lock state")
             .waiters
             .len()
+    }
+
+    pub fn wait_until_waiters(&self, expected: usize) {
+        let mut state = self.inner.state.lock().expect("async lock state");
+        while state.waiters.len() != expected {
+            state = self
+                .inner
+                .waiters_changed
+                .wait(state)
+                .expect("async lock waiters changed");
+        }
     }
 }
 

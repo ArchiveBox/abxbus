@@ -41,7 +41,7 @@ jobs:
       - run: uv sync --dev --all-extras --no-extra tachyon
       - run: uv pip install fastapi
       - name: Run documentation code blocks
-        run: uv run pytest -vv --tb=long README.md AGENTS.md skills docs
+        run: uv run pytest -vv --tb=long README.md abxbus-go/README.md abxbus-ts/README.md AGENTS.md skills docs
 
   tests:
     needs: docs_py
