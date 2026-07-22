@@ -1568,10 +1568,20 @@ class TestSyncRetryApiParity:
 
     def test_sync_semaphore_lax_false_throws_when_slots_are_full(self):
         semaphore_name = f'test_sync_sem_lax_false_{time.time_ns()}'
+        first_started = threading.Event()
+        release_first = threading.Event()
+        call_count = 0
+        call_lock = threading.Lock()
 
         @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name, semaphore_lax=False, semaphore_timeout=0.05)
         def fn():
-            time.sleep(0.2)
+            nonlocal call_count
+            with call_lock:
+                call_count += 1
+                current_call = call_count
+            if current_call == 1:
+                first_started.set()
+                release_first.wait()
             return 'ok'
 
         first_error: list[BaseException] = []
@@ -1584,25 +1594,43 @@ class TestSyncRetryApiParity:
 
         thread = threading.Thread(target=run_first)
         thread.start()
-        time.sleep(0.02)
-        with pytest.raises(TimeoutError):
-            fn()
+        first_started.wait()
+        try:
+            with pytest.raises(TimeoutError):
+                fn()
+        finally:
+            release_first.set()
         thread.join()
         assert not first_error
+        assert call_count == 1
 
     def test_sync_semaphore_lax_true_proceeds_without_semaphore_on_timeout(self):
         semaphore_name = f'test_sync_sem_lax_true_{time.time_ns()}'
+        first_started = threading.Event()
+        release_first = threading.Event()
+        call_count = 0
+        call_lock = threading.Lock()
 
         @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name, semaphore_lax=True, semaphore_timeout=0.05)
         def fn():
-            time.sleep(0.2)
+            nonlocal call_count
+            with call_lock:
+                call_count += 1
+                current_call = call_count
+            if current_call == 1:
+                first_started.set()
+                release_first.wait()
             return 'ok'
 
         thread = threading.Thread(target=fn)
         thread.start()
-        time.sleep(0.02)
-        assert fn() == 'ok'
+        first_started.wait()
+        try:
+            assert fn() == 'ok'
+        finally:
+            release_first.set()
         thread.join()
+        assert call_count == 2
 
     def test_sync_preserves_function_name(self):
         @retry()
