@@ -6,6 +6,69 @@ on:
   workflow_call:
 
 jobs:
+  discover_python:
+    runs-on: ubuntu-24.04
+    outputs:
+      PYTHON_TASKS: ${{ steps.discover.outputs.PYTHON_TASKS }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: "0.10.6"
+          enable-cache: false
+      - name: Discover Python tests and examples
+        id: discover
+        run: |
+          uv run --no-project python - <<'PY'
+          import json
+          import os
+          from collections import Counter
+          from itertools import cycle
+          from pathlib import Path
+
+          targets = (
+              {"os": "ubuntu-24.04", "os_name": "linux", "python": "3.11"},
+              {"os": "ubuntu-24.04", "os_name": "linux", "python": "3.12"},
+              {"os": "ubuntu-24.04", "os_name": "linux", "python": "3.13"},
+              {"os": "ubuntu-24.04", "os_name": "linux", "python": "3.14"},
+              {"os": "macos-15", "os_name": "macOS", "python": "3.11"},
+              {"os": "macos-15", "os_name": "macOS", "python": "3.12"},
+              {"os": "macos-15", "os_name": "macOS", "python": "3.13"},
+              {"os": "macos-15", "os_name": "macOS", "python": "3.14"},
+          )
+          discovered = [
+              *(("test", path) for path in sorted(Path("tests").glob("test_*.py"))),
+              *(("example", path) for path in sorted(Path("examples").glob("*.py"))),
+              ("runtime", Path("tests/performance_runtime.py")),
+          ]
+          if not discovered or not all(path.is_file() for _, path in discovered):
+              raise SystemExit("Python test/example discovery produced a missing or empty task list")
+
+          matrix = []
+          for (kind, path), target in zip(discovered, cycle(targets), strict=False):
+              matrix.append(
+                  {
+                      "id": f"{kind}-{path.stem}",
+                      "kind": kind,
+                      "path": str(path),
+                      "needs_cross_runtime": path == Path("tests/test_cross_runtime_roundtrip.py"),
+                      **target,
+                  },
+              )
+
+          assigned = Counter((item["kind"], item["path"]) for item in matrix)
+          expected = Counter((kind, str(path)) for kind, path in discovered)
+          if assigned != expected:
+              raise SystemExit("Every Python test, example, and runtime task must be assigned exactly once")
+          if {(item["os"], item["python"]) for item in matrix} != {
+              (target["os"], target["python"]) for target in targets
+          }:
+              raise SystemExit("Python tasks must cover every supported OS/Python cell")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"PYTHON_TASKS={json.dumps(matrix, separators=(',', ':'))}\n")
+          PY
+
   docs_py:
     runs-on: ubuntu-24.04
     steps:
@@ -44,49 +107,38 @@ jobs:
         run: uv run pytest -vv --tb=long README.md abxbus-go/README.md abxbus-ts/README.md AGENTS.md skills docs
 
   tests:
-    needs: docs_py
-    runs-on: ${{ matrix.target.os }}
+    needs: discover_python
+    runs-on: ${{ matrix.task.os }}
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - os: ubuntu-24.04
-            os_name: linux
-            python: "3.11"
-          - os: ubuntu-24.04
-            os_name: linux
-            python: "3.12"
-          - os: ubuntu-24.04
-            os_name: linux
-            python: "3.13"
-          - os: ubuntu-24.04
-            os_name: linux
-            python: "3.14"
-          - os: macos-15
-            os_name: macOS
-            python: "3.11"
-          - os: macos-15
-            os_name: macOS
-            python: "3.12"
-          - os: macos-15
-            os_name: macOS
-            python: "3.13"
-          - os: macos-15
-            os_name: macOS
-            python: "3.14"
-    name: ${{ matrix.target.os_name }}-py${{ matrix.target.python }}-all-tests-and-examples
+        task: ${{ fromJson(needs.discover_python.outputs.PYTHON_TASKS) }}
+    name: ${{ matrix.task.path }} / ${{ matrix.task.os_name }} / Python ${{ matrix.task.python }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: ${{ matrix.target.python }}
+          python-version: ${{ matrix.task.python }}
 
       - name: Set up Go for cross-runtime tests
+        if: matrix.task.needs_cross_runtime
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: abxbus-go/go.mod
           cache: true
           cache-dependency-path: abxbus-go/go.sum
+
+      - name: Set up Rust for cross-runtime tests
+        if: matrix.task.needs_cross_runtime
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.97.1
+
+      - name: Cache Cargo for cross-runtime tests
+        if: matrix.task.needs_cross_runtime
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: abxbus-rust -> target
 
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
@@ -95,17 +147,19 @@ jobs:
           activate-environment: true
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        if: matrix.task.needs_cross_runtime
         with:
           version: 10.33.2
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: matrix.task.needs_cross_runtime
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
       - name: Install bridge service binaries
-        if: runner.os == 'Linux'
+        if: matrix.task.needs_cross_runtime && runner.os == 'Linux'
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: redis-server nats-server postgresql sqlite3 gcc-14 g++-14
@@ -113,10 +167,11 @@ jobs:
           execute_install_scripts: true
 
       - name: Install bridge service binaries
-        if: runner.os == 'macOS'
+        if: matrix.task.needs_cross_runtime && runner.os == 'macOS'
         run: brew install redis nats-server postgresql@17 sqlite gcc@14
 
       - name: Configure bridge service binaries
+        if: matrix.task.needs_cross_runtime
         run: |
           if [[ "${{ runner.os }}" == "macOS" ]]; then
             PG_BINDIR="$(brew --prefix postgresql@17)/bin"
@@ -142,14 +197,17 @@ jobs:
       - run: uv sync --dev --all-extras --no-extra tachyon
 
       - name: Install optional Tachyon peer for bridge tests
+        if: matrix.task.needs_cross_runtime
         run: CC=gcc-14 CXX=g++-14 uv pip install tachyon-ipc
 
       - name: Build TypeScript ESM bundle for cross-runtime roundtrip tests
+        if: matrix.task.needs_cross_runtime
         run: |
           pnpm --dir abxbus-ts install --frozen-lockfile
           pnpm --dir abxbus-ts run build
 
       - name: Verify bridge optional Python deps
+        if: matrix.task.needs_cross_runtime
         run: |
           uv run python - <<'PY'
           import importlib
@@ -159,22 +217,20 @@ jobs:
           print('optional bridge deps import OK')
           PY
 
-      - name: Run every test and example with coverage
+      - name: Run discovered test with coverage
+        if: matrix.task.kind == 'test'
+        run: uv run coverage run --parallel-mode --source=abxbus -m pytest "${{ matrix.task.path }}"
+
+      - name: Run discovered example with coverage
+        if: matrix.task.kind == 'example'
+        run: uv run coverage run --parallel-mode --source=abxbus "${{ matrix.task.path }}"
+
+      - name: Run discovered performance runtime with coverage
+        if: matrix.task.kind == 'runtime'
         run: |
-          tests=()
-          while IFS= read -r test_file; do
-            tests+=("$test_file")
-          done < <(find tests -maxdepth 1 -type f -name 'test_*.py' ! -name 'test_eventbus_performance.py' | sort)
-          examples=()
-          while IFS= read -r example_file; do
-            examples+=("$example_file")
-          done < <(find examples -maxdepth 1 -type f -name '*.py' | sort)
-          [[ "${#tests[@]}" -gt 0 ]]
-          [[ "${#examples[@]}" -gt 0 ]]
-          uv run coverage run --parallel-mode --source=abxbus -m pytest "${tests[@]}"
-          for example in "${examples[@]}"; do
-            uv run coverage run --parallel-mode --source=abxbus "$example"
-          done
+          set -o pipefail
+          uv run coverage run --parallel-mode --source=abxbus "${{ matrix.task.path }}" | tee python_perf.log
+          cat python_perf.log >> "$GITHUB_STEP_SUMMARY"
 
       - name: Check coverage files
         if: always()
@@ -189,7 +245,7 @@ jobs:
       - name: Upload coverage data
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: coverage-${{ matrix.target.os_name }}-py${{ matrix.target.python }}
+          name: coverage-${{ matrix.task.id }}-${{ matrix.task.os_name }}-py${{ matrix.task.python }}
           path: |
             .coverage*
             pyproject.toml
@@ -257,81 +313,3 @@ jobs:
         run: |
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "[Download Python HTML coverage artifact (coverage-report)](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts/${{ steps.upload_py_coverage_report.outputs.artifact-id }})" >> "$GITHUB_STEP_SUMMARY"
-
-  perf:
-    runs-on: ubuntu-24.04
-    outputs:
-      perf_stats: ${{ steps.export_perf.outputs.perf_stats }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
-        with:
-          version: "0.10.6"
-          enable-cache: true
-          activate-environment: true
-
-      - run: uv sync --dev --all-extras --no-extra tachyon
-      - run: uv run pytest tests/test_eventbus_performance.py
-      - name: Run Python runtime perf
-        run: uv run python tests/performance_runtime.py | tee python_perf.log
-      - name: Export Python perf stats
-        id: export_perf
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          import re
-          from pathlib import Path
-
-          text = Path("python_perf.log").read_text(encoding="utf-8", errors="replace")
-          lines = [line.strip() for line in text.splitlines()]
-          stat_lines = [line for line in lines if re.match(r"^\[python\]\s.+:\s.*latency=", line)]
-
-          if not stat_lines:
-              # Fallback: parse final JSON payload if present.
-              for index, char in enumerate(text):
-                  if char != "[":
-                      continue
-                  try:
-                      payload = json.loads(text[index:])
-                  except Exception:
-                      continue
-                  if not isinstance(payload, list):
-                      continue
-                  compact = []
-                  for item in payload:
-                      if not isinstance(item, dict):
-                          continue
-                      scenario = str(item.get("scenario_id", "unknown"))
-                      latency = item.get("ms_per_event")
-                      unit = str(item.get("ms_per_event_unit", "event"))
-                      throughput = item.get("throughput")
-                      peak_rss = item.get("peak_rss_kb_per_event")
-                      parts = [f"{scenario}:"]
-                      if isinstance(latency, (int, float)):
-                          parts.append(f"latency={float(latency):.3f}ms/{unit}")
-                      if isinstance(throughput, (int, float)):
-                          parts.append(f"throughput={int(throughput)}/s")
-                      if isinstance(peak_rss, (int, float)):
-                          parts.append(f"peak_rss={float(peak_rss):.3f}kb/event")
-                      compact.append(" ".join(parts))
-                  if compact:
-                      stat_lines = compact
-                  break
-
-          if not stat_lines:
-              stat_lines = ["unable to parse python perf stats; see job log"]
-
-          stats = "\n".join(stat_lines)
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
-              fh.write("perf_stats<<EOF\n")
-              fh.write(stats + "\n")
-              fh.write("EOF\n")
-
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
-              fh.write("### Python Perf Stats\n\n```\n")
-              fh.write(stats + "\n")
-              fh.write("```\n")
-          PY
