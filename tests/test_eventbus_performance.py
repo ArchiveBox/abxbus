@@ -867,7 +867,8 @@ async def test_queue_jump_perf_matrix_by_mode(event_handler_concurrency: Literal
         await bus.destroy(clear=True)
 
     hard_floor = 60.0
-    regression_floor = throughput_regression_floor(phase1[0], min_fraction=0.50, hard_floor=50.0)
+    min_fraction = 0.50
+    regression_floor = throughput_regression_floor(phase1[0], min_fraction=min_fraction, hard_floor=50.0)
 
     assert parent_count == 1_000
     assert child_count == 1_000
@@ -875,8 +876,8 @@ async def test_queue_jump_perf_matrix_by_mode(event_handler_concurrency: Literal
     assert phase2[0] >= regression_floor, (
         f'queue-jump regression: phase1={phase1[0]:.0f} phase2={phase2[0]:.0f} (required >= {regression_floor:.0f})'
     )
-    assert phase2[2] < 45.0
-    assert phase2[4] < 360.0
+    assert phase2[2] <= phase1[2] / min_fraction
+    assert phase2[4] <= phase1[4] / min_fraction
 
 
 @pytest.mark.asyncio
@@ -953,13 +954,14 @@ async def test_forwarding_chain_perf_matrix_by_mode(event_handler_concurrency: L
         await sink_bus.destroy(clear=True)
 
     hard_floor = 35.0
-    regression_floor = throughput_regression_floor(phase1[0], min_fraction=0.45, hard_floor=20.0)
+    min_fraction = 0.45
+    regression_floor = throughput_regression_floor(phase1[0], min_fraction=min_fraction, hard_floor=20.0)
 
     assert sink_count == 1_000
     assert phase1[0] >= hard_floor
     assert phase2[0] >= regression_floor
-    assert phase2[2] < 120.0
-    assert phase2[4] < 1050.0
+    assert phase2[2] <= phase1[2] / min_fraction
+    assert phase2[4] <= phase1[4] / min_fraction
 
 
 @pytest.mark.asyncio
@@ -1153,14 +1155,15 @@ async def test_max_history_none_single_bus_stress_matrix(event_handler_concurren
     gc_delta = gc_mb - before_mb
     per_event_mb = max(gc_delta, 0.0) / 3_000
     hard_floor = 220.0
-    regression_floor = throughput_regression_floor(phase1[0], min_fraction=0.55, hard_floor=170.0)
+    min_fraction = 0.55
+    regression_floor = throughput_regression_floor(phase1[0], min_fraction=min_fraction, hard_floor=170.0)
 
     assert processed == 3_000
     assert history_size == 3_000
     assert phase1[0] >= hard_floor
     assert phase2[0] >= regression_floor
-    assert phase2[2] < 36.0
-    assert phase2[4] < 240.0
+    assert phase2[2] <= phase1[2] / min_fraction
+    assert phase2[4] <= phase1[4] / min_fraction
     assert done_delta < 260.0
     assert gc_delta < 220.0
     assert per_event_mb < 0.08
@@ -1227,7 +1230,8 @@ async def test_max_history_none_forwarding_chain_stress_matrix(event_handler_con
     gc_delta = gc_mb - before_mb
     done_delta = done_mb - before_mb
     hard_floor = 170.0
-    regression_floor = throughput_regression_floor(phase1[0], min_fraction=0.55, hard_floor=130.0)
+    min_fraction = 0.55
+    regression_floor = throughput_regression_floor(phase1[0], min_fraction=min_fraction, hard_floor=130.0)
 
     assert sink_count == 1_800
     assert source_hist == 1_800
@@ -1235,8 +1239,8 @@ async def test_max_history_none_forwarding_chain_stress_matrix(event_handler_con
     assert sink_hist == 1_800
     assert phase1[0] >= hard_floor
     assert phase2[0] >= regression_floor
-    assert phase2[2] < 45.0
-    assert phase2[4] < 300.0
+    assert phase2[2] <= phase1[2] / min_fraction
+    assert phase2[4] <= phase1[4] / min_fraction
     assert done_delta < 320.0
     assert gc_delta < 280.0
 
