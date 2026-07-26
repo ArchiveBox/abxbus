@@ -111,6 +111,13 @@ print(max(versions, key=parse) if versions else '')
 PY
 }
 
+version_at_ref() {
+    local ref="$1"
+    git show "${ref}:pyproject.toml" \
+        | sed -nE 's/^version = "([^"]+)".*/\1/p' \
+        | head -n 1
+}
+
 require_clean_exact_checkout() {
     local release_sha="$1"
     local release_branch="$2"
@@ -264,7 +271,7 @@ create_go_module_tags() {
 }
 
 main() {
-    local slug release_sha release_branch artifact_dir version latest candidate relation released_tag registry release_target pypi_exists npm_exists github_release_exists
+    local slug release_sha release_branch artifact_dir version previous_version latest candidate relation released_tag registry release_target pypi_exists npm_exists github_release_exists
 
     source_optional_env
     slug="$(repo_slug)"
@@ -274,6 +281,12 @@ main() {
     require_clean_exact_checkout "${release_sha}" "${release_branch}"
 
     version="$(current_version)"
+    previous_version="$(version_at_ref "${release_sha}^" || true)"
+    if [[ -n "${previous_version}" && "${previous_version}" == "${version}" ]]; then
+        echo "Package version ${version} did not change in ${release_sha}; nothing to publish"
+        return
+    fi
+
     latest="$(latest_release_version "${slug}")"
     for registry in pypi npm; do
         candidate="$(latest_registry_version "${registry}")"
