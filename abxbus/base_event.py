@@ -940,14 +940,12 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         This prevents premature completion when an event has been forwarded to
         another bus but that bus hasn't processed it yet.
         """
-        for bus in self._iter_eventbuses_for_registry(ignore_bus):
-            if not bus:
-                continue
-            if ignore_bus is not None and bus is ignore_bus:
-                continue
-            if bus.is_event_inflight_or_queued(self.event_id):
-                return True
-        return False
+        pending_bus_count = self.event_pending_bus_count
+        if pending_bus_count <= 0:
+            return False
+        if ignore_bus is not None and ignore_bus.is_event_inflight_or_queued(self.event_id):
+            return pending_bus_count > 1
+        return True
 
     async def _process_self_on_all_buses(self) -> None:
         """

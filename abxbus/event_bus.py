@@ -1242,6 +1242,7 @@ class EventBus:
                 self.pending_event_queue.put_nowait(event)
                 # Only add to history after successfully queuing
                 self.event_history[event.event_id] = event
+                event.event_pending_bus_count += 1
                 self.in_flight_event_ids.add(event.event_id)
                 # Resolve future find waiters immediately on emit so callers
                 # don't wait for queue position or handler execution.
@@ -1881,7 +1882,10 @@ class EventBus:
         self.processing_event_ids.discard(event.event_id)
         # Local bus consumed this event instance (or observed completion), so it
         # should not remain in this bus's active set.
+        was_in_flight = event.event_id in self.in_flight_event_ids
         self.in_flight_event_ids.discard(event.event_id)
+        if was_in_flight and event.event_pending_bus_count > 0:
+            event.event_pending_bus_count -= 1
 
         newly_completed_events = self._mark_event_tree_complete_if_ready(event)
         for completed_event in newly_completed_events:
