@@ -1,0 +1,29 @@
+.github/workflows/ci.yml
+  s_f8414d52051f83::t_b50fc53cd02e6a 92,96-97
+.github/workflows/test_go.yaml
+  s_f8414d52051f83::t_b50fc53cd02e6a 112,131
+.github/workflows/test_ts.yaml
+  s_f8414d52051f83::t_b50fc53cd02e6a 145,152
+.github/workflows/release.yml
+  s_f8414d52051f83::t_b50fc53cd02e6a 44
+.github/workflows/test_py.yaml
+  s_f8414d52051f83::t_b50fc53cd02e6a 22,101,104-105,107,146,197,201,212,222,226,232,265,268,289-291,296,299
+.github/workflows/pre-commit-hooks.yaml
+  s_f8414d52051f83::t_bc5747b4cbaeda 15,17-18,31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "2ff546083e151e2a97f3e929682694e4c5bb6765",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
