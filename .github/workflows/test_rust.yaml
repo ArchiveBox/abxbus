@@ -96,12 +96,12 @@ jobs:
 
       - name: Run Rust library tests
         if: matrix.task.kind == 'lib'
-        run: cargo test --locked --all-features --lib -- --nocapture
+        run: cargo test --locked --all-features --lib -- --nocapture --test-threads=1
 
       - name: Run Rust integration test
         if: matrix.task.kind == 'test'
-        run: cargo test --locked --all-features --test ${{ matrix.task.name }} -- --nocapture
+        run: cargo test --locked --all-features --test ${{ matrix.task.name }} -- --nocapture --test-threads=1
 
       - name: Run Rust binary tests
         if: matrix.task.kind == 'bin'
-        run: cargo test --locked --all-features --bin ${{ matrix.task.name }} -- --nocapture
+        run: cargo test --locked --all-features --bin ${{ matrix.task.name }} -- --nocapture --test-threads=1
