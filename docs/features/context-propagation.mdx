@@ -1,6 +1,6 @@
 ---
 title: Context Propagation
-description: Context variables like AsyncLocalStorage are passed from emit site to event handlers automatically.
+description: Context variables are passed from emit site to event handlers automatically.
 ---
 
 ## What are Context Variables?
@@ -211,5 +211,7 @@ In browsers:
 - pass correlation/tracing fields explicitly in event payloads when you need that metadata.
 
 See [Supported Runtimes](../operations/supported-runtimes) for runtime compatibility details.
+
+## Golang runtime note
 
 Go does not have ambient `AsyncLocalStorage`/`ContextVar` state; pass the request context at emit time with `bus.EmitWithContext(...)` or `event.EmitWithContext(...)` and AbxBus propagates that `context.Context` into handlers and awaited child events.
