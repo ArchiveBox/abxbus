@@ -29,7 +29,7 @@ repo_slug() {
 }
 
 current_version() {
-    uv run --no-project python - <<'PY'
+    uv run --no-cache --no-project python - <<'PY'
 from pathlib import Path
 import json
 import re
@@ -51,7 +51,7 @@ PY
 }
 
 compare_versions() {
-    uv run --no-project python - "$1" "$2" <<'PY'
+    uv run --no-cache --no-project python - "$1" "$2" <<'PY'
 import re
 import sys
 
@@ -71,7 +71,7 @@ latest_release_version() {
     local slug="$1"
     local raw_tags
     raw_tags="$(gh api "repos/${slug}/releases?per_page=100" --jq '.[].tag_name' || true)"
-    RELEASE_TAGS="${raw_tags}" uv run --no-project python - <<'PY'
+    RELEASE_TAGS="${raw_tags}" uv run --no-cache --no-project python - <<'PY'
 import os
 import re
 
@@ -95,7 +95,7 @@ latest_registry_version() {
     else
         versions="$(npm view "${NPM_PACKAGE}" versions --json --silent 2>/dev/null | jq -r '.[]' || true)"
     fi
-    RELEASE_TAGS="${versions}" uv run --no-project python - <<'PY'
+    RELEASE_TAGS="${versions}" uv run --no-cache --no-project python - <<'PY'
 import os
 import re
 
@@ -172,7 +172,7 @@ require_tested_artifacts() {
     }
 
     TESTED_VERSION="${version}" TESTED_WHEEL="${wheels[0]}" TESTED_SDIST="${sdists[0]}" TESTED_NPM_PACKAGE="${npm_packages[0]}" \
-        uv run --no-project python - <<'PY'
+        uv run --no-cache --no-project python - <<'PY'
 import json
 import os
 import re
@@ -205,7 +205,7 @@ publish_artifacts() {
     if curl -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | jq -e --arg version "${version}" '.releases[$version] | length > 0' >/dev/null 2>&1; then
         echo "${PYPI_PACKAGE} ${version} already published on PyPI"
     else
-        uv publish --trusted-publishing always "${wheels[@]}" "${sdists[@]}"
+        uv publish --no-cache --trusted-publishing always "${wheels[@]}" "${sdists[@]}"
     fi
 
     if npm view "${NPM_PACKAGE}@${version}" version --silent >/dev/null 2>&1; then
