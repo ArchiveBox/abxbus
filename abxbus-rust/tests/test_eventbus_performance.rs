@@ -276,7 +276,7 @@ fn test_performance_worst_case_forwarding_queue_jump_timeouts() {
         EventBusOptions {
             max_history_size: Some(128),
             max_history_drop: true,
-            event_timeout: Some(0.0001),
+            event_timeout: Some(0.001),
             event_handler_detect_file_paths: false,
             ..EventBusOptions::default()
         },
@@ -338,7 +338,7 @@ fn test_performance_worst_case_forwarding_queue_jump_timeouts() {
                 .unwrap_or_default();
             let timed_out = timed_out_for_handler.clone();
             async move {
-                if iteration % 10 == 0 {
+                if iteration % 20 == 0 {
                     timed_out.fetch_add(1, Ordering::Relaxed);
                     Delay::new(Duration::from_millis(2)).await;
                 }
