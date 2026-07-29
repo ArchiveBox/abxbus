@@ -1,4 +1,4 @@
-# `abxbus`: 📢 Production-ready multi-language event bus
+# `abxbus`: 📢 Fast, in-memory, multi-language event bus
 
 <img width="200" alt="image" src="https://github.com/user-attachments/assets/b3525c24-51ba-496c-b327-ccdfe46a7362" align="right" />
 
