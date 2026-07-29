@@ -363,6 +363,7 @@ main() {
     require_tested_artifacts "${artifact_dir}" "${version}" "${release_sha}"
     create_release "${slug}" "${version}" "${release_sha}"
     publish_artifacts "${version}" "${artifact_dir}"
+    sleep 60
     gh release upload "${TAG_PREFIX}${version}" --repo "${slug}" \
         "${artifact_dir}"/python/abxbus-*.whl \
         "${artifact_dir}"/python/abxbus-*.tar.gz \
