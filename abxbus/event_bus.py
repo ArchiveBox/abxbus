@@ -1886,6 +1886,7 @@ class EventBus:
         newly_completed_events = self._mark_event_tree_complete_if_ready(event)
         for completed_event in newly_completed_events:
             await self.on_event_change(completed_event, EventStatus.COMPLETED)
+        await self._propagate_parent_completion(event)
 
     def _mark_event_tree_complete_if_ready(self, root_event: BaseEvent[Any]) -> list[BaseEvent[Any]]:
         """
@@ -2143,7 +2144,6 @@ class EventBus:
             event_result._log_timeout_diagnostic_if_needed(event)  # pyright: ignore[reportPrivateUsage]
 
         await self._mark_event_complete_if_ready(event)
-        await self._propagate_parent_completion(event)
         self._trim_event_history_if_needed()
 
     def _get_handlers_for_event(self, event: BaseEvent[Any]) -> dict[PythonIdStr, EventHandler]:
