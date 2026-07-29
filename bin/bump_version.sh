@@ -62,3 +62,5 @@ paths['Cargo.lock'].write_text(re.sub(r'(?m)^(name = "abxbus"\nversion = ")[^"]+
 paths['version.go'].write_text(re.sub(r'const Version = "[^"]+"', f'const Version = "{version}"', texts['version.go'], count=1))
 print(version)
 PY
+
+uv lock --no-cache
