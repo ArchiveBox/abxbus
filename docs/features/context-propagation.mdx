@@ -1,29 +1,41 @@
 ---
 title: Context Propagation
-description: Carry request-scoped context through emit and handler execution (ContextVars / AsyncLocalStorage).
+description: Context variables like AsyncLocalStorage are passed from emit site to event handlers automatically.
 ---
 
-Context propagation means values you set at request entry (like `request_id`, `user_id`, trace/span context) are still available inside event handlers later in the async call chain.
+## What are Context Variables?
 
-This is commonly used in:
+[Context variables](https://nodejs.org/api/async_context.html#asynchronous-context-tracking) are a feature in some languages and runtimes, unrelated to `abxbus`, that let you set ambient "thread-local variables" that may be needed by many functions without passing them manually.
 
-- web servers (FastAPI, Fastify, Express/Nest adapters)
-- observability and distributed tracing (OpenTelemetry)
-- structured logging/correlation IDs
+Context variables are mostly used for repetitive arguments that would clutter function signatures if they had to be passed through every layer, such as request IDs, trace and span IDs, user IDs, database transaction IDs, and connection handles.
 
-## What this maps to per runtime
+They are especially common in FastAPI, Fastify, Express/Nest, and OpenTelemetry.
 
-- Python uses `ContextVars` (`contextvars.ContextVar`).
-- TypeScript (Node/Bun) uses `AsyncLocalStorage`.
-- Rust uses normal Rust context propagation (`dcontext` snapshots are captured at emit time and restored for handlers).
-- Go uses `context.Context` values captured with `EmitWithContext(...)` and restored during handler execution.
 
-Python/TypeScript/Rust AbxBus captures ambient context at `emit(...)` time and restores it when handlers execute. Go propagates the explicit `context.Context` passed to `EmitWithContext(...)`. In both cases, handler code sees the same request-local values.
+## How `abxbus` works in each runtime
+
+`abxbus` generally snapshots context variables at emit time and provides the snapshot to each event handler when it executes.
+
+For async or queued events, this gives handlers a consistent view of history that matches event dispatch order. This matters because dispatch order is the only strict order that exists when using any of the parallel `event_concurrency` or `event_handler_concurrency` modes.
+
+Event execution order is only statically guaranteed with:
+
+```ts
+event_concurrency: 'global-serial' | 'bus-serial'
+```
+
+These are the fully predictable modes, similar to a database's `STRICT SERIALIZABLE` mode, but they can be impractically slow when processing more than a few thousand events in a complex system. More parallel modes are typically used for performance.
+
+
+- Python uses [`ContextVars`](https://docs.python.org/3/library/contextvars.html#contextvars.Context) (`contextvars.ContextVar`).
+- TypeScript (Node/Bun) uses [`AsyncLocalStorage`](https://nodejs.org/api/async_context.html#asynchronous-context-tracking).
+- Rust uses [`thread_local!`](https://doc.rust-lang.org/std/macro.thread_local.html) ([`dcontext`](https://docs.rs/dcontext/latest/dcontext/) snapshots are captured at emit time and restored for handlers).
+- Go uses [`context.Context`](https://pkg.go.dev/context) values captured with `EmitWithContext(...)` and restored during handler execution.
 
 ## Why this matters
 
-Without propagation, handler code often loses request-local state after async boundaries and queue scheduling.  
-With propagation, event handlers can log/trace as if they were still running in the original request scope.
+Without propagation, event-based code would be difficult to integrate gradually into larger existing systems.
+With propagation, event handlers can log/trace normally like any other request handler or method an existing backend or framework.
 
 <Tabs>
 <Tab title="Python">

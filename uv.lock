@@ -4,7 +4,7 @@ requires-python = ">=3.11"
 
 [[package]]
 name = "abxbus"
-version = "2.5.41"
+version = "2.5.42"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },

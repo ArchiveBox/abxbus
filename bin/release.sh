@@ -265,8 +265,49 @@ create_go_module_tags() {
     done < <(go_module_tag_names "${version}")
 }
 
+verify_release_outputs() {
+    local slug="$1"
+    local version="$2"
+    local release_sha="$3"
+    local release_target release_json tag
+
+    release_target="$(git ls-remote origin "refs/tags/${TAG_PREFIX}${version}" | cut -f1)"
+    [[ "${release_target}" == "${release_sha}" ]] || {
+        echo "Release tag ${TAG_PREFIX}${version} does not target ${release_sha}" >&2
+        return 1
+    }
+
+    release_json="$(gh release view "${TAG_PREFIX}${version}" --repo "${slug}" --json tagName,targetCommitish,assets)"
+    jq -e \
+        --arg tag "${TAG_PREFIX}${version}" \
+        --arg sha "${release_sha}" \
+        --arg wheel "${PYPI_PACKAGE}-${version}-py3-none-any.whl" \
+        --arg sdist "${PYPI_PACKAGE}-${version}.tar.gz" \
+        --arg npm_package "${NPM_PACKAGE}-${version}.tgz" \
+        '
+          .tagName == $tag and
+          .targetCommitish == $sha and
+          ([.assets[].name] | sort) == ([$wheel, $sdist, $npm_package, "SHA256SUMS"] | sort)
+        ' <<<"${release_json}" >/dev/null
+
+    curl -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/${version}/json" |
+        jq -e \
+            --arg wheel "${PYPI_PACKAGE}-${version}-py3-none-any.whl" \
+            --arg sdist "${PYPI_PACKAGE}-${version}.tar.gz" \
+            '([.urls[].filename] | sort) == ([$wheel, $sdist] | sort)' >/dev/null
+    [[ "$(npm view "${NPM_PACKAGE}@${version}" version --silent)" == "${version}" ]]
+
+    while read -r tag; do
+        [[ -n "${tag}" ]] || continue
+        [[ "$(git ls-remote origin "refs/tags/${tag}" | cut -f1)" == "${release_sha}" ]] || {
+            echo "Go module tag ${tag} does not target ${release_sha}" >&2
+            return 1
+        }
+    done < <(go_module_tag_names "${version}")
+}
+
 main() {
-    local slug release_sha release_branch artifact_dir version latest candidate relation released_tag registry release_target pypi_exists npm_exists github_release_exists
+    local slug release_sha release_branch artifact_dir version latest candidate relation registry release_target pypi_exists npm_exists github_release_exists
 
     source_optional_env
     slug="$(repo_slug)"
@@ -307,8 +348,11 @@ main() {
         github_release_exists=true
     fi
     if [[ "${relation}" == "eq" && "${pypi_exists}" == true && "${npm_exists}" == true && "${github_release_exists}" == true && -n "${release_target}" ]]; then
-        echo "${PYPI_PACKAGE} ${version} is already released; nothing to publish"
-        return
+        if verify_release_outputs "${slug}" "${version}" "${release_sha}"; then
+            echo "${PYPI_PACKAGE} ${version} is already completely released; nothing to publish"
+            return
+        fi
+        echo "${PYPI_PACKAGE} ${version} has incomplete release outputs; recovering from tested artifacts"
     fi
     if [[ "${relation}" == "eq" && ( -z "${release_target}" || "${release_target}" != "${release_sha}" ) ]]; then
         echo "Refusing to recover partial release ${version}: no release tag anchors it to ${release_sha}" >&2
@@ -327,11 +371,7 @@ main() {
         --clobber
     create_go_module_tags "${version}" "${release_sha}"
 
-    released_tag="$(gh release view "${TAG_PREFIX}${version}" --repo "${slug}" --json tagName,targetCommitish --jq '[.tagName, .targetCommitish] | @tsv')"
-    if [[ "${released_tag}" != "${TAG_PREFIX}${version}"$'\t'"${release_sha}" ]]; then
-        echo "GitHub release does not target the tested SHA ${release_sha}: ${released_tag}" >&2
-        return 1
-    fi
+    verify_release_outputs "${slug}" "${version}" "${release_sha}"
     echo "Released ${PYPI_PACKAGE} and ${NPM_PACKAGE} ${version} from ${release_sha}"
 }
 
