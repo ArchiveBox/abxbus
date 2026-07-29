@@ -1,0 +1,20 @@
+docs/features/context-propagation.mdx
+  s_f8414d52051f83::t_8a6f393783ced5 3,215
+  s_f8414d52051f83::t_34e71d1692db0a 216
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "efb5bd8c10a948135c60185db4485cdc9b69f324",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
