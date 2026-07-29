@@ -19,7 +19,7 @@ jobs:
       - name: Discover Python tests and examples
         id: discover
         run: |
-          uv run --no-project python - <<'PY'
+          uv run --no-cache --no-project python - <<'PY'
           import json
           import os
           from collections import Counter
@@ -98,13 +98,13 @@ jobs:
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: "0.10.6"
-          enable-cache: true
+          enable-cache: false
           activate-environment: true
 
-      - run: uv sync --dev --all-extras --no-extra tachyon
-      - run: uv pip install fastapi
+      - run: uv sync --no-cache --dev --all-extras --no-extra tachyon
+      - run: uv pip install --no-cache fastapi
       - name: Run documentation code blocks
-        run: uv run pytest -vv --tb=long README.md abxbus-go/README.md abxbus-ts/README.md AGENTS.md skills docs
+        run: uv run --no-cache pytest -vv --tb=long README.md abxbus-go/README.md abxbus-ts/README.md AGENTS.md skills docs
 
   tests:
     needs: discover_python
@@ -143,7 +143,7 @@ jobs:
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: "0.10.6"
-          enable-cache: true
+          enable-cache: false
           activate-environment: true
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -194,11 +194,11 @@ jobs:
           gcc-14 --version
           g++-14 --version
 
-      - run: uv sync --dev --all-extras --no-extra tachyon
+      - run: uv sync --no-cache --dev --all-extras --no-extra tachyon
 
       - name: Install optional Tachyon peer for bridge tests
         if: matrix.task.needs_cross_runtime
-        run: CC=gcc-14 CXX=g++-14 uv pip install tachyon-ipc
+        run: CC=gcc-14 CXX=g++-14 uv pip install --no-cache tachyon-ipc
 
       - name: Build TypeScript ESM bundle for cross-runtime roundtrip tests
         if: matrix.task.needs_cross_runtime
@@ -209,7 +209,7 @@ jobs:
       - name: Verify bridge optional Python deps
         if: matrix.task.needs_cross_runtime
         run: |
-          uv run python - <<'PY'
+          uv run --no-cache python - <<'PY'
           import importlib
           modules = ['asyncpg', 'redis', 'nats', 'tachyon']
           for module in modules:
@@ -219,17 +219,17 @@ jobs:
 
       - name: Run discovered test with coverage
         if: matrix.task.kind == 'test'
-        run: uv run coverage run --parallel-mode --source=abxbus -m pytest "${{ matrix.task.path }}"
+        run: uv run --no-cache coverage run --parallel-mode --source=abxbus -m pytest "${{ matrix.task.path }}"
 
       - name: Run discovered example with coverage
         if: matrix.task.kind == 'example'
-        run: uv run coverage run --parallel-mode --source=abxbus "${{ matrix.task.path }}"
+        run: uv run --no-cache coverage run --parallel-mode --source=abxbus "${{ matrix.task.path }}"
 
       - name: Run discovered performance runtime with coverage
         if: matrix.task.kind == 'runtime'
         run: |
           set -o pipefail
-          uv run coverage run --parallel-mode --source=abxbus "${{ matrix.task.path }}" | tee python_perf.log
+          uv run --no-cache coverage run --parallel-mode --source=abxbus "${{ matrix.task.path }}" | tee python_perf.log
           cat python_perf.log >> "$GITHUB_STEP_SUMMARY"
 
       - name: Check coverage files
@@ -262,10 +262,10 @@ jobs:
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: "0.10.6"
-          enable-cache: true
+          enable-cache: false
           activate-environment: true
 
-      - run: uv sync --dev --all-extras --no-extra tachyon
+      - run: uv sync --no-cache --dev --all-extras --no-extra tachyon
 
       - name: Download all coverage data
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -286,17 +286,17 @@ jobs:
         run: |
           OMIT='abxbus/bridge*.py'
 
-          uv run coverage combine
-          uv run coverage html --skip-covered --skip-empty --omit="$OMIT"
-          uv run coverage xml --omit="$OMIT"
+          uv run --no-cache coverage combine
+          uv run --no-cache coverage html --skip-covered --skip-empty --omit="$OMIT"
+          uv run --no-cache coverage xml --omit="$OMIT"
 
           {
             echo "### Python combined coverage"
             echo ""
-            uv run coverage report --omit="$OMIT" --format=markdown
+            uv run --no-cache coverage report --omit="$OMIT" --format=markdown
           } >> "$GITHUB_STEP_SUMMARY"
 
-          uv run coverage report --omit="$OMIT" --fail-under=50
+          uv run --no-cache coverage report --omit="$OMIT" --fail-under=50
 
       - name: Upload combined coverage report
         id: upload_py_coverage_report

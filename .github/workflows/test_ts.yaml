@@ -142,14 +142,14 @@ jobs:
         if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'EventBus_locking')
         with:
           version: "0.10.6"
-          enable-cache: true
+          enable-cache: false
           activate-environment: true
 
       - name: Install Python deps for cross-runtime tests
         if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'EventBus_locking')
         run: |
           cd ..
-          uv sync --dev --all-extras --no-extra tachyon
+          uv sync --no-cache --dev --all-extras --no-extra tachyon
 
       - name: Verify bridge optional Node deps
         if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')
