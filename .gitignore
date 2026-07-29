@@ -36,6 +36,5 @@ coverage.xml
 secrets.env
 .env
 
-uv.lock
 temp
 tmp
