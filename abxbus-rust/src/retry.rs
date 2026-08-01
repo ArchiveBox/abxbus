@@ -104,7 +104,6 @@ impl RetrySemaphore {
 }
 
 static SEMAPHORES: OnceLock<Mutex<HashMap<String, Arc<RetrySemaphore>>>> = OnceLock::new();
-const MULTIPROCESS_SEMAPHORE_DIRNAME: &str = "browser_use_semaphores";
 const MULTIPROCESS_STALE_LOCK_SECONDS: u64 = 300;
 
 thread_local! {
@@ -188,8 +187,104 @@ fn now_nanos() -> u128 {
         .as_nanos()
 }
 
+fn expand_home(path: &str, home_dir: Option<&str>) -> PathBuf {
+    if path == "~" {
+        return home_dir.map_or_else(|| PathBuf::from(path), PathBuf::from);
+    }
+    if let Some(suffix) = path.strip_prefix("~/") {
+        if let Some(home_dir) = home_dir {
+            return PathBuf::from(home_dir).join(suffix);
+        }
+    }
+    PathBuf::from(path)
+}
+
+fn multiprocess_semaphore_dir_from_env(
+    configured: Option<&str>,
+    runtime_dir: Option<&str>,
+    cache_home: Option<&str>,
+    home_dir: Option<&str>,
+) -> PathBuf {
+    if let Some(configured) = configured.filter(|value| !value.is_empty()) {
+        return expand_home(configured, home_dir);
+    }
+    if let Some(runtime_dir) = runtime_dir.filter(|value| !value.is_empty()) {
+        return expand_home(runtime_dir, home_dir)
+            .join("abxbus")
+            .join("semaphores");
+    }
+
+    let cache_dir = cache_home
+        .filter(|value| !value.is_empty())
+        .map(|path| expand_home(path, home_dir))
+        .or_else(|| home_dir.map(|path| PathBuf::from(path).join(".cache")))
+        .unwrap_or_else(std::env::temp_dir);
+    cache_dir.join("abxbus").join("semaphores")
+}
+
 fn multiprocess_semaphore_dir() -> PathBuf {
-    std::env::temp_dir().join(MULTIPROCESS_SEMAPHORE_DIRNAME)
+    let configured = std::env::var("ABXBUS_MULTIPROCESS_SEMAPHORE_DIR").ok();
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").ok();
+    let cache_home = std::env::var("XDG_CACHE_HOME").ok();
+    let home_dir = std::env::var("HOME")
+        .ok()
+        .or_else(|| std::env::var("USERPROFILE").ok());
+
+    multiprocess_semaphore_dir_from_env(
+        configured.as_deref(),
+        runtime_dir.as_deref(),
+        cache_home.as_deref(),
+        home_dir.as_deref(),
+    )
+}
+
+#[cfg(test)]
+mod semaphore_directory_tests {
+    use super::multiprocess_semaphore_dir_from_env;
+    use std::path::PathBuf;
+
+    #[test]
+    fn configured_directory_takes_precedence_and_expands_home() {
+        assert_eq!(
+            multiprocess_semaphore_dir_from_env(
+                Some("~/.local/locks"),
+                Some("/run/user/1000"),
+                None,
+                Some("/home/alice")
+            ),
+            PathBuf::from("/home/alice/.local/locks"),
+        );
+    }
+
+    #[test]
+    fn runtime_directory_uses_abxbus_namespace() {
+        assert_eq!(
+            multiprocess_semaphore_dir_from_env(
+                None,
+                Some("/run/user/1000"),
+                None,
+                Some("/home/alice")
+            ),
+            PathBuf::from("/run/user/1000/abxbus/semaphores"),
+        );
+    }
+
+    #[test]
+    fn cache_directory_uses_abxbus_namespace() {
+        assert_eq!(
+            multiprocess_semaphore_dir_from_env(
+                None,
+                None,
+                Some("/var/cache/alice"),
+                Some("/home/alice")
+            ),
+            PathBuf::from("/var/cache/alice/abxbus/semaphores"),
+        );
+        assert_eq!(
+            multiprocess_semaphore_dir_from_env(None, None, None, Some("/home/alice")),
+            PathBuf::from("/home/alice/.cache/abxbus/semaphores"),
+        );
+    }
 }
 
 fn multiprocess_lock_prefix(key: &str) -> String {
