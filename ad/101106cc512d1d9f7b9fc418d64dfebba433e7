@@ -1,0 +1,34 @@
+abxbus-rust/src/retry.rs
+  s_69ddf154c10e6f::t_4dcd798acb7a1e 190-224,226-271,279,284
+  s_69ddf154c10e6f::t_7a063fbf20640d 272-278,280-283,285-287
+README.md
+  s_69ddf154c10e6f::t_34d815128ce45d 1853
+abxbus-go/version.go
+  s_69ddf154c10e6f::t_67e06c59cf32cc 3
+abxbus-rust/Cargo.lock
+  s_69ddf154c10e6f::t_8c889bfc77f202 7
+abxbus-rust/Cargo.toml
+  s_69ddf154c10e6f::t_48a8ee1417c66c 3
+abxbus-ts/package.json
+  s_69ddf154c10e6f::t_2f00a1ecb904c0 3
+pyproject.toml
+  s_69ddf154c10e6f::t_31581a5511c055 5
+uv.lock
+  s_69ddf154c10e6f::t_020123d4efbe48 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.19",
+  "base_commit_sha": "ad101106cc512d1d9f7b9fc418d64dfebba433e7",
+  "prompts": {},
+  "sessions": {
+    "s_69ddf154c10e6f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019faf8b-797c-7c30-9a89-b8c3ca8cc3e2",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
