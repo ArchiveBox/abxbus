@@ -1850,12 +1850,11 @@ the documentation tests that are evaluating this README.
 
 This project is licensed under the MIT License.
 
-This repo is a fork that adds many new features and performance enhancements over the [original project named `bubus`](https://github.com/browser-use/bubus), which was built for an upstream browser agent (but has since gone stale).
+This repo is a fork that adds many new features and performance enhancements over the original project named `bubus`, which has since gone stale.
 
 Timeline:
 
-- 2025-06 `v1.0.1`: Original library released https://github.com/browser-use/bubus
-- 2025-10 `v1.5.1`: Browser-Use v0.6.0 released, first version powered by `bubus`
+- 2025-06 `v1.0.1`: Original library released
 - 2025-11 `v1.7.1`: `bubus` forked to `pirate/bbus` temporarily; `ContextVar` support, `Middlewares`, and `bus.find()` added
 - 2026-01 `v2.3.2`: `bubus-ts` Typescript implementation released, cross-compatible with Python version (now `abxbus-ts`)
 - 2026-03 `v2.4.1`: Fork renamed from `pirate/bbus -> ArchiveBox/abxbus`; added dual `CJS`/`ESM` support, bugfixes and perf improvements
