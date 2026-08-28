@@ -11,25 +11,13 @@ PYPI_PACKAGE="abxbus"
 NPM_PACKAGE="abxbus"
 
 pypi_release_json() {
-    curl -fsSL --retry 30 --retry-all-errors --retry-delay 2 --retry-max-time 60 \
+    curl -fsSL \
         -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
         "https://pypi.org/pypi/${PYPI_PACKAGE}/$1/json?cache_bust=$(date +%s)-${RANDOM}"
 }
 
-pypi_wait_for_release() {
-    local version="$1"
-    pypi_release_json "${version}" >/dev/null
-    for _ in {1..30}; do
-        curl -fsSL -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
-            "https://pypi.org/simple/${PYPI_PACKAGE}/?cache_bust=$(date +%s)-${RANDOM}" | \
-            grep -Fq ">abxbus-${version}-py3-none-any.whl<" && return
-        sleep 2
-    done
-    return 1
-}
-
 npm_release_json() {
-    curl -fsSL --retry 30 --retry-all-errors --retry-delay 2 --retry-max-time 60 \
+    curl -fsSL \
         -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
         "https://registry.npmjs.org/${NPM_PACKAGE}/$1?cache_bust=$(date +%s)-${RANDOM}"
 }
@@ -226,18 +214,16 @@ publish_artifacts() {
     local sdists=("${artifact_dir}"/python/abxbus-*.tar.gz)
     local npm_packages=("${artifact_dir}"/npm/abxbus-*.tgz)
 
-    if curl -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | jq -e --arg version "${version}" '.releases[$version] | length > 0' >/dev/null 2>&1; then
+    if pypi_release_json "${version}" >/dev/null 2>&1; then
         echo "${PYPI_PACKAGE} ${version} already published on PyPI"
     else
         uv publish --no-cache --trusted-publishing always "${wheels[@]}" "${sdists[@]}"
-        pypi_wait_for_release "${version}"
     fi
 
     if npm view "${NPM_PACKAGE}@${version}" version --silent >/dev/null 2>&1; then
         echo "${NPM_PACKAGE} ${version} already published on npm"
     else
         npm publish --access public "${npm_packages[0]}"
-        npm_release_json "${version}" >/dev/null
     fi
 }
 
@@ -363,10 +349,10 @@ main() {
     pypi_exists=false
     npm_exists=false
     github_release_exists=false
-    if curl -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | jq -e --arg version "${version}" '.releases[$version] | length > 0' >/dev/null 2>&1; then
+    if pypi_release_json "${version}" >/dev/null 2>&1; then
         pypi_exists=true
     fi
-    if npm view "${NPM_PACKAGE}@${version}" version --silent >/dev/null 2>&1; then
+    if npm_release_json "${version}" >/dev/null 2>&1; then
         npm_exists=true
     fi
     release_target="$(git ls-remote origin "refs/tags/${TAG_PREFIX}${version}" | cut -f1)"
