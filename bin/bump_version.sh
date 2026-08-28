@@ -18,6 +18,7 @@ paths = {
     'Cargo.toml': Path('abxbus-rust/Cargo.toml'),
     'Cargo.lock': Path('abxbus-rust/Cargo.lock'),
     'version.go': Path('abxbus-go/version.go'),
+    'uv.lock': Path('uv.lock'),
 }
 texts = {name: path.read_text() for name, path in paths.items()}
 matches = {
@@ -60,7 +61,8 @@ paths['package.json'].write_text(json.dumps(package_json, indent=2) + '\n')
 paths['Cargo.toml'].write_text(re.sub(r'^version = "[^"]+"$', f'version = "{version}"', texts['Cargo.toml'], count=1, flags=re.MULTILINE))
 paths['Cargo.lock'].write_text(re.sub(r'(?m)^(name = "abxbus"\nversion = ")[^"]+("$)', rf'\g<1>{version}\2', texts['Cargo.lock'], count=1))
 paths['version.go'].write_text(re.sub(r'const Version = "[^"]+"', f'const Version = "{version}"', texts['version.go'], count=1))
+paths['uv.lock'].write_text(re.sub(r'(?m)^(name = "abxbus"\nversion = ")[^"]+("$)', rf'\g<1>{version}\2', texts['uv.lock'], count=1))
 print(version)
 PY
 
-uv lock --no-cache
+uv lock --check --offline --no-cache
