@@ -2,7 +2,7 @@ name: Release
 
 on:
   workflow_run:
-    workflows: [CI]
+    workflows: [Release candidate]
     types: [completed]
     branches: [main]
 
@@ -13,8 +13,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
+  candidate:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-24.04
+    outputs:
+      ready: ${{ steps.owner.outputs.ready }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - id: owner
+        shell: bash
+        run: |
+          VERSION="$(sed -nE 's/^version = "([^"]+)".*/\1/p' pyproject.toml | head -n 1)"
+          TARGET="$(git ls-remote origin "refs/tags/release-candidate/$VERSION" | awk '{print $1}')"
+          [[ "$TARGET" == "${{ github.event.workflow_run.head_sha }}" ]] && echo 'ready=true' >> "$GITHUB_OUTPUT" || echo 'ready=false' >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: candidate
+    if: needs.candidate.outputs.ready == 'true'
     runs-on: ubuntu-24.04
     environment: pypi
     timeout-minutes: 45
