@@ -1,8 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -16,23 +14,18 @@ concurrency:
 
 jobs:
   pre-commit:
-    if: github.event_name != 'push' || github.event.head_commit.author.email != 'release-bot@archivebox.io'
     uses: ./.github/workflows/pre-commit-hooks.yaml
 
   python:
-    if: github.event_name != 'push' || github.event.head_commit.author.email != 'release-bot@archivebox.io'
     uses: ./.github/workflows/test_py.yaml
 
   typescript:
-    if: github.event_name != 'push' || github.event.head_commit.author.email != 'release-bot@archivebox.io'
     uses: ./.github/workflows/test_ts.yaml
 
   go:
-    if: github.event_name != 'push' || github.event.head_commit.author.email != 'release-bot@archivebox.io'
     uses: ./.github/workflows/test_go.yaml
 
   rust:
-    if: github.event_name != 'push' || github.event.head_commit.author.email != 'release-bot@archivebox.io'
     uses: ./.github/workflows/test_rust.yaml
 
   release-artifacts:
