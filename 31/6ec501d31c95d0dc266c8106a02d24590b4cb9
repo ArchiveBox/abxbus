@@ -1,0 +1,21 @@
+.github/workflows/ci.yml
+  s_3155555fdbdae3::t_a13c7966c0d8f1 19,23,27,31,35
+.github/workflows/release-candidate.yml
+  s_3155555fdbdae3::t_baa20c748ef1c1 16-17,53,76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "316ec501d31c95d0dc266c8106a02d24590b4cb9",
+  "prompts": {},
+  "sessions": {
+    "s_3155555fdbdae3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0467b-ccd7-7a30-a1bb-9d99d3bf7584",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
