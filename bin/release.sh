@@ -16,6 +16,18 @@ pypi_release_json() {
         "https://pypi.org/pypi/${PYPI_PACKAGE}/$1/json?cache_bust=$(date +%s)-${RANDOM}"
 }
 
+pypi_wait_for_release() {
+    local version="$1"
+    pypi_release_json "${version}" >/dev/null
+    for _ in {1..30}; do
+        curl -fsSL -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
+            "https://pypi.org/simple/${PYPI_PACKAGE}/?cache_bust=$(date +%s)-${RANDOM}" | \
+            grep -Fq ">abxbus-${version}-py3-none-any.whl<" && return
+        sleep 2
+    done
+    return 1
+}
+
 npm_release_json() {
     curl -fsSL --retry 30 --retry-all-errors --retry-delay 2 --retry-max-time 60 \
         -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
@@ -218,7 +230,7 @@ publish_artifacts() {
         echo "${PYPI_PACKAGE} ${version} already published on PyPI"
     else
         uv publish --no-cache --trusted-publishing always "${wheels[@]}" "${sdists[@]}"
-        pypi_release_json "${version}" >/dev/null
+        pypi_wait_for_release "${version}"
     fi
 
     if npm view "${NPM_PACKAGE}@${version}" version --silent >/dev/null 2>&1; then
