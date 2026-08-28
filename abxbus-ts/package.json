@@ -1,6 +1,6 @@
 {
   "name": "abxbus",
-  "version": "2.5.48",
+  "version": "2.5.49",
   "description": "Event bus library for browsers and ESM Node.js",
   "type": "module",
   "sideEffects": false,
