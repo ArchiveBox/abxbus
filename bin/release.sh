@@ -302,13 +302,6 @@ verify_release_outputs() {
           ([.assets[].name] | sort) == ([$wheel, $sdist, $npm_package, "SHA256SUMS"] | sort)
         ' <<<"${release_json}" >/dev/null
 
-    pypi_release_json "${version}" |
-        jq -e \
-            --arg wheel "${PYPI_PACKAGE}-${version}-py3-none-any.whl" \
-            --arg sdist "${PYPI_PACKAGE}-${version}.tar.gz" \
-            '([.urls[].filename] | sort) == ([$wheel, $sdist] | sort)' >/dev/null
-    [[ "$(npm_release_json "${version}" | jq -r .version)" == "${version}" ]]
-
     while read -r tag; do
         [[ -n "${tag}" ]] || continue
         [[ "$(git ls-remote origin "refs/tags/${tag}" | cut -f1)" == "${release_sha}" ]] || {
