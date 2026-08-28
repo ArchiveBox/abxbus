@@ -10,6 +10,12 @@ TAG_PREFIX=""
 PYPI_PACKAGE="abxbus"
 NPM_PACKAGE="abxbus"
 
+pypi_release_json() {
+    curl -fsSL --retry 30 --retry-all-errors --retry-delay 2 --retry-max-time 60 \
+        -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
+        "https://pypi.org/pypi/${PYPI_PACKAGE}/$1/json?cache_bust=$(date +%s)-${RANDOM}"
+}
+
 source_optional_env() {
     if [[ -f "${REPO_DIR}/.env" ]]; then
         set -a
@@ -206,6 +212,7 @@ publish_artifacts() {
         echo "${PYPI_PACKAGE} ${version} already published on PyPI"
     else
         uv publish --no-cache --trusted-publishing always "${wheels[@]}" "${sdists[@]}"
+        pypi_release_json "${version}" >/dev/null
     fi
 
     if npm view "${NPM_PACKAGE}@${version}" version --silent >/dev/null 2>&1; then
@@ -290,7 +297,7 @@ verify_release_outputs() {
           ([.assets[].name] | sort) == ([$wheel, $sdist, $npm_package, "SHA256SUMS"] | sort)
         ' <<<"${release_json}" >/dev/null
 
-    curl -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/${version}/json" |
+    pypi_release_json "${version}" |
         jq -e \
             --arg wheel "${PYPI_PACKAGE}-${version}-py3-none-any.whl" \
             --arg sdist "${PYPI_PACKAGE}-${version}.tar.gz" \
