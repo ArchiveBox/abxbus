@@ -16,6 +16,12 @@ pypi_release_json() {
         "https://pypi.org/pypi/${PYPI_PACKAGE}/$1/json?cache_bust=$(date +%s)-${RANDOM}"
 }
 
+npm_release_json() {
+    curl -fsSL --retry 30 --retry-all-errors --retry-delay 2 --retry-max-time 60 \
+        -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
+        "https://registry.npmjs.org/${NPM_PACKAGE}/$1?cache_bust=$(date +%s)-${RANDOM}"
+}
+
 source_optional_env() {
     if [[ -f "${REPO_DIR}/.env" ]]; then
         set -a
@@ -219,6 +225,7 @@ publish_artifacts() {
         echo "${NPM_PACKAGE} ${version} already published on npm"
     else
         npm publish --access public "${npm_packages[0]}"
+        npm_release_json "${version}" >/dev/null
     fi
 }
 
@@ -302,7 +309,7 @@ verify_release_outputs() {
             --arg wheel "${PYPI_PACKAGE}-${version}-py3-none-any.whl" \
             --arg sdist "${PYPI_PACKAGE}-${version}.tar.gz" \
             '([.urls[].filename] | sort) == ([$wheel, $sdist] | sort)' >/dev/null
-    [[ "$(npm view "${NPM_PACKAGE}@${version}" version --silent)" == "${version}" ]]
+    [[ "$(npm_release_json "${version}" | jq -r .version)" == "${version}" ]]
 
     while read -r tag; do
         [[ -n "${tag}" ]] || continue
