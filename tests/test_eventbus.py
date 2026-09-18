@@ -1937,7 +1937,7 @@ class TestEventResults:
         """Users can merge dict handler results manually from event_results_list()."""
 
         async def config_base(event):
-            return {'debug': False, 'port': 8080, 'name': 'base'}
+            return {'debug': False, 'port': 5797, 'name': 'base'}
 
         async def config_override(event):
             return {'debug': True, 'timeout': 30, 'name': 'override'}
@@ -1954,7 +1954,7 @@ class TestEventResults:
         # Later handlers override earlier ones
         assert merged == {
             'debug': True,  # Overridden
-            'port': 8080,  # From base
+            'port': 5797,  # From base
             'timeout': 30,  # From override
             'name': 'override',  # Overridden
         }

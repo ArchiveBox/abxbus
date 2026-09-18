@@ -146,7 +146,7 @@ event! {
 let bus = EventBus::new(Some("ConfigBus".to_string()));
 
 bus.on(GetConfigEvent, |_event: GetConfigEvent| async move {
-    Ok(json!({"debug": true, "port": 8080}))
+    Ok(json!({"debug": true, "port": 5797}))
 });
 bus.on(GetConfigEvent, |_event: GetConfigEvent| async move {
     Ok(json!({"debug": false, "timeout": 30}))

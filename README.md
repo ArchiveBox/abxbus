@@ -301,7 +301,7 @@ bus = EventBus()
 <!--pytest-codeblocks:cont-->
 ```python
 async def load_user_config(event: GetConfigEvent) -> dict[str, Any]:
-    return {"debug": True, "port": 8080}
+    return {"debug": True, "port": 5797}
 
 async def load_system_config(event: GetConfigEvent) -> dict[str, Any]:
     return {"debug": False, "timeout": 30}

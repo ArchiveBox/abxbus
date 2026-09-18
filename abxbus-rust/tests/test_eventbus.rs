@@ -2333,7 +2333,7 @@ fn test_manual_dict_merge() {
     let bus = EventBus::new(Some("ManualDictMergeBus".to_string()));
 
     bus.on_raw("GetConfig", "config_base", |_event| async move {
-        Ok(json!({"debug": false, "port": 8080, "name": "base"}))
+        Ok(json!({"debug": false, "port": 5797, "name": "base"}))
     });
     bus.on_raw("GetConfig", "config_override", |_event| async move {
         Ok(json!({"debug": true, "timeout": 30, "name": "override"}))
@@ -2355,7 +2355,7 @@ fn test_manual_dict_merge() {
     }
     assert_eq!(
         Value::Object(merged),
-        json!({"debug": true, "port": 8080, "timeout": 30, "name": "override"})
+        json!({"debug": true, "port": 5797, "timeout": 30, "name": "override"})
     );
 
     bus.on_raw("BadConfig", "bad_handler", |_event| async move {
