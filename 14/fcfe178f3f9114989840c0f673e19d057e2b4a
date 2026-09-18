@@ -1,0 +1,20 @@
+README.md
+  h_923c208e183a7b 304
+abxbus-rust/tests/test_eventbus.rs
+  h_923c208e183a7b 2336,2358
+docs/features/return-value-handling.mdx
+  h_923c208e183a7b 149
+tests/test_eventbus.py
+  h_923c208e183a7b 1940,1957
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "14fcfe178f3f9114989840c0f673e19d057e2b4a",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
