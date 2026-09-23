@@ -43,6 +43,10 @@ jobs:
         with:
           version: 10.33.2
 
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.97.1
+
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22.23.1
@@ -54,12 +58,16 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          mkdir -p release-artifacts/python release-artifacts/npm
+          mkdir -p release-artifacts/python release-artifacts/npm release-artifacts/cratesio
           uv build --out-dir release-artifacts/python
           rm -f release-artifacts/python/.gitignore
           pnpm --dir abxbus-ts install --frozen-lockfile
           pnpm --dir abxbus-ts run build
           pnpm --dir abxbus-ts pack --pack-destination "$GITHUB_WORKSPACE/release-artifacts/npm"
+          cargo package --locked --manifest-path abxbus-rust/Cargo.toml
+          crate=(abxbus-rust/target/package/abxbus-*.crate)
+          [[ "${#crate[@]}" -eq 1 ]]
+          cp "${crate[0]}" release-artifacts/cratesio/
           wheel=(release-artifacts/python/abxbus-*.whl)
           npm_package=(release-artifacts/npm/abxbus-*.tgz)
           uv sync --locked --no-cache --no-sources --no-dev --no-install-project
@@ -70,7 +78,7 @@ jobs:
           npm install --prefix "$smoke_dir" --ignore-scripts "${npm_package[0]}"
           (cd "$smoke_dir" && node --input-type=module -e 'const pkg = await import("abxbus"); if (!pkg.EventBus) throw new Error("Missing EventBus")')
           printf '%s\n' "$GITHUB_SHA" > release-artifacts/COMMIT_SHA
-          (cd release-artifacts && find COMMIT_SHA python npm -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+          (cd release-artifacts && find COMMIT_SHA python npm cratesio -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: steps.version.outputs.action == 'ready' || steps.version.outputs.action == 'reserved'
