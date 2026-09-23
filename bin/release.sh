@@ -268,13 +268,16 @@ create_release() {
     local release_sha="$3"
 
     if gh release view "${TAG_PREFIX}${version}" --repo "${slug}" >/dev/null 2>&1; then
+        gh release edit "${TAG_PREFIX}${version}" \
+            --repo "${slug}" \
+            --title "v${version}"
         echo "GitHub release ${TAG_PREFIX}${version} already exists"
         return
     fi
     gh release create "${TAG_PREFIX}${version}" \
         --repo "${slug}" \
         --target "${release_sha}" \
-        --title "${TAG_PREFIX}${version}" \
+        --title "v${version}" \
         --generate-notes
 }
 
