@@ -160,8 +160,79 @@ async def test_nested_timeout_scenario_from_issue():
 
 
 @pytest.mark.asyncio
+async def test_child_timeout_does_not_expire_parent_deadline(caplog: pytest.LogCaptureFixture) -> None:
+    """A child can fail early; propagating its error must not invent a parent timeout."""
+    bus = EventBus(name='ChildTimeoutOrigin')
+
+    class ParentDeadlineEvent(BaseEvent[str]):
+        event_timeout: float | None = 0
+        event_handler_timeout: float | None = 10
+
+    class ChildDeadlineEvent(BaseEvent[str]):
+        event_timeout: float | None = 0
+        event_handler_timeout: float | None = 0.01
+
+    async def wait_for_child(event: ParentDeadlineEvent) -> str:
+        child = await event.emit(ChildDeadlineEvent()).now()
+        result = await child.event_result()
+        assert result is not None
+        return result
+
+    async def wait_for_completion(event: ChildDeadlineEvent) -> str:
+        await asyncio.Event().wait()
+        return 'completed'
+
+    bus.on(ParentDeadlineEvent, wait_for_child)
+    bus.on(ChildDeadlineEvent, wait_for_completion)
+    try:
+        parent = await bus.emit(ParentDeadlineEvent()).now()
+        child = parent.event_children[0]
+        parent_result = next(iter(parent.event_results.values()))
+        child_result = next(iter(child.event_results.values()))
+        assert isinstance(child_result.error, EventHandlerTimeoutError)
+        assert parent_result.error is child_result.error
+        assert '0.01s' in str(parent_result.error)
+        assert parent_result.status == 'error'
+        diagnostics = [record.getMessage() for record in caplog.records if record.funcName == 'log_timeout_tree']
+        assert len(diagnostics) == 1
+        assert 'ChildDeadlineEvent' in diagnostics[0]
+        assert 'ParentDeadlineEvent' not in diagnostics[0]
+        assert '\n' not in diagnostics[0]
+        assert not any(record.funcName in ('print_event_tree', 'print_handler_line') for record in caplog.records)
+    finally:
+        await bus.destroy(clear=True)
+
+
+@pytest.mark.asyncio
+async def test_handler_internal_timeout_does_not_expire_bus_deadline(caplog: pytest.LogCaptureFixture) -> None:
+    bus = EventBus(name='InternalTimeoutOrigin')
+
+    class OperationDeadlineEvent(BaseEvent[str]):
+        event_timeout: float | None = 0
+        event_handler_timeout: float | None = 10
+
+    async def wait_for_operation(event: OperationDeadlineEvent) -> str:
+        async with asyncio.timeout(0.01):
+            await asyncio.Event().wait()
+        return 'completed'
+
+    bus.on(OperationDeadlineEvent, wait_for_operation)
+    try:
+        event = await bus.emit(OperationDeadlineEvent()).now()
+        result = next(iter(event.event_results.values()))
+        assert isinstance(result.error, TimeoutError)
+        assert '10s' not in str(result.error)
+        assert not any(record.funcName == 'log_timeout_tree' for record in caplog.records)
+    finally:
+        await bus.destroy(clear=True)
+
+
+@pytest.mark.asyncio
 async def test_handler_timeout_marks_error_and_other_handlers_still_complete(caplog: pytest.LogCaptureFixture):
     """Focused timeout behavior: one handler times out, another still completes."""
+    # Full tree diagnostics remain available on explicit request. The default
+    # WARNING behavior is separately checked above so UI output stays bounded.
+    caplog.set_level(logging.DEBUG, logger='abxbus')
     bus = EventBus(name='TimeoutFocusedBus')
 
     class TimeoutFocusedEvent(BaseEvent[str]):
@@ -201,6 +272,9 @@ async def test_handler_timeout_marks_error_and_other_handlers_still_complete(cap
 
         fast_handler_diagnostics = [record.getMessage() for record in caplog.records if 'fast_handler' in record.getMessage()]
         assert any('☑️' in message for message in fast_handler_diagnostics)
+        tree_records = [record for record in caplog.records if record.funcName in ('print_event_tree', 'print_handler_line')]
+        assert tree_records
+        assert all(record.levelno == logging.DEBUG for record in tree_records)
     finally:
         await bus.destroy(clear=True)
 

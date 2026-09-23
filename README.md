@@ -1244,6 +1244,13 @@ Timeout precedence matches TS:
 - Slow handler warning threshold resolves in order: `handler.handler_slow_timeout` -> `event.event_handler_slow_timeout` -> `bus.event_handler_slow_timeout`.
 - Bus defaults are applied at execution time by the bus currently processing the event. Unset event fields stay unset on the event object so forwarded events can inherit the target bus defaults.
 
+A timeout inside a handler (including a child event's timeout) does not mean the
+parent handler's deadline expired. The original child error propagates without
+relabeling it as a parent timeout. Expired handler deadlines produce a concise
+warning; set `ABXBUS_LOGGING_LEVEL=DEBUG` to include the full event tree when
+diagnosing a failure. Normal logging omits that tree so large recursive workloads
+do not bury progress and the failing handler under completed sibling events.
+
 #### `EventBus` Properties
 
 - `name`: The bus identifier

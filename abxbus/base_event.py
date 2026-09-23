@@ -3,8 +3,7 @@ import contextvars
 import inspect
 import logging
 import os
-from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
-from contextlib import asynccontextmanager
+from collections.abc import Callable, Coroutine, Generator
 from datetime import UTC, datetime
 from enum import StrEnum
 from functools import partial
@@ -594,9 +593,20 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             if self.timeout is None:
                 handler_return_value = await handler_task
             else:
+                timeout_scope = asyncio.timeout(self.timeout)
                 try:
-                    handler_return_value = await asyncio.wait_for(asyncio.shield(handler_task), timeout=self.timeout)
+                    # A child event or an I/O operation may time out well before
+                    # this handler's deadline. wait_for raises TimeoutError in
+                    # both cases; catching that type alone falsely blamed every
+                    # ancestor and cancelled unrelated children. Only expiry of
+                    # OUR scope owns handler-timeout cleanup and diagnostics.
+                    # Shield the handler so a cancellation-resistant coroutine
+                    # cannot delay this deadline; the finally block stops it.
+                    async with timeout_scope:
+                        handler_return_value = await asyncio.shield(handler_task)
                 except TimeoutError as exc:
+                    if not timeout_scope.expired():
+                        raise
                     timed_out = True
                     timeout_error = self._on_handler_timeout(event)
                     raise timeout_error from exc
@@ -616,22 +626,6 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                     handler_task.add_done_callback(consume_late_task_exception)
             else:
                 await cancel_and_await(handler_task, timeout=0.1)
-
-    @asynccontextmanager
-    async def _run_with_timeout(self, event: 'BaseEvent[T_EventResultType]') -> AsyncGenerator[None]:
-        """Apply handler timeout and normalize timeout expiry to EventHandlerTimeoutError."""
-        if self.timeout is None or self.timeout <= 0:
-            yield
-            return
-        timeout_scope = asyncio.timeout(self.timeout)
-        try:
-            async with timeout_scope:
-                yield
-        except TimeoutError as exc:
-            if not timeout_scope.expired():
-                raise
-            timeout_error = self._on_handler_timeout(event)
-            raise timeout_error from exc
 
     def _on_handler_timeout(self, event: 'BaseEvent[T_EventResultType]') -> EventHandlerTimeoutError:
         children = f' and interrupted any processing of {len(event.event_children)} child events' if event.event_children else ''
