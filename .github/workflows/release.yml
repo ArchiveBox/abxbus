@@ -5,11 +5,18 @@ on:
     workflows: [Release candidate, CI]
     types: [completed]
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact main commit with verified release artifacts
+        required: true
+        type: string
+      candidate_run_id:
+        description: Successful release-candidate run containing the verified artifacts
+        required: true
+        type: string
 
 permissions: {}
-
-env:
-  RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
 
 concurrency:
   group: release-main
@@ -17,7 +24,7 @@ concurrency:
 
 jobs:
   candidate:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main'
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -29,9 +36,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-          ref: ${{ env.RELEASE_SHA }}
+          ref: ${{ github.event.workflow_run.head_sha }}
       - id: owner
         shell: bash
+        env:
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           VERSION="$(sed -nE 's/^version = "([^"]+)".*/\1/p' pyproject.toml | head -n 1)"
           TARGET="$(git ls-remote origin "refs/tags/release-candidate/$VERSION" | awk '{print $1}')"
@@ -43,6 +52,7 @@ jobs:
         if: steps.owner.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -67,9 +77,26 @@ jobs:
           echo 'ready=true' >> "$GITHUB_OUTPUT"
           echo "candidate_run_id=$CANDIDATE_RUN_ID" >> "$GITHUB_OUTPUT"
 
-  publish:
+  dispatch-publish:
     needs: candidate
     if: needs.candidate.outputs.ready == 'true'
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - name: Dispatch the OIDC-compatible publish workflow
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+          CANDIDATE_RUN_ID: ${{ needs.candidate.outputs.candidate_run_id }}
+        run: |
+          set -Eeuo pipefail
+          test -n "${GH_TOKEN:-}" || { echo 'RELEASE_GH_TOKEN is required to dispatch the trusted-publishing workflow' >&2; exit 1; }
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main \
+            -f release_sha="$RELEASE_SHA" \
+            -f candidate_run_id="$CANDIDATE_RUN_ID"
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     environment: pypi
     timeout-minutes: 45
@@ -81,13 +108,34 @@ jobs:
       version: ${{ steps.release.outputs.version }}
       cascade_ready: ${{ steps.cascade-state.outputs.ready }}
     env:
-      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+      RELEASE_SHA: ${{ inputs.release_sha }}
       RELEASE_BRANCH: main
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           ref: ${{ env.RELEASE_SHA }}
+
+      - name: Revalidate release commit and tested runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]]
+          [[ "$(git ls-remote origin refs/heads/main | cut -f1)" == "$RELEASE_SHA" ]]
+          VERSION="$(sed -nE 's/^version = "([^\"]+)".*/\1/p' pyproject.toml | head -n 1)"
+          [[ -n "$VERSION" ]]
+          [[ "$(git ls-remote origin "refs/tags/release-candidate/$VERSION" | cut -f1)" == "$RELEASE_SHA" ]]
+          CANDIDATE="$(gh run view "$CANDIDATE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --json headSha,event,status,conclusion --jq '[.headSha,.event,.status,.conclusion]|@tsv')"
+          [[ "$CANDIDATE" == "$RELEASE_SHA"$'\tpush\tcompleted\tsuccess' ]]
+          CI_RUN_ID="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
+            --commit "$RELEASE_SHA" --event push --limit 1 \
+            --json databaseId,status,conclusion \
+            --jq '.[0] | select(.status == "completed" and .conclusion == "success") | .databaseId // empty')"
+          [[ -n "$CI_RUN_ID" ]]
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
@@ -116,7 +164,7 @@ jobs:
         with:
           name: release-artifacts-${{ env.RELEASE_SHA }}
           path: ${{ runner.temp }}/release-artifacts
-          run-id: ${{ needs.candidate.outputs.candidate_run_id }}
+          run-id: ${{ inputs.candidate_run_id }}
           github-token: ${{ github.token }}
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
@@ -158,7 +206,7 @@ jobs:
 
   cascade:
     name: Cascade verified release
-    needs: [candidate, publish]
+    needs: publish
     if: needs.publish.outputs.cascade_ready == 'true'
     permissions:
       actions: read
@@ -167,7 +215,7 @@ jobs:
     with:
       upstream_package: abxbus
       upstream_version: ${{ needs.publish.outputs.version }}
-      upstream_artifact_name: release-artifacts-${{ github.event.workflow_run.head_sha }}
-      upstream_run_id: ${{ needs.candidate.outputs.candidate_run_id }}
+      upstream_artifact_name: release-artifacts-${{ inputs.release_sha }}
+      upstream_run_id: ${{ inputs.candidate_run_id }}
     secrets:
       release_token: ${{ secrets.RELEASE_GH_TOKEN }}
