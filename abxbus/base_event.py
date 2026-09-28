@@ -205,6 +205,7 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
 
     # Completion signal
     _handler_completed_signal: asyncio.Event | None = PrivateAttr(default=None)
+    _event_results_changed_signal: asyncio.Event | None = PrivateAttr(default=None)
     _handler_timeout_expired: bool = PrivateAttr(default=False)
     _timeout_diagnostic_logged: bool = PrivateAttr(default=False)
 
@@ -530,6 +531,8 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
             self.completed_at = monotonic_datetime()
             if self.handler_completed_signal:
                 self.handler_completed_signal.set()
+        if self.status in ('completed', 'error') and self._event_results_changed_signal is not None:
+            self._event_results_changed_signal.set()
         return self
 
     def _create_slow_handler_warning_timer(
@@ -884,6 +887,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
     # Completion signal
     _event_completed_signal: asyncio.Event | None = PrivateAttr(default=None)
+    _event_results_changed_signal: asyncio.Event | None = PrivateAttr(default=None)
     _event_is_complete_flag: bool = PrivateAttr(default=False)
     _lock_for_event_handler: 'ReentrantLock | None' = PrivateAttr(default=None)
 
@@ -1098,10 +1102,25 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
         async def wait_loop() -> None:
             assert self.event_completed_signal is not None
+            # first_result must return before unrelated handlers/children finish,
+            # so waiting only for event completion would change its contract. The
+            # original sleep(0) poll burned a core during ArchiveBox binary installs,
+            # competing with the executor/subprocess work it was waiting for.
+            # Share a notification with results (including direct update() callers),
+            # without retaining the parent event or allocating it for ordinary waits.
+            if self._event_results_changed_signal is None:
+                self._event_results_changed_signal = asyncio.Event()
+            changed = self._event_results_changed_signal
+            for result in self.event_results.values():
+                result._event_results_changed_signal = changed  # pyright: ignore[reportPrivateUsage]
             while not self._event_is_complete_flag and not self.event_completed_signal.is_set():
+                # Clear before checking state, with no intervening await: changes
+                # cannot be lost between the predicate and registering this waiter.
+                # Event.set() wakes all waiters, even if another clears it first.
+                changed.clear()
                 if self._has_included_event_result(include):
                     return
-                await asyncio.sleep(0)
+                await changed.wait()
 
         if timeout is None or timeout <= 0:
             await wait_loop()
@@ -1674,6 +1693,8 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         if existing_result.handler.id != handler_entry.id:
             existing_result.handler = handler_entry
 
+        # Forwarding can add results after first-result waiters have subscribed.
+        existing_result._event_results_changed_signal = self._event_results_changed_signal  # pyright: ignore[reportPrivateUsage]
         existing_result.update(**kwargs)
         if existing_result.status == 'started' and existing_result.started_at is not None:
             self._mark_started(existing_result.started_at)
@@ -1704,6 +1725,8 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
     def _mark_completed(self, current_bus: 'EventBus | None' = None) -> None:
         """Check if all handlers are done and signal completion"""
+        # Completion also releases first-result waiters when no handler produced
+        # an included result (including events with no handlers at all).
         completed_signal = self._event_completed_signal
         if completed_signal is not None and completed_signal.is_set():
             self._event_is_complete_flag = True
@@ -1712,6 +1735,8 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             if self.event_started_at is None:
                 self.event_started_at = self.event_completed_at
             self.event_status = EventStatus.COMPLETED
+            if self._event_results_changed_signal is not None:
+                self._event_results_changed_signal.set()
             return
 
         # If there are no results at all, the event is complete.
@@ -1728,6 +1753,8 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
             self.event_status = EventStatus.COMPLETED
             if completed_signal is not None:
                 completed_signal.set()
+            if self._event_results_changed_signal is not None:
+                self._event_results_changed_signal.set()
             self._event_dispatch_context = None
             return
 
@@ -1760,6 +1787,8 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         self.event_status = EventStatus.COMPLETED
         if completed_signal is not None:
             completed_signal.set()
+        if self._event_results_changed_signal is not None:
+            self._event_results_changed_signal.set()
         # Clear dispatch context to avoid memory leaks (it holds references to ContextVars)
         self._event_dispatch_context = None
 
@@ -1770,6 +1799,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         self._event_is_complete_flag = False
         self.event_completed_at = None
         self.event_results.clear()
+        self._event_results_changed_signal = None
         self._lock_for_event_handler = None
         self._event_dispatch_context = None
         try:
