@@ -31,7 +31,7 @@ asyncio.run(main())
 # "hi!"
 ```
 
-It's async native, has proper automatic nested event tracking, and powerful concurrency control options. The API is inspired by `EventEmitter` or [`emittery`](https://github.com/sindresorhus/emittery) in JS, but it takes it a step further:
+It's async native, has proper automatic nested event tracking + OTEL, and powerful concurrency control options. The API is inspired by `EventEmitter` or [`emittery`](https://github.com/sindresorhus/emittery) in JS, but it takes it a step further:
 
 - nice Pydantic / Zod schemas for events that can be exchanged between runtimes
 - automatic UUIDv7s and monotonic nanosecond timestamps for ordering events globally
