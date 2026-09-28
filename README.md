@@ -37,6 +37,8 @@ It's async native, has proper automatic nested event tracking + OTEL, and powerf
 - automatic UUIDv7s and monotonic nanosecond timestamps for ordering events globally
 - built in locking options to force strict global FIFO processing or fully parallel processing
 
+> *(Forked from initial implementation at a past job: [`browser-use/bubus`](https://github.com/browser-use/bubus))*
+
 ---
 
 ♾️ It's inspired by the simplicity of async and events in `JS` but with baked-in features that allow to eliminate most of the tedious repetitive complexity in event-driven codebases:
