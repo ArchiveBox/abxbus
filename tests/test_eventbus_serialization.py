@@ -18,6 +18,14 @@ class HandlerOrderEvent(BaseEvent[str]):
     value: str = 'order'
 
 
+class RestoreTTLProbeEvent(BaseEvent[str]):
+    pass
+
+
+class RestoreTTLTouchEvent(BaseEvent[None]):
+    pass
+
+
 JsonShape: TypeAlias = str | list['JsonShape'] | dict[str, 'JsonShape']
 
 
@@ -115,6 +123,40 @@ def test_eventbus_serialization_preserves_unbounded_history_null() -> None:
     assert restored.event_history.max_history_size is None
 
 
+@pytest.mark.asyncio
+async def test_eventbus_validate_rebuilds_ttl_indexes_for_restored_completed_history() -> None:
+    source = EventBus(name='RestoreResultTTLBus', max_history_size=None, event_ttl=-1, event_result_ttl=0)
+    source.on(RestoreTTLProbeEvent, lambda _event: 'ok')
+    result_event = await source.emit(RestoreTTLProbeEvent())
+    result_event_id = result_event.event_id
+    result_payload = source.model_dump()
+    await source.destroy(clear=True)
+
+    restored_results = EventBus.validate(result_payload)
+    try:
+        assert restored_results.event_history[result_event_id].event_results
+        await restored_results.emit(RestoreTTLTouchEvent())
+        assert result_event_id in restored_results.event_history
+        assert restored_results.event_history[result_event_id].event_results == {}
+    finally:
+        await restored_results.destroy(clear=True)
+
+    source = EventBus(name='RestoreEventTTLBus', max_history_size=None, event_ttl=0)
+    source.on(RestoreTTLProbeEvent, lambda _event: 'ok')
+    expired_event = await source.emit(RestoreTTLProbeEvent())
+    expired_event_id = expired_event.event_id
+    expired_payload = source.model_dump()
+    await source.destroy(clear=True)
+
+    restored_events = EventBus.validate(expired_payload)
+    try:
+        assert expired_event_id in restored_events.event_history
+        await restored_events.emit(RestoreTTLTouchEvent())
+        assert expired_event_id not in restored_events.event_history
+    finally:
+        await restored_events.destroy(clear=True)
+
+
 def test_eventbus_validate_null_event_timeout_uses_default() -> None:
     bus = EventBus(name='TimeoutNullBus')
     payload = bus.model_dump()
@@ -123,6 +165,49 @@ def test_eventbus_validate_null_event_timeout_uses_default() -> None:
     restored = EventBus.validate(payload)
     assert restored.event_timeout == 60.0
     assert restored.model_dump()['event_timeout'] == 60.0
+
+
+def test_eventbus_validate_rejects_restored_ttls_below_minus_one() -> None:
+    bus, event, handler_id = _make_bus_with_pending_event()
+    payload = bus.model_dump()
+    history = cast(dict[str, dict[str, Any]], payload['event_history'])
+    event_payload = history[event.event_id]
+    event_results = cast(dict[str, dict[str, Any]], event_payload['event_results'])
+    result_payload = event_results[handler_id]
+
+    with pytest.raises((AssertionError, ValidationError, ValueError), match='event_ttl'):
+        EventBus.validate({**payload, 'event_ttl': -2})
+    with pytest.raises((AssertionError, ValidationError, ValueError), match='event_result_ttl'):
+        EventBus.validate({**payload, 'event_result_ttl': -2})
+
+    invalid_event = {
+        **payload,
+        'event_history': {
+            event.event_id: {
+                **event_payload,
+                'event_ttl': -2,
+            }
+        },
+    }
+    with pytest.raises((AssertionError, ValidationError, ValueError), match='event_ttl'):
+        EventBus.validate(invalid_event)
+
+    invalid_result = {
+        **payload,
+        'event_history': {
+            event.event_id: {
+                **event_payload,
+                'event_results': {
+                    handler_id: {
+                        **result_payload,
+                        'handler_result_ttl': -2,
+                    }
+                },
+            }
+        },
+    }
+    with pytest.raises((AssertionError, ValidationError, ValueError), match='handler_result_ttl'):
+        EventBus.validate(invalid_result)
 
 
 @pytest.mark.asyncio
@@ -214,6 +299,15 @@ def test_baseevent_model_validate_roundtrips_runtime_json_shape() -> None:
     event_payload = bus.model_dump()['event_history'][event.event_id]
     assert event_payload['future_unrecognized_field'] == {'nested': ['kept']}
     assert 'event_extra_payload' not in event_payload
+    assert event.event_payload() == {
+        'value': 'roundtrip',
+        'future_unrecognized_field': {'nested': ['kept']},
+    }
+    event.event_payload()['value'] = 'mutated'
+    assert event.event_payload()['value'] == 'roundtrip'
+    assert 'event_id' not in event.event_payload()
+    assert 'event_ttl' not in event.event_payload()
+    assert 'event_payload' not in event_payload
 
     restored_payload = BaseEvent.model_validate(event_payload).model_dump(mode='json')
     assert _json_shape(restored_payload) == _json_shape(event_payload)

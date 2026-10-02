@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Map, Value};
 
 use crate::{
-    event_handler::EventHandler,
+    event_handler::{validate_optional_seconds_at_least_minus_one, EventHandler},
     event_result::{EventResult, EventResultStatus},
     id::uuid_v7_string,
     jsonschema::{normalize_json_schema, validate_json_schema_value},
@@ -29,6 +29,8 @@ pub struct BaseEventData {
     pub event_concurrency: Option<EventConcurrencyMode>,
     pub event_handler_timeout: Option<f64>,
     pub event_handler_slow_timeout: Option<f64>,
+    pub event_ttl: Option<f64>,
+    pub event_result_ttl: Option<f64>,
     pub event_handler_concurrency: Option<EventHandlerConcurrencyMode>,
     pub event_handler_completion: Option<EventHandlerCompletionMode>,
     pub event_blocks_parent_completion: bool,
@@ -52,7 +54,26 @@ pub struct BaseEventData {
 pub struct BaseEvent {
     pub inner: Mutex<BaseEventData>,
     pub completed: Event,
-    runtime_eventbus_id: Mutex<Option<String>>,
+    runtime_eventbus_id: Mutex<Option<Arc<str>>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct EventResetOptions {
+    pub ids: bool,
+    pub status: bool,
+    pub timestamps: bool,
+    pub results: bool,
+}
+
+impl Default for EventResetOptions {
+    fn default() -> Self {
+        Self {
+            ids: true,
+            status: true,
+            timestamps: true,
+            results: true,
+        }
+    }
 }
 
 pub type EventResultInclude = Arc<dyn Fn(Option<&Value>, &EventResult) -> bool + Send + Sync>;
@@ -156,11 +177,27 @@ fn take_usize(payload: &mut Map<String, Value>, key: &str) -> Result<Option<usiz
     take_from_value(payload, key)
 }
 
-fn take_option_f64(payload: &mut Map<String, Value>, key: &str) -> Result<Option<f64>, String> {
+fn take_option_f64_at_least_minus_one(
+    payload: &mut Map<String, Value>,
+    key: &str,
+) -> Result<Option<f64>, String> {
     let value: Option<f64> = take_from_value(payload, key)?;
     if let Some(value) = value {
-        if value < 0.0 {
-            return Err(format!("Invalid {key}: must be >= 0 or null"));
+        if !value.is_finite() || value < -1.0 {
+            return Err(format!("Invalid {key}: must be finite and >= -1 or null"));
+        }
+    }
+    Ok(value)
+}
+
+fn take_option_f64_nonnegative(
+    payload: &mut Map<String, Value>,
+    key: &str,
+) -> Result<Option<f64>, String> {
+    let value: Option<f64> = take_from_value(payload, key)?;
+    if let Some(value) = value {
+        if !value.is_finite() || value < 0.0 {
+            return Err(format!("Invalid {key}: must be finite and >= 0 or null"));
         }
     }
     Ok(value)
@@ -200,12 +237,16 @@ impl BaseEvent {
 
         let event_version =
             take_string(&mut payload, "event_version")?.unwrap_or_else(|| "0.0.1".to_string());
-        let event_timeout = take_option_f64(&mut payload, "event_timeout")?;
-        let event_slow_timeout = take_option_f64(&mut payload, "event_slow_timeout")?;
+        let event_timeout = take_option_f64_nonnegative(&mut payload, "event_timeout")?;
+        let event_slow_timeout = take_option_f64_nonnegative(&mut payload, "event_slow_timeout")?;
         let event_concurrency = take_option_from_value(&mut payload, "event_concurrency")?;
-        let event_handler_timeout = take_option_f64(&mut payload, "event_handler_timeout")?;
+        let event_handler_timeout =
+            take_option_f64_nonnegative(&mut payload, "event_handler_timeout")?;
         let event_handler_slow_timeout =
-            take_option_f64(&mut payload, "event_handler_slow_timeout")?;
+            take_option_f64_nonnegative(&mut payload, "event_handler_slow_timeout")?;
+        let event_ttl = take_option_f64_at_least_minus_one(&mut payload, "event_ttl")?;
+        let event_result_ttl =
+            take_option_f64_at_least_minus_one(&mut payload, "event_result_ttl")?;
         let event_handler_concurrency =
             take_option_from_value(&mut payload, "event_handler_concurrency")?;
         let event_handler_completion =
@@ -239,6 +280,8 @@ impl BaseEvent {
                 event_concurrency,
                 event_handler_timeout,
                 event_handler_slow_timeout,
+                event_ttl,
+                event_result_ttl,
                 event_handler_concurrency,
                 event_handler_completion,
                 event_blocks_parent_completion,
@@ -269,12 +312,15 @@ impl BaseEvent {
         self.event_bus()
     }
 
-    pub(crate) fn set_runtime_eventbus_id(&self, eventbus_id: Option<String>) {
+    pub(crate) fn set_runtime_eventbus_id(&self, eventbus_id: Option<Arc<str>>) {
         *self.runtime_eventbus_id.lock() = eventbus_id;
     }
 
     pub(crate) fn runtime_eventbus_id(&self) -> Option<String> {
-        self.runtime_eventbus_id.lock().clone()
+        self.runtime_eventbus_id
+            .lock()
+            .as_ref()
+            .map(|eventbus_id| eventbus_id.to_string())
     }
 
     fn validate_event_type(event_type: &str) -> Result<(), String> {
@@ -701,6 +747,9 @@ impl BaseEvent {
 
     pub fn mark_started(&self) {
         let mut event = self.inner.lock();
+        if event.event_status == EventStatus::Completed || event.event_completed_at.is_some() {
+            return;
+        }
         if event.event_started_at.is_none() {
             event.event_started_at = Some(now_iso());
         }
@@ -718,6 +767,14 @@ impl BaseEvent {
         if event.event_completed_at.is_none() {
             event.event_completed_at = Some(now_iso());
         }
+        if event.event_started_at.is_none() {
+            event.event_started_at = event.event_completed_at.clone();
+        }
+    }
+
+    pub(crate) fn should_skip_handler_execution(&self) -> bool {
+        let event = self.inner.lock();
+        event.event_status == EventStatus::Completed || event.event_completed_at.is_some()
     }
 
     pub(crate) fn notify_completed(&self) {
@@ -725,14 +782,37 @@ impl BaseEvent {
     }
 
     pub fn event_reset(&self) -> Arc<Self> {
+        self.event_reset_with_options(EventResetOptions::default())
+    }
+
+    pub fn event_reset_with_options(&self, options: EventResetOptions) -> Arc<Self> {
         let mut data = self.inner.lock().clone();
-        data.event_id = uuid_v7_string();
-        data.event_status = EventStatus::Pending;
-        data.event_started_at = None;
-        data.event_completed_at = None;
+        // Bridges and event_reset share this lifecycle reset path so redispatch semantics stay aligned.
+        if options.ids {
+            data.event_id = uuid_v7_string();
+            data.event_path.clear();
+            data.event_parent_id = None;
+            data.event_emitted_by_handler_id = None;
+            data.event_blocks_parent_completion = false;
+        }
+        if options.status {
+            data.event_status = EventStatus::Pending;
+            data.event_completed_at = None;
+        }
+        if options.timestamps {
+            data.event_started_at = None;
+            data.event_completed_at = None;
+        }
         data.event_pending_bus_count = 0;
-        data.event_results.clear();
-        data.event_result_order.clear();
+        if options.results {
+            data.event_results.clear();
+            data.event_result_order.clear();
+        } else if options.ids {
+            let event_id = data.event_id.clone();
+            for result in data.event_results.values_mut() {
+                result.event_id = event_id.clone();
+            }
+        }
         Arc::new(Self {
             inner: Mutex::new(data),
             completed: Event::new(),
@@ -758,6 +838,16 @@ impl BaseEvent {
             }
         }
         value
+    }
+
+    pub fn event_payload(&self) -> Map<String, Value> {
+        self.inner
+            .lock()
+            .event_extra_payload
+            .iter()
+            .filter(|(key, _)| !key.starts_with("event_"))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
     }
 
     pub fn event_errors(&self) -> Vec<String> {
@@ -840,6 +930,8 @@ impl BaseEvent {
                 "event_concurrency",
                 "event_handler_timeout",
                 "event_handler_slow_timeout",
+                "event_ttl",
+                "event_result_ttl",
                 "event_handler_concurrency",
                 "event_handler_completion",
                 "event_result_type",
@@ -932,6 +1024,10 @@ impl BaseEvent {
 
         let mut parsed: BaseEventData =
             serde_json::from_value(value).expect("invalid base_event json");
+        validate_optional_seconds_at_least_minus_one("event_ttl", parsed.event_ttl)
+            .expect("event_ttl must be finite and >= -1 or None");
+        validate_optional_seconds_at_least_minus_one("event_result_ttl", parsed.event_result_ttl)
+            .expect("event_result_ttl must be finite and >= -1 or None");
         parsed.event_result_order = event_result_order
             .into_iter()
             .filter(|handler_id| parsed.event_results.contains_key(handler_id))

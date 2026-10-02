@@ -1,8 +1,10 @@
 import asyncio
+from typing import Any
 
 import pytest
 
-from abxbus import BaseEvent, EventBus, EventHandlerConcurrencyMode
+from abxbus import BaseEvent, EventBus, EventHandlerConcurrencyMode, EventResult
+from abxbus.middlewares import EventBusMiddleware
 
 
 class PingEvent(BaseEvent[None]):
@@ -37,6 +39,20 @@ class ProxyDispatchRootEvent(BaseEvent[str]):
 
 class ProxyDispatchChildEvent(BaseEvent[str]):
     """Child event for proxy-dispatch child-linking coverage."""
+
+
+class ForwardingTTLProbeEvent(BaseEvent[str]):
+    pass
+
+
+class ForwardingTTLTouchEvent(BaseEvent[None]):
+    pass
+
+
+async def _run_forwarding_ttl_trim_pass(bus: EventBus) -> None:
+    touch = bus.emit(ForwardingTTLTouchEvent())
+    await touch.now()
+    await bus.wait_until_idle()
 
 
 def _dump_bus_state(buses: list[EventBus]) -> str:
@@ -94,6 +110,90 @@ async def test_events_forward_between_buses_without_duplication():
         await bus_a.destroy(clear=True)
         await bus_b.destroy(clear=True)
         await bus_c.destroy(clear=True)
+
+
+@pytest.mark.asyncio
+async def test_completed_forwarded_event_with_pruned_target_results_remains_terminal():
+    bus_a = EventBus(name='PrunedTerminalA')
+    bus_b_result_events: list[str] = []
+    middleware_events: list[str] = []
+
+    class RecordingMiddleware(EventBusMiddleware):
+        async def on_event_result_change(
+            self,
+            eventbus: EventBus,
+            event: BaseEvent[Any],
+            event_result: EventResult[Any],
+            status: str,
+        ) -> None:
+            if event_result.eventbus_id == bus_b.id:
+                middleware_events.append(f'{event.event_id}:{event_result.handler_name}:{status}')
+
+    bus_b = EventBus(name='PrunedTerminalB', middlewares=[RecordingMiddleware()])
+
+    bus_a.on(PingEvent, lambda event: (bus_b.emit(event), 'a')[1])
+    bus_b.on(PingEvent, lambda event: bus_b_result_events.append(event.event_id) or 'b')
+
+    try:
+        event = bus_a.emit(PingEvent(value=1))
+        await event.now()
+        await _wait_all_idle([bus_a, bus_b])
+
+        assert event.event_status == 'completed'
+        assert event.event_completed_at is not None
+        assert bus_b_result_events == [event.event_id]
+        middleware_event_count = len(middleware_events)
+        for handler_id, event_result in list(event.event_results.items()):
+            if event_result.eventbus_id == bus_b.id:
+                del event.event_results[handler_id]
+        assert not any(event_result.eventbus_id == bus_b.id for event_result in event.event_results.values())
+
+        bus_b.emit(event)
+        await event.now()
+        await _wait_all_idle([bus_a, bus_b])
+
+        assert event.event_status == 'completed'
+        assert event.event_completed_at is not None
+        assert bus_b_result_events == [event.event_id]
+        assert len(middleware_events) == middleware_event_count
+        assert event.event_id in bus_b.event_history
+    finally:
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
+
+
+@pytest.mark.asyncio
+async def test_completed_event_first_emitted_to_new_bus_skips_target_handlers():
+    bus_a = EventBus(name='CompletedReplaySource')
+    bus_b = EventBus(name='CompletedReplayTarget')
+    seen_a: list[str] = []
+    seen_b: list[str] = []
+
+    bus_a.on(PingEvent, lambda event: seen_a.append(event.event_id))
+    bus_b.on(PingEvent, lambda event: seen_b.append(event.event_id))
+
+    try:
+        event = bus_a.emit(PingEvent(value=1))
+        await event.now()
+        await bus_a.wait_until_idle()
+
+        assert event.event_status == 'completed'
+        assert event.event_completed_at is not None
+        assert seen_a == [event.event_id]
+        assert seen_b == []
+
+        bus_b.emit(event)
+        await event.now()
+        await _wait_all_idle([bus_a, bus_b])
+
+        assert seen_b == []
+        assert event.event_status == 'completed'
+        assert event.event_completed_at is not None
+        assert event.event_path == [bus_a.label, bus_b.label]
+        assert event.event_id in bus_b.event_history
+    finally:
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
 
 
 @pytest.mark.asyncio
@@ -392,6 +492,221 @@ async def test_forwarded_event_uses_processing_bus_defaults():
         bus_b_results = [result for result in inherited_ref.event_results.values() if result.handler.eventbus_id == bus_b.id]
         assert bus_b_results
         assert all(result.timeout == bus_b.event_timeout for result in bus_b_results)
+    finally:
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
+
+
+@pytest.mark.asyncio
+async def test_forwarded_event_ttl_absent_uses_each_processing_bus_default() -> None:
+    bus_a = EventBus(name='ForwardTTLAbsentOriginDelete', max_history_size=None, event_ttl=0)
+    bus_b = EventBus(name='ForwardTTLAbsentTargetKeep', max_history_size=None, event_ttl=-1)
+
+    async def forward(event: ForwardingTTLProbeEvent) -> None:
+        bus_b.emit(event)
+
+    async def target(_event: ForwardingTTLProbeEvent) -> str:
+        return 'target'
+
+    bus_a.on(ForwardingTTLProbeEvent, forward)
+    bus_b.on(ForwardingTTLProbeEvent, target)
+    try:
+        event = bus_a.emit(ForwardingTTLProbeEvent())
+        await event.now()
+        await bus_a.wait_until_idle()
+        await bus_b.wait_until_idle()
+
+        await _run_forwarding_ttl_trim_pass(bus_a)
+        await _run_forwarding_ttl_trim_pass(bus_b)
+
+        assert event.event_id not in bus_a.event_history
+        assert event.event_id in bus_b.event_history
+    finally:
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
+
+
+@pytest.mark.asyncio
+async def test_forwarded_event_ttl_null_uses_each_processing_bus_default() -> None:
+    bus_a = EventBus(name='ForwardTTLNullOriginKeep', max_history_size=None, event_ttl=-1)
+    bus_b = EventBus(name='ForwardTTLNullTargetDelete', max_history_size=None, event_ttl=0)
+
+    async def forward(event: ForwardingTTLProbeEvent) -> None:
+        bus_b.emit(event)
+
+    async def target(_event: ForwardingTTLProbeEvent) -> str:
+        return 'target'
+
+    bus_a.on(ForwardingTTLProbeEvent, forward)
+    bus_b.on(ForwardingTTLProbeEvent, target)
+    try:
+        event = bus_a.emit(ForwardingTTLProbeEvent(event_ttl=None))
+        await event.now()
+        await bus_a.wait_until_idle()
+        await bus_b.wait_until_idle()
+
+        await _run_forwarding_ttl_trim_pass(bus_a)
+        await _run_forwarding_ttl_trim_pass(bus_b)
+
+        assert event.event_id in bus_a.event_history
+        assert event.event_id not in bus_b.event_history
+    finally:
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
+
+
+@pytest.mark.asyncio
+async def test_forwarded_event_ttl_positive_uses_shorter_target_default_without_mutating_source_default() -> None:
+    bus_a = EventBus(name='ForwardTTLPositiveOriginLong', max_history_size=None, event_ttl=1)
+    bus_b = EventBus(name='ForwardTTLPositiveTargetShort', max_history_size=None, event_ttl=0.01)
+
+    async def forward(event: ForwardingTTLProbeEvent) -> None:
+        bus_b.emit(event)
+
+    async def target(_event: ForwardingTTLProbeEvent) -> str:
+        return 'target'
+
+    bus_a.on(ForwardingTTLProbeEvent, forward)
+    bus_b.on(ForwardingTTLProbeEvent, target)
+    try:
+        event = bus_a.emit(ForwardingTTLProbeEvent())
+        await event.now()
+        await bus_a.wait_until_idle()
+        await bus_b.wait_until_idle()
+
+        await asyncio.sleep(0.02)
+        await _run_forwarding_ttl_trim_pass(bus_a)
+        await _run_forwarding_ttl_trim_pass(bus_b)
+
+        assert event.event_id in bus_a.event_history
+        assert event.event_id not in bus_b.event_history
+    finally:
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
+
+
+@pytest.mark.asyncio
+async def test_forwarded_event_ttl_explicit_never_overrides_both_bus_defaults() -> None:
+    bus_a = EventBus(name='ForwardTTLExplicitNeverOrigin', max_history_size=None, event_ttl=0)
+    bus_b = EventBus(name='ForwardTTLExplicitNeverTarget', max_history_size=None, event_ttl=0.01)
+
+    async def forward(event: ForwardingTTLProbeEvent) -> None:
+        bus_b.emit(event)
+
+    async def target(_event: ForwardingTTLProbeEvent) -> str:
+        return 'target'
+
+    bus_a.on(ForwardingTTLProbeEvent, forward)
+    bus_b.on(ForwardingTTLProbeEvent, target)
+    try:
+        event = bus_a.emit(ForwardingTTLProbeEvent(event_ttl=-1))
+        await event.now()
+        await bus_a.wait_until_idle()
+        await bus_b.wait_until_idle()
+        await asyncio.sleep(0.02)
+
+        await _run_forwarding_ttl_trim_pass(bus_a)
+        await _run_forwarding_ttl_trim_pass(bus_b)
+
+        assert event.event_id in bus_a.event_history
+        assert event.event_id in bus_b.event_history
+    finally:
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
+
+
+@pytest.mark.asyncio
+async def test_forwarded_event_ttl_explicit_zero_overrides_both_bus_defaults() -> None:
+    bus_a = EventBus(name='ForwardTTLExplicitZeroOrigin', max_history_size=None, event_ttl=-1)
+    bus_b = EventBus(name='ForwardTTLExplicitZeroTarget', max_history_size=None, event_ttl=-1)
+
+    async def forward(event: ForwardingTTLProbeEvent) -> None:
+        bus_b.emit(event)
+
+    async def target(_event: ForwardingTTLProbeEvent) -> str:
+        return 'target'
+
+    bus_a.on(ForwardingTTLProbeEvent, forward)
+    bus_b.on(ForwardingTTLProbeEvent, target)
+    try:
+        event = bus_a.emit(ForwardingTTLProbeEvent(event_ttl=0))
+        await event.now()
+        await bus_a.wait_until_idle()
+        await bus_b.wait_until_idle()
+
+        await _run_forwarding_ttl_trim_pass(bus_a)
+        await _run_forwarding_ttl_trim_pass(bus_b)
+
+        assert event.event_id not in bus_a.event_history
+        assert event.event_id not in bus_b.event_history
+    finally:
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
+
+
+@pytest.mark.asyncio
+async def test_forwarded_event_result_ttl_prunes_only_processing_bus_results() -> None:
+    bus_a = EventBus(name='ForwardResultTTLOriginKeepResults', max_history_size=None, event_ttl=-1, event_result_ttl=-1)
+    bus_b = EventBus(name='ForwardResultTTLTargetClearResults', max_history_size=None, event_ttl=-1, event_result_ttl=0)
+
+    async def forward(event: ForwardingTTLProbeEvent) -> None:
+        bus_b.emit(event)
+
+    async def target(_event: ForwardingTTLProbeEvent) -> str:
+        return 'target'
+
+    bus_a.on(ForwardingTTLProbeEvent, forward)
+    bus_b.on(ForwardingTTLProbeEvent, target)
+    try:
+        event = bus_a.emit(ForwardingTTLProbeEvent())
+        await event.now()
+        await bus_a.wait_until_idle()
+        await bus_b.wait_until_idle()
+        assert any(result.eventbus_id == bus_b.id for result in event.event_results.values())
+
+        await _run_forwarding_ttl_trim_pass(bus_b)
+
+        assert event.event_id in bus_a.event_history
+        assert event.event_id in bus_b.event_history
+        assert not any(result.eventbus_id == bus_b.id for result in event.event_results.values())
+        assert any(result.eventbus_id == bus_a.id for result in event.event_results.values())
+    finally:
+        await bus_a.destroy(clear=True)
+        await bus_b.destroy(clear=True)
+
+
+@pytest.mark.asyncio
+async def test_forwarded_event_result_ttl_explicit_never_overrides_both_bus_defaults() -> None:
+    bus_a = EventBus(name='ForwardResultTTLExplicitNeverOrigin', max_history_size=None, event_ttl=-1, event_result_ttl=0)
+    bus_b = EventBus(
+        name='ForwardResultTTLExplicitNeverTarget',
+        max_history_size=None,
+        event_ttl=-1,
+        event_result_ttl=0.01,
+    )
+
+    async def forward(event: ForwardingTTLProbeEvent) -> None:
+        bus_b.emit(event)
+
+    async def target(_event: ForwardingTTLProbeEvent) -> str:
+        return 'target'
+
+    bus_a.on(ForwardingTTLProbeEvent, forward)
+    bus_b.on(ForwardingTTLProbeEvent, target)
+    try:
+        event = bus_a.emit(ForwardingTTLProbeEvent(event_result_ttl=-1))
+        await event.now()
+        await bus_a.wait_until_idle()
+        await bus_b.wait_until_idle()
+        assert event.event_results
+
+        await asyncio.sleep(0.02)
+        await _run_forwarding_ttl_trim_pass(bus_a)
+        await _run_forwarding_ttl_trim_pass(bus_b)
+
+        assert event.event_id in bus_a.event_history
+        assert event.event_id in bus_b.event_history
+        assert event.event_results
     finally:
         await bus_a.destroy(clear=True)
         await bus_b.destroy(clear=True)
