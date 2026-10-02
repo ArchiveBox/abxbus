@@ -26,7 +26,7 @@ In normal operation, queue-capacity errors are not the backpressure mechanism.
 
 `max_history_size=0` / `MaxHistorySize=0` is a special case in all runtimes: it does not trigger history-limit rejection, and instead keeps only in-flight visibility.
 
-With `max_history_drop=true`, `emit()` does not reject on history size. Under sustained overload, old uncompleted entries can be dropped and a warning is logged.
+With `max_history_drop=true`, `emit()` does not reject on history size. Python and TypeScript evict completed children before parents, preserving active work and retained ancestry even when they temporarily exceed the limit.
 
 ### Reject vs drop behavior
 

@@ -206,6 +206,7 @@ class EventBus:
     locks: LockManagerProtocol
     _ttl_deadline_queue: list[tuple[float, str]]
     _ttl_deadlines_by_event_id: dict[str, float]
+    _ttl_backfill_policy_signature: tuple[Any, ...] | None
     _destroyed: bool
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -325,6 +326,7 @@ class EventBus:
         self._pending_middleware_tasks = set()
         self._ttl_deadline_queue = []
         self._ttl_deadlines_by_event_id = {}
+        self._ttl_backfill_policy_signature = None
         try:
             self.event_concurrency = EventConcurrencyMode(event_concurrency or EventConcurrencyMode.BUS_SERIAL)
         except ValueError as exc:
@@ -1325,7 +1327,7 @@ class EventBus:
         already_in_history = event.event_id in self.event_history
         if (already_in_event_path or already_in_history) and self._completed_event_expired_for_history(event):
             self.event_history.pop(event.event_id, None)
-            self._untrack_event_ttl_deadline(event.event_id)
+            self._on_history_removed(event)
             return event
         if should_skip_handler_execution:
             self.event_history[event.event_id] = event
@@ -2258,37 +2260,29 @@ class EventBus:
         bisect.insort(self._ttl_deadline_queue, (deadline, event_id))
 
     def _retrack_completed_history_ttl_deadlines(self) -> None:
-        if self._has_active_ttl_backfill_policy():
-            events = list(self.event_history.values())
-        else:
-            events_by_id = {
-                event_id: self.event_history[event_id]
-                for event_id in list(self._ttl_deadlines_by_event_id)
-                if event_id in self.event_history
-            }
-            # Indexed events cover normal TTL shortening; this scan catches
-            # completed events whose own TTL fields changed from unset/-1 after
-            # completion, before any deadline entry existed.
-            for event in self.event_history.values():
-                if event.event_id in events_by_id or event.event_status != EventStatus.COMPLETED:
-                    continue
-                has_event_ttl_override = event.event_ttl is not None and event.event_ttl >= 0
-                has_result_ttl_override = event.event_result_ttl is not None and event.event_result_ttl >= 0
-                if has_event_ttl_override or has_result_ttl_override:
-                    events_by_id[event.event_id] = event
-            events = list(events_by_id.values())
-        for event in events:
+        signature = (
+            self.event_ttl,
+            self.event_result_ttl,
+            tuple((handler.id, handler.handler_result_ttl) for handler in self.handlers.values()),
+        )
+        if signature == self._ttl_backfill_policy_signature:
+            return
+        self._ttl_backfill_policy_signature = signature
+        # Completion and event-level TTL changes update their own deadlines.
+        # Only a changed bus/handler policy needs to revisit existing history.
+        for event in self.event_history.values():
             if event.event_status == EventStatus.COMPLETED:
                 self._track_event_ttl_deadline(event)
 
-    def _has_active_ttl_backfill_policy(self) -> bool:
-        if self.event_ttl is not None and self.event_ttl >= 0:
-            return True
-        if self.event_result_ttl is not None and self.event_result_ttl >= 0:
-            return True
-        return any(
-            handler.handler_result_ttl is not None and handler.handler_result_ttl >= 0 for handler in self.handlers.values()
-        )
+    def _on_history_removed(self, event: BaseEvent[Any]) -> None:
+        self._untrack_event_ttl_deadline(event.event_id)
+        parent = self.event_history.get(event.event_parent_id) if event.event_parent_id else None
+        if parent is not None:
+            for parent_result in parent.event_results.values():
+                if parent_result.eventbus_id == self.id:
+                    parent_result.event_children[:] = [
+                        child for child in parent_result.event_children if child.event_id != event.event_id
+                    ]
 
     def _trim_event_history_if_needed(self, *, include_ttl: bool = True) -> None:
         if self.event_history.max_history_size is not None and (
@@ -2300,7 +2294,7 @@ class EventBus:
             )
         ):
             self.event_history.trim_event_history(
-                on_remove=lambda event: self._untrack_event_ttl_deadline(event.event_id),
+                on_remove=self._on_history_removed,
                 owner_label=str(self),
             )
         if not include_ttl:
@@ -2336,15 +2330,8 @@ class EventBus:
             if event_ttl is None or event_ttl < 0 or age_seconds < event_ttl:
                 self._track_event_ttl_deadline(event)
                 continue
-            parent = self.event_history.get(event.event_parent_id) if event.event_parent_id else None
-            if parent is not None:
-                for parent_result in parent.event_results.values():
-                    if parent_result.eventbus_id == self.id:
-                        parent_result.event_children[:] = [
-                            child for child in parent_result.event_children if child.event_id != event_id
-                        ]
             self.event_history.pop(event_id, None)
-            self._untrack_event_ttl_deadline(event_id)
+            self._on_history_removed(event)
 
     async def _process_event(self, event: BaseEvent[Any], timeout: float | None = None) -> None:
         """

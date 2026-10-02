@@ -1027,7 +1027,7 @@ asyncio.run(bus.destroy())
 
 - When `max_history_size` is set and `max_history_drop=True`, EventBus removes old events when the limit is exceeded
 - If `max_history_size=0`, history keeps only pending/started events and drops each event immediately after completion
-- If `max_history_drop=True`, the bus may drop oldest history entries even if they are uncompleted events
+- In Python and TypeScript, `max_history_drop=True` evicts completed children before parents; active work and its ancestry may temporarily exceed the history limit
 - Completed events are removed first (oldest first), then started events, then pending events
 - This ensures active events are preserved while cleaning up old completed events
 
@@ -1237,7 +1237,7 @@ assert parameters['max_history_size'].default == 100
 - `event_handler_slow_timeout`: Default slow-handler warning threshold in seconds resolved at processing time when `event.event_handler_slow_timeout` is `None`
 - `event_handler_detect_file_paths`: Whether to auto-detect handler source file paths at registration time (slightly slower when enabled)
 - `max_history_size`: Maximum number of events to keep in history (default: 100, `None` = unlimited, `0` = keep only in-flight events and drop completed events immediately)
-- `max_history_drop`: If `True`, drop oldest history entries when full (even uncompleted events). If `False` (default), reject new emits once history reaches `max_history_size` (except when `max_history_size=0`, which never rejects on history size)
+- `max_history_drop`: If `True`, evict completed history entries, children before parents. Pending/running events and ancestors of retained children may temporarily exceed the limit. If `False` (default), reject new emits once history reaches `max_history_size` (except when `max_history_size=0`, which never rejects on history size)
 - `middlewares`: Optional list of `EventBusMiddleware` subclasses or instances that hook into handler execution for analytics, logging, retries, etc. (see [Middlewares](#middlewares) for more info)
 
 Timeout precedence matches TS:
@@ -1315,9 +1315,15 @@ asyncio.run(main())
 
 **Note:** Queueing is unbounded. History pressure is controlled by `max_history_size` + `max_history_drop`:
 
-- `max_history_drop=True`: absorb new events and trim old history entries (even uncompleted events).
+- `max_history_drop=True`: absorb new events and trim completed children before parents, preserving pending/running work and retained ancestry.
 - `max_history_drop=False`: raise `RuntimeError` when history is full.
 - `max_history_size=0`: keep pending/in-flight events only; completed events are immediately removed from history.
+
+For Python events describing resources that outlive their handlers, enter
+`with bus.event_history.retain(event):` before emitting the event and keep the
+scope open until the resource closes. Bounded dropping history retains that
+event and its ancestors until all retention scopes close. This does not change
+the explicit `max_history_size=0` policy.
 
 ##### `find(event_type: str | Literal['*'] | Type[BaseEvent], *, where: Callable[[BaseEvent], bool]=None, child_of: BaseEvent | None=None, past: bool | float | timedelta=True, future: bool | float=False, **event_fields) -> BaseEvent | None`
 

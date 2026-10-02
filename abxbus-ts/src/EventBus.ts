@@ -417,6 +417,14 @@ export class EventBus {
   }
 
   private _gcEventIfUnretained(event: BaseEvent): void {
+    const parent = event.event_parent_id ? this.event_history.get(event.event_parent_id) : undefined
+    if (parent) {
+      for (const result of parent.event_results.values()) {
+        if (result.eventbus_id === this.id) {
+          result.event_children = result.event_children.filter((child) => child.event_id !== event.event_id)
+        }
+      }
+    }
     if (!this._eventRetainedByAnyBus(event)) {
       event._gc()
     }
@@ -635,14 +643,6 @@ export class EventBus {
       if (event_ttl === null || event_ttl < 0 || age_seconds < event_ttl) {
         this._trackEventTTLDeadline(event)
         continue
-      }
-      const parent = event.event_parent_id ? this.event_history.get(event.event_parent_id) : undefined
-      if (parent) {
-        for (const result of parent.event_results.values()) {
-          if (result.eventbus_id === this.id) {
-            result.event_children = result.event_children.filter((child) => child.event_id !== event_id)
-          }
-        }
       }
       this.event_history.delete(event_id)
       this._untrackEventTTLDeadline(event_id)

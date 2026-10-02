@@ -30,13 +30,11 @@ export class EventHistory<TEvent extends BaseEvent = BaseEvent> implements Itera
   max_history_drop: boolean
 
   private _events: Map<string, TEvent>
-  private _warned_about_dropping_uncompleted_events: boolean
 
   constructor(options: { max_history_size?: number | null; max_history_drop?: boolean } = {}) {
     this.max_history_size = options.max_history_size === undefined ? 100 : options.max_history_size
     this.max_history_drop = options.max_history_drop ?? false
     this._events = new Map()
-    this._warned_about_dropping_uncompleted_events = false
   }
 
   get size(): number {
@@ -227,45 +225,29 @@ export class EventHistory<TEvent extends BaseEvent = BaseEvent> implements Itera
       return 0
     }
 
-    let remaining_overage = this.size - max_history_size
+    // Keep pending work and every retained child's ancestry queryable.
+    const children = new Map<string, number>()
+    for (const event of this._events.values()) {
+      if (event.event_parent_id) children.set(event.event_parent_id, (children.get(event.event_parent_id) ?? 0) + 1)
+    }
+    const leaves = Array.from(this._events.values())
+      .filter((event) => is_event_complete(event) && !children.get(event.event_id))
+      .map((event) => event.event_id)
     let removed_count = 0
-    const remove_event = (event_id: string, event: TEvent): void => {
+    for (let index = 0; index < leaves.length && this.size > max_history_size; index++) {
+      const event_id = leaves[index]!
+      const event = this._events.get(event_id)!
       this._events.delete(event_id)
       on_remove?.(event)
       removed_count += 1
-    }
-
-    for (const [event_id, event] of Array.from(this._events.entries())) {
-      if (remaining_overage <= 0) {
-        break
+      const parent_id = event.event_parent_id
+      if (parent_id) {
+        const count = children.get(parent_id)! - 1
+        children.set(parent_id, count)
+        const parent = this._events.get(parent_id)
+        if (count === 0 && parent && is_event_complete(parent)) leaves.push(parent_id)
       }
-      if (!is_event_complete(event)) {
-        continue
-      }
-      remove_event(event_id, event)
-      remaining_overage -= 1
     }
-
-    let dropped_uncompleted = 0
-    for (const [event_id, event] of Array.from(this._events.entries())) {
-      if (remaining_overage <= 0) {
-        break
-      }
-      if (!is_event_complete(event)) {
-        dropped_uncompleted += 1
-      }
-      remove_event(event_id, event)
-      remaining_overage -= 1
-    }
-
-    if (dropped_uncompleted > 0 && !this._warned_about_dropping_uncompleted_events) {
-      this._warned_about_dropping_uncompleted_events = true
-      const owner_label = options.owner_label ?? 'EventBus'
-      console.error(
-        `[abxbus] ⚠️ Bus ${owner_label} has exceeded max_history_size=${max_history_size} and is dropping oldest history entries (even uncompleted events). Increase max_history_size or set max_history_drop=false to reject.`
-      )
-    }
-
     return removed_count
   }
 

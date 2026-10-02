@@ -906,6 +906,15 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
     # Captured when emit() is called, used when executing handlers via ctx.run()
     _event_dispatch_context: contextvars.Context | None = PrivateAttr(default=None)
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        super().__setattr__(name, value)
+        if name in ('event_ttl', 'event_result_ttl') and self.event_status == EventStatus.COMPLETED:
+            from abxbus.event_bus import EventBus
+
+            for bus in EventBus.iter_all_instances():
+                if bus.event_history.get(self.event_id) is self:
+                    bus._track_event_ttl_deadline(self)  # pyright: ignore[reportPrivateUsage]
+
     def model_post_init(self, __context: Any) -> None:
         for field_name in ('event_ttl', 'event_result_ttl'):
             value = getattr(self, field_name)
