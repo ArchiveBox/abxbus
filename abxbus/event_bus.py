@@ -207,6 +207,7 @@ class EventBus:
     _ttl_deadline_queue: list[tuple[float, str]]
     _ttl_deadlines_by_event_id: dict[str, float]
     _ttl_backfill_policy_signature: tuple[Any, ...] | None
+    _history_changes_since_trim: int
     _destroyed: bool
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -327,6 +328,7 @@ class EventBus:
         self._ttl_deadline_queue = []
         self._ttl_deadlines_by_event_id = {}
         self._ttl_backfill_policy_signature = None
+        self._history_changes_since_trim = 0
         try:
             self.event_concurrency = EventConcurrencyMode(event_concurrency or EventConcurrencyMode.BUS_SERIAL)
         except ValueError as exc:
@@ -788,10 +790,11 @@ class EventBus:
         return bus
 
     async def on_event_change(self, event: BaseEvent[Any], status: EventStatus) -> None:
-        if not self.middlewares:
-            return
         for middleware in self.middlewares:
             await middleware.on_event_change(self, event, status)
+        if status == EventStatus.COMPLETED:
+            self._history_changes_since_trim += 1
+            self._trim_event_history_if_needed(include_ttl=False)
 
     async def on_event_result_change(self, event: BaseEvent[Any], event_result: EventResult[Any], status: EventStatus) -> None:
         if not self.middlewares:
@@ -1329,6 +1332,8 @@ class EventBus:
             self.event_history.pop(event.event_id, None)
             self._on_history_removed(event)
             return event
+        if not already_in_history:
+            self._history_changes_since_trim += 1
         if should_skip_handler_execution:
             self.event_history[event.event_id] = event
             self._resolve_find_waiters(event)
@@ -2291,12 +2296,23 @@ class EventBus:
                 self.event_history.max_history_size > 0
                 and self.event_history.max_history_drop
                 and len(self.event_history) > self.event_history.max_history_size
+                # Batch additions and completions to amortize the full ancestry
+                # pass during pending floods. Flush the final batch when drained.
+                and (
+                    self._history_changes_since_trim >= max(1, len(self.event_history) // 10)
+                    or (
+                        self._history_changes_since_trim > 0
+                        and not self.in_flight_event_ids
+                        and (self.pending_event_queue is None or self.pending_event_queue.qsize() == 0)
+                    )
+                )
             )
         ):
             self.event_history.trim_event_history(
                 on_remove=self._on_history_removed,
                 owner_label=str(self),
             )
+            self._history_changes_since_trim = 0
         if not include_ttl:
             return
 
