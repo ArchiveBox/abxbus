@@ -1,3 +1,3 @@
 package abxbus
 
-const Version = "2.5.73"
+const Version = "2.5.74"
