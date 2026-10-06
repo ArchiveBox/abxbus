@@ -348,13 +348,14 @@ event.event_result_update(
 
 ## Resetting an event
 
-You can create a fresh pending copy for re-emit.
+You can create a fresh pending copy for re-emit. By default this regenerates ids/routing lineage, resets status plus processing timestamps (`event_started_at`, `event_completed_at`), clears handler results, and clears runtime attachment state. `event_created_at` remains the original creation timestamp. Pass a field group as `false` to preserve it on the returned copy.
 
 <Tabs>
 <Tab title="Python">
 
 ```python
 fresh = event.event_reset()
+preserved_results = event.event_reset(results=False)
 ```
 
 </Tab>
@@ -362,6 +363,7 @@ fresh = event.event_reset()
 
 ```ts
 const fresh = event.eventReset()
+const preservedResults = event.eventReset({ results: false })
 ```
 
 </Tab>
@@ -369,6 +371,8 @@ const fresh = event.eventReset()
 
 ```go
 fresh, err := event.EventReset()
+disabled := false
+preservedResults, err := event.EventReset(abxbus.EventResetOptions{Results: &disabled})
 ```
 
 </Tab>
@@ -376,6 +380,10 @@ fresh, err := event.EventReset()
 
 ```rust
 let fresh = event.event_reset();
+let preserved_results = event.event_reset_with_options(abxbus::base_event::EventResetOptions {
+    results: false,
+    ..Default::default()
+});
 ```
 
 </Tab>

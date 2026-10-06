@@ -3,6 +3,7 @@ import gc
 import logging
 import math
 import os
+import sys
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -1328,3 +1329,50 @@ async def test_perf_forwarding_and_queue_jump_measurements() -> None:
     assert parent_metrics[4] < 300.0
     assert done_mb - before_mb < 320.0
     assert gc_mb - before_mb < 280.0
+
+
+@pytest.mark.parametrize('wait_api', ['now', 'wait'])
+@pytest.mark.asyncio
+async def test_first_result_wait_yields_while_subprocess_runs(wait_api: Literal['now', 'wait']) -> None:
+    """Waiting for a real handler result should not busy-spin the event-loop thread."""
+
+    class SubprocessEvent(BaseEvent[str]):
+        pass
+
+    bus = EventBus(name=f'FirstResultWait_{wait_api}', middlewares=[], max_history_drop=True)
+    subprocess_started = asyncio.Event()
+
+    async def run_subprocess(event: SubprocessEvent) -> str:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            '-c',
+            'import time; time.sleep(1.2); print("subprocess-result")',
+            stdout=asyncio.subprocess.PIPE,
+        )
+        subprocess_started.set()
+        stdout, _ = await process.communicate()
+        assert process.returncode == 0
+        return stdout.decode().strip()
+
+    bus.on(SubprocessEvent, run_subprocess)
+    event = bus.emit(SubprocessEvent())
+    first_result_wait = asyncio.create_task(getattr(event, wait_api)(first_result=True))
+
+    try:
+        await asyncio.wait_for(subprocess_started.wait(), timeout=5.0)
+        started_at = time.perf_counter()
+        thread_started_at = time.thread_time()
+        await asyncio.wait_for(first_result_wait, timeout=5.0)
+        elapsed = time.perf_counter() - started_at
+        thread_elapsed = time.thread_time() - thread_started_at
+
+        assert await event.event_result() == 'subprocess-result'
+        print(f'[first-result-wait] api={wait_api} wall_s={elapsed:.3f} thread_cpu_s={thread_elapsed:.3f}')
+        assert elapsed >= 0.8, 'the wait should span the real subprocess work'
+        # This budget is generous for event-loop bookkeeping but distinguishes
+        # yielding during subprocess I/O from spending its wall time in a spin loop.
+        assert thread_elapsed < 0.5, f'{wait_api}(first_result=True) used {thread_elapsed:.3f}s of thread CPU over {elapsed:.3f}s'
+        await event.wait(timeout=5.0)
+        await bus.wait_until_idle(timeout=5.0)
+    finally:
+        await bus.destroy(clear=True)

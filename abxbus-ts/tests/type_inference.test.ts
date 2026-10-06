@@ -3,7 +3,7 @@
 
 import { z } from 'zod'
 
-import { BaseEvent } from '../src/BaseEvent.js'
+import { BaseEvent, type EventPayloadFields } from '../src/BaseEvent.js'
 import { EventBus } from '../src/EventBus.js'
 import { events_suck } from '../src/events_suck.js'
 import type { EventResult } from '../src/EventResult.js'
@@ -81,6 +81,11 @@ const _exported_event_class_from_json: InstanceType<typeof StaticSchemaEvent> = 
 type _assert_static_schema_instance_default = Assert<IsEqual<typeof static_schema_default_event.some_field, 'abc'>>
 type _assert_static_schema_instance_length_default = Assert<IsEqual<typeof static_schema_default_event.length, number>>
 type _assert_static_schema_instance_builtin_default = Assert<IsEqual<typeof static_schema_default_event.event_timeout, number | null>>
+const static_schema_payload = static_schema_default_event.event_payload()
+type _assert_static_schema_payload_helper = Assert<
+  IsEqual<EventPayloadFields<typeof static_schema_default_event>, { some_field: 'abc'; length: number }>
+>
+type _assert_static_schema_payload = Assert<IsEqual<typeof static_schema_payload, { some_field: 'abc'; length: number }>>
 type _assert_static_shortcut_model_field = Assert<
   IsEqual<typeof StaticShortcutEvent.model_fields.shortcut_field, typeof StaticShortcutField>
 >
@@ -117,6 +122,18 @@ type _assert_static_shortcut_raw_object_instance_default = Assert<
 type _assert_static_shortcut_raw_tuple_instance_default = Assert<
   IsEqual<typeof static_shortcut_default_event.raw_tuple_shortcut_field, typeof StaticShortcutTupleField>
 >
+const static_shortcut_payload = static_shortcut_default_event.event_payload()
+type _assert_static_shortcut_payload = Assert<
+  IsEqual<
+    typeof static_shortcut_payload,
+    {
+      shortcut_field: string
+      raw_shortcut_field: 'abc'
+      raw_object_shortcut_field: typeof StaticShortcutObjectField
+      raw_tuple_shortcut_field: typeof StaticShortcutTupleField
+    }
+  >
+>
 type InferableEventResultEntry =
   InstanceType<typeof InferableResultEvent>['event_results'] extends Map<string, infer TResultEntry> ? TResultEntry : never
 type _assert_inferable_event_result_entry = Assert<
@@ -128,6 +145,10 @@ type _assert_inferable_event_result_value = Assert<IsEqual<InferableEventResultV
 const NoSchemaEvent = BaseEvent.extend('NoSchemaEventForInference', {})
 type NoSchemaResult = EventResultType<InstanceType<typeof NoSchemaEvent>>
 type _assert_no_schema_result = Assert<IsEqual<NoSchemaResult, unknown>>
+const raw_base_payload = new BaseEvent().event_payload()
+const no_schema_payload = NoSchemaEvent().event_payload()
+type _assert_raw_base_payload = Assert<IsEqual<typeof raw_base_payload, Record<string, unknown>>>
+type _assert_no_schema_payload = Assert<IsEqual<typeof no_schema_payload, Record<string, unknown>>>
 
 const ConstructorStringResultEvent = BaseEvent.extend('ConstructorStringResultEventForInference', {
   event_result_type: String,

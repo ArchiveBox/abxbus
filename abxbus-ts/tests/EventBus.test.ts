@@ -193,6 +193,148 @@ test('BaseEvent lifecycle methods are callable and preserve lifecycle behavior',
   assert.equal(dispatched.event_status, 'completed')
 })
 
+test('dispatching completed status event skips handlers and normalizes completion', async () => {
+  const AlreadyCompletedDispatchEvent = BaseEvent.extend('AlreadyCompletedDispatchEvent', {
+    label: z.string(),
+  })
+  const bus = new EventBus('AlreadyCompletedStatusBus')
+  let calls = 0
+  const handler_entry = bus.on(AlreadyCompletedDispatchEvent, (event) => {
+    calls += 1
+    return `ran:${event.label}`
+  })
+  const started_handler_entry = bus.on(AlreadyCompletedDispatchEvent, (event) => {
+    calls += 1
+    return `started:${event.label}`
+  })
+  const event = AlreadyCompletedDispatchEvent({ label: 'status' })
+  const pending_result = event.eventResultUpdate(handler_entry, { status: 'pending' })
+  const started_result = event.eventResultUpdate(started_handler_entry, { status: 'started' })
+  const provided_started_at = '2025-01-02T03:04:04.000Z'
+  const provided_completed_at = '2025-01-02T03:04:05.000Z'
+  event.event_status = 'completed'
+  event.event_started_at = provided_started_at
+  event.event_completed_at = provided_completed_at
+
+  const dispatched = bus.dispatch(event)
+  await bus.waitUntilIdle(1)
+
+  assert.equal(dispatched._event_original ?? dispatched, event)
+  assert.equal(calls, 0)
+  assert.equal(event.event_status, 'completed')
+  assert.equal(event.event_started_at, provided_started_at)
+  assert.equal(event.event_completed_at, provided_completed_at)
+  assert.deepEqual(event.event_path, [bus.label])
+  assert.equal(event.event_results.get(handler_entry.id), pending_result)
+  assert.equal(pending_result.status, 'pending')
+  assert.equal(pending_result.completed_at, null)
+  assert.equal(pending_result.result, undefined)
+  assert.equal(event.event_results.get(started_handler_entry.id), started_result)
+  assert.equal(started_result.status, 'started')
+  assert.equal(typeof started_result.started_at, 'string')
+  assert.equal(started_result.completed_at, null)
+  assert.equal(started_result.result, undefined)
+})
+
+test('dispatching completed_at event skips handlers and preserves timestamp', async () => {
+  const AlreadyCompletedAtDispatchEvent = BaseEvent.extend('AlreadyCompletedAtDispatchEvent', {
+    label: z.string(),
+  })
+  const bus = new EventBus('AlreadyCompletedAtBus')
+  let calls = 0
+  const handler_entry = bus.on(AlreadyCompletedAtDispatchEvent, (event) => {
+    calls += 1
+    return `ran:${event.label}`
+  })
+  const event = AlreadyCompletedAtDispatchEvent({ label: 'timestamp' })
+  const pending_result = event.eventResultUpdate(handler_entry, { status: 'pending' })
+  const provided_started_at = '2025-01-02T03:04:04.000Z'
+  const provided_completed_at = '2025-01-02T03:04:05.000Z'
+  event.event_started_at = provided_started_at
+  event.event_completed_at = provided_completed_at
+
+  const dispatched = bus.dispatch(event)
+  await bus.waitUntilIdle(1)
+
+  assert.equal(dispatched._event_original ?? dispatched, event)
+  assert.equal(calls, 0)
+  assert.equal(event.event_status, 'completed')
+  assert.equal(event.event_started_at, provided_started_at)
+  assert.equal(event.event_completed_at, provided_completed_at)
+  assert.deepEqual(event.event_path, [bus.label])
+  assert.equal(event.event_results.get(handler_entry.id), pending_result)
+  assert.equal(pending_result.status, 'pending')
+  assert.equal(pending_result.completed_at, null)
+  assert.equal(pending_result.result, undefined)
+
+  const fallback_completed_at = '2025-01-02T03:04:07.000Z'
+  const fallback_event = AlreadyCompletedAtDispatchEvent({ label: 'timestamp-fallback' })
+  fallback_event.event_completed_at = fallback_completed_at
+
+  bus.dispatch(fallback_event)
+  await bus.waitUntilIdle(1)
+
+  assert.equal(calls, 0)
+  assert.equal(fallback_event.event_status, 'completed')
+  assert.equal(fallback_event.event_started_at, fallback_completed_at)
+  assert.equal(fallback_event.event_completed_at, fallback_completed_at)
+  assert.deepEqual(fallback_event.event_path, [bus.label])
+})
+
+test('dispatching completed events with prior paths records bus once and skips handlers', async () => {
+  const AlreadyCompletedPriorPathEvent = BaseEvent.extend('AlreadyCompletedPriorPathEvent', {
+    label: z.string(),
+  })
+  const bus = new EventBus('AlreadyCompletedPriorPathBus')
+  const other_bus_label = 'PriorCompletedBus#1234'
+  let calls = 0
+  bus.on(AlreadyCompletedPriorPathEvent, (event) => {
+    calls += 1
+    return `ran:${event.label}`
+  })
+
+  const prior_other_bus_event = AlreadyCompletedPriorPathEvent({ label: 'prior-other-bus' })
+  prior_other_bus_event.event_path = [other_bus_label]
+  const provided_prior_other_started_at = '2025-01-02T03:04:04.000Z'
+  const provided_prior_other_completed_at = '2025-01-02T03:04:06.000Z'
+  prior_other_bus_event.event_status = 'completed'
+  prior_other_bus_event.event_started_at = provided_prior_other_started_at
+  prior_other_bus_event.event_completed_at = provided_prior_other_completed_at
+
+  bus.dispatch(prior_other_bus_event)
+  await bus.waitUntilIdle(1)
+
+  assert.equal(calls, 0)
+  assert.equal(prior_other_bus_event.event_status, 'completed')
+  assert.equal(prior_other_bus_event.event_started_at, provided_prior_other_started_at)
+  assert.equal(prior_other_bus_event.event_completed_at, provided_prior_other_completed_at)
+  assert.deepEqual(prior_other_bus_event.event_path, [other_bus_label, bus.label])
+
+  const provided_completed_at = '2025-01-02T03:04:05.000Z'
+  const provided_started_at = '2025-01-02T03:04:04.000Z'
+  const prior_same_bus_event = AlreadyCompletedPriorPathEvent({ label: 'prior-same-bus' })
+  prior_same_bus_event.event_path = [other_bus_label, bus.label]
+  prior_same_bus_event.event_started_at = provided_started_at
+  prior_same_bus_event.event_completed_at = provided_completed_at
+
+  bus.dispatch(prior_same_bus_event)
+  await bus.waitUntilIdle(1)
+
+  assert.equal(calls, 0)
+  assert.equal(prior_same_bus_event.event_status, 'completed')
+  assert.equal(prior_same_bus_event.event_started_at, provided_started_at)
+  assert.equal(prior_same_bus_event.event_completed_at, provided_completed_at)
+  assert.deepEqual(prior_same_bus_event.event_path, [other_bus_label, bus.label])
+
+  const history_size = bus.event_history.size
+  bus.dispatch(prior_same_bus_event)
+  await bus.waitUntilIdle(1)
+
+  assert.equal(calls, 0)
+  assert.equal(bus.event_history.size, history_size)
+  assert.deepEqual(prior_same_bus_event.event_path, [other_bus_label, bus.label])
+})
+
 test('BaseEvent toJSON/fromJSON roundtrips runtime fields and event_results', async () => {
   const RuntimeEvent = BaseEvent.extend('RuntimeSerializationEvent', {
     event_result_type: z.string(),
@@ -1241,7 +1383,7 @@ test('reset creates a fresh pending event for cross-bus dispatch', async () => {
   )
   assert.equal(
     forwarded.event_path.some((entry) => entry.startsWith('ResetCoverageBusA#')),
-    true
+    false
   )
   assert.equal(
     forwarded.event_path.some((entry) => entry.startsWith('ResetCoverageBusB#')),

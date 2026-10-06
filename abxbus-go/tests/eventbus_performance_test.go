@@ -190,7 +190,7 @@ func TestPerformanceOnOffChurn(t *testing.T) {
 
 func TestPerformanceWorstCaseForwardingQueueJumpTimeouts(t *testing.T) {
 	totalEvents := 2_000
-	eventTimeout := 0.0001
+	eventTimeout := 0.001
 	historySize := 128
 	parentBus := abxbus.NewEventBus("PerfWorstParentBus", &abxbus.EventBusOptions{
 		MaxHistorySize: &historySize,
@@ -216,7 +216,7 @@ func TestPerformanceWorstCaseForwardingQueueJumpTimeouts(t *testing.T) {
 	childBus.On("WCChild", "child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		atomic.AddInt64(&children, 1)
 		iteration, _ := event.EventExtraPayload["iteration"].(int)
-		if iteration%10 != 0 {
+		if iteration%20 != 0 {
 			return "ok", nil
 		}
 		select {

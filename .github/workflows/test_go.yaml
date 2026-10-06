@@ -109,7 +109,7 @@ jobs:
         if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
         with:
           version: "0.10.6"
-          enable-cache: true
+          enable-cache: false
           activate-environment: true
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -128,7 +128,7 @@ jobs:
         if: matrix.task.kind == 'test' && matrix.task.name == 'cross_runtime_roundtrip'
         run: |
           cd ..
-          uv sync --dev --all-extras --no-extra tachyon
+          uv sync --no-cache --dev --all-extras --no-extra tachyon
           pnpm --dir abxbus-ts install --frozen-lockfile
 
       - name: Run Go test file

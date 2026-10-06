@@ -91,6 +91,10 @@ func applyEventConfigField(event *BaseEvent, name string, value reflect.Value) b
 		event.EventHandlerTimeout = reflectOptionalFloat(value)
 	case "EventHandlerSlowTimeout":
 		event.EventHandlerSlowTimeout = reflectOptionalFloat(value)
+	case "EventTTL":
+		event.EventTTL = reflectOptionalFloat(value)
+	case "EventResultTTL":
+		event.EventResultTTL = reflectOptionalFloat(value)
 	case "EventConcurrency":
 		if str := reflectString(value); str != "" {
 			event.EventConcurrency = EventConcurrencyMode(str)
@@ -118,27 +122,29 @@ func applyEventConfigField(event *BaseEvent, name string, value reflect.Value) b
 }
 
 func reflectOptionalFloat(value reflect.Value) *float64 {
+	wasPointer := false
 	for value.Kind() == reflect.Pointer {
 		if value.IsNil() {
 			return nil
 		}
+		wasPointer = true
 		value = value.Elem()
 	}
 	switch value.Kind() {
 	case reflect.Float32, reflect.Float64:
-		if value.Float() == 0 {
+		if value.Float() == 0 && !wasPointer {
 			return nil
 		}
 		f := value.Convert(reflect.TypeOf(float64(0))).Float()
 		return &f
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		if value.Int() == 0 {
+		if value.Int() == 0 && !wasPointer {
 			return nil
 		}
 		f := float64(value.Int())
 		return &f
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		if value.Uint() == 0 {
+		if value.Uint() == 0 && !wasPointer {
 			return nil
 		}
 		f := float64(value.Uint())
@@ -320,7 +326,11 @@ func EventPayloadAs[T any](event *BaseEvent) (T, error) {
 	if event == nil {
 		return payload, fmt.Errorf("event is nil")
 	}
-	data, err := json.Marshal(event.EventExtraPayload)
+	eventPayload, err := event.EventPayload()
+	if err != nil {
+		return payload, err
+	}
+	data, err := json.Marshal(eventPayload)
 	if err != nil {
 		return payload, err
 	}
@@ -328,7 +338,7 @@ func EventPayloadAs[T any](event *BaseEvent) (T, error) {
 	if err != nil {
 		return payload, err
 	}
-	setEventExtraPayload(&payload, event.EventExtraPayload)
+	setEventExtraPayload(&payload, eventPayload)
 	return payload, nil
 }
 

@@ -8,6 +8,7 @@ import pytest
 from abxbus import (
     BaseEvent,
     EventBus,
+    EventHandler,
     EventHandlerAbortedError,
     EventHandlerCancelledError,
     EventHandlerTimeoutError,
@@ -38,6 +39,45 @@ class GrandchildEvent(BaseEvent[str]):
     success: bool = True
 
     event_timeout: float | None = 1
+
+
+def test_execution_timeout_fields_reject_negative_values_because_zero_disables_timeouts() -> None:
+    with pytest.raises(AssertionError, match='event_timeout'):
+        EventBus(name='BadBusEventTimeout', event_timeout=-0.5)
+    with pytest.raises(AssertionError, match='event_slow_timeout'):
+        EventBus(name='BadBusEventSlowTimeout', event_slow_timeout=-0.5)
+    with pytest.raises(AssertionError, match='event_handler_slow_timeout'):
+        EventBus(name='BadBusHandlerSlowTimeout', event_handler_slow_timeout=-0.5)
+    with pytest.raises(ValueError, match='event_timeout'):
+        BaseEvent(event_timeout=-0.5)
+    with pytest.raises(ValueError, match='event_slow_timeout'):
+        BaseEvent(event_slow_timeout=-0.5)
+    with pytest.raises(ValueError, match='event_handler_timeout'):
+        BaseEvent(event_handler_timeout=-0.5)
+    with pytest.raises(ValueError, match='event_handler_slow_timeout'):
+        BaseEvent(event_handler_slow_timeout=-0.5)
+    with pytest.raises(ValueError, match='handler_timeout'):
+        EventHandler(handler_timeout=-0.5)
+    with pytest.raises(ValueError, match='handler_slow_timeout'):
+        EventHandler(handler_slow_timeout=-0.5)
+
+
+@pytest.mark.asyncio
+async def test_mutated_execution_timeout_fields_reject_negative_values_before_emit() -> None:
+    bus = EventBus(name='BadMutatedExecutionTimeoutBus')
+    try:
+        for field_name in (
+            'event_timeout',
+            'event_slow_timeout',
+            'event_handler_timeout',
+            'event_handler_slow_timeout',
+        ):
+            event = BaseEvent()
+            setattr(event, field_name, -0.5)
+            with pytest.raises(AssertionError, match=field_name):
+                bus.emit(event)
+    finally:
+        await bus.destroy()
 
 
 # Watchdog classes
@@ -160,8 +200,79 @@ async def test_nested_timeout_scenario_from_issue():
 
 
 @pytest.mark.asyncio
+async def test_child_timeout_does_not_expire_parent_deadline(caplog: pytest.LogCaptureFixture) -> None:
+    """A child can fail early; propagating its error must not invent a parent timeout."""
+    bus = EventBus(name='ChildTimeoutOrigin')
+
+    class ParentDeadlineEvent(BaseEvent[str]):
+        event_timeout: float | None = 0
+        event_handler_timeout: float | None = 10
+
+    class ChildDeadlineEvent(BaseEvent[str]):
+        event_timeout: float | None = 0
+        event_handler_timeout: float | None = 0.01
+
+    async def wait_for_child(event: ParentDeadlineEvent) -> str:
+        child = await event.emit(ChildDeadlineEvent()).now()
+        result = await child.event_result()
+        assert result is not None
+        return result
+
+    async def wait_for_completion(event: ChildDeadlineEvent) -> str:
+        await asyncio.Event().wait()
+        return 'completed'
+
+    bus.on(ParentDeadlineEvent, wait_for_child)
+    bus.on(ChildDeadlineEvent, wait_for_completion)
+    try:
+        parent = await bus.emit(ParentDeadlineEvent()).now()
+        child = parent.event_children[0]
+        parent_result = next(iter(parent.event_results.values()))
+        child_result = next(iter(child.event_results.values()))
+        assert isinstance(child_result.error, EventHandlerTimeoutError)
+        assert parent_result.error is child_result.error
+        assert '0.01s' in str(parent_result.error)
+        assert parent_result.status == 'error'
+        diagnostics = [record.getMessage() for record in caplog.records if record.funcName == 'log_timeout_tree']
+        assert len(diagnostics) == 1
+        assert 'ChildDeadlineEvent' in diagnostics[0]
+        assert 'ParentDeadlineEvent' not in diagnostics[0]
+        assert '\n' not in diagnostics[0]
+        assert not any(record.funcName in ('print_event_tree', 'print_handler_line') for record in caplog.records)
+    finally:
+        await bus.destroy(clear=True)
+
+
+@pytest.mark.asyncio
+async def test_handler_internal_timeout_does_not_expire_bus_deadline(caplog: pytest.LogCaptureFixture) -> None:
+    bus = EventBus(name='InternalTimeoutOrigin')
+
+    class OperationDeadlineEvent(BaseEvent[str]):
+        event_timeout: float | None = 0
+        event_handler_timeout: float | None = 10
+
+    async def wait_for_operation(event: OperationDeadlineEvent) -> str:
+        async with asyncio.timeout(0.01):
+            await asyncio.Event().wait()
+        return 'completed'
+
+    bus.on(OperationDeadlineEvent, wait_for_operation)
+    try:
+        event = await bus.emit(OperationDeadlineEvent()).now()
+        result = next(iter(event.event_results.values()))
+        assert isinstance(result.error, TimeoutError)
+        assert '10s' not in str(result.error)
+        assert not any(record.funcName == 'log_timeout_tree' for record in caplog.records)
+    finally:
+        await bus.destroy(clear=True)
+
+
+@pytest.mark.asyncio
 async def test_handler_timeout_marks_error_and_other_handlers_still_complete(caplog: pytest.LogCaptureFixture):
     """Focused timeout behavior: one handler times out, another still completes."""
+    # Full tree diagnostics remain available on explicit request. The default
+    # WARNING behavior is separately checked above so UI output stays bounded.
+    caplog.set_level(logging.DEBUG, logger='abxbus')
     bus = EventBus(name='TimeoutFocusedBus')
 
     class TimeoutFocusedEvent(BaseEvent[str]):
@@ -201,6 +312,9 @@ async def test_handler_timeout_marks_error_and_other_handlers_still_complete(cap
 
         fast_handler_diagnostics = [record.getMessage() for record in caplog.records if 'fast_handler' in record.getMessage()]
         assert any('☑️' in message for message in fast_handler_diagnostics)
+        tree_records = [record for record in caplog.records if record.funcName in ('print_event_tree', 'print_handler_line')]
+        assert tree_records
+        assert all(record.levelno == logging.DEBUG for record in tree_records)
     finally:
         await bus.destroy(clear=True)
 
@@ -459,23 +573,27 @@ async def test_event_timeout_does_not_relabel_preexisting_handler_timeout() -> N
 
 @pytest.mark.asyncio
 async def test_multi_bus_timeout_is_recorded_on_target_bus():
-    """Closest Python equivalent: same event dispatched to two buses, timeout on target bus is captured."""
+    """Forwarded live event timeout on the target bus is captured."""
     bus_a = EventBus(name='MultiTimeoutA')
     bus_b = EventBus(name='MultiTimeoutB')
 
     class MultiBusTimeoutEvent(BaseEvent[str]):
         event_timeout: float | None = 0.01
 
+    async def forward_to_b(event: MultiBusTimeoutEvent) -> str:
+        bus_b.emit(event)
+        return 'forwarded'
+
     async def slow_target_handler(event: MultiBusTimeoutEvent) -> str:
         await asyncio.sleep(0.05)
         return 'slow'
 
+    bus_a.on(MultiBusTimeoutEvent, forward_to_b)
     bus_b.on(MultiBusTimeoutEvent, slow_target_handler)
 
     try:
-        event = MultiBusTimeoutEvent()
-        bus_a.emit(event)
-        bus_b.emit(event)
+        event = bus_a.emit(MultiBusTimeoutEvent())
+        await event
         await bus_b.wait_until_idle()
 
         bus_b_result = next((r for r in event.event_results.values() if r.eventbus_name == bus_b.name), None)
@@ -920,3 +1038,493 @@ async def test_zero_slow_warning_thresholds_disable_event_and_handler_slow_warni
         assert any('slow warning child handler finishing' in message for message in messages)
     finally:
         await bus.destroy()
+
+
+class TTLProbeEvent(BaseEvent[str]):
+    pass
+
+
+class TTLTouchEvent(BaseEvent[None]):
+    pass
+
+
+async def _emit_completed_ttl_probe(bus: EventBus, event: TTLProbeEvent | None = None) -> TTLProbeEvent:
+    emitted = bus.emit(event or TTLProbeEvent())
+    await emitted.now()
+    await bus.wait_until_idle()
+    return emitted
+
+
+async def _run_natural_history_trim_pass(bus: EventBus) -> None:
+    touch = bus.emit(TTLTouchEvent())
+    await touch.now()
+    await bus.wait_until_idle()
+
+
+@pytest.mark.asyncio
+async def test_event_ttl_zero_deletes_completed_events_on_the_next_natural_trim_pass() -> None:
+    bus = EventBus(name='EventTTLZeroBus', max_history_size=None, event_ttl=0)
+    try:
+        event = await _emit_completed_ttl_probe(bus)
+        assert event.event_id in bus.event_history
+        await _run_natural_history_trim_pass(bus)
+        assert event.event_id not in bus.event_history
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_event_result_ttl_zero_clears_completed_event_results_while_keeping_event() -> None:
+    bus = EventBus(name='EventResultTTLZeroBus', max_history_size=None, event_ttl=-1, event_result_ttl=0)
+
+    async def handler(_event: TTLProbeEvent) -> str:
+        return 'result'
+
+    bus.on(TTLProbeEvent, handler)
+    try:
+        event = await _emit_completed_ttl_probe(bus)
+        assert len(event.event_results) == 1
+        await _run_natural_history_trim_pass(bus)
+        assert event.event_id in bus.event_history
+        assert len(event.event_results) == 0
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_event_ttl_and_event_result_ttl_null_or_absent_inherit_bus_defaults() -> None:
+    bus = EventBus(name='TTLNullAbsentInheritBus', max_history_size=None, event_ttl=0, event_result_ttl=0)
+
+    async def handler(_event: TTLProbeEvent) -> str:
+        return 'result'
+
+    bus.on(TTLProbeEvent, handler)
+    try:
+        absent = await _emit_completed_ttl_probe(bus)
+        explicit_null = await _emit_completed_ttl_probe(bus, TTLProbeEvent(event_ttl=None, event_result_ttl=None))
+
+        await _run_natural_history_trim_pass(bus)
+
+        assert absent.event_id not in bus.event_history
+        assert explicit_null.event_id not in bus.event_history
+        assert len(absent.event_results) == 0
+        assert len(explicit_null.event_results) == 0
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_runtime_ttl_changes_retrack_completed_history_on_the_next_natural_trim_pass() -> None:
+    bus_ttl = EventBus(name='RuntimeBusTTLChangeBus', max_history_size=None)
+    try:
+        bus_ttl_event = await _emit_completed_ttl_probe(bus_ttl)
+        assert bus_ttl_event.event_id in bus_ttl.event_history
+
+        bus_ttl.event_ttl = 0
+        await _run_natural_history_trim_pass(bus_ttl)
+        assert bus_ttl_event.event_id not in bus_ttl.event_history
+    finally:
+        await bus_ttl.destroy()
+
+    event_ttl_bus = EventBus(name='RuntimeEventTTLChangeBus', max_history_size=None)
+    try:
+        event_ttl_event = await _emit_completed_ttl_probe(event_ttl_bus)
+        assert event_ttl_event.event_id in event_ttl_bus.event_history
+
+        event_ttl_event.event_ttl = 0
+        await _run_natural_history_trim_pass(event_ttl_bus)
+        assert event_ttl_event.event_id not in event_ttl_bus.event_history
+    finally:
+        await event_ttl_bus.destroy()
+
+    event_result_ttl_bus = EventBus(name='RuntimeEventResultTTLChangeBus', max_history_size=None, event_ttl=-1)
+
+    async def result_ttl_handler(_event: TTLProbeEvent) -> str:
+        return 'result'
+
+    event_result_ttl_bus.on(TTLProbeEvent, result_ttl_handler)
+    try:
+        event_result_ttl_event = await _emit_completed_ttl_probe(event_result_ttl_bus)
+        assert len(event_result_ttl_event.event_results) == 1
+
+        event_result_ttl_event.event_result_ttl = 0
+        await _run_natural_history_trim_pass(event_result_ttl_bus)
+        assert event_result_ttl_event.event_id in event_result_ttl_bus.event_history
+        assert len(event_result_ttl_event.event_results) == 0
+    finally:
+        await event_result_ttl_bus.destroy()
+
+    handler_ttl_bus = EventBus(
+        name='RuntimeHandlerResultTTLChangeBus',
+        max_history_size=None,
+        event_ttl=-1,
+        event_result_ttl=1,
+    )
+
+    async def handler(_event: TTLProbeEvent) -> str:
+        return 'result'
+
+    handler_entry = handler_ttl_bus.on(TTLProbeEvent, handler)
+    try:
+        handler_ttl_event = await _emit_completed_ttl_probe(handler_ttl_bus)
+        assert len(handler_ttl_event.event_results) == 1
+
+        handler_entry.handler_result_ttl = 0
+        await _run_natural_history_trim_pass(handler_ttl_bus)
+        assert handler_ttl_event.event_id in handler_ttl_bus.event_history
+        assert len(handler_ttl_event.event_results) == 0
+    finally:
+        await handler_ttl_bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_event_ttl_minus_one_overrides_positive_or_zero_bus_defaults_and_keeps_completed_events() -> None:
+    zero_default_bus = EventBus(name='EventTTLMinusOneOverridesZeroBus', max_history_size=None, event_ttl=0)
+    positive_default_bus = EventBus(name='EventTTLMinusOneOverridesPositiveBus', max_history_size=None, event_ttl=0.01)
+    try:
+        zero_default_event = await _emit_completed_ttl_probe(zero_default_bus, TTLProbeEvent(event_ttl=-1))
+        positive_default_event = await _emit_completed_ttl_probe(positive_default_bus, TTLProbeEvent(event_ttl=-1))
+
+        await asyncio.sleep(0.02)
+        await _run_natural_history_trim_pass(zero_default_bus)
+        await _run_natural_history_trim_pass(positive_default_bus)
+
+        assert zero_default_event.event_id in zero_default_bus.event_history
+        assert positive_default_event.event_id in positive_default_bus.event_history
+    finally:
+        await zero_default_bus.destroy()
+        await positive_default_bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_event_result_ttl_minus_one_overrides_positive_or_zero_bus_defaults_and_keeps_completed_results() -> None:
+    zero_default_bus = EventBus(
+        name='EventResultTTLMinusOneOverridesZeroBus',
+        max_history_size=None,
+        event_ttl=-1,
+        event_result_ttl=0,
+    )
+    positive_default_bus = EventBus(
+        name='EventResultTTLMinusOneOverridesPositiveBus',
+        max_history_size=None,
+        event_ttl=-1,
+        event_result_ttl=0.01,
+    )
+
+    async def zero_handler(_event: TTLProbeEvent) -> str:
+        return 'zero-default'
+
+    async def positive_handler(_event: TTLProbeEvent) -> str:
+        return 'positive-default'
+
+    zero_default_bus.on(TTLProbeEvent, zero_handler)
+    positive_default_bus.on(TTLProbeEvent, positive_handler)
+    try:
+        zero_default_event = await _emit_completed_ttl_probe(zero_default_bus, TTLProbeEvent(event_result_ttl=-1))
+        positive_default_event = await _emit_completed_ttl_probe(
+            positive_default_bus,
+            TTLProbeEvent(event_result_ttl=-1),
+        )
+
+        await asyncio.sleep(0.02)
+        await _run_natural_history_trim_pass(zero_default_bus)
+        await _run_natural_history_trim_pass(positive_default_bus)
+
+        assert len(zero_default_event.event_results) == 1
+        assert len(positive_default_event.event_results) == 1
+    finally:
+        await zero_default_bus.destroy()
+        await positive_default_bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_event_ttl_event_level_zero_overrides_bus_never_delete_default() -> None:
+    bus = EventBus(name='EventTTLZeroOverridesNeverBus', max_history_size=None, event_ttl=-1)
+    try:
+        event = await _emit_completed_ttl_probe(bus, TTLProbeEvent(event_ttl=0))
+        await _run_natural_history_trim_pass(bus)
+        assert event.event_id not in bus.event_history
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_event_result_ttl_event_level_zero_overrides_bus_never_delete_default() -> None:
+    bus = EventBus(name='EventResultTTLZeroOverridesNeverBus', max_history_size=None, event_ttl=-1, event_result_ttl=-1)
+
+    async def handler(_event: TTLProbeEvent) -> str:
+        return 'result'
+
+    bus.on(TTLProbeEvent, handler)
+    try:
+        event = await _emit_completed_ttl_probe(bus, TTLProbeEvent(event_result_ttl=0))
+        await _run_natural_history_trim_pass(bus)
+        assert event.event_id in bus.event_history
+        assert len(event.event_results) == 0
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_event_ttl_positive_event_override_can_be_shorter_than_bus_default() -> None:
+    bus = EventBus(name='EventTTLShorterOverrideBus', max_history_size=None, event_ttl=1)
+    try:
+        event = await _emit_completed_ttl_probe(bus, TTLProbeEvent(event_ttl=0.01))
+        await asyncio.sleep(0.02)
+        await _run_natural_history_trim_pass(bus)
+        assert event.event_id not in bus.event_history
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_event_ttl_positive_event_override_can_be_longer_than_bus_default() -> None:
+    bus = EventBus(name='EventTTLLongerOverrideBus', max_history_size=None, event_ttl=0.01)
+    try:
+        event = await _emit_completed_ttl_probe(bus, TTLProbeEvent(event_ttl=1))
+        await asyncio.sleep(0.02)
+        await _run_natural_history_trim_pass(bus)
+        assert event.event_id in bus.event_history
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_event_result_ttl_counts_from_event_completion_and_supports_shorter_and_longer_event_overrides() -> None:
+    shorter_bus = EventBus(name='EventResultTTLShorterOverrideBus', max_history_size=None, event_ttl=-1, event_result_ttl=1)
+    longer_bus = EventBus(name='EventResultTTLLongerOverrideBus', max_history_size=None, event_ttl=-1, event_result_ttl=0.01)
+
+    async def shorter_handler(_event: TTLProbeEvent) -> str:
+        return 'shorter'
+
+    async def longer_handler(_event: TTLProbeEvent) -> str:
+        return 'longer'
+
+    shorter_bus.on(TTLProbeEvent, shorter_handler)
+    longer_bus.on(TTLProbeEvent, longer_handler)
+    try:
+        shorter_event = await _emit_completed_ttl_probe(shorter_bus, TTLProbeEvent(event_result_ttl=0.01))
+        longer_event = await _emit_completed_ttl_probe(longer_bus, TTLProbeEvent(event_result_ttl=1))
+
+        await asyncio.sleep(0.02)
+        await _run_natural_history_trim_pass(shorter_bus)
+        await _run_natural_history_trim_pass(longer_bus)
+
+        assert len(shorter_event.event_results) == 0
+        assert len(longer_event.event_results) == 1
+    finally:
+        await shorter_bus.destroy()
+        await longer_bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_event_ttl_and_event_result_ttl_class_and_instance_precedence() -> None:
+    class TTLClassDefaultEvent(BaseEvent[str]):
+        event_ttl: float | None = 0.01
+        event_result_ttl: float | None = 0.01
+
+    bus = EventBus(name='TTLClassDefaultsBus', max_history_size=None, event_ttl=-1, event_result_ttl=-1)
+
+    async def handler(_event: TTLClassDefaultEvent) -> str:
+        return 'result'
+
+    bus.on(TTLClassDefaultEvent, handler)
+    try:
+        inherited = bus.emit(TTLClassDefaultEvent(event_ttl=None, event_result_ttl=None))
+        await inherited.now()
+        await asyncio.sleep(0.02)
+        await _run_natural_history_trim_pass(bus)
+        assert inherited.event_id not in bus.event_history
+
+        never = bus.emit(TTLClassDefaultEvent(event_ttl=-1, event_result_ttl=-1))
+        await never.now()
+        await asyncio.sleep(0.02)
+        await _run_natural_history_trim_pass(bus)
+        assert never.event_id in bus.event_history
+        assert len(never.event_results) == 1
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_event_ttl_and_event_result_ttl_class_defaults_beat_bus_defaults() -> None:
+    class TTLClassDefaultEvent(BaseEvent[str]):
+        event_ttl: float | None = 0.01
+        event_result_ttl: float | None = 0.01
+
+    bus = EventBus(name='TTLClassDefaultsBeatBusDefaultsBus', max_history_size=None, event_ttl=-1, event_result_ttl=-1)
+
+    async def handler(_event: TTLClassDefaultEvent) -> str:
+        return 'result'
+
+    bus.on(TTLClassDefaultEvent, handler)
+    try:
+        event = bus.emit(TTLClassDefaultEvent())
+        await event.now()
+        await bus.wait_until_idle()
+        assert event.event_id in bus.event_history
+        assert len(event.event_results) == 1
+
+        await asyncio.sleep(0.02)
+        await _run_natural_history_trim_pass(bus)
+
+        assert event.event_id not in bus.event_history
+        assert len(event.event_results) == 0
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_event_ttl_and_event_result_ttl_instance_minus_one_overrides_class_and_bus_scalar_defaults() -> None:
+    class TTLClassDefaultEvent(BaseEvent[str]):
+        event_ttl: float | None = 0.01
+        event_result_ttl: float | None = 0.01
+
+    bus = EventBus(name='TTLInstanceNeverBeatsClassAndBusBus', max_history_size=None, event_ttl=0, event_result_ttl=0)
+
+    async def handler(_event: TTLClassDefaultEvent) -> str:
+        return 'result'
+
+    bus.on(TTLClassDefaultEvent, handler)
+    try:
+        event = bus.emit(TTLClassDefaultEvent(event_ttl=-1, event_result_ttl=-1))
+        await event.now()
+        await bus.wait_until_idle()
+        await asyncio.sleep(0.02)
+        await _run_natural_history_trim_pass(bus)
+
+        assert event.event_id in bus.event_history
+        assert len(event.event_results) == 1
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_event_ttl_and_event_result_ttl_instance_null_inherits_class_scalar_defaults() -> None:
+    class TTLClassDefaultEvent(BaseEvent[str]):
+        event_ttl: float | None = 0.01
+        event_result_ttl: float | None = 0.01
+
+    bus = EventBus(name='TTLInstanceNullInheritsClassBus', max_history_size=None, event_ttl=-1, event_result_ttl=-1)
+
+    async def handler(_event: TTLClassDefaultEvent) -> str:
+        return 'result'
+
+    bus.on(TTLClassDefaultEvent, handler)
+    try:
+        event = bus.emit(TTLClassDefaultEvent(event_ttl=None, event_result_ttl=None))
+        await event.now()
+        await bus.wait_until_idle()
+        await asyncio.sleep(0.02)
+        await _run_natural_history_trim_pass(bus)
+
+        assert event.event_id not in bus.event_history
+        assert len(event.event_results) == 0
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_event_ttl_and_event_result_ttl_instance_zero_overrides_class_never_delete_defaults() -> None:
+    class TTLClassNeverEvent(BaseEvent[str]):
+        event_ttl: float | None = -1
+        event_result_ttl: float | None = -1
+
+    bus = EventBus(name='TTLInstanceZeroBeatsClassNeverBus', max_history_size=None, event_ttl=-1, event_result_ttl=-1)
+
+    async def handler(_event: TTLClassNeverEvent) -> str:
+        return 'result'
+
+    bus.on(TTLClassNeverEvent, handler)
+    try:
+        event = bus.emit(TTLClassNeverEvent(event_ttl=0, event_result_ttl=0))
+        await event.now()
+        await bus.wait_until_idle()
+        await _run_natural_history_trim_pass(bus)
+
+        assert event.event_id not in bus.event_history
+        assert len(event.event_results) == 0
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_handler_result_ttl_overrides_event_and_bus_result_ttl() -> None:
+    bus = EventBus(name='HandlerResultTTLBus', max_history_size=None, event_ttl=-1, event_result_ttl=-1)
+
+    async def handler(_event: TTLProbeEvent) -> str:
+        return 'result'
+
+    bus.on(TTLProbeEvent, handler, handler_result_ttl=0)
+    try:
+        event = await _emit_completed_ttl_probe(bus, TTLProbeEvent(event_result_ttl=-1))
+        assert len(event.event_results) == 1
+        await _run_natural_history_trim_pass(bus)
+        assert event.event_id in bus.event_history
+        assert len(event.event_results) == 0
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_handler_result_ttl_minus_one_preserves_results_when_event_and_bus_result_ttl_defaults_are_scalar() -> None:
+    bus = EventBus(name='HandlerResultTTLNeverBeatsScalarsBus', max_history_size=None, event_ttl=-1, event_result_ttl=0)
+
+    async def handler(_event: TTLProbeEvent) -> str:
+        return 'result'
+
+    bus.on(TTLProbeEvent, handler, handler_result_ttl=-1)
+    try:
+        event = await _emit_completed_ttl_probe(bus, TTLProbeEvent(event_result_ttl=0))
+        await _run_natural_history_trim_pass(bus)
+
+        assert event.event_id in bus.event_history
+        assert len(event.event_results) == 1
+    finally:
+        await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_handler_result_ttl_null_inherits_event_result_ttl_before_bus_result_ttl() -> None:
+    bus = EventBus(name='HandlerResultTTLNullInheritsEventBus', max_history_size=None, event_ttl=-1, event_result_ttl=-1)
+
+    async def handler(_event: TTLProbeEvent) -> str:
+        return 'result'
+
+    bus.on(TTLProbeEvent, handler, handler_result_ttl=None)
+    try:
+        event = await _emit_completed_ttl_probe(bus, TTLProbeEvent(event_result_ttl=0))
+        await _run_natural_history_trim_pass(bus)
+
+        assert event.event_id in bus.event_history
+        assert len(event.event_results) == 0
+    finally:
+        await bus.destroy()
+
+
+def test_event_ttl_and_event_result_ttl_reject_values_below_minus_one() -> None:
+    with pytest.raises((AssertionError, ValueError), match='event_ttl'):
+        EventBus(name='BadEventTTLBus', event_ttl=-2)
+    with pytest.raises((AssertionError, ValueError), match='event_result_ttl'):
+        EventBus(name='BadEventResultTTLBus', event_result_ttl=-2)
+    with pytest.raises(ValueError):
+        TTLProbeEvent(event_ttl=-2)
+    with pytest.raises(ValueError):
+        TTLProbeEvent(event_result_ttl=-2)
+
+
+def test_event_ttl_and_event_result_ttl_reject_class_defaults_below_minus_one() -> None:
+    class BadEventTTLDefaultEvent(BaseEvent[str]):
+        event_ttl: float | None = -2
+
+    class BadEventResultTTLDefaultEvent(BaseEvent[str]):
+        event_result_ttl: float | None = -2
+
+    with pytest.raises(ValueError, match='event_ttl'):
+        BadEventTTLDefaultEvent()
+    with pytest.raises(ValueError, match='event_ttl'):
+        BadEventTTLDefaultEvent(event_ttl=None)
+    with pytest.raises(ValueError, match='event_result_ttl'):
+        BadEventResultTTLDefaultEvent()
+    with pytest.raises(ValueError, match='event_result_ttl'):
+        BadEventResultTTLDefaultEvent(event_result_ttl=None)

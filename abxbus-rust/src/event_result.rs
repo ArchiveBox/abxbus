@@ -8,7 +8,10 @@ use serde_json::{json, Value};
 
 use crate::{
     base_event::{now_iso, BaseEvent},
-    event_handler::EventHandler,
+    event_handler::{
+        validate_optional_seconds_at_least_minus_one, validate_optional_seconds_nonnegative,
+        EventHandler,
+    },
     id::uuid_v7_string,
     lock_manager::{LockManager, OwnedRunloopPauseGuard},
 };
@@ -52,6 +55,7 @@ impl Serialize for EventResult {
             handler_file_path: &'a Option<String>,
             handler_timeout: &'a Option<f64>,
             handler_slow_timeout: &'a Option<f64>,
+            handler_result_ttl: &'a Option<f64>,
             handler_registered_at: &'a str,
             handler_event_pattern: &'a str,
             eventbus_name: &'a str,
@@ -73,6 +77,7 @@ impl Serialize for EventResult {
             handler_file_path: &self.handler.handler_file_path,
             handler_timeout: &self.handler.handler_timeout,
             handler_slow_timeout: &self.handler.handler_slow_timeout,
+            handler_result_ttl: &self.handler.handler_result_ttl,
             handler_registered_at: &self.handler.handler_registered_at,
             handler_event_pattern: &self.handler.event_pattern,
             eventbus_name: &self.handler.eventbus_name,
@@ -285,6 +290,7 @@ impl EventResult {
             "handler_file_path": self.handler.handler_file_path,
             "handler_timeout": self.handler.handler_timeout,
             "handler_slow_timeout": self.handler.handler_slow_timeout,
+            "handler_result_ttl": self.handler.handler_result_ttl,
             "handler_registered_at": self.handler.handler_registered_at,
             "handler_event_pattern": self.handler.event_pattern,
             "eventbus_name": self.handler.eventbus_name,
@@ -443,8 +449,28 @@ impl EventResult {
                 .get("handler_file_path")
                 .and_then(Value::as_str)
                 .map(ToString::to_string),
-            handler_timeout: record.get("handler_timeout").and_then(Value::as_f64),
-            handler_slow_timeout: record.get("handler_slow_timeout").and_then(Value::as_f64),
+            handler_timeout: {
+                let handler_timeout = record.get("handler_timeout").and_then(Value::as_f64);
+                validate_optional_seconds_nonnegative("handler_timeout", handler_timeout)
+                    .expect("handler_timeout must be finite and >= 0 or None");
+                handler_timeout
+            },
+            handler_slow_timeout: {
+                let handler_slow_timeout =
+                    record.get("handler_slow_timeout").and_then(Value::as_f64);
+                validate_optional_seconds_nonnegative("handler_slow_timeout", handler_slow_timeout)
+                    .expect("handler_slow_timeout must be finite and >= 0 or None");
+                handler_slow_timeout
+            },
+            handler_result_ttl: {
+                let handler_result_ttl = record.get("handler_result_ttl").and_then(Value::as_f64);
+                validate_optional_seconds_at_least_minus_one(
+                    "handler_result_ttl",
+                    handler_result_ttl,
+                )
+                .expect("handler_result_ttl must be finite and >= -1 or None");
+                handler_result_ttl
+            },
             handler_registered_at: record
                 .get("handler_registered_at")
                 .and_then(Value::as_str)

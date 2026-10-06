@@ -49,6 +49,8 @@ fn assert_eventbus_json_roundtrip_uses_id_keyed_structures(bus_name: &str, bus_i
             event_handler_completion: EventHandlerCompletionMode::First,
             event_timeout: Some(0.0),
             event_slow_timeout: Some(34.0),
+            event_ttl: None,
+            event_result_ttl: None,
             event_handler_slow_timeout: Some(12.0),
             event_handler_detect_file_paths: false,
             max_handler_recursion_depth: 2,
@@ -128,6 +130,84 @@ fn test_eventbus_serialization_preserves_unbounded_history_null() {
 }
 
 #[test]
+fn test_eventbus_from_json_rebuilds_ttl_indexes_for_restored_completed_history() {
+    let result_source = EventBus::new_with_options(
+        Some("RestoreResultTTLBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(-1.0),
+            event_result_ttl: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    result_source.on_raw_sync("RestoreTTLProbeEvent", "handler", |_event| Ok(json!("ok")));
+    let result_event = result_source.emit_base(BaseEvent::new(
+        "RestoreTTLProbeEvent",
+        serde_json::Map::new(),
+    ));
+    let _ = block_on(result_event.now());
+    assert!(block_on(result_source.wait_until_idle(Some(1.0))));
+    let result_event_id = result_event.inner.lock().event_id.clone();
+    let result_payload = result_source.to_json_value();
+    result_source.destroy();
+
+    let restored_results = EventBus::from_json_value(result_payload);
+    let restored_event = restored_results
+        .runtime_payload_for_test()
+        .get(&result_event_id)
+        .cloned()
+        .expect("restored result event");
+    assert!(!restored_event.inner.lock().event_results.is_empty());
+    let touch = restored_results.emit_base(BaseEvent::new(
+        "RestoreTTLTouchEvent",
+        serde_json::Map::new(),
+    ));
+    let _ = block_on(touch.now());
+    assert!(block_on(restored_results.wait_until_idle(Some(1.0))));
+    let restored_event = restored_results
+        .runtime_payload_for_test()
+        .get(&result_event_id)
+        .cloned()
+        .expect("result TTL should keep the event");
+    assert!(restored_event.inner.lock().event_results.is_empty());
+    restored_results.destroy();
+
+    let event_source = EventBus::new_with_options(
+        Some("RestoreEventTTLBus".to_string()),
+        EventBusOptions {
+            max_history_size: None,
+            event_ttl: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    event_source.on_raw_sync("RestoreTTLProbeEvent", "handler", |_event| Ok(json!("ok")));
+    let expired_event = event_source.emit_base(BaseEvent::new(
+        "RestoreTTLProbeEvent",
+        serde_json::Map::new(),
+    ));
+    let _ = block_on(expired_event.now());
+    assert!(block_on(event_source.wait_until_idle(Some(1.0))));
+    let expired_event_id = expired_event.inner.lock().event_id.clone();
+    let expired_payload = event_source.to_json_value();
+    event_source.destroy();
+
+    let restored_events = EventBus::from_json_value(expired_payload);
+    assert!(restored_events
+        .event_history_ids()
+        .contains(&expired_event_id));
+    let touch = restored_events.emit_base(BaseEvent::new(
+        "RestoreTTLTouchEvent",
+        serde_json::Map::new(),
+    ));
+    let _ = block_on(touch.now());
+    assert!(block_on(restored_events.wait_until_idle(Some(1.0))));
+    assert!(!restored_events
+        .event_history_ids()
+        .contains(&expired_event_id));
+    restored_events.destroy();
+}
+
+#[test]
 fn test_eventbus_from_json_null_event_timeout_uses_default() {
     let bus = EventBus::new(Some("TimeoutNullBus".to_string()));
     let mut payload = bus.to_json_value();
@@ -136,6 +216,48 @@ fn test_eventbus_from_json_null_event_timeout_uses_default() {
     let restored = EventBus::from_json_value(payload);
     assert_eq!(restored.to_json_value()["event_timeout"], json!(60.0));
     restored.destroy();
+    bus.destroy();
+}
+
+#[test]
+fn test_eventbus_from_json_rejects_restored_ttls_below_minus_one() {
+    let bus = EventBus::new(Some("BadRestoredTTLSourceBus".to_string()));
+    bus.on_raw_sync("BadRestoredTTLSourceEvent", "handler", |_event| {
+        Ok(json!("ok"))
+    });
+    let event = bus.emit_base(BaseEvent::new(
+        "BadRestoredTTLSourceEvent",
+        serde_json::Map::new(),
+    ));
+    let _ = block_on(event.now());
+    let event_id = event.inner.lock().event_id.clone();
+    let handler_id = event
+        .inner
+        .lock()
+        .event_results
+        .keys()
+        .next()
+        .expect("handler result")
+        .clone();
+    let payload = bus.to_json_value();
+
+    let mut bad_bus_ttl = payload.clone();
+    bad_bus_ttl["event_ttl"] = json!(-2.0);
+    assert!(std::panic::catch_unwind(|| EventBus::from_json_value(bad_bus_ttl)).is_err());
+
+    let mut bad_bus_result_ttl = payload.clone();
+    bad_bus_result_ttl["event_result_ttl"] = json!(-2.0);
+    assert!(std::panic::catch_unwind(|| EventBus::from_json_value(bad_bus_result_ttl)).is_err());
+
+    let mut bad_event_ttl = payload.clone();
+    bad_event_ttl["event_history"][event_id.as_str()]["event_ttl"] = json!(-2.0);
+    assert!(std::panic::catch_unwind(|| EventBus::from_json_value(bad_event_ttl)).is_err());
+
+    let mut bad_result_ttl = payload.clone();
+    bad_result_ttl["event_history"][event_id.as_str()]["event_results"][handler_id.as_str()]
+        ["handler_result_ttl"] = json!(-2.0);
+    assert!(std::panic::catch_unwind(|| EventBus::from_json_value(bad_result_ttl)).is_err());
+
     bus.destroy();
 }
 

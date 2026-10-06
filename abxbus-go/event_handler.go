@@ -35,6 +35,7 @@ type EventHandler struct {
 	HandlerFilePath     *string  `json:"handler_file_path"`
 	HandlerTimeout      *float64 `json:"handler_timeout"`
 	HandlerSlowTimeout  *float64 `json:"handler_slow_timeout"`
+	HandlerResultTTL    *float64 `json:"handler_result_ttl"`
 	HandlerRegisteredAt string   `json:"handler_registered_at"`
 
 	handler EventHandlerCallable
@@ -87,6 +88,25 @@ func EventHandlerFromJSON(data []byte, handler EventHandlerCallable) (*EventHand
 	}
 	parsed.handler = handler
 	return &parsed, nil
+}
+
+func (h *EventHandler) UnmarshalJSON(data []byte) error {
+	type eventHandlerAlias EventHandler
+	var parsed eventHandlerAlias
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	if err := validateOptionalSecondsAtLeastMinusOne("handler_result_ttl", parsed.HandlerResultTTL); err != nil {
+		return err
+	}
+	if err := validateOptionalSecondsNonNegative("handler_timeout", parsed.HandlerTimeout); err != nil {
+		return err
+	}
+	if err := validateOptionalSecondsNonNegative("handler_slow_timeout", parsed.HandlerSlowTimeout); err != nil {
+		return err
+	}
+	*h = EventHandler(parsed)
+	return nil
 }
 
 func (h *EventHandler) Handle(ctx context.Context, event *BaseEvent) (any, error) {

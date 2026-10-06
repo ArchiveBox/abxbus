@@ -19,8 +19,9 @@ HISTORY_LIMIT_ON_OFF = 128
 HISTORY_LIMIT_EPHEMERAL_BUS = 128
 HISTORY_LIMIT_FIXED_HANDLERS = 128
 HISTORY_LIMIT_WORST_CASE = 128
-WORST_CASE_IMMEDIATE_TIMEOUT_MS = 0.0001
-WORST_CASE_IMMEDIATE_TIMEOUT_SECONDS = WORST_CASE_IMMEDIATE_TIMEOUT_MS / 1000.0
+WORST_CASE_TIMEOUT_MS = 1.0
+WORST_CASE_TIMEOUT_SECONDS = WORST_CASE_TIMEOUT_MS / 1000.0
+WORST_CASE_SLOW_HANDLER_MS = 2.0
 
 
 @dataclass(slots=True)
@@ -646,7 +647,7 @@ async def run_perf_worst_case(input: PerfInput) -> dict[str, Any]:
         checksum += (event.value * 2) + event.iteration
         gc_event = event.emit(WCGrandchild(iteration=event.iteration, value=event.value + 1))
         if event.event_timeout is not None:
-            await hooks.sleep(0)
+            await hooks.sleep(WORST_CASE_SLOW_HANDLER_MS)
         await gc_event
 
     def grandchild_handler(event: WCGrandchild) -> None:
@@ -664,7 +665,7 @@ async def run_perf_worst_case(input: PerfInput) -> dict[str, Any]:
 
     try:
         for iteration in range(total_iterations):
-            should_timeout = iteration % 5 == 0
+            should_timeout = iteration % 20 == 0
             value = (iteration % 37) + 1
 
             async def ephemeral_handler(event: WCParent) -> None:
@@ -675,8 +676,7 @@ async def run_perf_worst_case(input: PerfInput) -> dict[str, Any]:
                     WCChild(
                         iteration=event.iteration,
                         value=event.value,
-                        # event_timeout is in seconds; mirror TS near-zero timeout value.
-                        event_timeout=WORST_CASE_IMMEDIATE_TIMEOUT_SECONDS if should_timeout else None,
+                        event_timeout=WORST_CASE_TIMEOUT_SECONDS if should_timeout else None,
                     )
                 )
                 bus_c.emit(child)

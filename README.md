@@ -31,11 +31,13 @@ asyncio.run(main())
 # "hi!"
 ```
 
-It's async native, has proper automatic nested event tracking, and powerful concurrency control options. The API is inspired by `EventEmitter` or [`emittery`](https://github.com/sindresorhus/emittery) in JS, but it takes it a step further:
+It's async native, has proper automatic nested event tracking + OTEL, and powerful concurrency control options. The API is inspired by `EventEmitter` or [`emittery`](https://github.com/sindresorhus/emittery) in JS, but it takes it a step further:
 
 - nice Pydantic / Zod schemas for events that can be exchanged between runtimes
 - automatic UUIDv7s and monotonic nanosecond timestamps for ordering events globally
 - built in locking options to force strict global FIFO processing or fully parallel processing
+
+> *(Forked from initial implementation at a past job: [`browser-use/bubus`](https://github.com/browser-use/bubus))*
 
 ---
 
@@ -301,7 +303,7 @@ bus = EventBus()
 <!--pytest-codeblocks:cont-->
 ```python
 async def load_user_config(event: GetConfigEvent) -> dict[str, Any]:
-    return {"debug": True, "port": 8080}
+    return {"debug": True, "port": 5797}
 
 async def load_system_config(event: GetConfigEvent) -> dict[str, Any]:
     return {"debug": False, "timeout": 30}
@@ -1025,7 +1027,7 @@ asyncio.run(bus.destroy())
 
 - When `max_history_size` is set and `max_history_drop=True`, EventBus removes old events when the limit is exceeded
 - If `max_history_size=0`, history keeps only pending/started events and drops each event immediately after completion
-- If `max_history_drop=True`, the bus may drop oldest history entries even if they are uncompleted events
+- In Python and TypeScript, `max_history_drop=True` evicts completed children before parents; active work and its ancestry may temporarily exceed the history limit
 - Completed events are removed first (oldest first), then started events, then pending events
 - This ensures active events are preserved while cleaning up old completed events
 
@@ -1235,7 +1237,7 @@ assert parameters['max_history_size'].default == 100
 - `event_handler_slow_timeout`: Default slow-handler warning threshold in seconds resolved at processing time when `event.event_handler_slow_timeout` is `None`
 - `event_handler_detect_file_paths`: Whether to auto-detect handler source file paths at registration time (slightly slower when enabled)
 - `max_history_size`: Maximum number of events to keep in history (default: 100, `None` = unlimited, `0` = keep only in-flight events and drop completed events immediately)
-- `max_history_drop`: If `True`, drop oldest history entries when full (even uncompleted events). If `False` (default), reject new emits once history reaches `max_history_size` (except when `max_history_size=0`, which never rejects on history size)
+- `max_history_drop`: If `True`, evict completed history entries, children before parents. Pending/running events and ancestors of retained children may temporarily exceed the limit. If `False` (default), reject new emits once history reaches `max_history_size` (except when `max_history_size=0`, which never rejects on history size)
 - `middlewares`: Optional list of `EventBusMiddleware` subclasses or instances that hook into handler execution for analytics, logging, retries, etc. (see [Middlewares](#middlewares) for more info)
 
 Timeout precedence matches TS:
@@ -1243,6 +1245,13 @@ Timeout precedence matches TS:
 - Effective handler timeout = `min(resolved_handler_timeout, event_timeout)` where `resolved_handler_timeout` resolves in order: `handler.handler_timeout` -> `event.event_handler_timeout` -> `bus.event_timeout`.
 - Slow handler warning threshold resolves in order: `handler.handler_slow_timeout` -> `event.event_handler_slow_timeout` -> `bus.event_handler_slow_timeout`.
 - Bus defaults are applied at execution time by the bus currently processing the event. Unset event fields stay unset on the event object so forwarded events can inherit the target bus defaults.
+
+A timeout inside a handler (including a child event's timeout) does not mean the
+parent handler's deadline expired. The original child error propagates without
+relabeling it as a parent timeout. Expired handler deadlines produce a concise
+warning; set `ABXBUS_LOGGING_LEVEL=DEBUG` to include the full event tree when
+diagnosing a failure. Normal logging omits that tree so large recursive workloads
+do not bury progress and the failing handler under completed sibling events.
 
 #### `EventBus` Properties
 
@@ -1306,9 +1315,15 @@ asyncio.run(main())
 
 **Note:** Queueing is unbounded. History pressure is controlled by `max_history_size` + `max_history_drop`:
 
-- `max_history_drop=True`: absorb new events and trim old history entries (even uncompleted events).
+- `max_history_drop=True`: absorb new events and trim completed children before parents, preserving pending/running work and retained ancestry.
 - `max_history_drop=False`: raise `RuntimeError` when history is full.
 - `max_history_size=0`: keep pending/in-flight events only; completed events are immediately removed from history.
+
+For Python events describing resources that outlive their handlers, enter
+`with bus.event_history.retain(event):` before emitting the event and keep the
+scope open until the resource closes. Bounded dropping history retains that
+event and its ancestors until all retention scopes close. This does not change
+the explicit `max_history_size=0` policy.
 
 ##### `find(event_type: str | Literal['*'] | Type[BaseEvent], *, where: Callable[[BaseEvent], bool]=None, child_of: BaseEvent | None=None, past: bool | float | timedelta=True, future: bool | float=False, **event_fields) -> BaseEvent | None`
 
@@ -1518,14 +1533,16 @@ async def main():
 asyncio.run(main())
 ```
 
-##### `reset() -> Self`
+##### `event_reset(ids=True, status=True, timestamps=True, results=True) -> Self`
 
 Return a fresh event copy with runtime processing state reset back to pending.
 
 - Intended for re-emitting an already-seen event as a fresh event (for example after crossing a bridge boundary).
 - The original event object is not mutated, it returns a new copy with some fields reset.
-- A new UUIDv7 `event_id` is generated for the returned copy (to allow it to process as a separate event it needs a new unique uuid)
-- Runtime completion state is cleared (`event_results`, completion signal/flags, processed timestamp, emit context).
+- By default, a new UUIDv7 `event_id` is generated and routing lineage is cleared (`event_path`, parent/emitting handler ids, parent-completion blocking).
+- By default, lifecycle status and processing timestamps (`event_started_at`, `event_completed_at`) are reset to pending, handler results are cleared, and runtime attachment state is cleared. `event_created_at` remains the original creation timestamp.
+- Pass `ids=False`, `status=False`, `timestamps=False`, or `results=False` to preserve that specific field group on the returned copy.
+- Older snippets may refer to this operation as `reset()`; update those callers to `event_reset(...)` (or the language-native `eventReset` / `EventReset` spelling).
 
 ##### `event_result_update(handler, eventbus: EventBus | None=None, **kwargs) -> EventResult`
 
@@ -1850,12 +1867,11 @@ the documentation tests that are evaluating this README.
 
 This project is licensed under the MIT License.
 
-This repo is a fork that adds many new features and performance enhancements over the [original project named `bubus`](https://github.com/browser-use/bubus), which was built to power the [Browser-Use Agent](https://github.com/browser-use/browser-use/tree/main/browser_use/browser/watchdogs) (but has since gone stale).
+This repo is a fork that adds many new features and performance enhancements over the original project named `bubus`, which has since gone stale.
 
 Timeline:
 
-- 2025-06 `v1.0.1`: Original library released https://github.com/browser-use/bubus
-- 2025-10 `v1.5.1`: Browser-Use v0.6.0 released, first version powered by `bubus`
+- 2025-06 `v1.0.1`: Original library released
 - 2025-11 `v1.7.1`: `bubus` forked to `pirate/bbus` temporarily; `ContextVar` support, `Middlewares`, and `bus.find()` added
 - 2026-01 `v2.3.2`: `bubus-ts` Typescript implementation released, cross-compatible with Python version (now `abxbus-ts`)
 - 2026-03 `v2.4.1`: Fork renamed from `pirate/bbus -> ArchiveBox/abxbus`; added dual `CJS`/`ESM` support, bugfixes and perf improvements

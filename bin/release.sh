@@ -9,6 +9,26 @@ cd "${REPO_DIR}"
 TAG_PREFIX=""
 PYPI_PACKAGE="abxbus"
 NPM_PACKAGE="abxbus"
+CARGO_PACKAGE="abxbus"
+
+pypi_release_json() {
+    curl -fsSL \
+        -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
+        "https://pypi.org/pypi/${PYPI_PACKAGE}/$1/json?cache_bust=$(date +%s)-${RANDOM}"
+}
+
+npm_release_json() {
+    curl -fsSL \
+        -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
+        "https://registry.npmjs.org/${NPM_PACKAGE}/$1?cache_bust=$(date +%s)-${RANDOM}"
+}
+
+cargo_release_json() {
+    curl -fsSL \
+        -A 'ArchiveBox abxbus release workflow (https://github.com/ArchiveBox/abxbus)' \
+        -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
+        "https://crates.io/api/v1/crates/${CARGO_PACKAGE}/$1?cache_bust=$(date +%s)-${RANDOM}"
+}
 
 source_optional_env() {
     if [[ -f "${REPO_DIR}/.env" ]]; then
@@ -29,7 +49,7 @@ repo_slug() {
 }
 
 current_version() {
-    uv run --no-project python - <<'PY'
+    uv run --no-cache --no-project python - <<'PY'
 from pathlib import Path
 import json
 import re
@@ -51,7 +71,7 @@ PY
 }
 
 compare_versions() {
-    uv run --no-project python - "$1" "$2" <<'PY'
+    uv run --no-cache --no-project python - "$1" "$2" <<'PY'
 import re
 import sys
 
@@ -71,7 +91,7 @@ latest_release_version() {
     local slug="$1"
     local raw_tags
     raw_tags="$(gh api "repos/${slug}/releases?per_page=100" --jq '.[].tag_name' || true)"
-    RELEASE_TAGS="${raw_tags}" uv run --no-project python - <<'PY'
+    RELEASE_TAGS="${raw_tags}" uv run --no-cache --no-project python - <<'PY'
 import os
 import re
 
@@ -92,10 +112,13 @@ latest_registry_version() {
     local versions
     if [[ "${registry}" == "pypi" ]]; then
         versions="$(curl -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | jq -r '.releases | keys[]' || true)"
+    elif [[ "${registry}" == "crates.io" ]]; then
+        versions="$(curl -fsSL -A 'ArchiveBox abxbus release workflow (https://github.com/ArchiveBox/abxbus)' \
+            "https://crates.io/api/v1/crates/${CARGO_PACKAGE}" | jq -r '.versions[].num' || true)"
     else
         versions="$(npm view "${NPM_PACKAGE}" versions --json --silent 2>/dev/null | jq -r '.[]' || true)"
     fi
-    RELEASE_TAGS="${versions}" uv run --no-project python - <<'PY'
+    RELEASE_TAGS="${versions}" uv run --no-cache --no-project python - <<'PY'
 import os
 import re
 
@@ -131,8 +154,8 @@ require_clean_exact_checkout() {
     local branch_head
     branch_head="$(git rev-parse "refs/remotes/origin/${release_branch}")"
     if [[ "${release_sha}" != "${branch_head}" ]]; then
-        echo "Refusing to release ${release_sha}: current origin/${release_branch} is ${branch_head}" >&2
-        return 1
+        echo "Skipping obsolete release ${release_sha}: current origin/${release_branch} is ${branch_head}" >&2
+        exit 0
     fi
 }
 
@@ -142,9 +165,11 @@ require_tested_artifacts() {
     local release_sha="$3"
     local python_dir="${artifact_dir}/python"
     local npm_dir="${artifact_dir}/npm"
+    local cratesio_dir="${artifact_dir}/cratesio"
 
     [[ -d "${python_dir}" ]] || { echo "Missing tested Python artifact directory: ${python_dir}" >&2; return 1; }
     [[ -d "${npm_dir}" ]] || { echo "Missing tested npm artifact directory: ${npm_dir}" >&2; return 1; }
+    [[ -d "${cratesio_dir}" ]] || { echo "Missing tested crates.io artifact directory: ${cratesio_dir}" >&2; return 1; }
     [[ -f "${artifact_dir}/SHA256SUMS" ]] || { echo "Missing tested artifact checksums" >&2; return 1; }
     (
         cd "${artifact_dir}"
@@ -159,9 +184,11 @@ require_tested_artifacts() {
     local wheels=("${python_dir}"/abxbus-*.whl)
     local sdists=("${python_dir}"/abxbus-*.tar.gz)
     local npm_packages=("${npm_dir}"/abxbus-*.tgz)
+    local crate_packages=("${cratesio_dir}"/abxbus-*.crate)
     [[ "${#wheels[@]}" -eq 1 ]] || { echo "Expected one tested wheel, found ${#wheels[@]}" >&2; return 1; }
     [[ "${#sdists[@]}" -eq 1 ]] || { echo "Expected one tested sdist, found ${#sdists[@]}" >&2; return 1; }
     [[ "${#npm_packages[@]}" -eq 1 ]] || { echo "Expected one tested npm package, found ${#npm_packages[@]}" >&2; return 1; }
+    [[ "${#crate_packages[@]}" -eq 1 ]] || { echo "Expected one tested Rust crate, found ${#crate_packages[@]}" >&2; return 1; }
     [[ "$(find "${python_dir}" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 2 ]] || {
         echo "Unexpected files in tested Python artifact directory" >&2
         return 1
@@ -170,13 +197,19 @@ require_tested_artifacts() {
         echo "Unexpected files in tested npm artifact directory" >&2
         return 1
     }
+    [[ "$(find "${cratesio_dir}" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 1 ]] || {
+        echo "Unexpected files in tested Rust crate directory" >&2
+        return 1
+    }
 
-    TESTED_VERSION="${version}" TESTED_WHEEL="${wheels[0]}" TESTED_SDIST="${sdists[0]}" TESTED_NPM_PACKAGE="${npm_packages[0]}" \
-        uv run --no-project python - <<'PY'
+    TESTED_VERSION="${version}" TESTED_WHEEL="${wheels[0]}" TESTED_SDIST="${sdists[0]}" \
+    TESTED_NPM_PACKAGE="${npm_packages[0]}" TESTED_CRATE="${crate_packages[0]}" \
+        uv run --no-cache --no-project python - <<'PY'
 import json
 import os
 import re
 import tarfile
+import tomllib
 from pathlib import Path
 
 version = os.environ["TESTED_VERSION"]
@@ -191,6 +224,14 @@ with tarfile.open(npm_package, "r:gz") as archive:
     package = json.load(archive.extractfile("package/package.json"))
 if package.get("name") != "abxbus" or package.get("version") != version:
     raise SystemExit(f"Unexpected npm package identity: {package.get('name')}@{package.get('version')}")
+
+with tarfile.open(Path(os.environ["TESTED_CRATE"]), "r:gz") as archive:
+    manifest = archive.extractfile(f"abxbus-{version}/Cargo.toml")
+    if manifest is None:
+        raise SystemExit("Rust crate is missing Cargo.toml")
+    rust_package = tomllib.loads(manifest.read().decode())["package"]
+if rust_package.get("name") != "abxbus" or rust_package.get("version") != version:
+    raise SystemExit(f"Unexpected Rust package identity: {rust_package.get('name')}@{rust_package.get('version')}")
 PY
 }
 
@@ -202,16 +243,22 @@ publish_artifacts() {
     local sdists=("${artifact_dir}"/python/abxbus-*.tar.gz)
     local npm_packages=("${artifact_dir}"/npm/abxbus-*.tgz)
 
-    if curl -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | jq -e --arg version "${version}" '.releases[$version] | length > 0' >/dev/null 2>&1; then
+    if pypi_release_json "${version}" >/dev/null 2>&1; then
         echo "${PYPI_PACKAGE} ${version} already published on PyPI"
     else
-        uv publish --trusted-publishing always "${wheels[@]}" "${sdists[@]}"
+        uv publish --no-cache --trusted-publishing always "${wheels[@]}" "${sdists[@]}"
     fi
 
     if npm view "${NPM_PACKAGE}@${version}" version --silent >/dev/null 2>&1; then
         echo "${NPM_PACKAGE} ${version} already published on npm"
     else
         npm publish --access public "${npm_packages[0]}"
+    fi
+
+    if cargo_release_json "${version}" >/dev/null 2>&1; then
+        echo "${CARGO_PACKAGE} ${version} already published on crates.io"
+    else
+        cargo publish --locked --manifest-path abxbus-rust/Cargo.toml
     fi
 }
 
@@ -221,13 +268,16 @@ create_release() {
     local release_sha="$3"
 
     if gh release view "${TAG_PREFIX}${version}" --repo "${slug}" >/dev/null 2>&1; then
+        gh release edit "${TAG_PREFIX}${version}" \
+            --repo "${slug}" \
+            --title "v${version}"
         echo "GitHub release ${TAG_PREFIX}${version} already exists"
         return
     fi
     gh release create "${TAG_PREFIX}${version}" \
         --repo "${slug}" \
         --target "${release_sha}" \
-        --title "${TAG_PREFIX}${version}" \
+        --title "v${version}" \
         --generate-notes
 }
 
@@ -265,8 +315,43 @@ create_go_module_tags() {
     done < <(go_module_tag_names "${version}")
 }
 
+verify_release_outputs() {
+    local slug="$1"
+    local version="$2"
+    local release_sha="$3"
+    local release_target release_json tag
+
+    release_target="$(git ls-remote origin "refs/tags/${TAG_PREFIX}${version}" | cut -f1)"
+    [[ "${release_target}" == "${release_sha}" ]] || {
+        echo "Release tag ${TAG_PREFIX}${version} does not target ${release_sha}" >&2
+        return 1
+    }
+
+    release_json="$(gh release view "${TAG_PREFIX}${version}" --repo "${slug}" --json tagName,targetCommitish,assets)"
+    jq -e \
+        --arg tag "${TAG_PREFIX}${version}" \
+        --arg sha "${release_sha}" \
+        --arg wheel "${PYPI_PACKAGE}-${version}-py3-none-any.whl" \
+        --arg sdist "${PYPI_PACKAGE}-${version}.tar.gz" \
+        --arg npm_package "${NPM_PACKAGE}-${version}.tgz" \
+        --arg rust_crate "${CARGO_PACKAGE}-${version}.crate" \
+        '
+          .tagName == $tag and
+          .targetCommitish == $sha and
+          ([.assets[].name] | sort) == ([$wheel, $sdist, $npm_package, $rust_crate, "SHA256SUMS"] | sort)
+        ' <<<"${release_json}" >/dev/null
+
+    while read -r tag; do
+        [[ -n "${tag}" ]] || continue
+        [[ "$(git ls-remote origin "refs/tags/${tag}" | cut -f1)" == "${release_sha}" ]] || {
+            echo "Go module tag ${tag} does not target ${release_sha}" >&2
+            return 1
+        }
+    done < <(go_module_tag_names "${version}")
+}
+
 main() {
-    local slug release_sha release_branch artifact_dir version latest candidate relation released_tag registry release_target pypi_exists npm_exists github_release_exists
+    local slug release_sha release_branch artifact_dir version latest candidate relation registry release_target pypi_exists npm_exists cargo_exists github_release_exists
 
     source_optional_env
     slug="$(repo_slug)"
@@ -277,7 +362,7 @@ main() {
 
     version="$(current_version)"
     latest="$(latest_release_version "${slug}")"
-    for registry in pypi npm; do
+    for registry in pypi npm crates.io; do
         candidate="$(latest_registry_version "${registry}")"
         if [[ -n "${candidate}" && ( -z "${latest}" || "$(compare_versions "${candidate}" "${latest}")" == "gt" ) ]]; then
             latest="${candidate}"
@@ -295,24 +380,29 @@ main() {
 
     pypi_exists=false
     npm_exists=false
+    cargo_exists=false
     github_release_exists=false
-    if curl -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | jq -e --arg version "${version}" '.releases[$version] | length > 0' >/dev/null 2>&1; then
+    if pypi_release_json "${version}" >/dev/null 2>&1; then
         pypi_exists=true
     fi
-    if npm view "${NPM_PACKAGE}@${version}" version --silent >/dev/null 2>&1; then
+    if npm_release_json "${version}" >/dev/null 2>&1; then
         npm_exists=true
+    fi
+    if cargo_release_json "${version}" >/dev/null 2>&1; then
+        cargo_exists=true
     fi
     release_target="$(git ls-remote origin "refs/tags/${TAG_PREFIX}${version}" | cut -f1)"
     if gh release view "${TAG_PREFIX}${version}" --repo "${slug}" >/dev/null 2>&1; then
         github_release_exists=true
     fi
-    if [[ "${relation}" == "eq" && "${pypi_exists}" == true && "${npm_exists}" == true && "${github_release_exists}" == true && -n "${release_target}" ]]; then
-        echo "${PYPI_PACKAGE} ${version} is already released; nothing to publish"
+    if [[ "${relation}" == "eq" ]]; then
+        if [[ "${pypi_exists}" != true || "${npm_exists}" != true || "${cargo_exists}" != true || "${github_release_exists}" != true || -z "${release_target}" ]]; then
+            echo "${PYPI_PACKAGE} ${version} is already reserved but its release outputs are incomplete; bump the version after fixing the release" >&2
+            return 1
+        fi
+        verify_release_outputs "${slug}" "${version}" "${release_target}"
+        echo "${PYPI_PACKAGE} ${version} is already completely released; nothing to publish"
         return
-    fi
-    if [[ "${relation}" == "eq" && ( -z "${release_target}" || "${release_target}" != "${release_sha}" ) ]]; then
-        echo "Refusing to recover partial release ${version}: no release tag anchors it to ${release_sha}" >&2
-        return 1
     fi
 
     [[ -n "${artifact_dir}" ]] || { echo "RELEASE_ARTIFACT_DIR must point to exact tested artifacts" >&2; return 1; }
@@ -323,16 +413,13 @@ main() {
         "${artifact_dir}"/python/abxbus-*.whl \
         "${artifact_dir}"/python/abxbus-*.tar.gz \
         "${artifact_dir}"/npm/abxbus-*.tgz \
+        "${artifact_dir}"/cratesio/abxbus-*.crate \
         "${artifact_dir}"/SHA256SUMS \
         --clobber
     create_go_module_tags "${version}" "${release_sha}"
 
-    released_tag="$(gh release view "${TAG_PREFIX}${version}" --repo "${slug}" --json tagName,targetCommitish --jq '[.tagName, .targetCommitish] | @tsv')"
-    if [[ "${released_tag}" != "${TAG_PREFIX}${version}"$'\t'"${release_sha}" ]]; then
-        echo "GitHub release does not target the tested SHA ${release_sha}: ${released_tag}" >&2
-        return 1
-    fi
-    echo "Released ${PYPI_PACKAGE} and ${NPM_PACKAGE} ${version} from ${release_sha}"
+    verify_release_outputs "${slug}" "${version}" "${release_sha}"
+    echo "Released ${PYPI_PACKAGE}, ${NPM_PACKAGE}, and ${CARGO_PACKAGE} ${version} from ${release_sha}"
 }
 
 main "$@"

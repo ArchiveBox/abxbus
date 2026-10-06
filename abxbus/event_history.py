@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import logging
-from collections.abc import Awaitable, Callable
+from collections import deque
+from collections.abc import Awaitable, Callable, Generator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any, Generic, Literal, TypeVar, overload
 
@@ -12,19 +13,35 @@ BaseEventT = TypeVar('BaseEventT', bound=BaseEvent[Any])
 TExpectedEvent = TypeVar('TExpectedEvent', bound=BaseEvent[Any])
 EventPatternType = str | Literal['*'] | type[BaseEvent[Any]]
 
-logger = logging.getLogger('abxbus')
-
 
 class EventHistory(dict[UUIDStr, BaseEventT], Generic[BaseEventT]):
     """Ordered event history map with query and trim helpers."""
 
-    __slots__ = ('max_history_size', 'max_history_drop', '_warned_about_dropping_uncompleted_events')
+    __slots__ = ('max_history_size', 'max_history_drop', '_retained')
 
     def __init__(self, max_history_size: int | None = 100, max_history_drop: bool = False):
         super().__init__()
         self.max_history_size = max_history_size
         self.max_history_drop = max_history_drop
-        self._warned_about_dropping_uncompleted_events = False
+        self._retained: dict[str, int] = {}
+
+    @contextmanager
+    def retain(self, event: BaseEventT) -> Generator[None]:
+        """Keep an event and its ancestry while an external resource is alive.
+
+        Enter before emitting the event so dispatch cannot evict it first.
+        Retention applies to bounded dropping history, not max_history_size=0.
+        """
+        event_id = event.event_id
+        self._retained[event_id] = self._retained.get(event_id, 0) + 1
+        try:
+            yield
+        finally:
+            remaining = self._retained[event_id] - 1
+            if remaining:
+                self._retained[event_id] = remaining
+            else:
+                del self._retained[event_id]
 
     def add_event(self, event: BaseEventT) -> None:
         self[event.event_id] = event
@@ -315,41 +332,34 @@ class EventHistory(dict[UUIDStr, BaseEventT], Generic[BaseEventT]):
         if not self.max_history_drop or len(self) <= self.max_history_size:
             return 0
 
-        remaining_overage = len(self) - self.max_history_size
+        # An event's ancestry remains queryable until its last retained child
+        # is evicted. Pending/running work can temporarily exceed the limit;
+        # completing it makes its leaves eligible for the next trim.
+        children: dict[str, int] = {}
+        for event in self.values():
+            if event.event_parent_id:
+                children[event.event_parent_id] = children.get(event.event_parent_id, 0) + 1
+        leaves = deque(
+            event_id
+            for event_id, event in self.items()
+            if event.event_status == 'completed' and not children.get(event_id) and event_id not in self._retained
+        )
         removed_count = 0
-
-        def remove_event(event_id: str, event: BaseEventT) -> None:
-            nonlocal removed_count
-            del self[event_id]
+        while leaves and len(self) > self.max_history_size:
+            event_id = leaves.popleft()
+            event = self.pop(event_id)
             if on_remove:
                 on_remove(event)
             removed_count += 1
-
-        for event_id, event in list(self.items()):
-            if remaining_overage <= 0:
-                break
-            if event.event_status != 'completed':
-                continue
-            remove_event(event_id, event)
-            remaining_overage -= 1
-
-        dropped_uncompleted = 0
-        for event_id, event in list(self.items()):
-            if remaining_overage <= 0:
-                break
-            if event.event_status != 'completed':
-                dropped_uncompleted += 1
-            remove_event(event_id, event)
-            remaining_overage -= 1
-
-        if dropped_uncompleted > 0 and not self._warned_about_dropping_uncompleted_events:
-            self._warned_about_dropping_uncompleted_events = True
-            owner = owner_label or 'EventBus'
-            logger.warning(
-                '[abxbus] ⚠️ Bus %s has exceeded max_history_size=%s and is dropping oldest history entries '
-                '(even uncompleted events). Increase max_history_size or set max_history_drop=False to reject.',
-                owner,
-                self.max_history_size,
-            )
-
+            parent_id = event.event_parent_id
+            if parent_id:
+                children[parent_id] -= 1
+                parent = self.get(parent_id)
+                if (
+                    children[parent_id] == 0
+                    and parent is not None
+                    and parent.event_status == 'completed'
+                    and parent_id not in self._retained
+                ):
+                    leaves.append(parent_id)
         return removed_count

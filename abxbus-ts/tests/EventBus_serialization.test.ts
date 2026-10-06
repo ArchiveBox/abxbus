@@ -10,6 +10,9 @@ const delay = (ms: number): Promise<void> =>
     setTimeout(resolve, ms)
   })
 
+const RestoreTTLProbeEvent = BaseEvent.extend('RestoreTTLProbeEvent', {})
+const RestoreTTLTouchEvent = BaseEvent.extend('RestoreTTLTouchEvent', {})
+
 test('EventBus toJSON/fromJSON roundtrip uses id-keyed structures', async () => {
   const bus = new EventBus('SerializableBus', {
     id: '018f8e40-1234-7000-8000-000000001234',
@@ -84,6 +87,76 @@ test('EventBus serialization preserves unbounded history null', () => {
   }
 })
 
+test('EventBus.fromJSON rebuilds TTL indexes for restored completed history', async () => {
+  const result_source = new EventBus('RestoreResultTTLBus', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: 0,
+  })
+  result_source.on(RestoreTTLProbeEvent, () => 'ok')
+  const result_event = await result_source.emit(RestoreTTLProbeEvent({})).now()
+  const result_event_id = result_event.event_id
+  const result_json = result_source.toJSON()
+  await result_source.destroy()
+
+  const restored_results = EventBus.fromJSON(result_json)
+  try {
+    assert.equal(restored_results.event_history.get(result_event_id)!.event_results.size > 0, true)
+    await restored_results.emit(RestoreTTLTouchEvent({})).now()
+    assert.equal(restored_results.event_history.has(result_event_id), true)
+    assert.equal(restored_results.event_history.get(result_event_id)!.event_results.size, 0)
+  } finally {
+    await restored_results.destroy()
+  }
+
+  const event_source = new EventBus('RestoreEventTTLBus', {
+    max_history_size: null,
+    event_ttl: 0,
+  })
+  event_source.on(RestoreTTLProbeEvent, () => 'ok')
+  const expired_event = await event_source.emit(RestoreTTLProbeEvent({})).now()
+  const expired_event_id = expired_event.event_id
+  const expired_json = event_source.toJSON()
+  await event_source.destroy()
+
+  const restored_events = EventBus.fromJSON(expired_json)
+  try {
+    assert.equal(restored_events.event_history.has(expired_event_id), true)
+    await restored_events.emit(RestoreTTLTouchEvent({})).now()
+    assert.equal(restored_events.event_history.has(expired_event_id), false)
+  } finally {
+    await restored_events.destroy()
+  }
+
+  const linked_source = new EventBus('RestoreLinkedHandlerTTLBus', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: -1,
+  })
+  const linked_handler = linked_source.on(RestoreTTLProbeEvent, () => 'ok', { handler_result_ttl: -1 } as unknown as Parameters<
+    EventBus['on']
+  >[2])
+  const linked_event = await linked_source.emit(RestoreTTLProbeEvent({})).now()
+  const linked_event_id = linked_event.event_id
+  const linked_json = linked_source.toJSON()
+  linked_json.handlers[linked_handler.id]!.handler_result_ttl = 0
+  const linked_result_json = linked_json.event_history[linked_event_id]!.event_results![linked_handler.id] as {
+    handler_result_ttl?: number | null
+  }
+  linked_result_json.handler_result_ttl = -1
+  await linked_source.destroy()
+
+  const restored_linked = EventBus.fromJSON(linked_json)
+  try {
+    assert.equal(restored_linked.event_history.get(linked_event_id)!.event_results.size, 1)
+    await restored_linked.emit(RestoreTTLTouchEvent({})).now()
+    assert.equal(restored_linked.event_history.has(linked_event_id), true)
+    assert.equal(restored_linked.event_history.get(linked_event_id)!.event_results.size, 0)
+  } finally {
+    await restored_linked.destroy()
+  }
+})
+
 test('EventBus.fromJSON null event_timeout uses default', () => {
   const bus = new EventBus('TimeoutNullBus')
   try {
@@ -95,6 +168,56 @@ test('EventBus.fromJSON null event_timeout uses default', () => {
     assert.equal(restored.toJSON().event_timeout, 60)
   } finally {
     bus.destroy()
+  }
+})
+
+test('EventBus.fromJSON rejects restored TTLs below -1', async () => {
+  const bus = new EventBus('BadRestoredTTLSourceBus', {
+    event_handler_detect_file_paths: false,
+  })
+  try {
+    const RestoredTTLEvent = BaseEvent.extend('BadRestoredTTLSourceEvent', {})
+    bus.on(RestoredTTLEvent, () => 'ok')
+    const event = await bus.emit(RestoredTTLEvent({})).now()
+    const handler_id = Array.from(event.event_results.keys())[0]
+    assert.ok(handler_id)
+    const json = bus.toJSON()
+
+    assert.throws(() => EventBus.fromJSON({ ...json, event_ttl: -2 }), /event_ttl/)
+    assert.throws(() => EventBus.fromJSON({ ...json, event_result_ttl: -2 }), /event_result_ttl/)
+    assert.throws(
+      () =>
+        EventBus.fromJSON({
+          ...json,
+          event_history: {
+            [event.event_id]: {
+              ...json.event_history[event.event_id],
+              event_ttl: -2,
+            },
+          },
+        }),
+      /event_ttl/
+    )
+    assert.throws(
+      () =>
+        EventBus.fromJSON({
+          ...json,
+          event_history: {
+            [event.event_id]: {
+              ...json.event_history[event.event_id],
+              event_results: {
+                [handler_id]: {
+                  ...(json.event_history[event.event_id]!.event_results as Record<string, Record<string, unknown>>)[handler_id],
+                  handler_result_ttl: -2,
+                },
+              },
+            },
+          },
+        }),
+      /handler_result_ttl/
+    )
+  } finally {
+    await bus.destroy()
   }
 })
 
@@ -294,6 +417,22 @@ test('BaseEvent toJSON uses shared JSON Schema fallback for transform event_resu
   const event = TransformResultEvent({})
 
   const json = event.toJSON() as Record<string, unknown>
+  const result_schema = json.event_result_type as Record<string, unknown>
+  const properties = result_schema.properties as Record<string, unknown>
+
+  assert.equal((properties.count as Record<string, unknown>).type, 'string')
+  assert.deepEqual(result_schema.required, ['count'])
+})
+
+test('BaseEvent toJSONArray uses shared JSON Schema fallback for transform event_result_type fields', () => {
+  const TransformResultEvent = BaseEvent.extend('BaseEventArrayTransformResultSchemaSerializationEvent', {
+    event_result_type: z.object({
+      count: z.string().transform(Number),
+    }),
+  })
+  const event = TransformResultEvent({})
+
+  const [json] = BaseEvent.toJSONArray([event]) as Record<string, unknown>[]
   const result_schema = json.event_result_type as Record<string, unknown>
   const properties = result_schema.properties as Record<string, unknown>
 

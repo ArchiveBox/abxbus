@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { v5 as uuidv5 } from 'uuid'
 
 import { normalizeEventPattern, type EventHandlerCallable, type EventPattern } from './types.js'
-import { BaseEvent } from './BaseEvent.js'
+import { BaseEvent, validateOptionalSecondsAtLeastMinusOne } from './BaseEvent.js'
 import type { EventResult } from './EventResult.js'
 import { monotonicDatetime } from './helpers.js'
 
@@ -88,8 +88,9 @@ export const EventHandlerJSONSchema = z
     event_pattern: z.union([z.string(), z.literal('*')]),
     handler_name: z.string(),
     handler_file_path: z.string().nullable().optional(),
-    handler_timeout: z.number().nullable().optional(),
-    handler_slow_timeout: z.number().nullable().optional(),
+    handler_timeout: z.number().nonnegative().nullable().optional(),
+    handler_slow_timeout: z.number().nonnegative().nullable().optional(),
+    handler_result_ttl: z.number().gte(-1).nullable().optional(),
     handler_registered_at: z.string().datetime(),
   })
   .strict()
@@ -104,6 +105,7 @@ export class EventHandler {
   handler_file_path: string | null // ~/path/to/source/file.ts:123, or null when unknown
   handler_timeout?: number | null // maximum time in seconds that the handler is allowed to run before it is aborted, resolved at runtime if not set
   handler_slow_timeout?: number | null // warning threshold in seconds for slow handler execution
+  private _handler_result_ttl_value?: number | null
   handler_registered_at: string // ISO datetime used in the deterministic handler-id seed
   event_pattern: string | '*' // event_type string to match against, or '*' to match all events
   eventbus_name: string // name of the event bus that the handler is registered on
@@ -116,6 +118,7 @@ export class EventHandler {
     handler_file_path?: string | null
     handler_timeout?: number | null
     handler_slow_timeout?: number | null
+    handler_result_ttl?: number | null
     handler_registered_at: string
     event_pattern: string | '*'
     eventbus_name: string
@@ -136,10 +139,19 @@ export class EventHandler {
     this.handler_file_path = params.handler_file_path ?? null
     this.handler_timeout = params.handler_timeout
     this.handler_slow_timeout = params.handler_slow_timeout
+    this.handler_result_ttl = params.handler_result_ttl
     this.handler_registered_at = handler_registered_at
     this.event_pattern = params.event_pattern
     this.eventbus_name = params.eventbus_name
     this.eventbus_id = params.eventbus_id
+  }
+
+  get handler_result_ttl(): number | null | undefined {
+    return this._handler_result_ttl_value
+  }
+
+  set handler_result_ttl(value: number | null | undefined) {
+    this._handler_result_ttl_value = validateOptionalSecondsAtLeastMinusOne('handler_result_ttl', value)
   }
 
   get _handler_async(): EventHandlerCallable {
@@ -177,6 +189,7 @@ export class EventHandler {
     handler_file_path?: string | null
     handler_timeout?: number | null
     handler_slow_timeout?: number | null
+    handler_result_ttl?: number | null
     handler_registered_at?: string
   }): EventHandler {
     const entry = new EventHandler({
@@ -186,6 +199,7 @@ export class EventHandler {
       handler_file_path: params.handler_file_path ?? null,
       handler_timeout: params.handler_timeout,
       handler_slow_timeout: params.handler_slow_timeout,
+      handler_result_ttl: params.handler_result_ttl,
       handler_registered_at: monotonicDatetime(params.handler_registered_at),
       event_pattern: normalizeEventPattern(params.event_pattern),
       eventbus_name: params.eventbus_name,
@@ -254,6 +268,7 @@ export class EventHandler {
       handler_file_path: this.handler_file_path,
       handler_timeout: this.handler_timeout,
       handler_slow_timeout: this.handler_slow_timeout,
+      handler_result_ttl: this.handler_result_ttl,
       handler_registered_at: this.handler_registered_at,
     }
   }
@@ -269,6 +284,7 @@ export class EventHandler {
       handler_file_path: record.handler_file_path ?? null,
       handler_timeout: record.handler_timeout,
       handler_slow_timeout: record.handler_slow_timeout,
+      handler_result_ttl: record.handler_result_ttl,
       handler_registered_at: record.handler_registered_at,
       event_pattern: record.event_pattern,
       eventbus_name: record.eventbus_name,

@@ -1,9 +1,13 @@
 [package]
 name = "abxbus"
-version = "2.5.41"
+version = "2.5.75"
 edition = "2021"
 license = "MIT"
 description = "Rust implementation of the abxbus Event Bus library"
+repository = "https://github.com/ArchiveBox/abxbus"
+homepage = "https://abxbus.archivebox.io"
+documentation = "https://docs.rs/abxbus"
+readme = "README.md"
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"runtime"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -178,26 +179,26 @@ func (l *LockManager) runWithHandlerDispatchContext(result *EventResult, handler
 		defer l.active_mu.Unlock()
 		for i := len(l.active_handler_result) - 1; i >= 0; i-- {
 			if l.active_handler_result[i] == result {
-				l.active_handler_result = append(l.active_handler_result[:i], l.active_handler_result[i+1:]...)
-				l.active_dispatch_context = append(l.active_dispatch_context[:i], l.active_dispatch_context[i+1:]...)
-				l.active_handler_context = append(l.active_handler_context[:i], l.active_handler_context[i+1:]...)
+				l.active_handler_result = slices.Delete(l.active_handler_result, i, i+1)
+				l.active_dispatch_context = slices.Delete(l.active_dispatch_context, i, i+1)
+				l.active_handler_context = slices.Delete(l.active_handler_context, i, i+1)
 				break
 			}
 		}
 		if stack := l.active_handler_by_g[gid]; len(stack) > 0 {
-			l.active_handler_by_g[gid] = stack[:len(stack)-1]
+			l.active_handler_by_g[gid] = slices.Delete(stack, len(stack)-1, len(stack))
 			if len(l.active_handler_by_g[gid]) == 0 {
 				delete(l.active_handler_by_g, gid)
 			}
 		}
 		if stack := l.active_dispatch_by_g[gid]; len(stack) > 0 {
-			l.active_dispatch_by_g[gid] = stack[:len(stack)-1]
+			l.active_dispatch_by_g[gid] = slices.Delete(stack, len(stack)-1, len(stack))
 			if len(l.active_dispatch_by_g[gid]) == 0 {
 				delete(l.active_dispatch_by_g, gid)
 			}
 		}
 		if stack := l.active_context_by_g[gid]; len(stack) > 0 {
-			l.active_context_by_g[gid] = stack[:len(stack)-1]
+			l.active_context_by_g[gid] = slices.Delete(stack, len(stack)-1, len(stack))
 			if len(l.active_context_by_g[gid]) == 0 {
 				delete(l.active_context_by_g, gid)
 			}

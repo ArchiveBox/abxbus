@@ -136,7 +136,7 @@ new EventBus(name?: string, options?: {
 | --------------------------------- | ------------------------------------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `id`                              | `string`                                                | `uuidv7()`     | Override bus UUID (mostly for serialization/tests).                                                                                                                  |
 | `max_history_size`                | `number \| null`                                        | `100`          | Max events kept in `event_history`; `null` = unbounded; `0` = keep only in-flight events and drop completed events immediately.                                      |
-| `max_history_drop`                | `boolean`                                               | `false`        | If `true`, when history is full drop oldest history entries (including uncompleted if needed). If `false`, reject new emits when history reaches `max_history_size`. |
+| `max_history_drop`                | `boolean`                                               | `false`        | If `true`, evict completed children before parents; active work and retained ancestry may temporarily exceed the limit. If `false`, reject new emits when history reaches `max_history_size`. |
 | `event_concurrency`               | `'global-serial' \| 'bus-serial' \| 'parallel' \| null` | `'bus-serial'` | Event-level scheduling policy, resolved at processing time when the event does not override it.                                                                       |
 | `event_handler_concurrency`       | `'serial' \| 'parallel' \| null`                        | `'serial'`     | Per-event handler scheduling policy, resolved at processing time when the event does not override it.                                                                |
 | `event_handler_completion`        | `'all' \| 'first'`                                      | `'all'`        | Event completion mode, resolved at processing time when the event does not override it.                                                                              |
@@ -549,16 +549,17 @@ eventResultUpdate(
   - `const seeded = event.eventResultUpdate(handler_entry, { eventbus: bus, status: 'pending' })`
   - `seeded.update({ status: 'completed', result: 'seeded' })`
 
-#### `reset()`
+#### `eventReset(options?)`
 
 ```ts
-reset(): this
+eventReset(options?: { ids?: boolean; status?: boolean; timestamps?: boolean; results?: boolean }): this
 ```
 
 - Returns a fresh event copy with runtime state reset to pending so it can be emitted again safely.
 - Original event object is unchanged.
-- Generates a new UUIDv7 `event_id` for the returned copy.
-- Clears runtime completion state (`event_results`, status/timestamps, captured async context, done signal, local bus binding).
+- By default, generates a new UUIDv7 `event_id` and clears routing lineage (`event_path`, parent/emitting handler ids, parent-completion blocking).
+- By default, resets lifecycle status and processing timestamps (`event_started_at`, `event_completed_at`) to pending, clears handler results, and clears runtime attachment state. `event_created_at` remains the original creation timestamp.
+- Set `ids`, `status`, `timestamps`, or `results` to `false` to preserve that specific field group on the returned copy.
 
 #### `toString()` / `toJSON()` / `fromJSON()`
 

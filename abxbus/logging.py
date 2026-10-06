@@ -218,12 +218,29 @@ def log_eventbus_tree(eventbus: 'EventBus') -> str:
 
 
 def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any]') -> None:
-    """Log detailed timeout information showing the event tree and which handler timed out"""
+    """Warn about the expired deadline; render the complete tree only for debugging.
+
+    A recursive crawl can contain thousands of completed events. Reprinting its
+    entire ancestry at WARNING buries both live progress and the actual failure,
+    and synchronous formatting can itself delay cleanup. Normal users need the
+    failing handler and its deadline, not every successful sibling. DEBUG keeps
+    the full causal tree available when investigating orchestration failures.
+    """
 
     from abxbus.base_event import logger
     from abxbus.event_bus import EventBus
 
     if not logger.isEnabledFor(logging.WARNING):
+        return
+
+    logger.warning(
+        'Handler timed out: %s on %s#%s (limit %ss; event tree: ABXBUS_LOGGING_LEVEL=DEBUG)',
+        timed_out_result.handler_name,
+        event.event_type,
+        event.event_id[-4:],
+        timed_out_result.timeout,
+    )
+    if not logger.isEnabledFor(logging.DEBUG):
         return
 
     now = datetime.now(UTC)
@@ -249,13 +266,13 @@ def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any
     pink = '\033[95m'
     reset = '\033[0m'
 
-    logger.warning('=' * 80)
+    logger.debug('=' * 80)
     timeout = timed_out_result.timeout
     timeout_label = f'{timeout}s' if timeout is not None else 'the configured handler timeout'
-    logger.warning(
+    logger.debug(
         f'⏱️  TIMEOUT ERROR - Handling took more than {timeout_label} for {timed_out_result.eventbus_label}.{timed_out_result.handler_name}({event})'
     )
-    logger.warning('=' * 80)
+    logger.debug('=' * 80)
 
     def print_handler_line(
         handler_indent: str,
@@ -346,7 +363,7 @@ def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any
             col9_extra = ''
 
         # Assemble and print
-        logger.warning(f'{left_part}{col4_padding}{col5_timing_icon} {col6_elapsed}{col7_slash}{col8_max}  {col9_extra}')
+        logger.debug(f'{left_part}{col4_padding}{col5_timing_icon} {col6_elapsed}{col7_slash}{col8_max}  {col9_extra}')
 
     def print_event_tree(evt: 'BaseEvent[Any]', indent: str = ''):
         """Recursively print event and its handlers"""
@@ -383,7 +400,7 @@ def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any
             col6_elapsed = f'{elapsed:2d}s'
 
         # Assemble and print
-        logger.warning(f'{left_part}{col4_padding}{col5_timing_icon}    {col6_elapsed}')
+        logger.debug(f'{left_part}{col4_padding}{col5_timing_icon}    {col6_elapsed}')
 
         # Increase indent for handlers (3 spaces to align under event name)
         handler_indent = indent + '   '
@@ -456,4 +473,4 @@ def log_timeout_tree(event: 'BaseEvent[Any]', timed_out_result: 'EventResult[Any
     # Print the tree starting from root
     print_event_tree(root_event)
 
-    logger.warning('\n' + '=' * 80 + '\n')
+    logger.debug('\n' + '=' * 80 + '\n')
