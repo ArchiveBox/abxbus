@@ -2,6 +2,7 @@ package abxbus_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -196,6 +197,42 @@ func TestEventHandlerCompletionExplicitFirstCancelsParallelLosers(t *testing.T) 
 	loser := firstSliceEventResultByHandlerName(t, emitted, "slow_handler")
 	if loser.Status != abxbus.EventResultError {
 		t.Fatalf("first completion should leave cancelled loser error result, got %#v", loser)
+	}
+}
+
+func TestFirstCompletionPublishesLoserBeforeCancellation(t *testing.T) {
+	bus := abxbus.NewEventBus("FirstCompletionPublication", &abxbus.EventBusOptions{
+		EventHandlerConcurrency: abxbus.EventHandlerConcurrencyParallel,
+		EventHandlerCompletion:  abxbus.EventHandlerCompletionFirst,
+	})
+	defer bus.Destroy()
+	started := make(chan struct{})
+	observed := make(chan []byte, 1)
+	var loser *abxbus.EventHandler
+	loser = bus.On("FirstCompletionPublicationEvent", "loser", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		close(started)
+		<-ctx.Done()
+		payload, err := json.Marshal(e.EventResults[loser.ID])
+		observed <- payload
+		return nil, err
+	}, nil)
+	bus.On("FirstCompletionPublicationEvent", "winner", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		<-started
+		return "winner", nil
+	}, nil)
+	event := bus.Emit(abxbus.NewBaseEvent("FirstCompletionPublicationEvent", nil))
+	if _, err := event.Now(); err != nil {
+		t.Fatal(err)
+	}
+	var record struct {
+		Status string `json:"status"`
+		Error  string `json:"error"`
+	}
+	if err := json.Unmarshal(<-observed, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != "error" || !strings.Contains(record.Error, "first-completion") {
+		t.Fatalf("cancellation exposed unsettled loser result: %#v", record)
 	}
 }
 

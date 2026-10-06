@@ -1495,6 +1495,22 @@ func (e *BaseEvent) runHandlers(ctx context.Context, bus *EventBus, handlers []*
 		}
 		for {
 			if hasSuccessfulResult() {
+				// Publish terminal loser records before cancellation becomes visible
+				// to handlers or the event can be reported complete.
+				for _, result := range results {
+					status, _, _, _ := result.snapshot()
+					var cancellation error
+					if status == EventResultPending {
+						cancellation = &EventHandlerCancelledError{Message: "Cancelled pending handler due to first-completion mode"}
+					} else if status == EventResultStarted {
+						cancellation = &EventHandlerAbortedError{Message: "Aborted running handler due to first-completion mode"}
+					} else {
+						continue
+					}
+					if result.markError(cancellation) {
+						bus.notifyEventResultChange(e, result, "completed")
+					}
+				}
 				if cancel != nil {
 					cancel()
 				}
@@ -1526,14 +1542,12 @@ func (e *BaseEvent) runHandlers(ctx context.Context, bus *EventBus, handlers []*
 }
 
 func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, handler *EventHandler, result *EventResult, signalFirstHandlerStarted func()) error {
-	status, _, _, _ := result.snapshot()
-	if status != EventResultPending {
+	if !result.markStarted() {
 		if signalFirstHandlerStarted != nil {
 			signalFirstHandlerStarted()
 		}
 		return nil
 	}
-	result.markStarted()
 	defer result.releaseQueueJumpPauses()
 	bus.notifyEventResultChange(event, result, "started")
 	if signalFirstHandlerStarted != nil {

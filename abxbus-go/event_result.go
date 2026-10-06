@@ -109,14 +109,16 @@ func EventResultFromJSON(data []byte) (*EventResult, error) {
 	return &parsed, nil
 }
 
-func (r *EventResult) markStarted() {
+func (r *EventResult) markStarted() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.Status == EventResultPending {
-		r.Status = EventResultStarted
-		now := monotonicDatetime()
-		r.StartedAt = &now
+	if r.Status != EventResultPending {
+		return false
 	}
+	r.Status = EventResultStarted
+	now := monotonicDatetime()
+	r.StartedAt = &now
+	return true
 }
 
 func (r *EventResult) markCompleted(result any) bool {

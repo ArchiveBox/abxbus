@@ -926,7 +926,8 @@ func (e *BaseEvent) raiseResultErrorsIfNeeded(options *resolvedEventResultOption
 
 func (e *BaseEvent) hasAnySettledResult() bool {
 	for _, result := range e.sortedEventResults() {
-		if result.Status == EventResultCompleted || result.Status == EventResultError {
+		status, _, _, _ := result.snapshot()
+		if status == EventResultCompleted || status == EventResultError {
 			return true
 		}
 	}
@@ -938,7 +939,8 @@ func (e *BaseEvent) hasValidResult(include func(result any, event_result *EventR
 		include = defaultEventResultInclude
 	}
 	for _, result := range e.sortedEventResults() {
-		if include(result.Result, result) {
+		_, value, _, _ := result.snapshot()
+		if include(value, result) {
 			return true
 		}
 	}
@@ -976,7 +978,8 @@ func isBaseEventResult(result any) bool {
 }
 
 func defaultResultInclude(result any, event_result *EventResult) bool {
-	if event_result.Status != EventResultCompleted || result == nil {
+	status, _, _, _ := event_result.snapshot()
+	if status != EventResultCompleted || result == nil {
 		return false
 	}
 	return !isBaseEventResult(result)
