@@ -294,6 +294,11 @@ class EventHistory(dict[UUIDStr, BaseEventT], Generic[BaseEventT]):
             for event in reversed(events):
                 if cutoff is not None and event.event_created_at < cutoff:
                     continue
+                # Large histories are mostly unrelated output events. Reject
+                # their types without calling the full matcher for every entry;
+                # check here rather than caching mutable event types in an index.
+                if event_key != '*' and event.event_type != event_key:
+                    continue
                 if matches(event):
                     results.append(event)
                     if limit is not None and len(results) >= limit:
