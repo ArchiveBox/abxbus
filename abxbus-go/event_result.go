@@ -24,6 +24,7 @@ type EventResult struct {
 	HandlerFilePath     *string           `json:"handler_file_path,omitempty"`
 	HandlerTimeout      *float64          `json:"handler_timeout,omitempty"`
 	HandlerSlowTimeout  *float64          `json:"handler_slow_timeout,omitempty"`
+	Timeout             *float64          `json:"timeout,omitempty"`
 	HandlerResultTTL    *float64          `json:"handler_result_ttl,omitempty"`
 	HandlerRegisteredAt string            `json:"handler_registered_at"`
 	HandlerEventPattern string            `json:"handler_event_pattern"`
@@ -33,6 +34,7 @@ type EventResult struct {
 	CompletedAt         *string           `json:"completed_at,omitempty"`
 	Result              any               `json:"result,omitempty"`
 	Error               any               `json:"error,omitempty"`
+	ResultSet           bool              `json:"-"`
 	EventChildren       []*BaseEvent      `json:"-"`
 	EventChildIDs       []string          `json:"-"`
 
@@ -41,6 +43,7 @@ type EventResult struct {
 
 	mu                     sync.Mutex
 	queueJumpPauseReleases map[*EventBus]func()
+	coreInvocationID       string
 	done_ch                chan struct{}
 	once                   sync.Once
 }
@@ -84,6 +87,7 @@ func NewEventResult(event *BaseEvent, handler *EventHandler) *EventResult {
 		HandlerFilePath:     handler.HandlerFilePath,
 		HandlerTimeout:      handler.HandlerTimeout,
 		HandlerSlowTimeout:  handler.HandlerSlowTimeout,
+		Timeout:             handler.HandlerTimeout,
 		HandlerResultTTL:    handler.HandlerResultTTL,
 		HandlerRegisteredAt: handler.HandlerRegisteredAt,
 		HandlerEventPattern: handler.EventPattern,
@@ -293,6 +297,7 @@ func (r *EventResult) UnmarshalJSON(data []byte) error {
 	r.CompletedAt = parsed.CompletedAt
 	r.Result = parsed.Result
 	r.Error = parsed.Error
+	r.ResultSet = false
 	r.EventChildIDs = append([]string{}, parsed.EventChildren...)
 	r.EventChildren = nil
 	r.done_ch = make(chan struct{})
@@ -317,6 +322,7 @@ func (r *EventResult) Update(options *EventResultUpdateOptions) *EventResult {
 
 	hasResult := options.ResultSet || options.Result != nil
 	if hasResult {
+		r.ResultSet = true
 		if errValue, ok := options.Result.(error); ok {
 			r.Result = nil
 			r.Error = errValue.Error()
@@ -338,6 +344,7 @@ func (r *EventResult) Update(options *EventResultUpdateOptions) *EventResult {
 
 	hasError := options.ErrorSet || options.Error != nil
 	if hasError {
+		r.ResultSet = false
 		r.Error = toErrorString(options.Error)
 		r.Status = EventResultError
 	}

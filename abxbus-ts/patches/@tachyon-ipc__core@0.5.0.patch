@@ -1,0 +1,83 @@
+diff --git a/dist/bus.js b/dist/bus.js
+index 526f26d1b04ab722915b266f07ac20a84d09ef4b..0db4820e13b413cbc5fa5d2c8e40fbaa42acc90f 100644
+--- a/dist/bus.js
++++ b/dist/bus.js
+@@ -5,10 +5,10 @@ import { AbiMismatchError, ErrorCode, PeerDeadError, isTachyonError } from "./er
+ import { RxGuard, TxGuard } from "./guards.js";
+ const _require = createRequire(import.meta.url);
+ function loadNative() {
+-    const candidates = [
+-        new URL('../../build/Release/tachyon_node.node', import.meta.url).pathname,
+-        new URL('../../build/Debug/tachyon_node.node', import.meta.url).pathname,
+-    ];
++	const candidates = [
++		new URL('../build/Release/tachyon_node.node', import.meta.url).pathname,
++		new URL('../build/Debug/tachyon_node.node', import.meta.url).pathname,
++	];
+     for (const p of candidates) {
+         try {
+             return _require(p);
+diff --git a/dist/rpc.js b/dist/rpc.js
+index 2a591d4b2879a579aa84240cc6bdf51efb3664d7..c5d29696c12ba2abe1ce469827b67e0690dccdf6 100644
+--- a/dist/rpc.js
++++ b/dist/rpc.js
+@@ -2,10 +2,10 @@ import { createRequire } from 'node:module';
+ import { AbiMismatchError, ErrorCode, PeerDeadError, isTachyonError } from "./error.js";
+ const _require = createRequire(import.meta.url);
+ function loadNative() {
+-    const candidates = [
+-        new URL('../../build/Release/tachyon_node.node', import.meta.url).pathname,
+-        new URL('../../build/Debug/tachyon_node.node', import.meta.url).pathname,
+-    ];
++	const candidates = [
++		new URL('../build/Release/tachyon_node.node', import.meta.url).pathname,
++		new URL('../build/Debug/tachyon_node.node', import.meta.url).pathname,
++	];
+     for (const p of candidates) {
+         try {
+             return _require(p);
+diff --git a/src/native/_core_local/src/arena.cpp b/src/native/_core_local/src/arena.cpp
+index b5a991ce734cee4055f35df1246f9d99f0917bd7..849cd4e3f9d0184c7a11c52896ebc387f05f9d59 100644
+--- a/src/native/_core_local/src/arena.cpp
++++ b/src/native/_core_local/src/arena.cpp
+@@ -50,6 +50,7 @@ namespace tachyon::core {
+ 
+ #if defined(__APPLE__)
+ #define UL_COMPARE_AND_WAIT 1
++#define UL_COMPARE_AND_WAIT_SHARED 3
+ #define ULF_WAKE_ALL 0x00000100
+ 
+ 		extern "C" int __ulock_wait(uint32_t operation, void *addr, uint64_t value, uint32_t timeout);
+@@ -71,7 +72,7 @@ namespace tachyon::core {
+ 			TACHYON_TSAN_ACQUIRE(addr);
+ 			return WaitResult::Woken;
+ #elif defined(__APPLE__)
+-			if (__ulock_wait(UL_COMPARE_AND_WAIT, addr, 1, WATCHDOG_TIMEOUT_US) == -1) {
++			if (__ulock_wait(UL_COMPARE_AND_WAIT_SHARED, addr, 1, WATCHDOG_TIMEOUT_US) == -1) {
+ 				if (errno == EINTR)
+ 					return WaitResult::Interrupted;
+ 				if (errno == ETIMEDOUT)
+@@ -92,7 +93,7 @@ namespace tachyon::core {
+ #if defined(__linux__)
+ 			syscall(SYS_futex, addr, FUTEX_WAKE, 1, nullptr, nullptr, 0);
+ #elif defined(__APPLE__)
+-			__ulock_wake(UL_COMPARE_AND_WAIT | ULF_WAKE_ALL, addr, 0);
++			__ulock_wake(UL_COMPARE_AND_WAIT_SHARED | ULF_WAKE_ALL, addr, 0);
+ #endif
+ 		}
+ 	} // namespace
+@@ -542,7 +543,13 @@ namespace tachyon::core {
+ 		pending_tx_ = 0;
+ 		if (layout_->indices.consumer_sleeping.load(std::memory_order_relaxed) != CONSUMER_PURE_SPIN) [[unlikely]] {
+ 			std::atomic_thread_fence(std::memory_order_seq_cst);
+-			if (layout_->indices.consumer_sleeping.load(std::memory_order_acquire) == CONSUMER_SLEEPING) [[unlikely]] {
++			uint32_t expected = CONSUMER_SLEEPING;
++			if (layout_->indices.consumer_sleeping.compare_exchange_strong(
++					expected,
++					CONSUMER_AWAKE,
++					std::memory_order_acq_rel,
++					std::memory_order_acquire
++				)) [[unlikely]] {
+ 				platform_wake(&layout_->indices.consumer_sleeping);
+ 			}
+ 		}

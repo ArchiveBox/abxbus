@@ -1,9 +1,10 @@
 import asyncio
+from typing import Any
 
 # pyright: reportPrivateUsage=false
 import pytest
 
-from abxbus import BaseEvent, EventBus, EventConcurrencyMode, EventHandlerConcurrencyMode
+from abxbus import BaseEvent, EventBus, EventConcurrencyMode, EventHandlerConcurrencyMode, EventResult
 from abxbus.lock_manager import ReentrantLock
 
 
@@ -102,7 +103,7 @@ async def test_run_with_event_lock_and_handler_lock_respect_parallel_bypass() ->
         event_handler_concurrency='serial',
     )
 
-    parallel_event = BaseEvent(
+    parallel_event: BaseEvent[Any] = BaseEvent(
         event_type='ParallelBypassEvent',
         event_concurrency=EventConcurrencyMode.PARALLEL,
         event_handler_concurrency=EventHandlerConcurrencyMode.PARALLEL,
@@ -111,15 +112,15 @@ async def test_run_with_event_lock_and_handler_lock_respect_parallel_bypass() ->
     async with bus.locks._run_with_event_lock(bus, parallel_event):
         assert bus.event_bus_serial_lock.locked() is False
 
-    parallel_result = parallel_event.event_result_update(handler=lambda _event: None)
+    parallel_result: EventResult[Any] = parallel_event.event_result_update(handler=lambda _event: None)
     async with bus.locks._run_with_handler_lock(bus, parallel_event, parallel_result):
         assert parallel_event._get_handler_lock() is None  # pyright: ignore[reportPrivateUsage]
 
-    serial_event = BaseEvent(event_type='SerialAcquireEvent')
+    serial_event: BaseEvent[Any] = BaseEvent(event_type='SerialAcquireEvent')
     async with bus.locks._run_with_event_lock(bus, serial_event):
         assert bus.event_bus_serial_lock.locked() is True
 
-    serial_result = serial_event.event_result_update(handler=lambda _event: None)
+    serial_result: EventResult[Any] = serial_event.event_result_update(handler=lambda _event: None)
     async with bus.locks._run_with_handler_lock(bus, serial_event, serial_result):
         lock = serial_event._get_handler_lock()  # pyright: ignore[reportPrivateUsage]
         assert lock is not None
@@ -163,7 +164,7 @@ async def test_reentrant_lock_releases_and_reraises_on_exception() -> None:
 
 async def test_run_with_event_lock_releases_and_reraises_on_exception() -> None:
     bus = EventBus(name='LockManagerEventErrorBus', event_concurrency='bus-serial')
-    event = BaseEvent(event_type='EventLockErrorEvent')
+    event: BaseEvent[Any] = BaseEvent(event_type='EventLockErrorEvent')
 
     lock = bus.locks.get_lock_for_event(bus, event)
     assert lock is not None
@@ -180,8 +181,8 @@ async def test_run_with_event_lock_releases_and_reraises_on_exception() -> None:
 
 async def test_run_with_handler_lock_releases_and_reraises_on_exception() -> None:
     bus = EventBus(name='LockManagerHandlerErrorBus', event_handler_concurrency='serial')
-    event = BaseEvent(event_type='HandlerLockErrorEvent')
-    event_result = event.event_result_update(handler=lambda _event: None)
+    event: BaseEvent[Any] = BaseEvent(event_type='HandlerLockErrorEvent')
+    event_result: EventResult[Any] = event.event_result_update(handler=lambda _event: None)
 
     with pytest.raises(RuntimeError, match='handler-lock-error'):
         async with bus.locks._run_with_handler_lock(bus, event, event_result):

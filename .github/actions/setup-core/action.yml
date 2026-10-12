@@ -1,0 +1,36 @@
+name: Set up Rust core
+description: Build the shared core and configure the native transport toolchain
+runs:
+  using: composite
+  steps:
+    - name: Install native toolchain on Linux
+      if: runner.os == 'Linux'
+      uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9
+      with:
+        packages: cmake gcc-14 g++-14
+        version: core-native-v1
+    - name: Install native toolchain on macOS
+      if: runner.os == 'macOS'
+      shell: bash
+      run: brew install cmake
+    - name: Configure native toolchain
+      shell: bash
+      run: |
+        if [[ "$RUNNER_OS" == "macOS" ]]; then
+          echo "CC=clang" >> "$GITHUB_ENV"
+          echo "CXX=clang++" >> "$GITHUB_ENV"
+          echo "MACOSX_DEPLOYMENT_TARGET=14.0" >> "$GITHUB_ENV"
+        else
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+        fi
+    - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      with:
+        toolchain: 1.97.1
+    - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+      with:
+        workspaces: abxbus-core -> target
+    - name: Build core
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      run: cargo build --locked --release --manifest-path abxbus-core/Cargo.toml --bin abxbus-core-tachyon

@@ -13,6 +13,8 @@ from .base_event import (
     UUIDStr,
 )
 from .bridges import EventBridge, HTTPEventBridge, JSONLEventBridge, SocketEventBridge, SQLiteEventBridge
+from .core_bus import RustCoreEventBus
+from .core_client import RustCoreClient
 from .event_bus import EventBus
 from .event_handler import (
     EventHandler,
@@ -37,6 +39,8 @@ from .middlewares import (
 
 __all__ = [
     'EventBus',
+    'RustCoreClient',
+    'RustCoreEventBus',
     'EventBusMiddleware',
     'BusHandlerRegisteredEvent',
     'BusHandlerUnregisteredEvent',

@@ -79,7 +79,7 @@ export class RedisEventBridge {
     this.url = parsed.url
     this.channel = parsed.channel
     this.name = name ?? `RedisEventBridge_${randomSuffix()}`
-    this.inbound_bus = new EventBus(this.name, { max_history_size: 0 })
+    this.inbound_bus = new EventBus(this.name, { max_history_size: 100, max_history_drop: true })
     this.running = false
     this.start_promise = null
     this.redis_pub = null

@@ -145,6 +145,9 @@ type EventBus struct {
 	ttlDeadlineQueue  []ttlDeadlineEntry
 	ttlDeadlinesByID  map[string]float64
 	destroyed         bool
+	core              *RustCoreEventBus
+	coreInitial       map[string][]CoreProtocolEnvelope
+	coreRouteIDs      map[string]string
 
 	mu          sync.Mutex
 	global_lock *AsyncLock
@@ -240,6 +243,8 @@ func NewEventBus(name string, options *EventBusOptions) *EventBus {
 		inFlightEventIDs:            map[string]bool{},
 		findWaiters:                 []*findWaiter{},
 		middlewares:                 append([]EventBusMiddleware{}, options.Middlewares...),
+		coreInitial:                 map[string][]CoreProtocolEnvelope{},
+		coreRouteIDs:                map[string]string{},
 		ttlDeadlineQueue:            []ttlDeadlineEntry{},
 		ttlDeadlinesByID:            map[string]float64{},
 		global_lock:                 shared_global_event_lock,
@@ -1063,19 +1068,29 @@ func activeHandlerResultFromContext(ctx context.Context) *EventResult {
 	return nil
 }
 
-func (c handlerContext) Deadline() (time.Time, bool) { return c.base.Deadline() }
-func (c handlerContext) Done() <-chan struct{}       { return c.base.Done() }
-func (c handlerContext) Err() error                  { return c.base.Err() }
+func (c handlerContext) baseContext() context.Context {
+	if c.base != nil {
+		return c.base
+	}
+	return context.Background()
+}
+
+func (c handlerContext) Deadline() (time.Time, bool) { return c.baseContext().Deadline() }
+func (c handlerContext) Done() <-chan struct{}       { return c.baseContext().Done() }
+func (c handlerContext) Err() error                  { return c.baseContext().Err() }
 func (c handlerContext) Value(key any) any {
 	if c.values != nil {
 		if value := c.values.Value(key); value != nil {
 			return value
 		}
 	}
-	return c.base.Value(key)
+	return c.baseContext().Value(key)
 }
 
 func mergeHandlerContext(base context.Context, values context.Context) context.Context {
+	if base == nil {
+		base = context.Background()
+	}
 	if values == nil || values == base {
 		return base
 	}
@@ -1171,6 +1186,32 @@ func completeIdleEventAcrossBuses(event *BaseEvent) bool {
 	}
 	completeEventAcrossBuses(event)
 	return true
+}
+
+func (b *EventBus) finalizeCoreEvent(event *BaseEvent) {
+	if b == nil || event == nil {
+		return
+	}
+	wasInFlight := false
+	b.mu.Lock()
+	if b.inFlightEventIDs[event.EventID] {
+		wasInFlight = true
+		delete(b.inFlightEventIDs, event.EventID)
+	}
+	b.mu.Unlock()
+	if event.status() == "completed" {
+		if wasInFlight {
+			b.notifyEventChange(event, "completed")
+			if b.EventHistory != nil {
+				b.EventHistory.TrimEventHistory(nil)
+			}
+		}
+		event.signalCompleted()
+	}
+	b.locks.notifyIdleListeners()
+	if wasInFlight {
+		b.startRunloop()
+	}
 }
 
 func startRunloopsForEvent(event *BaseEvent) {
@@ -1554,8 +1595,8 @@ func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, hand
 		signalFirstHandlerStarted()
 	}
 	ctx2 := ctx
-	if event.dispatchCtx != nil {
-		ctx2 = mergeHandlerContext(ctx, event.dispatchCtx)
+	if dispatchCtx := event.dispatchContext(); dispatchCtx != nil {
+		ctx2 = mergeHandlerContext(ctx, dispatchCtx)
 	}
 	explicit_handler_timeout := handler.HandlerTimeout
 	if explicit_handler_timeout == nil {

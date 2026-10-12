@@ -3,6 +3,16 @@ import type { EventPattern, FindWindow } from './types.js'
 import { normalizeEventPattern } from './types.js'
 import { monotonicDatetime } from './helpers.js'
 
+const normalizeMaxHistorySize = (value: number | null | undefined): number | null => {
+  if (value === undefined) {
+    return 100
+  }
+  if (value === null || value <= 0) {
+    return null
+  }
+  return value
+}
+
 export type EventHistoryFindOptions = {
   past?: FindWindow
   future?: FindWindow
@@ -32,7 +42,7 @@ export class EventHistory<TEvent extends BaseEvent = BaseEvent> implements Itera
   private _events: Map<string, TEvent>
 
   constructor(options: { max_history_size?: number | null; max_history_drop?: boolean } = {}) {
-    this.max_history_size = options.max_history_size === undefined ? 100 : options.max_history_size
+    this.max_history_size = normalizeMaxHistorySize(options.max_history_size)
     this.max_history_drop = options.max_history_drop ?? false
     this._events = new Map()
   }
@@ -199,7 +209,7 @@ export class EventHistory<TEvent extends BaseEvent = BaseEvent> implements Itera
   }
 
   trimEventHistory(options: EventHistoryTrimOptions<TEvent> = {}): number {
-    const max_history_size = options.max_history_size ?? this.max_history_size
+    const max_history_size = normalizeMaxHistorySize(options.max_history_size ?? this.max_history_size)
     const max_history_drop = options.max_history_drop ?? this.max_history_drop
     if (max_history_size === null) {
       return 0
@@ -207,19 +217,6 @@ export class EventHistory<TEvent extends BaseEvent = BaseEvent> implements Itera
 
     const is_event_complete = options.is_event_complete ?? ((event: TEvent) => event.event_status === 'completed')
     const on_remove = options.on_remove
-
-    if (max_history_size === 0) {
-      let removed_count = 0
-      for (const [event_id, event] of Array.from(this._events.entries())) {
-        if (!is_event_complete(event)) {
-          continue
-        }
-        this._events.delete(event_id)
-        on_remove?.(event)
-        removed_count += 1
-      }
-      return removed_count
-    }
 
     if (!max_history_drop || this.size <= max_history_size) {
       return 0

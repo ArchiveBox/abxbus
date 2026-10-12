@@ -185,7 +185,7 @@ export const buildResultLine = (
     } else if (result.error instanceof EventHandlerCancelledError) {
       line += ` Cancelled: ${result.error.message}`
     } else if (result.error instanceof EventHandlerAbortedError) {
-      line += ` Aborted: ${result.error.message}`
+      line += result.error.message.startsWith('Aborted: ') ? ` ${result.error.message}` : ` Aborted: ${result.error.message}`
     } else {
       const error_name = result.error instanceof Error ? result.error.name : 'Error'
       const error_message = result.error instanceof Error ? result.error.message : String(result.error)

@@ -39,6 +39,7 @@ pub struct BaseEventData {
     pub event_path: Vec<String>,
     pub event_parent_id: Option<String>,
     pub event_emitted_by_handler_id: Option<String>,
+    pub event_emitted_by_result_id: Option<String>,
     pub event_pending_bus_count: usize,
     pub event_created_at: String,
     pub event_status: EventStatus,
@@ -260,6 +261,8 @@ impl BaseEvent {
         let event_parent_id = take_option_string(&mut payload, "event_parent_id")?;
         let event_emitted_by_handler_id =
             take_option_string(&mut payload, "event_emitted_by_handler_id")?;
+        let event_emitted_by_result_id =
+            take_option_string(&mut payload, "event_emitted_by_result_id")?;
         let event_pending_bus_count =
             take_usize(&mut payload, "event_pending_bus_count")?.unwrap_or(0);
         let event_created_at =
@@ -290,6 +293,7 @@ impl BaseEvent {
                 event_path,
                 event_parent_id,
                 event_emitted_by_handler_id,
+                event_emitted_by_result_id,
                 event_pending_bus_count,
                 event_created_at,
                 event_status,
@@ -824,6 +828,9 @@ impl BaseEvent {
         let event = self.inner.lock();
         let mut value = serde_json::to_value(&*event).unwrap_or(Value::Null);
         if let Value::Object(ref mut object) = value {
+            if event.event_emitted_by_result_id.is_none() {
+                object.remove("event_emitted_by_result_id");
+            }
             if let Some(schema) = object.get_mut("event_result_type") {
                 *schema = normalize_json_schema(schema.take());
             }
@@ -937,6 +944,7 @@ impl BaseEvent {
                 "event_result_type",
                 "event_parent_id",
                 "event_emitted_by_handler_id",
+                "event_emitted_by_result_id",
                 "event_started_at",
                 "event_completed_at",
             ] {

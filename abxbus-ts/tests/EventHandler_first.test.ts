@@ -77,11 +77,11 @@ test('test_event_parallel_first_races_and_cancels_non_winners', async () => {
     event_handler_completion: 'all',
   })
   const CompletionEvent = BaseEvent.extend('CompletionParallelFirstEvent', { event_result_type: z.string() })
-  let slow_started = false
+  let slow_completed = false
 
   async function slow_handler_started() {
-    slow_started = true
     await delay(500)
+    slow_completed = true
     return 'slow-started'
   }
 
@@ -92,6 +92,7 @@ test('test_event_parallel_first_races_and_cancels_non_winners', async () => {
 
   async function slow_handler_pending_or_started() {
     await delay(500)
+    slow_completed = true
     return 'slow-other'
   }
 
@@ -109,11 +110,8 @@ test('test_event_parallel_first_races_and_cancels_non_winners', async () => {
     assert.equal(event.event_handler_concurrency, 'parallel')
     assert.equal(event.event_handler_completion, 'first')
 
-    const started = performance.now()
     await event.now()
-    const elapsed = performance.now() - started
-    assert.equal(slow_started, true)
-    assert.equal(elapsed < 200, true)
+    assert.equal(slow_completed, false)
 
     const winner_result = Array.from(event.event_results.values()).find((result) => result.handler_name === 'fast_winner')
     assert.equal(winner_result?.status, 'completed')

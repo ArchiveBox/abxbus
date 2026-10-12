@@ -45,6 +45,7 @@ type BaseEvent struct {
 	EventPath                   []string                    `json:"event_path,omitempty"`
 	EventResultType             any                         `json:"event_result_type,omitempty"`
 	EventEmittedByHandlerID     *string                     `json:"event_emitted_by_handler_id,omitempty"`
+	EventEmittedByResultID      *string                     `json:"event_emitted_by_result_id,omitempty"`
 	EventPendingBusCount        int                         `json:"event_pending_bus_count"`
 	EventStatus                 string                      `json:"event_status"`
 	EventStartedAt              *string                     `json:"event_started_at,omitempty"`
@@ -62,6 +63,7 @@ type BaseEvent struct {
 	EventResults      map[string]*EventResult `json:"-"`
 	eventResultOrder  []string
 	dispatchCtx       context.Context `json:"-"`
+	coreKnown         bool
 	mu                sync.Mutex
 	done_ch           chan struct{}
 	done_once         sync.Once
@@ -198,6 +200,9 @@ func (e *BaseEvent) MarshalJSON() ([]byte, error) {
 		jsonObjectEntry{key: "event_started_at", value: e.EventStartedAt},
 		jsonObjectEntry{key: "event_completed_at", value: e.EventCompletedAt},
 	)
+	if e.EventEmittedByResultID != nil {
+		entries = append(entries, jsonObjectEntry{key: "event_emitted_by_result_id", value: e.EventEmittedByResultID})
+	}
 	if len(e.EventResults) > 0 {
 		resultEntries := make([]jsonObjectEntry, 0, len(e.EventResults))
 		for _, result := range e.sortedEventResults() {
@@ -243,6 +248,7 @@ func (e *BaseEvent) UnmarshalJSON(data []byte) error {
 		EventPath                   []string                    `json:"event_path,omitempty"`
 		EventResultType             json.RawMessage             `json:"event_result_type,omitempty"`
 		EventEmittedByHandlerID     *string                     `json:"event_emitted_by_handler_id,omitempty"`
+		EventEmittedByResultID      *string                     `json:"event_emitted_by_result_id,omitempty"`
 		EventPendingBusCount        int                         `json:"event_pending_bus_count"`
 		EventStatus                 string                      `json:"event_status"`
 		EventStartedAt              *string                     `json:"event_started_at,omitempty"`
@@ -297,6 +303,7 @@ func (e *BaseEvent) UnmarshalJSON(data []byte) error {
 		e.EventResultType = nil
 	}
 	e.EventEmittedByHandlerID = m.EventEmittedByHandlerID
+	e.EventEmittedByResultID = m.EventEmittedByResultID
 	e.EventPendingBusCount = m.EventPendingBusCount
 	e.EventStatus = m.EventStatus
 	e.EventStartedAt = m.EventStartedAt
@@ -539,12 +546,19 @@ func (e *BaseEvent) markStarted() {
 }
 
 func (e *BaseEvent) markCompleted() {
+	e.markCompletedAt(nil)
+}
+
+func (e *BaseEvent) markCompletedAt(completedAt *string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.EventStatus = "completed"
 	if e.EventCompletedAt == nil {
-		now := monotonicDatetime()
-		e.EventCompletedAt = &now
+		if completedAt == nil {
+			now := monotonicDatetime()
+			completedAt = &now
+		}
+		e.EventCompletedAt = completedAt
 	}
 	if e.EventStartedAt == nil {
 		e.EventStartedAt = e.EventCompletedAt
@@ -575,6 +589,15 @@ func (e *BaseEvent) status() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.EventStatus
+}
+
+func (e *BaseEvent) dispatchContext() context.Context {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.dispatchCtx
 }
 
 func (e *BaseEvent) isUnattachedPendingEvent() bool {

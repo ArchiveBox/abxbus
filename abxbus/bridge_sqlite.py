@@ -24,7 +24,8 @@ from typing import Any, TypeGuard
 from uuid_extensions import uuid7str
 
 from abxbus.base_event import BaseEvent
-from abxbus.event_bus import EventBus, EventPatternType, in_handler_context
+from abxbus.bridge_utils import dispatch_bridge_event, event_pattern_matches
+from abxbus.event_bus import EventPatternType, in_handler_context
 
 _IDENTIFIER_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 _EVENT_PAYLOAD_COLUMN = 'event_payload'
@@ -61,7 +62,7 @@ class SQLiteEventBridge:
         self.path = Path(path)
         self.table = _validate_identifier(table, label='table name')
         self.poll_interval = poll_interval
-        self._inbound_bus = EventBus(name=name or f'SQLiteEventBridge_{uuid7str()[-8:]}', max_history_size=0)
+        self.name = name or f'SQLiteEventBridge_{uuid7str()[-8:]}'
 
         self._running = False
         self._start_task: asyncio.Task[None] | None = None
@@ -70,10 +71,11 @@ class SQLiteEventBridge:
         self._last_seen_event_created_at = ''
         self._last_seen_event_id = ''
         self._table_columns: set[str] = {'event_id', 'event_created_at', 'event_type', _EVENT_PAYLOAD_COLUMN}
+        self._handlers: list[tuple[EventPatternType, Callable[[BaseEvent[Any]], Any]]] = []
 
     def on(self, event_pattern: EventPatternType, handler: Callable[[BaseEvent[Any]], Any]) -> None:
         self._ensure_started()
-        self._inbound_bus.on(event_pattern, handler)
+        self._handlers.append((event_pattern, handler))
 
     async def emit(self, event: BaseEvent[Any]) -> BaseEvent[Any] | None:
         self._ensure_started()
@@ -133,7 +135,6 @@ class SQLiteEventBridge:
             self._listener_task.cancel()
             await asyncio.gather(self._listener_task, return_exceptions=True)
             self._listener_task = None
-        await self._inbound_bus.destroy(clear=clear)
 
     def _ensure_started(self) -> None:
         if self._running:
@@ -156,9 +157,6 @@ class SQLiteEventBridge:
                 for row in rows:
                     event_created_at = str(row.get('event_created_at') or '')
                     event_id = str(row.get('event_id') or '')
-                    if event_created_at or event_id:
-                        self._last_seen_event_created_at = event_created_at
-                        self._last_seen_event_id = event_id
 
                     payload: dict[str, Any] = {}
                     raw_event_payload = row.get(_EVENT_PAYLOAD_COLUMN)
@@ -182,6 +180,9 @@ class SQLiteEventBridge:
                             payload[key] = raw_value
 
                     await self._dispatch_inbound_payload(payload)
+                    if event_created_at or event_id:
+                        self._last_seen_event_created_at = event_created_at
+                        self._last_seen_event_id = event_id
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -190,7 +191,11 @@ class SQLiteEventBridge:
 
     async def _dispatch_inbound_payload(self, payload: Any) -> None:
         event = BaseEvent[Any].model_validate(payload).event_reset()
-        self._inbound_bus.emit(event)
+        await dispatch_bridge_event(self._handlers, event)
+
+    @staticmethod
+    def _matches(event_pattern: EventPatternType, event: BaseEvent[Any]) -> bool:
+        return event_pattern_matches(event_pattern, event)
 
     def _connect(self) -> sqlite3.Connection:
         # Under concurrent bridge startup/teardown across processes, sqlite can
