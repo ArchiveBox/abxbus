@@ -1,0 +1,35 @@
+abxbus-core/src/protocol.rs
+  s_13875c652141e9::t_a1a362c61caedc 129-132
+abxbus/core_bus.py
+  s_13875c652141e9::t_11f215f4e081f7 3786-3790,5467-5468
+  s_13875c652141e9::t_3835bc3b98ead9 4434
+  s_13875c652141e9::t_a1a362c61caedc 136-147,2554-2555,2570-2571
+  s_13875c652141e9::t_8af99f06d289d4 2928-2931
+  s_13875c652141e9::t_fa1cb5d2b3bd8b 1769-1770
+  s_13875c652141e9::t_2629da9f073c91 1986-1989
+  s_13875c652141e9::t_d7dcfbe0896b3f 1301,3529-3537
+abxbus-ts/src/CoreEventBus.ts
+  s_13875c652141e9::t_7a794c8dde30bf 843,999-1001,1872-1873,3845
+  s_13875c652141e9::t_11f215f4e081f7 1438,1462,1467
+  s_13875c652141e9::t_05bcfd02b7ec0d 2066
+abxbus-go/lock_manager.go
+  s_13875c652141e9::t_11f215f4e081f7 6,203-205,215
+abxbus-core/src/core.rs
+  s_13875c652141e9::t_a1a362c61caedc 1545-1547
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "73fae5ade0cffeea079cda56961a0e01a7999be8",
+  "prompts": {},
+  "sessions": {
+    "s_13875c652141e9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e0db9-b5f1-78a0-9a25-34f77a94022b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
