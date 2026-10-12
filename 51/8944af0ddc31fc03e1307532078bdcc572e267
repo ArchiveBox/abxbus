@@ -1,0 +1,19 @@
+.github/actions/setup-core/action.yml
+  s_13875c652141e9::t_ce31c8ac85fad9 15,19-25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "518944af0ddc31fc03e1307532078bdcc572e267",
+  "prompts": {},
+  "sessions": {
+    "s_13875c652141e9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e0db9-b5f1-78a0-9a25-34f77a94022b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
