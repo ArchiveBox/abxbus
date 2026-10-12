@@ -1,12 +1,10 @@
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 
 import { NATSEventBridge, PostgresEventBridge, RedisEventBridge, TachyonEventBridge } from '../src/bridges.js'
 import { HTTPEventBridge, JSONLEventBridge, SQLiteEventBridge, SocketEventBridge } from '../src/index.js'
 
 type WorkerConfig = {
   kind: string
-  ready_path: string
-  output_path: string
   endpoint?: string
   path?: string
   table?: string
@@ -38,15 +36,15 @@ const main = async (): Promise<void> => {
   })
 
   bridge.on('*', (event: { toJSON: () => unknown }) => {
-    writeFileSync(config.output_path, JSON.stringify(event.toJSON()), 'utf8')
+    process.stdout.write(`${JSON.stringify({ event: event.toJSON() })}\n`)
     resolve_done?.()
   })
   // Awaiting start() AFTER on() lets bridges with deferred readiness signals
   // (e.g. Tachyon's bind handshake) signal "actually bound" before we tell the
   // parent the listener is ready to accept connections.
   await bridge.start()
-  writeFileSync(config.ready_path, 'ready', 'utf8')
-  await Promise.race([done, new Promise((_, reject) => setTimeout(() => reject(new Error('worker timeout')), 30000))])
+  process.stdout.write(`${JSON.stringify({ ready: true })}\n`)
+  await done
   await bridge.close()
 }
 

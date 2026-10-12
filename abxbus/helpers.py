@@ -72,7 +72,7 @@ def monotonic_datetime(isostring: str | None = None) -> str:
 
 async def run_with_timeout(awaitable: Awaitable[R], timeout: float | None = None) -> R:
     """Await `awaitable` with optional timeout."""
-    if timeout is None:
+    if timeout is None or timeout <= 0:
         return await awaitable
     return await asyncio.wait_for(awaitable, timeout=timeout)
 

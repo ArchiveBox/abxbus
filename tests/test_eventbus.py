@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 from pydantic import Field
 
-from abxbus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus, EventStatus
 from abxbus.helpers import monotonic_datetime
 
 
@@ -59,6 +59,12 @@ class RecursiveEvent(BaseEvent):
 
     level: int = 0
     max_level: int = 0
+
+
+class AlreadyCompletedDispatchEvent(BaseEvent):
+    """Event used to verify user-marked completed dispatch skips handlers."""
+
+    label: str = 'already-completed'
 
 
 @pytest.fixture
@@ -104,7 +110,7 @@ class TestEventBusBasics:
 
         assert bus.max_handler_recursion_depth == 5
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_custom_handler_recursion_depth_allows_deeper_nested_handlers(self):
         """A higher configured recursion ceiling should allow deeper nested queue-jumps."""
         bus = EventBus(name='CustomRecursionDepthBus', max_handler_recursion_depth=5)
@@ -123,7 +129,7 @@ class TestEventBusBasics:
         finally:
             await bus.destroy(clear=True)
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_default_handler_recursion_depth_still_catches_runaway_loops(self):
         """The default recursion guard should still raise on deeper self-reentry."""
         bus = EventBus(name='DefaultRecursionDepthBus')
@@ -322,6 +328,144 @@ class TestEventEnqueueing:
 
         # Check event history
         assert len(eventbus.event_history) == 1
+
+    async def test_dispatching_completed_status_event_skips_handlers_and_normalizes_completion(self, eventbus):
+        calls = 0
+
+        async def handler(event: AlreadyCompletedDispatchEvent) -> str:
+            nonlocal calls
+            calls += 1
+            return f'ran:{event.label}'
+
+        async def started_handler(event: AlreadyCompletedDispatchEvent) -> str:
+            nonlocal calls
+            calls += 1
+            return f'started:{event.label}'
+
+        handler_entry = eventbus.on(AlreadyCompletedDispatchEvent, handler)
+        started_handler_entry = eventbus.on(AlreadyCompletedDispatchEvent, started_handler)
+        event = AlreadyCompletedDispatchEvent(label='status')
+        pending_result = event.event_result_update(handler_entry, status='pending')
+        started_result = event.event_result_update(started_handler_entry, status='started')
+        provided_started_at = monotonic_datetime('2025-01-02T03:04:04.000000000Z')
+        provided_completed_at = monotonic_datetime('2025-01-02T03:04:05.000000000Z')
+        event.event_status = EventStatus.COMPLETED
+        event.event_started_at = provided_started_at
+        event.event_completed_at = provided_completed_at
+
+        dispatched = eventbus.dispatch(event)
+        await eventbus.wait_until_idle(timeout=1)
+
+        assert dispatched is event
+        assert calls == 0
+        assert event.event_status == 'completed'
+        assert event.event_started_at == provided_started_at
+        assert event.event_completed_at == provided_completed_at
+        assert event.event_path == [eventbus.label]
+        assert event.event_results[handler_entry.id] is pending_result
+        assert pending_result.status == 'pending'
+        assert pending_result.completed_at is None
+        assert pending_result.result is None
+        assert event.event_results[started_handler_entry.id] is started_result
+        assert started_result.status == 'started'
+        assert started_result.started_at is not None
+        assert started_result.completed_at is None
+        assert started_result.result is None
+
+    async def test_dispatching_completed_at_event_skips_handlers_and_preserves_timestamp(self, eventbus):
+        calls = 0
+
+        async def handler(event: AlreadyCompletedDispatchEvent) -> str:
+            nonlocal calls
+            calls += 1
+            return f'ran:{event.label}'
+
+        handler_entry = eventbus.on(AlreadyCompletedDispatchEvent, handler)
+        event = AlreadyCompletedDispatchEvent(label='timestamp')
+        pending_result = event.event_result_update(handler_entry, status='pending')
+        provided_started_at = monotonic_datetime('2025-01-02T03:04:04.000000000Z')
+        provided_completed_at = monotonic_datetime('2025-01-02T03:04:05.000000000Z')
+        event.event_started_at = provided_started_at
+        event.event_completed_at = provided_completed_at
+
+        dispatched = eventbus.dispatch(event)
+        await eventbus.wait_until_idle(timeout=1)
+
+        assert dispatched is event
+        assert calls == 0
+        assert event.event_status == 'completed'
+        assert event.event_started_at == provided_started_at
+        assert event.event_completed_at == provided_completed_at
+        assert event.event_path == [eventbus.label]
+        assert event.event_results[handler_entry.id] is pending_result
+        assert pending_result.status == 'pending'
+        assert pending_result.completed_at is None
+        assert pending_result.result is None
+
+        fallback_completed_at = monotonic_datetime('2025-01-02T03:04:07.000000000Z')
+        fallback_event = AlreadyCompletedDispatchEvent(label='timestamp-fallback')
+        fallback_event.event_completed_at = fallback_completed_at
+
+        eventbus.dispatch(fallback_event)
+        await eventbus.wait_until_idle(timeout=1)
+
+        assert calls == 0
+        assert fallback_event.event_status == 'completed'
+        assert fallback_event.event_started_at == fallback_completed_at
+        assert fallback_event.event_completed_at == fallback_completed_at
+        assert fallback_event.event_path == [eventbus.label]
+
+    async def test_dispatching_completed_events_with_prior_paths_records_bus_once_and_skips_handlers(self, eventbus):
+        calls = 0
+        other_bus_label = 'PriorCompletedBus#1234'
+
+        async def handler(event: AlreadyCompletedDispatchEvent) -> str:
+            nonlocal calls
+            calls += 1
+            return f'ran:{event.label}'
+
+        eventbus.on(AlreadyCompletedDispatchEvent, handler)
+
+        prior_other_bus_event = AlreadyCompletedDispatchEvent(label='prior-other-bus')
+        prior_other_bus_event.event_path = [other_bus_label]
+        provided_prior_other_started_at = monotonic_datetime('2025-01-02T03:04:04.000000000Z')
+        provided_prior_other_completed_at = monotonic_datetime('2025-01-02T03:04:06.000000000Z')
+        prior_other_bus_event.event_status = EventStatus.COMPLETED
+        prior_other_bus_event.event_started_at = provided_prior_other_started_at
+        prior_other_bus_event.event_completed_at = provided_prior_other_completed_at
+
+        eventbus.dispatch(prior_other_bus_event)
+        await eventbus.wait_until_idle(timeout=1)
+
+        assert calls == 0
+        assert prior_other_bus_event.event_status == 'completed'
+        assert prior_other_bus_event.event_started_at == provided_prior_other_started_at
+        assert prior_other_bus_event.event_completed_at == provided_prior_other_completed_at
+        assert prior_other_bus_event.event_path == [other_bus_label, eventbus.label]
+
+        provided_completed_at = monotonic_datetime('2025-01-02T03:04:05.000000000Z')
+        provided_started_at = monotonic_datetime('2025-01-02T03:04:04.000000000Z')
+        prior_same_bus_event = AlreadyCompletedDispatchEvent(label='prior-same-bus')
+        prior_same_bus_event.event_path = [other_bus_label, eventbus.label]
+        prior_same_bus_event.event_started_at = provided_started_at
+        prior_same_bus_event.event_completed_at = provided_completed_at
+
+        eventbus.dispatch(prior_same_bus_event)
+        await eventbus.wait_until_idle(timeout=1)
+
+        assert calls == 0
+        assert prior_same_bus_event.event_status == 'completed'
+        assert prior_same_bus_event.event_started_at == provided_started_at
+        assert prior_same_bus_event.event_completed_at == provided_completed_at
+        assert prior_same_bus_event.event_path == [other_bus_label, eventbus.label]
+
+        history_size = len(eventbus.event_history)
+        eventbus.dispatch(prior_same_bus_event)
+        await eventbus.wait_until_idle(timeout=1)
+
+        assert calls == 0
+        assert len(eventbus.event_history) == history_size
+        assert prior_same_bus_event.event_path == [other_bus_label, eventbus.label]
 
     def test_emit_sync(self):
         """Test sync event emission"""
@@ -1222,7 +1366,7 @@ class TestEventBusHierarchy:
                 await asyncio.wait_for(peer2.wait_until_idle(), timeout=5)
                 await asyncio.wait_for(peer3.wait_until_idle(), timeout=5)
             except TimeoutError:
-                pytest.fail(f'Circular test stalled during first propagation.\n{dump_bus_state()}')
+                raise AssertionError(f'Circular test stalled during first propagation.\n{dump_bus_state()}')
 
             # Each peer should receive the event exactly once
             assert len(events_at_peer1) == 1
@@ -1254,7 +1398,7 @@ class TestEventBusHierarchy:
                 await asyncio.wait_for(peer2.wait_until_idle(), timeout=5)
                 await asyncio.wait_for(peer3.wait_until_idle(), timeout=5)
             except TimeoutError:
-                pytest.fail(f'Circular test stalled during second propagation.\n{dump_bus_state()}')
+                raise AssertionError(f'Circular test stalled during second propagation.\n{dump_bus_state()}')
 
             # Should visit peer2 -> peer3 -> peer1, then stop
             assert len(events_at_peer1) == 1
@@ -1939,7 +2083,7 @@ class TestEventResults:
         """Users can merge dict handler results manually from event_results_list()."""
 
         async def config_base(event):
-            return {'debug': False, 'port': 8080, 'name': 'base'}
+            return {'debug': False, 'port': 5797, 'name': 'base'}
 
         async def config_override(event):
             return {'debug': True, 'timeout': 30, 'name': 'override'}
@@ -1956,7 +2100,7 @@ class TestEventResults:
         # Later handlers override earlier ones
         assert merged == {
             'debug': True,  # Overridden
-            'port': 8080,  # From base
+            'port': 5797,  # From base
             'timeout': 30,  # From override
             'name': 'override',  # Overridden
         }
@@ -2437,7 +2581,7 @@ class TestComplexIntegration:
 
 import pytest
 
-from abxbus import BaseEvent, EventStatus
+from abxbus import BaseEvent
 
 
 class ResetCoverageEvent(BaseEvent[None]):
@@ -2476,7 +2620,7 @@ async def test_event_reset_creates_fresh_pending_event_for_cross_bus_dispatch():
     assert forwarded.event_status == EventStatus.COMPLETED
     assert seen_a == ['hello']
     assert seen_b == ['hello']
-    assert any(path.startswith('ResetCoverageBusA#') for path in forwarded.event_path)
+    assert not any(path.startswith('ResetCoverageBusA#') for path in forwarded.event_path)
     assert any(path.startswith('ResetCoverageBusB#') for path in forwarded.event_path)
 
     await bus_a.destroy(clear=True)
@@ -3738,27 +3882,17 @@ class TestNameConflictGC:
         for i in range(30):
             refs.append(await create_and_fill_bus(i))
 
-        # Encourage GC/finalization first (best effort without explicit destroy()).
-        for _ in range(20):
-            gc.collect()
-            await asyncio.sleep(0.02)
-
-        alive_buses = [ref() for ref in refs if ref() is not None]
-        still_live = [bus for bus in alive_buses if bus is not None]
+        gc.collect()
+        still_live = [live_bus for live_bus in (ref() for ref in refs) if live_bus is not None]
 
         # Deterministically clean up anything still alive.
         for bus in still_live:
             await bus.destroy(clear=True)
-        # Loop variable keeps a strong ref to the last bus in CPython.
         if still_live:
             del bus
         del still_live
-        del alive_buses
-
-        # Final GC and WeakSet purge.
-        for _ in range(10):
-            gc.collect()
-            await asyncio.sleep(0.01)
+        await asyncio.sleep(0)
+        gc.collect()
         _ = list(EventBus.all_instances)
 
         assert all(ref() is None for ref in refs), 'all buses should be collectable after cleanup'
@@ -3789,11 +3923,8 @@ class TestNameConflictGC:
         for i in range(20):
             refs.append(await create_and_fill_bus(i))
 
-        for _ in range(80):
-            gc.collect()
-            await asyncio.sleep(0.02)
-            if all(ref() is None for ref in refs):
-                break
+        await asyncio.sleep(0)
+        gc.collect()
 
         # Force WeakSet iteration to purge any dead refs.
         _ = list(EventBus.all_instances)
@@ -3828,10 +3959,7 @@ class TestNameConflictGC:
         assert lock_ref is not None
         assert bus_ref is not None
 
-        for _ in range(500):
-            gc.collect()
-            if subclass_ref() is None and registry_ref() is None and lock_ref() is None and bus_ref() is None:
-                break
+        gc.collect()
 
         assert bus_ref() is None, 'subclass bus instance should be collectable'
         assert subclass_ref() is None, 'subclass type should be collectable'

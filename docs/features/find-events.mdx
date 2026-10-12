@@ -62,7 +62,7 @@ bus.FindEventName(
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::event_bus::FindOptions;
+use abxbus::event_bus::FindOptions;
 use futures::executor::block_on;
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
@@ -551,7 +551,7 @@ recent, err := bus.FilterEventName("ResponseEvent", nil, &abxbus.FilterOptions{
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::event_bus::FilterOptions;
+use abxbus::event_bus::FilterOptions;
 
 let recent = block_on(bus.filter_with_options(
     "ResponseEvent",

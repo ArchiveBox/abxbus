@@ -3,32 +3,27 @@ import { BaseEvent } from './BaseEvent.js'
 
 import type { EventClass, EventResultType } from './types.js'
 
-type EventMap = Record<string, EventClass<BaseEvent>>
-type AnyFn = (...args: any[]) => any
-type FunctionMap = Record<string, AnyFn>
+type EventMap = Record<string, EventClass<BaseEvent, never>>
+type FunctionMap = Record<string, (...args: never[]) => unknown>
 type ExtraDict = Record<string, unknown>
 
-type EventFieldsFromFn<TFunc extends AnyFn> =
-  Parameters<TFunc> extends [infer TArg] ? (TArg extends Record<string, unknown> ? TArg : ExtraDict) : ExtraDict
+type EventFieldsFromFn<TFunc extends FunctionMap[string]> =
+  Parameters<TFunc> extends [infer TArg, ...unknown[]] ? (TArg extends Record<string, unknown> ? TArg : ExtraDict) : ExtraDict
 
-type GeneratedEvent<TFunc extends AnyFn> = {
-  (
-    data: EventFieldsFromFn<TFunc> & ExtraDict
-  ): BaseEvent & EventFieldsFromFn<TFunc> & { __event_result_type__?: Awaited<ReturnType<TFunc>> }
-  new (
-    data: EventFieldsFromFn<TFunc> & ExtraDict
-  ): BaseEvent & EventFieldsFromFn<TFunc> & { __event_result_type__?: Awaited<ReturnType<TFunc>> }
-  event_type?: string
-}
+type EventFromFn<TFunc extends FunctionMap[string]> = BaseEvent &
+  EventFieldsFromFn<TFunc> & {
+    __event_result_type__?: Awaited<ReturnType<TFunc>>
+  }
 
 export type GeneratedEvents<TEvents extends FunctionMap> = {
-  by_name: { [K in keyof TEvents]: GeneratedEvent<TEvents[K]> }
+  by_name: { [K in keyof TEvents]: EventClass<EventFromFn<TEvents[K]>, EventFieldsFromFn<TEvents[K]> & ExtraDict> }
 } & {
-  [K in keyof TEvents]: GeneratedEvent<TEvents[K]>
+  [K in keyof TEvents]: EventClass<EventFromFn<TEvents[K]>, EventFieldsFromFn<TEvents[K]> & ExtraDict>
 }
 
-type EventInit<TEventClass extends EventClass<BaseEvent>> =
-  ConstructorParameters<TEventClass> extends [infer TInit, ...unknown[]] ? TInit : never
+type EventInit<TEventClass extends EventClass<BaseEvent>> = [ConstructorParameters<TEventClass>[0]] extends [undefined]
+  ? {}
+  : NonNullable<ConstructorParameters<TEventClass>[0]>
 
 type EventMethodArgs<TEventClass extends EventClass<BaseEvent>> =
   {} extends EventInit<TEventClass>
@@ -50,12 +45,12 @@ type DynamicWrappedClient = {
 } & Record<string, (...args: unknown[]) => Promise<unknown>>
 
 export const make_events = <TEvents extends FunctionMap>(events: TEvents): GeneratedEvents<TEvents> => {
-  const by_name = {} as { [K in keyof TEvents]: GeneratedEvent<TEvents[K]> }
+  const by_name = {} as GeneratedEvents<TEvents>['by_name']
   for (const [event_name] of Object.entries(events) as Array<[keyof TEvents, TEvents[keyof TEvents]]>) {
     if (!/^[A-Za-z_$][\w$]*$/.test(String(event_name))) {
       throw new Error(`Invalid event name: ${String(event_name)}`)
     }
-    by_name[event_name] = BaseEvent.extend(String(event_name), {}) as unknown as GeneratedEvent<TEvents[keyof TEvents]>
+    by_name[event_name] = BaseEvent.extend(String(event_name), {}) as unknown as GeneratedEvents<TEvents>['by_name'][typeof event_name]
   }
   return Object.assign({ by_name }, by_name) as GeneratedEvents<TEvents>
 }
@@ -75,7 +70,10 @@ export const wrap = <TEvents extends EventMap>(class_name: string, methods: TEve
     Object.defineProperty(WrappedClient.prototype, method_name, {
       value: async function (this: DynamicWrappedClient, init?: Record<string, unknown>, extra?: Record<string, unknown>) {
         const payload = { ...(init ?? {}), ...(extra ?? {}) }
-        return await this.bus.emit(new EventCtor(payload)).now({ first_result: true }).eventResult()
+        return await this.bus
+          .emit((EventCtor as EventClass<BaseEvent, Record<string, unknown>>)(payload))
+          .now({ first_result: true })
+          .eventResult()
       },
       writable: true,
       configurable: true,

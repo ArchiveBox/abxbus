@@ -1,10 +1,9 @@
 import asyncio
-import functools
 import gc
-import inspect
 import logging
 import math
 import os
+import sys
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -13,8 +12,6 @@ from typing import Any, Literal
 import psutil
 import pytest
 
-import abxbus.base_event as base_event_module
-import abxbus.event_bus as event_bus_module
 from abxbus import BaseEvent, EventBus, EventHandlerAbortedError, EventHandlerCancelledError, EventHandlerTimeoutError
 
 pytestmark = pytest.mark.timeout(120, method='thread')
@@ -139,55 +136,6 @@ async def run_mode_throughput_benchmark(
     return processed, throughput
 
 
-async def run_io_fanout_benchmark(
-    *,
-    event_handler_concurrency: Literal['serial', 'parallel'],
-    total_events: int = 400,
-    handlers_per_event: int = 4,
-    sleep_seconds: float = 0.002,
-    batch_size: int = 25,
-) -> tuple[int, float]:
-    """Benchmark I/O-bound fanout to compare serial vs parallel handler mode."""
-    bus = EventBus(
-        name=f'Fanout_{event_handler_concurrency}',
-        event_concurrency='bus-serial',
-        event_handler_concurrency=event_handler_concurrency,
-        middlewares=[],
-        max_history_drop=True,
-    )
-
-    handled = 0
-
-    for index in range(handlers_per_event):
-
-        async def handler(event: SimpleEvent) -> None:
-            nonlocal handled
-            await asyncio.sleep(sleep_seconds)
-            handled += 1
-
-        handler.__name__ = f'fanout_handler_{index}'
-        bus.on(SimpleEvent, handler)
-
-    pending: list[BaseEvent[Any]] = []
-    start = time.time()
-    try:
-        for _ in range(total_events):
-            pending.append(bus.emit(SimpleEvent()))
-            if len(pending) >= batch_size:
-                await asyncio.gather(*pending)
-                pending.clear()
-
-        if pending:
-            await asyncio.gather(*pending)
-
-        await bus.wait_until_idle()
-    finally:
-        await bus.destroy(clear=True)
-
-    duration = time.time() - start
-    return handled, duration
-
-
 def throughput_floor_for_mode(event_handler_concurrency: Literal['serial', 'parallel']) -> int:
     """
     Conservative per-mode floor to catch severe regressions while avoiding CI flakiness.
@@ -207,77 +155,6 @@ def throughput_regression_floor(
     Scenario+mode regression threshold using same-run baseline + absolute safety floor.
     """
     return max(hard_floor, first_run_throughput * min_fraction)
-
-
-class MethodProfiler:
-    """Lightweight monkeypatch profiler for selected class methods."""
-
-    def __init__(self) -> None:
-        self.stats: dict[str, dict[str, float]] = {}
-        self._restore: list[tuple[type[Any], str, Any]] = []
-
-    def instrument(
-        self,
-        owner: type[Any],
-        method_name_or_ref: str | Callable[..., Any],
-        label: str | None = None,
-    ) -> None:
-        if isinstance(method_name_or_ref, str):
-            method_name = method_name_or_ref
-        else:
-            method_name = getattr(method_name_or_ref, '__name__', '')
-            if not method_name:
-                raise ValueError('method_name_or_ref callable must define __name__')
-        original = getattr(owner, method_name)
-        metric_name = label or f'{owner.__name__}.{method_name}'
-        wrapped_method: Any
-
-        if inspect.iscoroutinefunction(original):
-
-            @functools.wraps(original)
-            async def wrapped_async(*args: Any, **kwargs: Any) -> Any:
-                started = time.perf_counter()
-                try:
-                    return await original(*args, **kwargs)
-                finally:
-                    elapsed = time.perf_counter() - started
-                    metric = self.stats.setdefault(metric_name, {'calls': 0.0, 'total_s': 0.0})
-                    metric['calls'] += 1.0
-                    metric['total_s'] += elapsed
-
-            wrapped_method = wrapped_async
-        else:
-
-            @functools.wraps(original)
-            def wrapped_sync(*args: Any, **kwargs: Any) -> Any:
-                started = time.perf_counter()
-                try:
-                    return original(*args, **kwargs)
-                finally:
-                    elapsed = time.perf_counter() - started
-                    metric = self.stats.setdefault(metric_name, {'calls': 0.0, 'total_s': 0.0})
-                    metric['calls'] += 1.0
-                    metric['total_s'] += elapsed
-
-            wrapped_method = wrapped_sync
-
-        self._restore.append((owner, method_name, original))
-        setattr(owner, method_name, wrapped_method)
-
-    def restore(self) -> None:
-        for owner, method_name, original in reversed(self._restore):
-            setattr(owner, method_name, original)
-        self._restore.clear()
-
-    def top_lines(self, limit: int = 12) -> list[str]:
-        ranked = sorted(self.stats.items(), key=lambda item: item[1]['total_s'], reverse=True)
-        lines: list[str] = []
-        for name, metric in ranked[:limit]:
-            calls = int(metric['calls'])
-            total_s = metric['total_s']
-            avg_us = (total_s * 1_000_000.0) / max(calls, 1)
-            lines.append(f'{name}: calls={calls:,} total={total_s:.3f}s avg={avg_us:.1f}us')
-        return lines
 
 
 async def run_contention_round(
@@ -766,24 +643,6 @@ async def test_basic_throughput_floor_regression_guard(event_handler_concurrency
 
 
 @pytest.mark.asyncio
-async def test_event_handler_concurrency_mode_improves_io_bound_fanout():
-    """
-    For I/O-bound workloads with multiple handlers per event, parallel mode should
-    provide a meaningful speedup versus serial mode.
-    """
-    serial_handled, serial_duration = await run_io_fanout_benchmark(event_handler_concurrency='serial')
-    parallel_handled, parallel_duration = await run_io_fanout_benchmark(event_handler_concurrency='parallel')
-
-    expected_total = 400 * 4
-    assert serial_handled == expected_total
-    assert parallel_handled == expected_total
-    assert parallel_duration < serial_duration * 0.8, (
-        f'Expected parallel handler mode to be faster for I/O fanout; '
-        f'serial={serial_duration:.2f}s parallel={parallel_duration:.2f}s'
-    )
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     'event_handler_concurrency',
     ['serial', 'parallel'],
@@ -885,41 +744,83 @@ async def test_global_lock_contention_multi_bus_matrix(event_handler_concurrency
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     'handlers_per_event',
-    [10, 30],
-    ids=['fanout_10_handlers', 'fanout_30_handlers'],
+    [4, 10, 30],
+    ids=['fanout_4_handlers', 'fanout_10_handlers', 'fanout_30_handlers'],
 )
-async def test_event_handler_concurrency_mode_scales_with_high_fanout(handlers_per_event: int):
+async def test_event_handler_concurrency_mode_controls_fanout_overlap(handlers_per_event: int):
     """
-    High fanout benchmark to catch regressions in parallel handler scheduling.
+    Handler concurrency contract: serial handlers do not overlap; parallel handlers all overlap.
     """
-    total_events = 250 if handlers_per_event == 10 else 200
-    sleep_seconds = 0.002 if handlers_per_event == 10 else 0.004
 
-    serial_handled, serial_duration = await run_io_fanout_benchmark(
-        event_handler_concurrency='serial',
-        total_events=total_events,
-        handlers_per_event=handlers_per_event,
-        sleep_seconds=sleep_seconds,
-        batch_size=25,
-    )
-    parallel_handled, parallel_duration = await run_io_fanout_benchmark(
-        event_handler_concurrency='parallel',
-        total_events=total_events,
-        handlers_per_event=handlers_per_event,
-        sleep_seconds=sleep_seconds,
-        batch_size=25,
-    )
+    async def run_overlap_probe(
+        event_handler_concurrency: Literal['serial', 'parallel'],
+    ) -> tuple[list[int], int, int, list[Any]]:
+        bus = EventBus(
+            name=f'FanoutOverlap_{event_handler_concurrency}',
+            event_concurrency='bus-serial',
+            event_handler_concurrency=event_handler_concurrency,
+            middlewares=[],
+            max_history_drop=True,
+        )
+        release_handlers = asyncio.Event()
+        expected_active = handlers_per_event if event_handler_concurrency == 'parallel' else 1
+        expected_active_reached = asyncio.Event()
+        handled: list[int] = []
+        active = 0
+        max_active = 0
+        results: list[Any] = []
 
-    expected_total = total_events * handlers_per_event
-    speedup = serial_duration / max(parallel_duration, 1e-9)
-    minimum_speedup = 1.2 if handlers_per_event == 10 else 1.5
+        if event_handler_concurrency == 'serial':
+            release_handlers.set()
 
-    assert serial_handled == expected_total
-    assert parallel_handled == expected_total
-    assert speedup >= minimum_speedup, (
-        f'Parallel fanout speedup too small for {handlers_per_event} handlers/event: '
-        f'{speedup:.2f}x (expected >= {minimum_speedup:.2f}x)'
-    )
+        def make_handler(index: int):
+            async def handler(event: SimpleEvent) -> int:
+                nonlocal active, max_active
+                active += 1
+                max_active = max(max_active, active)
+                if active == expected_active:
+                    expected_active_reached.set()
+                try:
+                    await release_handlers.wait()
+                    handled.append(index)
+                    return index
+                finally:
+                    active -= 1
+
+            handler.__name__ = f'fanout_handler_{index}'
+            return handler
+
+        for index in range(handlers_per_event):
+            bus.on(SimpleEvent, make_handler(index))
+
+        event = bus.emit(SimpleEvent())
+        try:
+            await asyncio.wait_for(expected_active_reached.wait(), timeout=10.0)
+            release_handlers.set()
+            await event
+            results = list(event.event_results.values())
+        finally:
+            release_handlers.set()
+            await bus.destroy(clear=True)
+
+        return handled, max_active, active, results
+
+    serial_handled, serial_max_active, serial_active, serial_results = await run_overlap_probe('serial')
+    parallel_handled, parallel_max_active, parallel_active, parallel_results = await run_overlap_probe('parallel')
+
+    expected_results = list(range(handlers_per_event))
+    assert sorted(serial_handled) == expected_results
+    assert sorted(parallel_handled) == expected_results
+    assert serial_active == 0
+    assert parallel_active == 0
+    assert serial_max_active == 1
+    assert parallel_max_active == handlers_per_event
+    assert len(serial_results) == handlers_per_event
+    assert len(parallel_results) == handlers_per_event
+    assert all(result.status == 'completed' for result in serial_results)
+    assert all(result.status == 'completed' for result in parallel_results)
+    assert sorted(result.result for result in serial_results) == expected_results
+    assert sorted(result.result for result in parallel_results) == expected_results
 
 
 @pytest.mark.asyncio
@@ -979,7 +880,8 @@ async def test_queue_jump_perf_matrix_by_mode(event_handler_concurrency: Literal
         await bus.destroy(clear=True)
 
     hard_floor = 60.0
-    regression_floor = throughput_regression_floor(phase1[0], min_fraction=0.50, hard_floor=50.0)
+    min_fraction = 0.50
+    regression_floor = throughput_regression_floor(phase1[0], min_fraction=min_fraction, hard_floor=50.0)
 
     assert parent_count == 1_000
     assert child_count == 1_000
@@ -987,8 +889,8 @@ async def test_queue_jump_perf_matrix_by_mode(event_handler_concurrency: Literal
     assert phase2[0] >= regression_floor, (
         f'queue-jump regression: phase1={phase1[0]:.0f} phase2={phase2[0]:.0f} (required >= {regression_floor:.0f})'
     )
-    assert phase2[2] < 45.0
-    assert phase2[4] < 360.0
+    assert phase2[2] <= phase1[2] / min_fraction
+    assert phase2[4] <= phase1[4] / min_fraction
 
 
 @pytest.mark.asyncio
@@ -1024,34 +926,30 @@ async def test_forwarding_chain_perf_matrix_by_mode(event_handler_concurrency: L
     )
 
     sink_count = 0
+    middle_slots = asyncio.Semaphore(100)
+    sink_slots = asyncio.Semaphore(100)
 
     async def sink_handler(event: SimpleEvent) -> None:
         nonlocal sink_count
         sink_count += 1
+        sink_slots.release()
 
     async def forward_to_middle(event: BaseEvent[Any]) -> None:
-        while True:
-            try:
-                middle_bus.emit(event)
-                return
-            except asyncio.QueueFull:
-                await asyncio.sleep(0)
-            except RuntimeError as exc:
-                if 'history limit reached' not in str(exc):
-                    raise
-                await asyncio.sleep(0)
+        await middle_slots.acquire()
+        try:
+            middle_bus.emit(event)
+        except BaseException:
+            middle_slots.release()
+            raise
 
     async def forward_to_sink(event: BaseEvent[Any]) -> None:
-        while True:
-            try:
-                sink_bus.emit(event)
-                return
-            except asyncio.QueueFull:
-                await asyncio.sleep(0)
-            except RuntimeError as exc:
-                if 'history limit reached' not in str(exc):
-                    raise
-                await asyncio.sleep(0)
+        middle_slots.release()
+        await sink_slots.acquire()
+        try:
+            sink_bus.emit(event)
+        except BaseException:
+            sink_slots.release()
+            raise
 
     source_bus.on('*', forward_to_middle)
     middle_bus.on('*', forward_to_sink)
@@ -1069,13 +967,14 @@ async def test_forwarding_chain_perf_matrix_by_mode(event_handler_concurrency: L
         await sink_bus.destroy(clear=True)
 
     hard_floor = 35.0
-    regression_floor = throughput_regression_floor(phase1[0], min_fraction=0.45, hard_floor=20.0)
+    min_fraction = 0.45
+    regression_floor = throughput_regression_floor(phase1[0], min_fraction=min_fraction, hard_floor=20.0)
 
     assert sink_count == 1_000
     assert phase1[0] >= hard_floor
     assert phase2[0] >= regression_floor
-    assert phase2[2] < 120.0
-    assert phase2[4] < 1050.0
+    assert phase2[2] <= phase1[2] / min_fraction
+    assert phase2[4] <= phase1[4] / min_fraction
 
 
 @pytest.mark.asyncio
@@ -1269,14 +1168,15 @@ async def test_max_history_none_single_bus_stress_matrix(event_handler_concurren
     gc_delta = gc_mb - before_mb
     per_event_mb = max(gc_delta, 0.0) / 3_000
     hard_floor = 220.0
-    regression_floor = throughput_regression_floor(phase1[0], min_fraction=0.55, hard_floor=170.0)
+    min_fraction = 0.55
+    regression_floor = throughput_regression_floor(phase1[0], min_fraction=min_fraction, hard_floor=170.0)
 
     assert processed == 3_000
     assert history_size == 3_000
     assert phase1[0] >= hard_floor
     assert phase2[0] >= regression_floor
-    assert phase2[2] < 36.0
-    assert phase2[4] < 240.0
+    assert phase2[2] <= phase1[2] / min_fraction
+    assert phase2[4] <= phase1[4] / min_fraction
     assert done_delta < 260.0
     assert gc_delta < 220.0
     assert per_event_mb < 0.08
@@ -1343,7 +1243,8 @@ async def test_max_history_none_forwarding_chain_stress_matrix(event_handler_con
     gc_delta = gc_mb - before_mb
     done_delta = done_mb - before_mb
     hard_floor = 170.0
-    regression_floor = throughput_regression_floor(phase1[0], min_fraction=0.55, hard_floor=130.0)
+    min_fraction = 0.55
+    regression_floor = throughput_regression_floor(phase1[0], min_fraction=min_fraction, hard_floor=130.0)
 
     assert sink_count == 1_800
     assert source_hist == 1_800
@@ -1351,30 +1252,18 @@ async def test_max_history_none_forwarding_chain_stress_matrix(event_handler_con
     assert sink_hist == 1_800
     assert phase1[0] >= hard_floor
     assert phase2[0] >= regression_floor
-    assert phase2[2] < 45.0
-    assert phase2[4] < 300.0
+    assert phase2[2] <= phase1[2] / min_fraction
+    assert phase2[4] <= phase1[4] / min_fraction
     assert done_delta < 320.0
     assert gc_delta < 280.0
 
 
 @pytest.mark.asyncio
-async def test_perf_debug_hot_path_breakdown() -> None:
+async def test_perf_forwarding_and_queue_jump_measurements() -> None:
     """
-    Debug-only perf test:
-    profiles key hot-path methods to confirm where time is spent before optimizing.
+    Measure the real forwarding and nested queue-jump paths without mutating
+    production methods during the measurement.
     """
-    profiler = MethodProfiler()
-    instrumented: list[tuple[type[Any], str]] = [
-        (event_bus_module.ReentrantLock, '__aenter__'),
-        (event_bus_module.ReentrantLock, '__aexit__'),
-        (event_bus_module.EventBus, '_get_handlers_for_event'),
-        (event_bus_module.EventBus, '_process_event'),
-        (event_bus_module.EventBus, '_run_handler'),
-        (event_bus_module.EventHistory, 'trim_event_history'),
-        (base_event_module.BaseEvent, '_create_pending_handler_results'),
-    ]
-    for owner, method_ref in instrumented:
-        profiler.instrument(owner, method_ref)
 
     class DebugParentEvent(BaseEvent):
         idx: int = 0
@@ -1427,7 +1316,6 @@ async def test_perf_debug_hot_path_breakdown() -> None:
     finally:
         await bus_a.destroy(clear=True)
         await bus_b.destroy(clear=True)
-        profiler.restore()
     elapsed = time.perf_counter() - start
     done_mb = get_memory_usage_mb()
     gc.collect()
@@ -1443,9 +1331,60 @@ async def test_perf_debug_hot_path_breakdown() -> None:
     )
     print(f'[perf-debug] memory_mb before={before_mb:.1f} done={done_mb:.1f} gc={gc_mb:.1f}')
     print(f'[perf-debug] forwarded_simple_count={forwarded_simple_count:,} child_count={child_count:,}')
-    print('[perf-debug] hot_path_top_total_time:')
-    for line in profiler.top_lines(limit=14):
-        print(f'[perf-debug]   {line}')
-
     assert forwarded_simple_count == 2_000
     assert child_count == 600
+    assert simple_metrics[0] >= 130.0
+    assert parent_metrics[0] >= 100.0
+    assert simple_metrics[2] < 45.0
+    assert parent_metrics[2] < 45.0
+    assert simple_metrics[4] < 300.0
+    assert parent_metrics[4] < 300.0
+    assert done_mb - before_mb < 320.0
+    assert gc_mb - before_mb < 280.0
+
+
+@pytest.mark.parametrize('wait_api', ['now', 'wait'])
+@pytest.mark.asyncio
+async def test_first_result_wait_yields_while_subprocess_runs(wait_api: Literal['now', 'wait']) -> None:
+    """Waiting for a real handler result should not busy-spin the event-loop thread."""
+
+    class SubprocessEvent(BaseEvent[str]):
+        pass
+
+    bus = EventBus(name=f'FirstResultWait_{wait_api}', middlewares=[], max_history_drop=True)
+    subprocess_started = asyncio.Event()
+
+    async def run_subprocess(event: SubprocessEvent) -> str:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            '-c',
+            'import time; time.sleep(1.2); print("subprocess-result")',
+            stdout=asyncio.subprocess.PIPE,
+        )
+        subprocess_started.set()
+        stdout, _ = await process.communicate()
+        assert process.returncode == 0
+        return stdout.decode().strip()
+
+    bus.on(SubprocessEvent, run_subprocess)
+    event = bus.emit(SubprocessEvent())
+    first_result_wait = asyncio.create_task(getattr(event, wait_api)(first_result=True))
+
+    try:
+        await asyncio.wait_for(subprocess_started.wait(), timeout=5.0)
+        started_at = time.perf_counter()
+        thread_started_at = time.thread_time()
+        await asyncio.wait_for(first_result_wait, timeout=5.0)
+        elapsed = time.perf_counter() - started_at
+        thread_elapsed = time.thread_time() - thread_started_at
+
+        assert await event.event_result() == 'subprocess-result'
+        print(f'[first-result-wait] api={wait_api} wall_s={elapsed:.3f} thread_cpu_s={thread_elapsed:.3f}')
+        assert elapsed >= 0.8, 'the wait should span the real subprocess work'
+        # This budget is generous for event-loop bookkeeping but distinguishes
+        # yielding during subprocess I/O from spending its wall time in a spin loop.
+        assert thread_elapsed < 0.5, f'{wait_api}(first_result=True) used {thread_elapsed:.3f}s of thread CPU over {elapsed:.3f}s'
+        await event.wait(timeout=5.0)
+        await bus.wait_until_idle(timeout=5.0)
+    finally:
+        await bus.destroy(clear=True)

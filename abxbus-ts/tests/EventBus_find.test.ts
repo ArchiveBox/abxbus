@@ -155,10 +155,10 @@ test('find future works with string event keys', async () => {
   assert.equal(found_event.event_type, 'ParentEvent')
 })
 
-test('find class pattern matches generic BaseEvent event_type for future lookups', async () => {
+test('find event class pattern matches generic BaseEvent event_type for future lookups', async () => {
   const bus = new EventBus('FindFutureClassPatternBus')
 
-  class DifferentNameFromClass extends BaseEvent {}
+  const DifferentNameFromClass = BaseEvent.extend('DifferentNameFromClass', {})
 
   bus.on('DifferentNameFromClass', () => 'done')
 

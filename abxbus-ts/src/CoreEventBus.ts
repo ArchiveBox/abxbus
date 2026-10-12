@@ -26,6 +26,7 @@ import type { EventBusMiddleware, EventBusMiddlewareCtor, EventBusMiddlewareInpu
 import { logTree } from './logging.js'
 import { RetryTimeoutError } from './retry.js'
 import { monotonicDatetime } from './helpers.js'
+import { toJsonSchema } from './jsonschema.js'
 import {
   cancelWarningTimer as cancelCoalescedTimer,
   scheduleWarningTimer as scheduleCoalescedTimer,
@@ -33,7 +34,6 @@ import {
 } from './timing.js'
 import {
   normalizeEventPattern,
-  toJsonSchema,
   type EventHandlerCallable,
   type EventPattern,
   type FilterOptions,
@@ -111,6 +111,8 @@ export type RustCoreEventBusOptions = {
   event_handler_detect_file_paths?: boolean
   event_timeout?: number | null
   event_slow_timeout?: number | null
+  event_ttl?: number | null
+  event_result_ttl?: number | null
   event_handler_timeout?: number | null
   event_handler_slow_timeout?: number | null
   max_history_size?: number | null
@@ -144,6 +146,8 @@ export type RustCoreEventBusJSON = {
   event_concurrency: EventConcurrencyMode
   event_timeout: number | null
   event_slow_timeout: number | null
+  event_ttl: number | null
+  event_result_ttl: number | null
   event_handler_concurrency: EventHandlerConcurrencyMode
   event_handler_completion: EventHandlerCompletionMode
   event_handler_timeout: number | null
@@ -516,6 +520,8 @@ export class RustCoreEventBus {
   readonly event_handler_detect_file_paths: boolean
   readonly event_timeout: number | null
   readonly event_slow_timeout: number | null
+  event_ttl: number | null
+  event_result_ttl: number | null
   readonly event_handler_timeout: number | null
   readonly event_handler_slow_timeout: number | null
 
@@ -565,6 +571,8 @@ export class RustCoreEventBus {
     this.event_handler_detect_file_paths = options.event_handler_detect_file_paths ?? true
     this.event_timeout = options.event_timeout === undefined ? 60 : options.event_timeout
     this.event_slow_timeout = options.event_slow_timeout === undefined ? 300 : options.event_slow_timeout
+    this.event_ttl = options.event_ttl ?? null
+    this.event_result_ttl = options.event_result_ttl ?? null
     this.event_handler_timeout = options.event_handler_timeout ?? null
     this.event_handler_slow_timeout = options.event_handler_slow_timeout === undefined ? 30 : options.event_handler_slow_timeout
     this.handlers = new Map()
@@ -630,6 +638,8 @@ export class RustCoreEventBus {
 
   defaultsRecord(): Record<string, unknown> {
     return {
+      event_ttl: this.event_ttl,
+      event_result_ttl: this.event_result_ttl,
       event_concurrency: this.event_concurrency,
       event_handler_concurrency: this.event_handler_concurrency,
       event_handler_completion: this.event_handler_completion,
@@ -650,6 +660,15 @@ export class RustCoreEventBus {
       max_history_size: normalizeMaxHistorySize(this.event_history.max_history_size),
       max_history_drop: this.event_history.max_history_drop,
     }
+  }
+
+  _trackRuntimeTTLChange(event: BaseEvent): void {
+    for (const message of this.core.requestMessages({
+      type: 'update_event_retention',
+      event_id: event.event_id,
+      event_ttl: event.event_ttl ?? null,
+      event_result_ttl: event.event_result_ttl ?? null,
+    })) this.applyCoreMessageToLocalBuses(message)
   }
 
   start(): void {
@@ -978,6 +997,8 @@ export class RustCoreEventBus {
     }
     if (event.event_timeout !== null) record.event_timeout = event.event_timeout
     if (event.event_slow_timeout !== undefined && event.event_slow_timeout !== null) record.event_slow_timeout = event.event_slow_timeout
+    if (event.event_ttl !== undefined && event.event_ttl !== null) record.event_ttl = event.event_ttl
+    if (event.event_result_ttl !== undefined && event.event_result_ttl !== null) record.event_result_ttl = event.event_result_ttl
     if (event.event_concurrency !== undefined && event.event_concurrency !== null) record.event_concurrency = event.event_concurrency
     if (event.event_handler_timeout !== undefined && event.event_handler_timeout !== null) {
       record.event_handler_timeout = event.event_handler_timeout
@@ -1003,7 +1024,7 @@ export class RustCoreEventBus {
         if (value === undefined || typeof value === 'function') continue
         record[key] = value
       }
-      for (const key of event._event_fields_set ?? []) {
+      for (const key of Object.keys(event)) {
         if (payload_fields.has(key) || key.startsWith('_') || key === 'bus' || key === 'event_bus' || key === 'event_results') {
           continue
         }
@@ -2040,6 +2061,8 @@ export class RustCoreEventBus {
       event_history[event_id] = event.toJSON()
     }
     const payload: RustCoreEventBusJSON = {
+      event_ttl: this.event_ttl,
+      event_result_ttl: this.event_result_ttl,
       id: this.id,
       name: this.name,
       max_history_size: this.event_history.max_history_size,

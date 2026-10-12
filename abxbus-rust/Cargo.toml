@@ -1,9 +1,13 @@
 [package]
-name = "abxbus-rust"
-version = "2.5.2"
+name = "abxbus"
+version = "2.5.77"
 edition = "2021"
 license = "MIT"
 description = "Rust implementation of the abxbus Event Bus library"
+repository = "https://github.com/ArchiveBox/abxbus"
+homepage = "https://abxbus.archivebox.io"
+documentation = "https://docs.rs/abxbus"
+readme = "README.md"
 
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
@@ -15,5 +19,9 @@ event-listener = "5.4.1"
 parking_lot = "0.12.5"
 chrono = { version = "0.4.44", default-features = false, features = ["clock", "std"] }
 dcontext = "0.7.1"
+regex = "1.11.1"
+libc = "0.2"
+sha2 = "0.10"
+paste = "1.0"
 
 [dev-dependencies]

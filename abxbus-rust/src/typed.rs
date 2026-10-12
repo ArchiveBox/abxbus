@@ -8,7 +8,10 @@ use crate::types::{EventConcurrencyMode, EventHandlerCompletionMode, EventHandle
 use crate::{
     base_event::{BaseEvent as RawBaseEvent, BaseEventData},
     event_bus::EventBus,
-    event_handler::{EventHandler, EventHandlerOptions},
+    event_handler::{
+        validate_optional_seconds_at_least_minus_one, validate_optional_seconds_nonnegative,
+        EventHandler, EventHandlerOptions,
+    },
     event_result::EventResult,
 };
 
@@ -88,6 +91,11 @@ where
             return;
         }
         *self.fallback.lock() = value;
+    }
+
+    #[doc(hidden)]
+    pub fn source_event(&self) -> Option<Arc<RawBaseEvent>> {
+        self.source.clone()
     }
 }
 
@@ -175,6 +183,64 @@ pub fn is_live_event_results_empty(
 
 pub struct EventType<E: EventSpec>(PhantomData<E>);
 
+#[allow(non_snake_case)]
+pub struct ModelField<T, D = ()> {
+    pub name: &'static str,
+    pub Type: Value,
+    pub Default: D,
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<T: 'static, D> ModelField<T, D> {
+    pub fn new(name: &'static str, default: D) -> Self {
+        Self {
+            name,
+            Type: json_schema_for_type::<T>(),
+            Default: default,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T, D> Clone for ModelField<T, D>
+where
+    D: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name,
+            Type: self.Type.clone(),
+            Default: self.Default.clone(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T, D> fmt::Debug for ModelField<T, D>
+where
+    D: fmt::Debug,
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ModelField")
+            .field("name", &self.name)
+            .field("Type", &self.Type)
+            .field("Default", &self.Default)
+            .finish()
+    }
+}
+
+impl<T, D> PartialEq for ModelField<T, D>
+where
+    D: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.Type == other.Type && self.Default == other.Default
+    }
+}
+
+impl<T, D> Eq for ModelField<T, D> where D: Eq {}
+
 impl<E: EventSpec> Clone for EventType<E> {
     fn clone(&self) -> Self {
         *self
@@ -192,6 +258,15 @@ impl<E: EventSpec> EventType<E> {
 impl<E: EventSpec> Default for EventType<E> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<E> EventType<E>
+where
+    E: EventSpec + EventModelFields,
+{
+    pub fn model_fields(&self) -> E::ModelFields {
+        E::model_fields()
     }
 }
 
@@ -219,6 +294,8 @@ pub trait EventSpec: Send + Sync + 'static {
     const event_concurrency: Option<EventConcurrencyMode> = None;
     const event_handler_timeout: Option<f64> = None;
     const event_handler_slow_timeout: Option<f64> = None;
+    const event_ttl: Option<f64> = None;
+    const event_result_ttl: Option<f64> = None;
     const event_handler_concurrency: Option<EventHandlerConcurrencyMode> = None;
     const event_handler_completion: Option<EventHandlerCompletionMode> = None;
     const event_blocks_parent_completion: bool = false;
@@ -233,6 +310,12 @@ pub trait EventSpec: Send + Sync + 'static {
         }
         primitive_result_type_schema::<Self::event_result_type>()
     }
+}
+
+pub trait EventModelFields: EventSpec {
+    type ModelFields;
+
+    fn model_fields() -> Self::ModelFields;
 }
 
 fn primitive_result_type_schema<T: 'static>() -> Option<Value> {
@@ -260,6 +343,10 @@ fn primitive_result_type_schema<T: 'static>() -> Option<Value> {
     }
 }
 
+pub fn json_schema_for_type<T: 'static>() -> Value {
+    primitive_result_type_schema::<T>().unwrap_or_else(|| json!({}))
+}
+
 pub trait TypedEventObject:
     EventSpec<payload = Self> + Serialize + DeserializeOwned + Clone
 {
@@ -272,7 +359,7 @@ pub trait TypedEventObject:
         let Value::Object(payload_map) = value else {
             panic!("event payload must serialize to a JSON object");
         };
-        if let Some(event) = Self::attached_inner_event_from_payload(&payload_map) {
+        if let Some(event) = self._attached_inner_event() {
             sync_inner_event_from_payload::<Self>(&event, payload_map);
             return event;
         }
@@ -316,11 +403,29 @@ where
     let has_event_concurrency = payload_map.contains_key("event_concurrency");
     let has_event_handler_timeout = payload_map.contains_key("event_handler_timeout");
     let has_event_handler_slow_timeout = payload_map.contains_key("event_handler_slow_timeout");
+    let has_event_ttl = payload_map.contains_key("event_ttl");
+    let has_event_result_ttl = payload_map.contains_key("event_result_ttl");
     let has_event_handler_concurrency = payload_map.contains_key("event_handler_concurrency");
     let has_event_handler_completion = payload_map.contains_key("event_handler_completion");
     let has_event_blocks_parent_completion =
         payload_map.contains_key("event_blocks_parent_completion");
     let has_event_result_type = payload_map.contains_key("event_result_type");
+
+    validate_optional_seconds_at_least_minus_one("event_ttl", E::event_ttl)
+        .expect("event_ttl must be finite and >= -1 or None");
+    validate_optional_seconds_at_least_minus_one("event_result_ttl", E::event_result_ttl)
+        .expect("event_result_ttl must be finite and >= -1 or None");
+    validate_optional_seconds_nonnegative("event_timeout", E::event_timeout)
+        .expect("event_timeout must be finite and >= 0 or None");
+    validate_optional_seconds_nonnegative("event_slow_timeout", E::event_slow_timeout)
+        .expect("event_slow_timeout must be finite and >= 0 or None");
+    validate_optional_seconds_nonnegative("event_handler_timeout", E::event_handler_timeout)
+        .expect("event_handler_timeout must be finite and >= 0 or None");
+    validate_optional_seconds_nonnegative(
+        "event_handler_slow_timeout",
+        E::event_handler_slow_timeout,
+    )
+    .expect("event_handler_slow_timeout must be finite and >= 0 or None");
 
     let inner = RawBaseEvent::new(E::event_type, payload_map);
     {
@@ -342,6 +447,12 @@ where
         }
         if !has_event_handler_slow_timeout {
             event.event_handler_slow_timeout = E::event_handler_slow_timeout;
+        }
+        if !has_event_ttl {
+            event.event_ttl = E::event_ttl;
+        }
+        if !has_event_result_ttl {
+            event.event_result_ttl = E::event_result_ttl;
         }
         if !has_event_handler_concurrency {
             event.event_handler_concurrency = E::event_handler_concurrency;
@@ -374,6 +485,8 @@ where
     current.event_concurrency = updated.event_concurrency;
     current.event_handler_timeout = updated.event_handler_timeout;
     current.event_handler_slow_timeout = updated.event_handler_slow_timeout;
+    current.event_ttl = updated.event_ttl;
+    current.event_result_ttl = updated.event_result_ttl;
     current.event_handler_concurrency = updated.event_handler_concurrency;
     current.event_handler_completion = updated.event_handler_completion;
     current.event_blocks_parent_completion = updated.event_blocks_parent_completion;
@@ -381,13 +494,13 @@ where
     current.event_parent_id = updated.event_parent_id.clone();
     current.event_emitted_by_handler_id = updated.event_emitted_by_handler_id.clone();
     current.event_created_at = updated.event_created_at.clone();
-    current.payload = updated.payload.clone();
+    current.event_extra_payload = updated.event_extra_payload.clone();
 }
 
 #[doc(hidden)]
 pub fn payload_value_from_inner_event(event: &Arc<RawBaseEvent>) -> Value {
     let event = event.inner.lock();
-    let mut payload = event.payload.clone();
+    let mut payload = event.event_extra_payload.clone();
     payload.insert("event_type".to_string(), json!(event.event_type));
     payload.insert("event_version".to_string(), json!(event.event_version));
     payload.insert("event_timeout".to_string(), json!(event.event_timeout));
@@ -406,6 +519,11 @@ pub fn payload_value_from_inner_event(event: &Arc<RawBaseEvent>) -> Value {
     payload.insert(
         "event_handler_slow_timeout".to_string(),
         json!(event.event_handler_slow_timeout),
+    );
+    payload.insert("event_ttl".to_string(), json!(event.event_ttl));
+    payload.insert(
+        "event_result_ttl".to_string(),
+        json!(event.event_result_ttl),
     );
     payload.insert(
         "event_handler_concurrency".to_string(),
@@ -554,6 +672,9 @@ macro_rules! event {
             @parse
             [$(#[$attr])*] [$vis] [$name]
             payload[]
+            model_fields[]
+            defaults[]
+            default_methods[]
             result[]
             event_type[]
             event_version[]
@@ -562,6 +683,8 @@ macro_rules! event {
             event_concurrency[]
             event_handler_timeout[]
             event_handler_slow_timeout[]
+            event_ttl[]
+            event_result_ttl[]
             event_handler_concurrency[]
             event_handler_completion[]
             event_blocks_parent_completion[]
@@ -577,6 +700,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -585,6 +711,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -596,6 +724,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -604,6 +735,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -614,6 +747,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -622,6 +758,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -633,6 +771,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$next_result]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -641,6 +782,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -651,6 +794,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -659,6 +805,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -670,6 +818,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$next_event_type]
             event_version[$($event_version)*]
@@ -678,6 +829,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -688,6 +841,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -696,6 +852,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -707,6 +865,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$next_event_version]
@@ -715,6 +876,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -725,6 +888,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -733,6 +899,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -744,6 +912,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -752,6 +923,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -762,6 +935,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -770,6 +946,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -781,6 +959,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -789,6 +970,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -799,6 +982,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -807,6 +993,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -818,6 +1006,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -826,6 +1017,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$next_mode]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -836,6 +1029,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -844,6 +1040,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -855,6 +1053,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -863,6 +1064,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$next_timeout]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -873,6 +1076,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -881,6 +1087,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -892,6 +1100,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -900,6 +1111,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$next_timeout]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -910,6 +1123,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -918,6 +1134,102 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        event_ttl: $next_ttl:literal,
+        $($rest:tt)*
+    ) => {
+        $crate::_inner_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
+            result[$($result)*]
+            event_type[$($event_type)*]
+            event_version[$($event_version)*]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$next_ttl]
+            event_result_ttl[$($event_result_ttl)*]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        event_result_ttl: $next_ttl:literal,
+        $($rest:tt)*
+    ) => {
+        $crate::_inner_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
+            result[$($result)*]
+            event_type[$($event_type)*]
+            event_version[$($event_version)*]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$next_ttl]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -929,6 +1241,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -937,6 +1252,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$next_mode]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -947,6 +1264,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -955,6 +1275,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -966,6 +1288,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -974,6 +1299,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$next_mode]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -984,6 +1311,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -992,6 +1322,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -1003,6 +1335,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -1011,6 +1346,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$next_blocks]
@@ -1021,6 +1358,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -1029,6 +1369,8 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -1040,6 +1382,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)*]
+            model_fields[$($model_fields)*]
+            defaults[$($defaults)*]
+            default_methods[$($default_methods)*]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -1048,6 +1393,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -1058,6 +1405,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -1066,6 +1416,55 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
+        event_handler_concurrency[$($event_handler_concurrency:tt)*]
+        event_handler_completion[$($event_handler_completion:tt)*]
+        event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
+        event_result_schema[$($event_result_schema:tt)*]
+        $field_vis:vis $field:ident : $field_ty:ty = $field_default:expr,
+        $($rest:tt)*
+    ) => {
+        $crate::_inner_event_parse! {
+            @parse
+            [$($attr)*] [$vis] [$name]
+            payload[$($payload)* $field_vis $field: $field_ty,]
+            model_fields[$($model_fields)* $field_vis $field: $crate::typed::ModelField<$field_ty, $field_ty>,]
+            defaults[$($defaults)* $field: $field_default,]
+            default_methods[$($default_methods)* $field: $crate::typed::ModelField::<$field_ty, $field_ty>::new(stringify!($field), $field_default),]
+            result[$($result)*]
+            event_type[$($event_type)*]
+            event_version[$($event_version)*]
+            event_timeout[$($event_timeout)*]
+            event_slow_timeout[$($event_slow_timeout)*]
+            event_concurrency[$($event_concurrency)*]
+            event_handler_timeout[$($event_handler_timeout)*]
+            event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
+            event_handler_concurrency[$($event_handler_concurrency)*]
+            event_handler_completion[$($event_handler_completion)*]
+            event_blocks_parent_completion[$($event_blocks_parent_completion)*]
+            event_result_schema[$($event_result_schema)*]
+            $($rest)*
+        }
+    };
+    (@parse
+        [$($attr:tt)*] [$vis:vis] [$name:ident]
+        payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
+        result[$($result:tt)*]
+        event_type[$($event_type:tt)*]
+        event_version[$($event_version:tt)*]
+        event_timeout[$($event_timeout:tt)*]
+        event_slow_timeout[$($event_slow_timeout:tt)*]
+        event_concurrency[$($event_concurrency:tt)*]
+        event_handler_timeout[$($event_handler_timeout:tt)*]
+        event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
@@ -1077,6 +1476,9 @@ macro_rules! _inner_event_parse {
             @parse
             [$($attr)*] [$vis] [$name]
             payload[$($payload)* $field_vis $field: $field_ty,]
+            model_fields[$($model_fields)* $field_vis $field: $crate::typed::ModelField<$field_ty, Option<$field_ty>>,]
+            defaults[$($defaults)* $field: Default::default(),]
+            default_methods[$($default_methods)* $field: $crate::typed::ModelField::<$field_ty, Option<$field_ty>>::new(stringify!($field), None),]
             result[$($result)*]
             event_type[$($event_type)*]
             event_version[$($event_version)*]
@@ -1085,6 +1487,8 @@ macro_rules! _inner_event_parse {
             event_concurrency[$($event_concurrency)*]
             event_handler_timeout[$($event_handler_timeout)*]
             event_handler_slow_timeout[$($event_handler_slow_timeout)*]
+            event_ttl[$($event_ttl)*]
+            event_result_ttl[$($event_result_ttl)*]
             event_handler_concurrency[$($event_handler_concurrency)*]
             event_handler_completion[$($event_handler_completion)*]
             event_blocks_parent_completion[$($event_blocks_parent_completion)*]
@@ -1095,6 +1499,9 @@ macro_rules! _inner_event_parse {
     (@parse
         [$($attr:tt)*] [$vis:vis] [$name:ident]
         payload[$($payload:tt)*]
+        model_fields[$($model_fields:tt)*]
+        defaults[$($defaults:tt)*]
+        default_methods[$($default_methods:tt)*]
         result[$($result:tt)*]
         event_type[$($event_type:tt)*]
         event_version[$($event_version:tt)*]
@@ -1103,18 +1510,20 @@ macro_rules! _inner_event_parse {
         event_concurrency[$($event_concurrency:tt)*]
         event_handler_timeout[$($event_handler_timeout:tt)*]
         event_handler_slow_timeout[$($event_handler_slow_timeout:tt)*]
+        event_ttl[$($event_ttl:tt)*]
+        event_result_ttl[$($event_result_ttl:tt)*]
         event_handler_concurrency[$($event_handler_concurrency:tt)*]
         event_handler_completion[$($event_handler_completion:tt)*]
         event_blocks_parent_completion[$($event_blocks_parent_completion:tt)*]
         event_result_schema[$($event_result_schema:tt)*]
     ) => {
-        #[derive(Clone, Default, $crate::serde::Serialize, $crate::serde::Deserialize)]
+        #[derive(Clone, $crate::serde::Serialize, $crate::serde::Deserialize)]
         $($attr)*
         $vis struct $name {
             $($payload)*
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_string_empty")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_string_empty")]
             pub event_type: String,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_string_empty")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_string_empty")]
             pub event_version: String,
             #[serde(default, skip_serializing_if = "Option::is_none")]
             pub event_timeout: Option<f64>,
@@ -1127,37 +1536,121 @@ macro_rules! _inner_event_parse {
             #[serde(default, skip_serializing_if = "Option::is_none")]
             pub event_handler_slow_timeout: Option<f64>,
             #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub event_ttl: Option<f64>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            pub event_result_ttl: Option<f64>,
+            #[serde(default, skip_serializing_if = "Option::is_none")]
             pub event_handler_concurrency: Option<$crate::types::EventHandlerConcurrencyMode>,
             #[serde(default, skip_serializing_if = "Option::is_none")]
             pub event_handler_completion: Option<$crate::types::EventHandlerCompletionMode>,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_false")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_false")]
             pub event_blocks_parent_completion: bool,
             #[serde(default, skip_serializing_if = "Option::is_none")]
             pub event_result_type: Option<$crate::serde_json::Value>,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_string_empty")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_string_empty")]
             pub event_id: String,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_live_vec_string_empty")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_live_vec_string_empty")]
             pub event_path: $crate::typed::Live<Vec<String>>,
             #[serde(default, skip_serializing_if = "Option::is_none")]
             pub event_parent_id: Option<String>,
             #[serde(default, skip_serializing_if = "Option::is_none")]
             pub event_emitted_by_handler_id: Option<String>,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_live_usize_zero")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_live_usize_zero")]
             pub event_pending_bus_count: $crate::typed::Live<usize>,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_string_empty")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_string_empty")]
             pub event_created_at: String,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_live_event_status_pending")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_live_event_status_pending")]
             pub event_status: $crate::typed::Live<$crate::types::EventStatus>,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_live_option_string_none")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_live_option_string_none")]
             pub event_started_at: $crate::typed::Live<Option<String>>,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_live_option_string_none")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_live_option_string_none")]
             pub event_completed_at: $crate::typed::Live<Option<String>>,
-            #[serde(default, skip_serializing_if = "abxbus_rust::typed::is_live_event_results_empty")]
+            #[serde(default, skip_serializing_if = "abxbus::typed::is_live_event_results_empty")]
             pub event_results: $crate::typed::Live<std::collections::HashMap<String, $crate::event_result::EventResult>>,
+            // Runtime-only storage for flat JSON fields not declared on this typed event.
+            // Serde flattens it when dumping and fills it from unknown flat fields when
+            // loading, so "event_extra_payload" never appears on the wire.
+            #[serde(default, flatten)]
+            pub event_extra_payload: $crate::serde_json::Map<String, $crate::serde_json::Value>,
+        }
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self {
+                    $($defaults)*
+                    event_type: String::new(),
+                    event_version: String::new(),
+                    event_timeout: None,
+                    event_slow_timeout: None,
+                    event_concurrency: None,
+                    event_handler_timeout: None,
+                    event_handler_slow_timeout: None,
+                    event_ttl: None,
+                    event_result_ttl: None,
+                    event_handler_concurrency: None,
+                    event_handler_completion: None,
+                    event_blocks_parent_completion: false,
+                    event_result_type: None,
+                    event_id: String::new(),
+                    event_path: Default::default(),
+                    event_parent_id: None,
+                    event_emitted_by_handler_id: None,
+                    event_pending_bus_count: Default::default(),
+                    event_created_at: String::new(),
+                    event_status: Default::default(),
+                    event_started_at: Default::default(),
+                    event_completed_at: Default::default(),
+                    event_results: Default::default(),
+                    event_extra_payload: Default::default(),
+                }
+            }
         }
 
         #[allow(non_upper_case_globals)]
         $vis const $name: $crate::typed::EventType<$name> = $crate::typed::EventType::new();
+
+        $crate::paste::paste! {
+            #[derive(Clone, Debug, PartialEq)]
+            $vis struct [<$name ModelFields>] {
+                $($model_fields)*
+                pub event_type: $crate::typed::ModelField<String, String>,
+                pub event_version: $crate::typed::ModelField<String, String>,
+                pub event_timeout: $crate::typed::ModelField<Option<f64>, Option<f64>>,
+                pub event_slow_timeout: $crate::typed::ModelField<Option<f64>, Option<f64>>,
+                pub event_concurrency: $crate::typed::ModelField<Option<$crate::types::EventConcurrencyMode>, Option<$crate::types::EventConcurrencyMode>>,
+                pub event_handler_timeout: $crate::typed::ModelField<Option<f64>, Option<f64>>,
+                pub event_handler_slow_timeout: $crate::typed::ModelField<Option<f64>, Option<f64>>,
+                pub event_ttl: $crate::typed::ModelField<Option<f64>, Option<f64>>,
+                pub event_result_ttl: $crate::typed::ModelField<Option<f64>, Option<f64>>,
+                pub event_handler_concurrency: $crate::typed::ModelField<Option<$crate::types::EventHandlerConcurrencyMode>, Option<$crate::types::EventHandlerConcurrencyMode>>,
+                pub event_handler_completion: $crate::typed::ModelField<Option<$crate::types::EventHandlerCompletionMode>, Option<$crate::types::EventHandlerCompletionMode>>,
+                pub event_blocks_parent_completion: $crate::typed::ModelField<bool, bool>,
+                pub event_result_type: $crate::typed::ModelField<<$name as $crate::typed::EventSpec>::event_result_type, Option<$crate::serde_json::Value>>,
+            }
+
+            impl $crate::typed::EventModelFields for $name {
+                type ModelFields = [<$name ModelFields>];
+
+                fn model_fields() -> Self::ModelFields {
+                    [<$name ModelFields>] {
+                        $($default_methods)*
+                        event_type: $crate::typed::ModelField::new("event_type", <$name as $crate::typed::EventSpec>::event_type.to_string()),
+                        event_version: $crate::typed::ModelField::new("event_version", <$name as $crate::typed::EventSpec>::event_version.to_string()),
+                        event_timeout: $crate::typed::ModelField::new("event_timeout", <$name as $crate::typed::EventSpec>::event_timeout),
+                        event_slow_timeout: $crate::typed::ModelField::new("event_slow_timeout", <$name as $crate::typed::EventSpec>::event_slow_timeout),
+                        event_concurrency: $crate::typed::ModelField::new("event_concurrency", <$name as $crate::typed::EventSpec>::event_concurrency),
+                        event_handler_timeout: $crate::typed::ModelField::new("event_handler_timeout", <$name as $crate::typed::EventSpec>::event_handler_timeout),
+                        event_handler_slow_timeout: $crate::typed::ModelField::new("event_handler_slow_timeout", <$name as $crate::typed::EventSpec>::event_handler_slow_timeout),
+                        event_ttl: $crate::typed::ModelField::new("event_ttl", <$name as $crate::typed::EventSpec>::event_ttl),
+                        event_result_ttl: $crate::typed::ModelField::new("event_result_ttl", <$name as $crate::typed::EventSpec>::event_result_ttl),
+                        event_handler_concurrency: $crate::typed::ModelField::new("event_handler_concurrency", <$name as $crate::typed::EventSpec>::event_handler_concurrency),
+                        event_handler_completion: $crate::typed::ModelField::new("event_handler_completion", <$name as $crate::typed::EventSpec>::event_handler_completion),
+                        event_blocks_parent_completion: $crate::typed::ModelField::new("event_blocks_parent_completion", <$name as $crate::typed::EventSpec>::event_blocks_parent_completion),
+                        event_result_type: $crate::typed::ModelField::new("event_result_type", <$name as $crate::typed::EventSpec>::event_result_type_json()),
+                    }
+                }
+            }
+        }
 
         impl std::fmt::Debug for $name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1176,7 +1669,13 @@ macro_rules! _inner_event_parse {
 
         impl $name {
             pub fn event_bus(&self) -> Option<std::sync::Arc<$crate::event_bus::EventBus>> {
-                $crate::event_bus::EventBus::event_bus_for_event_id(&self.event_id)
+                $crate::typed::TypedEventObject::_attached_inner_event(self)
+                    .and_then(|event| {
+                        $crate::event_bus::EventBus::event_bus_for_event(&event)
+                    })
+                    .or_else(|| {
+                        $crate::event_bus::EventBus::event_bus_for_event_id(&self.event_id)
+                    })
             }
 
             pub fn bus(&self) -> Option<std::sync::Arc<$crate::event_bus::EventBus>> {
@@ -1196,6 +1695,10 @@ macro_rules! _inner_event_parse {
 
             pub fn to_json_value(&self) -> $crate::serde_json::Value {
                 $crate::typed::TypedEventObject::_inner_event(self).to_json_value()
+            }
+
+            pub fn event_payload(&self) -> $crate::serde_json::Map<String, $crate::serde_json::Value> {
+                $crate::typed::TypedEventObject::_inner_event(self).event_payload()
             }
 
             pub async fn now(&self) -> Result<Self, String> {
@@ -1257,8 +1760,12 @@ macro_rules! _inner_event_parse {
             }
 
             pub fn event_reset(&self) -> Self {
+                self.event_reset_with_options($crate::base_event::EventResetOptions::default())
+            }
+
+            pub fn event_reset_with_options(&self, options: $crate::base_event::EventResetOptions) -> Self {
                 <Self as $crate::typed::TypedEventObject>::_from_inner_event(
-                    $crate::typed::TypedEventObject::_inner_event(self).event_reset()
+                    $crate::typed::TypedEventObject::_inner_event(self).event_reset_with_options(options)
                 )
             }
 
@@ -1297,6 +1804,10 @@ macro_rules! _inner_event_parse {
                 $crate::_inner_event_optional_f64!($($event_handler_timeout)*);
             const event_handler_slow_timeout: Option<f64> =
                 $crate::_inner_event_optional_f64!($($event_handler_slow_timeout)*);
+            const event_ttl: Option<f64> =
+                $crate::_inner_event_optional_f64!($($event_ttl)*);
+            const event_result_ttl: Option<f64> =
+                $crate::_inner_event_optional_f64!($($event_result_ttl)*);
             const event_handler_concurrency: Option<$crate::types::EventHandlerConcurrencyMode> =
                 $crate::_inner_event_handler_concurrency!($($event_handler_concurrency)*);
             const event_handler_completion: Option<$crate::types::EventHandlerCompletionMode> =
@@ -1308,6 +1819,14 @@ macro_rules! _inner_event_parse {
         }
 
         impl $crate::typed::TypedEventObject for $name {
+            fn _attached_inner_event(
+                &self,
+            ) -> Option<std::sync::Arc<$crate::base_event::BaseEvent>> {
+                self.event_status.source_event().or_else(|| {
+                    $crate::event_bus::EventBus::event_for_event_id(&self.event_id)
+                })
+            }
+
             fn _from_inner_event(event: std::sync::Arc<$crate::base_event::BaseEvent>) -> Self {
                 let mut typed: Self = $crate::serde_json::from_value(
                     $crate::typed::payload_value_from_inner_event(&event),

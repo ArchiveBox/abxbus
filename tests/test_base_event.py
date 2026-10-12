@@ -1336,6 +1336,89 @@ async def test_event_at_fields_are_recognized():
     assert event.event_pending_bus_count == 2
 
 
+async def test_baseevent_reset_returns_a_fresh_pending_event_that_can_be_redispatched():
+    class BaseEventResetEvent(BaseEvent[str]):
+        label: str
+
+    bus_a = EventBus(name='BaseEventResetBusA')
+    bus_b = EventBus(name='BaseEventResetBusB')
+    bus_a.on(BaseEventResetEvent, lambda event: f'a:{event.label}')
+    bus_b.on(BaseEventResetEvent, lambda event: f'b:{event.label}')
+
+    completed = await bus_a.emit(BaseEventResetEvent(label='hello')).now()
+    completed.event_parent_id = '018f8e40-1234-7000-8000-000000000401'
+    completed.event_emitted_by_handler_id = '018f8e40-1234-7000-8000-000000000402'
+    completed.event_blocks_parent_completion = True
+
+    fresh = completed.event_reset()
+    assert fresh.event_id != completed.event_id
+    assert fresh.event_path == []
+    assert fresh.event_parent_id is None
+    assert fresh.event_emitted_by_handler_id is None
+    assert fresh.event_blocks_parent_completion is False
+    assert fresh.event_status == EventStatus.PENDING
+    assert fresh.event_created_at == completed.event_created_at
+    assert fresh.event_started_at is None
+    assert fresh.event_completed_at is None
+    assert fresh.event_pending_bus_count == 0
+    assert fresh.event_results == {}
+    assert fresh.event_type == 'BaseEventResetEvent'
+    assert fresh.label == 'hello'
+
+    forwarded = await bus_b.emit(fresh).now()
+    assert forwarded.event_status == EventStatus.COMPLETED
+    assert any(result.result == 'b:hello' for result in forwarded.event_results.values())
+    assert not any(path.startswith('BaseEventResetBusA#') for path in forwarded.event_path)
+    assert any(path.startswith('BaseEventResetBusB#') for path in forwarded.event_path)
+
+    await bus_a.destroy(clear=True)
+    await bus_b.destroy(clear=True)
+
+
+async def test_baseevent_event_reset_options_control_ids_status_timestamps_and_results():
+    class BaseEventResetOptionsEvent(BaseEvent[str]):
+        label: str
+
+    bus = EventBus(name='BaseEventResetOptionsBus')
+    bus.on(BaseEventResetOptionsEvent, lambda event: f'done:{event.label}')
+
+    completed = await bus.emit(BaseEventResetOptionsEvent(label='hello')).now()
+    completed.event_path = ['BaseEventResetOptionsSeedBus#1234']
+    completed.event_parent_id = '018f8e40-1234-7000-8000-000000000411'
+    completed.event_emitted_by_handler_id = '018f8e40-1234-7000-8000-000000000412'
+    completed.event_blocks_parent_completion = True
+    completed.event_pending_bus_count = 3
+    completed.event_created_at = '2025-01-02T03:04:05.000000000Z'
+    completed.event_started_at = '2025-01-02T03:04:06.000000000Z'
+    completed.event_completed_at = '2025-01-02T03:04:07.000000000Z'
+
+    preserved = completed.event_reset(ids=False, status=False, timestamps=False, results=False)
+
+    assert preserved.event_id == completed.event_id
+    assert preserved.event_path == completed.event_path
+    assert preserved.event_parent_id == completed.event_parent_id
+    assert preserved.event_emitted_by_handler_id == completed.event_emitted_by_handler_id
+    assert preserved.event_blocks_parent_completion is True
+    assert preserved.event_status == EventStatus.COMPLETED
+    assert preserved.event_created_at == '2025-01-02T03:04:05.000000000Z'
+    assert preserved.event_started_at == '2025-01-02T03:04:06.000000000Z'
+    assert preserved.event_completed_at == '2025-01-02T03:04:07.000000000Z'
+    assert preserved.event_results.keys() == completed.event_results.keys()
+    assert next(iter(preserved.event_results.values())).result == 'done:hello'
+    assert preserved.event_pending_bus_count == 0
+
+    redispatch = completed.event_reset(ids=False, status=True, timestamps=False, results=True)
+    assert redispatch.event_status == EventStatus.PENDING
+    assert redispatch.event_started_at == '2025-01-02T03:04:06.000000000Z'
+    assert redispatch.event_completed_at is None
+
+    with_results = completed.event_reset(results=False)
+    assert with_results.event_id != completed.event_id
+    assert all(result.event_id == with_results.event_id for result in with_results.event_results.values())
+
+    await bus.destroy(clear=True)
+
+
 async def test_event_result_update_creates_and_updates_typed_handler_results():
     class EventResultUpdateEvent(BaseEvent[str]):
         pass

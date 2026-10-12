@@ -51,8 +51,8 @@ bus.Off("MyEvent", entry)
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event, event_bus::EventBus};
-use abxbus_rust::typed::EventSpec;
+use abxbus::{event, event_bus::EventBus};
+use abxbus::typed::EventSpec;
 
 event! {
     struct MyEvent {
@@ -141,7 +141,7 @@ println!("{}", serde_json::to_string_pretty(&payload)?);
 //   ...
 // }
 
-let restored = abxbus_rust::event_handler::EventHandler::from_json_value(payload);
+let restored = abxbus::event_handler::EventHandler::from_json_value(payload);
 ```
 
 </Tab>

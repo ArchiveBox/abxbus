@@ -1,0 +1,683 @@
+{
+  "raw_schemas": [
+    {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    {
+      "$defs": {
+        "CommonNodeResult": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "child": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/CommonNodeResult"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      "$ref": "#/$defs/CommonNodeResult"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "integer"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ]
+        },
+        "tags": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "value",
+        "count"
+      ]
+    }
+  ],
+  "common_complex_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "CommonComplexResult",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 40,
+        "pattern": "^[a-z][a-z0-9-]*$",
+        "title": "Id"
+      },
+      "mode": {
+        "default": "standard",
+        "type": "string",
+        "const": "standard",
+        "title": "Mode"
+      },
+      "category": {
+        "default": "alpha",
+        "type": "string",
+        "enum": [
+          "alpha",
+          "beta"
+        ],
+        "title": "Category"
+      },
+      "status": {
+        "anyOf": [
+          {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "done"
+            ]
+          },
+          {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3
+          }
+        ],
+        "title": "Status"
+      },
+      "score": {
+        "default": 0,
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 100,
+        "multipleOf": 5,
+        "title": "Score"
+      },
+      "confidence": {
+        "default": 0.5,
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "exclusiveMaximum": 1,
+        "multipleOf": 0.25,
+        "title": "Confidence"
+      },
+      "owner": {
+        "default": null,
+        "title": "Owner",
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "title": "Name"
+              },
+              "tier": {
+                "default": 1,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "title": "Tier"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "tags": {
+        "default": [],
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24
+        },
+        "minItems": 0,
+        "maxItems": 4,
+        "title": "Tags"
+      },
+      "metrics": {
+        "default": {},
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "title": "Count"
+            },
+            "note": {
+              "default": null,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 20
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Note"
+            },
+            "samples": {
+              "default": [
+                0.25
+              ],
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "multipleOf": 0.25
+              },
+              "minItems": 1,
+              "maxItems": 3,
+              "title": "Samples"
+            }
+          },
+          "required": [
+            "count"
+          ],
+          "additionalProperties": false,
+          "title": "CommonMetric"
+        },
+        "title": "Metrics"
+      },
+      "regions": {
+        "default": [],
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "header",
+                    "body",
+                    "footer"
+                  ]
+                },
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10
+                }
+              ],
+              "title": "Kind"
+            },
+            "visible": {
+              "default": true,
+              "type": "boolean",
+              "title": "Visible"
+            },
+            "window": {
+              "default": [
+                0,
+                10
+              ],
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10
+                }
+              ],
+              "minItems": 2,
+              "maxItems": 2,
+              "title": "Window"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false,
+          "title": "CommonRegion"
+        },
+        "title": "Regions"
+      }
+    },
+    "required": [
+      "id",
+      "metrics",
+      "regions",
+      "status"
+    ]
+  },
+  "common_complex_payload": {
+    "id": "result-1",
+    "status": 2,
+    "owner": {
+      "name": "Ada"
+    },
+    "metrics": {
+      "latency": {
+        "count": 12
+      }
+    },
+    "regions": [
+      {
+        "kind": "header"
+      },
+      {
+        "kind": 2
+      }
+    ]
+  },
+  "common_complex_validated_payload": {
+    "id": "result-1",
+    "mode": "standard",
+    "category": "alpha",
+    "status": 2,
+    "score": 0,
+    "confidence": 0.5,
+    "owner": {
+      "name": "Ada",
+      "tier": 1
+    },
+    "tags": [],
+    "metrics": {
+      "latency": {
+        "count": 12,
+        "note": null,
+        "samples": [
+          0.25
+        ]
+      }
+    },
+    "regions": [
+      {
+        "kind": "header",
+        "visible": true,
+        "window": [
+          0,
+          10
+        ]
+      },
+      {
+        "kind": 2,
+        "visible": true,
+        "window": [
+          0,
+          10
+        ]
+      }
+    ]
+  },
+  "common_complex_invalid_payloads": [
+    {
+      "name": "rejects id pattern mismatch",
+      "payload": {
+        "id": "Result 1",
+        "status": 2,
+        "owner": {
+          "name": "Ada"
+        },
+        "metrics": {
+          "latency": {
+            "count": 12
+          }
+        },
+        "regions": [
+          {
+            "kind": "header"
+          },
+          {
+            "kind": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "rejects const mismatch",
+      "payload": {
+        "id": "result-1",
+        "mode": "custom",
+        "status": 2,
+        "owner": {
+          "name": "Ada"
+        },
+        "metrics": {
+          "latency": {
+            "count": 12
+          }
+        },
+        "regions": [
+          {
+            "kind": "header"
+          },
+          {
+            "kind": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "rejects enum mismatch",
+      "payload": {
+        "id": "result-1",
+        "category": "gamma",
+        "status": 2,
+        "owner": {
+          "name": "Ada"
+        },
+        "metrics": {
+          "latency": {
+            "count": 12
+          }
+        },
+        "regions": [
+          {
+            "kind": "header"
+          },
+          {
+            "kind": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "rejects status above integer maximum",
+      "payload": {
+        "id": "result-1",
+        "status": 4,
+        "owner": {
+          "name": "Ada"
+        },
+        "metrics": {
+          "latency": {
+            "count": 12
+          }
+        },
+        "regions": [
+          {
+            "kind": "header"
+          },
+          {
+            "kind": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "rejects score multipleOf mismatch",
+      "payload": {
+        "id": "result-1",
+        "status": 2,
+        "score": 7,
+        "owner": {
+          "name": "Ada"
+        },
+        "metrics": {
+          "latency": {
+            "count": 12
+          }
+        },
+        "regions": [
+          {
+            "kind": "header"
+          },
+          {
+            "kind": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "rejects confidence exclusive maximum",
+      "payload": {
+        "id": "result-1",
+        "status": 2,
+        "confidence": 1,
+        "owner": {
+          "name": "Ada"
+        },
+        "metrics": {
+          "latency": {
+            "count": 12
+          }
+        },
+        "regions": [
+          {
+            "kind": "header"
+          },
+          {
+            "kind": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "rejects owner name minLength",
+      "payload": {
+        "id": "result-1",
+        "status": 2,
+        "owner": {
+          "name": ""
+        },
+        "metrics": {
+          "latency": {
+            "count": 12
+          }
+        },
+        "regions": [
+          {
+            "kind": "header"
+          },
+          {
+            "kind": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "rejects tags maxItems",
+      "payload": {
+        "id": "result-1",
+        "status": 2,
+        "tags": [
+          "one",
+          "two",
+          "three",
+          "four",
+          "five"
+        ],
+        "owner": {
+          "name": "Ada"
+        },
+        "metrics": {
+          "latency": {
+            "count": 12
+          }
+        },
+        "regions": [
+          {
+            "kind": "header"
+          },
+          {
+            "kind": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "rejects metric count above safe integer maximum",
+      "payload": {
+        "id": "result-1",
+        "status": 2,
+        "owner": {
+          "name": "Ada"
+        },
+        "metrics": {
+          "latency": {
+            "count": 9007199254740992
+          }
+        },
+        "regions": [
+          {
+            "kind": "header"
+          },
+          {
+            "kind": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "rejects metric sample multipleOf mismatch",
+      "payload": {
+        "id": "result-1",
+        "status": 2,
+        "owner": {
+          "name": "Ada"
+        },
+        "metrics": {
+          "latency": {
+            "count": 12,
+            "samples": [
+              0.3
+            ]
+          }
+        },
+        "regions": [
+          {
+            "kind": "header"
+          },
+          {
+            "kind": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "rejects region kind integer maximum",
+      "payload": {
+        "id": "result-1",
+        "status": 2,
+        "owner": {
+          "name": "Ada"
+        },
+        "metrics": {
+          "latency": {
+            "count": 12
+          }
+        },
+        "regions": [
+          {
+            "kind": 11
+          }
+        ]
+      }
+    },
+    {
+      "name": "rejects region window tuple item maximum",
+      "payload": {
+        "id": "result-1",
+        "status": 2,
+        "owner": {
+          "name": "Ada"
+        },
+        "metrics": {
+          "latency": {
+            "count": 12
+          }
+        },
+        "regions": [
+          {
+            "kind": "header",
+            "window": [
+              0,
+              11
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "rejects extra top-level property",
+      "payload": {
+        "id": "result-1",
+        "status": 2,
+        "owner": {
+          "name": "Ada"
+        },
+        "metrics": {
+          "latency": {
+            "count": 12
+          }
+        },
+        "regions": [
+          {
+            "kind": "header"
+          },
+          {
+            "kind": 2
+          }
+        ],
+        "extra": true
+      }
+    }
+  ]
+}

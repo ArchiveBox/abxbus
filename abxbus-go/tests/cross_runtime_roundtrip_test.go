@@ -70,8 +70,9 @@ func TestGoRoundtripCLIPreservesEventJSONShape(t *testing.T) {
 		t.Fatalf("roundtrip event payload mismatch: %#v", events)
 	}
 	expectedSchema := map[string]any{
-		"type":  "array",
-		"items": map[string]any{"type": "string"},
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type":    "array",
+		"items":   map[string]any{"type": "string"},
 	}
 	if !reflect.DeepEqual(events[0]["event_result_type"], expectedSchema) {
 		t.Fatalf("event_result_type schema did not roundtrip: %#v", events[0]["event_result_type"])
@@ -199,6 +200,13 @@ func runRuntimeRoundtrip(t *testing.T, runtime string, mode string, payload any)
 
 func assertJSONEqual(t *testing.T, expected any, actual any) {
 	t.Helper()
+	// event_extra_payload is an in-memory escape hatch only; wire JSON must stay flat.
+	if data, err := json.Marshal(actual); err == nil && strings.Contains(string(data), "event_extra_payload") {
+		t.Fatalf("actual JSON emitted event_extra_payload wrapper: %s", data)
+	}
+	if data, err := json.Marshal(expected); err == nil && strings.Contains(string(data), "event_extra_payload") {
+		t.Fatalf("expected fixture used event_extra_payload wrapper: %s", data)
+	}
 	var expectedJSON any
 	expectedData, err := json.Marshal(expected)
 	if err != nil {
@@ -216,6 +224,13 @@ func assertJSONEqual(t *testing.T, expected any, actual any) {
 
 func assertEventRoundtripEqualAllowingSchemaNormalization(t *testing.T, expected any, actual any) {
 	t.Helper()
+	// event_extra_payload is an in-memory escape hatch only; wire JSON must stay flat.
+	if data, err := json.Marshal(actual); err == nil && strings.Contains(string(data), "event_extra_payload") {
+		t.Fatalf("actual event JSON emitted event_extra_payload wrapper: %s", data)
+	}
+	if data, err := json.Marshal(expected); err == nil && strings.Contains(string(data), "event_extra_payload") {
+		t.Fatalf("expected event fixture used event_extra_payload wrapper: %s", data)
+	}
 	expectedEvents := normalizeEventList(t, expected)
 	actualEvents := normalizeEventList(t, actual)
 	if len(expectedEvents) != len(actualEvents) {
@@ -232,6 +247,12 @@ func assertEventRoundtripEqualAllowingSchemaNormalization(t *testing.T, expected
 		if _, ok := actualEvents[idx]["event_result_type"]; !ok {
 			t.Fatalf("event_result_type missing after roundtrip at index %d", idx)
 		}
+		assertJSONSchemaLayout(
+			t,
+			fmt.Sprint(expectedEvents[idx]["event_type"]),
+			actualEvents[idx]["event_result_type"],
+			fmt.Sprintf("roundtrip event %d", idx),
+		)
 	}
 }
 
@@ -317,6 +338,22 @@ func roundtripEventCases() []roundtripEventCase {
 			valid:   []any{"ok", 7},
 			invalid: []any{false},
 		},
+		{
+			event: roundtripEventFixture("GoRecursiveNodeEvent", "go-recursive", map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string"},
+					"child": map[string]any{"anyOf": []any{
+						map[string]any{"$ref": "#"},
+						map[string]any{"type": "null"},
+					}},
+				},
+				"required":             []any{"name", "child"},
+				"additionalProperties": false,
+			}, 8),
+			valid:   []any{map[string]any{"name": "root", "child": map[string]any{"name": "leaf", "child": nil}}},
+			invalid: []any{map[string]any{"name": "root", "child": map[string]any{"name": 3, "child": nil}}, map[string]any{"child": nil}},
+		},
 	}
 }
 
@@ -344,12 +381,44 @@ func assertGoResultSchemaSemantics(t *testing.T, payload any, cases []roundtripE
 		if !ok {
 			t.Fatalf("unexpected roundtrip event type %q", eventType)
 		}
+		assertJSONSchemaLayout(t, eventType, eventPayload["event_result_type"], eventType)
 		for idx, valid := range tc.valid {
 			assertGoHandlerResultAccepted(t, eventPayload, valid, fmt.Sprintf("%s valid[%d]", eventType, idx))
 		}
 		for idx, invalid := range tc.invalid {
 			assertGoHandlerResultRejected(t, eventPayload, invalid, fmt.Sprintf("%s invalid[%d]", eventType, idx))
 		}
+	}
+}
+
+func assertJSONSchemaLayout(t *testing.T, eventType string, schema any, context string) {
+	t.Helper()
+	if eventType != "GoRecursiveNodeEvent" {
+		return
+	}
+	schemaMap, ok := schema.(map[string]any)
+	if !ok {
+		t.Fatalf("%s: recursive schema should remain an object", context)
+	}
+	properties, ok := schemaMap["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s: missing recursive schema properties", context)
+	}
+	childSchema, ok := properties["child"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s: missing child schema", context)
+	}
+	if !reflect.DeepEqual(childSchema["anyOf"], []any{map[string]any{"$ref": "#"}, map[string]any{"type": "null"}}) {
+		t.Fatalf("%s: child schema should keep standard anyOf $ref/null, got %#v", context, childSchema)
+	}
+	if _, ok := childSchema["nullable"]; ok {
+		t.Fatalf("%s: child schema should not use nullable", context)
+	}
+	if _, ok := childSchema["allOf"]; ok {
+		t.Fatalf("%s: child schema should not use nullable allOf", context)
+	}
+	if _, ok := childSchema["oneOf"]; ok {
+		t.Fatalf("%s: child schema should not use oneOf", context)
 	}
 }
 
@@ -434,6 +503,8 @@ func roundtripEventFixture(eventType string, label string, resultSchema map[stri
 		"event_concurrency":              nil,
 		"event_handler_timeout":          nil,
 		"event_handler_slow_timeout":     nil,
+		"event_ttl":                      nil,
+		"event_result_ttl":               nil,
 		"event_handler_concurrency":      nil,
 		"event_handler_completion":       nil,
 		"event_blocks_parent_completion": false,
@@ -448,6 +519,12 @@ func roundtripEventFixture(eventType string, label string, resultSchema map[stri
 		"event_started_at":               nil,
 		"event_completed_at":             nil,
 		"label":                          label,
+		// Known-event extras must survive every runtime as flat top-level fields.
+		"future_unrecognized_field": map[string]any{
+			"source": "go",
+			"index":  idSuffix,
+			"nested": []any{"kept", map[string]any{"event_type": eventType}},
+		},
 	}
 }
 
@@ -470,6 +547,7 @@ func roundtripBusFixture() map[string]any {
 			"handler_file_path":     nil,
 			"handler_timeout":       nil,
 			"handler_slow_timeout":  nil,
+			"handler_result_ttl":    nil,
 			"handler_registered_at": "2025-01-02T03:04:05.000000000Z",
 			"handler_event_pattern": "GoCrossRuntimeResumeEvent",
 			"eventbus_name":         "GoCrossRuntimeBus",
@@ -489,6 +567,8 @@ func roundtripBusFixture() map[string]any {
 		"event_concurrency":               "bus-serial",
 		"event_timeout":                   60.0,
 		"event_slow_timeout":              300.0,
+		"event_ttl":                       nil,
+		"event_result_ttl":                nil,
 		"event_handler_concurrency":       "serial",
 		"event_handler_completion":        "all",
 		"event_handler_timeout":           nil,
@@ -502,6 +582,7 @@ func roundtripBusFixture() map[string]any {
 				"handler_file_path":     nil,
 				"handler_timeout":       nil,
 				"handler_slow_timeout":  nil,
+				"handler_result_ttl":    nil,
 				"handler_registered_at": "2025-01-02T03:04:05.000000000Z",
 				"eventbus_name":         "GoCrossRuntimeBus",
 				"eventbus_id":           busID,
@@ -573,7 +654,7 @@ func TestJSONLEventBridgeForwardsEventsThroughFile(t *testing.T) {
 
 	select {
 	case inbound := <-received:
-		if inbound.EventType != "JSONLTestEvent" || inbound.Payload["value"] != "hello" {
+		if inbound.EventType != "JSONLTestEvent" || inbound.EventExtraPayload["value"] != "hello" {
 			t.Fatalf("unexpected inbound event: %#v", inbound)
 		}
 	case <-time.After(2 * time.Second):
@@ -610,8 +691,8 @@ func TestJSONLEventBridgeIgnoresMalformedLinesAndKeepsPolling(t *testing.T) {
 
 	select {
 	case inbound := <-received:
-		if inbound.Payload["ok"] != true {
-			t.Fatalf("unexpected payload: %#v", inbound.Payload)
+		if inbound.EventExtraPayload["ok"] != true {
+			t.Fatalf("unexpected payload: %#v", inbound.EventExtraPayload)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for valid event after malformed line")
@@ -692,7 +773,7 @@ func measureJSONLBridgeWarmLatencyMS(t *testing.T, jsonlPath string) float64 {
 	warmupOnce := sync.Once{}
 	measuredOnce := sync.Once{}
 	receiver.On("IPCPingEvent", "latency_capture", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		label, _ := event.Payload["label"].(string)
+		label, _ := event.EventExtraPayload["label"].(string)
 		countsMu.Lock()
 		defer countsMu.Unlock()
 		if strings.HasPrefix(label, warmupPrefix) {

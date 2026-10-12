@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use abxbus_rust::{
+use abxbus::{
     base_event::{BaseEvent, EventResultOptions, EventWaitOptions},
     event,
     event_bus::{EventBus, EventBusOptions},
@@ -584,7 +584,7 @@ fn test_event_handler_concurrency_per_event_override_controls_execution_mode() {
 
 // Folded from test_event_handler_ids.rs to keep test layout class-based.
 mod folded_test_event_handler_ids {
-    use abxbus_rust::id::compute_handler_id;
+    use abxbus::id::compute_handler_id;
     use uuid::Uuid;
 
     #[test]

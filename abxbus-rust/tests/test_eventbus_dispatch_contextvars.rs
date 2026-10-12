@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use abxbus_rust::{
+use abxbus::{
     event,
     event_bus::{EventBus, EventBusOptions},
     event_handler::EventHandlerOptions,

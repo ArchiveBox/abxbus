@@ -15,6 +15,10 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BusDefaults {
+    #[serde(default)]
+    pub event_ttl: Option<f64>,
+    #[serde(default)]
+    pub event_result_ttl: Option<f64>,
     pub event_concurrency: EventConcurrency,
     pub event_handler_concurrency: HandlerConcurrency,
     pub event_handler_completion: HandlerCompletion,
@@ -27,6 +31,8 @@ pub struct BusDefaults {
 impl Default for BusDefaults {
     fn default() -> Self {
         Self {
+            event_ttl: None,
+            event_result_ttl: None,
             event_concurrency: EventConcurrency::BusSerial,
             event_handler_concurrency: HandlerConcurrency::Serial,
             event_handler_completion: HandlerCompletion::All,
@@ -57,6 +63,8 @@ fn default_max_history_size() -> Option<usize> {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HandlerRecord {
+    #[serde(default)]
+    pub handler_result_ttl: Option<f64>,
     pub handler_id: HandlerId,
     pub bus_id: BusId,
     pub host_id: String,
@@ -72,6 +80,10 @@ pub struct HandlerRecord {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventRecord {
+    #[serde(default)]
+    pub event_ttl: Option<f64>,
+    #[serde(default)]
+    pub event_result_ttl: Option<f64>,
     pub event_id: EventId,
     pub event_type: String,
     pub event_version: String,

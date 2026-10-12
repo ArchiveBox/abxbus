@@ -1,11 +1,11 @@
-use abxbus_rust::event;
+use abxbus::event;
 use std::{
     sync::{Arc, Mutex},
     thread,
     time::Duration,
 };
 
-use abxbus_rust::{
+use abxbus::{
     base_event::{EventResultOptions, EventWaitOptions},
     event_bus::{EventBus, EventBusOptions},
     types::{
@@ -172,6 +172,150 @@ fn test_events_forward_between_buses_without_duplication() {
     bus_a.destroy();
     bus_b.destroy();
     bus_c.destroy();
+}
+
+#[test]
+fn test_completed_forwarded_event_with_pruned_target_results_remains_terminal() {
+    let bus_a = EventBus::new(Some("PrunedTerminalA".to_string()));
+    let bus_b = EventBus::new(Some("PrunedTerminalB".to_string()));
+
+    let bus_b_result_events = Arc::new(Mutex::new(Vec::new()));
+    let bus_b_for_forward = bus_b.clone();
+    bus_a.on_raw(
+        "PingEvent",
+        "forward_to_b_for_pruned_terminal",
+        move |event| {
+            let bus_b = bus_b_for_forward.clone();
+            async move {
+                bus_b.emit_base(event);
+                Ok(json!("a"))
+            }
+        },
+    );
+    let bus_b_seen = bus_b_result_events.clone();
+    bus_b.on_raw("PingEvent", "target_for_pruned_terminal", move |event| {
+        let seen = bus_b_seen.clone();
+        async move {
+            seen.lock()
+                .expect("bus_b_result_events lock")
+                .push(event.inner.lock().event_id.clone());
+            Ok(json!("b"))
+        }
+    });
+
+    let event = bus_a.emit(PingEvent {
+        value: 1,
+        ..Default::default()
+    });
+    let _ = block_on(event.now());
+    block_on(bus_a.wait_until_idle(None));
+    block_on(bus_b.wait_until_idle(None));
+
+    let event_id = event.event_id.clone();
+    let original_event = event._inner_event();
+    {
+        let inner = original_event.inner.lock();
+        assert_eq!(inner.event_status, EventStatus::Completed);
+        assert!(inner.event_completed_at.is_some());
+    }
+    assert_eq!(
+        bus_b_result_events.lock().expect("seen lock").as_slice(),
+        std::slice::from_ref(&event_id)
+    );
+    {
+        let mut inner = original_event.inner.lock();
+        inner
+            .event_results
+            .retain(|_, result| result.handler.eventbus_id != bus_b.id);
+        assert!(!inner
+            .event_results
+            .values()
+            .any(|result| result.handler.eventbus_id == bus_b.id));
+    }
+
+    bus_b.emit_base(original_event.clone());
+    let _ = block_on(event.now());
+    block_on(bus_a.wait_until_idle(None));
+    block_on(bus_b.wait_until_idle(None));
+
+    {
+        let inner = original_event.inner.lock();
+        assert_eq!(inner.event_status, EventStatus::Completed);
+        assert!(inner.event_completed_at.is_some());
+    }
+    assert_eq!(
+        bus_b_result_events.lock().expect("seen lock").as_slice(),
+        std::slice::from_ref(&event_id)
+    );
+
+    bus_a.destroy();
+    bus_b.destroy();
+}
+
+#[test]
+fn test_completed_event_first_emitted_to_new_bus_skips_target_handlers() {
+    let bus_a = EventBus::new(Some("CompletedReplaySource".to_string()));
+    let bus_b = EventBus::new(Some("CompletedReplayTarget".to_string()));
+
+    let seen_a = Arc::new(Mutex::new(Vec::new()));
+    let seen_b = Arc::new(Mutex::new(Vec::new()));
+
+    let seen_a_handler = seen_a.clone();
+    bus_a.on_raw("PingEvent", "source_seen", move |event| {
+        let seen = seen_a_handler.clone();
+        async move {
+            seen.lock()
+                .expect("seen_a lock")
+                .push(event.inner.lock().event_id.clone());
+            Ok(json!("a"))
+        }
+    });
+    let seen_b_handler = seen_b.clone();
+    bus_b.on_raw("PingEvent", "target_seen", move |event| {
+        let seen = seen_b_handler.clone();
+        async move {
+            seen.lock()
+                .expect("seen_b lock")
+                .push(event.inner.lock().event_id.clone());
+            Ok(json!("b"))
+        }
+    });
+
+    let event = bus_a.emit(PingEvent {
+        value: 1,
+        ..Default::default()
+    });
+    let _ = block_on(event.now());
+    block_on(bus_a.wait_until_idle(None));
+
+    let event_id = event.event_id.clone();
+    let original_event = event._inner_event();
+    {
+        let inner = original_event.inner.lock();
+        assert_eq!(inner.event_status, EventStatus::Completed);
+        assert!(inner.event_completed_at.is_some());
+    }
+    assert_eq!(
+        seen_a.lock().expect("seen_a lock").as_slice(),
+        std::slice::from_ref(&event_id)
+    );
+    assert!(seen_b.lock().expect("seen_b lock").is_empty());
+
+    bus_b.emit_base(original_event.clone());
+    block_on(bus_a.wait_until_idle(None));
+    block_on(bus_b.wait_until_idle(None));
+
+    assert!(seen_b.lock().expect("seen_b lock").is_empty());
+    {
+        let inner = original_event.inner.lock();
+        assert_eq!(inner.event_status, EventStatus::Completed);
+        assert!(inner.event_completed_at.is_some());
+        assert_eq!(inner.event_path, vec![bus_a.label(), bus_b.label()]);
+    }
+    assert!(bus_b.event_history_ids().contains(&event_id));
+
+    bus_a.destroy();
+    bus_b.destroy();
 }
 
 #[test]
@@ -715,7 +859,7 @@ fn test_forwarded_event_uses_processing_bus_defaults() {
         },
     );
     let log = Arc::new(Mutex::new(Vec::new()));
-    let inherited_ref: Arc<Mutex<Option<Arc<abxbus_rust::base_event::BaseEvent>>>> =
+    let inherited_ref: Arc<Mutex<Option<Arc<abxbus::base_event::BaseEvent>>>> =
         Arc::new(Mutex::new(None));
 
     let log_b1 = log.clone();
@@ -731,7 +875,7 @@ fn test_forwarded_event_uses_processing_bus_defaults() {
             let mode = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("mode")
                 .and_then(serde_json::Value::as_str)
                 .expect("mode")
@@ -755,7 +899,7 @@ fn test_forwarded_event_uses_processing_bus_defaults() {
             let mode = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("mode")
                 .and_then(serde_json::Value::as_str)
                 .expect("mode")
@@ -790,7 +934,7 @@ fn test_forwarded_event_uses_processing_bus_defaults() {
         },
     );
 
-    let top = bus_a.emit_base(abxbus_rust::base_event::BaseEvent::new(
+    let top = bus_a.emit_base(abxbus::base_event::BaseEvent::new(
         "ForwardedDefaultsTriggerEvent",
         serde_json::Map::new(),
     ));
@@ -847,7 +991,7 @@ fn test_forwarded_event_preserves_explicit_handler_concurrency_override() {
             let mode = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("mode")
                 .and_then(serde_json::Value::as_str)
                 .expect("mode")
@@ -865,7 +1009,7 @@ fn test_forwarded_event_preserves_explicit_handler_concurrency_override() {
             let mode = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("mode")
                 .and_then(serde_json::Value::as_str)
                 .expect("mode")
@@ -900,7 +1044,7 @@ fn test_forwarded_event_preserves_explicit_handler_concurrency_override() {
         },
     );
 
-    let top = bus_a.emit_base(abxbus_rust::base_event::BaseEvent::new(
+    let top = bus_a.emit_base(abxbus::base_event::BaseEvent::new(
         "ForwardedDefaultsTriggerEvent",
         serde_json::Map::new(),
     ));
@@ -1075,7 +1219,7 @@ fn test_events_are_processed_in_fifo_order() {
             let order = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("order")
                 .and_then(|value| value.as_i64())
                 .expect("order payload");
@@ -1102,4 +1246,329 @@ fn test_events_are_processed_in_fifo_order() {
         &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     );
     bus.destroy();
+}
+
+fn run_forwarding_ttl_trim_pass(bus: &Arc<EventBus>) {
+    let touch = bus.emit_base(abxbus::base_event::BaseEvent::new(
+        "ForwardingTTLTouchEvent",
+        serde_json::Map::new(),
+    ));
+    let _ = block_on(touch.now());
+    assert!(block_on(bus.wait_until_idle(Some(1.0))));
+}
+
+#[test]
+fn test_forwarded_event_ttl_absent_uses_each_processing_bus_default() {
+    let bus_a = EventBus::new_with_options(
+        Some("ForwardTTLAbsentOriginDelete".to_string()),
+        EventBusOptions {
+            event_ttl: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_b = EventBus::new_with_options(
+        Some("ForwardTTLAbsentTargetKeep".to_string()),
+        EventBusOptions {
+            event_ttl: Some(-1.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_b_for_forward = bus_b.clone();
+    bus_a.on_raw_sync("ForwardingTTLProbeEvent", "forward", move |event| {
+        bus_b_for_forward.emit_base(event);
+        Ok(json!(null))
+    });
+    bus_b.on_raw_sync("ForwardingTTLProbeEvent", "target", |_event| {
+        Ok(json!("target"))
+    });
+
+    let event = bus_a.emit_base(abxbus::base_event::BaseEvent::new(
+        "ForwardingTTLProbeEvent",
+        serde_json::Map::new(),
+    ));
+    let _ = block_on(event.now());
+    assert!(block_on(bus_a.wait_until_idle(Some(1.0))));
+    assert!(block_on(bus_b.wait_until_idle(Some(1.0))));
+
+    run_forwarding_ttl_trim_pass(&bus_a);
+    run_forwarding_ttl_trim_pass(&bus_b);
+
+    let event_id = event.inner.lock().event_id.clone();
+    assert!(!bus_a.event_history_ids().contains(&event_id));
+    assert!(bus_b.event_history_ids().contains(&event_id));
+    bus_a.destroy();
+    bus_b.destroy();
+}
+
+#[test]
+fn test_forwarded_event_ttl_none_uses_each_processing_bus_default() {
+    let bus_a = EventBus::new_with_options(
+        Some("ForwardTTLNoneOriginKeep".to_string()),
+        EventBusOptions {
+            event_ttl: Some(-1.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_b = EventBus::new_with_options(
+        Some("ForwardTTLNoneTargetDelete".to_string()),
+        EventBusOptions {
+            event_ttl: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_b_for_forward = bus_b.clone();
+    bus_a.on_raw_sync("ForwardingTTLProbeEvent", "forward", move |event| {
+        bus_b_for_forward.emit_base(event);
+        Ok(json!(null))
+    });
+    bus_b.on_raw_sync("ForwardingTTLProbeEvent", "target", |_event| {
+        Ok(json!("target"))
+    });
+
+    let event =
+        abxbus::base_event::BaseEvent::new("ForwardingTTLProbeEvent", serde_json::Map::new());
+    event.inner.lock().event_ttl = None;
+    let event = bus_a.emit_base(event);
+    let _ = block_on(event.now());
+    assert!(block_on(bus_a.wait_until_idle(Some(1.0))));
+    assert!(block_on(bus_b.wait_until_idle(Some(1.0))));
+
+    run_forwarding_ttl_trim_pass(&bus_a);
+    run_forwarding_ttl_trim_pass(&bus_b);
+
+    let event_id = event.inner.lock().event_id.clone();
+    assert!(bus_a.event_history_ids().contains(&event_id));
+    assert!(!bus_b.event_history_ids().contains(&event_id));
+    bus_a.destroy();
+    bus_b.destroy();
+}
+
+#[test]
+fn test_forwarded_event_ttl_positive_uses_shorter_target_default_without_mutating_source_default() {
+    let bus_a = EventBus::new_with_options(
+        Some("ForwardTTLPositiveOriginLong".to_string()),
+        EventBusOptions {
+            event_ttl: Some(1.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_b = EventBus::new_with_options(
+        Some("ForwardTTLPositiveTargetShort".to_string()),
+        EventBusOptions {
+            event_ttl: Some(0.01),
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_b_for_forward = bus_b.clone();
+    bus_a.on_raw_sync("ForwardingTTLProbeEvent", "forward", move |event| {
+        bus_b_for_forward.emit_base(event);
+        Ok(json!(null))
+    });
+    bus_b.on_raw_sync("ForwardingTTLProbeEvent", "target", |_event| {
+        Ok(json!("target"))
+    });
+
+    let event = bus_a.emit_base(abxbus::base_event::BaseEvent::new(
+        "ForwardingTTLProbeEvent",
+        serde_json::Map::new(),
+    ));
+    let _ = block_on(event.now());
+    assert!(block_on(bus_a.wait_until_idle(Some(1.0))));
+    assert!(block_on(bus_b.wait_until_idle(Some(1.0))));
+
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    run_forwarding_ttl_trim_pass(&bus_a);
+    run_forwarding_ttl_trim_pass(&bus_b);
+
+    let event_id = event.inner.lock().event_id.clone();
+    assert!(bus_a.event_history_ids().contains(&event_id));
+    assert!(!bus_b.event_history_ids().contains(&event_id));
+    bus_a.destroy();
+    bus_b.destroy();
+}
+
+#[test]
+fn test_forwarded_event_ttl_explicit_never_overrides_both_bus_defaults() {
+    let bus_a = EventBus::new_with_options(
+        Some("ForwardTTLExplicitNeverOrigin".to_string()),
+        EventBusOptions {
+            event_ttl: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_b = EventBus::new_with_options(
+        Some("ForwardTTLExplicitNeverTarget".to_string()),
+        EventBusOptions {
+            event_ttl: Some(0.01),
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_b_for_forward = bus_b.clone();
+    bus_a.on_raw_sync("ForwardingTTLProbeEvent", "forward", move |event| {
+        bus_b_for_forward.emit_base(event);
+        Ok(json!(null))
+    });
+    bus_b.on_raw_sync("ForwardingTTLProbeEvent", "target", |_event| {
+        Ok(json!("target"))
+    });
+
+    let event =
+        abxbus::base_event::BaseEvent::new("ForwardingTTLProbeEvent", serde_json::Map::new());
+    event.inner.lock().event_ttl = Some(-1.0);
+    let event = bus_a.emit_base(event);
+    let _ = block_on(event.now());
+    assert!(block_on(bus_a.wait_until_idle(Some(1.0))));
+    assert!(block_on(bus_b.wait_until_idle(Some(1.0))));
+
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    run_forwarding_ttl_trim_pass(&bus_a);
+    run_forwarding_ttl_trim_pass(&bus_b);
+
+    let event_id = event.inner.lock().event_id.clone();
+    assert!(bus_a.event_history_ids().contains(&event_id));
+    assert!(bus_b.event_history_ids().contains(&event_id));
+    bus_a.destroy();
+    bus_b.destroy();
+}
+
+#[test]
+fn test_forwarded_event_ttl_explicit_zero_overrides_both_bus_defaults() {
+    let bus_a = EventBus::new_with_options(
+        Some("ForwardTTLExplicitZeroOrigin".to_string()),
+        EventBusOptions {
+            event_ttl: Some(-1.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_b = EventBus::new_with_options(
+        Some("ForwardTTLExplicitZeroTarget".to_string()),
+        EventBusOptions {
+            event_ttl: Some(-1.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_b_for_forward = bus_b.clone();
+    bus_a.on_raw_sync("ForwardingTTLProbeEvent", "forward", move |event| {
+        bus_b_for_forward.emit_base(event);
+        Ok(json!(null))
+    });
+    bus_b.on_raw_sync("ForwardingTTLProbeEvent", "target", |_event| {
+        Ok(json!("target"))
+    });
+
+    let event =
+        abxbus::base_event::BaseEvent::new("ForwardingTTLProbeEvent", serde_json::Map::new());
+    event.inner.lock().event_ttl = Some(0.0);
+    let event = bus_a.emit_base(event);
+    let _ = block_on(event.now());
+    assert!(block_on(bus_a.wait_until_idle(Some(1.0))));
+    assert!(block_on(bus_b.wait_until_idle(Some(1.0))));
+
+    run_forwarding_ttl_trim_pass(&bus_a);
+    run_forwarding_ttl_trim_pass(&bus_b);
+
+    let event_id = event.inner.lock().event_id.clone();
+    assert!(!bus_a.event_history_ids().contains(&event_id));
+    assert!(!bus_b.event_history_ids().contains(&event_id));
+    bus_a.destroy();
+    bus_b.destroy();
+}
+
+#[test]
+fn test_forwarded_event_result_ttl_prunes_only_processing_bus_results() {
+    let bus_a = EventBus::new_with_options(
+        Some("ForwardResultTTLOriginKeep".to_string()),
+        EventBusOptions {
+            event_ttl: Some(-1.0),
+            event_result_ttl: Some(-1.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_b = EventBus::new_with_options(
+        Some("ForwardResultTTLTargetClear".to_string()),
+        EventBusOptions {
+            event_ttl: Some(-1.0),
+            event_result_ttl: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_b_for_forward = bus_b.clone();
+    bus_a.on_raw_sync("ForwardingTTLProbeEvent", "forward", move |event| {
+        bus_b_for_forward.emit_base(event);
+        Ok(json!(null))
+    });
+    bus_b.on_raw_sync("ForwardingTTLProbeEvent", "target", |_event| {
+        Ok(json!("target"))
+    });
+
+    let event = bus_a.emit_base(abxbus::base_event::BaseEvent::new(
+        "ForwardingTTLProbeEvent",
+        serde_json::Map::new(),
+    ));
+    let _ = block_on(event.now());
+    assert!(block_on(bus_a.wait_until_idle(Some(1.0))));
+    assert!(block_on(bus_b.wait_until_idle(Some(1.0))));
+
+    run_forwarding_ttl_trim_pass(&bus_b);
+
+    let inner = event.inner.lock();
+    assert!(inner
+        .event_results
+        .values()
+        .any(|result| result.handler.eventbus_id == bus_a.id));
+    assert!(!inner
+        .event_results
+        .values()
+        .any(|result| result.handler.eventbus_id == bus_b.id));
+    drop(inner);
+    bus_a.destroy();
+    bus_b.destroy();
+}
+
+#[test]
+fn test_forwarded_event_result_ttl_explicit_never_overrides_both_bus_defaults() {
+    let bus_a = EventBus::new_with_options(
+        Some("ForwardResultTTLExplicitNeverOrigin".to_string()),
+        EventBusOptions {
+            event_ttl: Some(-1.0),
+            event_result_ttl: Some(0.0),
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_b = EventBus::new_with_options(
+        Some("ForwardResultTTLExplicitNeverTarget".to_string()),
+        EventBusOptions {
+            event_ttl: Some(-1.0),
+            event_result_ttl: Some(0.01),
+            ..EventBusOptions::default()
+        },
+    );
+    let bus_b_for_forward = bus_b.clone();
+    bus_a.on_raw_sync("ForwardingTTLProbeEvent", "forward", move |event| {
+        bus_b_for_forward.emit_base(event);
+        Ok(json!(null))
+    });
+    bus_b.on_raw_sync("ForwardingTTLProbeEvent", "target", |_event| {
+        Ok(json!("target"))
+    });
+
+    let event =
+        abxbus::base_event::BaseEvent::new("ForwardingTTLProbeEvent", serde_json::Map::new());
+    event.inner.lock().event_result_ttl = Some(-1.0);
+    let event = bus_a.emit_base(event);
+    let _ = block_on(event.now());
+    assert!(block_on(bus_a.wait_until_idle(Some(1.0))));
+    assert!(block_on(bus_b.wait_until_idle(Some(1.0))));
+    assert!(!event.inner.lock().event_results.is_empty());
+
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    run_forwarding_ttl_trim_pass(&bus_a);
+    run_forwarding_ttl_trim_pass(&bus_b);
+
+    let event_id = event.inner.lock().event_id.clone();
+    assert!(bus_a.event_history_ids().contains(&event_id));
+    assert!(bus_b.event_history_ids().contains(&event_id));
+    assert!(!event.inner.lock().event_results.is_empty());
+    bus_a.destroy();
+    bus_b.destroy();
 }

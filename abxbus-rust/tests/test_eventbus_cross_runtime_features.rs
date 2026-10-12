@@ -1,4 +1,4 @@
-use abxbus_rust::event;
+use abxbus::event;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -6,7 +6,8 @@ use std::{
     time::Duration,
 };
 
-use abxbus_rust::{
+use abxbus::{
+    base_event::EventWaitOptions,
     event_bus::{EventBus, EventBusOptions, FindOptions},
     types::{EventConcurrencyMode, EventHandlerConcurrencyMode, EventStatus},
 };
@@ -258,16 +259,13 @@ fn test_concurrency_intersection_parallel_events_with_serial_handlers_stays_seri
     for event in events {
         let event_id = event.event_id.clone();
         assert_eq!(max_by_event.get(&event_id), Some(&1));
-        assert!(
-            event
-                ._inner_event()
-                .inner
-                .lock()
-                .event_results
-                .values()
-                .all(|result| result.status
-                    == abxbus_rust::event_result::EventResultStatus::Completed)
-        );
+        assert!(event
+            ._inner_event()
+            .inner
+            .lock()
+            .event_results
+            .values()
+            .all(|result| result.status == abxbus::event_result::EventResultStatus::Completed));
     }
     assert!(*global_max.lock().expect("global max lock") >= 2);
     bus.destroy();
@@ -316,7 +314,7 @@ fn test_timeout_enforcement_does_not_break_followup_processing_or_queue_state() 
         .lock()
         .event_results
         .values()
-        .all(|result| result.status == abxbus_rust::event_result::EventResultStatus::Error));
+        .all(|result| result.status == abxbus::event_result::EventResultStatus::Error));
 
     let followup = bus.emit(TimeoutFollowupEvent {
         ..Default::default()
@@ -328,7 +326,7 @@ fn test_timeout_enforcement_does_not_break_followup_processing_or_queue_state() 
         .lock()
         .event_results
         .values()
-        .all(|result| result.status == abxbus_rust::event_result::EventResultStatus::Completed));
+        .all(|result| result.status == abxbus::event_result::EventResultStatus::Completed));
     assert_eq!(
         followup
             ._inner_event()
@@ -353,7 +351,7 @@ fn test_zero_history_backpressure_with_find_future_still_resolves_new_events() {
         let value = event
             .inner
             .lock()
-            .payload
+            .event_extra_payload
             .get("value")
             .and_then(Value::as_str)
             .unwrap_or("<missing>")
@@ -366,7 +364,34 @@ fn test_zero_history_backpressure_with_find_future_still_resolves_new_events() {
         ..Default::default()
     });
     let first_id = first.event_id.clone();
-    let _ = block_on(first.now());
+    let completed_first = block_on(first.now_with_options(EventWaitOptions {
+        timeout: Some(2.0),
+        first_result: false,
+    }))
+    .expect("first zero-history event should complete");
+    assert!(Arc::ptr_eq(
+        &first._inner_event(),
+        &completed_first._inner_event()
+    ));
+    assert!(Arc::ptr_eq(
+        &first.event_bus().expect("first event bus"),
+        &bus
+    ));
+    assert_eq!(first.event_status.read(), EventStatus::Completed);
+    let first_result = first
+        ._inner_event()
+        .inner
+        .lock()
+        .event_results
+        .values()
+        .next()
+        .cloned()
+        .expect("first zero-history result");
+    assert_eq!(
+        first_result.status,
+        abxbus::event_result::EventResultStatus::Completed
+    );
+    assert_eq!(first_result.result, Some(json!("ok:first")));
     assert!(!bus.event_history_ids().contains(&first_id));
     assert!(block_on(bus.find("ZeroHistoryEvent", true, None, None)).is_none());
 
@@ -402,7 +427,7 @@ fn test_zero_history_backpressure_with_find_future_still_resolves_new_events() {
         future_match
             .inner
             .lock()
-            .payload
+            .event_extra_payload
             .get("value")
             .and_then(Value::as_str),
         Some("future")
@@ -523,7 +548,7 @@ fn test_pending_queue_find_visibility_transitions_to_completed_after_release() {
             let tag = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("tag")
                 .and_then(Value::as_str)
                 .unwrap_or("<missing>")
@@ -595,7 +620,7 @@ fn test_history_backpressure_rejects_overflow_and_preserves_findable_history() {
         let value = event
             .inner
             .lock()
-            .payload
+            .event_extra_payload
             .get("value")
             .and_then(Value::as_str)
             .unwrap_or("<missing>")

@@ -1,2 +1,15 @@
+autoInstallPeers: false
+
+overrides:
+  flatted: 3.4.2
+
+packageExtensions:
+  "@tachyon-ipc/core":
+    dependencies:
+      cmake-js: ^8.0.0
+
 onlyBuiltDependencies:
+  - "@tachyon-ipc/core"
   - better-sqlite3
+  - esbuild
+  - protobufjs

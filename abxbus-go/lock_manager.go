@@ -284,7 +284,7 @@ func (l *LockManager) getActiveHandlerResultForGoroutine(goid uint64) *EventResu
 
 func (l *LockManager) waitForIdle(timeout *float64) bool {
 	deadline := time.Time{}
-	if timeout != nil {
+	if timeout != nil && *timeout > 0 {
 		deadline = time.Now().Add(time.Duration(*timeout * float64(time.Second)))
 	}
 	for {

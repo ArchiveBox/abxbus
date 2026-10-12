@@ -26,7 +26,15 @@ type dispatchDefaultsConfiguredEvent struct {
 	EventSlowTimeout            float64
 	EventHandlerTimeout         float64
 	EventHandlerSlowTimeout     float64
+	EventTTL                    float64
+	EventResultTTL              float64
 	EventBlocksParentCompletion bool
+}
+
+type dispatchDefaultsPointerZeroEvent struct {
+	EventType      string
+	EventTTL       *float64
+	EventResultTTL *float64
 }
 
 func TestEventConcurrencyRemainsUnsetOnDispatchAndResolvesDuringProcessing(t *testing.T) {
@@ -199,6 +207,8 @@ func TestTypedEventConfigDefaultsPopulateBaseEventFields(t *testing.T) {
 		EventSlowTimeout:            30,
 		EventHandlerTimeout:         3,
 		EventHandlerSlowTimeout:     4,
+		EventTTL:                    5,
+		EventResultTTL:              6,
 		EventBlocksParentCompletion: true,
 	})
 	if event.EventVersion != "2.0.0" {
@@ -216,7 +226,35 @@ func TestTypedEventConfigDefaultsPopulateBaseEventFields(t *testing.T) {
 	if event.EventHandlerSlowTimeout == nil || *event.EventHandlerSlowTimeout != 4 {
 		t.Fatalf("event_handler_slow_timeout mismatch: %#v", event.EventHandlerSlowTimeout)
 	}
+	if event.EventTTL == nil || *event.EventTTL != 5 {
+		t.Fatalf("event_ttl mismatch: %#v", event.EventTTL)
+	}
+	if event.EventResultTTL == nil || *event.EventResultTTL != 6 {
+		t.Fatalf("event_result_ttl mismatch: %#v", event.EventResultTTL)
+	}
 	if !event.EventBlocksParentCompletion {
 		t.Fatalf("event_blocks_parent_completion mismatch: %#v", event.EventBlocksParentCompletion)
+	}
+}
+
+func TestTypedEventPointerZeroTTLsAreExplicitOverrides(t *testing.T) {
+	bus := abxbus.NewEventBus("PointerZeroTTLDefaultsBus", &abxbus.EventBusOptions{
+		EventTTL:       ttlPtr(30),
+		EventResultTTL: ttlPtr(30),
+	})
+	defer bus.Destroy()
+
+	zero := 0.0
+	event := bus.Emit(dispatchDefaultsPointerZeroEvent{
+		EventType:      "PointerZeroTTLEvent",
+		EventTTL:       &zero,
+		EventResultTTL: &zero,
+	})
+
+	if event.EventTTL == nil || *event.EventTTL != 0 {
+		t.Fatalf("event_ttl zero override mismatch: %#v", event.EventTTL)
+	}
+	if event.EventResultTTL == nil || *event.EventResultTTL != 0 {
+		t.Fatalf("event_result_ttl zero override mismatch: %#v", event.EventResultTTL)
 	}
 }

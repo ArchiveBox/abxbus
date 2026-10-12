@@ -42,18 +42,15 @@ const bus = new EventBus('AppBus', {
 <Tab title="Go">
 
 ```go
-bus := abxbus.NewEventBus("AppBus", &abxbus.EventBusOptions{
-	Middlewares: []abxbus.EventBusMiddleware{
-		abxbus.NewOtelTracingMiddleware(nil),
-	},
-})
+// Not implemented in the core Go module.
+// OpenTelemetry is intentionally not a required Go dependency.
 ```
 
 </Tab>
 <Tab title="Rust">
 
 ```rust
-// Not implemented in abxbus-rust yet.
+// Not implemented in the Rust crate yet.
 // Use typed event JSON serialization with an external transport for now.
 ```
 
@@ -99,7 +96,7 @@ pip install sentry-sdk opentelemetry-api opentelemetry-sdk
 <Tab title="Rust">
 
 ```rust
-// Not implemented in abxbus-rust yet.
+// Not implemented in the Rust crate yet.
 // Wire tracing around typed handlers directly until Rust middleware parity lands.
 ```
 

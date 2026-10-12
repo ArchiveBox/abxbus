@@ -1,4 +1,4 @@
-use abxbus_rust::event;
+use abxbus::event;
 use std::{
     collections::BTreeSet,
     sync::{
@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use abxbus_rust::{
+use abxbus::{
     base_event::{BaseEvent, EventResultOptions, EventWaitOptions},
     event_bus::EventBus,
     event_handler::{EventHandler, EventHandlerOptions, HandlerFuture},
@@ -38,6 +38,13 @@ fn event_result_test_guard() -> MutexGuard<'static, ()> {
         .expect("event result test lock")
 }
 
+fn load_json_schema_common_shapes_fixture() -> Value {
+    let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../tests/fixtures/jsonschema_common_shapes.json");
+    let fixture = std::fs::read_to_string(fixture_path).expect("json schema fixture");
+    serde_json::from_str(&fixture).expect("json schema fixture json")
+}
+
 fn expected_event_result_json_keys() -> BTreeSet<String> {
     BTreeSet::from([
         "completed_at".to_string(),
@@ -51,6 +58,7 @@ fn expected_event_result_json_keys() -> BTreeSet<String> {
         "handler_id".to_string(),
         "handler_name".to_string(),
         "handler_registered_at".to_string(),
+        "handler_result_ttl".to_string(),
         "handler_slow_timeout".to_string(),
         "handler_timeout".to_string(),
         "id".to_string(),
@@ -339,6 +347,7 @@ fn test_event_result_defaults() {
         handler_file_path: None,
         handler_timeout: None,
         handler_slow_timeout: None,
+        handler_result_ttl: None,
         handler_registered_at: "2026-01-01T00:00:00.000Z".into(),
         eventbus_name: "bus".into(),
         eventbus_id: "bus-id".into(),
@@ -360,6 +369,7 @@ fn test_event_result_serializes_handler_metadata_and_derived_fields() {
         handler_file_path: Some("~/project/app.rs:123".into()),
         handler_timeout: Some(10.0),
         handler_slow_timeout: Some(2.0),
+        handler_result_ttl: None,
         handler_registered_at: "2026-01-01T00:00:00.000Z".into(),
         eventbus_name: "StandaloneBus".into(),
         eventbus_id: "018f8e40-1234-7000-8000-000000001234".into(),
@@ -565,6 +575,7 @@ fn test_eventhandler_json_roundtrips_handler_metadata() {
         handler_file_path: Some("~/project/app.rs:123".into()),
         handler_timeout: None,
         handler_slow_timeout: None,
+        handler_result_ttl: None,
         handler_registered_at: "2025-01-02T03:04:05.678Z".into(),
         eventbus_name: "StandaloneBus".into(),
         eventbus_id: "018f8e40-1234-7000-8000-000000001234".into(),
@@ -656,6 +667,7 @@ fn test_event_result_update_keeps_consistent_ordering_semantics_for_status_resul
         handler_file_path: None,
         handler_timeout: None,
         handler_slow_timeout: None,
+        handler_result_ttl: None,
         handler_registered_at: "2026-01-01T00:00:00.000Z".into(),
         eventbus_name: "StandaloneBus".into(),
         eventbus_id: "018f8e40-1234-7000-8000-000000001234".into(),
@@ -690,6 +702,7 @@ fn test_run_handler_is_a_no_op_for_already_settled_results() {
         handler_file_path: None,
         handler_timeout: None,
         handler_slow_timeout: None,
+        handler_result_ttl: None,
         handler_registered_at: "2026-01-01T00:00:00.000Z".into(),
         eventbus_name: "RunHandlerSettledBus".into(),
         eventbus_id: "018f8e40-1234-7000-8000-000000001234".into(),
@@ -718,9 +731,9 @@ fn test_handler_result_stays_pending_while_waiting_for_handler_lock_entry() {
     let _guard = event_result_test_guard();
     let bus = EventBus::new_with_options(
         Some("RunHandlerLockWaitBus".to_string()),
-        abxbus_rust::event_bus::EventBusOptions {
-            event_handler_concurrency: abxbus_rust::types::EventHandlerConcurrencyMode::Serial,
-            ..abxbus_rust::event_bus::EventBusOptions::default()
+        abxbus::event_bus::EventBusOptions {
+            event_handler_concurrency: abxbus::types::EventHandlerConcurrencyMode::Serial,
+            ..abxbus::event_bus::EventBusOptions::default()
         },
     );
     let (started_tx, started_rx) = std::sync::mpsc::channel();
@@ -806,10 +819,10 @@ fn test_slow_handler_warning_is_based_on_handler_runtime_after_lock_wait() {
     let _guard = event_result_test_guard();
     let bus = EventBus::new_with_options(
         Some("RunHandlerSlowAfterLockWaitBus".to_string()),
-        abxbus_rust::event_bus::EventBusOptions {
-            event_handler_concurrency: abxbus_rust::types::EventHandlerConcurrencyMode::Serial,
+        abxbus::event_bus::EventBusOptions {
+            event_handler_concurrency: abxbus::types::EventHandlerConcurrencyMode::Serial,
             event_handler_slow_timeout: Some(0.01),
-            ..abxbus_rust::event_bus::EventBusOptions::default()
+            ..abxbus::event_bus::EventBusOptions::default()
         },
     );
     let (first_started_tx, first_started_rx) = std::sync::mpsc::channel();
@@ -888,6 +901,7 @@ fn test_event_result_error_json_roundtrip_preserves_error_type_and_message() {
         "handler_file_path": null,
         "handler_timeout": null,
         "handler_slow_timeout": null,
+        "handler_result_ttl": null,
         "handler_registered_at": "2026-01-01T00:00:00.000Z",
         "handler_event_pattern": "StandaloneEvent",
         "eventbus_name": "StandaloneBus",
@@ -961,9 +975,9 @@ fn test_event_result_and_results_list_use_registration_order_for_current_result_
     let _guard = event_result_test_guard();
     let bus = EventBus::new_with_options(
         Some("EventResultFirstValueBus".to_string()),
-        abxbus_rust::event_bus::EventBusOptions {
-            event_handler_concurrency: abxbus_rust::types::EventHandlerConcurrencyMode::Parallel,
-            ..abxbus_rust::event_bus::EventBusOptions::default()
+        abxbus::event_bus::EventBusOptions {
+            event_handler_concurrency: abxbus::types::EventHandlerConcurrencyMode::Parallel,
+            ..abxbus::event_bus::EventBusOptions::default()
         },
     );
     let completed_order = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -1068,6 +1082,7 @@ fn test_base_event_from_json_preserves_event_results_object_registration_order()
             "handler_file_path": null,
             "handler_timeout": null,
             "handler_slow_timeout": null,
+            "handler_result_ttl": null,
             "handler_registered_at": registered_at,
             "handler_event_pattern": "AccessorEvent",
             "eventbus_name": "RestoredOrderBus",
@@ -1438,6 +1453,7 @@ fn test_eventresultslist_supports_timeout_include_raise_if_any_raise_if_none_arg
     });
     let include_event =
         include_bus.emit_base(BaseEvent::new("IncludeEvent", serde_json::Map::new()));
+    block_on(include_event.now()).expect("include event should complete");
     let filtered_values = block_on(include_event.event_results_list_with_options(
         EventResultOptions {
             raise_if_any: false,
@@ -1478,7 +1494,7 @@ fn test_eventresultslist_supports_timeout_include_raise_if_any_raise_if_none_arg
 mod folded_test_event_result_handler_metadata {
     use std::sync::Arc;
 
-    use abxbus_rust::{
+    use abxbus::{
         base_event::BaseEvent,
         event_handler::{EventHandler, EventHandlerCallable, EventHandlerOptions},
         event_result::{EventResult, EventResultStatus},
@@ -1499,7 +1515,7 @@ mod folded_test_event_result_handler_metadata {
                 let value = event
                     .inner
                     .lock()
-                    .payload
+                    .event_extra_payload
                     .get("data")
                     .cloned()
                     .unwrap_or(Value::Null);
@@ -1514,7 +1530,7 @@ mod folded_test_event_result_handler_metadata {
                 let value = event
                     .inner
                     .lock()
-                    .payload
+                    .event_extra_payload
                     .get("data")
                     .and_then(Value::as_str)
                     .unwrap_or_default()
@@ -1745,11 +1761,12 @@ mod folded_test_event_result_handler_metadata {
 mod folded_test_event_result_typed_results {
     use std::sync::Arc;
 
-    use abxbus_rust::event;
-    use abxbus_rust::{
+    use abxbus::event;
+    use abxbus::{
         base_event::BaseEvent,
         event_bus::EventBus,
         event_result::{EventResult, EventResultStatus},
+        jsonschema::{normalize_json_schema, validate_json_schema_value},
     };
     use futures::executor::block_on;
     use serde::{Deserialize, Serialize};
@@ -1773,9 +1790,13 @@ mod folded_test_event_result_typed_results {
     }
 
     fn assert_schema_roundtrips(schema: Value) {
-        let original = schema_event("SchemaEvent", Some(schema.clone()));
+        let normalized_schema = normalize_json_schema(schema);
+        let original = schema_event("SchemaEvent", Some(normalized_schema.clone()));
         let restored = BaseEvent::from_json_value(original.to_json_value());
-        assert_eq!(restored.inner.lock().event_result_type, Some(schema));
+        assert_eq!(
+            restored.inner.lock().event_result_type,
+            Some(normalized_schema)
+        );
     }
 
     fn wait(event: &Arc<BaseEvent>) {
@@ -1804,7 +1825,7 @@ mod folded_test_event_result_typed_results {
         let result = first_event_result_record(&event);
         assert_eq!(
             result.status,
-            abxbus_rust::event_result::EventResultStatus::Completed
+            abxbus::event_result::EventResultStatus::Completed
         );
         assert_eq!(result.result, Some(json!({"value": "hello", "count": 42})));
         bus.destroy();
@@ -1864,7 +1885,7 @@ mod folded_test_event_result_typed_results {
 
         assert_eq!(
             event.inner.lock().event_status,
-            abxbus_rust::types::EventStatus::Completed
+            abxbus::types::EventStatus::Completed
         );
 
         let result = first_event_result_record(&event);
@@ -1944,7 +1965,7 @@ mod folded_test_event_result_typed_results {
     }
 
     struct DictIntSchemaEvent;
-    impl abxbus_rust::typed::EventSpec for DictIntSchemaEvent {
+    impl abxbus::typed::EventSpec for DictIntSchemaEvent {
         type payload = Map<String, Value>;
         type event_result_type = Map<String, Value>;
         const event_type: &'static str = "DictIntSchemaEvent";
@@ -1953,7 +1974,7 @@ mod folded_test_event_result_typed_results {
     }
 
     struct DictModuleSchemaEvent;
-    impl abxbus_rust::typed::EventSpec for DictModuleSchemaEvent {
+    impl abxbus::typed::EventSpec for DictModuleSchemaEvent {
         type payload = Map<String, Value>;
         type event_result_type = Map<String, Value>;
         const event_type: &'static str = "DictModuleSchemaEvent";
@@ -1975,7 +1996,7 @@ mod folded_test_event_result_typed_results {
     }
 
     struct DictLocalSchemaEvent;
-    impl abxbus_rust::typed::EventSpec for DictLocalSchemaEvent {
+    impl abxbus::typed::EventSpec for DictLocalSchemaEvent {
         type payload = Map<String, Value>;
         type event_result_type = Map<String, Value>;
         const event_type: &'static str = "DictLocalSchemaEvent";
@@ -1997,12 +2018,12 @@ mod folded_test_event_result_typed_results {
     }
 
     struct SpecificUserEvent;
-    impl abxbus_rust::typed::EventSpec for SpecificUserEvent {
+    impl abxbus::typed::EventSpec for SpecificUserEvent {
         type payload = Map<String, Value>;
         type event_result_type = ModuleLevelResult;
         const event_type: &'static str = "SpecificUserEvent";
         const event_result_type_schema: Option<&'static str> =
-            <RuntimeSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_schema;
+            <RuntimeSchemaEvent as abxbus::typed::EventSpec>::event_result_type_schema;
     }
 
     #[test]
@@ -2107,16 +2128,15 @@ mod folded_test_event_result_typed_results {
     #[test]
     fn test_nested_inheritance() {
         assert_eq!(
-            <SpecificUserEvent as abxbus_rust::typed::EventSpec>::event_result_type_json(),
-            <RuntimeSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json()
+            <SpecificUserEvent as abxbus::typed::EventSpec>::event_result_type_json(),
+            <RuntimeSchemaEvent as abxbus::typed::EventSpec>::event_result_type_json()
         );
     }
 
     #[test]
     fn test_module_level_types_auto_extraction() {
-        let schema =
-            <RuntimeSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json()
-                .expect("module-level schema");
+        let schema = <RuntimeSchemaEvent as abxbus::typed::EventSpec>::event_result_type_json()
+            .expect("module-level schema");
         assert_eq!(schema["type"], "object");
         assert!(schema["properties"].get("result_id").is_some());
         assert!(schema["properties"].get("data").is_some());
@@ -2157,7 +2177,7 @@ mod folded_test_event_result_typed_results {
     #[test]
     fn test_extract_basemodel_generic_arg_basic() {
         assert_eq!(
-            <BuiltinIntEvent as abxbus_rust::typed::EventSpec>::event_result_type_json(),
+            <BuiltinIntEvent as abxbus::typed::EventSpec>::event_result_type_json(),
             Some(json!({"type": "integer"}))
         );
     }
@@ -2165,16 +2185,15 @@ mod folded_test_event_result_typed_results {
     #[test]
     fn test_extract_basemodel_generic_arg_dict() {
         assert_eq!(
-            <DictIntSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json(),
+            <DictIntSchemaEvent as abxbus::typed::EventSpec>::event_result_type_json(),
             Some(json!({"type": "object", "additionalProperties": {"type": "integer"}}))
         );
     }
 
     #[test]
     fn test_extract_basemodel_generic_arg_dict_with_module_type() {
-        let schema =
-            <DictModuleSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json()
-                .expect("module dict schema");
+        let schema = <DictModuleSchemaEvent as abxbus::typed::EventSpec>::event_result_type_json()
+            .expect("module dict schema");
         assert_eq!(schema["type"], "object");
         assert_eq!(
             schema["additionalProperties"]["properties"]["recipients"]["items"]["type"],
@@ -2184,9 +2203,8 @@ mod folded_test_event_result_typed_results {
 
     #[test]
     fn test_extract_basemodel_generic_arg_dict_with_local_type() {
-        let schema =
-            <DictLocalSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json()
-                .expect("local dict schema");
+        let schema = <DictLocalSchemaEvent as abxbus::typed::EventSpec>::event_result_type_json()
+            .expect("local dict schema");
         assert_eq!(schema["type"], "object");
         assert_eq!(
             schema["additionalProperties"]["properties"]["mime_type"]["type"],
@@ -2197,7 +2215,7 @@ mod folded_test_event_result_typed_results {
     #[test]
     fn test_extract_basemodel_generic_arg_no_generic() {
         assert_eq!(
-            <PlainSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json(),
+            <PlainSchemaEvent as abxbus::typed::EventSpec>::event_result_type_json(),
             None
         );
     }
@@ -2228,12 +2246,12 @@ mod folded_test_event_result_typed_results {
         let number_result = first_event_result_record(&number_event);
         assert_eq!(
             string_result.status,
-            abxbus_rust::event_result::EventResultStatus::Completed
+            abxbus::event_result::EventResultStatus::Completed
         );
         assert_eq!(string_result.result, Some(json!("42")));
         assert_eq!(
             number_result.status,
-            abxbus_rust::event_result::EventResultStatus::Completed
+            abxbus::event_result::EventResultStatus::Completed
         );
         assert_eq!(number_result.result, Some(json!(123)));
         bus.destroy();
@@ -2268,7 +2286,7 @@ mod folded_test_event_result_typed_results {
             wait(&event);
             assert_eq!(
                 first_event_result_record(&event).status,
-                abxbus_rust::event_result::EventResultStatus::Completed
+                abxbus::event_result::EventResultStatus::Completed
             );
         }
 
@@ -2285,7 +2303,7 @@ mod folded_test_event_result_typed_results {
         let invalid_result = first_event_result_record(&invalid);
         assert_eq!(
             invalid_result.status,
-            abxbus_rust::event_result::EventResultStatus::Error
+            abxbus::event_result::EventResultStatus::Error
         );
         assert!(invalid_result
             .error
@@ -2313,7 +2331,7 @@ mod folded_test_event_result_typed_results {
         let result = first_event_result_record(&event);
         assert_eq!(
             result.status,
-            abxbus_rust::event_result::EventResultStatus::Error
+            abxbus::event_result::EventResultStatus::Error
         );
         assert!(result
             .error
@@ -2338,7 +2356,7 @@ mod folded_test_event_result_typed_results {
         let result = first_event_result_record(&event);
         assert_eq!(
             result.status,
-            abxbus_rust::event_result::EventResultStatus::Completed
+            abxbus::event_result::EventResultStatus::Completed
         );
         assert_eq!(result.result, Some(json!({"raw": true})));
         bus.destroy();
@@ -2366,7 +2384,7 @@ mod folded_test_event_result_typed_results {
         let result = first_event_result_record(&event);
         assert_eq!(
             result.status,
-            abxbus_rust::event_result::EventResultStatus::Completed
+            abxbus::event_result::EventResultStatus::Completed
         );
         assert_eq!(
             result.result,
@@ -2402,7 +2420,7 @@ mod folded_test_event_result_typed_results {
         let result = first_event_result_record(&dispatched);
         assert_eq!(
             result.status,
-            abxbus_rust::event_result::EventResultStatus::Completed
+            abxbus::event_result::EventResultStatus::Completed
         );
         assert_eq!(
             result.result,
@@ -2414,6 +2432,7 @@ mod folded_test_event_result_typed_results {
     #[test]
     fn test_fromjson_deserializes_event_result_type_and_tojson_reserializes_schema() {
         let schema = json!({"type": "integer"});
+        let normalized_schema = normalize_json_schema(schema.clone());
         let event = BaseEvent::from_json_value(json!({
             "event_id": "018f8e40-1234-7000-8000-000000001235",
             "event_created_at": "2025-01-01T00:00:01.000Z",
@@ -2422,8 +2441,14 @@ mod folded_test_event_result_typed_results {
             "event_result_type": schema,
         }));
 
-        assert_eq!(event.inner.lock().event_result_type, Some(schema.clone()));
-        assert_eq!(event.to_json_value()["event_result_type"], schema);
+        assert_eq!(
+            event.inner.lock().event_result_type,
+            Some(normalized_schema.clone())
+        );
+        assert_eq!(
+            event.to_json_value()["event_result_type"],
+            normalized_schema
+        );
     }
 
     #[test]
@@ -2445,7 +2470,7 @@ mod folded_test_event_result_typed_results {
         let result = first_event_result_record(&dispatched);
         assert_eq!(
             result.status,
-            abxbus_rust::event_result::EventResultStatus::Completed
+            abxbus::event_result::EventResultStatus::Completed
         );
         assert_eq!(result.result, Some(json!(true)));
         bus.destroy();
@@ -2509,6 +2534,337 @@ mod folded_test_event_result_typed_results {
     }
 
     #[test]
+    fn test_json_schema_null_unions_normalize_to_standard_anyof() {
+        let event = schema_event(
+            "NullableSchemaEvent",
+            Some(json!({"anyOf": [{"type": "string"}, {"type": "null"}]})),
+        );
+        let schema = event.to_json_value()["event_result_type"].clone();
+
+        assert_eq!(
+            schema["anyOf"],
+            json!([{"type": "string"}, {"type": "null"}])
+        );
+        assert!(schema.get("nullable").is_none());
+        assert!(schema.get("oneOf").is_none());
+    }
+
+    #[test]
+    fn test_json_schema_type_null_union_validates_the_same_as_anyof_null_union() {
+        let bus = EventBus::new(Some("StandardNullUnionSchemaBus".to_string()));
+        bus.on_raw(
+            "StandardNullUnionSchemaEvent",
+            "handler",
+            |_event| async move { Ok(json!("ok")) },
+        );
+        let event = bus.emit_base(schema_event(
+            "StandardNullUnionSchemaEvent",
+            Some(json!({"type": ["string", "null"]})),
+        ));
+        wait(&event);
+
+        let result = first_event_result_record(&event);
+        assert_eq!(result.status, EventResultStatus::Completed);
+        assert_eq!(result.result, Some(json!("ok")));
+        let bus_json = bus.to_json_value();
+        let history = bus_json["event_history"]
+            .as_object()
+            .expect("event history");
+        let event_json = history.values().next().expect("event history event");
+        assert_eq!(
+            event_json["event_result_type"]["anyOf"],
+            json!([{"type": "string"}, {"type": "null"}])
+        );
+        assert!(event_json["event_result_type"].get("nullable").is_none());
+        bus.destroy();
+    }
+
+    #[test]
+    fn test_json_schema_oneof_semantics_survive_normalization() {
+        let schema = normalize_json_schema(json!({"oneOf": [{}, {"type": "null"}]}));
+
+        assert!(schema.get("oneOf").is_some());
+        assert!(schema.get("anyOf").is_none());
+        validate_json_schema_value(&schema, &schema, &json!("ok"), "$")
+            .expect("oneOf non-null value should validate");
+        assert!(
+            validate_json_schema_value(&schema, &schema, &Value::Null, "$").is_err(),
+            "oneOf null value should fail because it matches both branches"
+        );
+    }
+
+    #[test]
+    fn test_json_schema_allof_semantics_survive_rehydration() {
+        let schema = json!({"allOf": [{"type": "string", "minLength": 2}, {"pattern": "^a"}]});
+
+        validate_json_schema_value(&schema, &schema, &json!("ab"), "$")
+            .expect("allOf valid value should validate");
+        assert!(
+            validate_json_schema_value(&schema, &schema, &json!("b"), "$").is_err(),
+            "allOf should reject values that fail a branch"
+        );
+        assert!(
+            validate_json_schema_value(&schema, &schema, &json!("a"), "$").is_err(),
+            "allOf should reject values that fail sibling constraints"
+        );
+    }
+
+    #[test]
+    fn test_json_schema_null_enum_semantics_survive_rehydration() {
+        let schema = json!({"enum": ["queued", null]});
+
+        validate_json_schema_value(&schema, &schema, &json!("queued"), "$")
+            .expect("enum string value should validate");
+        validate_json_schema_value(&schema, &schema, &Value::Null, "$")
+            .expect("enum null value should validate");
+        assert!(
+            validate_json_schema_value(&schema, &schema, &json!("done"), "$").is_err(),
+            "enum should reject values outside the enum"
+        );
+    }
+
+    #[test]
+    fn test_json_schema_tuple_prefix_items_only_apply_items_to_remaining_values() {
+        let schema = json!({
+            "type": "array",
+            "prefixItems": [{"type": "string"}, {"type": "integer"}],
+            "items": {"type": "boolean"}
+        });
+
+        validate_json_schema_value(&schema, &schema, &json!(["ok", 1, true, false]), "$")
+            .expect("tuple prefix plus remaining items should validate");
+        assert!(
+            validate_json_schema_value(&schema, &schema, &json!(["ok", 1, "not-boolean"]), "$")
+                .is_err(),
+            "items should validate only values after prefixItems"
+        );
+        assert!(
+            validate_json_schema_value(&schema, &schema, &json!(["ok", "not-integer", true]), "$")
+                .is_err(),
+            "prefixItems should still validate tuple-prefix values"
+        );
+    }
+
+    #[test]
+    fn test_json_schema_object_without_properties_rejects_additional_properties() {
+        let schema = json!({"type": "object", "additionalProperties": false});
+
+        validate_json_schema_value(&schema, &schema, &json!({}), "$")
+            .expect("empty object should validate");
+        assert!(
+            validate_json_schema_value(&schema, &schema, &json!({"extra": true}), "$").is_err(),
+            "additionalProperties false should reject keys even without properties"
+        );
+    }
+
+    #[test]
+    fn test_json_schema_recursive_null_refs_serialize_without_infinite_expansion() {
+        let schema = json!({
+            "$defs": {
+                "Node": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "child": {
+                            "anyOf": [
+                                {"$ref": "#/$defs/Node"},
+                                {"type": "null"}
+                            ]
+                        }
+                    },
+                    "required": ["name"]
+                }
+            },
+            "$ref": "#/$defs/Node"
+        });
+        let event = schema_event("RecursiveNullableSchemaEvent", Some(schema));
+        let event_schema = event.to_json_value()["event_result_type"].clone();
+        let child_schema = event_schema["properties"]["child"]
+            .as_object()
+            .expect("child schema");
+
+        assert_eq!(
+            child_schema.get("anyOf"),
+            Some(&json!([{"$ref": "#"}, {"type": "null"}]))
+        );
+        assert_eq!(event_schema.get("title"), Some(&json!("Node")));
+        assert!(child_schema.get("nullable").is_none());
+        assert!(child_schema.get("allOf").is_none());
+        assert!(child_schema.get("oneOf").is_none());
+
+        let normalized_schema = normalize_json_schema(json!({
+            "$defs": {
+                "Node": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "child": {
+                            "anyOf": [
+                                {"$ref": "#/$defs/Node"},
+                                {"type": "null"}
+                            ]
+                        }
+                    },
+                    "required": ["name"]
+                }
+            },
+            "$ref": "#/$defs/Node"
+        }));
+        let normalized_child_schema = normalized_schema["properties"]["child"]
+            .as_object()
+            .expect("normalized child schema");
+        assert_eq!(normalized_schema.get("title"), Some(&json!("Node")));
+        assert!(normalized_schema.get("$defs").is_none());
+        assert_eq!(
+            normalized_child_schema.get("anyOf"),
+            Some(&json!([{"$ref": "#"}, {"type": "null"}]))
+        );
+        assert!(normalized_child_schema.get("nullable").is_none());
+        assert!(normalized_child_schema.get("allOf").is_none());
+        assert!(normalized_child_schema.get("oneOf").is_none());
+    }
+
+    #[test]
+    fn test_json_schema_common_shapes_normalize_as_stable_roundtrip_fixtures() {
+        let fixture = crate::load_json_schema_common_shapes_fixture();
+        let mut raw_fixtures = fixture["raw_schemas"]
+            .as_array()
+            .expect("raw schemas")
+            .clone();
+        let common_complex_schema = fixture["common_complex_schema"].clone();
+        let common_complex_payload = fixture["common_complex_payload"].clone();
+        let common_complex_invalid_payloads = fixture["common_complex_invalid_payloads"]
+            .as_array()
+            .expect("invalid payloads")
+            .clone();
+        raw_fixtures.push(common_complex_schema.clone());
+
+        for schema in &raw_fixtures {
+            let normalized = normalize_json_schema(schema.clone());
+            assert_eq!(normalize_json_schema(normalized.clone()), normalized);
+            assert_eq!(
+                normalized.get("$schema"),
+                Some(&json!("https://json-schema.org/draft/2020-12/schema"))
+            );
+        }
+
+        let nullable_string = normalize_json_schema(raw_fixtures[0].clone());
+        assert_eq!(
+            nullable_string.get("anyOf"),
+            Some(&json!([{"type": "string"}, {"type": "null"}]))
+        );
+        assert!(nullable_string.get("nullable").is_none());
+
+        let recursive = normalize_json_schema(raw_fixtures[1].clone());
+        assert!(recursive.get("$defs").is_none());
+        assert_eq!(recursive.get("title"), Some(&json!("CommonNodeResult")));
+        let recursive_child = &recursive["properties"]["child"];
+        assert_eq!(
+            recursive_child.get("anyOf"),
+            Some(&json!([{"$ref": "#"}, {"type": "null"}]))
+        );
+        assert!(recursive_child.get("nullable").is_none());
+
+        let object_union = normalize_json_schema(raw_fixtures[2].clone());
+        assert_eq!(
+            object_union.get("required"),
+            Some(&json!(["count", "value"]))
+        );
+
+        let normalized_complex = normalize_json_schema(common_complex_schema.clone());
+        assert_eq!(normalized_complex, common_complex_schema);
+        assert_eq!(
+            normalized_complex["properties"]["id"]["pattern"],
+            json!("^[a-z][a-z0-9-]*$")
+        );
+        assert_eq!(
+            normalized_complex["properties"]["mode"]["const"],
+            json!("standard")
+        );
+        assert_eq!(
+            normalized_complex["properties"]["category"]["enum"],
+            json!(["alpha", "beta"])
+        );
+        assert_eq!(
+            normalized_complex["properties"]["status"]["anyOf"][1]["minimum"],
+            json!(1)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["status"]["anyOf"][1]["maximum"],
+            json!(3)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["score"]["multipleOf"],
+            json!(5)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["confidence"]["exclusiveMaximum"],
+            json!(1)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["score"]["default"],
+            json!(0)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["owner"]["anyOf"][1],
+            json!({"type": "null"})
+        );
+        assert_eq!(
+            normalized_complex["properties"]["owner"]["anyOf"][0]["properties"]["tier"]["default"],
+            json!(1)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["tags"]["maxItems"],
+            json!(4)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["metrics"]["additionalProperties"]["properties"]
+                ["count"]["maximum"],
+            json!(9007199254740991i64)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["metrics"]["additionalProperties"]["properties"]
+                ["note"]["anyOf"][0]["maxLength"],
+            json!(20)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["metrics"]["additionalProperties"]["properties"]
+                ["samples"]["items"]["multipleOf"],
+            json!(0.25)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["regions"]["items"]["properties"]["window"]
+                ["prefixItems"][1]["maximum"],
+            json!(10)
+        );
+        assert_eq!(
+            normalized_complex["properties"]["regions"]["items"]["properties"]["visible"]
+                ["default"],
+            json!(true)
+        );
+        validate_json_schema_value(
+            &normalized_complex,
+            &normalized_complex,
+            &common_complex_payload,
+            "$",
+        )
+        .expect("complex payload should validate");
+        for invalid_case in common_complex_invalid_payloads {
+            let invalid_payload = &invalid_case["payload"];
+            assert!(
+                validate_json_schema_value(
+                    &normalized_complex,
+                    &normalized_complex,
+                    invalid_payload,
+                    "$"
+                )
+                .is_err(),
+                "complex invalid payload should fail validation: {invalid_case}"
+            );
+        }
+    }
+
+    #[test]
     fn test_custom_pydantic_models_auto_extraction() {
         let bus = EventBus::new(Some("RuntimeSchemaExtractionBus".to_string()));
         let event = bus.emit(RuntimeSchemaEvent {
@@ -2517,7 +2873,7 @@ mod folded_test_event_result_typed_results {
         assert_eq!(
             event.event_result_type,
             Some(
-                <RuntimeSchemaEvent as abxbus_rust::typed::EventSpec>::event_result_type_json()
+                <RuntimeSchemaEvent as abxbus::typed::EventSpec>::event_result_type_json()
                     .expect("runtime schema")
             )
         );
@@ -2909,12 +3265,13 @@ mod folded_test_event_result_typed_results {
             },
             "required": ["title", "count", "flags", "active", "meta"]
         });
+        let normalized_complex_schema = normalize_json_schema(complex_schema.clone());
         let original = schema_event("ComplexRoundtripEvent", Some(complex_schema.clone()));
         let roundtripped = BaseEvent::from_json_value(original.to_json_value());
 
         assert_eq!(
             roundtripped.inner.lock().event_result_type,
-            Some(complex_schema)
+            Some(normalized_complex_schema)
         );
 
         bus.on_raw("ComplexRoundtripEvent", "handler", |_event| async move {
@@ -2933,7 +3290,7 @@ mod folded_test_event_result_typed_results {
         let result = first_event_result_record(&dispatched);
         assert_eq!(
             result.status,
-            abxbus_rust::event_result::EventResultStatus::Completed
+            abxbus::event_result::EventResultStatus::Completed
         );
         assert_eq!(
             result.result,
@@ -2951,7 +3308,7 @@ mod folded_test_event_result_typed_results {
 
 // Folded from test_typed_events.rs to keep test layout class-based.
 mod folded_test_typed_events {
-    use abxbus_rust::{
+    use abxbus::{
         base_event::EventResultOptions,
         event,
         event_bus::{EventBus, FindOptions},
@@ -3016,7 +3373,7 @@ mod folded_test_typed_events {
         let _ = block_on(event.now());
 
         let found = block_on(bus.find(AddEvent::event_type, true, None, None))
-            .map(<AddEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event)
+            .map(<AddEvent as abxbus::typed::TypedEventObject>::_from_inner_event)
             .expect("expected typed event");
         assert_eq!(found.a, 7);
         assert_eq!(found.b, 1);
@@ -3038,7 +3395,7 @@ mod folded_test_typed_events {
         });
 
         let found = block_on(bus.find(AddEvent::event_type, false, Some(1.0), None))
-            .map(<AddEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event)
+            .map(<AddEvent as abxbus::typed::TypedEventObject>::_from_inner_event)
             .expect("expected future typed event");
         assert_eq!(found.a, 57);
         assert_eq!(found.b, 42);
@@ -3067,7 +3424,7 @@ mod folded_test_typed_events {
                     event
                         .inner
                         .lock()
-                        .payload
+                        .event_extra_payload
                         .get("a")
                         .and_then(serde_json::Value::as_i64)
                         == Some(51)
@@ -3075,7 +3432,7 @@ mod folded_test_typed_events {
                 ..FindOptions::default()
             },
         ))
-        .map(<AddEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event)
+        .map(<AddEvent as abxbus::typed::TypedEventObject>::_from_inner_event)
         .expect("expected filtered typed event");
         assert_eq!(filtered.a, 51);
         assert_eq!(filtered.b, 96);
@@ -3094,7 +3451,7 @@ mod folded_test_typed_events {
         let _ = block_on(event.now());
 
         let found = block_on(bus.find(AddEvent::event_type, true, None, None))
-            .map(<AddEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event)
+            .map(<AddEvent as abxbus::typed::TypedEventObject>::_from_inner_event)
             .expect("expected past typed event");
         let found_event_id = found.event_id.clone();
         let emitted_event_id = event.event_id.clone();
@@ -3186,9 +3543,14 @@ mod folded_test_typed_events {
         let inner = base.inner.lock();
         assert_eq!(inner.event_timeout, Some(12.0));
         assert_eq!(inner.event_handler_timeout, Some(3.0));
-        assert_eq!(inner.payload.get("name"), Some(&serde_json::json!("job")));
-        assert!(!inner.payload.contains_key("event_timeout"));
-        assert!(!inner.payload.contains_key("event_handler_timeout"));
+        assert_eq!(
+            inner.event_extra_payload.get("name"),
+            Some(&serde_json::json!("job"))
+        );
+        assert!(!inner.event_extra_payload.contains_key("event_timeout"));
+        assert!(!inner
+            .event_extra_payload
+            .contains_key("event_handler_timeout"));
         drop(inner);
         bus.destroy();
     }

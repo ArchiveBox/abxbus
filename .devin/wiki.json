@@ -1,0 +1,303 @@
+{
+  "repo_notes": [
+    {
+      "content": "Don't over-document the fact that the library is implemented 1:1 in many languages, don't describe the minutae of the differences / attempt to individually document Python, TS, Go, and Rust implementations explicitly. We have thorough hand-written + translated examples and source maps available at https://abxbus.archivebox.io/ already, your job is only to document the main shared shapes and APIs and concepts, using Python by default for pseudocode and examples, and leave one or two sentences maximum to describe differences/exceptional cases when they are significant for specific languages.",
+      "author": "Maintainer"
+    }
+  ],
+  "pages": [
+    {
+      "title": "Overview",
+      "purpose": "High-level introduction to abxbus: what it is, why it exists, key design principles, and how the Python, TypeScript, Go, and Rust implementations relate. Links to all major child sections.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Getting Started",
+      "purpose": "Installation, first event, and minimal working examples in both Python and TypeScript. Covers pip/npm install, defining a BaseEvent subclass, registering a handler, and emitting an event.",
+      "parent": "Overview",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Supported Runtimes & Language Parity",
+      "purpose": "Documents which Python versions and JS runtimes (Node, Bun, Deno, browser) are supported, and explains the design goal of behavioral parity between the Python, TypeScript, Go, and Rust implementations. Covers the cross-runtime roundtrip test infrastructure.",
+      "parent": "Overview",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Core Architecture",
+      "purpose": "Overview of the fundamental building blocks: EventBus, BaseEvent, EventHandler, and EventResult. Explains how they compose and links to child pages for each component.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "EventBus",
+      "purpose": "Deep dive into the EventBus class: constructor options, runtime state, handler registration (on/off), emit, wait_until_idle, stop, and the internal run-loop. Covers both Python (abxbus/event_bus.py) and TypeScript (abxbus-ts/src/event_bus.ts) implementations.",
+      "parent": "Core Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "BaseEvent",
+      "purpose": "Explains the BaseEvent model: how to define typed events (Pydantic in Python, Zod in TypeScript), all metadata fields (event_id, event_type, event_status, event_path, event_results, etc.), the completion model (await vs event_completed()), and result access helpers (event_result, event_results_list, first).",
+      "parent": "Core Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "EventHandler & EventResult",
+      "purpose": "Documents the EventHandler registration object and the EventResult per-handler execution record. Covers handler metadata (handler_name, handler_file_path), result status lifecycle (pending/started/completed/error), error capture, and the scope-stack execution order inside a handler run.",
+      "parent": "Core Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Event History & Memory Management",
+      "purpose": "Explains the EventHistory subsystem: pending_event_queue vs event_history, max_history_size and max_history_drop retention policies, eviction order, and the find() API for querying past or future events.",
+      "parent": "Core Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Concurrency & Execution Model",
+      "purpose": "Overview of all concurrency controls in abxbus: event scheduling modes, handler execution modes, completion strategies, timeouts, and the queue-jump mechanism. Links to child pages for each topic.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Event Scheduling Modes",
+      "purpose": "Covers the three event_concurrency modes: bus-serial (default FIFO per bus), global-serial (single global slot across all buses), and parallel (unrestricted overlap). Includes the LockManager implementation and semaphore internals.",
+      "parent": "Concurrency & Execution Model",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Handler Execution & Completion Modes",
+      "purpose": "Explains event_handler_concurrency (serial vs parallel handlers for one event) and event_handler_completion (all vs first). Covers how 'first' mode cancels losing handlers and how parallel handlers interact with child event emission.",
+      "parent": "Concurrency & Execution Model",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Immediate Execution (Queue-Jump)",
+      "purpose": "Deep dive into the queue-jump mechanism: how awaiting a child event inside a handler causes it to bypass the FIFO queue, the 'no overshoot' constraint, nested execution chains, and interaction with different concurrency modes.",
+      "parent": "Concurrency & Execution Model",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Timeouts & Backpressure",
+      "purpose": "Documents the three-level timeout hierarchy (bus, event, handler), slow-warning thresholds, EventHandlerTimeoutError, and backpressure behavior under high load (max_history_size + max_history_drop interaction with emit).",
+      "parent": "Concurrency & Execution Model",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Retry Decorator",
+      "purpose": "Documents the retry() decorator/HOF available in both Python (abxbus/retry.py) and TypeScript (abxbus-ts/src/retry.ts): max_attempts, retry_after, backoff, retry_on_errors, semaphore-based concurrency limiting, and multiprocess semaphore support.",
+      "parent": "Concurrency & Execution Model",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Event Features",
+      "purpose": "Overview of higher-level event features built on top of the core bus. Links to child pages covering parent-child tracking, forwarding, find/debounce, context propagation, and the events_suck ergonomics layer.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Parent-Child Tracking & Causality Trees",
+      "purpose": "Explains how abxbus automatically records event lineage (event_parent_id, event_children, event_emitted_by_handler_id), how the log_tree() visualization works, and how lineage is preserved across forwarded buses.",
+      "parent": "Event Features",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Forwarding Between Buses",
+      "purpose": "Covers multi-bus topologies: how to wire buses together with bus.on('*', other_bus.emit), loop prevention via event_path, result aggregation across buses, and design patterns for service-local vs relay buses.",
+      "parent": "Event Features",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Find Events & Debouncing",
+      "purpose": "Documents the bus.find() API: past/future/where/child_of options, history-only vs future-wait modes, and how to build debounce patterns (reuse recent work, coalesce concurrent callers, history-first-then-future).",
+      "parent": "Event Features",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Context Propagation",
+      "purpose": "Explains how abxbus captures and restores ambient context (Python ContextVars, Node/Bun AsyncLocalStorage) at emit time so handlers see the same request-scoped values (request_id, trace context, user_id).",
+      "parent": "Event Features",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "events_suck: Ergonomics Layer",
+      "purpose": "Documents the events_suck module (abxbus/events_suck.py, abxbus-ts/src/events_suck.ts): the wrap() helper that generates method-shaped client APIs over event emit/await, reducing boilerplate at call sites.",
+      "parent": "Event Features",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Integrations",
+      "purpose": "Overview of the two integration layers: Bridges (transport connectors to external services) and Middlewares (lifecycle hooks). Links to child pages for each.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Bridges",
+      "purpose": "Documents all bridge connectors: Redis, NATS, PostgreSQL, SQLite, JSONL, HTTP, Socket, and Tachyon. Covers the shared bridge interface (emit/on/start/close), setup patterns, and optional dependency installation. Includes the high-performance Tachyon SPSC IPC bridge for same-machine cross-runtime communication.",
+      "parent": "Integrations",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Middlewares",
+      "purpose": "Documents the EventBusMiddleware interface and all built-in middleware classes: WALEventBusMiddleware, LoggerEventBusMiddleware, SQLiteHistoryMirrorMiddleware, OtelTracingMiddleware, AutoErrorEventMiddleware, AutoReturnEventMiddleware, AutoHandlerChangeEventMiddleware.",
+      "parent": "Integrations",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Language Implementations",
+      "purpose": "Overview of the four language implementations of abxbus: Python (reference), TypeScript, Go, and Rust. Explains the shared JSON wire format and cross-runtime compatibility guarantees. Links to child pages for each implementation.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Python Implementation",
+      "purpose": "Explains the abxbus Python package layout: core modules (event_bus.py, base_event.py, event_handler.py, event_result.py, event_history.py, lock_manager.py, middlewares.py, retry.py, events_suck.py, bridges.py), optional bridge extras, pyproject.toml configuration, and uv-based build/publish workflow.",
+      "parent": "Language Implementations",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "TypeScript Implementation",
+      "purpose": "Explains the abxbus-ts build pipeline: ESM/CJS/types outputs, build scripts (build_esm.mjs, build_cjs.mjs), pnpm workspace, optional bridge dependencies (ioredis, nats, pg), and browser compatibility notes.",
+      "parent": "Language Implementations",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Go Implementation",
+      "purpose": "Documents the abxbus-go package: EventBus, BaseEvent, EventHandler, EventResult, typed helpers (typed.go), JSONLEventBridge, OtelTracingMiddleware, JSON serialization/deserialization roundtrips, and the roundtrip_cli test utility. Covers what is and isn't yet implemented relative to the Python reference.",
+      "parent": "Language Implementations",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Rust Implementation",
+      "purpose": "Documents the abxbus-rust crate: EventBus, BaseEvent, EventResult, the event! macro, EventSpec trait, typed handler registration, HandlerExecutor thread pool, ReentrantLock, and dcontext integration. Covers what is and isn't yet implemented (no bridges/middlewares yet) and the Cargo.toml dependency set.",
+      "parent": "Language Implementations",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Cross-Runtime Roundtrip & Wire Format",
+      "purpose": "Documents the JSON wire format shared across all four language implementations, the cross-runtime roundtrip test infrastructure (roundtrip_cli in Go, abxbus-rust-roundtrip binary in Rust), and how to verify serialization parity between Python, TypeScript, Go, and Rust.",
+      "parent": "Language Implementations",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Package Structure & Build",
+      "purpose": "Overview of the Python and TypeScript package layouts, build pipelines, and distribution artifacts. Links to child pages for the Python package and TypeScript build details.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    }
+  ]
+}

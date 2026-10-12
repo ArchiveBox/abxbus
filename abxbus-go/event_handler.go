@@ -35,6 +35,7 @@ type EventHandler struct {
 	HandlerFilePath     *string  `json:"handler_file_path"`
 	HandlerTimeout      *float64 `json:"handler_timeout"`
 	HandlerSlowTimeout  *float64 `json:"handler_slow_timeout"`
+	HandlerResultTTL    *float64 `json:"handler_result_ttl"`
 	HandlerRegisteredAt string   `json:"handler_registered_at"`
 
 	handler EventHandlerCallable
@@ -87,6 +88,25 @@ func EventHandlerFromJSON(data []byte, handler EventHandlerCallable) (*EventHand
 	}
 	parsed.handler = handler
 	return &parsed, nil
+}
+
+func (h *EventHandler) UnmarshalJSON(data []byte) error {
+	type eventHandlerAlias EventHandler
+	var parsed eventHandlerAlias
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	if err := validateOptionalSecondsAtLeastMinusOne("handler_result_ttl", parsed.HandlerResultTTL); err != nil {
+		return err
+	}
+	if err := validateOptionalSecondsNonNegative("handler_timeout", parsed.HandlerTimeout); err != nil {
+		return err
+	}
+	if err := validateOptionalSecondsNonNegative("handler_slow_timeout", parsed.HandlerSlowTimeout); err != nil {
+		return err
+	}
+	*h = EventHandler(parsed)
+	return nil
 }
 
 func (h *EventHandler) Handle(ctx context.Context, event *BaseEvent) (any, error) {
@@ -217,10 +237,10 @@ func unsupportedHandlerSignatureError(handler any) error {
 
 func normalizeTypedEventHandlerReflectCallable(value reflect.Value, handlerType reflect.Type) EventHandlerCallable {
 	payloadType := handlerType.In(0)
-	payloadSchema := jsonSchemaForType(payloadType)
+	payloadSchema := jsonschema.SchemaForType(payloadType)
 	withContext := handlerType.NumIn() == 2
 	return func(event *BaseEvent, ctx context.Context) (any, error) {
-		if err := jsonschema.Validate(payloadSchema, event.Payload); err != nil {
+		if err := jsonschema.Validate(payloadSchema, event.EventExtraPayload); err != nil {
 			return nil, fmt.Errorf("EventHandlerPayloadSchemaError: Event payload did not match declared handler payload type: %w", err)
 		}
 		payload, err := eventPayloadAsReflectValue(event, payloadType)
@@ -257,7 +277,7 @@ func eventPayloadAsReflectValue(event *BaseEvent, payloadType reflect.Type) (ref
 	if event == nil {
 		return reflect.Value{}, fmt.Errorf("event is nil")
 	}
-	data, err := json.Marshal(event.Payload)
+	data, err := json.Marshal(event.EventExtraPayload)
 	if err != nil {
 		return reflect.Value{}, err
 	}
@@ -296,9 +316,9 @@ func normalizeTypedFindPredicate(where any) (func(*BaseEvent) bool, error) {
 		}, nil
 	}
 	payloadType := predicateType.In(0)
-	payloadSchema := jsonSchemaForType(payloadType)
+	payloadSchema := jsonschema.SchemaForType(payloadType)
 	return func(event *BaseEvent) bool {
-		if err := jsonschema.Validate(payloadSchema, event.Payload); err != nil {
+		if err := jsonschema.Validate(payloadSchema, event.EventExtraPayload); err != nil {
 			return false
 		}
 		payload, err := eventPayloadAsReflectValue(event, payloadType)

@@ -283,7 +283,7 @@ export class LockManager {
       this.idle_waiters.push(finish)
       this.scheduleIdleCheck()
 
-      if (timeout_seconds === null || timeout_seconds === undefined) {
+      if (timeout_seconds === null || timeout_seconds === undefined || timeout_seconds <= 0) {
         return
       }
 

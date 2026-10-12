@@ -1,12 +1,11 @@
 import { z } from 'zod'
-import type { BaseEvent } from './BaseEvent.js'
-import type { EventFactory } from './BaseEvent.js'
+import type { BaseEvent, EventClass as BaseEventClass } from './BaseEvent.js'
+import { fromJsonSchema, isJsonSchema, type JsonSchema } from './jsonschema.js'
 
 export type EventStatus = 'pending' | 'started' | 'completed'
+export type { EventClass } from './BaseEvent.js'
 
-export type EventClass<T extends BaseEvent = BaseEvent> = { event_type?: string } & (new (...args: any[]) => T)
-
-export type EventPattern<T extends BaseEvent = BaseEvent> = string | EventClass<T> | EventFactory<any, unknown>
+export type EventPattern<T extends BaseEvent = BaseEvent> = string | BaseEventClass<T>
 
 export type EventWithResultSchema<TResult> = BaseEvent & { __event_result_type__?: TResult }
 
@@ -14,7 +13,7 @@ export type EventResultType<TEvent extends BaseEvent> = TEvent extends { __event
 
 export type EventResultTypeConstructor = StringConstructor | NumberConstructor | BooleanConstructor | ArrayConstructor | ObjectConstructor
 
-export type EventResultTypeInput = z.ZodTypeAny | EventResultTypeConstructor | unknown
+export type EventResultTypeInput = z.ZodTypeAny | EventResultTypeConstructor | JsonSchema
 
 export type EventHandlerReturn<T extends BaseEvent = BaseEvent> = EventResultType<T> | BaseEvent | null | void
 
@@ -75,7 +74,7 @@ export const normalizeEventPattern = (event_pattern: EventPattern | '*'): string
   } catch {
     preview = String(event_pattern).slice(0, 30)
   }
-  throw new Error('bus.on(match_pattern, ...) must be a string event type, "*", or a BaseEvent class, got: ' + preview)
+  throw new Error('bus.on(match_pattern, ...) must be a string event type, "*", or a BaseEvent.extend() event class, got: ' + preview)
 }
 
 export const isZodSchema = (value: unknown): value is z.ZodTypeAny => !!value && typeof (value as z.ZodTypeAny).safeParse === 'function'
@@ -108,19 +107,7 @@ export const extractZodShape = (raw: Record<string, unknown>): z.ZodRawShape => 
   return shape as z.ZodRawShape
 }
 
-export const toJsonSchema = (schema: unknown): unknown => {
-  if (!schema || !isZodSchema(schema)) return schema
-  const zod_any = z as unknown as { toJSONSchema: (input: z.ZodTypeAny) => unknown }
-  // Cross-language roundtrips preserve core structural types; constraint keywords may not roundtrip exactly.
-  return zod_any.toJSONSchema(schema)
-}
-
-export const fromJsonSchema = (schema: unknown): z.ZodTypeAny => {
-  const zod_any = z as unknown as { fromJSONSchema: (input: unknown) => z.ZodTypeAny }
-  return zod_any.fromJSONSchema(schema)
-}
-
-export const normalizeEventResultType = (value: EventResultTypeInput): z.ZodTypeAny | undefined => {
+export function normalizeEventResultType(value: unknown): z.ZodTypeAny | undefined {
   if (value === undefined || value === null) {
     return undefined
   }
@@ -130,6 +117,9 @@ export const normalizeEventResultType = (value: EventResultTypeInput): z.ZodType
   const constructor_schema = eventResultTypeFromConstructor(value)
   if (constructor_schema) {
     return constructor_schema
+  }
+  if (!isJsonSchema(value)) {
+    throw new Error(`event_result_type must be a Zod schema, constructor shorthand, or JSON Schema value, got: ${typeof value}`)
   }
   return fromJsonSchema(value)
 }

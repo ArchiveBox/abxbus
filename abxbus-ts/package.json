@@ -1,6 +1,6 @@
 {
   "name": "abxbus",
-  "version": "2.5.2",
+  "version": "2.5.77",
   "description": "Event bus library for browsers and ESM Node.js",
   "type": "module",
   "sideEffects": false,
@@ -71,15 +71,15 @@
   "packageManager": "pnpm@10.33.2",
   "dependencies": {
     "@msgpack/msgpack": "^3.1.3",
+    "@tachyon-ipc/core": "0.5.0",
     "uuid": "^14.0.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@opentelemetry/api": "^1.9.1",
-    "@opentelemetry/exporter-trace-otlp-http": "^0.217.0",
-    "@opentelemetry/resources": "^2.7.1",
-    "@opentelemetry/sdk-trace-base": "^2.7.1",
-    "@tachyon-ipc/core": "^0.5.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
+    "@opentelemetry/resources": "^2.8.0",
+    "@opentelemetry/sdk-trace-base": "^2.8.0",
     "@types/node": "^25.6.1",
     "@typescript-eslint/eslint-plugin": "^8.59.2",
     "@typescript-eslint/parser": "^8.59.2",
@@ -91,15 +91,14 @@
     "pg": "^8.20.0",
     "prettier": "^3.8.3",
     "tsc-files": "^1.1.4",
-    "tsx": "^4.21.0",
+    "tsx": "^4.23.15",
     "typescript": "^6.0.3"
   },
   "peerDependencies": {
     "@opentelemetry/api": "^1.9.1",
-    "@opentelemetry/exporter-trace-otlp-http": "^0.217.0",
-    "@opentelemetry/resources": "^2.7.1",
-    "@opentelemetry/sdk-trace-base": "^2.7.1",
-    "@tachyon-ipc/core": "^0.5.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
+    "@opentelemetry/resources": "^2.8.0",
+    "@opentelemetry/sdk-trace-base": "^2.8.0",
     "ioredis": "^5.10.1",
     "nats": "^2.29.3",
     "pg": "^8.20.0"
@@ -115,9 +114,6 @@
       "optional": true
     },
     "@opentelemetry/sdk-trace-base": {
-      "optional": true
-    },
-    "@tachyon-ipc/core": {
       "optional": true
     },
     "ioredis": {
@@ -145,7 +141,8 @@
   },
   "pnpm": {
     "overrides": {
-      "flatted": "3.4.2"
+      "flatted": "3.4.2",
+      "tar": "7.5.22"
     },
     "packageExtensions": {
       "@tachyon-ipc/core": {

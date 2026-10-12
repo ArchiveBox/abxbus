@@ -178,7 +178,7 @@ func (b *JSONLEventBridge) pollNewLines() error {
 		if err != nil {
 			continue
 		}
-		resetInboundEvent(event)
+		resetBaseEventForDispatch(event, EventResetOptions{})
 		b.inboundBus.Emit(event)
 	}
 	return nil
@@ -223,16 +223,4 @@ func (b *JSONLEventBridge) readAppendedText() (string, int64, error) {
 		return "", offset, err
 	}
 	return string(data), size, nil
-}
-
-func resetInboundEvent(event *BaseEvent) {
-	event.EventStatus = "pending"
-	event.EventStartedAt = nil
-	event.EventCompletedAt = nil
-	event.EventPendingBusCount = 0
-	event.EventEmittedByResultID = nil
-	event.EventResults = map[string]*EventResult{}
-	event.Bus = nil
-	event.done_ch = make(chan struct{})
-	event.done_once = sync.Once{}
 }

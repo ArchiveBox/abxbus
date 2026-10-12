@@ -1,29 +1,30 @@
 name: test-rust
 
 on:
-  push:
-    branches:
-      - main
-      - stable
-      - 'releases/**'
-    tags:
-      - '*'
-  pull_request:
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 jobs:
+  core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: ./.github/actions/setup-core
+      - name: Test shared Rust core
+        run: cargo test --locked --all-targets --manifest-path abxbus-core/Cargo.toml
+
   find_rust_tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       RUST_TASKS: ${{ steps.lsgrep.outputs.RUST_TASKS }}
       # [{ "kind": "lib" | "test" | "bin", "name": "test_eventbus" }, ...]
       RUST_TEST_TASKS: ${{ steps.lsgrep.outputs.RUST_TEST_TASKS }}
       # [{ "kind": "test", "name": "test_eventbus" }, ...]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: lsgrep
         run: |
           RUST_LIB_TASKS="$(jq -cn '[{kind: "lib", name: "lib"}]')"
@@ -59,7 +60,7 @@ jobs:
   tests:
     needs:
       - find_rust_tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -70,11 +71,13 @@ jobs:
         # - { kind: "bin", name: "abxbus-rust-roundtrip" }
         # ... and more
     name: rust-${{ matrix.task.kind }}-${{ matrix.task.name }}
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: abxbus-rust
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup-core
 
       - name: Check that the previous step managed to find some tasks for us to run
         run: |
@@ -84,16 +87,18 @@ jobs:
           fi
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.97.1
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: abxbus-rust -> target
 
       - name: Set up Go for cross-runtime roundtrip tests
         if: matrix.task.kind == 'test' && matrix.task.name == 'test_cross_runtime_roundtrip'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: abxbus-go/go.mod
           cache: true
@@ -101,12 +106,12 @@ jobs:
 
       - name: Run Rust library tests
         if: matrix.task.kind == 'lib'
-        run: cargo test --locked --all-features --lib
+        run: cargo test --locked --all-features --lib -- --nocapture --test-threads=1
 
       - name: Run Rust integration test
         if: matrix.task.kind == 'test'
-        run: cargo test --locked --all-features --test ${{ matrix.task.name }}
+        run: cargo test --locked --all-features --test ${{ matrix.task.name }} -- --nocapture --test-threads=1
 
       - name: Run Rust binary tests
         if: matrix.task.kind == 'bin'
-        run: cargo test --locked --all-features --bin ${{ matrix.task.name }}
+        run: cargo test --locked --all-features --bin ${{ matrix.task.name }} -- --nocapture --test-threads=1

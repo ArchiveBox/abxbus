@@ -731,3 +731,155 @@ async def test_event_result_raise_if_any_includes_first_mode_control_errors() ->
         assert await event.event_result(raise_if_any=False, raise_if_none=True) == 'fast'
     finally:
         await bus.destroy()
+
+
+async def test_first_result_waiter_cancellation_does_not_wake_or_cancel_another_waiter() -> None:
+    bus = EventBus(name='CompletionFirstWaiterCancellationBus', event_handler_concurrency='serial')
+    handler_started = asyncio.Event()
+    release_handler = asyncio.Event()
+
+    async def gated_handler(_event: CompletionEvent) -> str:
+        handler_started.set()
+        await release_handler.wait()
+        return 'handler-result'
+
+    bus.on(CompletionEvent, gated_handler)
+
+    try:
+        event = bus.emit(CompletionEvent())
+        await asyncio.wait_for(handler_started.wait(), timeout=5.0)
+        cancelled_waiter = asyncio.create_task(event.wait(first_result=True))
+        surviving_waiters = [
+            asyncio.create_task(event.wait(first_result=True)),
+            asyncio.create_task(event.wait(first_result=True)),
+        ]
+        # Let all three real event waits subscribe before cancelling one; the
+        # handler gate keeps the result from racing them.
+        await asyncio.sleep(0)
+        cancelled_waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled_waiter
+        assert all(not waiter.done() for waiter in surviving_waiters)
+
+        release_handler.set()
+        results = await asyncio.wait_for(asyncio.gather(*surviving_waiters), timeout=5.0)
+        assert len(results) == 2 and all(result is event for result in results)
+        assert await event.event_result() == 'handler-result'
+    finally:
+        release_handler.set()
+        await bus.destroy()
+
+
+@pytest.mark.parametrize('with_none_handler', [False, True], ids=['empty', 'none-result'])
+async def test_first_result_wait_completes_when_event_has_no_included_result(with_none_handler: bool) -> None:
+    bus = EventBus(name='CompletionFirstWaitNoneBus', event_handler_concurrency='serial')
+
+    async def none_handler(_event: CompletionEvent) -> None:
+        return None
+
+    if with_none_handler:
+        bus.on(CompletionEvent, none_handler)
+
+    try:
+        event = bus.emit(CompletionEvent())
+        assert await asyncio.wait_for(event.wait(first_result=True), timeout=5.0) is event
+        assert event.event_status == 'completed'
+        if with_none_handler:
+            result = next(iter(event.event_results.values()))
+            assert result.status == 'completed'
+            assert result.result is None
+            assert result.error is None
+        else:
+            assert event.event_results == {}
+    finally:
+        await bus.destroy()
+
+
+async def test_first_result_wait_is_notified_by_direct_event_result_update() -> None:
+    bus = EventBus(name='CompletionFirstDirectUpdateBus', event_handler_concurrency='serial')
+    handler_started = asyncio.Event()
+    release_handler = asyncio.Event()
+    handler_finished = asyncio.Event()
+
+    async def gated_handler(_event: CompletionEvent) -> str:
+        handler_started.set()
+        await release_handler.wait()
+        handler_finished.set()
+        return 'handler-returned-result'
+
+    bus.on(CompletionEvent, gated_handler)
+
+    try:
+        event = bus.emit(CompletionEvent())
+        await asyncio.wait_for(handler_started.wait(), timeout=5.0)
+        result = next(iter(event.event_results.values()))
+        first_result_waiter = asyncio.create_task(event.wait(first_result=True))
+        # The waiter gets a turn to subscribe before the documented result
+        # update; the real handler remains blocked on its gate.
+        await asyncio.sleep(0)
+        result.update(result='published-early')
+
+        assert await asyncio.wait_for(first_result_waiter, timeout=5.0) is event
+        assert result.result == 'published-early'
+        assert result.status == 'completed'
+        assert not handler_finished.is_set()
+        release_handler.set()
+        await asyncio.wait_for(handler_finished.wait(), timeout=5.0)
+        await event.wait(timeout=5.0)
+    finally:
+        release_handler.set()
+        await bus.destroy()
+
+
+async def test_first_result_wait_observes_early_result_added_by_forwarded_bus() -> None:
+    source_bus = EventBus(name='CompletionFirstForwardSourceBus', event_handler_concurrency='serial')
+    target_bus = EventBus(name='CompletionFirstForwardTargetBus', event_handler_concurrency='serial')
+    source_handler_started = asyncio.Event()
+    allow_forwarding = asyncio.Event()
+    slow_target_started = asyncio.Event()
+    release_slow_target = asyncio.Event()
+    slow_target_finished = asyncio.Event()
+
+    async def gate_source(_event: CompletionEvent) -> None:
+        source_handler_started.set()
+        await allow_forwarding.wait()
+
+    async def fast_target(_event: CompletionEvent) -> str:
+        return 'forwarded-result'
+
+    async def slow_target(_event: CompletionEvent) -> str:
+        slow_target_started.set()
+        await release_slow_target.wait()
+        slow_target_finished.set()
+        return 'slow-target-result'
+
+    source_bus.on(CompletionEvent, gate_source)
+    source_bus.on('*', target_bus.emit)
+    target_bus.on(CompletionEvent, fast_target)
+    target_bus.on(CompletionEvent, slow_target)
+
+    try:
+        event = source_bus.emit(CompletionEvent())
+        await asyncio.wait_for(source_handler_started.wait(), timeout=5.0)
+        first_result_waiter = asyncio.create_task(event.wait(first_result=True))
+        # The source gate holds forwarding until the first-result waiter has
+        # subscribed to the event's current results.
+        await asyncio.sleep(0)
+        allow_forwarding.set()
+
+        assert await asyncio.wait_for(first_result_waiter, timeout=5.0) is event
+        await asyncio.wait_for(slow_target_started.wait(), timeout=5.0)
+        forwarded_result = next(result for result in event.event_results.values() if result.result == 'forwarded-result')
+        assert forwarded_result.status == 'completed'
+        assert not slow_target_finished.is_set()
+
+        release_slow_target.set()
+        await event.wait(timeout=5.0)
+        await source_bus.wait_until_idle(timeout=5.0)
+        await target_bus.wait_until_idle(timeout=5.0)
+        assert slow_target_finished.is_set()
+    finally:
+        allow_forwarding.set()
+        release_slow_target.set()
+        await source_bus.destroy(clear=True)
+        await target_bus.destroy(clear=True)

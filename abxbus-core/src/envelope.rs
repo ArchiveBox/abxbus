@@ -13,6 +13,10 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventEnvelope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_ttl: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_result_ttl: Option<f64>,
     pub event_type: String,
     #[serde(default = "default_event_version")]
     pub event_version: String,
@@ -93,6 +97,8 @@ impl EventEnvelope {
         };
         validate_payload_fields(&payload)?;
         Ok(Self {
+            event_ttl: record.event_ttl,
+            event_result_ttl: record.event_result_ttl,
             event_type: record.event_type.clone(),
             event_version: record.event_version.clone(),
             event_timeout: record.event_timeout,
@@ -120,6 +126,8 @@ impl EventEnvelope {
     pub fn into_record(self) -> Result<EventRecord, EnvelopeError> {
         validate_payload_fields(&self.payload)?;
         Ok(EventRecord {
+            event_ttl: self.event_ttl,
+            event_result_ttl: self.event_result_ttl,
             event_id: self.event_id,
             event_type: self.event_type,
             event_version: self.event_version,

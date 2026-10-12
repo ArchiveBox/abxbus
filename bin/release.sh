@@ -9,6 +9,26 @@ cd "${REPO_DIR}"
 TAG_PREFIX=""
 PYPI_PACKAGE="abxbus"
 NPM_PACKAGE="abxbus"
+CARGO_PACKAGE="abxbus"
+
+pypi_release_json() {
+    curl -fsSL \
+        -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
+        "https://pypi.org/pypi/${PYPI_PACKAGE}/$1/json?cache_bust=$(date +%s)-${RANDOM}"
+}
+
+npm_release_json() {
+    curl -fsSL \
+        -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
+        "https://registry.npmjs.org/${NPM_PACKAGE}/$1?cache_bust=$(date +%s)-${RANDOM}"
+}
+
+cargo_release_json() {
+    curl -fsSL \
+        -A 'ArchiveBox abxbus release workflow (https://github.com/ArchiveBox/abxbus)' \
+        -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
+        "https://crates.io/api/v1/crates/${CARGO_PACKAGE}/$1?cache_bust=$(date +%s)-${RANDOM}"
+}
 
 source_optional_env() {
     if [[ -f "${REPO_DIR}/.env" ]]; then
@@ -20,156 +40,38 @@ source_optional_env() {
 }
 
 repo_slug() {
-    python3 - <<'PY'
-import re
-import subprocess
-
-remote = subprocess.check_output(
-    ['git', 'remote', 'get-url', 'origin'],
-    text=True,
-).strip()
-
-patterns = [
-    r'github\.com[:/](?P<slug>[^/]+/[^/.]+)(?:\.git)?$',
-    r'github\.com/(?P<slug>[^/]+/[^/.]+)(?:\.git)?$',
-]
-
-for pattern in patterns:
-    match = re.search(pattern, remote)
-    if match:
-        print(match.group('slug'))
-        raise SystemExit(0)
-
-raise SystemExit(f'Unable to parse GitHub repo slug from remote: {remote}')
-PY
-}
-
-default_branch() {
-    if [[ -n "${DEFAULT_BRANCH:-}" ]]; then
-        echo "${DEFAULT_BRANCH}"
-        return 0
+    if [[ -n "${GITHUB_REPOSITORY:-}" ]]; then
+        printf '%s\n' "${GITHUB_REPOSITORY}"
+        return
     fi
-    if git symbolic-ref refs/remotes/origin/HEAD >/dev/null 2>&1; then
-        git symbolic-ref refs/remotes/origin/HEAD | sed 's#^refs/remotes/origin/##'
-        return 0
-    fi
-    git remote show origin | sed -n '/HEAD branch/s/.*: //p' | head -n 1
+
+    git remote get-url origin | sed -E 's#^git@github\.com:##; s#^https://github\.com/##; s#\.git$##'
 }
 
 current_version() {
-    python3 - <<'PY'
+    uv run --no-cache --no-project python - <<'PY'
 from pathlib import Path
 import json
 import re
 
-versions = []
-pyproject_text = Path('pyproject.toml').read_text()
-pyproject_match = re.search(r'^version = "([^"]+)"$', pyproject_text, re.MULTILINE)
-if pyproject_match:
-    versions.append(pyproject_match.group(1))
-
-package_json = json.loads(Path('abxbus-ts/package.json').read_text())
-if 'version' in package_json:
-    versions.append(package_json['version'])
-
-cargo_text = Path('abxbus-rust/Cargo.toml').read_text()
-cargo_match = re.search(r'^version = "([^"]+)"$', cargo_text, re.MULTILINE)
-if cargo_match:
-    versions.append(cargo_match.group(1))
-
-go_version_text = Path('abxbus-go/version.go').read_text()
-go_version_match = re.search(r'const Version = "([^"]+)"', go_version_text)
-if go_version_match:
-    versions.append(go_version_match.group(1))
-
-def parse(version: str) -> tuple[int, int, int, int]:
-    match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:rc(\d+))?', version)
-    if not match:
-        raise SystemExit(f'Unsupported version format: {version}')
-    major, minor, patch, rc = match.groups()
-    return (int(major), int(minor), int(patch), int(rc) if rc is not None else 10_000)
-
-print(max(versions, key=parse))
-PY
+versions = {
+    'pyproject.toml': re.search(r'^version = "([^"]+)"$', Path('pyproject.toml').read_text(), re.MULTILINE),
+    'abxbus-rust/Cargo.toml': re.search(r'^version = "([^"]+)"$', Path('abxbus-rust/Cargo.toml').read_text(), re.MULTILINE),
+    'abxbus-rust/Cargo.lock': re.search(r'(?m)^name = "abxbus"\nversion = "([^"]+)"$', Path('abxbus-rust/Cargo.lock').read_text()),
+    'abxbus-go/version.go': re.search(r'const Version = "([^"]+)"', Path('abxbus-go/version.go').read_text()),
 }
-
-bump_version() {
-    python3 - <<'PY'
-from pathlib import Path
-import json
-import re
-
-def parse(version: str) -> tuple[int, int, int, int]:
-    match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:rc(\d+))?', version)
-    if not match:
-        raise SystemExit(f'Unsupported version format: {version}')
-    major, minor, patch, rc = match.groups()
-    return (int(major), int(minor), int(patch), int(rc) if rc is not None else 10_000)
-
-pyproject_path = Path('pyproject.toml')
-pyproject_text = pyproject_path.read_text()
-pyproject_match = re.search(r'^version = "([^"]+)"$', pyproject_text, re.MULTILINE)
-if not pyproject_match:
-    raise SystemExit('Failed to find version in pyproject.toml')
-
-package_path = Path('abxbus-ts/package.json')
-package_json = json.loads(package_path.read_text())
-if 'version' not in package_json:
-    raise SystemExit('Failed to find version in abxbus-ts/package.json')
-
-cargo_path = Path('abxbus-rust/Cargo.toml')
-cargo_text = cargo_path.read_text()
-cargo_match = re.search(r'^version = "([^"]+)"$', cargo_text, re.MULTILINE)
-if not cargo_match:
-    raise SystemExit('Failed to find version in abxbus-rust/Cargo.toml')
-
-cargo_lock_path = Path('abxbus-rust/Cargo.lock')
-cargo_lock_text = cargo_lock_path.read_text()
-cargo_lock_match = re.search(r'(?m)^name = "abxbus-rust"\nversion = "([^"]+)"$', cargo_lock_text)
-if not cargo_lock_match:
-    raise SystemExit('Failed to find abxbus-rust version in abxbus-rust/Cargo.lock')
-
-go_version_path = Path('abxbus-go/version.go')
-go_version_text = go_version_path.read_text()
-go_version_match = re.search(r'const Version = "([^"]+)"', go_version_text)
-if not go_version_match:
-    raise SystemExit('Failed to find version in abxbus-go/version.go')
-
-current_version = max([
-    pyproject_match.group(1),
-    package_json['version'],
-    cargo_match.group(1),
-    cargo_lock_match.group(1),
-    go_version_match.group(1),
-], key=parse)
-major, minor, patch, _ = parse(current_version)
-next_version = f'{major}.{minor}.{patch + 1}'
-
-pyproject_path.write_text(
-    re.sub(r'^version = "[^"]+"$', f'version = "{next_version}"', pyproject_text, count=1, flags=re.MULTILINE)
-)
-package_json['version'] = next_version
-package_path.write_text(json.dumps(package_json, indent=2) + '\n')
-cargo_path.write_text(
-    re.sub(r'^version = "[^"]+"$', f'version = "{next_version}"', cargo_text, count=1, flags=re.MULTILINE)
-)
-cargo_lock_path.write_text(
-    re.sub(
-        r'(?m)^(name = "abxbus-rust"\nversion = ")[^"]+(")$',
-        rf'\g<1>{next_version}\2',
-        cargo_lock_text,
-        count=1,
-    )
-)
-go_version_path.write_text(
-    re.sub(r'const Version = "[^"]+"', f'const Version = "{next_version}"', go_version_text, count=1)
-)
-print(next_version)
+values = {path: match.group(1) if match else None for path, match in versions.items()}
+values['abxbus-ts/package.json'] = json.loads(Path('abxbus-ts/package.json').read_text()).get('version')
+if None in values.values():
+    raise SystemExit(f'Failed to read all package versions: {values}')
+if len(set(values.values())) != 1:
+    raise SystemExit(f'Package versions disagree: {values}')
+print(next(iter(values.values())))
 PY
 }
 
 compare_versions() {
-    python3 - "$1" "$2" <<'PY'
+    uv run --no-cache --no-project python - "$1" "$2" <<'PY'
 import re
 import sys
 
@@ -181,12 +83,7 @@ def parse(version: str) -> tuple[int, int, int, int]:
     return (int(major), int(minor), int(patch), int(rc) if rc is not None else 10_000)
 
 left, right = sys.argv[1], sys.argv[2]
-if parse(left) > parse(right):
-    print('gt')
-elif parse(left) == parse(right):
-    print('eq')
-else:
-    print('lt')
+print('gt' if parse(left) > parse(right) else 'eq' if parse(left) == parse(right) else 'lt')
 PY
 }
 
@@ -194,7 +91,7 @@ latest_release_version() {
     local slug="$1"
     local raw_tags
     raw_tags="$(gh api "repos/${slug}/releases?per_page=100" --jq '.[].tag_name' || true)"
-    RELEASE_TAGS="${raw_tags}" python3 - <<'PY'
+    RELEASE_TAGS="${raw_tags}" uv run --no-cache --no-project python - <<'PY'
 import os
 import re
 
@@ -205,224 +102,324 @@ def parse(version: str) -> tuple[int, int, int, int]:
     major, minor, patch, rc = match.groups()
     return (int(major), int(minor), int(patch), int(rc) if rc is not None else 10_000)
 
-versions = [line.strip() for line in os.environ.get('RELEASE_TAGS', '').splitlines() if line.strip()]
-if not versions:
-    print('')
-else:
-    print(max(versions, key=parse))
+versions = [version for version in os.environ.get('RELEASE_TAGS', '').splitlines() if parse(version) != (-1, -1, -1, -1)]
+print(max(versions, key=parse) if versions else '')
 PY
 }
 
-wait_for_runs() {
-    local slug="$1"
-    local event="$2"
-    local sha="$3"
-    local label="$4"
-    local run_count
-    local run_ids
-    local attempts=0
-
-    while :; do
-        run_count="$(GH_FORCE_TTY=0 GH_PROMPT_DISABLED=1 GH_PAGER=cat gh run list --repo "${slug}" --event "${event}" --commit "${sha}" --limit 20 --json databaseId,status,conclusion,workflowName --jq 'length')"
-        if [[ "${run_count}" -gt 0 ]]; then
-            break
-        fi
-        attempts=$((attempts + 1))
-        if [[ "${attempts}" -ge 30 ]]; then
-            echo "Timed out waiting for ${label} workflows to start" >&2
-            return 1
-        fi
-        sleep 10
-    done
-
-    run_ids="$(GH_FORCE_TTY=0 GH_PROMPT_DISABLED=1 GH_PAGER=cat gh run list --repo "${slug}" --event "${event}" --commit "${sha}" --limit 20 --json databaseId,status,conclusion,workflowName --jq '.[].databaseId')"
-    while read -r run_id; do
-        gh run watch "${run_id}" --repo "${slug}" --exit-status
-    done <<<"${run_ids}"
-}
-
-wait_for_pypi() {
-    local package_name="$1"
-    local expected_version="$2"
-    local attempts=0
-    local published_version
-
-    while :; do
-        published_version="$(curl -fsSL "https://pypi.org/pypi/${package_name}/json" | jq -r '.info.version')"
-        if [[ "${published_version}" == "${expected_version}" ]]; then
-            return 0
-        fi
-        attempts=$((attempts + 1))
-        if [[ "${attempts}" -ge 30 ]]; then
-            echo "Timed out waiting for ${package_name}==${expected_version} on PyPI" >&2
-            return 1
-        fi
-        sleep 10
-    done
-}
-
-wait_for_npm() {
-    local package_name="$1"
-    local expected_version="$2"
-    local attempts=0
-    local published_version
-
-    while :; do
-        published_version="$(npm view "${package_name}" version --silent 2>/dev/null || true)"
-        if [[ "${published_version}" == "${expected_version}" ]]; then
-            return 0
-        fi
-        attempts=$((attempts + 1))
-        if [[ "${attempts}" -ge 30 ]]; then
-            echo "Timed out waiting for ${package_name}@${expected_version} on npm" >&2
-            return 1
-        fi
-        sleep 10
-    done
-}
-
-run_checks() {
-    uv sync --all-extras --all-groups --no-cache --upgrade
-    pnpm --dir abxbus-ts install --no-frozen-lockfile
-    uv run prek run --all-files
-    pnpm --dir abxbus-ts run build
-    uv build
-}
-
-validate_release_state() {
-    local slug="$1"
-    local branch="$2"
-    local current latest relation
-
-    if [[ "$(git branch --show-current)" != "${branch}" ]]; then
-        echo "Skipping release-state validation on non-default branch $(git branch --show-current)"
-        return 0
+latest_registry_version() {
+    local registry="$1"
+    local versions
+    if [[ "${registry}" == "pypi" ]]; then
+        versions="$(curl -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | jq -r '.releases | keys[]' || true)"
+    elif [[ "${registry}" == "crates.io" ]]; then
+        versions="$(curl -fsSL -A 'ArchiveBox abxbus release workflow (https://github.com/ArchiveBox/abxbus)' \
+            "https://crates.io/api/v1/crates/${CARGO_PACKAGE}" | jq -r '.versions[].num' || true)"
+    else
+        versions="$(npm view "${NPM_PACKAGE}" versions --json --silent 2>/dev/null | jq -r '.[]' || true)"
     fi
+    RELEASE_TAGS="${versions}" uv run --no-cache --no-project python - <<'PY'
+import os
+import re
 
-    current="$(current_version)"
-    latest="$(latest_release_version "${slug}")"
-    if [[ -z "${latest}" ]]; then
-        echo "No published releases found for ${slug}; release state is valid"
-        return 0
-    fi
+def parse(version: str) -> tuple[int, int, int, int]:
+    match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:rc(\d+))?', version)
+    if not match:
+        return (-1, -1, -1, -1)
+    major, minor, patch, rc = match.groups()
+    return (int(major), int(minor), int(patch), int(rc) if rc is not None else 10_000)
 
-    relation="$(compare_versions "${current}" "${latest}")"
-    if [[ "${relation}" == "lt" ]]; then
-        echo "Current version ${current} is behind latest published version ${latest}" >&2
+versions = [version for version in os.environ.get('RELEASE_TAGS', '').splitlines() if parse(version) != (-1, -1, -1, -1)]
+print(max(versions, key=parse) if versions else '')
+PY
+}
+
+require_clean_exact_checkout() {
+    local release_sha="$1"
+    local release_branch="$2"
+
+    if [[ ! "${release_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+        echo "RELEASE_SHA must be a full 40-character commit SHA" >&2
         return 1
     fi
-
-    echo "Release state is valid: local=${current} latest=${latest}"
+    if [[ "$(git rev-parse HEAD)" != "${release_sha}" ]]; then
+        echo "Refusing to release: checkout HEAD does not match RELEASE_SHA ${release_sha}" >&2
+        return 1
+    fi
+    if [[ -n "$(git status --short)" ]]; then
+        echo "Refusing to release from a dirty worktree" >&2
+        return 1
+    fi
+    git fetch --quiet --no-tags origin "+refs/heads/${release_branch}:refs/remotes/origin/${release_branch}"
+    local branch_head
+    branch_head="$(git rev-parse "refs/remotes/origin/${release_branch}")"
+    if [[ "${release_sha}" != "${branch_head}" ]]; then
+        echo "Skipping obsolete release ${release_sha}: current origin/${release_branch} is ${branch_head}" >&2
+        exit 0
+    fi
 }
 
-create_release() {
-    local slug="$1"
+require_tested_artifacts() {
+    local artifact_dir="$1"
     local version="$2"
-    if gh release view "${TAG_PREFIX}${version}" --repo "${slug}" >/dev/null 2>&1; then
-        echo "GitHub release ${TAG_PREFIX}${version} already exists"
-        return 0
-    fi
-    gh release create "${TAG_PREFIX}${version}" \
-        --repo "${slug}" \
-        --target "$(git rev-parse HEAD)" \
-        --title "${TAG_PREFIX}${version}" \
-        --generate-notes
+    local release_sha="$3"
+    local python_dir="${artifact_dir}/python"
+    local npm_dir="${artifact_dir}/npm"
+    local cratesio_dir="${artifact_dir}/cratesio"
+
+    [[ -d "${python_dir}" ]] || { echo "Missing tested Python artifact directory: ${python_dir}" >&2; return 1; }
+    [[ -d "${npm_dir}" ]] || { echo "Missing tested npm artifact directory: ${npm_dir}" >&2; return 1; }
+    [[ -d "${cratesio_dir}" ]] || { echo "Missing tested crates.io artifact directory: ${cratesio_dir}" >&2; return 1; }
+    [[ -f "${artifact_dir}/SHA256SUMS" ]] || { echo "Missing tested artifact checksums" >&2; return 1; }
+    (
+        cd "${artifact_dir}"
+        sha256sum --check SHA256SUMS
+    )
+    [[ "$(<"${artifact_dir}/COMMIT_SHA")" == "${release_sha}" ]] || {
+        echo "Tested artifacts are not from release SHA ${release_sha}" >&2
+        return 1
+    }
+
+    shopt -s nullglob
+    local wheels=("${python_dir}"/abxbus-*.whl)
+    local sdists=("${python_dir}"/abxbus-*.tar.gz)
+    local npm_packages=("${npm_dir}"/abxbus-*.tgz)
+    local crate_packages=("${cratesio_dir}"/abxbus-*.crate)
+    [[ "${#wheels[@]}" -eq 1 ]] || { echo "Expected one tested wheel, found ${#wheels[@]}" >&2; return 1; }
+    [[ "${#sdists[@]}" -eq 1 ]] || { echo "Expected one tested sdist, found ${#sdists[@]}" >&2; return 1; }
+    [[ "${#npm_packages[@]}" -eq 1 ]] || { echo "Expected one tested npm package, found ${#npm_packages[@]}" >&2; return 1; }
+    [[ "${#crate_packages[@]}" -eq 1 ]] || { echo "Expected one tested Rust crate, found ${#crate_packages[@]}" >&2; return 1; }
+    [[ "$(find "${python_dir}" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 2 ]] || {
+        echo "Unexpected files in tested Python artifact directory" >&2
+        return 1
+    }
+    [[ "$(find "${npm_dir}" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 1 ]] || {
+        echo "Unexpected files in tested npm artifact directory" >&2
+        return 1
+    }
+    [[ "$(find "${cratesio_dir}" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 1 ]] || {
+        echo "Unexpected files in tested Rust crate directory" >&2
+        return 1
+    }
+
+    TESTED_VERSION="${version}" TESTED_WHEEL="${wheels[0]}" TESTED_SDIST="${sdists[0]}" \
+    TESTED_NPM_PACKAGE="${npm_packages[0]}" TESTED_CRATE="${crate_packages[0]}" \
+        uv run --no-cache --no-project python - <<'PY'
+import json
+import os
+import re
+import tarfile
+import tomllib
+from pathlib import Path
+
+version = os.environ["TESTED_VERSION"]
+normalized = re.escape(version.replace("-", "_"))
+for variable in ("TESTED_WHEEL", "TESTED_SDIST"):
+    name = Path(os.environ[variable]).name
+    if not re.match(rf"abxbus-{normalized}(?:-|\.)", name):
+        raise SystemExit(f"{name} does not contain release version {version}")
+
+npm_package = Path(os.environ["TESTED_NPM_PACKAGE"])
+with tarfile.open(npm_package, "r:gz") as archive:
+    package = json.load(archive.extractfile("package/package.json"))
+if package.get("name") != "abxbus" or package.get("version") != version:
+    raise SystemExit(f"Unexpected npm package identity: {package.get('name')}@{package.get('version')}")
+
+with tarfile.open(Path(os.environ["TESTED_CRATE"]), "r:gz") as archive:
+    manifest = archive.extractfile(f"abxbus-{version}/Cargo.toml")
+    if manifest is None:
+        raise SystemExit("Rust crate is missing Cargo.toml")
+    rust_package = tomllib.loads(manifest.read().decode())["package"]
+if rust_package.get("name") != "abxbus" or rust_package.get("version") != version:
+    raise SystemExit(f"Unexpected Rust package identity: {rust_package.get('name')}@{rust_package.get('version')}")
+PY
 }
 
 publish_artifacts() {
     local version="$1"
-    local pypi_token="${UV_PUBLISH_TOKEN:-${PYPI_TOKEN:-${PYPI_PAT_SECRET:-}}}"
-    local npm_token="${NODE_AUTH_TOKEN:-${NPM_TOKEN:-}}"
+    local artifact_dir="$2"
+    shopt -s nullglob
+    local wheels=("${artifact_dir}"/python/abxbus-*.whl)
+    local sdists=("${artifact_dir}"/python/abxbus-*.tar.gz)
+    local npm_packages=("${artifact_dir}"/npm/abxbus-*.tgz)
 
-    if curl -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | jq -e --arg version "${version}" '.releases[$version] | length > 0' >/dev/null 2>&1; then
+    if pypi_release_json "${version}" >/dev/null 2>&1; then
         echo "${PYPI_PACKAGE} ${version} already published on PyPI"
     else
-        if [[ -n "${pypi_token}" ]]; then
-            UV_PUBLISH_TOKEN="${pypi_token}" uv publish --username=__token__ dist/*
-        else
-            echo "Missing PyPI credentials: set UV_PUBLISH_TOKEN or PYPI_TOKEN" >&2
-            return 1
-        fi
+        uv publish --no-cache --trusted-publishing always "${wheels[@]}" "${sdists[@]}"
     fi
 
     if npm view "${NPM_PACKAGE}@${version}" version --silent >/dev/null 2>&1; then
         echo "${NPM_PACKAGE} ${version} already published on npm"
     else
-        if [[ -n "${npm_token}" ]]; then
-            (
-                cd abxbus-ts
-                npm_config_file="$(mktemp)"
-                printf '//registry.npmjs.org/:_authToken=%s\n' "${npm_token}" >"${npm_config_file}"
-                NODE_AUTH_TOKEN="${npm_token}" npm_config_userconfig="${npm_config_file}" pnpm publish --access public --no-git-checks
-                rm -f "${npm_config_file}"
-            )
-        else
-            echo "Missing npm credentials: set NPM_TOKEN or NODE_AUTH_TOKEN" >&2
-            return 1
-        fi
+        npm publish --access public "${npm_packages[0]}"
     fi
 
-    wait_for_pypi "${PYPI_PACKAGE}" "${version}"
-    wait_for_npm "${NPM_PACKAGE}" "${version}"
+    if cargo_release_json "${version}" >/dev/null 2>&1; then
+        echo "${CARGO_PACKAGE} ${version} already published on crates.io"
+    else
+        cargo publish --locked --manifest-path abxbus-rust/Cargo.toml
+    fi
+}
+
+create_release() {
+    local slug="$1"
+    local version="$2"
+    local release_sha="$3"
+
+    if gh release view "${TAG_PREFIX}${version}" --repo "${slug}" >/dev/null 2>&1; then
+        gh release edit "${TAG_PREFIX}${version}" \
+            --repo "${slug}" \
+            --title "v${version}"
+        echo "GitHub release ${TAG_PREFIX}${version} already exists"
+        return
+    fi
+    gh release create "${TAG_PREFIX}${version}" \
+        --repo "${slug}" \
+        --target "${release_sha}" \
+        --title "v${version}" \
+        --generate-notes
+}
+
+go_module_tag_names() {
+    local version="$1"
+    local mod_file module_dir
+    find . -name go.mod -not -path './.git/*' | sort | while read -r mod_file; do
+        module_dir="${mod_file%/go.mod}"
+        module_dir="${module_dir#./}"
+        if [[ "${module_dir}" == "." ]]; then
+            printf 'v%s\n' "${version}"
+        else
+            printf '%s/v%s\n' "${module_dir}" "${version}"
+        fi
+    done
+}
+
+create_go_module_tags() {
+    local version="$1"
+    local release_sha="$2"
+    local tag
+
+    while read -r tag; do
+        [[ -n "${tag}" ]] || continue
+        if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            if [[ "$(git ls-remote --tags origin "refs/tags/${tag}" | cut -f1)" != "${release_sha}" ]]; then
+                echo "Existing Go module tag ${tag} does not target ${release_sha}" >&2
+                return 1
+            fi
+            echo "Go module tag ${tag} already exists on ${release_sha}"
+            continue
+        fi
+        git tag "${tag}" "${release_sha}"
+        git push origin "refs/tags/${tag}"
+    done < <(go_module_tag_names "${version}")
+}
+
+verify_release_outputs() {
+    local slug="$1"
+    local version="$2"
+    local release_sha="$3"
+    local release_target release_json tag
+
+    release_target="$(git ls-remote origin "refs/tags/${TAG_PREFIX}${version}" | cut -f1)"
+    [[ "${release_target}" == "${release_sha}" ]] || {
+        echo "Release tag ${TAG_PREFIX}${version} does not target ${release_sha}" >&2
+        return 1
+    }
+
+    release_json="$(gh release view "${TAG_PREFIX}${version}" --repo "${slug}" --json tagName,targetCommitish,assets)"
+    jq -e \
+        --arg tag "${TAG_PREFIX}${version}" \
+        --arg sha "${release_sha}" \
+        --arg wheel "${PYPI_PACKAGE}-${version}-py3-none-any.whl" \
+        --arg sdist "${PYPI_PACKAGE}-${version}.tar.gz" \
+        --arg npm_package "${NPM_PACKAGE}-${version}.tgz" \
+        --arg rust_crate "${CARGO_PACKAGE}-${version}.crate" \
+        '
+          .tagName == $tag and
+          .targetCommitish == $sha and
+          ([.assets[].name] | sort) == ([$wheel, $sdist, $npm_package, $rust_crate, "SHA256SUMS"] | sort)
+        ' <<<"${release_json}" >/dev/null
+
+    while read -r tag; do
+        [[ -n "${tag}" ]] || continue
+        [[ "$(git ls-remote origin "refs/tags/${tag}" | cut -f1)" == "${release_sha}" ]] || {
+            echo "Go module tag ${tag} does not target ${release_sha}" >&2
+            return 1
+        }
+    done < <(go_module_tag_names "${version}")
 }
 
 main() {
-    local slug branch version latest relation
+    local slug release_sha release_branch artifact_dir version latest candidate relation registry release_target pypi_exists npm_exists cargo_exists github_release_exists
 
     source_optional_env
     slug="$(repo_slug)"
-    branch="$(default_branch)"
-
-    if [[ "${GITHUB_EVENT_NAME:-}" == "push" ]]; then
-        validate_release_state "${slug}" "${branch}"
-        return 0
-    fi
-
-    if [[ "$(git branch --show-current)" != "${branch}" ]]; then
-        echo "Release must run from ${branch}, found $(git branch --show-current)" >&2
-        return 1
-    fi
+    release_sha="${RELEASE_SHA:-$(git rev-parse HEAD)}"
+    release_branch="${RELEASE_BRANCH:-main}"
+    artifact_dir="${RELEASE_ARTIFACT_DIR:-}"
+    require_clean_exact_checkout "${release_sha}" "${release_branch}"
 
     version="$(current_version)"
     latest="$(latest_release_version "${slug}")"
-    if [[ -z "${latest}" ]]; then
-        relation="gt"
-    else
+    for registry in pypi npm crates.io; do
+        candidate="$(latest_registry_version "${registry}")"
+        if [[ -n "${candidate}" && ( -z "${latest}" || "$(compare_versions "${candidate}" "${latest}")" == "gt" ) ]]; then
+            latest="${candidate}"
+        fi
+    done
+    relation="gt"
+    if [[ -n "${latest}" ]]; then
         relation="$(compare_versions "${version}" "${latest}")"
     fi
 
+    if [[ "${relation}" == "lt" ]]; then
+        echo "Current version ${version} is behind latest published version ${latest}" >&2
+        return 1
+    fi
+
+    pypi_exists=false
+    npm_exists=false
+    cargo_exists=false
+    github_release_exists=false
+    if pypi_release_json "${version}" >/dev/null 2>&1; then
+        pypi_exists=true
+    fi
+    if npm_release_json "${version}" >/dev/null 2>&1; then
+        npm_exists=true
+    fi
+    if cargo_release_json "${version}" >/dev/null 2>&1; then
+        cargo_exists=true
+    fi
+    release_target="$(git ls-remote origin "refs/tags/${TAG_PREFIX}${version}" | cut -f1)"
+    if gh release view "${TAG_PREFIX}${version}" --repo "${slug}" >/dev/null 2>&1; then
+        github_release_exists=true
+    fi
     if [[ "${relation}" == "eq" ]]; then
-        version="$(bump_version)"
-        run_checks
-
-        git add -A
-        git commit -m "release: ${version}"
-        git push origin "${branch}"
-
-        wait_for_runs "${slug}" push "$(git rev-parse HEAD)" "push"
-    elif [[ "${relation}" == "gt" ]]; then
-        if [[ -n "$(git status --short)" ]]; then
-            echo "Refusing to publish existing unreleased version ${version} with a dirty worktree" >&2
+        if [[ "${pypi_exists}" != true || "${npm_exists}" != true || "${cargo_exists}" != true || "${github_release_exists}" != true || -z "${release_target}" ]]; then
+            echo "${PYPI_PACKAGE} ${version} is already reserved but its release outputs are incomplete; bump the version after fixing the release" >&2
             return 1
         fi
-        run_checks
-        wait_for_runs "${slug}" push "$(git rev-parse HEAD)" "push"
-    else
-        echo "Current version ${version} is behind latest GitHub release ${latest}" >&2
-        return 1
+        verify_release_outputs "${slug}" "${version}" "${release_target}"
+        echo "${PYPI_PACKAGE} ${version} is already completely released; nothing to publish"
+        return
     fi
 
-    publish_artifacts "${version}"
-    create_release "${slug}" "${version}"
+    [[ -n "${artifact_dir}" ]] || { echo "RELEASE_ARTIFACT_DIR must point to exact tested artifacts" >&2; return 1; }
+    require_tested_artifacts "${artifact_dir}" "${version}" "${release_sha}"
+    create_release "${slug}" "${version}" "${release_sha}"
+    publish_artifacts "${version}" "${artifact_dir}"
+    gh release upload "${TAG_PREFIX}${version}" --repo "${slug}" \
+        "${artifact_dir}"/python/abxbus-*.whl \
+        "${artifact_dir}"/python/abxbus-*.tar.gz \
+        "${artifact_dir}"/npm/abxbus-*.tgz \
+        "${artifact_dir}"/cratesio/abxbus-*.crate \
+        "${artifact_dir}"/SHA256SUMS \
+        --clobber
+    create_go_module_tags "${version}" "${release_sha}"
 
-    latest="$(latest_release_version "${slug}")"
-    relation="$(compare_versions "${latest}" "${version}")"
-    if [[ "${relation}" != "eq" ]]; then
-        echo "GitHub release version mismatch: expected ${version}, got ${latest}" >&2
-        return 1
-    fi
-
-    echo "Released ${PYPI_PACKAGE} and ${NPM_PACKAGE} ${version}"
+    verify_release_outputs "${slug}" "${version}" "${release_sha}"
+    echo "Released ${PYPI_PACKAGE}, ${NPM_PACKAGE}, and ${CARGO_PACKAGE} ${version} from ${release_sha}"
 }
 
 main "$@"

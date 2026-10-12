@@ -158,7 +158,7 @@ println!("{}", serde_json::to_string_pretty(&payload)?);
 //   ...
 // }
 
-let restored: abxbus_rust::event_result::EventResult = serde_json::from_value(payload)?;
+let restored: abxbus::event_result::EventResult = serde_json::from_value(payload)?;
 ```
 
 </Tab>

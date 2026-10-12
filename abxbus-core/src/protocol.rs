@@ -113,6 +113,11 @@ pub enum HostToCoreMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         event_blocks_parent_completion: Option<bool>,
     },
+    UpdateEventRetention {
+        event_id: EventId,
+        event_ttl: Option<f64>,
+        event_result_ttl: Option<f64>,
+    },
     ProcessRoute {
         route_id: RouteId,
         #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -21,7 +21,6 @@ const SPIN_THRESHOLD = 50_000_000
 const POLLING_MODE = 1
 const HANDLER_OUTCOME_BATCH_LIMIT = 65_536
 const CORE_STARTUP_TIMEOUT_MS = 120_000
-const DEFAULT_TS_HOST_ID = `ts-${randomUUID()}`
 const DEFAULT_CORE_NAMESPACE = `process-${process.pid}`
 const DEBUG_CORE_REQUESTS = typeof process !== 'undefined' && process.env.ABXBUS_DEBUG_CORE_REQUESTS === '1'
 const EMPTY_BUFFER = Buffer.alloc(0)
@@ -175,7 +174,7 @@ export class RustCoreClient {
   private readonly session_id_bytes: Buffer
 
   constructor(options: { command?: string; args?: string[]; session_id?: string; socket_path?: string; bus_name?: string } = {}) {
-    this.session_id = options.session_id ?? DEFAULT_TS_HOST_ID
+    this.session_id = options.session_id ?? `ts-${randomUUID()}`
     this.session_id_bytes = Buffer.from(this.session_id)
     this.socket_path =
       options.socket_path ??

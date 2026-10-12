@@ -305,9 +305,13 @@ func TestComprehensiveDispatchMultipleAwaitOneSkipsOthersUntilAfterHandler(t *te
 	bus := abxbus.NewEventBus("MultiDispatchBus", nil)
 	var mu sync.Mutex
 	order := []string{}
+	event1Started := make(chan struct{})
+	allowChildren := make(chan struct{})
 
 	bus.On("Event1", "event1_handler", func(e *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		appendLocked(&mu, &order, "Event1_start")
+		close(event1Started)
+		<-allowChildren
 		e.Emit(abxbus.NewBaseEvent("ChildA", nil))
 		appendLocked(&mu, &order, "ChildA_dispatched")
 		childB := e.Emit(abxbus.NewBaseEvent("ChildB", nil))
@@ -331,8 +335,10 @@ func TestComprehensiveDispatchMultipleAwaitOneSkipsOthersUntilAfterHandler(t *te
 	}
 
 	event1 := bus.Emit(abxbus.NewBaseEvent("Event1", nil))
+	<-event1Started
 	bus.Emit(abxbus.NewBaseEvent("Event2", nil))
 	bus.Emit(abxbus.NewBaseEvent("Event3", nil))
+	close(allowChildren)
 
 	if _, err := event1.Now(); err != nil {
 		t.Fatal(err)

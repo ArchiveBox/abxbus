@@ -1,11 +1,11 @@
-use abxbus_rust::event;
+use abxbus::event;
 use std::{
     sync::{Arc, Mutex},
     thread,
     time::Duration,
 };
 
-use abxbus_rust::{
+use abxbus::{
     base_event::BaseEvent,
     event_bus::{EventBus, EventBusOptions},
     types::{EventHandlerConcurrencyMode, EventStatus},
@@ -597,7 +597,7 @@ fn test_cross_eventbus_dispatch_preserves_parent_tracking() {
                 ..Default::default()
             });
             bus_2.emit(
-                <ChildEvent as abxbus_rust::typed::TypedEventObject>::_from_inner_event(
+                <ChildEvent as abxbus::typed::TypedEventObject>::_from_inner_event(
                     child._inner_event(),
                 ),
             );
@@ -1017,7 +1017,7 @@ fn test_awaited_event_emit_child_blocks_parent_completion_and_queue_jumps() {
             });
             assert!(!child.event_blocks_parent_completion);
             *child_ref.lock().expect("child ref lock") = Some(child._inner_event());
-            let _ = child.now().await;
+            let child = child.now().await.expect("await child");
             assert!(child.event_blocks_parent_completion);
             Ok(json!("parent"))
         }
@@ -1042,7 +1042,6 @@ fn test_awaited_event_emit_child_blocks_parent_completion_and_queue_jumps() {
     child_started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("child should queue-jump and start");
-    thread::sleep(Duration::from_millis(30));
     assert_ne!(parent.event_status.read(), EventStatus::Completed);
 
     let child = child_ref

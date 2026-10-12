@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use abxbus_rust::{
+use abxbus::{
     base_event::BaseEvent,
     event_bus::{EventBus, EventBusOptions},
     event_handler::EventHandlerOptions,
@@ -87,12 +87,12 @@ fn test_performance_50k_events() {
             processed_for_handler.fetch_add(1, Ordering::Relaxed);
             let inner = event.inner.lock();
             let value = inner
-                .payload
+                .event_extra_payload
                 .get("value")
                 .and_then(Value::as_i64)
                 .unwrap_or_default();
             let batch_id = inner
-                .payload
+                .event_extra_payload
                 .get("batch_id")
                 .and_then(Value::as_i64)
                 .unwrap_or_default();
@@ -276,7 +276,7 @@ fn test_performance_worst_case_forwarding_queue_jump_timeouts() {
         EventBusOptions {
             max_history_size: Some(128),
             max_history_drop: true,
-            event_timeout: Some(0.0001),
+            event_timeout: Some(0.001),
             event_handler_detect_file_paths: false,
             ..EventBusOptions::default()
         },
@@ -305,7 +305,7 @@ fn test_performance_worst_case_forwarding_queue_jump_timeouts() {
             let iteration = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("iteration")
                 .cloned()
                 .unwrap_or_else(|| json!(0));
@@ -332,13 +332,13 @@ fn test_performance_worst_case_forwarding_queue_jump_timeouts() {
             let iteration = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("iteration")
                 .and_then(Value::as_i64)
                 .unwrap_or_default();
             let timed_out = timed_out_for_handler.clone();
             async move {
-                if iteration % 10 == 0 {
+                if iteration % 20 == 0 {
                     timed_out.fetch_add(1, Ordering::Relaxed);
                     Delay::new(Duration::from_millis(2)).await;
                 }

@@ -66,6 +66,8 @@ def _option_value(value: Any) -> Any:
 
 
 class CoreBusDefaults(TypedDict):
+    event_ttl: float | None
+    event_result_ttl: float | None
     event_concurrency: EventConcurrency
     event_handler_concurrency: HandlerConcurrency
     event_handler_completion: HandlerCompletion
@@ -158,6 +160,8 @@ class RustCoreEventBus:
         max_history_drop: bool = False,
         event_timeout: float | None = 60.0,
         event_slow_timeout: float | None = 300.0,
+        event_ttl: float | None = None,
+        event_result_ttl: float | None = None,
         event_handler_timeout: float | None = None,
         event_handler_slow_timeout: float | None = 30.0,
         event_handler_detect_file_paths: bool = True,
@@ -182,6 +186,11 @@ class RustCoreEventBus:
         self.local_immediate_child_events = local_immediate_child_events
         self.event_timeout = event_timeout
         self.event_slow_timeout = event_slow_timeout
+        for field, value in (('event_ttl', event_ttl), ('event_result_ttl', event_result_ttl)):
+            if value is not None and (not math.isfinite(value) or value < -1):
+                raise ValueError(f'{field} must be finite and >= -1 or None')
+        self.event_ttl = event_ttl
+        self.event_result_ttl = event_result_ttl
         self.event_handler_timeout = event_handler_timeout
         self.event_handler_slow_timeout = event_handler_slow_timeout
         self.id = self.bus_id
@@ -278,6 +287,8 @@ class RustCoreEventBus:
 
     def defaults_record(self) -> CoreBusDefaults:
         return {
+            'event_ttl': self.event_ttl,
+            'event_result_ttl': self.event_result_ttl,
             'event_concurrency': self.event_concurrency,
             'event_handler_concurrency': self.event_handler_concurrency,
             'event_handler_completion': self.event_handler_completion,
@@ -302,6 +313,15 @@ class RustCoreEventBus:
         self.core.register_bus(self._bus_record())
         self._registered_max_history_size = self.event_history.max_history_size
         self._registered_max_history_drop = self.event_history.max_history_drop
+
+    def _track_event_ttl_deadline(self, event: BaseEvent[Any]) -> None:
+        for message in self.core.request_messages({
+            'type': 'update_event_retention',
+            'event_id': event.event_id,
+            'event_ttl': event.event_ttl,
+            'event_result_ttl': event.event_result_ttl,
+        }):
+            self._apply_core_message(message)
 
     def _sync_bus_history_policy(self) -> None:
         if (
@@ -3675,6 +3695,8 @@ class RustCoreEventBus:
         for event in self.pending_event_queue.iter_items():
             event_history.setdefault(event.event_id, event.model_dump(mode='json'))
         return {
+            'event_ttl': self.event_ttl,
+            'event_result_ttl': self.event_result_ttl,
             'id': self.id,
             'name': self.name,
             'max_history_size': self.event_history.max_history_size,
@@ -3732,6 +3754,8 @@ class RustCoreEventBus:
             max_history_drop=bool(payload.get('max_history_drop', False)),
             event_timeout=timeout_value('event_timeout', 60.0),
             event_slow_timeout=timeout_value('event_slow_timeout', 300.0),
+            event_ttl=timeout_value('event_ttl', None),
+            event_result_ttl=timeout_value('event_result_ttl', None),
             event_handler_timeout=timeout_value('event_handler_timeout', None),
             event_handler_slow_timeout=timeout_value('event_handler_slow_timeout', 30.0),
             event_handler_detect_file_paths=bool(payload.get('event_handler_detect_file_paths', True)),

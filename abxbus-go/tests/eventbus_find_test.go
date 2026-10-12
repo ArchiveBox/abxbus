@@ -21,7 +21,7 @@ func TestFindHistoryAndFuture(t *testing.T) {
 	}
 
 	match, err := bus.FindEventName("ResponseEvent", func(e *abxbus.BaseEvent) bool {
-		return e.Payload["request_id"] == "abc"
+		return e.EventExtraPayload["request_id"] == "abc"
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func TestEmitRequiresEventObject(t *testing.T) {
 	if _, err := event.Now(); err != nil {
 		t.Fatal(err)
 	}
-	if event.EventType != "RawStringEvent" || event.Payload["ok"] != true {
+	if event.EventType != "RawStringEvent" || event.EventExtraPayload["ok"] != true {
 		t.Fatalf("unexpected raw event emission: %#v", event)
 	}
 }
@@ -271,7 +271,7 @@ func TestFindWherePredicateAndBusScopedHistory(t *testing.T) {
 	}
 
 	foundA, err := busA.FindEventName("ScopedEvent", func(event *abxbus.BaseEvent) bool {
-		return event.Payload["source"] == "A" && event.Payload["value"] == 1
+		return event.EventExtraPayload["source"] == "A" && event.EventExtraPayload["value"] == 1
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
@@ -281,7 +281,7 @@ func TestFindWherePredicateAndBusScopedHistory(t *testing.T) {
 	}
 
 	foundB, err := busB.FindEventName("ScopedEvent", func(event *abxbus.BaseEvent) bool {
-		return event.Payload["source"] == "B"
+		return event.EventExtraPayload["source"] == "B"
 	}, &abxbus.FindOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
@@ -513,7 +513,7 @@ func TestMaxHistorySizeZeroDisablesPastSearchButFutureFindStillResolves(t *testi
 	zeroHistorySize := 0
 	bus := abxbus.NewEventBus("FindZeroHistoryBus", &abxbus.EventBusOptions{MaxHistorySize: &zeroHistorySize})
 	bus.On("ZeroHistoryEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		return "ok:" + event.Payload["value"].(string), nil
+		return "ok:" + event.EventExtraPayload["value"].(string), nil
 	}, nil)
 
 	first := bus.Emit(abxbus.NewBaseEvent("ZeroHistoryEvent", map[string]any{"value": "first"}))
@@ -536,12 +536,12 @@ func TestMaxHistorySizeZeroDisablesPastSearchButFutureFindStillResolves(t *testi
 		bus.Emit(abxbus.NewBaseEvent("ZeroHistoryEvent", map[string]any{"value": "future"}))
 	}()
 	future, err := bus.FindEventName("ZeroHistoryEvent", func(event *abxbus.BaseEvent) bool {
-		return event.Payload["value"] == "future"
+		return event.EventExtraPayload["value"] == "future"
 	}, &abxbus.FindOptions{Past: false, Future: 1.0})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if future == nil || future.Payload["value"] != "future" {
+	if future == nil || future.EventExtraPayload["value"] != "future" {
 		t.Fatalf("future find should resolve before zero history pruning, got %#v", future)
 	}
 	if _, err := future.Now(); err != nil {
@@ -686,7 +686,7 @@ func TestFilterRespectsWherePredicateNewestFirst(t *testing.T) {
 	}
 
 	matches, err := bus.FilterEventName("ScreenshotEvent", func(event *abxbus.BaseEvent) bool {
-		return event.Payload["target_id"] == "same"
+		return event.EventExtraPayload["target_id"] == "same"
 	}, &abxbus.FilterOptions{Past: true, Future: false})
 	if err != nil {
 		t.Fatal(err)
@@ -775,7 +775,7 @@ func TestFilterSupportsWhereEqualsWildcardChildAndFuture(t *testing.T) {
 	bus.Emit(abxbus.NewBaseEvent("Other", map[string]any{"kind": "target"}))
 
 	childMatches, err := bus.FilterEventName("*", func(event *abxbus.BaseEvent) bool {
-		return event.Payload["kind"] == "target"
+		return event.EventExtraPayload["kind"] == "target"
 	}, &abxbus.FilterOptions{Past: true, Future: false, ChildOf: parent, Equals: map[string]any{"kind": "target"}})
 	if err != nil {
 		t.Fatal(err)
@@ -884,7 +884,7 @@ func TestEventHistoryFindCoversFiltersAndEdgeCases(t *testing.T) {
 	}
 
 	whereMatch := h.Find("*", func(event *abxbus.BaseEvent) bool {
-		return event.Payload["kind"] == "other" && event.EventStatus == "started"
+		return event.EventExtraPayload["kind"] == "other" && event.EventStatus == "started"
 	}, &abxbus.EventHistoryFindOptions{Past: true})
 	if whereMatch == nil || whereMatch.EventID != other.EventID {
 		t.Fatalf("expected wildcard+where filter to find other event, got %#v", whereMatch)

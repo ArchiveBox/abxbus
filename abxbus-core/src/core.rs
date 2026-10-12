@@ -1445,6 +1445,16 @@ impl Core {
                     }
                 }
             }
+            HostToCoreMessage::UpdateEventRetention {
+                event_id,
+                event_ttl,
+                event_result_ttl,
+            } => {
+                let event = self.store.events.get_mut(&event_id)
+                    .ok_or_else(|| CoreErrorState::MissingEvent(event_id.clone()))?;
+                event.event_ttl = event_ttl;
+                event.event_result_ttl = event_result_ttl;
+            }
             HostToCoreMessage::UpdateEventOptions {
                 event_id,
                 event_handler_completion,
@@ -4814,6 +4824,8 @@ mod tests {
             name: "Bus".to_string(),
             label: "Bus".to_string(),
             defaults: BusDefaults {
+                event_ttl: None,
+                event_result_ttl: None,
                 event_concurrency: EventConcurrency::BusSerial,
                 event_handler_concurrency: HandlerConcurrency::Parallel,
                 event_handler_completion: HandlerCompletion::All,
@@ -4829,6 +4841,7 @@ mod tests {
         core.insert_bus(bus.clone());
         for i in 0..2_000 {
             core.insert_handler(HandlerRecord {
+                handler_result_ttl: None,
                 handler_id: format!("handler-{i}"),
                 bus_id: bus.bus_id.clone(),
                 host_id: "host".to_string(),
@@ -4844,6 +4857,8 @@ mod tests {
         }
 
         let event = EventEnvelope {
+            event_ttl: None,
+            event_result_ttl: None,
             event_type: "Fanout".to_string(),
             event_version: "0.0.1".to_string(),
             event_timeout: None,
@@ -4936,6 +4951,8 @@ mod tests {
             name: "Bus".to_string(),
             label: "Bus".to_string(),
             defaults: BusDefaults {
+                event_ttl: None,
+                event_result_ttl: None,
                 event_concurrency: EventConcurrency::BusSerial,
                 event_handler_concurrency: HandlerConcurrency::Parallel,
                 event_handler_completion: HandlerCompletion::All,
@@ -4960,6 +4977,7 @@ mod tests {
                 "host",
                 HostToCoreMessage::RegisterHandler {
                     handler: HandlerRecord {
+                        handler_result_ttl: None,
                         handler_id: format!("handler-{i}"),
                         bus_id: bus.bus_id.clone(),
                         host_id: "host".to_string(),
@@ -4979,6 +4997,8 @@ mod tests {
             patch_seq = core.latest_patch_seq();
         }
         let event = EventEnvelope {
+            event_ttl: None,
+            event_result_ttl: None,
             event_type: "Fanout".to_string(),
             event_version: "0.0.1".to_string(),
             event_timeout: None,

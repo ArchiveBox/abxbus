@@ -25,6 +25,7 @@ fn bus(id: &str, label: &str, defaults: BusDefaults) -> BusRecord {
 
 fn handler(id: &str, bus_id: &str, event_pattern: &str, handler_seq: usize) -> HandlerRecord {
     HandlerRecord {
+        handler_result_ttl: None,
         handler_id: id.to_string(),
         bus_id: bus_id.to_string(),
         host_id: "host".to_string(),
@@ -41,6 +42,8 @@ fn handler(id: &str, bus_id: &str, event_pattern: &str, handler_seq: usize) -> H
 
 fn event(id: &str, event_type: &str) -> EventRecord {
     EventRecord {
+        event_ttl: None,
+        event_result_ttl: None,
         event_id: id.to_string(),
         event_type: event_type.to_string(),
         event_version: "0.0.1".to_string(),
@@ -1010,6 +1013,8 @@ fn flat_event_envelope_preserves_payload_and_result_schema_roundtrip() {
     let mut bad_payload = Map::new();
     bad_payload.insert("event_custom".to_string(), json!(true));
     assert!(EventEnvelope {
+        event_ttl: None,
+        event_result_ttl: None,
         event_type: "BadEvent".to_string(),
         event_version: "0.0.1".to_string(),
         event_timeout: None,

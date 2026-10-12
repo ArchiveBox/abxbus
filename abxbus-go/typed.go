@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"regexp"
 	"strings"
 
 	"github.com/ArchiveBox/abxbus/abxbus-go/v2/jsonschema"
@@ -58,12 +57,16 @@ func baseEventFromAny(value any) (*BaseEvent, error) {
 		if field.Anonymous {
 			continue
 		}
-		name, _, skip, _ := jsonFieldName(field)
+		name, _, skip, _ := jsonschema.StructFieldJSONName(field)
 		if skip {
 			continue
 		}
 		fieldValue := raw.Field(i)
 		if applyEventConfigField(event, field.Name, fieldValue) {
+			continue
+		}
+		if field.Name == "EventExtraPayload" {
+			mergeEventExtraPayload(payload, fieldValue)
 			continue
 		}
 		payload[name] = normalizeReflectValue(fieldValue)
@@ -89,6 +92,10 @@ func applyEventConfigField(event *BaseEvent, name string, value reflect.Value) b
 		event.EventHandlerTimeout = reflectOptionalFloat(value)
 	case "EventHandlerSlowTimeout":
 		event.EventHandlerSlowTimeout = reflectOptionalFloat(value)
+	case "EventTTL":
+		event.EventTTL = reflectOptionalFloat(value)
+	case "EventResultTTL":
+		event.EventResultTTL = reflectOptionalFloat(value)
 	case "EventConcurrency":
 		if str := reflectString(value); str != "" {
 			event.EventConcurrency = EventConcurrencyMode(str)
@@ -116,27 +123,29 @@ func applyEventConfigField(event *BaseEvent, name string, value reflect.Value) b
 }
 
 func reflectOptionalFloat(value reflect.Value) *float64 {
+	wasPointer := false
 	for value.Kind() == reflect.Pointer {
 		if value.IsNil() {
 			return nil
 		}
+		wasPointer = true
 		value = value.Elem()
 	}
 	switch value.Kind() {
 	case reflect.Float32, reflect.Float64:
-		if value.Float() == 0 {
+		if value.Float() == 0 && !wasPointer {
 			return nil
 		}
 		f := value.Convert(reflect.TypeOf(float64(0))).Float()
 		return &f
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		if value.Int() == 0 {
+		if value.Int() == 0 && !wasPointer {
 			return nil
 		}
 		f := float64(value.Int())
 		return &f
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		if value.Uint() == 0 {
+		if value.Uint() == 0 && !wasPointer {
 			return nil
 		}
 		f := float64(value.Uint())
@@ -166,6 +175,107 @@ func normalizeReflectValue(value reflect.Value) any {
 	return value.Interface()
 }
 
+type ModelField struct {
+	Name       string
+	Type       map[string]any
+	Default    any
+	HasDefault bool
+}
+
+type EventClass[T any] struct {
+	eventType string
+	options   []EventOption
+}
+
+func NewEventClass[T any](eventType string, options ...EventOption) EventClass[T] {
+	return EventClass[T]{eventType: eventType, options: append([]EventOption(nil), options...)}
+}
+
+func (eventClass EventClass[T]) ModelFields() map[string]ModelField {
+	return ModelFieldsFor[T](eventClass.options...)
+}
+
+func (eventClass EventClass[T]) New(payload T, options ...EventOption) (*BaseEvent, error) {
+	mergedOptions := append(append([]EventOption(nil), eventClass.options...), options...)
+	return NewEvent(eventClass.eventType, payload, mergedOptions...)
+}
+
+func (eventClass EventClass[T]) MustNew(payload T, options ...EventOption) *BaseEvent {
+	event, err := eventClass.New(payload, options...)
+	if err != nil {
+		panic(err)
+	}
+	return event
+}
+
+func ModelFieldsFor[T any](options ...EventOption) map[string]ModelField {
+	fields := map[string]ModelField{}
+	payloadSchema := JSONSchemaFor[T]()
+	properties, _ := payloadSchema["properties"].(map[string]any)
+	defaults := defaultPayloadValues[T]()
+	for _, name := range payloadModelFieldNames(reflect.TypeOf((*T)(nil)).Elem()) {
+		schema, _ := properties[name].(map[string]any)
+		defaultValue, hasDefault := defaults[name]
+		fields[name] = ModelField{
+			Name:       name,
+			Type:       schema,
+			Default:    defaultValue,
+			HasDefault: hasDefault,
+		}
+	}
+	event := NewBaseEvent("", nil)
+	for _, option := range options {
+		if option != nil {
+			option(event)
+		}
+	}
+	if event.EventResultType != nil {
+		resultSchema, _ := event.EventResultType.(map[string]any)
+		fields["event_result_type"] = ModelField{
+			Name:       "event_result_type",
+			Type:       resultSchema,
+			Default:    event.EventResultType,
+			HasDefault: true,
+		}
+	}
+	return fields
+}
+
+func defaultPayloadValues[T any]() map[string]any {
+	var zero T
+	data, err := json.Marshal(zero)
+	if err != nil || string(data) == "null" {
+		return map[string]any{}
+	}
+	defaults := map[string]any{}
+	if err := json.Unmarshal(data, &defaults); err != nil {
+		return map[string]any{}
+	}
+	return defaults
+}
+
+func payloadModelFieldNames(t reflect.Type) []string {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
+	names := []string{}
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if field.PkgPath != "" || field.Anonymous || strings.HasPrefix(field.Name, "Event") || strings.HasPrefix(field.Name, "Model") {
+			continue
+		}
+		name, _, skip, _ := jsonschema.StructFieldJSONName(field)
+		if skip {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
 func newEventFromPayload[T any](eventType string, payload T) (*BaseEvent, error) {
 	normalized := map[string]any{}
 	data, err := json.Marshal(payload)
@@ -177,6 +287,9 @@ func newEventFromPayload[T any](eventType string, payload T) (*BaseEvent, error)
 			return nil, err
 		}
 	}
+	delete(normalized, "event_extra_payload")
+	delete(normalized, "EventExtraPayload")
+	mergeEventExtraPayload(normalized, reflect.ValueOf(payload))
 	return NewBaseEvent(eventType, normalized), nil
 }
 
@@ -231,7 +344,7 @@ func OnTyped[TPayload any, TResult any, THandler TypedEventHandler[TPayload, TRe
 ) *EventHandler {
 	payloadSchema := JSONSchemaFor[TPayload]()
 	return bus.On(eventPattern, handlerName, func(event *BaseEvent, ctx context.Context) (any, error) {
-		if err := jsonschema.Validate(payloadSchema, event.Payload); err != nil {
+		if err := jsonschema.Validate(payloadSchema, event.EventExtraPayload); err != nil {
 			var zero TResult
 			return zero, fmt.Errorf("EventHandlerPayloadSchemaError: Event payload did not match declared handler payload type: %w", err)
 		}
@@ -340,12 +453,104 @@ func EventPayloadAs[T any](event *BaseEvent) (T, error) {
 	if event == nil {
 		return payload, fmt.Errorf("event is nil")
 	}
-	data, err := json.Marshal(event.Payload)
+	eventPayload, err := event.EventPayload()
+	if err != nil {
+		return payload, err
+	}
+	data, err := json.Marshal(eventPayload)
 	if err != nil {
 		return payload, err
 	}
 	err = json.Unmarshal(data, &payload)
-	return payload, err
+	if err != nil {
+		return payload, err
+	}
+	setEventExtraPayload(&payload, eventPayload)
+	return payload, nil
+}
+
+// EventExtraPayload is the in-memory field for forward-compatible typed events.
+// It stores flat JSON fields that were not declared statically on the Go type.
+// The map is always merged into the normal flat event JSON before dumping, and
+// split back out when loading; the key "event_extra_payload" is never emitted.
+func mergeEventExtraPayload(payload map[string]any, value reflect.Value) {
+	for value.IsValid() && (value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface) {
+		if value.IsNil() {
+			return
+		}
+		value = value.Elem()
+	}
+	if !value.IsValid() || value.Kind() != reflect.Struct {
+		return
+	}
+	field := value.FieldByName("EventExtraPayload")
+	if !field.IsValid() || field.Kind() != reflect.Map || field.Type().Key().Kind() != reflect.String {
+		return
+	}
+	for _, key := range field.MapKeys() {
+		payload[key.String()] = normalizeReflectValue(field.MapIndex(key))
+	}
+}
+
+func setEventExtraPayload(target any, payload map[string]any) {
+	value := reflect.ValueOf(target)
+	if value.Kind() != reflect.Pointer || value.IsNil() {
+		return
+	}
+	value = value.Elem()
+	for value.IsValid() && value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			value.Set(reflect.New(value.Type().Elem()))
+		}
+		value = value.Elem()
+	}
+	if !value.IsValid() || value.Kind() != reflect.Struct {
+		return
+	}
+	field := value.FieldByName("EventExtraPayload")
+	if !field.IsValid() || !field.CanSet() || field.Kind() != reflect.Map || field.Type().Key().Kind() != reflect.String {
+		return
+	}
+	extra := reflect.MakeMap(field.Type())
+	for key, item := range payload {
+		if typedPayloadJSONFieldNames(value.Type())[key] {
+			continue
+		}
+		itemValue := reflect.ValueOf(item)
+		if !itemValue.IsValid() {
+			itemValue = reflect.Zero(field.Type().Elem())
+		} else if !itemValue.Type().AssignableTo(field.Type().Elem()) {
+			if !itemValue.Type().ConvertibleTo(field.Type().Elem()) {
+				continue
+			}
+			itemValue = itemValue.Convert(field.Type().Elem())
+		}
+		extra.SetMapIndex(reflect.ValueOf(key), itemValue)
+	}
+	if extra.Len() > 0 {
+		field.Set(extra)
+	}
+}
+
+func typedPayloadJSONFieldNames(t reflect.Type) map[string]bool {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	names := map[string]bool{}
+	if t.Kind() != reflect.Struct {
+		return names
+	}
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if field.PkgPath != "" || field.Anonymous || strings.HasPrefix(field.Name, "Event") || strings.HasPrefix(field.Name, "Model") {
+			continue
+		}
+		name, _, skip, _ := jsonschema.StructFieldJSONName(field)
+		if !skip {
+			names[name] = true
+		}
+	}
+	return names
 }
 
 func EventResultAs[T any](result any) (T, error) {
@@ -360,139 +565,5 @@ func EventResultAs[T any](result any) (T, error) {
 
 func JSONSchemaFor[T any]() map[string]any {
 	var zero T
-	return jsonSchemaForType(reflect.TypeOf(zero))
-}
-
-func jsonSchemaForType(t reflect.Type) map[string]any {
-	if t == nil {
-		return map[string]any{"$schema": jsonSchemaDraft202012}
-	}
-	for t.Kind() == reflect.Pointer {
-		return map[string]any{
-			"$schema": jsonSchemaDraft202012,
-			"anyOf": []any{
-				jsonSchemaWithoutDraft(jsonSchemaForType(t.Elem())),
-				map[string]any{"type": "null"},
-			},
-		}
-	}
-	schema := jsonSchemaWithoutDraft(jsonSchemaForNonPointerType(t))
-	schema["$schema"] = jsonSchemaDraft202012
-	return schema
-}
-
-func jsonSchemaForNonPointerType(t reflect.Type) map[string]any {
-	switch t.Kind() {
-	case reflect.String:
-		return map[string]any{"type": "string"}
-	case reflect.Bool:
-		return map[string]any{"type": "boolean"}
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return map[string]any{"type": "integer"}
-	case reflect.Float32, reflect.Float64:
-		return map[string]any{"type": "number"}
-	case reflect.Slice, reflect.Array:
-		return map[string]any{"type": "array", "items": jsonSchemaWithoutDraft(jsonSchemaForType(t.Elem()))}
-	case reflect.Map:
-		schema := map[string]any{"type": "object"}
-		schema["additionalProperties"] = jsonSchemaWithoutDraft(jsonSchemaForType(t.Elem()))
-		return schema
-	case reflect.Struct:
-		return jsonSchemaForStruct(t)
-	case reflect.Interface:
-		return map[string]any{}
-	default:
-		return map[string]any{}
-	}
-}
-
-func jsonSchemaForStruct(t reflect.Type) map[string]any {
-	properties := map[string]any{}
-	required := []any{}
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		name, omitempty, skip, explicitName := jsonFieldName(field)
-		if skip {
-			continue
-		}
-		fieldType := field.Type
-		for fieldType.Kind() == reflect.Pointer {
-			fieldType = fieldType.Elem()
-		}
-		if field.Anonymous && !explicitName && fieldType.Kind() == reflect.Struct {
-			embedded := jsonSchemaForStruct(fieldType)
-			if embeddedProperties, ok := embedded["properties"].(map[string]any); ok {
-				for embeddedName, embeddedSchema := range embeddedProperties {
-					properties[embeddedName] = embeddedSchema
-				}
-			}
-			if !omitempty && field.Type.Kind() != reflect.Pointer {
-				if embeddedRequired, ok := embedded["required"].([]any); ok {
-					required = append(required, embeddedRequired...)
-				}
-			}
-			continue
-		}
-		if field.PkgPath != "" {
-			continue
-		}
-		properties[name] = jsonSchemaWithoutDraft(jsonSchemaForType(field.Type))
-		if !omitempty && field.Type.Kind() != reflect.Pointer {
-			required = append(required, name)
-		}
-	}
-	schema := map[string]any{"type": "object", "properties": properties}
-	if len(required) > 0 {
-		schema["required"] = required
-	}
-	return schema
-}
-
-func jsonFieldName(field reflect.StructField) (name string, omitempty bool, skip bool, explicitName bool) {
-	name = lowerSnakeCase(field.Name)
-	tag := field.Tag.Get("json")
-	if tag == "-" {
-		return "", false, true, false
-	}
-	if tag == "" {
-		return name, false, false, false
-	}
-	parts := strings.Split(tag, ",")
-	if parts[0] != "" {
-		name = parts[0]
-		explicitName = true
-	}
-	for _, part := range parts[1:] {
-		if part == "omitempty" || part == "omitzero" {
-			omitempty = true
-			break
-		}
-	}
-	return name, omitempty, false, explicitName
-}
-
-var initialismPattern = regexp.MustCompile(`([A-Z]+)([A-Z][a-z])`)
-var wordBoundaryPattern = regexp.MustCompile(`([a-z0-9])([A-Z])`)
-
-func lowerSnakeCase(name string) string {
-	if name == "" {
-		return name
-	}
-	name = initialismPattern.ReplaceAllString(name, `${1}_${2}`)
-	name = wordBoundaryPattern.ReplaceAllString(name, `${1}_${2}`)
-	name = strings.ReplaceAll(name, "-", "_")
-	name = strings.ReplaceAll(name, " ", "_")
-	return strings.ToLower(name)
-}
-
-func jsonSchemaWithoutDraft(schema map[string]any) map[string]any {
-	out := make(map[string]any, len(schema))
-	for key, value := range schema {
-		if key == "$schema" {
-			continue
-		}
-		out[key] = value
-	}
-	return out
+	return jsonschema.SchemaForType(reflect.TypeOf(zero))
 }

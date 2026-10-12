@@ -1,4 +1,4 @@
-use abxbus_rust::event;
+use abxbus::event;
 use std::{
     collections::HashMap,
     sync::{mpsc, Arc, Mutex},
@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use abxbus_rust::{
+use abxbus::{
     base_event::BaseEvent,
     event_bus::{EventBus, FilterOptions, FindOptions},
 };
@@ -114,7 +114,7 @@ fn payload_string(event: &Arc<BaseEvent>, key: &str) -> Option<String> {
     event
         .inner
         .lock()
-        .payload
+        .event_extra_payload
         .get(key)
         .and_then(|value| value.as_str())
         .map(str::to_string)
@@ -1071,7 +1071,7 @@ fn test_find_where_filter_works_with_future_waiting() {
     .expect("expected future filtered event");
 
     assert_eq!(
-        found.inner.lock().payload.get("value"),
+        found.inner.lock().event_extra_payload.get("value"),
         Some(&json!("right"))
     );
     bus.destroy();
@@ -1111,7 +1111,7 @@ fn test_find_future_with_predicate() {
     .expect("included future event");
 
     assert_eq!(
-        found.inner.lock().payload.get("value"),
+        found.inner.lock().event_extra_payload.get("value"),
         Some(&json!("included"))
     );
     bus.destroy();
@@ -1158,7 +1158,7 @@ fn test_find_with_complex_predicate() {
     .expect("complex predicate should match");
 
     assert_eq!(
-        found.inner.lock().payload.get("category"),
+        found.inner.lock().event_extra_payload.get("category"),
         Some(&json!("final"))
     );
     assert_eq!(events_seen.lock().expect("seen lock").len(), 4);
@@ -1199,7 +1199,7 @@ fn test_find_with_exclude_style_filter() {
     .expect("non-excluded future event");
 
     assert_eq!(
-        found.inner.lock().payload.get("value"),
+        found.inner.lock().event_extra_payload.get("value"),
         Some(&json!("included"))
     );
     bus.destroy();
@@ -1329,7 +1329,7 @@ fn test_find_wildcard_with_where_filter_works_for_future_waiting() {
 
     assert_eq!(found.inner.lock().event_type, "UserActionEvent");
     assert_eq!(
-        found.inner.lock().payload.get("value"),
+        found.inner.lock().event_extra_payload.get("value"),
         Some(&json!("special"))
     );
     bus.destroy();
@@ -1681,7 +1681,7 @@ fn test_find_child_of_filters_to_correct_parent_among_siblings() {
             let url = event
                 .inner
                 .lock()
-                .payload
+                .event_extra_payload
                 .get("url")
                 .and_then(|value| value.as_str())
                 .expect("url")
@@ -1715,11 +1715,11 @@ fn test_find_child_of_filters_to_correct_parent_among_siblings() {
         block_on(bus.find("tab_created", true, None, Some(nav_2._inner_event()))).expect("tab 2");
 
     assert_eq!(
-        tab_1.inner.lock().payload.get("tab_id"),
+        tab_1.inner.lock().event_extra_payload.get("tab_id"),
         Some(&json!("tab_for_site1"))
     );
     assert_eq!(
-        tab_2.inner.lock().payload.get("tab_id"),
+        tab_2.inner.lock().event_extra_payload.get("tab_id"),
         Some(&json!("tab_for_site2"))
     );
     bus.destroy();
@@ -1816,7 +1816,7 @@ fn test_find_past_can_match_incomplete_events() {
     let dispatched_id = dispatched.event_id.clone();
     assert_eq!(found_id, dispatched_id);
     let found_status = found.inner.lock().event_status;
-    assert_ne!(found_status, abxbus_rust::types::EventStatus::Completed);
+    assert_ne!(found_status, abxbus::types::EventStatus::Completed);
 
     let _ = block_on(dispatched.now());
     bus.destroy();
@@ -1834,7 +1834,7 @@ fn test_most_recent_wins_across_completed_and_inflight() {
                 event
                     .inner
                     .lock()
-                    .payload
+                    .event_extra_payload
                     .get("value")
                     .and_then(|value| value.as_str())
                     .map(str::to_string)
@@ -1876,7 +1876,7 @@ fn test_most_recent_wins_across_completed_and_inflight() {
     assert_eq!(found_id, second_id);
     assert_ne!(
         found.inner.lock().event_status,
-        abxbus_rust::types::EventStatus::Completed
+        abxbus::types::EventStatus::Completed
     );
 
     let _ = block_on(second.now());
@@ -1905,13 +1905,13 @@ fn test_find_future_receives_dispatched_event_before_completion() {
     let found_status = found.inner.lock().event_status;
     assert!(matches!(
         found_status,
-        abxbus_rust::types::EventStatus::Pending | abxbus_rust::types::EventStatus::Started
+        abxbus::types::EventStatus::Pending | abxbus::types::EventStatus::Started
     ));
 
     let _ = block_on(found.wait());
     assert_eq!(
         found.inner.lock().event_status,
-        abxbus_rust::types::EventStatus::Completed
+        abxbus::types::EventStatus::Completed
     );
     bus.destroy();
 }
@@ -2101,7 +2101,7 @@ fn test_past_includes_in_progress_events() {
     assert_eq!(found_id, in_flight_id);
     assert!(matches!(
         found.inner.lock().event_status,
-        abxbus_rust::types::EventStatus::Pending | abxbus_rust::types::EventStatus::Started
+        abxbus::types::EventStatus::Pending | abxbus::types::EventStatus::Started
     ));
 
     let _ = block_on(in_flight.now());

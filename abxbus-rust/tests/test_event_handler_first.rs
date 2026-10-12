@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use abxbus_rust::{
+use abxbus::{
     base_event::{BaseEvent, EventResultOptions, EventWaitOptions},
     event,
     event_bus::{EventBus, EventBusOptions},

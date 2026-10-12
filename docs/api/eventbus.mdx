@@ -70,7 +70,7 @@ type EventBusOptions struct {
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{
+use abxbus::{
     event_bus::{EventBus, EventBusOptions},
     types::{
         EventConcurrencyMode,
@@ -166,7 +166,7 @@ bus.On("UserEvent", "custom", handler, &abxbus.EventHandler{
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event, event_bus::EventBus, event_handler::EventHandlerOptions};
+use abxbus::{event, event_bus::EventBus, event_handler::EventHandlerOptions};
 use serde_json::json;
 
 event! {
@@ -230,7 +230,7 @@ bus.Off("*", nil)
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::typed::EventSpec;
+use abxbus::typed::EventSpec;
 
 let handler = bus.on(UserEvent, |_event: UserEvent| async move {
     Ok(serde_json::Value::Null)
@@ -281,7 +281,7 @@ if err != nil {
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event, event_bus::EventBus};
+use abxbus::{event, event_bus::EventBus};
 use futures::executor::block_on;
 
 event! {
@@ -340,7 +340,7 @@ child, err := bus.FindEventName("ChildEvent", nil, &abxbus.FindOptions{
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::event_bus::FindOptions;
+use abxbus::event_bus::FindOptions;
 use futures::executor::block_on;
 
 let event = block_on(bus.find("ResponseEvent", true, None, None));
@@ -402,7 +402,7 @@ recentWithPredicate, err := bus.FilterEventName(
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::event_bus::FilterOptions;
+use abxbus::event_bus::FilterOptions;
 use futures::executor::block_on;
 use serde_json::json;
 use std::collections::HashMap;
@@ -641,7 +641,7 @@ bus.Destroy()
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::{event, event_bus::EventBus};
+use abxbus::{event, event_bus::EventBus};
 use futures::executor::block_on;
 use serde_json::json;
 
@@ -718,7 +718,7 @@ bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Clear: false})
 <Tab title="Rust">
 
 ```rust
-use abxbus_rust::event_bus::DestroyOptions;
+use abxbus::event_bus::DestroyOptions;
 
 bus.destroy();
 bus.destroy_with_options(DestroyOptions { clear: false, ..Default::default() });

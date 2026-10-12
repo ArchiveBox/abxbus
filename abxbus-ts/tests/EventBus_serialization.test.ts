@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { z } from 'zod'
 
 import { BaseEvent, EventBus } from '../src/index.js'
+import { toJsonSchema } from '../src/jsonschema.js'
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+
+const RestoreTTLProbeEvent = BaseEvent.extend('RestoreTTLProbeEvent', {})
+const RestoreTTLTouchEvent = BaseEvent.extend('RestoreTTLTouchEvent', {})
 
 test('EventBus toJSON/fromJSON roundtrip uses id-keyed structures', async () => {
   const bus = new EventBus('SerializableBus', {
@@ -30,86 +35,194 @@ test('EventBus toJSON/fromJSON roundtrip uses id-keyed structures', async () => 
 
   const release_pause = bus.locks._requestRunloopPause()
   const pending_event = bus.emit(SerializableEvent({ event_timeout: 11, event_concurrency: 'bus-serial' } as any))
-  let restored: EventBus | null = null
-  try {
-    await Promise.resolve()
+  await Promise.resolve()
 
-    const json = bus.toJSON()
-    assert.equal(json.id, '018f8e40-1234-7000-8000-000000001234')
-    assert.equal(json.name, 'SerializableBus')
-    assert.equal(Object.keys(json.handlers).length, 1)
-    assert.equal(Object.keys(json.handlers_by_key).length, 1)
-    assert.equal(Array.isArray(json.handlers_by_key.SerializableEvent), true)
-    assert.equal(Object.keys(json.event_history).length, 1)
-    assert.equal((json.event_history[pending_event.event_id] as Record<string, unknown>).event_id, pending_event.event_id)
-    assert.equal(json.pending_event_queue.length, 1)
-    assert.equal(json.pending_event_queue[0], pending_event.event_id)
+  const json = bus.toJSON()
+  assert.equal(json.id, '018f8e40-1234-7000-8000-000000001234')
+  assert.equal(json.name, 'SerializableBus')
+  assert.equal(Object.keys(json.handlers).length, 1)
+  assert.equal(Object.keys(json.handlers_by_key).length, 1)
+  assert.equal(Array.isArray(json.handlers_by_key.SerializableEvent), true)
+  assert.equal(Object.keys(json.event_history).length, 1)
+  assert.equal((json.event_history[pending_event.event_id] as Record<string, unknown>).event_id, pending_event.event_id)
+  assert.equal(json.pending_event_queue.length, 1)
+  assert.equal(json.pending_event_queue[0], pending_event.event_id)
 
-    restored = EventBus.fromJSON(json)
-    assert.equal(restored.id, '018f8e40-1234-7000-8000-000000001234')
-    assert.equal(restored.name, 'SerializableBus')
-    assert.equal(restored.event_history.max_history_size, 500)
-    assert.equal(restored.event_history.max_history_drop, false)
-    assert.equal(restored.event_concurrency, 'parallel')
-    assert.equal(restored.event_handler_concurrency, 'parallel')
-    assert.equal(restored.event_handler_completion, 'first')
-    assert.equal(restored.event_timeout, 0)
-    assert.equal(restored.event_handler_slow_timeout, 12)
-    assert.equal(restored.event_slow_timeout, 34)
-    assert.equal(restored.event_handler_detect_file_paths, false)
-    assert.equal(restored.handlers.size, 1)
-    assert.equal(restored.handlers_by_key.get('SerializableEvent')?.length, 1)
-    assert.equal(restored.event_history.size, 1)
-    assert.equal(restored.pending_event_queue.length, 1)
-    assert.equal(restored.pending_event_queue[0].event_id, pending_event.event_id)
-    assert.equal(restored.runloop_running, false)
+  const restored = EventBus.fromJSON(json)
+  assert.equal(restored.id, '018f8e40-1234-7000-8000-000000001234')
+  assert.equal(restored.name, 'SerializableBus')
+  assert.equal(restored.event_history.max_history_size, 500)
+  assert.equal(restored.event_history.max_history_drop, false)
+  assert.equal(restored.event_concurrency, 'parallel')
+  assert.equal(restored.event_handler_concurrency, 'parallel')
+  assert.equal(restored.event_handler_completion, 'first')
+  assert.equal(restored.event_timeout, 0)
+  assert.equal(restored.event_handler_slow_timeout, 12)
+  assert.equal(restored.event_slow_timeout, 34)
+  assert.equal(restored.event_handler_detect_file_paths, false)
+  assert.equal(restored.handlers.size, 1)
+  assert.equal(restored.handlers_by_key.get('SerializableEvent')?.length, 1)
+  assert.equal(restored.event_history.size, 1)
+  assert.equal(restored.pending_event_queue.length, 1)
+  assert.equal(restored.pending_event_queue[0].event_id, pending_event.event_id)
+  assert.equal(restored.runloop_running, false)
 
-    release_pause()
-    await pending_event.now()
-  } finally {
-    release_pause()
-    await restored?.destroy()
-    await bus.destroy()
-  }
+  release_pause()
+  await pending_event.now()
 })
 
-test('EventBus serialization preserves unbounded history null', async () => {
+test('EventBus serialization preserves unbounded history null', () => {
   const bus = new EventBus('UnlimitedSerBus', {
     max_history_size: null,
     max_history_drop: false,
   })
-  let restored: EventBus | null = null
   try {
     const json = bus.toJSON()
     assert.equal(json.max_history_size, null)
 
-    restored = EventBus.fromJSON(json)
+    const restored = EventBus.fromJSON(json)
     assert.equal(restored.event_history.max_history_size, null)
   } finally {
-    await restored?.destroy()
-    await bus.destroy()
+    bus.destroy()
   }
 })
 
-test('EventBus.fromJSON null event_timeout uses default', async () => {
+test('EventBus.fromJSON rebuilds TTL indexes for restored completed history', async () => {
+  const result_source = new EventBus('RestoreResultTTLBus', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: 0,
+  })
+  result_source.on(RestoreTTLProbeEvent, () => 'ok')
+  const result_event = await result_source.emit(RestoreTTLProbeEvent({})).now()
+  const result_event_id = result_event.event_id
+  const result_json = result_source.toJSON()
+  await result_source.destroy()
+
+  const restored_results = EventBus.fromJSON(result_json)
+  try {
+    assert.equal(restored_results.event_history.get(result_event_id)!.event_results.size > 0, true)
+    await restored_results.emit(RestoreTTLTouchEvent({})).now()
+    assert.equal(restored_results.event_history.has(result_event_id), true)
+    assert.equal(restored_results.event_history.get(result_event_id)!.event_results.size, 0)
+  } finally {
+    await restored_results.destroy()
+  }
+
+  const event_source = new EventBus('RestoreEventTTLBus', {
+    max_history_size: null,
+    event_ttl: 0,
+  })
+  event_source.on(RestoreTTLProbeEvent, () => 'ok')
+  const expired_event = await event_source.emit(RestoreTTLProbeEvent({})).now()
+  const expired_event_id = expired_event.event_id
+  const expired_json = event_source.toJSON()
+  await event_source.destroy()
+
+  const restored_events = EventBus.fromJSON(expired_json)
+  try {
+    assert.equal(restored_events.event_history.has(expired_event_id), true)
+    await restored_events.emit(RestoreTTLTouchEvent({})).now()
+    assert.equal(restored_events.event_history.has(expired_event_id), false)
+  } finally {
+    await restored_events.destroy()
+  }
+
+  const linked_source = new EventBus('RestoreLinkedHandlerTTLBus', {
+    max_history_size: null,
+    event_ttl: -1,
+    event_result_ttl: -1,
+  })
+  const linked_handler = linked_source.on(RestoreTTLProbeEvent, () => 'ok', { handler_result_ttl: -1 } as unknown as Parameters<
+    EventBus['on']
+  >[2])
+  const linked_event = await linked_source.emit(RestoreTTLProbeEvent({})).now()
+  const linked_event_id = linked_event.event_id
+  const linked_json = linked_source.toJSON()
+  linked_json.handlers[linked_handler.id]!.handler_result_ttl = 0
+  const linked_result_json = linked_json.event_history[linked_event_id]!.event_results![linked_handler.id] as {
+    handler_result_ttl?: number | null
+  }
+  linked_result_json.handler_result_ttl = -1
+  await linked_source.destroy()
+
+  const restored_linked = EventBus.fromJSON(linked_json)
+  try {
+    assert.equal(restored_linked.event_history.get(linked_event_id)!.event_results.size, 1)
+    await restored_linked.emit(RestoreTTLTouchEvent({})).now()
+    assert.equal(restored_linked.event_history.has(linked_event_id), true)
+    assert.equal(restored_linked.event_history.get(linked_event_id)!.event_results.size, 0)
+  } finally {
+    await restored_linked.destroy()
+  }
+})
+
+test('EventBus.fromJSON null event_timeout uses default', () => {
   const bus = new EventBus('TimeoutNullBus')
-  let restored: EventBus | null = null
   try {
     const json = bus.toJSON()
     json.event_timeout = null
 
-    restored = EventBus.fromJSON(json)
+    const restored = EventBus.fromJSON(json)
     assert.equal(restored.event_timeout, 60)
     assert.equal(restored.toJSON().event_timeout, 60)
   } finally {
-    await restored?.destroy()
+    bus.destroy()
+  }
+})
+
+test('EventBus.fromJSON rejects restored TTLs below -1', async () => {
+  const bus = new EventBus('BadRestoredTTLSourceBus', {
+    event_handler_detect_file_paths: false,
+  })
+  try {
+    const RestoredTTLEvent = BaseEvent.extend('BadRestoredTTLSourceEvent', {})
+    bus.on(RestoredTTLEvent, () => 'ok')
+    const event = await bus.emit(RestoredTTLEvent({})).now()
+    const handler_id = Array.from(event.event_results.keys())[0]
+    assert.ok(handler_id)
+    const json = bus.toJSON()
+
+    assert.throws(() => EventBus.fromJSON({ ...json, event_ttl: -2 }), /event_ttl/)
+    assert.throws(() => EventBus.fromJSON({ ...json, event_result_ttl: -2 }), /event_result_ttl/)
+    assert.throws(
+      () =>
+        EventBus.fromJSON({
+          ...json,
+          event_history: {
+            [event.event_id]: {
+              ...json.event_history[event.event_id],
+              event_ttl: -2,
+            },
+          },
+        }),
+      /event_ttl/
+    )
+    assert.throws(
+      () =>
+        EventBus.fromJSON({
+          ...json,
+          event_history: {
+            [event.event_id]: {
+              ...json.event_history[event.event_id],
+              event_results: {
+                [handler_id]: {
+                  ...(json.event_history[event.event_id]!.event_results as Record<string, Record<string, unknown>>)[handler_id],
+                  handler_result_ttl: -2,
+                },
+              },
+            },
+          },
+        }),
+      /handler_result_ttl/
+    )
+  } finally {
     await bus.destroy()
   }
 })
 
 test('EventBus.fromJSON defaults missing handler maps', async () => {
-  const source = new EventBus('MissingHandlerMaps')
-  const json = source.toJSON()
+  const json = new EventBus('MissingHandlerMaps').toJSON()
   delete (json as Partial<typeof json>).handlers
   delete (json as Partial<typeof json>).handlers_by_key
 
@@ -121,7 +234,6 @@ test('EventBus.fromJSON defaults missing handler maps', async () => {
     assert.equal(result, 'ok')
   } finally {
     await restored.destroy()
-    await source.destroy()
   }
 })
 
@@ -143,38 +255,36 @@ test('EventBus preserves handler registration order through JSON and restore', a
     return 'second'
   })
   const expected_ids = [first.id, second.id]
-  let restored: EventBus | null = null
-  try {
-    const json = bus.toJSON()
-    assert.deepEqual(Object.keys(json.handlers), expected_ids)
-    assert.deepEqual(json.handlers_by_key.HandlerOrderEvent, expected_ids)
 
-    await bus.emit(HandlerOrderEvent({})).now()
-    assert.deepEqual(original_order, ['first', 'second'])
+  const json = bus.toJSON()
+  assert.deepEqual(Object.keys(json.handlers), expected_ids)
+  assert.deepEqual(json.handlers_by_key.HandlerOrderEvent, expected_ids)
 
-    restored = EventBus.fromJSON(json)
-    assert.deepEqual(Array.from(restored.handlers.keys()), expected_ids)
-    assert.deepEqual(restored.handlers_by_key.get('HandlerOrderEvent'), expected_ids)
+  await bus.emit(HandlerOrderEvent({})).now()
+  assert.deepEqual(original_order, ['first', 'second'])
 
-    const restored_order: string[] = []
-    restored.handlers.get(first.id)!.handler = () => {
-      restored_order.push('first')
-      return 'first'
-    }
-    restored.handlers.get(second.id)!.handler = () => {
-      restored_order.push('second')
-      return 'second'
-    }
+  const restored = EventBus.fromJSON(json)
+  const restored_json = restored.toJSON()
+  assert.deepEqual(Array.from(restored.handlers.keys()), expected_ids)
+  assert.deepEqual(restored.handlers_by_key.get('HandlerOrderEvent'), expected_ids)
+  assert.deepEqual(Object.keys(restored_json.handlers), expected_ids)
+  assert.deepEqual(restored_json.handlers_by_key.HandlerOrderEvent, expected_ids)
 
-    await restored.emit(HandlerOrderEvent({})).now()
-    assert.deepEqual(restored_order, ['first', 'second'])
-    const restored_json = restored.toJSON()
-    assert.deepEqual(Object.keys(restored_json.handlers), expected_ids)
-    assert.deepEqual(restored_json.handlers_by_key.HandlerOrderEvent, expected_ids)
-  } finally {
-    await restored?.destroy()
-    await bus.destroy()
+  const restored_order: string[] = []
+  restored.handlers.get(first.id)!.handler = () => {
+    restored_order.push('first')
+    return 'first'
   }
+  restored.handlers.get(second.id)!.handler = () => {
+    restored_order.push('second')
+    return 'second'
+  }
+
+  await restored.emit(HandlerOrderEvent({})).now()
+  assert.deepEqual(restored_order, ['first', 'second'])
+
+  bus.destroy()
+  restored.destroy()
 })
 
 test('EventBus.fromJSON recreates missing handler entries from event_result metadata', async () => {
@@ -183,30 +293,24 @@ test('EventBus.fromJSON recreates missing handler entries from event_result meta
   })
   const SerializableEvent = BaseEvent.extend('MissingHandlerHydrationEvent', {})
 
-  let restored: EventBus | null = null
-  try {
-    bus.on(SerializableEvent, () => 'ok')
-    const event = bus.emit(SerializableEvent({}))
-    await event.now()
+  bus.on(SerializableEvent, () => 'ok')
+  const event = bus.emit(SerializableEvent({}))
+  await event.now()
 
-    const handler_id = Array.from(event.event_results.values())[0].handler_id
-    const json = bus.toJSON()
-    json.handlers = {}
-    json.handlers_by_key = {}
+  const handler_id = Array.from(event.event_results.values())[0].handler_id
+  const json = bus.toJSON()
+  json.handlers = {}
+  json.handlers_by_key = {}
 
-    restored = EventBus.fromJSON(json)
-    const restored_event = restored.event_history.get(event.event_id)
-    assert.ok(restored_event)
-    assert.ok(restored.handlers.has(handler_id))
-    const restored_result = restored_event!.event_results.get(handler_id)
-    assert.ok(restored_result)
-    assert.equal(restored_result!.handler, restored.handlers.get(handler_id))
-    assert.equal(typeof restored_result!.handler.handler, 'function')
-    assert.equal(await restored_result!.handler.handler(restored_event as BaseEvent), undefined)
-  } finally {
-    await restored?.destroy()
-    await bus.destroy()
-  }
+  const restored = EventBus.fromJSON(json)
+  const restored_event = restored.event_history.get(event.event_id)
+  assert.ok(restored_event)
+  assert.ok(restored.handlers.has(handler_id))
+  const restored_result = restored_event!.event_results.get(handler_id)
+  assert.ok(restored_result)
+  assert.equal(restored_result!.handler, restored.handlers.get(handler_id))
+  assert.equal(typeof restored_result!.handler.handler, 'function')
+  assert.equal(await restored_result!.handler.handler(restored_event as BaseEvent), undefined)
 })
 
 test('BaseEvent.fromJSON roundtrips runtime JSON shape', async () => {
@@ -238,25 +342,115 @@ test('EventBus toJSON promotes pending events into event_history snapshot', asyn
 
   const release_pause = bus.locks._requestRunloopPause()
   const pending = bus.emit(PendingEvent({}))
+  await Promise.resolve()
+
+  const json = bus.toJSON()
+  assert.equal(Boolean(json.event_history[pending.event_id]), true)
+  assert.equal(json.pending_event_queue.includes(pending.event_id), true)
+
+  release_pause()
+  await pending.now()
+})
+
+test('EventBus toJSON serializes history events when Zod event schema encode fails', () => {
+  const bus = new EventBus('TransformHistorySerializationBus')
+  const TransformEvent = BaseEvent.extend('TransformHistorySerializationEvent', {
+    count: z.string().transform(Number),
+  })
   try {
-    await Promise.resolve()
+    const event = TransformEvent({ count: '7' })
+    bus.event_history.set(event.event_id, event)
 
+    assert.equal((Array.from(bus.event_history.values())[0] as unknown as { count: number }).count, 7)
     const json = bus.toJSON()
-    assert.equal(Boolean(json.event_history[pending.event_id]), true)
-    assert.equal(json.pending_event_queue.includes(pending.event_id), true)
-
-    release_pause()
-    await pending.now()
+    assert.equal((json.event_history[event.event_id] as Record<string, unknown>).count, 7)
   } finally {
-    release_pause()
-    await bus.destroy()
+    bus.destroy()
   }
 })
 
-test('EventBus.fromJSON preserves event_history object order', async () => {
+test('EventBus toJSON falls back to closest JSON Schema for transform event_result_type fields', () => {
+  const bus = new EventBus('TransformResultSchemaSerializationBus')
+  const TransformResultEvent = BaseEvent.extend('TransformResultSchemaSerializationEvent', {
+    event_result_type: z.object({
+      label: z.string(),
+      count: z.string().transform(Number),
+      nested: z.object({
+        ok: z.boolean(),
+        bad: z.string().transform(Number),
+      }),
+      maybe: z.string().transform(Number).optional(),
+      items: z.array(z.string().transform(Number)),
+      choice: z.union([z.string().transform(Number), z.number()]),
+    }),
+  })
+  try {
+    const event = TransformResultEvent({})
+    bus.event_history.set(event.event_id, event)
+
+    const json = bus.toJSON()
+    const result_schema = (json.event_history[event.event_id] as Record<string, unknown>).event_result_type as Record<string, unknown>
+    const properties = result_schema.properties as Record<string, unknown>
+    assert.deepEqual(Object.keys(properties).sort(), ['choice', 'count', 'items', 'label', 'maybe', 'nested'])
+    assert.deepEqual(result_schema.required, ['choice', 'count', 'items', 'label', 'nested'])
+    assert.equal((properties.label as Record<string, unknown>).type, 'string')
+    assert.equal((properties.count as Record<string, unknown>).type, 'string')
+    assert.equal((properties.maybe as Record<string, unknown>).type, 'string')
+    assert.equal(((properties.items as Record<string, unknown>).items as Record<string, unknown>).type, 'string')
+    assert.deepEqual((properties.choice as Record<string, unknown>).anyOf, [{ type: 'string' }, { type: 'number' }])
+
+    const nested_properties = (properties.nested as Record<string, unknown>).properties as Record<string, unknown>
+    assert.deepEqual(Object.keys(nested_properties).sort(), ['bad', 'ok'])
+    assert.deepEqual((properties.nested as Record<string, unknown>).required, ['bad', 'ok'])
+    assert.equal((nested_properties.bad as Record<string, unknown>).type, 'string')
+  } finally {
+    bus.destroy()
+  }
+})
+
+test('BaseEvent toJSON uses shared JSON Schema fallback for transform event_result_type fields', () => {
+  const TransformResultEvent = BaseEvent.extend('BaseEventTransformResultSchemaSerializationEvent', {
+    event_result_type: z.object({
+      count: z.string().transform(Number),
+    }),
+  })
+  const event = TransformResultEvent({})
+
+  const json = event.toJSON() as Record<string, unknown>
+  const result_schema = json.event_result_type as Record<string, unknown>
+  const properties = result_schema.properties as Record<string, unknown>
+
+  assert.equal((properties.count as Record<string, unknown>).type, 'string')
+  assert.deepEqual(result_schema.required, ['count'])
+})
+
+test('BaseEvent toJSONArray uses shared JSON Schema fallback for transform event_result_type fields', () => {
+  const TransformResultEvent = BaseEvent.extend('BaseEventArrayTransformResultSchemaSerializationEvent', {
+    event_result_type: z.object({
+      count: z.string().transform(Number),
+    }),
+  })
+  const event = TransformResultEvent({})
+
+  const [json] = BaseEvent.toJSONArray([event]) as Record<string, unknown>[]
+  const result_schema = json.event_result_type as Record<string, unknown>
+  const properties = result_schema.properties as Record<string, unknown>
+
+  assert.equal((properties.count as Record<string, unknown>).type, 'string')
+  assert.deepEqual(result_schema.required, ['count'])
+})
+
+test('toJsonSchema falls back to Zod input JSON Schema for unidirectional transforms', () => {
+  const schema = toJsonSchema(z.object({ count: z.string().transform(Number) })) as Record<string, unknown>
+  const properties = schema.properties as Record<string, unknown>
+
+  assert.equal((properties.count as Record<string, unknown>).type, 'string')
+  assert.deepEqual(schema.required, ['count'])
+})
+
+test('EventBus.fromJSON preserves event_history object order', () => {
   const bus = new EventBus('HistoryOrderBus')
   const HistoryOrderEvent = BaseEvent.extend('HistoryOrderEvent', {})
-  let restored: EventBus | null = null
   try {
     const first = HistoryOrderEvent({})
     const second = HistoryOrderEvent({})
@@ -266,10 +460,9 @@ test('EventBus.fromJSON preserves event_history object order', async () => {
     const json = bus.toJSON()
     assert.deepEqual(Object.keys(json.event_history), [first.event_id, second.event_id])
 
-    restored = EventBus.fromJSON(json)
+    const restored = EventBus.fromJSON(json)
     assert.deepEqual(Object.keys(restored.toJSON().event_history), [first.event_id, second.event_id])
   } finally {
-    await restored?.destroy()
-    await bus.destroy()
+    bus.destroy()
   }
 })

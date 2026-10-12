@@ -6,10 +6,6 @@ import (
 	"errors"
 	"fmt"
 	abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -21,6 +17,15 @@ import (
 	"testing"
 	"time"
 )
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
 
 func TestEmitAndDispatchUseDefaultBehavior(t *testing.T) {
 	bus := abxbus.NewEventBus("DefaultsBus", nil)
@@ -70,6 +75,224 @@ func TestEmitAndDispatchUseDefaultBehavior(t *testing.T) {
 	}
 	if values[0] != "first" || !reflect.DeepEqual(values[1], map[string]any{"user_id": "abc"}) {
 		t.Fatalf("unexpected result values/order: %#v", values)
+	}
+}
+
+func TestDispatchingCompletedStatusEventSkipsHandlersAndNormalizesCompletion(t *testing.T) {
+	bus := abxbus.NewEventBus("AlreadyCompletedStatusBus", nil)
+	calls := 0
+	handler := bus.On("AlreadyCompletedDispatchEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		calls++
+		return "ran", nil
+	}, nil)
+	startedHandler := bus.On("AlreadyCompletedDispatchEvent", "started_handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		calls++
+		return "started", nil
+	}, nil)
+	event := abxbus.NewBaseEvent("AlreadyCompletedDispatchEvent", map[string]any{"label": "status"})
+	pendingResult := event.EventResultUpdate(handler, &abxbus.BaseEventResultUpdateOptions{
+		EventResultUpdateOptions: abxbus.EventResultUpdateOptions{Status: abxbus.EventResultPending},
+	})
+	startedResult := event.EventResultUpdate(startedHandler, &abxbus.BaseEventResultUpdateOptions{
+		EventResultUpdateOptions: abxbus.EventResultUpdateOptions{Status: abxbus.EventResultStarted},
+	})
+	providedStartedAt := "2025-01-02T03:04:04.000000000Z"
+	providedCompletedAt := "2025-01-02T03:04:05.000000000Z"
+	event.EventStatus = "completed"
+	event.EventStartedAt = &providedStartedAt
+	event.EventCompletedAt = &providedCompletedAt
+
+	dispatched := bus.Dispatch(event)
+	wait := 1.0
+	if !bus.WaitUntilIdle(&wait) {
+		t.Fatal("bus did not become idle")
+	}
+
+	if dispatched != event {
+		t.Fatal("dispatch should preserve event identity")
+	}
+	if calls != 0 {
+		t.Fatalf("handler should not run for completed event, got %d calls", calls)
+	}
+	if event.EventStatus != "completed" {
+		t.Fatalf("expected completed status, got %s", event.EventStatus)
+	}
+	if event.EventStartedAt == nil || *event.EventStartedAt != providedStartedAt {
+		t.Fatalf("event_started_at should be preserved, got %#v", event.EventStartedAt)
+	}
+	if event.EventCompletedAt == nil || *event.EventCompletedAt != providedCompletedAt {
+		t.Fatalf("event_completed_at should be preserved, got %#v", event.EventCompletedAt)
+	}
+	if !reflect.DeepEqual(event.EventPath, []string{bus.Label()}) {
+		t.Fatalf("event_path should contain only handling bus %s, got %#v", bus.Label(), event.EventPath)
+	}
+	if event.EventResults[handler.ID] != pendingResult {
+		t.Fatal("pending event_result should be preserved")
+	}
+	if pendingResult.Status != abxbus.EventResultPending || pendingResult.CompletedAt != nil || pendingResult.Result != nil {
+		t.Fatalf("pending event_result should be unchanged, got %#v", pendingResult)
+	}
+	if event.EventResults[startedHandler.ID] != startedResult {
+		t.Fatal("started event_result should be preserved")
+	}
+	if startedResult.Status != abxbus.EventResultStarted || startedResult.StartedAt == nil || startedResult.CompletedAt != nil || startedResult.Result != nil {
+		t.Fatalf("started event_result should be unchanged, got %#v", startedResult)
+	}
+}
+
+func TestDispatchingCompletedAtEventSkipsHandlersAndPreservesTimestamp(t *testing.T) {
+	bus := abxbus.NewEventBus("AlreadyCompletedAtBus", nil)
+	calls := 0
+	handler := bus.On("AlreadyCompletedAtDispatchEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		calls++
+		return "ran", nil
+	}, nil)
+	event := abxbus.NewBaseEvent("AlreadyCompletedAtDispatchEvent", map[string]any{"label": "timestamp"})
+	pendingResult := event.EventResultUpdate(handler, &abxbus.BaseEventResultUpdateOptions{
+		EventResultUpdateOptions: abxbus.EventResultUpdateOptions{Status: abxbus.EventResultPending},
+	})
+	providedStartedAt := "2025-01-02T03:04:04.000000000Z"
+	providedCompletedAt := "2025-01-02T03:04:05.000000000Z"
+	event.EventStartedAt = &providedStartedAt
+	event.EventCompletedAt = &providedCompletedAt
+
+	dispatched := bus.Dispatch(event)
+	wait := 1.0
+	if !bus.WaitUntilIdle(&wait) {
+		t.Fatal("bus did not become idle")
+	}
+
+	if dispatched != event {
+		t.Fatal("dispatch should preserve event identity")
+	}
+	if calls != 0 {
+		t.Fatalf("handler should not run for completed_at event, got %d calls", calls)
+	}
+	if event.EventStatus != "completed" {
+		t.Fatalf("expected completed status, got %s", event.EventStatus)
+	}
+	if event.EventStartedAt == nil || *event.EventStartedAt != providedStartedAt {
+		t.Fatalf("event_started_at should be preserved, got %#v", event.EventStartedAt)
+	}
+	if event.EventCompletedAt == nil || *event.EventCompletedAt != providedCompletedAt {
+		t.Fatalf("event_completed_at should be preserved, got %#v", event.EventCompletedAt)
+	}
+	if !reflect.DeepEqual(event.EventPath, []string{bus.Label()}) {
+		t.Fatalf("event_path should contain only handling bus %s, got %#v", bus.Label(), event.EventPath)
+	}
+	if event.EventResults[handler.ID] != pendingResult {
+		t.Fatal("pending event_result should be preserved")
+	}
+	if pendingResult.Status != abxbus.EventResultPending || pendingResult.CompletedAt != nil || pendingResult.Result != nil {
+		t.Fatalf("pending event_result should be unchanged, got %#v", pendingResult)
+	}
+
+	fallbackCompletedAt := "2025-01-02T03:04:07.000000000Z"
+	fallbackEvent := abxbus.NewBaseEvent("AlreadyCompletedAtDispatchEvent", map[string]any{"label": "timestamp-fallback"})
+	fallbackEvent.EventCompletedAt = &fallbackCompletedAt
+
+	bus.Dispatch(fallbackEvent)
+	if !bus.WaitUntilIdle(&wait) {
+		t.Fatal("bus did not become idle after fallback completed_at dispatch")
+	}
+
+	if calls != 0 {
+		t.Fatalf("handler should not run for fallback completed_at event, got %d calls", calls)
+	}
+	if fallbackEvent.EventStatus != "completed" {
+		t.Fatalf("expected fallback status completed, got %s", fallbackEvent.EventStatus)
+	}
+	if fallbackEvent.EventStartedAt == nil || *fallbackEvent.EventStartedAt != fallbackCompletedAt {
+		t.Fatalf("fallback event_started_at should use completed_at, got %#v", fallbackEvent.EventStartedAt)
+	}
+	if fallbackEvent.EventCompletedAt == nil || *fallbackEvent.EventCompletedAt != fallbackCompletedAt {
+		t.Fatalf("fallback event_completed_at should be preserved, got %#v", fallbackEvent.EventCompletedAt)
+	}
+	if !reflect.DeepEqual(fallbackEvent.EventPath, []string{bus.Label()}) {
+		t.Fatalf("fallback event_path should contain only handling bus %s, got %#v", bus.Label(), fallbackEvent.EventPath)
+	}
+}
+
+func TestDispatchingCompletedEventsWithPriorPathsRecordsBusOnceAndSkipsHandlers(t *testing.T) {
+	bus := abxbus.NewEventBus("AlreadyCompletedPriorPathBus", nil)
+	otherBusLabel := "PriorCompletedBus#1234"
+	calls := 0
+	bus.On("AlreadyCompletedPriorPathEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
+		calls++
+		return "ran", nil
+	}, nil)
+
+	priorOtherBusEvent := abxbus.NewBaseEvent("AlreadyCompletedPriorPathEvent", map[string]any{"label": "prior-other-bus"})
+	priorOtherBusEvent.EventPath = []string{otherBusLabel}
+	providedPriorOtherStartedAt := "2025-01-02T03:04:04.000000000Z"
+	providedPriorOtherCompletedAt := "2025-01-02T03:04:06.000000000Z"
+	priorOtherBusEvent.EventStatus = "completed"
+	priorOtherBusEvent.EventStartedAt = &providedPriorOtherStartedAt
+	priorOtherBusEvent.EventCompletedAt = &providedPriorOtherCompletedAt
+
+	bus.Dispatch(priorOtherBusEvent)
+	wait := 1.0
+	if !bus.WaitUntilIdle(&wait) {
+		t.Fatal("bus did not become idle after prior-other-bus dispatch")
+	}
+
+	if calls != 0 {
+		t.Fatalf("handler should not run for prior-other-bus completed event, got %d calls", calls)
+	}
+	if priorOtherBusEvent.EventStatus != "completed" {
+		t.Fatalf("expected prior-other-bus status completed, got %s", priorOtherBusEvent.EventStatus)
+	}
+	if priorOtherBusEvent.EventStartedAt == nil || *priorOtherBusEvent.EventStartedAt != providedPriorOtherStartedAt {
+		t.Fatalf("prior-other-bus event_started_at should be preserved, got %#v", priorOtherBusEvent.EventStartedAt)
+	}
+	if priorOtherBusEvent.EventCompletedAt == nil || *priorOtherBusEvent.EventCompletedAt != providedPriorOtherCompletedAt {
+		t.Fatalf("prior-other-bus event_completed_at should be preserved, got %#v", priorOtherBusEvent.EventCompletedAt)
+	}
+	if !reflect.DeepEqual(priorOtherBusEvent.EventPath, []string{otherBusLabel, bus.Label()}) {
+		t.Fatalf("prior-other-bus event_path mismatch: %#v", priorOtherBusEvent.EventPath)
+	}
+
+	providedCompletedAt := "2025-01-02T03:04:05.000000000Z"
+	providedStartedAt := "2025-01-02T03:04:04.000000000Z"
+	priorSameBusEvent := abxbus.NewBaseEvent("AlreadyCompletedPriorPathEvent", map[string]any{"label": "prior-same-bus"})
+	priorSameBusEvent.EventPath = []string{otherBusLabel, bus.Label()}
+	priorSameBusEvent.EventStartedAt = &providedStartedAt
+	priorSameBusEvent.EventCompletedAt = &providedCompletedAt
+
+	bus.Dispatch(priorSameBusEvent)
+	if !bus.WaitUntilIdle(&wait) {
+		t.Fatal("bus did not become idle after prior-same-bus dispatch")
+	}
+
+	if calls != 0 {
+		t.Fatalf("handler should not run for prior-same-bus completed event, got %d calls", calls)
+	}
+	if priorSameBusEvent.EventStatus != "completed" {
+		t.Fatalf("expected prior-same-bus status completed, got %s", priorSameBusEvent.EventStatus)
+	}
+	if priorSameBusEvent.EventStartedAt == nil || *priorSameBusEvent.EventStartedAt != providedStartedAt {
+		t.Fatalf("prior-same-bus event_started_at should be preserved, got %#v", priorSameBusEvent.EventStartedAt)
+	}
+	if priorSameBusEvent.EventCompletedAt == nil || *priorSameBusEvent.EventCompletedAt != providedCompletedAt {
+		t.Fatalf("prior-same-bus event_completed_at should be preserved, got %#v", priorSameBusEvent.EventCompletedAt)
+	}
+	if !reflect.DeepEqual(priorSameBusEvent.EventPath, []string{otherBusLabel, bus.Label()}) {
+		t.Fatalf("prior-same-bus event_path should not duplicate bus label, got %#v", priorSameBusEvent.EventPath)
+	}
+
+	historySize := bus.EventHistory.Size()
+	bus.Dispatch(priorSameBusEvent)
+	if !bus.WaitUntilIdle(&wait) {
+		t.Fatal("bus did not become idle after re-dispatching prior-same-bus event")
+	}
+	if calls != 0 {
+		t.Fatalf("handler should not run for re-dispatched completed event, got %d calls", calls)
+	}
+	if bus.EventHistory.Size() != historySize {
+		t.Fatalf("re-dispatching completed event should not duplicate history entries: before=%d after=%d", historySize, bus.EventHistory.Size())
+	}
+	if !reflect.DeepEqual(priorSameBusEvent.EventPath, []string{otherBusLabel, bus.Label()}) {
+		t.Fatalf("re-dispatched completed event_path should not duplicate bus label, got %#v", priorSameBusEvent.EventPath)
 	}
 }
 
@@ -538,16 +761,16 @@ func TestEventResetCreatesFreshPendingEventForCrossBusDispatch(t *testing.T) {
 	seenB := []string{}
 
 	busA.On("ResetCoverageEvent", "record_a", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		if label, ok := event.Payload["label"].(string); ok {
+		if label, ok := event.EventExtraPayload["label"].(string); ok {
 			seenA = append(seenA, label)
 		}
-		return "a:" + event.Payload["label"].(string), nil
+		return "a:" + event.EventExtraPayload["label"].(string), nil
 	}, nil)
 	busB.On("ResetCoverageEvent", "record_b", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		if label, ok := event.Payload["label"].(string); ok {
+		if label, ok := event.EventExtraPayload["label"].(string); ok {
 			seenB = append(seenB, label)
 		}
-		return "b:" + event.Payload["label"].(string), nil
+		return "b:" + event.EventExtraPayload["label"].(string), nil
 	}, nil)
 
 	completed := busA.Emit(abxbus.NewBaseEvent("ResetCoverageEvent", map[string]any{"label": "hello"}))
@@ -585,15 +808,15 @@ func TestEventResetCreatesFreshPendingEventForCrossBusDispatch(t *testing.T) {
 	hasBusA := false
 	hasBusB := false
 	for _, entry := range forwarded.EventPath {
-		if len(entry) >= len("ResetCoverageBusA#") && entry[:len("ResetCoverageBusA#")] == "ResetCoverageBusA#" {
+		if strings.HasPrefix(entry, "ResetCoverageBusA#") {
 			hasBusA = true
 		}
-		if len(entry) >= len("ResetCoverageBusB#") && entry[:len("ResetCoverageBusB#")] == "ResetCoverageBusB#" {
+		if strings.HasPrefix(entry, "ResetCoverageBusB#") {
 			hasBusB = true
 		}
 	}
-	if !hasBusA || !hasBusB {
-		t.Fatalf("reset event should preserve previous path and append new bus path: %#v", forwarded.EventPath)
+	if hasBusA || !hasBusB {
+		t.Fatalf("reset event should record only the redispatch bus path: %#v", forwarded.EventPath)
 	}
 }
 
@@ -1542,7 +1765,6 @@ func TestDestroyingOneBusDoesNotBreakSharedHandlersOrForwardTargets(t *testing.T
 // Folded from optional_dependencies_test.go to keep test layout class-based.
 func TestGoIntegrationSurfaceOnlyIncludesSupportedBridgeAndMiddleware(t *testing.T) {
 	var _ = abxbus.NewJSONLEventBridge
-	var _ abxbus.EventBusMiddleware = abxbus.NewOtelTracingMiddleware(nil)
 
 	goRoot := goPackageRoot(t)
 	entries, err := os.ReadDir(goRoot)
@@ -1567,7 +1789,7 @@ func TestGoIntegrationSurfaceOnlyIncludesSupportedBridgeAndMiddleware(t *testing
 	if len(bridgeFiles) != 1 || !bridgeFiles["jsonl_bridge.go"] {
 		t.Fatalf("Go should only implement JSONL bridge for now, got %v", bridgeFiles)
 	}
-	expectedMiddlewareFiles := map[string]bool{"middleware.go": true, "otel_middleware.go": true}
+	expectedMiddlewareFiles := map[string]bool{"middleware.go": true}
 	if len(middlewareFiles) != len(expectedMiddlewareFiles) {
 		t.Fatalf("unexpected Go middleware files: %v", middlewareFiles)
 	}
@@ -1606,6 +1828,7 @@ func TestGoUnsupportedBridgeAPIsAndDependenciesAreAbsent(t *testing.T) {
 			"github.com/lib/pq",
 			"github.com/redis",
 			"github.com/nats-io",
+			"go.opentelemetry.io",
 			"modernc.org/sqlite",
 			"github.com/mattn/go-sqlite3",
 		} {
@@ -1623,235 +1846,4 @@ func goPackageRoot(t *testing.T) string {
 		t.Fatal("runtime.Caller failed")
 	}
 	return filepath.Dir(filepath.Dir(filename))
-}
-
-// Folded from otel_tracing_middleware_test.go to keep test layout class-based.
-func TestOtelTracingMiddlewareCreatesEventAndHandlerSpans(t *testing.T) {
-	recorder := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-	defer func() { _ = provider.Shutdown(context.Background()) }()
-
-	middleware := abxbus.NewOtelTracingMiddleware(&abxbus.OtelTracingMiddlewareOptions{
-		Tracer: provider.Tracer("abxbus-test"),
-		RootSpanAttributes: []attribute.KeyValue{
-			attribute.String("stagehand.session_id", "session-123"),
-		},
-	})
-	bus := abxbus.NewEventBus("OtelBus", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
-	bus.On("OtelEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		return "ok", nil
-	}, nil)
-
-	event := bus.Emit(abxbus.NewBaseEvent("OtelEvent", map[string]any{"session_id": "event-session-456", "value": "x"}))
-	if _, err := event.Now(); err != nil {
-		t.Fatal(err)
-	}
-
-	spans := recorder.Ended()
-	if len(spans) != 2 {
-		t.Fatalf("expected event and handler spans, got %d", len(spans))
-	}
-
-	names := map[string]bool{}
-	for _, span := range spans {
-		names[span.Name()] = true
-	}
-	if !names["OtelBus.emit(OtelEvent)"] {
-		t.Fatalf("missing event span: %#v", names)
-	}
-	if !names["handler(OtelEvent)"] {
-		t.Fatalf("missing handler span: %#v", names)
-	}
-	eventSpan := findSpan(t, spans, "OtelBus.emit(OtelEvent)")
-	handlerSpan := findSpan(t, spans, "handler(OtelEvent)")
-	eventAttrs := spanAttributes(eventSpan)
-	handlerAttrs := spanAttributes(handlerSpan)
-	if eventAttrs["abxbus.event_bus.name"] != "OtelBus" || eventAttrs["abxbus.event_type"] != "OtelEvent" {
-		t.Fatalf("event span attributes did not match abxbus schema: %#v", eventAttrs)
-	}
-	if eventAttrs["abxbus.trace.root"] != true {
-		t.Fatalf("top-level event span should be marked as trace root: %#v", eventAttrs)
-	}
-	if eventAttrs["stagehand.session_id"] != "session-123" || eventAttrs["abxbus.session_id"] != "event-session-456" {
-		t.Fatalf("missing root/session attrs: %#v", eventAttrs)
-	}
-	if handlerAttrs["abxbus.handler_name"] != "handler" || handlerAttrs["abxbus.event_result_status"] != "completed" {
-		t.Fatalf("handler span attributes did not match abxbus schema: %#v", handlerAttrs)
-	}
-}
-
-func TestOtelTracingMiddlewareNamesEventAndHandlerSpansForDisplay(t *testing.T) {
-	recorder := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-	defer func() { _ = provider.Shutdown(context.Background()) }()
-
-	middleware := abxbus.NewOtelTracingMiddleware(&abxbus.OtelTracingMiddlewareOptions{
-		Tracer: provider.Tracer("abxbus-test"),
-	})
-	bus := abxbus.NewEventBus("StagehandExtensionBackground", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
-	t.Cleanup(bus.Destroy)
-	bus.On("CDPConnect", "DebuggerClient.on_CDPConnect", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		return "connected", nil
-	}, nil)
-
-	eventTimeout := 0.2
-	event := abxbus.NewBaseEvent("CDPConnect", nil)
-	event.EventTimeout = &eventTimeout
-	if _, err := bus.Emit(event).Now(); err != nil {
-		t.Fatal(err)
-	}
-
-	_ = findSpan(t, recorder.Ended(), "StagehandExtensionBackground.emit(CDPConnect)")
-	_ = findSpan(t, recorder.Ended(), "DebuggerClient.on_CDPConnect(CDPConnect)")
-}
-
-func TestOtelTracingMiddlewareParentsChildEventToEmittingHandlerSpan(t *testing.T) {
-	recorder := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-	defer func() { _ = provider.Shutdown(context.Background()) }()
-
-	middleware := abxbus.NewOtelTracingMiddleware(&abxbus.OtelTracingMiddlewareOptions{
-		Tracer: provider.Tracer("abxbus-test"),
-	})
-	bus := abxbus.NewEventBus("OtelParentBus", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
-	bus.On("ParentOtelEvent", "parent", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		child := event.Emit(abxbus.NewBaseEvent("ChildOtelEvent", nil))
-		if _, err := child.Now(); err != nil {
-			return nil, err
-		}
-		return "parent", nil
-	}, nil)
-	bus.On("ChildOtelEvent", "child", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		return "child", nil
-	}, nil)
-
-	parent := bus.Emit(abxbus.NewBaseEvent("ParentOtelEvent", nil))
-	if _, err := parent.Now(); err != nil {
-		t.Fatal(err)
-	}
-
-	spans := recorder.Ended()
-	parentEventSpan := findSpan(t, spans, "OtelParentBus.emit(ParentOtelEvent)")
-	parentHandlerSpan := findSpan(t, spans, "parent(ParentOtelEvent)")
-	childEventSpan := findSpan(t, spans, "OtelParentBus.emit(ChildOtelEvent)")
-	childHandlerSpan := findSpan(t, spans, "child(ChildOtelEvent)")
-
-	if parentHandlerSpan.Parent().SpanID() != parentEventSpan.SpanContext().SpanID() {
-		t.Fatalf("parent handler should be child of parent event")
-	}
-	if childEventSpan.Parent().SpanID() != parentHandlerSpan.SpanContext().SpanID() {
-		t.Fatalf("child event should be child of emitting handler")
-	}
-	if childHandlerSpan.Parent().SpanID() != childEventSpan.SpanContext().SpanID() {
-		t.Fatalf("child handler should be child of child event")
-	}
-	childAttrs := spanAttributes(childEventSpan)
-	if childAttrs["abxbus.event_parent_id"] != parent.EventID {
-		t.Fatalf("child event span missing parent id attr: %#v", childAttrs)
-	}
-	if _, ok := childAttrs["abxbus.event_emitted_by_handler_id"].(string); !ok {
-		t.Fatalf("child event span missing emitted-by handler attr: %#v", childAttrs)
-	}
-}
-
-func TestOtelTracingMiddlewareWaitsUntilTopLevelEventCompletionBeforeEndingSpans(t *testing.T) {
-	recorder := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-	defer func() { _ = provider.Shutdown(context.Background()) }()
-
-	middleware := abxbus.NewOtelTracingMiddleware(&abxbus.OtelTracingMiddlewareOptions{
-		Tracer: provider.Tracer("abxbus-test"),
-	})
-	bus := abxbus.NewEventBus("OtelRootStartBus", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
-	t.Cleanup(bus.Destroy)
-
-	started := make(chan struct{})
-	release := make(chan struct{})
-	bus.On("OtelRootStartEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		close(started)
-		select {
-		case <-release:
-			return "done", nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}, nil)
-
-	eventTimeout := 0.5
-	event := abxbus.NewBaseEvent("OtelRootStartEvent", nil)
-	event.EventTimeout = &eventTimeout
-	emitted := bus.Emit(event)
-	select {
-	case <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("handler did not start")
-	}
-	if ended := recorder.Ended(); len(ended) != 0 {
-		t.Fatalf("spans should not be ended/exportable before event completion, got %d", len(ended))
-	}
-
-	close(release)
-	if _, err := emitted.Now(); err != nil {
-		t.Fatal(err)
-	}
-
-	eventSpan := findSpan(t, recorder.Ended(), "OtelRootStartBus.emit(OtelRootStartEvent)")
-	handlerSpan := findSpan(t, recorder.Ended(), "handler(OtelRootStartEvent)")
-	if eventSpan.Parent().IsValid() {
-		t.Fatalf("top-level event span should be root, got parent=%s", eventSpan.Parent().SpanID())
-	}
-	if handlerSpan.Parent().SpanID() != eventSpan.SpanContext().SpanID() {
-		t.Fatalf("handler span should be child of event span")
-	}
-	if !eventSpan.EndTime().After(eventSpan.StartTime()) || !handlerSpan.EndTime().After(handlerSpan.StartTime()) {
-		t.Fatalf("ended spans should have non-zero duration")
-	}
-}
-
-func TestOtelTracingMiddlewareRecordsHandlerErrors(t *testing.T) {
-	recorder := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
-	defer func() { _ = provider.Shutdown(context.Background()) }()
-
-	middleware := abxbus.NewOtelTracingMiddleware(&abxbus.OtelTracingMiddlewareOptions{
-		Tracer: provider.Tracer("abxbus-test"),
-	})
-	bus := abxbus.NewEventBus("OtelErrorBus", &abxbus.EventBusOptions{Middlewares: []abxbus.EventBusMiddleware{middleware}})
-	handlerErr := errors.New("handler failed")
-	bus.On("OtelErrorEvent", "handler", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
-		return nil, handlerErr
-	}, nil)
-
-	event := bus.Emit(abxbus.NewBaseEvent("OtelErrorEvent", nil))
-	if _, err := event.Wait(); err != nil {
-		t.Fatal(err)
-	}
-
-	eventSpan := findSpan(t, recorder.Ended(), "OtelErrorBus.emit(OtelErrorEvent)")
-	handlerSpan := findSpan(t, recorder.Ended(), "handler(OtelErrorEvent)")
-	if eventSpan.Status().Code != codes.Error {
-		t.Fatalf("event span should be error, got %#v", eventSpan.Status())
-	}
-	if handlerSpan.Status().Code != codes.Error {
-		t.Fatalf("handler span should be error, got %#v", handlerSpan.Status())
-	}
-}
-
-func findSpan(t *testing.T, spans []sdktrace.ReadOnlySpan, name string) sdktrace.ReadOnlySpan {
-	t.Helper()
-	for _, span := range spans {
-		if span.Name() == name {
-			return span
-		}
-	}
-	t.Fatalf("missing span %q", name)
-	return nil
-}
-
-func spanAttributes(span sdktrace.ReadOnlySpan) map[string]any {
-	attrs := map[string]any{}
-	for _, attr := range span.Attributes() {
-		attrs[string(attr.Key)] = attr.Value.AsInterface()
-	}
-	return attrs
 }

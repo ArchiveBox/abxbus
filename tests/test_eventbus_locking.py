@@ -1,3 +1,4 @@
+import ast
 import asyncio
 
 import pytest
@@ -58,13 +59,17 @@ async def test_event_concurrency_global_serial_allows_only_one_inflight_across_b
     in_flight = 0
     max_in_flight = 0
     starts: list[str] = []
+    started: asyncio.Queue[str] = asyncio.Queue()
+    releases = {f'{source}:{order}': asyncio.Event() for source in ('a', 'b') for order in range(3)}
 
     async def handler(event: GlobalSerialEvent) -> None:
         nonlocal in_flight, max_in_flight
         in_flight += 1
         max_in_flight = max(max_in_flight, in_flight)
-        starts.append(f'{event.source}:{event.order}')
-        await asyncio.sleep(0.01)
+        key = f'{event.source}:{event.order}'
+        starts.append(key)
+        started.put_nowait(key)
+        await releases[key].wait()
         in_flight -= 1
 
     bus_a.on(GlobalSerialEvent, handler)
@@ -75,7 +80,12 @@ async def test_event_concurrency_global_serial_allows_only_one_inflight_across_b
             bus_a.emit(GlobalSerialEvent(order=i, source='a'))
             bus_b.emit(GlobalSerialEvent(order=i, source='b'))
 
-        await asyncio.gather(bus_a.wait_until_idle(), bus_b.wait_until_idle())
+        idle = asyncio.gather(bus_a.wait_until_idle(), bus_b.wait_until_idle())
+        for _ in range(6):
+            key = await asyncio.wait_for(started.get(), timeout=1.0)
+            assert in_flight == 1
+            releases[key].set()
+        await idle
 
         starts_a = [int(value.split(':')[1]) for value in starts if value.startswith('a:')]
         starts_b = [int(value.split(':')[1]) for value in starts if value.startswith('b:')]
@@ -104,13 +114,11 @@ async def test_global_serial_awaited_child_jumps_ahead_of_queued_events_across_b
 
     async def child_handler(_: ChildEvent) -> str:
         order.append('child_start')
-        await asyncio.sleep(0.005)
         order.append('child_end')
         return 'child'
 
     async def queued_handler(_: QueuedEvent) -> str:
         order.append('queued_start')
-        await asyncio.sleep(0.001)
         order.append('queued_end')
         return 'queued'
 
@@ -145,10 +153,55 @@ async def test_global_serial_awaited_child_jumps_ahead_of_queued_events_across_b
 
 
 @pytest.mark.asyncio
+async def test_now_waits_for_event_already_claimed_by_runloop() -> None:
+    class InFlightEvent(BaseEvent[str]):
+        pass
+
+    bus = EventBus(name='InFlightNowBus', event_concurrency='parallel')
+    started = asyncio.Event()
+    release = asyncio.Event()
+    handler_runs = 0
+
+    async def handler(_: InFlightEvent) -> str:
+        nonlocal handler_runs
+        handler_runs += 1
+        started.set()
+        await release.wait()
+        return 'done'
+
+    bus.on(InFlightEvent, handler)
+
+    try:
+        event = bus.emit(InFlightEvent())
+        idle_task = asyncio.create_task(bus.wait_until_idle(timeout=2.0))
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+
+        waiter_started = asyncio.Event()
+
+        async def wait_now():
+            waiter_started.set()
+            return await event.now()
+
+        now_task = asyncio.create_task(wait_now())
+        await waiter_started.wait()
+        assert not now_task.done()
+
+        release.set()
+        completed = await asyncio.wait_for(now_task, timeout=1.0)
+        await idle_task
+
+        assert completed.event_status == 'completed'
+        assert handler_runs == 1
+    finally:
+        await bus.destroy(clear=True)
+
+
+@pytest.mark.asyncio
 async def test_event_concurrency_bus_serial_serializes_per_bus_but_overlaps_across_buses() -> None:
     bus_a = EventBus(name='BusSerialA', event_concurrency='bus-serial')
     bus_b = EventBus(name='BusSerialB', event_concurrency='bus-serial')
     b_started = asyncio.Event()
+    a_started = asyncio.Event()
 
     in_flight_global = 0
     max_in_flight_global = 0
@@ -163,8 +216,8 @@ async def test_event_concurrency_bus_serial_serializes_per_bus_but_overlaps_acro
         in_flight_a += 1
         max_in_flight_global = max(max_in_flight_global, in_flight_global)
         max_in_flight_a = max(max_in_flight_a, in_flight_a)
+        a_started.set()
         await b_started.wait()
-        await asyncio.sleep(0.01)
         in_flight_global -= 1
         in_flight_a -= 1
 
@@ -175,7 +228,7 @@ async def test_event_concurrency_bus_serial_serializes_per_bus_but_overlaps_acro
         max_in_flight_global = max(max_in_flight_global, in_flight_global)
         max_in_flight_b = max(max_in_flight_b, in_flight_b)
         b_started.set()
-        await asyncio.sleep(0.01)
+        await a_started.wait()
         in_flight_global -= 1
         in_flight_b -= 1
 
@@ -211,7 +264,6 @@ async def test_event_concurrency_parallel_allows_same_bus_events_to_overlap() ->
         if in_flight >= 2:
             overlap_seen.set()
         await release.wait()
-        await asyncio.sleep(0.005)
         in_flight -= 1
 
     bus.on(ParallelEvent, handler)
@@ -306,6 +358,7 @@ async def test_event_concurrency_override_parallel_beats_bus_serial_default() ->
 async def test_event_concurrency_override_bus_serial_beats_bus_parallel_default() -> None:
     bus = EventBus(name='OverrideBusSerialBus', event_concurrency='parallel', event_handler_concurrency='parallel')
     release = asyncio.Event()
+    first_started = asyncio.Event()
     in_flight = 0
     max_in_flight = 0
 
@@ -313,6 +366,7 @@ async def test_event_concurrency_override_bus_serial_beats_bus_parallel_default(
         nonlocal in_flight, max_in_flight
         in_flight += 1
         max_in_flight = max(max_in_flight, in_flight)
+        first_started.set()
         await release.wait()
         in_flight -= 1
 
@@ -321,7 +375,7 @@ async def test_event_concurrency_override_bus_serial_beats_bus_parallel_default(
     try:
         first = bus.emit(OverrideSerialEvent(order=0, event_concurrency=EventConcurrencyMode.BUS_SERIAL))
         second = bus.emit(OverrideSerialEvent(order=1, event_concurrency=EventConcurrencyMode.BUS_SERIAL))
-        await asyncio.sleep(0.02)
+        await asyncio.wait_for(first_started.wait(), timeout=1.0)
         assert max_in_flight == 1
 
         release.set()
@@ -380,13 +434,16 @@ async def test_retry_global_handler_lock_serializes_handlers_across_buses() -> N
 
     in_flight = 0
     max_in_flight = 0
+    started: asyncio.Queue[asyncio.Event] = asyncio.Queue()
 
     @retry(semaphore_scope='global', semaphore_name='eventbus_locking_global_handler', semaphore_limit=1)
     async def locked_handler(_event: HandlerLockEvent) -> None:
         nonlocal in_flight, max_in_flight
         in_flight += 1
         max_in_flight = max(max_in_flight, in_flight)
-        await asyncio.sleep(0.005)
+        release = asyncio.Event()
+        started.put_nowait(release)
+        await release.wait()
         in_flight -= 1
 
     bus_a.on(HandlerLockEvent, locked_handler)
@@ -397,7 +454,12 @@ async def test_retry_global_handler_lock_serializes_handlers_across_buses() -> N
             bus_a.emit(HandlerLockEvent(order=i, source='a'))
             bus_b.emit(HandlerLockEvent(order=i, source='b'))
 
-        await asyncio.gather(bus_a.wait_until_idle(), bus_b.wait_until_idle())
+        idle = asyncio.gather(bus_a.wait_until_idle(), bus_b.wait_until_idle())
+        for _ in range(8):
+            release = await asyncio.wait_for(started.get(), timeout=1.0)
+            assert in_flight == 1
+            release.set()
+        await idle
         assert max_in_flight == 1
     finally:
         await bus_a.destroy(clear=True)
@@ -406,10 +468,20 @@ async def test_retry_global_handler_lock_serializes_handlers_across_buses() -> N
 
 # Folded from test_retry.py to keep test layout class-based.
 import inspect
+import json
 import multiprocessing
 import os
+import queue
 import re
+import subprocess
+import sys
+import threading
 import time
+from multiprocessing.queues import Queue as MultiprocessingQueue
+from multiprocessing.sharedctypes import Synchronized
+from multiprocessing.synchronize import Event as MultiprocessingEvent
+from multiprocessing.synchronize import Lock as MultiprocessingLock
+from pathlib import Path
 from typing import Any
 
 import abxbus.retry as retry_helpers
@@ -418,10 +490,12 @@ import abxbus.retry as retry_helpers
 def worker_acquire_semaphore(
     worker_id: int,
     start_time: float,
-    results_queue: 'multiprocessing.Queue[Any]',
-    hold_time: float = 0.5,
+    results_queue: 'MultiprocessingQueue[Any]',
+    release_event: MultiprocessingEvent,
     timeout: float = 5.0,
-    should_release: bool = True,
+    active_count: 'Synchronized[int] | None' = None,
+    max_active: 'Synchronized[int] | None' = None,
+    state_lock: MultiprocessingLock | None = None,
 ):
     """Worker process that tries to acquire a semaphore."""
     try:
@@ -440,9 +514,16 @@ def worker_acquire_semaphore(
         async def semaphore_protected_function():
             acquire_time = time.time() - start_time
             results_queue.put(('acquired', worker_id, acquire_time))
+            if active_count is not None and max_active is not None and state_lock is not None:
+                with state_lock:
+                    active_count.value += 1
+                    max_active.value = max(max_active.value, active_count.value)
 
-            # Hold the semaphore for a bit
-            await asyncio.sleep(hold_time)
+            await asyncio.to_thread(release_event.wait)
+
+            if active_count is not None and state_lock is not None:
+                with state_lock:
+                    active_count.value -= 1
 
             release_time = time.time() - start_time
             results_queue.put(('released', worker_id, release_time))
@@ -467,11 +548,61 @@ def worker_acquire_semaphore(
         results_queue.put(('error', worker_id, error_time, str(e)))
 
 
+def worker_acquire_semaphore_sync(
+    worker_id: int,
+    start_time: float,
+    results_queue: 'MultiprocessingQueue[Any]',
+    release_event: MultiprocessingEvent,
+    timeout: float = 5.0,
+    semaphore_limit: int = 3,
+    semaphore_name: str = 'test_multiprocess_sync_sem',
+    active_count: 'Synchronized[int] | None' = None,
+    max_active: 'Synchronized[int] | None' = None,
+    state_lock: MultiprocessingLock | None = None,
+):
+    """Worker process that tries to acquire a semaphore from a sync retry wrapper."""
+    try:
+
+        @retry(
+            max_attempts=1,
+            timeout=10,
+            semaphore_limit=semaphore_limit,
+            semaphore_name=semaphore_name,
+            semaphore_scope='multiprocess',
+            semaphore_timeout=timeout,
+            semaphore_lax=False,
+        )
+        def semaphore_protected_function():
+            acquire_time = time.time() - start_time
+            results_queue.put(('acquired', worker_id, acquire_time))
+            if active_count is not None and max_active is not None and state_lock is not None:
+                with state_lock:
+                    active_count.value += 1
+                    max_active.value = max(max_active.value, active_count.value)
+            release_event.wait()
+            if active_count is not None and state_lock is not None:
+                with state_lock:
+                    active_count.value -= 1
+            release_time = time.time() - start_time
+            results_queue.put(('released', worker_id, release_time))
+            return f'Worker {worker_id} completed'
+
+        result = semaphore_protected_function()
+        results_queue.put(('completed', worker_id, result))
+
+    except TimeoutError as e:
+        timeout_time = time.time() - start_time
+        results_queue.put(('timeout', worker_id, timeout_time, str(e)))
+    except Exception as e:
+        error_time = time.time() - start_time
+        results_queue.put(('error', worker_id, error_time, str(e)))
+
+
 def worker_that_dies(
     worker_id: int,
     start_time: float,
-    results_queue: 'multiprocessing.Queue[Any]',
-    die_after: float = 0.2,
+    results_queue: 'MultiprocessingQueue[Any]',
+    acquired_event: MultiprocessingEvent,
 ):
     """Worker process that acquires semaphore then dies without releasing."""
     try:
@@ -488,9 +619,7 @@ def worker_that_dies(
         async def semaphore_protected_function():
             acquire_time = time.time() - start_time
             results_queue.put(('acquired', worker_id, acquire_time))
-
-            # Hold for a bit then simulate crash
-            await asyncio.sleep(die_after)
+            acquired_event.set()
 
             # Simulate unexpected death
             os._exit(1)  # Hard exit without cleanup
@@ -505,7 +634,7 @@ def worker_that_dies(
 def worker_death_test_normal(
     worker_id: int,
     start_time: float,
-    results_queue: 'multiprocessing.Queue[Any]',
+    results_queue: 'MultiprocessingQueue[Any]',
 ):
     """Worker for death test that uses the same semaphore."""
 
@@ -521,7 +650,6 @@ def worker_death_test_normal(
     async def semaphore_protected_function():
         acquire_time = time.time() - start_time
         results_queue.put(('acquired', worker_id, acquire_time))
-        await asyncio.sleep(0.2)
         release_time = time.time() - start_time
         results_queue.put(('released', worker_id, release_time))
         return f'Worker {worker_id} completed'
@@ -537,8 +665,8 @@ def worker_death_test_normal(
 def worker_with_custom_limit(
     worker_id: int,
     start_time: float,
-    results_queue: 'multiprocessing.Queue[Any]',
-    hold_time: float = 0.5,
+    results_queue: 'MultiprocessingQueue[Any]',
+    release_event: MultiprocessingEvent,
     timeout: float = 5.0,
     semaphore_limit: int = 2,
     semaphore_name: str = 'test_custom_sem',
@@ -559,8 +687,7 @@ def worker_with_custom_limit(
             acquire_time = time.time() - start_time
             results_queue.put(('acquired', worker_id, acquire_time))
 
-            # Hold the semaphore for a bit
-            await asyncio.sleep(hold_time)
+            await asyncio.to_thread(release_event.wait)
 
             release_time = time.time() - start_time
             results_queue.put(('released', worker_id, release_time))
@@ -581,48 +708,118 @@ def worker_with_custom_limit(
 class TestMultiprocessSemaphore:
     """Test multiprocess semaphore functionality."""
 
+    def test_multiprocess_semaphore_dir_respects_env_before_import(self, tmp_path: Path):
+        """Multiprocess semaphores should use a caller-owned runtime dir."""
+        semaphore_dir = tmp_path / 'semaphores'
+        env = os.environ.copy()
+        env['ABXBUS_MULTIPROCESS_SEMAPHORE_DIR'] = str(semaphore_dir)
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                '-c',
+                """
+import asyncio
+import json
+from abxbus.retry import MULTIPROCESS_SEMAPHORE_DIR, retry
+
+async def main():
+    @retry(
+        max_attempts=1,
+        semaphore_limit=1,
+        semaphore_name='test_env_multiprocess_sem',
+        semaphore_scope='multiprocess',
+        semaphore_timeout=2,
+        semaphore_lax=False,
+    )
+    async def protected():
+        return 'ok'
+
+    protected_result = await protected()
+    print(json.dumps({
+        'result': protected_result,
+        'semaphore_dir': str(MULTIPROCESS_SEMAPHORE_DIR),
+        'exists': MULTIPROCESS_SEMAPHORE_DIR.exists(),
+    }))
+
+asyncio.run(main())
+""",
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10,
+        )
+
+        assert result.returncode == 0, result.stderr
+        output = json.loads(result.stdout)
+        assert output['result'] == 'ok'
+        assert output['semaphore_dir'] == str(semaphore_dir)
+        assert output['exists'] is True
+        assert semaphore_dir.exists()
+
     def test_basic_multiprocess_semaphore(self):
         """Test that semaphore limits work across processes."""
-        results_queue: multiprocessing.Queue[Any] = multiprocessing.Queue()
+        results_queue: MultiprocessingQueue[Any] = multiprocessing.Queue()
         start_time = time.time()
         processes: list[multiprocessing.Process] = []
+        releases = [multiprocessing.Event() for _ in range(6)]
+        active_count = multiprocessing.Value('i', 0)
+        max_active = multiprocessing.Value('i', 0)
+        state_lock = multiprocessing.Lock()
 
         # Start first batch of 3 workers (fills all slots)
         for i in range(3):
-            p = multiprocessing.Process(target=worker_acquire_semaphore, args=(i, start_time, results_queue, 1.0, 5.0))
+            p = multiprocessing.Process(
+                target=worker_acquire_semaphore,
+                args=(i, start_time, results_queue, releases[i], 5.0, active_count, max_active, state_lock),
+            )
             p.start()
             processes.append(p)
 
-        # Wait to ensure first batch has acquired all slots
-        time.sleep(0.5)
+        first_batch_acquired = [results_queue.get(timeout=5) for _ in range(3)]
+        assert {event[1] for event in first_batch_acquired} == {0, 1, 2}
 
         # Now start second batch - they should wait
         for i in range(3, 6):
-            p = multiprocessing.Process(target=worker_acquire_semaphore, args=(i, start_time, results_queue, 0.5, 5.0))
+            p = multiprocessing.Process(
+                target=worker_acquire_semaphore,
+                args=(i, start_time, results_queue, releases[i], 5.0, active_count, max_active, state_lock),
+            )
             p.start()
             processes.append(p)
+
+        for release in releases[:3]:
+            release.set()
+
+        second_batch_events = [results_queue.get(timeout=5) for _ in range(6)]
+        second_batch_acquired = [event for event in second_batch_events if event[0] == 'acquired']
+        while len(second_batch_acquired) < 3:
+            event = results_queue.get(timeout=5)
+            second_batch_events.append(event)
+            if event[0] == 'acquired':
+                second_batch_acquired.append(event)
+        assert {event[1] for event in second_batch_acquired} == {3, 4, 5}
+        for release in releases[3:]:
+            release.set()
 
         # Wait for all processes to complete
         for p in processes:
             p.join(timeout=10)
+            assert p.exitcode == 0
 
         # Collect results
-        results: list[tuple[Any, ...]] = []
-        while not results_queue.empty():
-            results.append(results_queue.get())
+        results: list[tuple[Any, ...]] = [*first_batch_acquired, *second_batch_events]
+        while len(results) < 18:
+            results.append(results_queue.get(timeout=5))
 
         # Analyze results
-        acquired_events = [r for r in results if r[0] == 'acquired']
         completed_events = [r for r in results if r[0] == 'completed']
 
         # All 6 workers should complete successfully
         assert len(completed_events) == 6, f'Expected 6 completions, got {len(completed_events)}'
 
-        # Sort by acquisition time
-        acquired_events.sort(key=lambda x: x[2])
-
-        # Extract worker IDs in order of acquisition
-        acquisition_order = [event[1] for event in acquired_events]
+        acquisition_order = [event[1] for event in [*first_batch_acquired, *second_batch_acquired]]
 
         # First 3 acquisitions should be from first batch (0, 1, 2)
         first_three = set(acquisition_order[:3])
@@ -632,57 +829,104 @@ class TestMultiprocessSemaphore:
         last_three = set(acquisition_order[3:])
         assert last_three == {3, 4, 5}, f'Last 3 acquisitions should be workers 3-5, got {last_three}'
 
-        # Verify semaphore is actually limiting concurrency
-        # Check that no more than 3 workers held the semaphore simultaneously
-        active_workers: list[int] = []
-        # Keep only acquire/release events with numeric timestamps.
-        timed_events: list[tuple[str, int, float]] = [
-            (str(e[0]), int(e[1]), float(e[2]))
-            for e in results
-            if len(e) >= 3 and e[0] in ('acquired', 'released') and isinstance(e[2], (int, float))
-        ]
-        for event in sorted(timed_events, key=lambda x: x[2]):  # Sort all events by time
+        assert max_active.value == 3
+
+    def test_basic_multiprocess_semaphore_sync_wrapper(self):
+        """Test that sync retry wrappers enforce semaphore limits across processes."""
+        results_queue: MultiprocessingQueue[Any] = multiprocessing.Queue()
+        start_time = time.time()
+        semaphore_name = f'test_multiprocess_sync_sem_{time.time_ns()}'
+        processes: list[multiprocessing.Process] = []
+        releases = [multiprocessing.Event() for _ in range(4)]
+        active_count = multiprocessing.Value('i', 0)
+        max_active = multiprocessing.Value('i', 0)
+        state_lock = multiprocessing.Lock()
+
+        for i in range(2):
+            p = multiprocessing.Process(
+                target=worker_acquire_semaphore_sync,
+                args=(i, start_time, results_queue, releases[i], 5.0, 2, semaphore_name, active_count, max_active, state_lock),
+            )
+            p.start()
+            processes.append(p)
+
+        first_batch_acquired = [results_queue.get(timeout=5) for _ in range(2)]
+        assert {event[1] for event in first_batch_acquired} == {0, 1}
+
+        for i in range(2, 4):
+            p = multiprocessing.Process(
+                target=worker_acquire_semaphore_sync,
+                args=(i, start_time, results_queue, releases[i], 5.0, 2, semaphore_name, active_count, max_active, state_lock),
+            )
+            p.start()
+            processes.append(p)
+
+        for release in releases[:2]:
+            release.set()
+
+        observed = [results_queue.get(timeout=5) for _ in range(4)]
+        acquired = [event for event in observed if event[0] == 'acquired']
+        while len(acquired) < 2:
+            event = results_queue.get(timeout=5)
+            observed.append(event)
             if event[0] == 'acquired':
-                active_workers.append(event[1])
-                assert len(active_workers) <= 3, f'Too many workers active: {active_workers}'
-            elif event[0] == 'released':
-                if event[1] in active_workers:
-                    active_workers.remove(event[1])
+                acquired.append(event)
+        assert {event[1] for event in acquired} == {2, 3}
+        for release in releases[2:]:
+            release.set()
+
+        for p in processes:
+            p.join(timeout=10)
+            assert p.exitcode == 0
+
+        results: list[tuple[Any, ...]] = [*first_batch_acquired, *observed]
+        while len(results) < 12:
+            results.append(results_queue.get(timeout=5))
+
+        completed_events = [r for r in results if r[0] == 'completed']
+        assert len(completed_events) == 4
+
+        assert max_active.value == 2
 
     def test_semaphore_timeout(self):
         """Test that semaphore timeout works correctly."""
-        results_queue: multiprocessing.Queue[Any] = multiprocessing.Queue()
+        results_queue: MultiprocessingQueue[Any] = multiprocessing.Queue()
         start_time = time.time()
         processes: list[multiprocessing.Process] = []
+        releases = [multiprocessing.Event() for _ in range(4)]
 
         # Start first 3 workers to fill all slots
         for i in range(3):
             p = multiprocessing.Process(
                 target=worker_acquire_semaphore,
-                args=(i, start_time, results_queue, 3.0, 5.0),  # 3s hold, 5s timeout
+                args=(i, start_time, results_queue, releases[i], 5.0),
             )
             p.start()
             processes.append(p)
 
-        # Wait a bit to ensure first 3 have acquired the semaphore
-        time.sleep(0.5)
+        first_batch_acquired = [results_queue.get(timeout=5) for _ in range(3)]
+        assert {event[1] for event in first_batch_acquired} == {0, 1, 2}
 
         # Now start the 4th worker with a short timeout
         p = multiprocessing.Process(
             target=worker_acquire_semaphore,
-            args=(3, start_time, results_queue, 1.0, 0.5),  # 1s hold, 0.5s timeout
+            args=(3, start_time, results_queue, releases[3], 0.1),
         )
         p.start()
         processes.append(p)
+        p.join(timeout=2)
+        assert p.exitcode == 0
+        for release in releases[:3]:
+            release.set()
 
         # Wait for processes
         for p in processes:
             p.join(timeout=10)
 
         # Collect results
-        results: list[tuple[str, int, float]] = []
-        while not results_queue.empty():
-            results.append(results_queue.get())
+        results: list[tuple[str, int, float]] = list(first_batch_acquired)
+        while len(results) < 10:
+            results.append(results_queue.get(timeout=5))
 
         # Check that we have timeout events
         timeout_events = [r for r in results if r[0] == 'timeout']
@@ -697,18 +941,22 @@ class TestMultiprocessSemaphore:
 
     def test_process_death_releases_semaphore(self):
         """Test that killing a process releases its semaphore slot."""
-        results_queue: multiprocessing.Queue[Any] = multiprocessing.Queue()
+        results_queue: MultiprocessingQueue[Any] = multiprocessing.Queue()
         start_time = time.time()
 
         # Start 2 processes that will die (limit is 2)
         death_processes: list[multiprocessing.Process] = []
+        death_acquired = [multiprocessing.Event() for _ in range(2)]
         for i in range(2):
-            p = multiprocessing.Process(target=worker_that_dies, args=(i, start_time, results_queue, 0.3))
+            p = multiprocessing.Process(target=worker_that_dies, args=(i, start_time, results_queue, death_acquired[i]))
             p.start()
             death_processes.append(p)
 
-        # Wait a bit for them to acquire
-        time.sleep(0.5)
+        assert all(acquired.wait(timeout=5) for acquired in death_acquired)
+
+        for p in death_processes:
+            p.join(timeout=2)
+            assert p.exitcode == 1, f'Process should have exited with code 1, got {p.exitcode}'
 
         # Now start 2 more processes that should be able to acquire after the first 2 die
         normal_processes: list[multiprocessing.Process] = []
@@ -717,11 +965,6 @@ class TestMultiprocessSemaphore:
             p.start()
             normal_processes.append(p)
 
-        # Wait for death processes to exit
-        for p in death_processes:
-            p.join(timeout=2)
-            assert p.exitcode == 1, f'Process should have exited with code 1, got {p.exitcode}'
-
         # Wait for normal processes
         for p in normal_processes:
             p.join(timeout=10)
@@ -729,150 +972,167 @@ class TestMultiprocessSemaphore:
 
         # Collect results
         results: list[tuple[str, int, float]] = []
-        while not results_queue.empty():
-            results.append(results_queue.get())
+        completed_worker_ids: set[int] = set()
+        while completed_worker_ids != {2, 3}:
+            event = results_queue.get(timeout=5)
+            results.append(event)
+            if event[0] == 'completed' and event[1] >= 2:
+                completed_worker_ids.add(event[1])
 
         # Check that processes 2 and 3 were able to acquire
         acquired_events = [r for r in results if r[0] == 'acquired']
         completed_events = [r for r in results if r[0] == 'completed' and r[1] >= 2]
 
-        # Should have 4 acquisitions total (2 that died + 2 that completed)
-        assert len(acquired_events) >= 4, f'Expected at least 4 acquisitions, got {len(acquired_events)}'
+        assert {event[1] for event in acquired_events if event[1] >= 2} == {2, 3}
 
         # Processes 2 and 3 should complete
         assert len(completed_events) == 2, f'Expected 2 completions from workers 2-3, got {len(completed_events)}'
 
     def test_concurrent_acquisition_order(self):
-        """Test that processes acquire semaphore with fairness."""
-        results_queue: multiprocessing.Queue[Any] = multiprocessing.Queue()
+        """Test that all blocked processes eventually acquire a semaphore slot."""
+        results_queue: MultiprocessingQueue[Any] = multiprocessing.Queue()
         start_time = time.time()
         processes: list[multiprocessing.Process] = []
+        releases = [multiprocessing.Event() for _ in range(5)]
 
         # Start first 2 processes (fills all slots with limit=2)
         for i in range(2):
             p = multiprocessing.Process(
                 target=worker_with_custom_limit,
-                args=(i, start_time, results_queue, 1.0, 5.0, 2, 'test_concurrent_order_sem'),  # 1s hold time, limit=2
+                args=(i, start_time, results_queue, releases[i], 5.0, 2, 'test_concurrent_order_sem'),
             )
             p.start()
             processes.append(p)
 
-        # Wait to ensure first 2 have acquired
-        time.sleep(0.5)
+        first_acquired = [results_queue.get(timeout=5) for _ in range(2)]
+        assert {event[1] for event in first_acquired} == {0, 1}
 
-        # Start next 3 processes in sequence with delays to establish order
+        # Start the blocked workers while both slots are held.
         for i in range(2, 5):
             p = multiprocessing.Process(
                 target=worker_with_custom_limit,
-                args=(i, start_time, results_queue, 0.5, 5.0, 2, 'test_concurrent_order_sem'),  # 0.5s hold time, limit=2
+                args=(i, start_time, results_queue, releases[i], 5.0, 2, 'test_concurrent_order_sem'),
             )
             p.start()
             processes.append(p)
-            time.sleep(0.2)  # 200ms delay to establish clear queue order
+
+        for release in releases[:2]:
+            release.set()
+
+        observed = [results_queue.get(timeout=5) for _ in range(4)]
+        blocked_acquired = [event for event in observed if event[0] == 'acquired']
+        while len(blocked_acquired) < 2:
+            event = results_queue.get(timeout=5)
+            observed.append(event)
+            if event[0] == 'acquired':
+                blocked_acquired.append(event)
+        for event in blocked_acquired:
+            releases[int(event[1])].set()
+
+        last_acquired: tuple[str, int, float] | None = None
+        while last_acquired is None:
+            event = results_queue.get(timeout=5)
+            observed.append(event)
+            if event[0] == 'acquired' and event[1] not in {item[1] for item in blocked_acquired}:
+                last_acquired = event
+        releases[last_acquired[1]].set()
 
         # Wait for all to complete
         for p in processes:
             p.join(timeout=10)
 
         # Collect and analyze results
-        results: list[tuple[str, int, float]] = []
-        while not results_queue.empty():
-            results.append(results_queue.get())
+        results: list[tuple[str, int, float]] = [*first_acquired, *observed]
+        while len(results) < 15:
+            results.append(results_queue.get(timeout=5))
 
-        acquired_events = [r for r in results if r[0] == 'acquired']
-        acquired_events.sort(key=lambda x: x[2])  # Sort by acquisition time
-
-        # Extract worker IDs in order of acquisition
-        acquisition_order = [event[1] for event in acquired_events]
+        acquisition_order = [event[1] for event in [*first_acquired, *blocked_acquired, last_acquired]]
 
         # Verify all workers acquired
         assert len(acquisition_order) == 5, f'All 5 workers should acquire, got {len(acquisition_order)}'
         assert set(acquisition_order) == {0, 1, 2, 3, 4}, f'All workers should acquire: {acquisition_order}'
 
-        # First 2 should be workers 0 and 1 (they started first and slots were available)
+        # The first two holders must own both slots before the blocked workers start.
         assert set(acquisition_order[:2]) == {0, 1}, f'First 2 acquisitions should be workers 0-1, got {acquisition_order[:2]}'
 
-        # Next 3 should be workers 2, 3, 4 (they had to wait)
+        # Every blocked worker must eventually acquire after a holder is released.
         assert set(acquisition_order[2:]) == {2, 3, 4}, f'Next 3 acquisitions should be workers 2-4, got {acquisition_order[2:]}'
-
-        # Verify timing - workers 2, 3, 4 should acquire after workers 0, 1 start releasing
-        first_batch_release_times = [r[2] for r in results if r[0] == 'released' and r[1] in {0, 1}]
-        second_batch_acquire_times = [r[2] for r in results if r[0] == 'acquired' and r[1] in {2, 3, 4}]
-
-        if first_batch_release_times and second_batch_acquire_times:
-            min_release = min(first_batch_release_times)
-            min_second_acquire = min(second_batch_acquire_times)
-            # Second batch should start acquiring around when first batch releases
-            assert min_second_acquire >= min_release - 0.1, (
-                f'Second batch should acquire after first batch releases. '
-                f'First release: {min_release:.2f}s, Second acquire: {min_second_acquire:.2f}s'
-            )
 
     def test_semaphore_persistence_across_runs(self):
         """Test that semaphore state persists correctly across process runs."""
-        results_queue: multiprocessing.Queue[Any] = multiprocessing.Queue()
+        results_queue: MultiprocessingQueue[Any] = multiprocessing.Queue()
         start_time = time.time()
+        releases = [multiprocessing.Event() for _ in range(7)]
 
         # First run: Start 3 processes that hold semaphore (limit is 3)
         first_batch: list[multiprocessing.Process] = []
         for i in range(3):
             p = multiprocessing.Process(
                 target=worker_acquire_semaphore,
-                args=(i, start_time, results_queue, 1.0, 5.0),  # Hold for 1 second
+                args=(i, start_time, results_queue, releases[i], 5.0),
             )
             p.start()
             first_batch.append(p)
 
-        # Wait for them to acquire and ensure all slots are taken
-        time.sleep(0.5)
+        first_batch_acquired = [results_queue.get(timeout=5) for _ in range(3)]
+        assert {event[1] for event in first_batch_acquired} == {0, 1, 2}
 
         # Try to start one more - should timeout quickly
         timeout_worker = multiprocessing.Process(
             target=worker_acquire_semaphore,
-            args=(99, start_time, results_queue, 0.5, 0.3),  # Very short timeout
+            args=(99, start_time, results_queue, releases[6], 0.1),
         )
         timeout_worker.start()
         timeout_worker.join(timeout=2)
+        assert timeout_worker.exitcode == 0
+
+        for release in releases[:3]:
+            release.set()
 
         # Wait for first batch to complete
         for p in first_batch:
             p.join(timeout=5)
+            assert p.exitcode == 0
+
+        first_phase_events: list[tuple[Any, ...]] = []
+        first_completed: set[int] = set()
+        timeout_seen = False
+        while first_completed != {0, 1, 2} or not timeout_seen:
+            event = results_queue.get(timeout=5)
+            first_phase_events.append(event)
+            if event[0] == 'completed':
+                first_completed.add(event[1])
+            elif event[0] == 'timeout' and event[1] == 99:
+                timeout_seen = True
 
         # Now start a new batch - should work immediately
         second_batch: list[multiprocessing.Process] = []
         for i in range(3, 6):
-            p = multiprocessing.Process(target=worker_acquire_semaphore, args=(i, start_time, results_queue, 0.2, 5.0))
+            p = multiprocessing.Process(target=worker_acquire_semaphore, args=(i, start_time, results_queue, releases[i], 5.0))
             p.start()
             second_batch.append(p)
+
+        second_batch_acquired = [results_queue.get(timeout=5) for _ in range(3)]
+        assert {event[1] for event in second_batch_acquired} == {3, 4, 5}
+        for release in releases[3:6]:
+            release.set()
 
         for p in second_batch:
             p.join(timeout=5)
 
         # Analyze results
-        results: list[tuple[str, int, float]] = []
-        while not results_queue.empty():
-            results.append(results_queue.get())
+        results: list[tuple[str, int, float]] = [*first_batch_acquired, *first_phase_events, *second_batch_acquired]
+        while len(results) < 19:
+            results.append(results_queue.get(timeout=5))
 
         timeout_events = [r for r in results if r[0] == 'timeout' and r[1] == 99]
-        second_batch_acquired = [r for r in results if r[0] == 'acquired' and r[1] >= 3]
+        second_batch_acquired_events = [r for r in results if r[0] == 'acquired' and 3 <= r[1] < 6]
 
         # Worker 99 should timeout
         assert len(timeout_events) == 1, 'Worker 99 should timeout'
 
         # Second batch should all acquire successfully
-        assert len(second_batch_acquired) == 3, 'All second batch workers should acquire'
-
-        # Verify the second batch acquired after the first batch started releasing
-        # Get the minimum release time from first batch
-        first_batch_released = [r for r in results if r[0] == 'released' and r[1] < 3]
-        if first_batch_released:
-            min_release_time = min(r[2] for r in first_batch_released)
-            # At least one second batch worker should have acquired after first release
-            second_batch_times = [event[2] for event in second_batch_acquired]
-            assert any(t >= min_release_time - 0.1 for t in second_batch_times), (
-                f'Second batch should acquire after first batch releases. '
-                f'Min release: {min_release_time:.2f}, Second batch times: {second_batch_times}'
-            )
+        assert len(second_batch_acquired_events) == 3, 'All second batch workers should acquire'
 
     async def test_semaphore_file_disappears(self):
         """Test that semaphores handle missing lock files gracefully."""
@@ -907,7 +1167,6 @@ class TestMultiprocessSemaphore:
                 if acquired_count == 1:
                     shutil.rmtree(test_dir, ignore_errors=True)
 
-                await asyncio.sleep(0.1)
                 return f'completed_{acquired_count}'
 
             # Run multiple tasks concurrently
@@ -930,7 +1189,10 @@ class TestRegularSemaphoreScopes:
 
     async def test_global_scope(self):
         """Test global scope semaphore."""
-        results: list[tuple[str, int, float]] = []
+        active = 0
+        max_active = 0
+        started: asyncio.Queue[None] = asyncio.Queue()
+        release = asyncio.Event()
 
         @retry(
             max_attempts=1,
@@ -940,31 +1202,29 @@ class TestRegularSemaphoreScopes:
             semaphore_name='test_global',
         )
         async def test_func(worker_id: int):
-            results.append(('start', worker_id, time.time()))
-            await asyncio.sleep(0.1)
-            results.append(('end', worker_id, time.time()))
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            started.put_nowait(None)
+            await release.wait()
+            active -= 1
             return worker_id
 
         # Run 4 tasks concurrently (limit is 2)
-        tasks = [test_func(i) for i in range(4)]
-        await asyncio.gather(*tasks)
-
-        # Check that only 2 ran concurrently
-        starts = [r for r in results if r[0] == 'start']
-        starts.sort(key=lambda x: x[2])
-
-        # First 2 should start immediately
-        assert starts[1][2] - starts[0][2] < 0.05
-
-        # 3rd should wait for first to finish
-        assert starts[2][2] - starts[0][2] > 0.08
+        tasks = [asyncio.create_task(test_func(i)) for i in range(4)]
+        await asyncio.wait_for(started.get(), timeout=1.0)
+        await asyncio.wait_for(started.get(), timeout=1.0)
+        assert active == 2
+        release.set()
+        assert await asyncio.gather(*tasks) == [0, 1, 2, 3]
+        assert max_active == 2
 
     async def test_class_scope(self):
         """Test class scope semaphore."""
 
         class TestClass:
             def __init__(self):
-                self.results: list[tuple[str, int, float]] = []
+                self.started = started
 
             @retry(
                 max_attempts=1,
@@ -974,10 +1234,12 @@ class TestRegularSemaphoreScopes:
                 semaphore_name='test_method',
             )
             async def test_method(self, worker_id: int):
-                self.results.append(('start', worker_id, time.time()))
-                await asyncio.sleep(0.1)
-                self.results.append(('end', worker_id, time.time()))
+                self.started.put_nowait(worker_id)
+                await release.wait()
                 return worker_id
+
+        started: asyncio.Queue[int] = asyncio.Queue()
+        release = asyncio.Event()
 
         # Create two instances
         obj1 = TestClass()
@@ -985,22 +1247,19 @@ class TestRegularSemaphoreScopes:
 
         # Run method on both instances concurrently
         # They should share the semaphore (class scope)
-        start_time = time.time()
-        await asyncio.gather(
-            obj1.test_method(1),
-            obj2.test_method(2),
-        )
-        end_time = time.time()
-
-        # Should take ~0.2s (sequential) not ~0.1s (parallel)
-        assert end_time - start_time > 0.18
+        first = asyncio.create_task(obj1.test_method(1))
+        second = asyncio.create_task(obj2.test_method(2))
+        assert await asyncio.wait_for(started.get(), timeout=1.0) in {1, 2}
+        assert started.empty()
+        release.set()
+        assert set(await asyncio.gather(first, second)) == {1, 2}
 
     async def test_self_scope(self):
         """Test self scope semaphore."""
 
         class TestClass:
             def __init__(self):
-                self.results: list[tuple[str, int, float]] = []
+                self.started = started
 
             @retry(
                 max_attempts=1,
@@ -1010,10 +1269,12 @@ class TestRegularSemaphoreScopes:
                 semaphore_name='test_method',
             )
             async def test_method(self, worker_id: int):
-                self.results.append(('start', worker_id, time.time()))
-                await asyncio.sleep(0.1)
-                self.results.append(('end', worker_id, time.time()))
+                self.started.put_nowait(worker_id)
+                await both_started.wait()
                 return worker_id
+
+        started: asyncio.Queue[int] = asyncio.Queue()
+        both_started = asyncio.Event()
 
         # Create two instances
         obj1 = TestClass()
@@ -1021,23 +1282,38 @@ class TestRegularSemaphoreScopes:
 
         # Run method on both instances concurrently
         # They should NOT share the semaphore (self scope)
-        start_time = time.time()
-        await asyncio.gather(
-            obj1.test_method(1),
-            obj2.test_method(2),
-        )
-        end_time = time.time()
-
-        # Should be closer to parallel execution (~0.1s) than strict serialization (~0.2s).
-        # Allow overhead from periodic overload checks.
-        assert end_time - start_time < 0.25
+        tasks = [asyncio.create_task(obj1.test_method(1)), asyncio.create_task(obj2.test_method(2))]
+        assert {await asyncio.wait_for(started.get(), timeout=1.0), await asyncio.wait_for(started.get(), timeout=1.0)} == {1, 2}
+        both_started.set()
+        assert set(await asyncio.gather(*tasks)) == {1, 2}
 
 
 class TestRetryApiParity:
+    def test_retry_module_has_no_event_bus_imports(self):
+        retry_ast = ast.parse(inspect.getsource(retry_helpers))
+        forbidden_modules = {'abxbus.base_event', 'abxbus.event_bus'}
+        imported_modules = {
+            node.module for node in ast.walk(retry_ast) if isinstance(node, ast.ImportFrom) and node.module is not None
+        }
+        assert imported_modules.isdisjoint(forbidden_modules)
+
     async def test_defaults_match_typescript(self):
         params = inspect.signature(retry).parameters
         assert params['max_attempts'].default == 1
         assert params['timeout'].default is None
+        assert params['slow_timeout'].default is None
+
+    async def test_standalone_async_function_without_event_bus(self):
+        calls = 0
+
+        @retry(max_attempts=2)
+        async def standalone():
+            nonlocal calls
+            calls += 1
+            return 'ok'
+
+        assert await standalone() == 'ok'
+        assert calls == 1
 
     async def test_max_attempts_counts_total_attempts(self):
         attempt_count = 0
@@ -1071,9 +1347,28 @@ class TestRetryApiParity:
         assert await flaky() == 'ok'
         assert attempt_count == 3
 
+    async def test_slow_timeout_throttles_per_decorated_async_method(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level('WARNING', logger='abxbus.retry')
+
+        @retry(max_attempts=1, slow_timeout=0.01)
+        async def slow(first: str, second: str, *, key: str):
+            await asyncio.sleep(0.03)
+            return 'ok'
+
+        assert await asyncio.gather(
+            slow('abcdef', 'defghi', key='value'),
+            slow('abcdef', 'defghi', key='value'),
+            slow('abcdef', 'defghi', key='value'),
+        ) == ['ok', 'ok', 'ok']
+        messages = [record.getMessage() for record in caplog.records if record.getMessage().startswith('Warning: slow(')]
+        assert len(messages) == 1
+        assert messages[0].startswith('Warning: slow(abc, def, key=val) slow (0.')
+
     async def test_semaphore_name_callable_uses_call_args_for_keying(self):
         active = 0
         max_active = 0
+        started: asyncio.Queue[None] = asyncio.Queue()
+        release = asyncio.Event()
 
         def _semaphore_key(a: str, b: str) -> str:
             return f'{a}-{b}'
@@ -1088,16 +1383,605 @@ class TestRetryApiParity:
             nonlocal active, max_active
             active += 1
             max_active = max(max_active, active)
-            await asyncio.sleep(0.05)
+            started.put_nowait(None)
+            await release.wait()
             active -= 1
 
         max_active = 0
-        await asyncio.gather(keyed('same', 'key'), keyed('same', 'key'))
+        same_tasks = [asyncio.create_task(keyed('same', 'key')), asyncio.create_task(keyed('same', 'key'))]
+        await asyncio.wait_for(started.get(), timeout=1.0)
+        assert active == 1
+        release.set()
+        await asyncio.gather(*same_tasks)
         assert max_active == 1
 
         max_active = 0
-        await asyncio.gather(keyed('a', '1'), keyed('b', '2'))
-        assert max_active >= 2
+        release = asyncio.Event()
+        different_tasks = [asyncio.create_task(keyed('a', '1')), asyncio.create_task(keyed('b', '2'))]
+        await asyncio.wait_for(started.get(), timeout=1.0)
+        await asyncio.wait_for(started.get(), timeout=1.0)
+        assert active == 2
+        release.set()
+        await asyncio.gather(*different_tasks)
+        assert max_active == 2
+
+    async def test_in_process_semaphore_is_shared_between_async_and_sync_wrappers(self):
+        semaphore_name = f'test_async_sync_shared_sem_{time.time_ns()}'
+        events: list[str] = []
+        holder_started = threading.Event()
+        release_holder = threading.Event()
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name)
+        async def async_holder():
+            events.append('async-start')
+            holder_started.set()
+            await asyncio.to_thread(release_holder.wait)
+            events.append('async-end')
+            return 'async'
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name)
+        def sync_contender():
+            events.append('sync-start')
+            return 'sync'
+
+        holder_task = asyncio.create_task(async_holder())
+        await asyncio.to_thread(holder_started.wait)
+        contender_started = asyncio.Event()
+
+        async def run_contender():
+            contender_started.set()
+            return await asyncio.to_thread(sync_contender)
+
+        contender_task = asyncio.create_task(run_contender())
+        await contender_started.wait()
+        assert not contender_task.done()
+        release_holder.set()
+        result = await contender_task
+        assert result == 'sync'
+        assert await holder_task == 'async'
+
+        assert events == ['async-start', 'async-end', 'sync-start']
+
+
+class TestSyncRetryApiParity:
+    def test_sync_standalone_function_without_event_bus(self):
+        calls = 0
+
+        @retry(max_attempts=2)
+        def standalone():
+            nonlocal calls
+            calls += 1
+            return 'ok'
+
+        result = standalone()
+        assert result == 'ok'
+        assert calls == 1
+        assert not inspect.isawaitable(result)
+
+    def test_sync_function_succeeds_on_first_attempt_with_no_retries_needed(self):
+        @retry(max_attempts=3)
+        def fn():
+            return 'ok'
+
+        result = fn()
+        assert result == 'ok'
+        assert not inspect.isawaitable(result)
+
+    def test_sync_function_retries_on_failure_and_eventually_succeeds(self):
+        calls = 0
+
+        @retry(max_attempts=3)
+        def fn():
+            nonlocal calls
+            calls += 1
+            if calls < 3:
+                raise ValueError(f'fail {calls}')
+            return 'ok'
+
+        assert fn() == 'ok'
+        assert calls == 3
+
+    def test_sync_throws_after_exhausting_all_attempts(self):
+        calls = 0
+
+        @retry(max_attempts=3)
+        def fn():
+            nonlocal calls
+            calls += 1
+            raise ValueError('always fails')
+
+        with pytest.raises(ValueError, match='always fails'):
+            fn()
+        assert calls == 3
+
+    def test_sync_max_attempts_one_means_no_retries(self):
+        calls = 0
+
+        @retry(max_attempts=1)
+        def fn():
+            nonlocal calls
+            calls += 1
+            raise ValueError('fail')
+
+        with pytest.raises(ValueError, match='fail'):
+            fn()
+        assert calls == 1
+
+    def test_sync_default_max_attempts_one_means_single_attempt(self):
+        calls = 0
+
+        @retry()
+        def fn():
+            nonlocal calls
+            calls += 1
+            raise ValueError('fail')
+
+        with pytest.raises(ValueError, match='fail'):
+            fn()
+        assert calls == 1
+
+    def test_sync_retry_after_introduces_blocking_delay_between_attempts(self):
+        calls = 0
+        timestamps: list[float] = []
+
+        @retry(max_attempts=3, retry_after=0.05)
+        def fn():
+            nonlocal calls
+            calls += 1
+            timestamps.append(time.monotonic())
+            if calls < 3:
+                raise ValueError('fail')
+            return 'ok'
+
+        assert fn() == 'ok'
+        assert calls == 3
+        assert timestamps[1] - timestamps[0] >= 0.05
+        assert timestamps[2] - timestamps[1] >= 0.05
+
+    def test_sync_retry_backoff_factor_increases_blocking_delay_between_attempts(self):
+        from abxbus.retry import retry_delay
+
+        calls = 0
+        started = time.monotonic()
+
+        @retry(max_attempts=4, retry_after=0.03, retry_backoff_factor=2.0)
+        def fn():
+            nonlocal calls
+            calls += 1
+            if calls < 4:
+                raise ValueError('fail')
+            return 'ok'
+
+        assert fn() == 'ok'
+        elapsed = time.monotonic() - started
+        assert calls == 4
+        delays = [retry_delay(0.03, 2.0, attempt) for attempt in range(1, 4)]
+        assert delays == [0.03, 0.06, 0.12]
+        assert elapsed >= sum(delays)
+
+    def test_sync_retry_on_errors_supports_exception_classes_and_regex(self):
+        calls = 0
+
+        @retry(
+            max_attempts=4,
+            retry_after=0.01,
+            retry_on_errors=[re.compile(r'^ValueError: temporary failure$'), RuntimeError],
+        )
+        def fn():
+            nonlocal calls
+            calls += 1
+            if calls < 3:
+                raise ValueError('temporary failure')
+            return 'ok'
+
+        assert fn() == 'ok'
+        assert calls == 3
+
+    def test_sync_retry_on_errors_does_not_retry_non_matching_errors(self):
+        calls = 0
+
+        @retry(max_attempts=3, retry_on_errors=[RuntimeError])
+        def fn():
+            nonlocal calls
+            calls += 1
+            raise ValueError('not retryable')
+
+        with pytest.raises(ValueError, match='not retryable'):
+            fn()
+        assert calls == 1
+
+    def test_sync_slow_timeout_throttles_per_decorated_method(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level('WARNING', logger='abxbus.retry')
+
+        @retry(max_attempts=1, slow_timeout=0.01)
+        def slow(first: str, second: str, *, key: str):
+            time.sleep(0.03)
+            return 'ok'
+
+        assert slow('abcdef', 'defghi', key='value') == 'ok'
+        assert slow('abcdef', 'defghi', key='value') == 'ok'
+        messages = [record.getMessage() for record in caplog.records if record.getMessage().startswith('Warning: slow(')]
+        assert len(messages) == 1
+        assert messages[0].startswith('Warning: slow(abc, def, key=val) slow (0.')
+
+    def test_sync_timeout_triggers_timeout_error_on_slow_attempts(self):
+        calls = 0
+
+        @retry(max_attempts=1, timeout=0.02)
+        def fn():
+            nonlocal calls
+            calls += 1
+            time.sleep(0.05)
+            return 'ok'
+
+        with pytest.raises(TimeoutError):
+            fn()
+        assert calls == 1
+
+    def test_sync_timeout_allows_fast_attempts_to_succeed(self):
+        @retry(max_attempts=1, timeout=1)
+        def fn():
+            return 'fast'
+
+        assert fn() == 'fast'
+
+    def test_sync_timed_out_attempts_are_retried_when_max_attempts_gt_one(self):
+        calls = 0
+
+        @retry(max_attempts=3, timeout=0.02)
+        def fn():
+            nonlocal calls
+            calls += 1
+            if calls < 3:
+                time.sleep(0.05)
+                return 'slow'
+            return 'ok'
+
+        assert fn() == 'ok'
+        assert calls == 3
+
+    def test_sync_semaphore_limit_controls_max_concurrent_executions(self):
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+        pair_entered = threading.Barrier(2)
+
+        @retry(max_attempts=1, semaphore_limit=2, semaphore_name=f'test_sync_sem_limit_{time.time_ns()}')
+        def fn():
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+            pair_entered.wait()
+            with lock:
+                active -= 1
+
+        threads = [threading.Thread(target=fn) for _ in range(6)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert max_active == 2
+
+    def test_sync_semaphore_lax_false_throws_when_slots_are_full(self):
+        semaphore_name = f'test_sync_sem_lax_false_{time.time_ns()}'
+        first_started = threading.Event()
+        release_first = threading.Event()
+        call_count = 0
+        call_lock = threading.Lock()
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name, semaphore_lax=False, semaphore_timeout=0.05)
+        def fn():
+            nonlocal call_count
+            with call_lock:
+                call_count += 1
+                current_call = call_count
+            if current_call == 1:
+                first_started.set()
+                release_first.wait()
+            return 'ok'
+
+        first_error: list[BaseException] = []
+
+        def run_first() -> None:
+            try:
+                fn()
+            except BaseException as exc:
+                first_error.append(exc)
+
+        thread = threading.Thread(target=run_first)
+        thread.start()
+        first_started.wait()
+        try:
+            with pytest.raises(TimeoutError):
+                fn()
+        finally:
+            release_first.set()
+        thread.join()
+        assert not first_error
+        assert call_count == 1
+
+    def test_sync_semaphore_lax_true_proceeds_without_semaphore_on_timeout(self):
+        semaphore_name = f'test_sync_sem_lax_true_{time.time_ns()}'
+        first_started = threading.Event()
+        release_first = threading.Event()
+        call_count = 0
+        call_lock = threading.Lock()
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name, semaphore_lax=True, semaphore_timeout=0.05)
+        def fn():
+            nonlocal call_count
+            with call_lock:
+                call_count += 1
+                current_call = call_count
+            if current_call == 1:
+                first_started.set()
+                release_first.wait()
+            return 'ok'
+
+        thread = threading.Thread(target=fn)
+        thread.start()
+        first_started.wait()
+        try:
+            assert fn() == 'ok'
+        finally:
+            release_first.set()
+        thread.join()
+        assert call_count == 2
+
+    def test_sync_preserves_function_name(self):
+        @retry()
+        def my_named_function():
+            return 'ok'
+
+        assert my_named_function.__name__ == 'my_named_function'
+
+    def test_sync_preserves_this_context_for_methods(self):
+        class MyService:
+            value = 42
+
+            @retry(max_attempts=2)
+            def fetch(self):
+                return self.value
+
+        assert MyService().fetch() == 42
+
+    def test_sync_max_attempts_zero_is_treated_as_one(self):
+        calls = 0
+
+        @retry(max_attempts=0)
+        def fn():
+            nonlocal calls
+            calls += 1
+            return 'ok'
+
+        assert fn() == 'ok'
+        assert calls == 1
+
+    def test_sync_passes_arguments_through_to_wrapped_function(self):
+        @retry(max_attempts=1)
+        def fn(a: int, b: str):
+            return f'{a}-{b}'
+
+        assert fn(1, 'hello') == '1-hello'
+
+    def test_sync_semaphore_is_held_across_all_retry_attempts(self):
+        active = 0
+        max_active = 0
+        total_calls = 0
+        lock = threading.Lock()
+
+        @retry(max_attempts=3, semaphore_limit=1, semaphore_name=f'test_sync_sem_across_retries_{time.time_ns()}')
+        def fn():
+            nonlocal active, max_active, total_calls
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+                total_calls += 1
+                current_call = total_calls
+            with lock:
+                active -= 1
+            if current_call % 2 == 1:
+                raise ValueError('fail')
+            return 'ok'
+
+        results: list[str] = []
+        threads = [threading.Thread(target=lambda: results.append(fn())) for _ in range(3)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert max_active == 1
+        assert sorted(results) == ['ok', 'ok', 'ok']
+        assert total_calls == 6
+
+    def test_sync_semaphore_released_even_when_all_attempts_fail(self):
+        @retry(max_attempts=2, semaphore_limit=1, semaphore_name=f'test_sync_sem_release_on_fail_{time.time_ns()}')
+        def fn():
+            raise ValueError('always fails')
+
+        with pytest.raises(ValueError):
+            fn()
+        with pytest.raises(ValueError):
+            fn()
+
+    def test_sync_reentrant_call_on_same_semaphore_does_not_deadlock(self):
+        semaphore_name = f'test_sync_shared_sem_{time.time_ns()}'
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name)
+        def inner():
+            return 'inner ok'
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name)
+        def outer():
+            return f'outer got: {inner()}'
+
+        assert outer() == 'outer got: inner ok'
+
+    def test_sync_recursive_function_with_semaphore_does_not_deadlock(self):
+        depth = 0
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=f'test_sync_recursive_sem_{time.time_ns()}')
+        def recurse(n: int) -> int:
+            nonlocal depth
+            depth += 1
+            if n <= 1:
+                return 1
+            return n + recurse(n - 1)
+
+        assert recurse(5) == 15
+        assert depth == 5
+
+    def test_sync_three_level_nested_reentrancy_does_not_deadlock(self):
+        semaphore_name = f'test_sync_nested_sem_{time.time_ns()}'
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name)
+        def level3():
+            return 'level3'
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name)
+        def level2():
+            return f'level2>{level3()}'
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_name=semaphore_name)
+        def level1():
+            return f'level1>{level2()}'
+
+        assert level1() == 'level1>level2>level3'
+
+    def test_sync_semaphore_scope_class_shares_semaphore_across_instances(self):
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+        entered: queue.Queue[None] = queue.Queue()
+        release = threading.Event()
+
+        class Worker:
+            @retry(max_attempts=1, semaphore_limit=1, semaphore_scope='class', semaphore_name=f'test_sync_class_{time.time_ns()}')
+            def run(self):
+                nonlocal active, max_active
+                with lock:
+                    active += 1
+                    max_active = max(max_active, active)
+                entered.put(None)
+                release.wait()
+                with lock:
+                    active -= 1
+                return 'done'
+
+        a = Worker()
+        b = Worker()
+        launch = threading.Barrier(2)
+
+        def run(worker: Worker) -> None:
+            launch.wait()
+            worker.run()
+
+        threads = [threading.Thread(target=run, args=(a,)), threading.Thread(target=run, args=(b,))]
+        for thread in threads:
+            thread.start()
+        entered.get(timeout=1)
+        assert active == 1
+        release.set()
+        for thread in threads:
+            thread.join()
+        assert max_active == 1
+
+    def test_sync_semaphore_scope_instance_gives_each_instance_its_own_semaphore(self):
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+        both_entered = threading.Barrier(2)
+
+        class Worker:
+            @retry(max_attempts=1, semaphore_limit=1, semaphore_scope='instance', semaphore_name='test_sync_instance')
+            def run(self):
+                nonlocal active, max_active
+                with lock:
+                    active += 1
+                    max_active = max(max_active, active)
+                both_entered.wait()
+                with lock:
+                    active -= 1
+                return 'done'
+
+        a = Worker()
+        b = Worker()
+        threads = [threading.Thread(target=a.run), threading.Thread(target=b.run)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert max_active == 2
+
+    def test_sync_semaphore_scope_instance_serializes_calls_on_same_instance(self):
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+        entered: queue.Queue[None] = queue.Queue()
+        release = threading.Event()
+
+        class Worker:
+            @retry(max_attempts=1, semaphore_limit=1, semaphore_scope='instance', semaphore_name='test_sync_instance_same')
+            def run(self):
+                nonlocal active, max_active
+                with lock:
+                    active += 1
+                    max_active = max(max_active, active)
+                entered.put(None)
+                release.wait()
+                with lock:
+                    active -= 1
+                return 'done'
+
+        worker = Worker()
+        launch = threading.Barrier(3)
+
+        def run() -> None:
+            launch.wait()
+            worker.run()
+
+        threads = [threading.Thread(target=run) for _ in range(3)]
+        for thread in threads:
+            thread.start()
+        entered.get(timeout=1)
+        assert active == 1
+        release.set()
+        for thread in threads:
+            thread.join()
+        assert max_active == 1
+
+    def test_sync_semaphore_name_callable_uses_call_args_for_keying(self):
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+        both_keys_entered = threading.Barrier(2)
+        resolved_args: list[tuple[str, str]] = []
+
+        def _semaphore_key(a: str, b: str) -> str:
+            with lock:
+                resolved_args.append((a, b))
+            return f'{a}-{b}'
+
+        @retry(max_attempts=1, semaphore_limit=1, semaphore_scope='global', semaphore_name=_semaphore_key)
+        def keyed(a: str, b: str):
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+            both_keys_entered.wait()
+            with lock:
+                active -= 1
+
+        threads = [threading.Thread(target=keyed, args=args) for args in [('a', '1'), ('b', '2')]]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert max_active == 2
+        assert set(resolved_args) == {('a', '1'), ('b', '2')}
 
 
 if __name__ == '__main__':

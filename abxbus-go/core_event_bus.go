@@ -558,8 +558,8 @@ func rustCoreEventRecord(event *BaseEvent) (map[string]any, error) {
 		"event_started_at":               event.EventStartedAt,
 		"event_completed_at":             event.EventCompletedAt,
 	}
-	payload := make(map[string]any, len(event.Payload))
-	for key, value := range event.Payload {
+	payload := make(map[string]any, len(event.EventExtraPayload))
+	for key, value := range event.EventExtraPayload {
 		payload[key] = value
 	}
 	event.mu.Unlock()
@@ -1289,7 +1289,7 @@ func baseEventFromCoreRecord(record map[string]any) (*BaseEvent, error) {
 		EventHandlerConcurrency:     EventHandlerConcurrencyMode(coreString(record["event_handler_concurrency"])),
 		EventHandlerCompletion:      EventHandlerCompletionMode(coreString(record["event_handler_completion"])),
 		EventBlocksParentCompletion: coreBool(record["event_blocks_parent_completion"]),
-		Payload:                     map[string]any{},
+		EventExtraPayload:                     map[string]any{},
 		EventResults:                map[string]*EventResult{},
 		eventResultOrder:            []string{},
 		done_ch:                     make(chan struct{}),
@@ -1303,7 +1303,7 @@ func baseEventFromCoreRecord(record map[string]any) (*BaseEvent, error) {
 	}
 	for key, value := range record {
 		if _, known := coreEventKnownFields[key]; !known {
-			event.Payload[key] = normalizeCoreValue(value)
+			event.EventExtraPayload[key] = normalizeCoreValue(value)
 		}
 	}
 	if rawResults, ok := record["event_results"].(map[string]any); ok && len(rawResults) > 0 {
@@ -1525,8 +1525,8 @@ func restoreCoreJSONNumbers(event *BaseEvent) {
 		return
 	}
 	event.mu.Lock()
-	if payload, ok := restoreJSONNumbers(event.Payload).(map[string]any); ok {
-		event.Payload = payload
+	if payload, ok := restoreJSONNumbers(event.EventExtraPayload).(map[string]any); ok {
+		event.EventExtraPayload = payload
 	}
 	results := make([]*EventResult, 0, len(event.EventResults))
 	for _, result := range event.EventResults {
@@ -3014,10 +3014,9 @@ func copyBaseEventRuntime(target *BaseEvent, source *BaseEvent, bus *EventBus) {
 	target.EventHandlerConcurrency = source.EventHandlerConcurrency
 	target.EventHandlerCompletion = source.EventHandlerCompletion
 	target.EventBlocksParentCompletion = source.EventBlocksParentCompletion
-	target.Payload = cloneMap(source.Payload)
+	target.EventExtraPayload = cloneMap(source.EventExtraPayload)
 	target.EventResults = cloneEventResults(source.EventResults, target)
 	target.eventResultOrder = append([]string{}, source.eventResultOrder...)
-	target.eventResultTypeRaw = append([]byte{}, source.eventResultTypeRaw...)
 	target.coreKnown = source.coreKnown
 	if bus != nil {
 		target.Bus = bus

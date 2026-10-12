@@ -1,63 +1,18 @@
 name: test-ts
 
 on:
-  push:
-    branches:
-      - main
-      - stable
-      - 'releases/**'
-    tags:
-      - '*'
-  pull_request:
-  workflow_dispatch:
+  workflow_call:
 
 jobs:
-  lint_ts:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: abxbus-ts
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: abxbus-ts/pnpm-lock.yaml
-
-      - name: Install native TypeScript build tools
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: cmake gcc-14 g++-14
-          version: native-typescript-build-tools-v1
-          execute_install_scripts: true
-
-      - name: Configure native TypeScript build tools
-        run: |
-          echo "CC=gcc-14" >> "$GITHUB_ENV"
-          echo "CXX=g++-14" >> "$GITHUB_ENV"
-          cmake --version
-          gcc-14 --version
-
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec prettier --check .
-      - run: pnpm exec eslint .
-      - run: pnpm run typecheck
-
   find_ts_tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       TS_TASKS: ${{ steps.lsgrep.outputs.TS_TASKS }}
       # [{ "kind": "test" | "example", "name": "eventbus_basics" }, ...]
       TS_TEST_TASKS: ${{ steps.lsgrep.outputs.TS_TEST_TASKS }}
       # [{ "kind": "test", "name": "eventbus_basics" }, ...]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: lsgrep
         run: |
           TS_TEST_TASKS="$(
@@ -91,9 +46,8 @@ jobs:
 
   tests:
     needs:
-      - lint_ts
       - find_ts_tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -107,7 +61,8 @@ jobs:
       run:
         working-directory: abxbus-ts
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup-core
 
       - name: Check that the previous step managed to find some tasks for us to run
         run: |
@@ -116,29 +71,21 @@ jobs:
             exit 1
           fi
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          version: 10
+          version: 10.33.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
-      - name: Set up Rust for core-backed TypeScript tests
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Cargo for core-backed TypeScript tests
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: abxbus-core -> target
-
       - name: Install bridge service binaries
         if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')
-        uses: awalsh128/cache-apt-pkgs-action@latest
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
-          packages: redis-server nats-server postgresql sqlite3 gcc-14 g++-14
+          packages: redis-server nats-server postgresql sqlite3
           version: bridge-service-binaries-v1
           execute_install_scripts: true
 
@@ -159,54 +106,51 @@ jobs:
           initdb --version
           postgres --version
           sqlite3 --version
-          gcc-14 --version
 
       - name: Install native TypeScript build tools
-        uses: awalsh128/cache-apt-pkgs-action@latest
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: cmake gcc-14 g++-14
-          version: native-typescript-build-tools-v1
+          version: native-typescript-gcc14-tools-v1
           execute_install_scripts: true
 
       - name: Configure native TypeScript build tools
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')
         run: |
           echo "CC=gcc-14" >> "$GITHUB_ENV"
           echo "CXX=g++-14" >> "$GITHUB_ENV"
           cmake --version
           gcc-14 --version
+          g++-14 --version
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Build Rust core Tachyon binary
-        run: cargo build --manifest-path ../abxbus-core/Cargo.toml --bin abxbus-core-tachyon
+      - name: Install optional Tachyon peer dependency
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')
+        run: pnpm add --save-dev --lockfile=false --config.frozen-lockfile=false @tachyon-ipc/core@0.5.0
 
       - name: Build @tachyon-ipc/core native binding
-        if: matrix.task.kind == 'test' && matrix.task.name == 'bridges'
-        env:
-          CC: gcc-14
-          CXX: g++-14
+        if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')
         run: |
-          # pnpm doesn't run @tachyon-ipc/core's `install` lifecycle script by default
-          # (onlyBuiltDependencies gate), so build it manually and copy the native
-          # binding to the path bus.js expects (`@tachyon-ipc/build/Release/...`).
           TACHYON_PKG_DIR="$(node -p "path.dirname(require.resolve('@tachyon-ipc/core/package.json'))")"
           TACHYON_PARENT_DIR="$(dirname "${TACHYON_PKG_DIR}")"
-          (cd "${TACHYON_PKG_DIR}" && npx --yes cmake-js compile)
           mkdir -p "${TACHYON_PARENT_DIR}/build/Release"
           cp "${TACHYON_PKG_DIR}/build/Release/tachyon_node.node" "${TACHYON_PARENT_DIR}/build/Release/tachyon_node.node"
           node -e "const m = require('@tachyon-ipc/core'); console.log('tachyon-ipc loaded:', typeof m.Bus)"
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'EventBus_locking')
         with:
-          enable-cache: true
+          version: "0.10.6"
+          enable-cache: false
           activate-environment: true
 
       - name: Install Python deps for cross-runtime tests
         if: matrix.task.kind == 'test' && (matrix.task.name == 'cross_runtime_roundtrip' || matrix.task.name == 'EventBus_locking')
         run: |
           cd ..
-          uv sync --dev --all-extras
+          uv sync --no-cache --dev --all-extras --no-extra tachyon
 
       - name: Verify bridge optional Node deps
         if: matrix.task.kind == 'test' && (matrix.task.name == 'bridges' || matrix.task.name == 'cross_runtime_roundtrip')
@@ -229,7 +173,7 @@ jobs:
         if: matrix.task.kind == 'example'
         run: NODE_V8_COVERAGE=.v8-coverage NODE_OPTIONS='--expose-gc' node --expose-gc --import tsx examples/${{ matrix.task.name }}.ts
       - name: Upload raw coverage data
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ts-coverage-${{ matrix.task.kind }}-${{ matrix.task.name }}
           path: |
@@ -241,38 +185,25 @@ jobs:
 
   coverage:
     needs: tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup-core
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          version: 10
+          version: 10.33.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
-      - name: Install native TypeScript build tools
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: cmake gcc-14 g++-14
-          version: native-typescript-build-tools-v1
-          execute_install_scripts: true
-
-      - name: Configure native TypeScript build tools
-        run: |
-          echo "CC=gcc-14" >> "$GITHUB_ENV"
-          echo "CXX=g++-14" >> "$GITHUB_ENV"
-          cmake --version
-          gcc-14 --version
-
       - run: cd abxbus-ts && pnpm install --frozen-lockfile
 
       - name: Download all coverage data
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: ts-coverage-*
           path: coverage-data/
@@ -356,7 +287,7 @@ jobs:
 
       - name: Upload merged coverage report
         id: upload_ts_coverage_report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ts-coverage-report
           path: |
@@ -370,44 +301,31 @@ jobs:
           echo "[Download TypeScript HTML coverage artifact (ts-coverage-report)](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts/${{ steps.upload_ts_coverage_report.outputs.artifact-id }})" >> "$GITHUB_STEP_SUMMARY"
 
   perf:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       perf_stats: ${{ steps.export_perf.outputs.perf_stats }}
     defaults:
       run:
         working-directory: abxbus-ts
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/setup-core
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          version: 10
+          version: 10.33.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: abxbus-ts/pnpm-lock.yaml
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
-      - uses: denoland/setup-deno@v2
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
         with:
           deno-version: v2.x
-
-      - name: Install native TypeScript build tools
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: cmake gcc-14 g++-14
-          version: native-typescript-build-tools-v1
-          execute_install_scripts: true
-
-      - name: Configure native TypeScript build tools
-        run: |
-          echo "CC=gcc-14" >> "$GITHUB_ENV"
-          echo "CXX=g++-14" >> "$GITHUB_ENV"
-          cmake --version
-          gcc-14 --version
 
       - run: pnpm install --frozen-lockfile
       - name: Run TypeScript runtime perf

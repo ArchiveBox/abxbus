@@ -7,9 +7,10 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Map, Value};
 
 use crate::{
-    event_handler::EventHandler,
+    event_handler::{validate_optional_seconds_at_least_minus_one, EventHandler},
     event_result::{EventResult, EventResultStatus},
     id::uuid_v7_string,
+    jsonschema::{normalize_json_schema, validate_json_schema_value},
     types::{
         EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode, EventStatus,
     },
@@ -28,6 +29,8 @@ pub struct BaseEventData {
     pub event_concurrency: Option<EventConcurrencyMode>,
     pub event_handler_timeout: Option<f64>,
     pub event_handler_slow_timeout: Option<f64>,
+    pub event_ttl: Option<f64>,
+    pub event_result_ttl: Option<f64>,
     pub event_handler_concurrency: Option<EventHandlerConcurrencyMode>,
     pub event_handler_completion: Option<EventHandlerCompletionMode>,
     pub event_blocks_parent_completion: bool,
@@ -46,13 +49,32 @@ pub struct BaseEventData {
     #[serde(skip)]
     pub event_result_order: Vec<String>,
     #[serde(flatten)]
-    pub payload: Map<String, Value>,
+    pub event_extra_payload: Map<String, Value>,
 }
 
 pub struct BaseEvent {
     pub inner: Mutex<BaseEventData>,
     pub completed: Event,
-    runtime_eventbus_id: Mutex<Option<String>>,
+    runtime_eventbus_id: Mutex<Option<Arc<str>>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct EventResetOptions {
+    pub ids: bool,
+    pub status: bool,
+    pub timestamps: bool,
+    pub results: bool,
+}
+
+impl Default for EventResetOptions {
+    fn default() -> Self {
+        Self {
+            ids: true,
+            status: true,
+            timestamps: true,
+            results: true,
+        }
+    }
 }
 
 pub type EventResultInclude = Arc<dyn Fn(Option<&Value>, &EventResult) -> bool + Send + Sync>;
@@ -156,11 +178,27 @@ fn take_usize(payload: &mut Map<String, Value>, key: &str) -> Result<Option<usiz
     take_from_value(payload, key)
 }
 
-fn take_option_f64(payload: &mut Map<String, Value>, key: &str) -> Result<Option<f64>, String> {
+fn take_option_f64_at_least_minus_one(
+    payload: &mut Map<String, Value>,
+    key: &str,
+) -> Result<Option<f64>, String> {
     let value: Option<f64> = take_from_value(payload, key)?;
     if let Some(value) = value {
-        if value < 0.0 {
-            return Err(format!("Invalid {key}: must be >= 0 or null"));
+        if !value.is_finite() || value < -1.0 {
+            return Err(format!("Invalid {key}: must be finite and >= -1 or null"));
+        }
+    }
+    Ok(value)
+}
+
+fn take_option_f64_nonnegative(
+    payload: &mut Map<String, Value>,
+    key: &str,
+) -> Result<Option<f64>, String> {
+    let value: Option<f64> = take_from_value(payload, key)?;
+    if let Some(value) = value {
+        if !value.is_finite() || value < 0.0 {
+            return Err(format!("Invalid {key}: must be finite and >= 0 or null"));
         }
     }
     Ok(value)
@@ -200,19 +238,24 @@ impl BaseEvent {
 
         let event_version =
             take_string(&mut payload, "event_version")?.unwrap_or_else(|| "0.0.1".to_string());
-        let event_timeout = take_option_f64(&mut payload, "event_timeout")?;
-        let event_slow_timeout = take_option_f64(&mut payload, "event_slow_timeout")?;
+        let event_timeout = take_option_f64_nonnegative(&mut payload, "event_timeout")?;
+        let event_slow_timeout = take_option_f64_nonnegative(&mut payload, "event_slow_timeout")?;
         let event_concurrency = take_option_from_value(&mut payload, "event_concurrency")?;
-        let event_handler_timeout = take_option_f64(&mut payload, "event_handler_timeout")?;
+        let event_handler_timeout =
+            take_option_f64_nonnegative(&mut payload, "event_handler_timeout")?;
         let event_handler_slow_timeout =
-            take_option_f64(&mut payload, "event_handler_slow_timeout")?;
+            take_option_f64_nonnegative(&mut payload, "event_handler_slow_timeout")?;
+        let event_ttl = take_option_f64_at_least_minus_one(&mut payload, "event_ttl")?;
+        let event_result_ttl =
+            take_option_f64_at_least_minus_one(&mut payload, "event_result_ttl")?;
         let event_handler_concurrency =
             take_option_from_value(&mut payload, "event_handler_concurrency")?;
         let event_handler_completion =
             take_option_from_value(&mut payload, "event_handler_completion")?;
         let event_blocks_parent_completion =
             take_bool(&mut payload, "event_blocks_parent_completion")?.unwrap_or(false);
-        let event_result_type = take_option_value(&mut payload, "event_result_type");
+        let event_result_type =
+            take_option_value(&mut payload, "event_result_type").map(normalize_json_schema);
         let event_id = take_string(&mut payload, "event_id")?.unwrap_or_else(uuid_v7_string);
         let event_path = take_vec_string(&mut payload, "event_path")?.unwrap_or_default();
         let event_parent_id = take_option_string(&mut payload, "event_parent_id")?;
@@ -240,6 +283,8 @@ impl BaseEvent {
                 event_concurrency,
                 event_handler_timeout,
                 event_handler_slow_timeout,
+                event_ttl,
+                event_result_ttl,
                 event_handler_concurrency,
                 event_handler_completion,
                 event_blocks_parent_completion,
@@ -256,7 +301,7 @@ impl BaseEvent {
                 event_completed_at,
                 event_results,
                 event_result_order: Vec::new(),
-                payload,
+                event_extra_payload: payload,
             }),
             completed: Event::new(),
             runtime_eventbus_id: Mutex::new(None),
@@ -271,12 +316,15 @@ impl BaseEvent {
         self.event_bus()
     }
 
-    pub(crate) fn set_runtime_eventbus_id(&self, eventbus_id: Option<String>) {
+    pub(crate) fn set_runtime_eventbus_id(&self, eventbus_id: Option<Arc<str>>) {
         *self.runtime_eventbus_id.lock() = eventbus_id;
     }
 
     pub(crate) fn runtime_eventbus_id(&self) -> Option<String> {
-        self.runtime_eventbus_id.lock().clone()
+        self.runtime_eventbus_id
+            .lock()
+            .as_ref()
+            .map(|eventbus_id| eventbus_id.to_string())
     }
 
     fn validate_event_type(event_type: &str) -> Result<(), String> {
@@ -298,6 +346,12 @@ impl BaseEvent {
             "bus", "emit", "now", "wait", "toString", "toJSON", "fromJSON",
         ];
         for key in payload.keys() {
+            if key == "event_extra_payload" {
+                return Err(
+                    "Event JSON must be flat; event_extra_payload is runtime-only and must not appear on the wire"
+                        .to_string(),
+                );
+            }
             if RESERVED_USER_EVENT_FIELDS.contains(&key.as_str()) {
                 return Err(format!(
                     "Reserved runtime field is not allowed in payload: {key}"
@@ -648,7 +702,7 @@ impl BaseEvent {
         if value.is_null() || Self::is_base_event_json(&value) {
             return Ok(value);
         }
-        Self::validate_json_schema_value(&schema, &schema, &value, "$")
+        validate_json_schema_value(&schema, &schema, &value, "$")
             .map(|_| value.clone())
             .map_err(|error| {
                 let preview = serde_json::to_string(&value)
@@ -660,157 +714,6 @@ impl BaseEvent {
                     "EventHandlerResultSchemaError: Event handler return value {preview}... did not match event_result_type: {error}"
                 )
             })
-    }
-
-    fn validate_json_schema_value(
-        root_schema: &Value,
-        schema: &Value,
-        value: &Value,
-        path: &str,
-    ) -> Result<(), String> {
-        if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
-            let resolved = Self::resolve_json_schema_ref(root_schema, reference)
-                .ok_or_else(|| format!("{path} unresolved schema reference {reference}"))?;
-            Self::validate_json_schema_value(root_schema, resolved, value, path)?;
-            if schema.as_object().is_some_and(|object| object.len() == 1) {
-                return Ok(());
-            }
-        }
-
-        if let Some(any_of) = schema.get("anyOf").and_then(Value::as_array) {
-            if any_of.iter().any(|branch| {
-                Self::validate_json_schema_value(root_schema, branch, value, path).is_ok()
-            }) {
-                return Ok(());
-            }
-            return Err(format!("{path} did not match anyOf schema"));
-        }
-
-        let schema_type = schema.get("type");
-        if let Some(Value::Array(types)) = schema_type {
-            if types
-                .iter()
-                .any(|schema_type| Self::json_schema_type_matches(schema_type, value))
-            {
-                return Self::validate_json_schema_children(root_schema, schema, value, path);
-            }
-            return Err(format!("{path} did not match any allowed type"));
-        }
-
-        if let Some(schema_type) = schema_type {
-            if !Self::json_schema_type_matches(schema_type, value) {
-                return Err(format!(
-                    "{path} expected {}",
-                    schema_type.as_str().unwrap_or("matching schema type")
-                ));
-            }
-        } else if (schema.get("properties").is_some()
-            || schema.get("required").is_some()
-            || schema.get("additionalProperties").is_some())
-            && !value.is_object()
-        {
-            return Err(format!("{path} expected object"));
-        }
-
-        Self::validate_json_schema_children(root_schema, schema, value, path)
-    }
-
-    fn resolve_json_schema_ref<'a>(root_schema: &'a Value, reference: &str) -> Option<&'a Value> {
-        let pointer = reference.strip_prefix('#')?;
-        if pointer.is_empty() {
-            Some(root_schema)
-        } else {
-            root_schema.pointer(pointer)
-        }
-    }
-
-    fn json_schema_type_matches(schema_type: &Value, value: &Value) -> bool {
-        match schema_type.as_str() {
-            Some("string") => value.is_string(),
-            Some("number") => value.is_number(),
-            Some("integer") => value
-                .as_f64()
-                .is_some_and(|number| number.is_finite() && number.fract() == 0.0),
-            Some("boolean") => value.is_boolean(),
-            Some("null") => value.is_null(),
-            Some("array") => value.is_array(),
-            Some("object") => value.is_object(),
-            _ => true,
-        }
-    }
-
-    fn validate_json_schema_children(
-        root_schema: &Value,
-        schema: &Value,
-        value: &Value,
-        path: &str,
-    ) -> Result<(), String> {
-        if let Some(items_schema) = schema.get("items") {
-            if let Some(items) = value.as_array() {
-                for (index, item) in items.iter().enumerate() {
-                    Self::validate_json_schema_value(
-                        root_schema,
-                        items_schema,
-                        item,
-                        &format!("{path}[{index}]"),
-                    )?;
-                }
-            }
-        }
-
-        let Some(object) = value.as_object() else {
-            return Ok(());
-        };
-
-        if let Some(required) = schema.get("required").and_then(Value::as_array) {
-            for key in required.iter().filter_map(Value::as_str) {
-                if !object.contains_key(key) {
-                    return Err(format!("{path}.{key} is required"));
-                }
-            }
-        }
-
-        let properties = schema.get("properties").and_then(Value::as_object);
-        if let Some(properties) = properties {
-            for (key, property_schema) in properties {
-                if let Some(property_value) = object.get(key) {
-                    Self::validate_json_schema_value(
-                        root_schema,
-                        property_schema,
-                        property_value,
-                        &format!("{path}.{key}"),
-                    )?;
-                }
-            }
-        }
-
-        match schema.get("additionalProperties") {
-            Some(Value::Bool(false)) => {
-                if let Some(properties) = properties {
-                    for key in object.keys() {
-                        if !properties.contains_key(key) {
-                            return Err(format!("{path}.{key} is not allowed"));
-                        }
-                    }
-                }
-            }
-            Some(additional_schema @ Value::Object(_)) => {
-                for (key, item) in object {
-                    if properties.is_some_and(|props| props.contains_key(key)) {
-                        continue;
-                    }
-                    Self::validate_json_schema_value(
-                        root_schema,
-                        additional_schema,
-                        item,
-                        &format!("{path}.{key}"),
-                    )?;
-                }
-            }
-            _ => {}
-        }
-
-        Ok(())
     }
 
     fn sort_fallback_event_results(results: &mut [EventResult]) {
@@ -848,6 +751,9 @@ impl BaseEvent {
 
     pub fn mark_started(&self) {
         let mut event = self.inner.lock();
+        if event.event_status == EventStatus::Completed || event.event_completed_at.is_some() {
+            return;
+        }
         if event.event_started_at.is_none() {
             event.event_started_at = Some(now_iso());
         }
@@ -865,6 +771,14 @@ impl BaseEvent {
         if event.event_completed_at.is_none() {
             event.event_completed_at = Some(now_iso());
         }
+        if event.event_started_at.is_none() {
+            event.event_started_at = event.event_completed_at.clone();
+        }
+    }
+
+    pub(crate) fn should_skip_handler_execution(&self) -> bool {
+        let event = self.inner.lock();
+        event.event_status == EventStatus::Completed || event.event_completed_at.is_some()
     }
 
     pub(crate) fn notify_completed(&self) {
@@ -872,14 +786,37 @@ impl BaseEvent {
     }
 
     pub fn event_reset(&self) -> Arc<Self> {
+        self.event_reset_with_options(EventResetOptions::default())
+    }
+
+    pub fn event_reset_with_options(&self, options: EventResetOptions) -> Arc<Self> {
         let mut data = self.inner.lock().clone();
-        data.event_id = uuid_v7_string();
-        data.event_status = EventStatus::Pending;
-        data.event_started_at = None;
-        data.event_completed_at = None;
+        // Bridges and event_reset share this lifecycle reset path so redispatch semantics stay aligned.
+        if options.ids {
+            data.event_id = uuid_v7_string();
+            data.event_path.clear();
+            data.event_parent_id = None;
+            data.event_emitted_by_handler_id = None;
+            data.event_blocks_parent_completion = false;
+        }
+        if options.status {
+            data.event_status = EventStatus::Pending;
+            data.event_completed_at = None;
+        }
+        if options.timestamps {
+            data.event_started_at = None;
+            data.event_completed_at = None;
+        }
         data.event_pending_bus_count = 0;
-        data.event_results.clear();
-        data.event_result_order.clear();
+        if options.results {
+            data.event_results.clear();
+            data.event_result_order.clear();
+        } else if options.ids {
+            let event_id = data.event_id.clone();
+            for result in data.event_results.values_mut() {
+                result.event_id = event_id.clone();
+            }
+        }
         Arc::new(Self {
             inner: Mutex::new(data),
             completed: Event::new(),
@@ -894,6 +831,9 @@ impl BaseEvent {
             if event.event_emitted_by_result_id.is_none() {
                 object.remove("event_emitted_by_result_id");
             }
+            if let Some(schema) = object.get_mut("event_result_type") {
+                *schema = normalize_json_schema(schema.take());
+            }
             if event.event_results.is_empty() {
                 object.remove("event_results");
             } else {
@@ -905,6 +845,16 @@ impl BaseEvent {
             }
         }
         value
+    }
+
+    pub fn event_payload(&self) -> Map<String, Value> {
+        self.inner
+            .lock()
+            .event_extra_payload
+            .iter()
+            .filter(|(key, _)| !key.starts_with("event_"))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
     }
 
     pub fn event_errors(&self) -> Vec<String> {
@@ -987,6 +937,8 @@ impl BaseEvent {
                 "event_concurrency",
                 "event_handler_timeout",
                 "event_handler_slow_timeout",
+                "event_ttl",
+                "event_result_ttl",
                 "event_handler_concurrency",
                 "event_handler_completion",
                 "event_result_type",
@@ -1017,6 +969,9 @@ impl BaseEvent {
                     "event_status".to_string(),
                     Value::String("pending".to_string()),
                 );
+            }
+            if let Some(schema) = object.get_mut("event_result_type") {
+                *schema = normalize_json_schema(schema.take());
             }
 
             if let Some(Value::Array(raw_results)) = object.get("event_results").cloned() {
@@ -1077,6 +1032,10 @@ impl BaseEvent {
 
         let mut parsed: BaseEventData =
             serde_json::from_value(value).expect("invalid base_event json");
+        validate_optional_seconds_at_least_minus_one("event_ttl", parsed.event_ttl)
+            .expect("event_ttl must be finite and >= -1 or None");
+        validate_optional_seconds_at_least_minus_one("event_result_ttl", parsed.event_result_ttl)
+            .expect("event_result_ttl must be finite and >= -1 or None");
         parsed.event_result_order = event_result_order
             .into_iter()
             .filter(|handler_id| parsed.event_results.contains_key(handler_id))

@@ -70,10 +70,10 @@ test('handlers can be sync or async', async () => {
   assert.ok(results.includes('async'))
 })
 
-test('class matcher falls back to class name and matches generic BaseEvent event_type', async () => {
-  const bus = new EventBus('ClassNameFallbackBus')
+test('event class matcher matches generic BaseEvent event_type', async () => {
+  const bus = new EventBus('EventClassPatternBus')
 
-  class DifferentNameFromClass extends BaseEvent {}
+  const DifferentNameFromClass = BaseEvent.extend('DifferentNameFromClass', {})
 
   const seen: string[] = []
   bus.on(DifferentNameFromClass, (event: BaseEvent) => {

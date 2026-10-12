@@ -16,44 +16,52 @@ Implemented core features:
 - `ToJSON` / `FromJSON` roundtrips for EventBus, BaseEvent, EventHandler, EventResult
 - Python/TS/Rust-compatible cross-runtime roundtrip helper: `tests/roundtrip_cli`
 - `JSONLEventBridge`
-- `OtelTracingMiddleware`
 
 Intentionally not implemented yet:
 - event_suck helpers
 - retry decorator / retry middleware
 - bridge implementations other than JSONLBridge
-- middleware implementations other than OtelTracingMiddleware
+- middleware implementations
 
 ## Development
 
+Verify the local module from the repository checkout:
+
 ```bash
-go test ./...
-go run ./tests/roundtrip_cli events input.json output.json
-go run ./tests/roundtrip_cli bus input.json output.json
+cd abxbus-go
+test "$(go list -m -f '{{.Path}}')" = "github.com/ArchiveBox/abxbus/abxbus-go/v2"
+go test .
+```
+
+Import the package as `abxbus "github.com/ArchiveBox/abxbus/abxbus-go/v2"`.
+
+```bash
+cd abxbus-go
+go test ./tests/roundtrip_cli
 ```
 
 Result helpers are intentionally no-arg by default:
 
-```go
+<pre><code>
 value, err := event.EventResult()
 values, err := event.EventResultsList(&abxbus.EventResultOptions{
 	RaiseIfAny:  false,
 	RaiseIfNone: false,
 })
-```
+</code></pre>
 
 Only `EmitWithContext(...)` accepts a caller-provided context. `Now()`, `Wait()`, `EventResult()`, and `EventResultsList()` use the context snapshot captured at emit/handler-dispatch time plus their own native timeout options.
 
 Destroy clears bus-owned state by default:
 
-```go
+<pre><code>
 bus.Destroy()
 bus.DestroyWithOptions(&abxbus.EventBusDestroyOptions{Clear: false}) // still terminal; preserves handlers/history for inspection
-```
+</code></pre>
 
 Cross-runtime parity tests live in the Python and TypeScript test suites. From the repo root:
 
 ```bash
-uv run pytest tests/test_cross_runtime_roundtrip.py -q
-pnpm --dir abxbus-ts exec node --expose-gc --test --import tsx tests/cross_runtime_roundtrip.test.ts
+test -f tests/test_cross_runtime_roundtrip.py
+test -f abxbus-ts/tests/cross_runtime_roundtrip.test.ts
 ```

@@ -109,7 +109,7 @@ func TestRustCoreEventBusFindAndFilterReadFromCoreSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if found == nil || found.EventID != latest.EventID || int(found.Payload["value"].(float64)) != 2 {
+	if found == nil || found.EventID != latest.EventID || int(found.EventExtraPayload["value"].(float64)) != 2 {
 		t.Fatalf("unexpected found event: %#v latest=%s first=%s", found, latest.EventID, first.EventID)
 	}
 	if len(found.EventResults) != 1 {
