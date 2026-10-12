@@ -564,8 +564,10 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         eventbus: 'EventBus',
         handler_slow_timeout: float | None,
     ) -> Callable[[], Coroutine[Any, Any, None]] | None:
-        should_warn_for_slow_handler = handler_slow_timeout is not None and (
-            self.timeout is None or self.timeout > handler_slow_timeout
+        should_warn_for_slow_handler = (
+            handler_slow_timeout is not None
+            and handler_slow_timeout > 0
+            and (self.timeout is None or self.timeout > handler_slow_timeout)
         )
         if not should_warn_for_slow_handler:
             return None
@@ -602,9 +604,10 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
     ) -> T_EventResultType | 'BaseEvent[Any]' | None:
         handler_task: asyncio.Task[Any] | None = None
         handler_return_value: T_EventResultType | BaseEvent[Any] | None = None
+        timed_out = False
         try:
             if dispatch_context is None:
-                handler_return_value = await handler(event)
+                handler_task = asyncio.create_task(handler(event))
             else:
                 merged_context = dispatch_context.copy()
                 for variable, value in contextvars.copy_context().items():
@@ -613,10 +616,34 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
                     handler(event),
                     context=merged_context,
                 )
+            if self.timeout is None:
                 handler_return_value = await handler_task
+            else:
+                timeout_scope = asyncio.timeout(self.timeout)
+                try:
+                    async with timeout_scope:
+                        handler_return_value = await asyncio.shield(handler_task)
+                except TimeoutError as exc:
+                    if not timeout_scope.expired():
+                        raise
+                    timed_out = True
+                    raise self._on_handler_timeout(event) from exc
             return handler_return_value
         finally:
-            await cancel_and_await(handler_task, timeout=0.1)
+            current_task = asyncio.current_task()
+            if handler_task is not None and (timed_out or (current_task is not None and current_task.cancelling())):
+                if not handler_task.done():
+                    handler_task.cancel()
+
+                    def consume_late_task_exception(task: asyncio.Task[Any]) -> None:
+                        try:
+                            task.exception()
+                        except (asyncio.CancelledError, Exception):
+                            pass
+
+                    handler_task.add_done_callback(consume_late_task_exception)
+            else:
+                await cancel_and_await(handler_task, timeout=0.1)
 
     def _on_handler_timeout(self, event: 'BaseEvent[T_EventResultType]') -> EventHandlerTimeoutError:
         children = f' and interrupted any processing of {len(event.event_children)} child events' if event.event_children else ''
@@ -652,9 +679,6 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
         format_exception_for_log: Callable[[BaseException], str],
     ) -> None:
         normalized_error: Exception = exc
-        if isinstance(exc, TimeoutError) and not isinstance(exc, EventHandlerTimeoutError):
-            timeout_message = str(exc) or f'Event handler {self.handler.label}({event}) timed out'
-            normalized_error = EventHandlerTimeoutError(timeout_message)
 
         self.update(error=normalized_error)
         red = '\033[91m'
@@ -707,16 +731,15 @@ class EventResult(BaseModel, Generic[T_EventResultType]):
 
             with eventbus._run_with_handler_dispatch_context(event, self.handler_id):  # pyright: ignore[reportPrivateUsage]
                 slow_handler_monitor = self._create_slow_handler_warning_timer(event, eventbus, handler_slow_timeout)
-                async with self._run_with_timeout(event):
-                    async with _run_with_slow_monitor(
-                        slow_handler_monitor,
-                        task_name=f'{eventbus}.slow_handler_monitor({event}, {self.handler.label})',
-                    ):
-                        handler_return_value = await self._call_handler(
-                            event,
-                            handler,
-                            dispatch_context,
-                        )
+                async with _run_with_slow_monitor(
+                    slow_handler_monitor,
+                    task_name=f'{eventbus}.slow_handler_monitor({event}, {self.handler.label})',
+                ):
+                    handler_return_value = await self._call_handler(
+                        event,
+                        handler,
+                        dispatch_context,
+                    )
                 self.update(result=handler_return_value)
             return self.result
 
@@ -1219,10 +1242,6 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
             if in_handler_context():
                 await core_bus.process_event_immediately(self)
-                return
-
-            process_now_locally = getattr(core_bus, '_process_event_now_locally_if_possible', None)
-            if callable(process_now_locally) and await process_now_locally(self):
                 return
 
             core_bus._explicit_await_event_ids.add(self.event_id)  # pyright: ignore[reportPrivateUsage]
@@ -2037,9 +2056,9 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         """Return a copy with selected lifecycle fields reset for redispatch."""
         fresh_event = self.__class__.model_validate(self.model_dump(mode='python'))
         if not results:
-            fresh_event.event_results = EventResultsDict(
-                {handler_id: result.model_copy(deep=True) for handler_id, result in self.event_results.items()}
-            )
+            fresh_event.event_results = {
+                handler_id: result.model_copy(deep=True) for handler_id, result in self.event_results.items()
+            }
         return fresh_event._reset_for_dispatch(ids=ids, status=status, timestamps=timestamps, results=results)
 
     def _get_dispatch_context(self) -> contextvars.Context | None:

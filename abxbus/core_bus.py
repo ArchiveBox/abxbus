@@ -132,7 +132,33 @@ class _HandlerRegistry(dict[str, EventHandler]):
         return key, value
 
 
+class _CoreEventHistory(EventHistory[T_Event]):
+    def __init__(self, bus: RustCoreEventBus, *, max_history_size: int | None, max_history_drop: bool) -> None:
+        super().__init__(max_history_size=max_history_size, max_history_drop=max_history_drop)
+        self._bus_ref = weakref.ref(bus)
+
+    @contextmanager
+    def retain(self, event: T_Event) -> Any:
+        bus = self._bus_ref()
+        if bus is None:
+            raise RuntimeError('event history owner no longer exists')
+        request = {'type': 'retain_history', 'bus_id': bus.bus_id, 'event_id': event.event_id}
+        bus.core.request_messages({**request, 'retain': True})
+        try:
+            yield
+        finally:
+            bus.core.request_messages({**request, 'retain': False})
+
+
 class RustCoreEventBus:
+    @staticmethod
+    def _validate_optional_timeout_seconds(value: float | None, field_name: str) -> float | None:
+        if value is None:
+            return None
+        seconds = float(value)
+        assert seconds >= 0, f'{field_name} must be >= 0 or None, got: {value!r}'
+        return seconds
+
     _instances: weakref.WeakSet[RustCoreEventBus] = weakref.WeakSet()
     _event_global_serial_lock: ReentrantLock = ReentrantLock()
     _INLINE_SYNC_INVOCATION_THRESHOLD = 64
@@ -146,6 +172,16 @@ class RustCoreEventBus:
     event_slow_timeout: float | None
     event_handler_timeout: float | None
     event_handler_slow_timeout: float | None
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in ('event_ttl', 'event_result_ttl'):
+            if value is not None and (not math.isfinite(value) or value < -1):
+                raise ValueError(f'{name} must be finite and >= -1 or None')
+            object.__setattr__(self, name, value)
+            if 'event_history' in self.__dict__:
+                self._register_bus_to_core()
+            return
+        object.__setattr__(self, name, value)
 
     def __init__(
         self,
@@ -165,12 +201,16 @@ class RustCoreEventBus:
         event_handler_timeout: float | None = None,
         event_handler_slow_timeout: float | None = 30.0,
         event_handler_detect_file_paths: bool = True,
-        local_immediate_handlers: bool = False,
-        local_immediate_skip_core_handlers: bool = False,
-        local_immediate_child_events: bool = False,
         middlewares: list[Any] | None = None,
         background_worker: bool = False,
     ) -> None:
+        for field_name, value in (
+            ('event_timeout', event_timeout),
+            ('event_slow_timeout', event_slow_timeout),
+            ('event_handler_timeout', event_handler_timeout),
+            ('event_handler_slow_timeout', event_handler_slow_timeout),
+        ):
+            self._validate_optional_timeout_seconds(value, field_name)
         self._uses_shared_core = core is None
         self._owns_core_transport = False
         self.core = core or RustCoreClient.acquire_named(name)
@@ -181,14 +221,8 @@ class RustCoreEventBus:
         self.event_handler_concurrency = cast(HandlerConcurrency, _option_value(event_handler_concurrency))
         self.event_handler_completion = cast(HandlerCompletion, _option_value(event_handler_completion))
         self.event_handler_detect_file_paths = event_handler_detect_file_paths
-        self.local_immediate_handlers = local_immediate_handlers
-        self.local_immediate_skip_core_handlers = local_immediate_skip_core_handlers
-        self.local_immediate_child_events = local_immediate_child_events
         self.event_timeout = event_timeout
         self.event_slow_timeout = event_slow_timeout
-        for field, value in (('event_ttl', event_ttl), ('event_result_ttl', event_result_ttl)):
-            if value is not None and (not math.isfinite(value) or value < -1):
-                raise ValueError(f'{field} must be finite and >= -1 or None')
         self.event_ttl = event_ttl
         self.event_result_ttl = event_result_ttl
         self.event_handler_timeout = event_handler_timeout
@@ -215,7 +249,9 @@ class RustCoreEventBus:
         self._handler_names_by_key: dict[str, set[str]] = {}
         self._events: dict[str, BaseEvent[Any]] = {}
         self._event_ids_without_results: set[str] = set()
-        self.event_history = EventHistory[BaseEvent[Any]](max_history_size=max_history_size, max_history_drop=max_history_drop)
+        self.event_history = _CoreEventHistory[BaseEvent[Any]](
+            self, max_history_size=max_history_size, max_history_drop=max_history_drop
+        )
         self.pending_event_queue: CleanShutdownQueue[BaseEvent[Any]] = CleanShutdownQueue(maxsize=0)
         self.middlewares = [middleware() if isinstance(middleware, type) else middleware for middleware in (middlewares or [])]
         self._middleware_event_statuses: set[tuple[str, str]] = set()
@@ -246,8 +282,6 @@ class RustCoreEventBus:
         self._queue_jump_parent_invocation_by_event_id: dict[str, str] = {}
         self._explicit_await_event_ids: set[str] = set()
         self._hydrating_completed_event_ids: set[str] = set()
-        self._locally_completed_without_core_patch: set[str] = set()
-        self._local_only_event_ids: set[str] = set()
         self._event_slow_warning_timers: dict[str, asyncio.TimerHandle | asyncio.Task[None] | threading.Timer] = {}
         self._async_handler_slow_warning_entries: dict[tuple[str, str], tuple[float, BaseEvent[Any], EventHandler]] = {}
         self._async_handler_slow_warning_timer: asyncio.TimerHandle | None = None
@@ -315,12 +349,14 @@ class RustCoreEventBus:
         self._registered_max_history_drop = self.event_history.max_history_drop
 
     def _track_event_ttl_deadline(self, event: BaseEvent[Any]) -> None:
-        for message in self.core.request_messages({
-            'type': 'update_event_retention',
-            'event_id': event.event_id,
-            'event_ttl': event.event_ttl,
-            'event_result_ttl': event.event_result_ttl,
-        }):
+        for message in self.core.request_messages(
+            {
+                'type': 'update_event_retention',
+                'event_id': event.event_id,
+                'event_ttl': event.event_ttl,
+                'event_result_ttl': event.event_result_ttl,
+            }
+        ):
             self._apply_core_message(message)
 
     def _sync_bus_history_policy(self) -> None:
@@ -339,25 +375,17 @@ class RustCoreEventBus:
     def _on_history_remove(self, event: BaseEvent[Any]) -> None:
         if event.event_status != EventStatus.COMPLETED:
             return
+        parent = self._events.get(event.event_parent_id) if event.event_parent_id else None
+        if parent is not None:
+            for result in parent.event_results.values():
+                result.event_children[:] = [child for child in result.event_children if child.event_id != event.event_id]
         self._events.pop(event.event_id, None)
         self._event_ids_without_results.discard(event.event_id)
         self.in_flight_event_ids.discard(event.event_id)
         self._drain_pending_on_await_event_ids.discard(event.event_id)
         self._queue_jump_event_ids.discard(event.event_id)
         self._queue_jump_parent_invocation_by_event_id.pop(event.event_id, None)
-        self._local_only_event_ids.discard(event.event_id)
         self._cancel_event_slow_warning_timer(event.event_id)
-
-    def _forget_completed_event_if_unretained(self, event: BaseEvent[Any]) -> None:
-        max_size = self.event_history.max_history_size
-        if event.event_status != EventStatus.COMPLETED or max_size is None:
-            return
-        if max_size == 0:
-            self.event_history.pop(event.event_id, None)
-            self._on_history_remove(event)
-            return
-        if self.event_history.max_history_drop and event.event_id not in self.event_history:
-            self._on_history_remove(event)
 
     def _index_event_relationships(self, event: BaseEvent[Any]) -> None:
         if event.event_emitted_by_result_id is not None:
@@ -374,21 +402,15 @@ class RustCoreEventBus:
                 self._merge_referenced_event_instance(parent)
 
     def _trim_event_history_if_needed(self, *, force: bool = False, strict: bool = False) -> None:
+        self._sync_bus_history_policy()
         max_size = self.event_history.max_history_size
-        if max_size is None:
+        if max_size is None or len(self.event_history) <= max_size:
             return
-        if max_size == 0:
-            for event_id, event in list(self.event_history.items()):
-                if event.event_status == EventStatus.COMPLETED:
-                    self.event_history.pop(event_id, None)
-                    self._on_history_remove(event)
-            return
-        if not self.event_history.max_history_drop:
-            return
-        soft_limit = max(max_size, int(max_size * 1.2))
-        limit = max_size if strict else soft_limit
-        if len(self.event_history) > limit:
-            self.event_history.trim_event_history(on_remove=self._on_history_remove, owner_label=str(self))
+        retained = set(self.core.list_event_ids('*', bus_id=self.bus_id))
+        for event_id, event in list(self.event_history.items()):
+            if event_id not in retained and event.event_status == EventStatus.COMPLETED:
+                self.event_history.pop(event_id)
+                self._on_history_remove(event)
 
     def _mark_idle(self) -> None:
         self._trim_event_history_if_needed(force=True, strict=True)
@@ -485,6 +507,7 @@ class RustCoreEventBus:
         handler_name: str | None = None,
         handler_timeout: float | None = None,
         handler_slow_timeout: float | None = None,
+        handler_result_ttl: float | None = None,
         handler_concurrency: HandlerConcurrency | None = None,
         handler_completion: HandlerCompletion | None = None,
     ) -> EventHandler: ...
@@ -498,6 +521,7 @@ class RustCoreEventBus:
         handler_name: str | None = None,
         handler_timeout: float | None = None,
         handler_slow_timeout: float | None = None,
+        handler_result_ttl: float | None = None,
         handler_concurrency: HandlerConcurrency | None = None,
         handler_completion: HandlerCompletion | None = None,
     ) -> EventHandler: ...
@@ -510,6 +534,7 @@ class RustCoreEventBus:
         handler_name: str | None = None,
         handler_timeout: float | None = None,
         handler_slow_timeout: float | None = None,
+        handler_result_ttl: float | None = None,
         handler_concurrency: HandlerConcurrency | None = None,
         handler_completion: HandlerCompletion | None = None,
     ) -> EventHandler:
@@ -524,6 +549,7 @@ class RustCoreEventBus:
             detect_handler_file_path=self.event_handler_detect_file_paths,
             handler_timeout=handler_timeout,
             handler_slow_timeout=handler_slow_timeout,
+            handler_result_ttl=handler_result_ttl,
         )
         if handler_name is not None:
             handler_entry.handler_name = handler_name
@@ -577,23 +603,12 @@ class RustCoreEventBus:
             'handler_registered_at': handler.handler_registered_at,
             'handler_timeout': handler.handler_timeout,
             'handler_slow_timeout': handler.handler_slow_timeout,
+            'handler_result_ttl': handler.handler_result_ttl,
             'handler_concurrency': options.get('handler_concurrency'),
             'handler_completion': options.get('handler_completion'),
         }
 
     def _sync_handler_to_core(self, handler: EventHandler) -> None:
-        if self.local_immediate_skip_core_handlers and (
-            self._handler_can_run_local_immediate(handler)
-            or (
-                self.local_immediate_handlers
-                and not self.middlewares
-                and not self._background_worker
-                and self._handler_can_run_local_async(handler)
-            )
-        ):
-            self._registered_core_handler_ids.discard(handler.id)
-            self._registered_core_handler_records.pop(handler.id, None)
-            return
         handler_record = self._handler_core_record(handler)
         if self._registered_core_handler_records.get(handler.id) == handler_record:
             return
@@ -613,15 +628,6 @@ class RustCoreEventBus:
         if isinstance(getattr(callable_handler, '__self__', None), RustCoreEventBus):
             return False
         return True
-
-    @staticmethod
-    def _handler_can_run_local_async(handler: EventHandler) -> bool:
-        callable_handler = handler.handler
-        if callable_handler is None:
-            return False
-        if isinstance(getattr(callable_handler, '__self__', None), RustCoreEventBus):
-            return False
-        return inspect.iscoroutinefunction(callable_handler)
 
     def _unregister_handler_from_core(self, handler_id: str) -> None:
         self._handler_core_options.pop(handler_id, None)
@@ -672,400 +678,11 @@ class RustCoreEventBus:
             if not names:
                 self._handler_names_by_key.pop(event_pattern, None)
 
-    def _can_batch_core_emit(
-        self,
-        event_obj: BaseEvent[Any],
-        *,
-        active_handler_id: str | None,
-        forwarding_existing_event: bool,
-        parent_invocation_id: str | None,
-        explicit_active_child_emit: bool,
-    ) -> bool:
-        return (
-            not forwarding_existing_event
-            and self._can_schedule_async_processing()
-            and not self._background_worker
-            and self._suppress_auto_driver <= 0
-            and active_handler_id is None
-            and parent_invocation_id is None
-            and not explicit_active_child_emit
-            and event_obj.event_parent_id is None
-            and event_obj.event_emitted_by_result_id is None
-            and event_obj.event_emitted_by_handler_id is None
-        )
-
-    def _can_run_local_immediate_handlers(
-        self,
-        event_obj: BaseEvent[Any],
-        *,
-        active_bus: RustCoreEventBus | None,
-        active_event: BaseEvent[Any] | None,
-        active_handler_id: str | None,
-        forwarding_existing_event: bool,
-        had_existing_pending: bool,
-        parent_invocation_id: str | None,
-        explicit_active_child_emit: bool,
-    ) -> bool:
-        if not self.local_immediate_handlers:
-            return False
-        if self.middlewares or self._background_worker:
-            return False
-        completion = _option_value(event_obj.event_handler_completion) or self.event_handler_completion
-        if completion != 'all':
-            return False
-        handlers = self._matching_local_handlers_for_event(event_obj)
-        child_fast_path = (
-            self.local_immediate_child_events
-            and explicit_active_child_emit
-            and active_bus is self
-            and active_event is not None
-            and event_obj.event_parent_id == active_event.event_id
-            and event_obj.event_emitted_by_result_id is not None
-        )
-        no_handler_child_fast_path = (
-            not handlers
-            and explicit_active_child_emit
-            and active_event is not None
-            and event_obj.event_parent_id == active_event.event_id
-            and event_obj.event_emitted_by_result_id is not None
-            and not forwarding_existing_event
-            and parent_invocation_id is None
-        )
-        top_level_fast_path = (
-            active_handler_id is None
-            and not forwarding_existing_event
-            and not had_existing_pending
-            and parent_invocation_id is None
-            and not explicit_active_child_emit
-            and event_obj.event_parent_id is None
-            and event_obj.event_emitted_by_result_id is None
-            and event_obj.event_emitted_by_handler_id is None
-        )
-        if child_fast_path:
-            if forwarding_existing_event or parent_invocation_id is not None:
-                return False
-        elif no_handler_child_fast_path:
-            pass
-        else:
-            if (
-                active_handler_id is not None
-                or forwarding_existing_event
-                or had_existing_pending
-                or parent_invocation_id is not None
-                or explicit_active_child_emit
-                or event_obj.event_parent_id is not None
-                or event_obj.event_emitted_by_result_id is not None
-                or event_obj.event_emitted_by_handler_id is not None
-            ):
-                return False
-        if not (child_fast_path or no_handler_child_fast_path) and not top_level_fast_path:
-            return False
-        active_processing_tasks = {
-            task for task in self._processing_tasks if task is not asyncio.current_task() and not task.done()
-        }
-        active_invocation_tasks = {
-            task for task in self._local_invocation_tasks if task is not asyncio.current_task() and not task.done()
-        }
-        if self._pending_core_emits:
-            return False
-        if not (child_fast_path or no_handler_child_fast_path) and (active_processing_tasks or active_invocation_tasks):
-            return False
-        if not (child_fast_path or no_handler_child_fast_path) and self.in_flight_event_ids:
-            return False
-        if any(tasks for tasks in self._outcome_commit_tasks_by_event_id.values()):
-            return False
-        if handlers and not (child_fast_path or top_level_fast_path):
-            for bus in list(type(self)._instances):
-                if bus is self or bus._closed:
-                    continue
-                if bus.core is self.core:
-                    return False
-        for handler in handlers:
-            if not self._handler_can_run_local_immediate(handler):
-                return False
-        return True
-
-    def _run_local_immediate_handlers(self, event: BaseEvent[Any]) -> bool:
-        handlers = self._matching_local_handlers_for_event(event)
-        self._resolve_find_waiters(event)
-        if not handlers:
-            event._mark_completed(current_bus=cast(Any, self))  # pyright: ignore[reportPrivateUsage]
-            self._track_event_replayability_for_new_handlers(event)
-            self._mark_idle()
-            return True
-
-        for handler in handlers:
-            result = event.event_results.get(handler.id)
-            if result is None:
-                result = self._create_pending_result_fast(event, handler)
-            self._event_id_by_result_id[result.id] = event.event_id
-            result.update(status='started')
-            event._mark_started(result.started_at)  # pyright: ignore[reportPrivateUsage]
-            try:
-                with self._run_with_handler_dispatch_context(event, handler.id):
-                    value = handler(event)
-                if inspect.isawaitable(value) and not isinstance(value, BaseEvent):
-                    raise RuntimeError(
-                        'local_immediate_handlers only supports synchronous handlers; '
-                        f'{handler.handler_name} returned an awaitable'
-                    )
-                result.update(result=value)
-            except BaseException as exc:
-                result.update(error=exc)
-        self._track_event_replayability_for_new_handlers(event)
-        self._complete_event_if_local_results_terminal(event)
-        if event.event_status == EventStatus.COMPLETED:
-            self._mark_idle()
-            return True
-        return False
-
-    def _can_run_local_async_handlers(
-        self,
-        event_obj: BaseEvent[Any],
-        *,
-        active_bus: RustCoreEventBus | None,
-        active_event: BaseEvent[Any] | None,
-        active_handler_id: str | None,
-        forwarding_existing_event: bool,
-        had_existing_pending: bool,
-        parent_invocation_id: str | None,
-        explicit_active_child_emit: bool,
-    ) -> bool:
-        if not self.local_immediate_handlers:
-            return False
-        if self.middlewares or self._background_worker:
-            return False
-        if forwarding_existing_event or parent_invocation_id is not None:
-            return False
-        if self._pending_core_emits or any(tasks for tasks in self._outcome_commit_tasks_by_event_id.values()):
-            return False
-        if not self._can_schedule_async_processing():
-            return False
-        if (_option_value(event_obj.event_handler_completion) or self.event_handler_completion) != 'all':
-            return False
-        if (_option_value(event_obj.event_handler_concurrency) or self.event_handler_concurrency) != 'serial':
-            return False
-        handlers = self._matching_local_handlers_for_event(event_obj)
-        if not handlers or not any(self._handler_can_run_local_async(handler) for handler in handlers):
-            return False
-        if not all(
-            self._handler_can_run_local_async(handler) or self._handler_can_run_local_immediate(handler) for handler in handlers
-        ):
-            return False
-
-        top_level_fast_path = (
-            active_handler_id is None
-            and active_bus is None
-            and active_event is None
-            and not had_existing_pending
-            and not explicit_active_child_emit
-            and event_obj.event_parent_id is None
-            and event_obj.event_emitted_by_result_id is None
-            and event_obj.event_emitted_by_handler_id is None
-            and not self.in_flight_event_ids
-            and (self.local_immediate_skip_core_handlers or not self._active_local_tasks())
-        )
-        if top_level_fast_path:
-            return True
-
-        return (
-            self.local_immediate_child_events
-            and explicit_active_child_emit
-            and active_bus is not None
-            and active_bus is not self
-            and active_event is not None
-            and active_event.event_id in active_bus._local_only_event_ids
-            and event_obj.event_parent_id == active_event.event_id
-            and event_obj.event_emitted_by_result_id is not None
-        )
-
     @staticmethod
     def _deadline_at_after(seconds: float | None) -> str | None:
         if seconds is None:
             return None
         return (datetime.now(UTC) + timedelta(seconds=max(0.0, seconds))).isoformat().replace('+00:00', 'Z')
-
-    def _local_invocation_record(
-        self,
-        event: BaseEvent[Any],
-        handler: EventHandler,
-        result: EventResult[Any],
-    ) -> dict[str, Any]:
-        handler_timeout = self._number_option(handler.handler_timeout)
-        if handler_timeout is None:
-            handler_timeout = self._number_option(event.event_handler_timeout)
-        if handler_timeout is None:
-            handler_timeout = self._number_option(self.event_handler_timeout)
-        event_timeout = self._number_option(event.event_timeout)
-        if event_timeout is None:
-            event_timeout = self._number_option(self.event_timeout)
-        if event_timeout is not None and event_timeout <= 0:
-            event_timeout = None
-        return {
-            'handler_id': handler.id,
-            'event_id': event.event_id,
-            'result_id': result.id,
-            'invocation_id': f'local:{result.id}',
-            'fence': 0,
-            'event_snapshot': {
-                'event_timeout': event_timeout,
-                'event_handler_completion': _option_value(event.event_handler_completion) or self.event_handler_completion,
-            },
-            'result_snapshot': {
-                'timeout': handler_timeout,
-                'handler_timeout': handler_timeout,
-            },
-            'deadline_at': self._deadline_at_after(handler_timeout),
-            'event_deadline_at': self._deadline_at_after(event_timeout),
-        }
-
-    def _run_local_async_handlers(self, event: BaseEvent[Any]) -> bool:
-        handlers = self._matching_local_handlers_for_event(event)
-        if not handlers:
-            return False
-        self._start_event_slow_warning_timer(event)
-        self._resolve_find_waiters(event)
-        self._local_only_event_ids.add(event.event_id)
-        self.in_flight_event_ids.add(event.event_id)
-        on_idle = self._on_idle
-        if on_idle is not None:
-            on_idle.clear()
-        event._core_known = False  # pyright: ignore[reportPrivateUsage]
-        dispatch_context = event._get_dispatch_context()  # pyright: ignore[reportPrivateUsage]
-        context = dispatch_context.copy() if dispatch_context is not None else self._without_core_outcome_batch_context()
-        task = asyncio.create_task(self._run_local_async_handlers_task(event, handlers), context=context)
-        self._processing_tasks.add(task)
-        task.add_done_callback(self._processing_tasks.discard)
-        return True
-
-    async def _run_local_async_handlers_task(
-        self,
-        event: BaseEvent[Any],
-        handlers: list[EventHandler],
-    ) -> None:
-        expected_handler_ids = {handler.id for handler in handlers}
-        try:
-            for handler in handlers:
-                pending_result, _notify_pending = self._pending_result_for_invocation(event, handler)
-                active_result = self._start_result_fast(event, handler)
-                active_result.id = pending_result.id
-                self._event_id_by_result_id[active_result.id] = event.event_id
-                invocation = self._local_invocation_record(event, handler, active_result)
-                self._apply_effective_timeout_to_result(invocation, active_result, event, handler)
-                abort_context = ActiveAbortContext()
-                try:
-                    tokens = self._set_handler_context(event, handler.id)
-                    abort_token = set_active_abort_context(abort_context)
-                    try:
-                        with self._handler_event_path_context(event):
-                            result_value = await self._invoke_handler_value_async(invocation, event, handler, abort_context)
-                    finally:
-                        reset_active_abort_context(abort_token)
-                        self._reset_handler_context(tokens)
-                except EventHandlerAbortedError as exc:
-                    local_result = self._update_event_result_for_handler(event, handler, status='started')
-                    local_result.id = active_result.id
-                    self._apply_effective_timeout_to_result(invocation, local_result, event, handler)
-                    local_result.update(error=exc)
-                except Exception as exc:
-                    local_result = self._update_event_result_for_handler(event, handler, status='started')
-                    local_result.id = active_result.id
-                    self._apply_effective_timeout_to_result(invocation, local_result, event, handler)
-                    local_result.update(error=exc)
-                else:
-                    completed_result = self._complete_untyped_result_fast(event, handler, result_value)
-                    if completed_result is None:
-                        completed_result = self._update_event_result_for_handler(event, handler, result=result_value)
-                    completed_result.id = active_result.id
-                    self._event_id_by_result_id[completed_result.id] = event.event_id
-            self._track_event_replayability_for_new_handlers(event)
-            if not self._complete_local_only_event_if_terminal(event, expected_handler_ids):
-                await asyncio.sleep(0)
-                self._complete_local_only_event_if_terminal(event, expected_handler_ids)
-        finally:
-            if event.event_status == EventStatus.COMPLETED:
-                self._local_only_event_ids.discard(event.event_id)
-            if not self._event_has_unfinished_results(event):
-                self.in_flight_event_ids.discard(event.event_id)
-            if not self.in_flight_event_ids:
-                self._mark_idle()
-
-    async def _process_event_now_locally_if_possible(self, event: BaseEvent[Any]) -> bool:
-        if self.middlewares or self._background_worker:
-            return False
-        if event.event_emitted_by_result_id is not None or event.event_parent_id is not None:
-            return False
-        if self._find_parent_invocation_for_event(event) is not None:
-            return False
-        pending_records = [record for record in self._pending_core_emits if record.get('event_id') == event.event_id]
-        if not pending_records and event._core_known:  # pyright: ignore[reportPrivateUsage]
-            return False
-        handlers = self._matching_local_handlers_for_event(event)
-        if not handlers:
-            return False
-        if not all(
-            handler.handler is not None and not isinstance(getattr(handler.handler, '__self__', None), RustCoreEventBus)
-            for handler in handlers
-        ):
-            return False
-
-        self._pending_core_emits = [record for record in self._pending_core_emits if record.get('event_id') != event.event_id]
-        self._local_only_event_ids.add(event.event_id)
-        event._core_known = False  # pyright: ignore[reportPrivateUsage]
-        self._remove_pending_event(event.event_id)
-        self.in_flight_event_ids.add(event.event_id)
-        on_idle = self._on_idle
-        if on_idle is not None:
-            on_idle.clear()
-
-        expected_handler_ids = {handler.id for handler in handlers}
-        for handler in handlers:
-            pending_result, _notify_pending = self._pending_result_for_invocation(event, handler)
-            active_result = self._start_result_fast(event, handler)
-            active_result.id = pending_result.id
-            self._event_id_by_result_id[active_result.id] = event.event_id
-            invocation = self._local_invocation_record(event, handler, active_result)
-            self._apply_effective_timeout_to_result(invocation, active_result, event, handler)
-            abort_context = ActiveAbortContext()
-            try:
-                tokens = self._set_handler_context(event, handler.id)
-                abort_token = set_active_abort_context(abort_context)
-                try:
-                    with self._handler_event_path_context(event):
-                        result_value = await self._invoke_handler_value_async(invocation, event, handler, abort_context)
-                finally:
-                    reset_active_abort_context(abort_token)
-                    self._reset_handler_context(tokens)
-            except EventHandlerAbortedError as exc:
-                local_result = self._update_event_result_for_handler(event, handler, status='started')
-                local_result.id = active_result.id
-                self._apply_effective_timeout_to_result(invocation, local_result, event, handler)
-                local_result.update(error=exc)
-            except Exception as exc:
-                local_result = self._update_event_result_for_handler(event, handler, status='started')
-                local_result.id = active_result.id
-                self._apply_effective_timeout_to_result(invocation, local_result, event, handler)
-                local_result.update(error=exc)
-            else:
-                completed_result = self._complete_untyped_result_fast(event, handler, result_value)
-                if completed_result is None:
-                    completed_result = self._update_event_result_for_handler(event, handler, result=result_value)
-                completed_result.id = active_result.id
-                self._event_id_by_result_id[completed_result.id] = event.event_id
-            if (_option_value(event.event_handler_completion) or self.event_handler_completion) == 'first':
-                if any(result.status == 'completed' and result.result is not None for result in event.event_results.values()):
-                    expected_handler_ids = set(event.event_results.keys())
-                    break
-
-        self._track_event_replayability_for_new_handlers(event)
-        self._complete_local_only_event_if_terminal(event, expected_handler_ids)
-        if event.event_status == EventStatus.COMPLETED:
-            self._local_only_event_ids.discard(event.event_id)
-        if not self._event_has_unfinished_results(event):
-            self.in_flight_event_ids.discard(event.event_id)
-        if not self.in_flight_event_ids:
-            self._mark_idle()
-        return event.event_status == EventStatus.COMPLETED
 
     def off(
         self,
@@ -1094,6 +711,8 @@ class RustCoreEventBus:
 
     def emit(self, event: T_Event) -> T_Event:
         self._raise_if_destroyed()
+        for field_name in ('event_timeout', 'event_slow_timeout', 'event_handler_timeout', 'event_handler_slow_timeout'):
+            self._validate_optional_timeout_seconds(getattr(event, field_name), field_name)
         if self.pending_event_queue is None:  # type: ignore[comparison-overlap]
             self.pending_event_queue = CleanShutdownQueue(maxsize=0)
         event_obj = event
@@ -1133,17 +752,15 @@ class RustCoreEventBus:
             event_obj.event_path.append(self.label)
         if event_obj._get_dispatch_context() is None:  # pyright: ignore[reportPrivateUsage]
             event_obj._set_dispatch_context(self._without_core_outcome_batch_context())  # pyright: ignore[reportPrivateUsage]
-        event_obj.event_status = EventStatus.PENDING
         on_idle = self._on_idle
         if on_idle is not None:
             on_idle.clear()
         self._events[event_obj.event_id] = event_obj
-        self._local_only_event_ids.discard(event_obj.event_id)
         event_obj._core_event_bus_ref = weakref.ref(self)  # pyright: ignore[reportPrivateUsage]
         self.event_history[event_obj.event_id] = event_obj
         self._trim_event_history_if_needed()
         self._index_event_relationships(event_obj)
-        if self.middlewares:
+        if self.middlewares and not event_obj._should_skip_handler_execution():
             self._ensure_local_pending_results_for_event(event_obj)
         self._track_event_replayability_for_new_handlers(event_obj)
         had_existing_pending = any(event_id != event_obj.event_id for event_id in self.in_flight_event_ids)
@@ -1157,28 +774,6 @@ class RustCoreEventBus:
             and event_obj.event_parent_id == active_event.event_id
             and event_obj.event_emitted_by_result_id is not None
         )
-        if self._can_run_local_immediate_handlers(
-            event_obj,
-            active_bus=active_bus,
-            active_event=active_event,
-            active_handler_id=active_handler_id,
-            forwarding_existing_event=forwarding_existing_event,
-            had_existing_pending=had_existing_pending,
-            parent_invocation_id=parent_invocation_id,
-            explicit_active_child_emit=explicit_active_child_emit,
-        ) and self._run_local_immediate_handlers(event_obj):
-            return event_obj
-        if self._can_run_local_async_handlers(
-            event_obj,
-            active_bus=active_bus,
-            active_event=active_event,
-            active_handler_id=active_handler_id,
-            forwarding_existing_event=forwarding_existing_event,
-            had_existing_pending=had_existing_pending,
-            parent_invocation_id=parent_invocation_id,
-            explicit_active_child_emit=explicit_active_child_emit,
-        ) and self._run_local_async_handlers(event_obj):
-            return event_obj
         self._start_event_slow_warning_timer(event_obj)
         self.in_flight_event_ids.add(event_obj.event_id)
         if event_obj.event_id not in self._pending_event_ids:
@@ -1197,9 +792,6 @@ class RustCoreEventBus:
         event_record = self._event_record_for_core(event_obj)
         event_record.pop('event_pending_bus_count', None)
         event_record.pop('event_results', None)
-        event_record['event_status'] = 'pending'
-        event_record['event_started_at'] = None
-        event_record['event_completed_at'] = None
         defer_start = (
             had_existing_pending
             and self._can_schedule_async_processing()
@@ -1217,31 +809,6 @@ class RustCoreEventBus:
             defer_start = True
         if forwarding_existing_event:
             self._flush_related_pending_core_emits_sync()
-        if self._can_batch_core_emit(
-            event_obj,
-            active_handler_id=active_handler_id,
-            forwarding_existing_event=forwarding_existing_event,
-            parent_invocation_id=parent_invocation_id,
-            explicit_active_child_emit=explicit_active_child_emit,
-        ):
-            self._enqueue_core_emit(event_record)
-            event_obj._core_known = True  # pyright: ignore[reportPrivateUsage]
-            self._resolve_find_waiters(event_obj)
-            if (
-                resolved_event_concurrency == 'parallel'
-                and had_existing_pending
-                and active_handler_id is None
-                and event_obj.event_emitted_by_result_id is None
-                and self._can_schedule_async_processing()
-            ):
-                task = asyncio.create_task(
-                    self._process_event_now_locally_if_possible(event_obj),
-                    context=self._without_core_outcome_batch_context(),
-                )
-                self._processing_tasks.add(task)
-                task.add_done_callback(self._processing_tasks.discard)
-            self._ensure_background_driver(None)
-            return event_obj
         if forwarding_existing_event:
             core_messages = self.core.forward_event(
                 event_obj.event_id,
@@ -1591,7 +1158,6 @@ class RustCoreEventBus:
         self,
         target_event_id: str | None = None,
         *,
-        allow_local_terminal_completion: bool = False,
         initial_messages: list[dict[str, Any]] | None = None,
     ) -> None:
         try:
@@ -1739,14 +1305,6 @@ class RustCoreEventBus:
                         if event is None or event.event_status == EventStatus.COMPLETED:
                             self.in_flight_event_ids.discard(event_id)
                             continue
-                        if (
-                            allow_local_terminal_completion
-                            and event.event_status != EventStatus.COMPLETED
-                            and self._complete_event_if_local_results_terminal(event)
-                        ):
-                            progressed = True
-                            self.in_flight_event_ids.discard(event_id)
-                            continue
                     if not self.in_flight_event_ids:
                         if await self._process_own_core_route_work_once_async():
                             continue
@@ -1842,85 +1400,6 @@ class RustCoreEventBus:
         except RuntimeError:
             return
         loop.call_soon(self._ensure_background_driver, None)
-
-    def _complete_event_if_local_results_terminal(self, event: BaseEvent[Any]) -> bool:
-        expected_handler_ids = self._expected_live_handler_ids(event)
-        if not expected_handler_ids:
-            return False
-        if not expected_handler_ids.issubset(event.event_results.keys()):
-            return False
-        if any(event.event_results[handler_id].status not in ('completed', 'error') for handler_id in expected_handler_ids):
-            return False
-        for handler_id in expected_handler_ids:
-            result = event.event_results[handler_id]
-            if not isinstance(result.result, BaseEvent):
-                continue
-            child_event = result.result
-            if child_event.event_id == event.event_id:
-                continue
-            if child_event.event_status == EventStatus.COMPLETED:
-                continue
-            completed_child = self._completed_live_event(child_event.event_id)
-            if completed_child is not None:
-                result.result = completed_child
-                continue
-            return False
-        if event._is_queued_on_any_bus(ignore_bus=cast(Any, self)):  # pyright: ignore[reportPrivateUsage]
-            return False
-        if not event._are_all_children_complete():  # pyright: ignore[reportPrivateUsage]
-            return False
-        latest_completed: str | None = None
-        for result in event.event_results.values():
-            if result.completed_at is not None and (latest_completed is None or result.completed_at > latest_completed):
-                latest_completed = result.completed_at
-        event.event_completed_at = latest_completed or event.event_completed_at or monotonic_datetime()
-        if event.event_started_at is None:
-            event.event_started_at = event.event_completed_at
-        event.event_status = EventStatus.COMPLETED
-        event._event_is_complete_flag = True  # pyright: ignore[reportPrivateUsage]
-        completed_signal = event.event_completed_signal
-        if completed_signal is not None:
-            completed_signal.set()
-        self.event_history[event.event_id] = event
-        self._trim_event_history_if_needed(force=True)
-        self._forget_completed_event_if_unretained(event)
-        self._remove_pending_event(event.event_id)
-        self.in_flight_event_ids.discard(event.event_id)
-        self._local_only_event_ids.discard(event.event_id)
-        return True
-
-    def _complete_local_only_event_if_terminal(
-        self,
-        event: BaseEvent[Any],
-        expected_handler_ids: set[str],
-    ) -> bool:
-        if not expected_handler_ids:
-            return False
-        if not expected_handler_ids.issubset(event.event_results.keys()):
-            return False
-        if any(event.event_results[handler_id].status not in ('completed', 'error') for handler_id in expected_handler_ids):
-            return False
-        if not event._are_all_children_complete():  # pyright: ignore[reportPrivateUsage]
-            return False
-        latest_completed: str | None = None
-        for handler_id in expected_handler_ids:
-            completed_at = event.event_results[handler_id].completed_at
-            if completed_at is not None and (latest_completed is None or completed_at > latest_completed):
-                latest_completed = completed_at
-        event.event_completed_at = latest_completed or event.event_completed_at or monotonic_datetime()
-        if event.event_started_at is None:
-            event.event_started_at = event.event_completed_at
-        event.event_status = EventStatus.COMPLETED
-        event._event_is_complete_flag = True  # pyright: ignore[reportPrivateUsage]
-        completed_signal = event.event_completed_signal
-        if completed_signal is not None:
-            completed_signal.set()
-        self.event_history[event.event_id] = event
-        self._trim_event_history_if_needed(force=True)
-        self._forget_completed_event_if_unretained(event)
-        self._remove_pending_event(event.event_id)
-        self.in_flight_event_ids.discard(event.event_id)
-        return True
 
     @staticmethod
     def _active_handler_id() -> str | None:
@@ -2160,7 +1639,6 @@ class RustCoreEventBus:
                             self._events[event_id] = event_obj
                             self.event_history[event_id] = event_obj
                             self._trim_event_history_if_needed(force=event_obj.event_status == EventStatus.COMPLETED)
-                            self._forget_completed_event_if_unretained(event_obj)
                             if event_obj.event_status == EventStatus.COMPLETED:
                                 self._remove_pending_event(event_id)
                                 return self._completed_snapshot_or_event(event_obj)
@@ -2174,22 +1652,6 @@ class RustCoreEventBus:
 
     async def process_event_immediately(self, event: BaseEvent[Any]) -> BaseEvent[Any]:
         event_id = event.event_id
-        if event_id in self._local_only_event_ids:
-            if event.event_status != EventStatus.COMPLETED and event.event_completed_signal is not None:
-                await event.event_completed_signal.wait()
-            parent_result_id = event.event_emitted_by_result_id
-            if parent_result_id is not None:
-                for bus in list(type(self)._instances):
-                    parent_event_id = bus._event_id_by_result_id.get(parent_result_id)
-                    parent_event = bus._events.get(parent_event_id) if parent_event_id is not None else None
-                    if parent_event is None or parent_event.event_id not in bus._local_only_event_ids:
-                        continue
-                    parent_handler_id = parent_event.event_emitted_by_handler_id
-                    if parent_handler_id is None and parent_event.event_results:
-                        parent_handler_id = next(iter(parent_event.event_results))
-                    if parent_handler_id is not None:
-                        bus._complete_local_only_event_if_terminal(parent_event, {parent_handler_id})
-            return event
         parent_invocation_id = self._find_parent_invocation_for_event(event)
         block_parent_completion = parent_invocation_id is not None
         if parent_invocation_id is None:
@@ -2269,10 +1731,6 @@ class RustCoreEventBus:
         if event_obj is not None and self._events.get(event_id) is None:
             self._events[event_id] = event_obj
         local_event = event_obj or self._events.get(event_id)
-        if event_id in self._local_only_event_ids and local_event is not None:
-            if local_event.event_status != EventStatus.COMPLETED and local_event.event_completed_signal is not None:
-                await local_event.event_completed_signal.wait()
-            return self._completed_snapshot_or_event(local_event)
         deadline = self._event_completion_wait_deadline(event_obj or self._events.get(event_id))
         with self._targeted_core_drive_scope():
             while self._deadline_active(deadline):
@@ -2355,7 +1813,6 @@ class RustCoreEventBus:
                         await self._apply_core_snapshot_to_event_async(target_event, snapshot)
                         self.event_history[event_id] = target_event
                         self._trim_event_history_if_needed(force=target_event.event_status == EventStatus.COMPLETED)
-                        self._forget_completed_event_if_unretained(target_event)
                         if target_event.event_status == EventStatus.COMPLETED:
                             return (
                                 await self._completed_event_after_optional_queue_drain(target_event)
@@ -2425,7 +1882,7 @@ class RustCoreEventBus:
             return False
 
         self._ensure_background_driver(None)
-        if timeout is None:
+        if timeout is None or timeout <= 0:
             await event.event_completed_signal.wait()
         else:
             await asyncio.wait_for(event.event_completed_signal.wait(), timeout=timeout)
@@ -2448,19 +1905,6 @@ class RustCoreEventBus:
             yield
         finally:
             self._passive_handler_wait_depth -= 1
-
-    def _can_return_locally_completed_event_without_snapshot(self, event: BaseEvent[Any]) -> bool:
-        if self.middlewares:
-            return False
-        if event.event_id not in self._locally_completed_without_core_patch:
-            return False
-        if event.event_id in self._drain_pending_on_await_event_ids:
-            return False
-        if event.event_status != EventStatus.COMPLETED:
-            return False
-        self._remove_pending_event(event.event_id)
-        self.in_flight_event_ids.discard(event.event_id)
-        return True
 
     async def _completed_event_after_optional_queue_drain(self, event: BaseEvent[Any]) -> BaseEvent[Any]:
         completed = await self._completed_snapshot_or_event_async(event)
@@ -2488,7 +1932,7 @@ class RustCoreEventBus:
             ):
                 return completed
         await self._await_core_outcome_commits_for_event(event.event_id, event_type=event.event_type)
-        await self._drive_local_until_idle(None, allow_local_terminal_completion=True)
+        await self._drive_local_until_idle(None)
         await self._await_core_outcome_commits_for_event(event.event_id, event_type=event.event_type)
         return completed
 
@@ -2535,7 +1979,6 @@ class RustCoreEventBus:
             self._merge_live_event_metadata(event)
             self.event_history[event.event_id] = event
             self._trim_event_history_if_needed(force=True)
-            self._forget_completed_event_if_unretained(event)
             self._remove_pending_event(event.event_id)
             self.in_flight_event_ids.discard(event.event_id)
             await self._on_event_change_once(event, EventStatus.COMPLETED)
@@ -2548,12 +1991,8 @@ class RustCoreEventBus:
             self._merge_live_event_metadata(event)
             self.event_history[event.event_id] = event
             self._trim_event_history_if_needed(force=True)
-            self._forget_completed_event_if_unretained(event)
             self._remove_pending_event(event.event_id)
             self.in_flight_event_ids.discard(event.event_id)
-            await self._on_event_change_once(event, EventStatus.COMPLETED)
-            return event
-        if event.event_status != EventStatus.COMPLETED and self._complete_event_if_local_results_terminal(event):
             await self._on_event_change_once(event, EventStatus.COMPLETED)
             return event
         snapshot = await self._get_event_snapshot_from_core_async(event.event_id)
@@ -2561,7 +2000,6 @@ class RustCoreEventBus:
             self._apply_core_snapshot_to_event(event, snapshot)
         self.event_history[event.event_id] = event
         self._trim_event_history_if_needed(force=event.event_status == EventStatus.COMPLETED)
-        self._forget_completed_event_if_unretained(event)
         self._remove_pending_event(event.event_id)
         if event.event_status == EventStatus.COMPLETED:
             self.in_flight_event_ids.discard(event.event_id)
@@ -2643,7 +2081,6 @@ class RustCoreEventBus:
             self._merge_live_event_metadata(event)
             self.event_history[event.event_id] = event
             self._trim_event_history_if_needed(force=True)
-            self._forget_completed_event_if_unretained(event)
             self._remove_pending_event(event.event_id)
             self.in_flight_event_ids.discard(event.event_id)
             return event
@@ -2655,7 +2092,6 @@ class RustCoreEventBus:
             self._merge_live_event_metadata(event)
             self.event_history[event.event_id] = event
             self._trim_event_history_if_needed(force=True)
-            self._forget_completed_event_if_unretained(event)
             self._remove_pending_event(event.event_id)
             self.in_flight_event_ids.discard(event.event_id)
             return event
@@ -2675,7 +2111,6 @@ class RustCoreEventBus:
         self._apply_core_snapshot_to_event(event, snapshot)
         self.event_history[event.event_id] = event
         self._trim_event_history_if_needed(force=event.event_status == EventStatus.COMPLETED)
-        self._forget_completed_event_if_unretained(event)
         self._remove_pending_event(event.event_id)
         if event.event_status == EventStatus.COMPLETED:
             self.in_flight_event_ids.discard(event.event_id)
@@ -2812,7 +2247,7 @@ class RustCoreEventBus:
             if event.event_started_at is None:
                 event.event_started_at = event.event_completed_at
             event.event_status = EventStatus.COMPLETED
-        if not event.event_results and event.event_status == EventStatus.COMPLETED and event.event_completed_at is not None:
+        if event.event_status == EventStatus.COMPLETED and event.event_started_at is None:
             event.event_started_at = event.event_completed_at
         for result in event.event_results.values():
             result_value = result.result
@@ -2839,7 +2274,6 @@ class RustCoreEventBus:
             self._remove_pending_event(event.event_id)
             self.in_flight_event_ids.discard(event.event_id)
             self._trim_event_history_if_needed(force=True)
-            self._forget_completed_event_if_unretained(event)
             completed_signal = event.event_completed_signal
             if completed_signal is not None:
                 completed_signal.set()
@@ -3091,14 +2525,6 @@ class RustCoreEventBus:
                     )
                 except RuntimeError:
                     return None
-            if (
-                event_obj.event_status == EventStatus.COMPLETED
-                and event_obj.event_id in self._locally_completed_without_core_patch
-            ):
-                expected_handler_ids = self._expected_live_handler_ids(event_obj)
-                if expected_handler_ids and not expected_handler_ids.issubset(event_obj.event_results.keys()):
-                    await self._await_core_outcome_commits_for_event(event_obj.event_id, event_type=event_obj.event_type)
-                    event_obj = await self._completed_snapshot_or_event_async(event_obj)
             return event_obj
 
         matches: list[T_Event | BaseEvent[Any]] = []
@@ -3987,9 +3413,6 @@ class RustCoreEventBus:
                     invocations = remaining_invocations
                     if not outcome:
                         continue
-                    if not bus._apply_local_completed_outcome_without_patch_messages(invocation, outcome):
-                        for message in bus._local_outcome_patch_messages(invocation, outcome):
-                            await bus._apply_core_message_async(message)
                     invocation_id = outcome.get('invocation_id')
                     invocations_by_invocation = {invocation_id: invocation} if isinstance(invocation_id, str) else {}
                     produced = bus._complete_core_outcomes([outcome], invocations_by_invocation)
@@ -4012,32 +3435,6 @@ class RustCoreEventBus:
                 if not outcomes:
                     continue
                 produced_entries: list[tuple[RustCoreEventBus, dict[str, Any]]] = []
-                all_completed = all(
-                    isinstance(outcome.get('outcome'), dict)
-                    and cast(dict[str, Any], outcome['outcome']).get('status') == 'completed'
-                    for outcome in outcomes
-                )
-                if all_completed:
-                    locally_applied_invocation_ids = self._apply_local_completed_outcomes_without_patch_messages(
-                        outcomes,
-                        buses_by_invocation,
-                        invocations_by_invocation,
-                    )
-                    for outcome in outcomes:
-                        invocation_id = outcome.get('invocation_id')
-                        if not isinstance(invocation_id, str):
-                            continue
-                        if invocation_id in locally_applied_invocation_ids:
-                            continue
-                        outcome_bus = buses_by_invocation.get(invocation_id, self)
-                        invocation = invocations_by_invocation.get(invocation_id)
-                        if invocation is None:
-                            continue
-                        for message in outcome_bus._local_outcome_patch_messages(invocation, outcome):
-                            await outcome_bus._apply_core_message_async(message)
-                    self._schedule_core_outcome_commit(outcomes, buses_by_invocation, invocations_by_invocation)
-                    progressed = True
-                    continue
                 outcome_bus = next(
                     (
                         buses_by_invocation[cast(str, outcome.get('invocation_id'))]
@@ -4105,46 +3502,6 @@ class RustCoreEventBus:
                     if not outcomes:
                         continue
                     produced_entries: list[tuple[RustCoreEventBus, dict[str, Any]]] = []
-                    all_completed = all(
-                        isinstance(outcome.get('outcome'), dict)
-                        and cast(dict[str, Any], outcome['outcome']).get('status') == 'completed'
-                        for outcome in outcomes
-                    )
-                    if all_completed and not race_first:
-                        locally_applied_invocation_ids = self._apply_local_completed_outcomes_without_patch_messages(
-                            outcomes,
-                            buses_by_invocation,
-                            invocations_by_invocation,
-                        )
-                        for outcome in outcomes:
-                            invocation_id = outcome.get('invocation_id')
-                            if not isinstance(invocation_id, str):
-                                continue
-                            if invocation_id in locally_applied_invocation_ids:
-                                continue
-                            outcome_bus = buses_by_invocation.get(invocation_id, self)
-                            invocation = invocations_by_invocation.get(invocation_id)
-                            if invocation is None:
-                                continue
-                            for message in outcome_bus._local_outcome_patch_messages(invocation, outcome):
-                                await outcome_bus._apply_core_message_async(message)
-                        self._schedule_core_outcome_commit(outcomes, buses_by_invocation, invocations_by_invocation)
-                        progressed = True
-                        continue
-                    else:
-                        outcome_bus = next(
-                            (
-                                buses_by_invocation[cast(str, outcome.get('invocation_id'))]
-                                for outcome in outcomes
-                                if isinstance(outcome.get('invocation_id'), str)
-                                and cast(str, outcome.get('invocation_id')) in buses_by_invocation
-                            ),
-                            self,
-                        )
-                        produced = outcome_bus.core.complete_handler_outcomes(outcomes, compact_response=True)
-                        for outcome in outcomes:
-                            outcome_bus._release_queue_jump_children_for_invocation(outcome.get('invocation_id'))
-                        produced_entries.extend((outcome_bus, message) for message in produced)
                     if produced_entries:
                         progressed = True
                     produced_messages = [message for _bus, message in produced_entries]
@@ -4893,190 +4250,6 @@ class RustCoreEventBus:
             'outcome': outcome,
         }
 
-    def _local_outcome_patch_messages(
-        self,
-        invocation: dict[str, Any],
-        outcome_record: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        handler_id = invocation['handler_id']
-        handler = self._handlers.get(handler_id)
-        event_id = cast(str, invocation['event_id'])
-        event = self._events.get(event_id)
-        if handler is None or event is None:
-            return []
-        outcome = cast(dict[str, Any], outcome_record.get('outcome') or {})
-        outcome_status = outcome.get('status')
-        result_status = 'error' if outcome_status == 'errored' else 'completed'
-        patch_type = 'result_cancelled' if outcome_status == 'errored' else 'result_completed'
-        result = event.event_results.get(handler.id)
-        if result is None:
-            result = self._update_event_result_for_handler(event, handler, status='started')
-        self._apply_effective_timeout_to_result(invocation, result)
-        result_id = invocation.get('result_id')
-        if isinstance(result_id, str):
-            result.id = result_id
-            self._event_id_by_result_id[result_id] = event.event_id
-        result_record = {
-            'result_id': result.id,
-            'event_id': event.event_id,
-            'handler_id': handler.id,
-            'handler_name': handler.handler_name,
-            'handler_file_path': handler.handler_file_path,
-            'handler_timeout': handler.handler_timeout,
-            'handler_slow_timeout': handler.handler_slow_timeout,
-            'timeout': result.timeout,
-            'handler_registered_at': handler.handler_registered_at,
-            'handler_event_pattern': handler.event_pattern,
-            'eventbus_name': handler.eventbus_name,
-            'eventbus_id': handler.eventbus_id,
-            'started_at': result.started_at,
-            'completed_at': result.completed_at,
-            'status': result_status,
-            'result': outcome.get('value') if result_status == 'completed' else None,
-            'error': outcome.get('error') if result_status == 'error' else None,
-            'result_is_event_reference': outcome.get('result_is_event_reference') is True,
-            'result_is_undefined': outcome.get('result_is_undefined') is True,
-            'event_children': [child.event_id for child in result.event_children],
-        }
-        completed_at = result.completed_at or event.event_completed_at or monotonic_datetime()
-        started_at = event.event_started_at or completed_at
-        messages = [{'type': 'patch', 'patch': {'type': patch_type, 'result': result_record}}]
-        completion = _option_value(event.event_handler_completion) or self.event_handler_completion
-        snapshot = invocation.get('event_snapshot')
-        if isinstance(snapshot, dict):
-            completion = _option_value(snapshot.get('event_handler_completion')) or completion
-        if completion != 'first':
-            messages.append(
-                {
-                    'type': 'patch',
-                    'patch': {
-                        'type': 'event_completed_compact',
-                        'event_id': event.event_id,
-                        'completed_at': completed_at,
-                        'event_started_at': started_at,
-                    },
-                }
-            )
-        return messages
-
-    def _apply_local_completed_outcome_without_patch_messages(
-        self,
-        invocation: dict[str, Any],
-        outcome_record: dict[str, Any],
-    ) -> bool:
-        event = self._apply_local_completed_outcome_fields_without_terminal_check(invocation, outcome_record)
-        if event is None:
-            return False
-        if (
-            event.event_id in self._locally_completed_without_core_patch
-            and event.event_status == EventStatus.COMPLETED
-            and event._event_is_complete_flag  # pyright: ignore[reportPrivateUsage]
-        ):
-            return True
-        if not self._event_has_unfinished_results(event):
-            if event.event_started_at is None:
-                event.event_started_at = event.event_completed_at or monotonic_datetime()
-            if event.event_completed_at is None:
-                event.event_completed_at = event.event_started_at or monotonic_datetime()
-            self._mark_local_event_completed_fast(event)
-        return True
-
-    def _apply_local_completed_outcomes_without_patch_messages(
-        self,
-        outcomes: list[dict[str, Any]],
-        buses_by_invocation: dict[str, RustCoreEventBus],
-        invocations_by_invocation: dict[str, dict[str, Any]],
-    ) -> set[str]:
-        applied_invocation_ids: set[str] = set()
-        touched_events: dict[str, tuple[RustCoreEventBus, BaseEvent[Any]]] = {}
-        for outcome in outcomes:
-            invocation_id = outcome.get('invocation_id')
-            if not isinstance(invocation_id, str):
-                continue
-            invocation = invocations_by_invocation.get(invocation_id)
-            if invocation is None:
-                continue
-            outcome_bus = buses_by_invocation.get(invocation_id, self)
-            event = outcome_bus._apply_local_completed_outcome_fields_without_terminal_check(invocation, outcome)
-            if event is None:
-                continue
-            applied_invocation_ids.add(invocation_id)
-            touched_events[event.event_id] = (outcome_bus, event)
-        for event_bus, event in touched_events.values():
-            if (
-                event.event_id in event_bus._locally_completed_without_core_patch
-                and event.event_status == EventStatus.COMPLETED
-                and event._event_is_complete_flag  # pyright: ignore[reportPrivateUsage]
-            ):
-                continue
-            if not event_bus._event_has_unfinished_results(event):
-                if event.event_started_at is None:
-                    event.event_started_at = event.event_completed_at or monotonic_datetime()
-                if event.event_completed_at is None:
-                    event.event_completed_at = event.event_started_at or monotonic_datetime()
-                event_bus._mark_local_event_completed_fast(event)
-        return applied_invocation_ids
-
-    def _apply_local_completed_outcome_fields_without_terminal_check(
-        self,
-        invocation: dict[str, Any],
-        outcome_record: dict[str, Any],
-    ) -> BaseEvent[Any] | None:
-        if self.middlewares:
-            return None
-        outcome = outcome_record.get('outcome')
-        if not isinstance(outcome, dict) or outcome.get('status') != 'completed':
-            return None
-        event_id = invocation.get('event_id')
-        handler_id = invocation.get('handler_id')
-        if not isinstance(event_id, str) or not isinstance(handler_id, str):
-            return None
-        event = self._events.get(event_id)
-        if event is None:
-            return None
-        if event.event_path != [self.label]:
-            return None
-        result = event.event_results.get(handler_id)
-        if result is None or result.status != 'completed':
-            return None
-        completion = _option_value(event.event_handler_completion) or self.event_handler_completion
-        snapshot = invocation.get('event_snapshot')
-        if isinstance(snapshot, dict):
-            completion = _option_value(snapshot.get('event_handler_completion')) or completion
-        if completion == 'first':
-            return None
-        result_id = invocation.get('result_id')
-        if isinstance(result_id, str):
-            result.id = result_id
-            self._event_id_by_result_id[result_id] = event.event_id
-        return event
-
-    def _mark_local_event_completed_fast(self, event: BaseEvent[Any]) -> None:
-        self._remove_pending_event(event.event_id)
-        self.in_flight_event_ids.discard(event.event_id)
-        if event.event_status == EventStatus.PENDING and event.event_started_at is None:
-            event._mark_started()  # pyright: ignore[reportPrivateUsage]
-        event.event_status = EventStatus.COMPLETED
-        event._event_is_complete_flag = True  # pyright: ignore[reportPrivateUsage]
-        event._event_dispatch_context = None  # pyright: ignore[reportPrivateUsage]
-        if event.event_completed_at is None:
-            event.event_completed_at = monotonic_datetime()
-        if event.event_started_at is None:
-            event.event_started_at = event.event_completed_at
-        self._locally_completed_without_core_patch.add(event.event_id)
-        self._cancel_event_slow_warning_timer(event.event_id)
-        self._trim_event_history_if_needed(force=True)
-        self._forget_completed_event_if_unretained(event)
-        completed_signal = event.event_completed_signal
-        if completed_signal is not None:
-            completed_signal.set()
-
-    def _core_completion_already_applied_locally(self, event_id: str) -> bool:
-        if self.middlewares or event_id not in self._locally_completed_without_core_patch:
-            return False
-        event = self._events.get(event_id)
-        return event is None or (event.event_status == EventStatus.COMPLETED and not self._event_has_unfinished_results(event))
-
     def _schedule_core_outcome_commit(
         self,
         outcomes: list[dict[str, Any]],
@@ -5156,9 +4329,6 @@ class RustCoreEventBus:
         async def commit() -> None:
             invocation_id = outcome.get('invocation_id')
             invocations_by_invocation = {invocation_id: invocation} if isinstance(invocation_id, str) else {}
-            if not self._apply_local_completed_outcome_without_patch_messages(invocation, outcome):
-                for message in self._local_outcome_patch_messages(invocation, outcome):
-                    await self._apply_core_message_async(message)
             produced = self._complete_core_outcomes([outcome], invocations_by_invocation)
             self._release_queue_jump_children_for_invocation(invocation_id)
             if produced:
@@ -5195,7 +4365,7 @@ class RustCoreEventBus:
         commit_core = self.core
         produced: list[dict[str, Any]] = []
         if len(outcomes) > 1:
-            return commit_core.complete_handler_outcomes_no_patches(outcomes, compact_response=True)
+            return commit_core.complete_handler_outcomes(outcomes, compact_response=True)
         if invocations_by_invocation and all(
             isinstance(outcome.get('invocation_id'), str)
             and cast(str, outcome['invocation_id']) in invocations_by_invocation
@@ -5216,7 +4386,7 @@ class RustCoreEventBus:
                     and any(event_id in bus._explicit_await_event_ids for bus in list(type(self)._instances) if not bus._closed)
                 )
                 complete = (
-                    commit_core.complete_handler_no_patches
+                    commit_core.complete_handler
                     if event is not None
                     and result is not None
                     and self._can_use_patchless_completed_outcome(invocation, event, result)
@@ -5233,7 +4403,7 @@ class RustCoreEventBus:
                     )
                 )
         else:
-            produced = commit_core.complete_handler_outcomes_no_patches(outcomes, compact_response=True)
+            produced = commit_core.complete_handler_outcomes(outcomes, compact_response=True)
         return produced
 
     def _invoke_handler_value_inline_sync(
@@ -5347,7 +4517,7 @@ class RustCoreEventBus:
             and self._can_defer_outcome_to_active_batch(invocation)
         ):
             active_batch['outcomes'].append(outcome_record)
-            return self._local_outcome_patch_messages(invocation, outcome_record)
+            return []
         pending_outcomes = owned_batch['outcomes'] if owned_batch is not None else []
         if pending_outcomes:
             return core_client.complete_handler_outcomes([*pending_outcomes, outcome_record], compact_response=True)
@@ -5637,7 +4807,7 @@ class RustCoreEventBus:
                 compact_response=True,
             )
         complete = (
-            core_client.complete_handler_no_patches
+            core_client.complete_handler
             if self._can_use_patchless_completed_outcome(invocation, event, result)
             else core_client.complete_handler
         )
@@ -5984,7 +5154,7 @@ class RustCoreEventBus:
                 continue
             if handler.id in event.event_results:
                 continue
-            if event.event_status != EventStatus.PENDING and event.event_results:
+            if event.event_status != EventStatus.PENDING or event.event_completed_at is not None:
                 continue
             event.event_status = EventStatus.PENDING
             event.event_completed_at = None
@@ -6097,8 +5267,6 @@ class RustCoreEventBus:
         if message.get('type') == 'event_completed':
             event_id = message.get('event_id')
             if isinstance(event_id, str):
-                if self._core_completion_already_applied_locally(event_id):
-                    return
                 self._mark_event_completed_from_core(event_id)
             return
         if message.get('type') != 'patch':
@@ -6110,6 +5278,18 @@ class RustCoreEventBus:
         self.core.ack_patch_messages([message])
 
         patch_type = patch.get('type')
+        if patch_type == 'history_evicted':
+            if patch.get('bus_id') == self.bus_id:
+                event = self.event_history.pop(patch['event_id'], None)
+                if event is not None:
+                    self._on_history_remove(event)
+            return
+        if patch_type == 'results_expired':
+            event = self._events.get(patch['event_id'])
+            if event is not None:
+                for handler_id in patch['handler_ids']:
+                    event.event_results.pop(handler_id, None)
+            return
         if patch_type == 'event_started':
             event_id = patch.get('event_id')
             if isinstance(event_id, str) and event_id in self._events:
@@ -6146,7 +5326,6 @@ class RustCoreEventBus:
                     event.event_completed_at = None
                     event._event_is_complete_flag = False  # pyright: ignore[reportPrivateUsage]
                     self.in_flight_event_ids.add(event.event_id)
-                    self._locally_completed_without_core_patch.discard(event.event_id)
                     return
             return
         if patch_type == 'result_slow_warning':
@@ -6164,15 +5343,8 @@ class RustCoreEventBus:
         if patch_type == 'event_completed':
             event_id = patch.get('event_id')
             if isinstance(event_id, str):
-                if self._core_completion_already_applied_locally(event_id):
-                    return
                 completed_at = patch.get('completed_at')
                 raw_results = patch.get('event_results')
-                if not (isinstance(raw_results, dict) and raw_results) and any(
-                    (event := bus._events.get(event_id)) is not None and bus._event_has_unfinished_results(event)
-                    for bus in list(type(self)._instances)
-                ):
-                    return
                 for bus in list(type(self)._instances):
                     bus._remove_pending_event(event_id)
                     bus.in_flight_event_ids.discard(event_id)
@@ -6209,7 +5381,6 @@ class RustCoreEventBus:
                     event._event_is_complete_flag = True  # pyright: ignore[reportPrivateUsage]
                     event._event_dispatch_context = None  # pyright: ignore[reportPrivateUsage]
                     bus._trim_event_history_if_needed(force=True)
-                    bus._forget_completed_event_if_unretained(event)
                     completed_signal = event.event_completed_signal
                     if completed_signal is not None:
                         completed_signal.set()
@@ -6217,13 +5388,6 @@ class RustCoreEventBus:
         if patch_type == 'event_completed_compact':
             event_id = patch.get('event_id')
             if isinstance(event_id, str):
-                if self._core_completion_already_applied_locally(event_id):
-                    return
-                if any(
-                    (event := bus._events.get(event_id)) is not None and bus._event_has_unfinished_results(event)
-                    for bus in list(type(self)._instances)
-                ):
-                    return
                 for bus in list(type(self)._instances):
                     bus._remove_pending_event(event_id)
                     bus.in_flight_event_ids.discard(event_id)
@@ -6250,18 +5414,12 @@ class RustCoreEventBus:
                     bus._hydrate_completed_event_if_missing_results(event)
                     bus._merge_live_event_metadata(event)
                     bus._trim_event_history_if_needed(force=True)
-                    bus._forget_completed_event_if_unretained(event)
                     completed_signal = event.event_completed_signal
                     if completed_signal is not None:
                         completed_signal.set()
             return
 
     def _mark_event_completed_from_core(self, event_id: str) -> None:
-        if any(
-            (event := bus._events.get(event_id)) is not None and bus._event_has_unfinished_results(event)
-            for bus in list(type(self)._instances)
-        ):
-            return
         for bus in list(type(self)._instances):
             bus._remove_pending_event(event_id)
             bus.in_flight_event_ids.discard(event_id)
@@ -6282,7 +5440,6 @@ class RustCoreEventBus:
             bus._hydrate_completed_event_if_missing_results(event)
             bus._merge_live_event_metadata(event)
             bus._trim_event_history_if_needed(force=True)
-            bus._forget_completed_event_if_unretained(event)
             completed_signal = event.event_completed_signal
             if completed_signal is not None:
                 completed_signal.set()
@@ -6394,7 +5551,6 @@ class RustCoreEventBus:
             event.event_completed_at = None
             event._event_is_complete_flag = False  # pyright: ignore[reportPrivateUsage]
             self.in_flight_event_ids.add(event.event_id)
-            self._locally_completed_without_core_patch.discard(event.event_id)
         if status in ('completed', 'error', 'cancelled', 'timed_out'):
             self._invocation_by_result_id.pop(result.id, None)
         timeout = record.get('timeout')
@@ -6493,7 +5649,6 @@ class RustCoreEventBus:
                 self.event_history[child.event_id] = child
                 self._index_event_relationships(child)
                 self._trim_event_history_if_needed(force=child.event_status == EventStatus.COMPLETED)
-                self._forget_completed_event_if_unretained(child)
             if self._attach_child_to_result(event, result, child):
                 changed = True
         if changed:
@@ -6627,7 +5782,6 @@ class RustCoreEventBus:
         self._events[event_id] = event
         self.event_history[event_id] = event
         self._trim_event_history_if_needed(force=event.event_status == EventStatus.COMPLETED)
-        self._forget_completed_event_if_unretained(event)
         return event
 
     def log_tree(self) -> str:

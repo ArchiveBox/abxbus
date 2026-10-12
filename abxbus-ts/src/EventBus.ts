@@ -57,6 +57,8 @@ export class EventBus extends RustCoreEventBus {
       options.event_concurrency = record.event_concurrency
     }
     if (typeof record.event_timeout === 'number') options.event_timeout = record.event_timeout
+    if (typeof record.event_ttl === 'number' || record.event_ttl === null) options.event_ttl = record.event_ttl
+    if (typeof record.event_result_ttl === 'number' || record.event_result_ttl === null) options.event_result_ttl = record.event_result_ttl
     if (typeof record.event_slow_timeout === 'number' || record.event_slow_timeout === null) {
       options.event_slow_timeout = record.event_slow_timeout
     }
@@ -188,6 +190,7 @@ export class EventBus extends RustCoreEventBus {
         handler_registered_at: handler.handler_registered_at,
         handler_timeout: handler.handler_timeout ?? null,
         handler_slow_timeout: handler.handler_slow_timeout ?? null,
+        handler_result_ttl: handler.handler_result_ttl ?? null,
         handler_concurrency: null,
         handler_completion: null,
       })),

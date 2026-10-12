@@ -524,10 +524,6 @@ export class RustCoreClient {
     })
   }
 
-  completeHandlerNoPatches(invocation: Record<string, unknown>, value: unknown, options: FastCompletedHandlerOptions = {}): CoreMessage[] {
-    return this.requestFastCompletedHandler(invocation, value, options)
-  }
-
   private requestFastCompletedHandler(
     invocation: Record<string, unknown>,
     value: unknown,
@@ -818,7 +814,6 @@ export class RustCoreClient {
 
   completeHandlerOutcomes(outcomes: Record<string, unknown>[], options: { compact_response?: boolean } = {}): CoreMessage[] {
     const compact_response = options.compact_response ?? false
-    const include_patches = !(compact_response && outcomes.length > 1)
     const messages: CoreMessage[] = []
     for (let index = 0; index < outcomes.length; index += HANDLER_OUTCOME_BATCH_LIMIT) {
       const chunk = outcomes.slice(index, index + HANDLER_OUTCOME_BATCH_LIMIT)
@@ -826,8 +821,6 @@ export class RustCoreClient {
         ...this.requestMessages(
           { type: 'handler_outcomes', outcomes: chunk, compact_response },
           {
-            includePatches: include_patches,
-            advancePatchSeq: !include_patches,
             advancePatchSeqWhenNoPatches: compact_response,
           }
         )

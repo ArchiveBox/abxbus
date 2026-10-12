@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 
 import { RustCoreClient, coreNamespace, type CoreMessage } from './CoreClient.js'
-import { BaseEvent, BaseEventSchema } from './BaseEvent.js'
+import { BaseEvent, BaseEventSchema, validateOptionalSecondsAtLeastMinusOne } from './BaseEvent.js'
 import type { BaseEventJSON } from './BaseEvent.js'
 import {
   EventHandler,
@@ -32,13 +32,7 @@ import {
   scheduleWarningTimer as scheduleCoalescedTimer,
   type WarningTimerHandle,
 } from './timing.js'
-import {
-  normalizeEventPattern,
-  type EventHandlerCallable,
-  type EventPattern,
-  type FilterOptions,
-  type FindOptions,
-} from './types.js'
+import { normalizeEventPattern, type EventHandlerCallable, type EventPattern, type FilterOptions, type FindOptions } from './types.js'
 
 export type CoreHandler<T extends BaseEvent = BaseEvent> = EventHandlerCallable<T>
 type CoalescedTimerHandle = WarningTimerHandle
@@ -128,6 +122,7 @@ export type RustCoreHandlerOptions = {
   handler_file_path?: string | null
   handler_timeout?: number | null
   handler_slow_timeout?: number | null
+  handler_result_ttl?: number | null
   handler_concurrency?: EventHandlerConcurrencyMode | null
   handler_completion?: EventHandlerCompletionMode | null
   [key: string]: unknown
@@ -290,7 +285,6 @@ export class CoreEventHistory implements Iterable<[string, BaseEvent]> {
 
   get size(): number {
     const event_ids = this.bus.historyEventIds('*')
-    this.bus.collectEvictedCompletedEventRefs(new Set(event_ids))
     return event_ids.length
   }
 
@@ -338,7 +332,6 @@ export class CoreEventHistory implements Iterable<[string, BaseEvent]> {
   has(event_id: string): boolean {
     const event_ids = this.bus.historyEventIds('*')
     const visible_event_ids = new Set(event_ids)
-    this.bus.collectEvictedCompletedEventRefs(visible_event_ids)
     return visible_event_ids.has(event_id)
   }
 
@@ -520,8 +513,8 @@ export class RustCoreEventBus {
   readonly event_handler_detect_file_paths: boolean
   readonly event_timeout: number | null
   readonly event_slow_timeout: number | null
-  event_ttl: number | null
-  event_result_ttl: number | null
+  private _event_ttl: number | null = null
+  private _event_result_ttl: number | null = null
   readonly event_handler_timeout: number | null
   readonly event_handler_slow_timeout: number | null
 
@@ -552,7 +545,6 @@ export class RustCoreEventBus {
   private foreground_worker_messages: CoreMessage[]
   private foreground_worker_task: Promise<void> | null
   private serial_route_pause_releases: Map<string, () => void>
-  private completed_event_refs: Map<string, WeakRef<BaseEvent>>
   private closed: boolean
   private readonly owns_shared_core: boolean
   private registered_max_history_size: number | null | undefined
@@ -604,7 +596,6 @@ export class RustCoreEventBus {
     this.foreground_worker_messages = []
     this.foreground_worker_task = null
     this.serial_route_pause_releases = new Map()
-    this.completed_event_refs = new Map()
     this.closed = false
     this.registered_max_history_size = undefined
     this.registered_max_history_drop = undefined
@@ -650,6 +641,24 @@ export class RustCoreEventBus {
     }
   }
 
+  get event_ttl(): number | null {
+    return this._event_ttl
+  }
+
+  set event_ttl(value: number | null) {
+    this._event_ttl = validateOptionalSecondsAtLeastMinusOne('event_ttl', value) ?? null
+    if (this.registered) this.core.registerBus(this.busRecord())
+  }
+
+  get event_result_ttl(): number | null {
+    return this._event_result_ttl
+  }
+
+  set event_result_ttl(value: number | null) {
+    this._event_result_ttl = validateOptionalSecondsAtLeastMinusOne('event_result_ttl', value) ?? null
+    if (this.registered) this.core.registerBus(this.busRecord())
+  }
+
   private busRecord(): Record<string, unknown> {
     return {
       bus_id: this.bus_id,
@@ -668,7 +677,8 @@ export class RustCoreEventBus {
       event_id: event.event_id,
       event_ttl: event.event_ttl ?? null,
       event_result_ttl: event.event_result_ttl ?? null,
-    })) this.applyCoreMessageToLocalBuses(message)
+    }))
+      this.applyCoreMessageToLocalBuses(message)
   }
 
   start(): void {
@@ -709,6 +719,7 @@ export class RustCoreEventBus {
       detect_handler_file_path: this.event_handler_detect_file_paths,
       handler_timeout: options.handler_timeout,
       handler_slow_timeout: options.handler_slow_timeout,
+      handler_result_ttl: options.handler_result_ttl,
     })
     if (options.handler_name) {
       handler_entry.handler_name = options.handler_name
@@ -745,6 +756,7 @@ export class RustCoreEventBus {
       handler_registered_at: handler_entry.handler_registered_at,
       handler_timeout: handler_entry.handler_timeout ?? null,
       handler_slow_timeout: handler_entry.handler_slow_timeout ?? null,
+      handler_result_ttl: handler_entry.handler_result_ttl ?? null,
       handler_concurrency: options.handler_concurrency ?? null,
       handler_completion: options.handler_completion ?? null,
     })
@@ -834,9 +846,8 @@ export class RustCoreEventBus {
     }
     const forwarding_existing_event = event_obj._core_known
     event_obj.event_path.push(this.label)
-    event_obj.event_status = 'pending'
     this.events.set(event_obj.event_id, event_obj)
-    if (this.shouldPrecreatePendingLocalResults(event_obj)) {
+    if (event_obj.event_status !== 'completed' && !event_obj.event_completed_at && this.shouldPrecreatePendingLocalResults(event_obj)) {
       this.ensurePendingLocalResults(event_obj)
     }
     this.in_flight_event_ids.add(event_obj.event_id)
@@ -1156,6 +1167,7 @@ export class RustCoreEventBus {
         handler_registered_at: handler.handler_registered_at,
         handler_timeout: handler.handler_timeout ?? null,
         handler_slow_timeout: handler.handler_slow_timeout ?? null,
+        handler_result_ttl: handler.handler_result_ttl ?? null,
         handler_concurrency: null,
         handler_completion: null,
       })),
@@ -1663,7 +1675,6 @@ export class RustCoreEventBus {
     this.processing.clear()
     this.processing_tasks.clear()
     this.in_flight_event_ids.clear()
-    this.completed_event_refs.clear()
     this.locks.clear()
   }
 
@@ -1809,48 +1820,7 @@ export class RustCoreEventBus {
         this.applyCoreSnapshotToEvent(original, snapshot)
       }
     }
-    this.trackLocalEventUntilCoreEvictsIt(original)
-    this.events.delete(original.event_id)
     this.in_flight_event_ids.delete(original.event_id)
-  }
-
-  private trackLocalEventUntilCoreEvictsIt(event: BaseEvent): void {
-    if (!this.event_history.max_history_drop || this.event_history.max_history_size === null) {
-      return
-    }
-    if (this.completed_event_refs.get(event.event_id)?.deref()) {
-      return
-    }
-    this.completed_event_refs.set(event.event_id, new WeakRef(event))
-    const max_history_size = Math.max(1, this.event_history.max_history_size)
-    const cleanup_threshold = Math.max(max_history_size * 2, max_history_size + 64)
-    if (max_history_size <= 1 || this.completed_event_refs.size > cleanup_threshold) {
-      this.collectEvictedCompletedEventRefs()
-    }
-  }
-
-  collectEvictedCompletedEventRefs(visible_event_ids: Set<string> | null = null): void {
-    if (this.completed_event_refs.size === 0) {
-      return
-    }
-    visible_event_ids ??= new Set(this.historyEventIds('*'))
-    for (const [event_id, event_ref] of this.completed_event_refs.entries()) {
-      const event = event_ref.deref()
-      if (!event) {
-        this.completed_event_refs.delete(event_id)
-        continue
-      }
-      if (!visible_event_ids.has(event_id)) {
-        if (event.event_status !== 'completed') {
-          const snapshot = this.core.getEvent(event_id)
-          if (snapshot?.event_status !== 'completed') {
-            continue
-          }
-        }
-        event._gc()
-        this.completed_event_refs.delete(event_id)
-      }
-    }
   }
 
   private pendingQueueEventsFromCore(): BaseEvent[] {
@@ -1894,6 +1864,11 @@ export class RustCoreEventBus {
   private applyCoreSnapshotToEvent(event: BaseEvent, snapshot: Record<string, unknown>): void {
     event._core_known = true
     const event_results = snapshot.event_results
+    if (snapshot.event_status === 'completed') {
+      for (const handler_id of event.event_results.keys()) {
+        if (!event_results || !Object.hasOwn(event_results, handler_id)) event.event_results.delete(handler_id)
+      }
+    }
     if (event_results && typeof event_results === 'object' && !Array.isArray(event_results)) {
       for (const result of this.orderedResultRecords(event_results as Record<string, unknown>)) {
         this.applyResultSnapshot(event, result)
@@ -2136,26 +2111,6 @@ export class RustCoreEventBus {
   ): CoreMessage[] {
     try {
       return this.core.completeHandler(invocation, value, options)
-    } catch (error) {
-      if (this.isStaleInvocationOutcomeError(error)) {
-        return this.eventSnapshotMessageForInvocation(invocation)
-      }
-      throw error
-    }
-  }
-
-  private completeHandlerNoPatchesOrSnapshot(
-    invocation: CoreMessage,
-    value: unknown,
-    options: {
-      result_is_event_reference?: boolean
-      process_route_after?: boolean
-      process_available_after?: boolean
-      compact_response?: boolean
-    }
-  ): CoreMessage[] {
-    try {
-      return this.core.completeHandlerNoPatches(invocation, value, options)
     } catch (error) {
       if (this.isStaleInvocationOutcomeError(error)) {
         return this.eventSnapshotMessageForInvocation(invocation)
@@ -2561,7 +2516,7 @@ export class RustCoreEventBus {
           (owned_batch?.outcomes.length ?? 0) === 0 &&
           this.canUsePatchlessCompletedOutcome(invocation, event, result, returned_event)
         if (can_use_patchless) {
-          messages = this.completeHandlerNoPatchesOrSnapshot(invocation, result.result, {
+          messages = this.completeHandlerOrSnapshot(invocation, result.result, {
             process_route_after: true,
             process_available_after,
             compact_response: true,
@@ -3725,6 +3680,24 @@ export class RustCoreEventBus {
     if (message.type !== 'patch') return
     const patch = message.patch as CoreMessage | undefined
     if (!patch) return
+    if (patch.type === 'history_evicted') {
+      if (patch.bus_id === this.bus_id) {
+        const event = this.events.get(patch.event_id as string)
+        this.events.delete(patch.event_id as string)
+        if (event?.event_parent_id) {
+          const parent = this.events.get(event.event_parent_id)
+          for (const result of parent?.event_results.values() ?? []) {
+            result.event_children = result.event_children.filter((child) => child.event_id !== event.event_id)
+          }
+        }
+      }
+      return
+    }
+    if (patch.type === 'results_expired') {
+      const event = this.events.get(patch.event_id as string)
+      for (const handler_id of patch.handler_ids as string[]) event?.event_results.delete(handler_id)
+      return
+    }
     if (patch.type === 'event_emitted') {
       const event_record = patch.event
       if (event_record && typeof event_record === 'object' && !Array.isArray(event_record)) {

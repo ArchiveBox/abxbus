@@ -557,6 +557,15 @@ class RustCoreClient:
                     return [cast(dict[str, Any], event) for event in event_items if isinstance(event, dict)]
         return []
 
+    def list_event_ids(self, event_pattern: str = '*', limit: int | None = None, bus_id: str | None = None) -> list[str]:
+        for message in self.request_messages(
+            {'type': 'list_event_ids', 'event_pattern': event_pattern, 'limit': limit, 'bus_id': bus_id},
+            include_patches=False,
+        ):
+            if message.get('type') == 'event_id_list':
+                return cast(list[str], message['event_ids'])
+        return []
+
     def complete_handler(
         self,
         invocation: dict[str, Any],
@@ -575,26 +584,6 @@ class RustCoreClient:
             process_available_after=process_available_after,
             compact_response=compact_response,
             include_patches=True,
-        )
-
-    def complete_handler_no_patches(
-        self,
-        invocation: dict[str, Any],
-        value: Any,
-        *,
-        result_is_event_reference: bool = False,
-        process_route_after: bool = False,
-        process_available_after: bool = False,
-        compact_response: bool = False,
-    ) -> list[dict[str, Any]]:
-        return self._complete_handler_fast(
-            invocation,
-            value,
-            result_is_event_reference=result_is_event_reference,
-            process_route_after=process_route_after,
-            process_available_after=process_available_after,
-            compact_response=compact_response,
-            include_patches=False,
         )
 
     def _complete_handler_fast(
@@ -797,31 +786,12 @@ class RustCoreClient:
     def complete_handler_outcomes(
         self, outcomes: list[dict[str, Any]], *, compact_response: bool = False
     ) -> list[dict[str, Any]]:
-        include_patches = not (compact_response and len(outcomes) > 1)
         messages: list[dict[str, Any]] = []
         for index in range(0, len(outcomes), HANDLER_OUTCOME_BATCH_LIMIT):
             chunk = outcomes[index : index + HANDLER_OUTCOME_BATCH_LIMIT]
             messages.extend(
                 self.request_messages(
                     {'type': 'handler_outcomes', 'outcomes': chunk, 'compact_response': compact_response},
-                    include_patches=include_patches,
-                    advance_patch_seq=not include_patches,
-                    advance_patch_seq_when_no_patches=compact_response,
-                )
-            )
-        return messages
-
-    def complete_handler_outcomes_no_patches(
-        self, outcomes: list[dict[str, Any]], *, compact_response: bool = False
-    ) -> list[dict[str, Any]]:
-        messages: list[dict[str, Any]] = []
-        for index in range(0, len(outcomes), HANDLER_OUTCOME_BATCH_LIMIT):
-            chunk = outcomes[index : index + HANDLER_OUTCOME_BATCH_LIMIT]
-            messages.extend(
-                self.request_messages(
-                    {'type': 'handler_outcomes', 'outcomes': chunk, 'compact_response': compact_response},
-                    include_patches=False,
-                    advance_patch_seq=True,
                     advance_patch_seq_when_no_patches=compact_response,
                 )
             )

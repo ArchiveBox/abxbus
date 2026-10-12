@@ -734,11 +734,7 @@ func (c *RustCoreClient) CompleteHandler(invocation map[string]any, value any, r
 }
 
 func (c *RustCoreClient) completeHandler(invocation map[string]any, value any, resultIsEventReference bool, processRouteAfter bool, processAvailableAfter bool) ([]CoreProtocolEnvelope, error) {
-	return c.completeHandlerFast(invocation, value, resultIsEventReference, processRouteAfter, processAvailableAfter, true, false)
-}
-
-func (c *RustCoreClient) completeHandlerNoPatches(invocation map[string]any, value any, resultIsEventReference bool, processRouteAfter bool, processAvailableAfter bool) ([]CoreProtocolEnvelope, error) {
-	return c.completeHandlerFast(invocation, value, resultIsEventReference, processRouteAfter, processAvailableAfter, true, false)
+	return c.completeHandlerFast(invocation, value, resultIsEventReference, processRouteAfter, processAvailableAfter, true, true)
 }
 
 func (c *RustCoreClient) completeHandlerFast(invocation map[string]any, value any, resultIsEventReference bool, processRouteAfter bool, processAvailableAfter bool, compactResponse bool, includePatches bool) ([]CoreProtocolEnvelope, error) {
@@ -999,7 +995,6 @@ func readFastPatchSeq(data []byte) (uint64, error) {
 }
 
 func (c *RustCoreClient) completeHandlerOutcomes(outcomes []map[string]any) ([]CoreProtocolEnvelope, error) {
-	includePatches := len(outcomes) <= 1
 	responses := make([]CoreProtocolEnvelope, 0)
 	for index := 0; index < len(outcomes); index += handlerOutcomeBatchLimit {
 		end := index + handlerOutcomeBatchLimit
@@ -1011,8 +1006,7 @@ func (c *RustCoreClient) completeHandlerOutcomes(outcomes []map[string]any) ([]C
 			"outcomes":         outcomes[index:end],
 			"compact_response": true,
 		}, coreRequestOptions{
-			IncludePatches:               includePatches,
-			AdvancePatchSeq:              !includePatches,
+			IncludePatches:               true,
 			AdvancePatchSeqWhenNoPatches: true,
 		})
 		if err != nil {

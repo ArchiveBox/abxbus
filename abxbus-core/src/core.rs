@@ -151,6 +151,9 @@ pub struct Core {
     pub result_deadlines_by_id: BTreeMap<String, (Option<Timestamp>, Option<Timestamp>)>,
     pub event_deadlines_by_id: BTreeMap<String, (Option<Timestamp>, Option<Timestamp>)>,
     pub paused_serial_routes_by_bus: BTreeMap<String, BTreeSet<String>>,
+    pub(crate) retention_deadlines: BTreeMap<(String, String), Timestamp>,
+    pub(crate) retention_queue: BTreeMap<Timestamp, BTreeSet<(String, String)>>,
+    pub(crate) history_retain_counts: BTreeMap<(String, String), usize>,
 }
 
 impl Core {
@@ -159,14 +162,24 @@ impl Core {
         self.store
             .append_patch(CorePatch::BusRegistered { bus: bus.clone() });
         self.store.insert_bus(bus);
+        self.track_bus_retention(&bus_id);
         self.apply_history_policy_for_bus(&bus_id);
     }
 
     pub fn insert_handler(&mut self, handler: HandlerRecord) {
+        let retention_changed = self
+            .store
+            .handlers
+            .get(&handler.handler_id)
+            .is_some_and(|previous| previous.handler_result_ttl != handler.handler_result_ttl);
+        let bus_id = handler.bus_id.clone();
         self.store.append_patch(CorePatch::HandlerRegistered {
             handler: handler.clone(),
         });
         self.store.insert_handler(handler);
+        if retention_changed {
+            self.track_bus_retention(&bus_id);
+        }
     }
 
     pub fn import_bus_snapshot(
@@ -261,6 +274,7 @@ impl Core {
                 let _ = self.complete_event_if_done(&event_id)?;
             }
         }
+        self.track_bus_retention(&bus.bus_id);
         self.apply_history_policy_for_bus(&bus.bus_id);
         Ok(())
     }
@@ -919,6 +933,7 @@ impl Core {
         }
         .to_string();
         Some(CoreEventResultSnapshot {
+            handler_result_ttl: handler.handler_result_ttl,
             id: result.result_id.clone(),
             status,
             event_id: result.event_id.clone(),
@@ -963,19 +978,16 @@ impl Core {
 
     fn forward_existing_event_to_bus_with_patch(
         &mut self,
-        mut event: EventRecord,
+        event: EventRecord,
         bus_id: &str,
         emit_patch: bool,
     ) -> Result<String, CoreErrorState> {
-        event.event_status = EventStatus::Pending;
-        event.event_started_at = None;
-        event.event_completed_at = None;
         self.emit_to_bus_with_options(event, bus_id, emit_patch, false)
     }
 
     fn emit_to_bus_with_options(
         &mut self,
-        event: EventRecord,
+        mut event: EventRecord,
         bus_id: &str,
         emit_patch: bool,
         replace_terminal_event: bool,
@@ -990,6 +1002,16 @@ impl Core {
         let route_id = uuid_v7_string();
         let event_id = event.event_id.clone();
         self.ensure_bus_history_has_room(&resolved_bus_id, &event_id)?;
+        let sealed =
+            event.event_status == EventStatus::Completed || event.event_completed_at.is_some();
+        if sealed {
+            event.event_status = EventStatus::Completed;
+            let completed_at = event
+                .event_completed_at
+                .get_or_insert_with(now_timestamp)
+                .clone();
+            event.event_started_at.get_or_insert(completed_at);
+        }
         let existing_route_ids = self
             .store
             .routes_by_event
@@ -1109,7 +1131,11 @@ impl Core {
             event_id: event_id.clone(),
             bus_id: resolved_bus_id.clone(),
             route_seq,
-            status: RouteStatus::Pending,
+            status: if sealed {
+                RouteStatus::Completed
+            } else {
+                RouteStatus::Pending
+            },
             handler_cursor: 0,
             serial_handler_paused_by: None,
             event_lock_lease: None,
@@ -1119,6 +1145,18 @@ impl Core {
             .add_event_to_bus_history(&resolved_bus_id, &event_id);
         self.store
             .record_event_emitted_to_bus(&resolved_bus_id, &event_id);
+        if sealed {
+            self.remove_route_from_bus_schedule_index(&route_id);
+            let completed_at = self.store.events[&event_id]
+                .event_completed_at
+                .clone()
+                .unwrap();
+            let patch = self.event_completed_patch_for_event(&event_id, completed_at)?;
+            self.store.append_patch(patch);
+            self.track_event_retention(&resolved_bus_id, &event_id);
+            self.apply_history_policy_for_bus(&resolved_bus_id);
+            return Ok(route_id);
+        }
         if self
             .store
             .events
@@ -1179,7 +1217,7 @@ impl Core {
         Ok(())
     }
 
-    fn apply_history_policy_for_bus(&mut self, bus_id: &str) {
+    pub(crate) fn apply_history_policy_for_bus(&mut self, bus_id: &str) {
         let Some(bus) = self.store.buses.get(bus_id) else {
             return;
         };
@@ -1190,35 +1228,77 @@ impl Core {
             return;
         }
 
-        loop {
-            let should_pop_front = {
-                let Some(history) = self.store.bus_event_history.get(bus_id) else {
-                    break;
-                };
-                if history.len() <= max_history_size {
-                    break;
-                }
-                let Some(event_id) = history.front() else {
-                    break;
-                };
+        let Some(history) = self.store.bus_event_history.get(bus_id) else {
+            return;
+        };
+        if history.len() <= max_history_size {
+            return;
+        }
+        let mut children = BTreeMap::<String, usize>::new();
+        for event_id in history {
+            if let Some(parent_id) = self
+                .store
+                .events
+                .get(event_id)
+                .and_then(|event| event.event_parent_id.as_ref())
+            {
+                *children.entry(parent_id.clone()).or_default() += 1;
+            }
+        }
+        let mut leaves: VecDeque<_> = history
+            .iter()
+            .filter(|event_id| {
                 self.store
                     .events
-                    .get(event_id)
+                    .get(*event_id)
                     .is_some_and(|event| event.event_status == EventStatus::Completed)
-            };
-            if !should_pop_front {
+                    && (max_history_size == 0
+                        || (!children.contains_key(*event_id)
+                            && !self
+                                .history_retain_counts
+                                .contains_key(&(bus_id.to_string(), (*event_id).clone()))))
+            })
+            .cloned()
+            .collect();
+        let mut count = history.len();
+        while count > max_history_size {
+            let Some(event_id) = leaves.pop_front() else {
                 break;
+            };
+            let parent_id = self
+                .store
+                .events
+                .get(&event_id)
+                .and_then(|event| event.event_parent_id.clone());
+            self.evict_history_event(bus_id, &event_id);
+            count -= 1;
+            if let Some(parent_id) = parent_id {
+                if let Some(children_count) = children.get_mut(&parent_id) {
+                    *children_count -= 1;
+                    if *children_count == 0
+                        && max_history_size > 0
+                        && self
+                            .store
+                            .events
+                            .get(&parent_id)
+                            .is_some_and(|event| event.event_status == EventStatus::Completed)
+                        && self
+                            .store
+                            .bus_event_history_members
+                            .get(bus_id)
+                            .is_some_and(|ids| ids.contains(&parent_id))
+                        && !self
+                            .history_retain_counts
+                            .contains_key(&(bus_id.to_string(), parent_id.clone()))
+                    {
+                        leaves.push_back(parent_id);
+                    }
+                }
             }
-
-            let Some(event_id) = self.store.pop_front_bus_history_event(bus_id) else {
-                break;
-            };
-            self.compact_completed_event_routes(&event_id);
-            self.prune_event_if_unreferenced(&event_id);
         }
     }
 
-    fn prune_event_if_unreferenced(&mut self, event_id: &str) {
+    pub(crate) fn prune_event_if_unreferenced(&mut self, event_id: &str) {
         if self
             .store
             .routes_by_event
@@ -1357,6 +1437,7 @@ impl Core {
                 block_parent_completion,
                 pause_parent_route,
             } => {
+                self.expire_history();
                 compact_response = compact;
                 self.active_hosts.insert(session_id.to_string());
                 let event_id = event.event_id.clone();
@@ -1407,6 +1488,7 @@ impl Core {
                 defer_start,
                 compact_response: compact,
             } => {
+                self.expire_history();
                 compact_response = compact;
                 self.active_hosts.insert(session_id.to_string());
                 let mut route_ids = Vec::with_capacity(events.len());
@@ -1445,15 +1527,47 @@ impl Core {
                     }
                 }
             }
+            HostToCoreMessage::RetainHistory {
+                bus_id,
+                event_id,
+                retain,
+            } => {
+                let key = (bus_id, event_id);
+                if retain {
+                    *self.history_retain_counts.entry(key).or_default() += 1;
+                } else if let Some(count) = self.history_retain_counts.get_mut(&key) {
+                    *count -= 1;
+                    if *count == 0 {
+                        self.history_retain_counts.remove(&key);
+                    }
+                }
+            }
+            HostToCoreMessage::TrimHistory { bus_id } => {
+                self.expire_history();
+                self.apply_history_policy_for_bus(&bus_id);
+            }
             HostToCoreMessage::UpdateEventRetention {
                 event_id,
                 event_ttl,
                 event_result_ttl,
             } => {
-                let event = self.store.events.get_mut(&event_id)
+                let event = self
+                    .store
+                    .events
+                    .get_mut(&event_id)
                     .ok_or_else(|| CoreErrorState::MissingEvent(event_id.clone()))?;
                 event.event_ttl = event_ttl;
                 event.event_result_ttl = event_result_ttl;
+                let bus_ids: Vec<_> = self
+                    .store
+                    .bus_event_history_members
+                    .iter()
+                    .filter(|(_, members)| members.contains(&event_id))
+                    .map(|(bus_id, _)| bus_id.clone())
+                    .collect();
+                for bus_id in bus_ids {
+                    self.track_event_retention(&bus_id, &event_id);
+                }
             }
             HostToCoreMessage::UpdateEventOptions {
                 event_id,
@@ -4489,6 +4603,14 @@ impl Core {
     }
 
     fn complete_event(&mut self, event_id: &str) -> Result<bool, CoreErrorState> {
+        if self
+            .store
+            .events
+            .get(event_id)
+            .is_some_and(|event| event.event_status == EventStatus::Completed)
+        {
+            return Ok(false);
+        }
         let has_results = self
             .store
             .routes_by_event
@@ -4540,6 +4662,7 @@ impl Core {
             .map(|route| route.bus_id.clone())
             .collect::<BTreeSet<_>>();
         for bus_id in affected_bus_ids {
+            self.track_event_retention(&bus_id, event_id);
             self.apply_history_policy_for_bus(&bus_id);
         }
         self.prune_event_if_unreferenced(event_id);
@@ -4616,7 +4739,7 @@ impl Core {
         Ok(())
     }
 
-    fn compact_completed_event_routes(&mut self, event_id: &str) {
+    pub(crate) fn compact_completed_event_routes(&mut self, event_id: &str) {
         let route_ids = self
             .store
             .routes_by_event

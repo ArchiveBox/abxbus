@@ -10,6 +10,7 @@ pub mod envelope;
 pub mod id;
 pub mod locks;
 pub mod protocol;
+mod retention;
 pub mod scheduler;
 pub mod store;
 pub mod time;

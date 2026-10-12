@@ -118,6 +118,14 @@ pub enum HostToCoreMessage {
         event_ttl: Option<f64>,
         event_result_ttl: Option<f64>,
     },
+    TrimHistory {
+        bus_id: String,
+    },
+    RetainHistory {
+        bus_id: String,
+        event_id: EventId,
+        retain: bool,
+    },
     ProcessRoute {
         route_id: RouteId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -324,6 +332,8 @@ pub struct CoreEventSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreEventResultSnapshot {
+    #[serde(default)]
+    pub handler_result_ttl: Option<f64>,
     pub id: ResultId,
     pub status: String,
     pub event_id: EventId,
@@ -354,6 +364,14 @@ pub struct CoreEventResultSnapshot {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CorePatch {
+    HistoryEvicted {
+        bus_id: String,
+        event_id: EventId,
+    },
+    ResultsExpired {
+        event_id: EventId,
+        handler_ids: Vec<HandlerId>,
+    },
     BusRegistered {
         bus: BusRecord,
     },

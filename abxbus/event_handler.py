@@ -276,7 +276,7 @@ class EventHandler(BaseModel):
 
     def __setattr__(self, name: str, value: Any) -> None:
         super().__setattr__(name, value)
-        if name in {'handler_timeout', 'handler_slow_timeout'}:
+        if name in {'handler_timeout', 'handler_slow_timeout', 'handler_result_ttl'}:
             callback = self._mutation_callback
             if callback is not None:
                 callback(self)

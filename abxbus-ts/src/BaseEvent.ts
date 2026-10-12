@@ -1736,7 +1736,8 @@ export class BaseEvent {
       }
     }
     original.event_status = 'completed'
-    original.event_completed_at = original.event_completed_at ?? (completed_at === null ? monotonicDatetime() : monotonicDatetime(completed_at))
+    original.event_completed_at =
+      original.event_completed_at ?? (completed_at === null ? monotonicDatetime() : monotonicDatetime(completed_at))
     original.event_started_at = original.event_started_at ?? original.event_completed_at
     if (!was_completed && original.event_bus) {
       const bus_for_hook = original.event_bus
