@@ -12,12 +12,17 @@ runs:
     - name: Install native toolchain on macOS
       if: runner.os == 'macOS'
       shell: bash
-      run: brew install gcc@14 cmake
+      run: brew install cmake
     - name: Configure native toolchain
       shell: bash
       run: |
-        echo "CC=gcc-14" >> "$GITHUB_ENV"
-        echo "CXX=g++-14" >> "$GITHUB_ENV"
+        if [[ "$RUNNER_OS" == "macOS" ]]; then
+          echo "CC=clang" >> "$GITHUB_ENV"
+          echo "CXX=clang++" >> "$GITHUB_ENV"
+        else
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+        fi
     - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
       with:
         toolchain: 1.97.1
