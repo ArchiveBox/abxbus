@@ -133,6 +133,18 @@ class _HandlerRegistry(dict[str, EventHandler]):
 
 
 class _CoreEventHistory(EventHistory[T_Event]):
+    def __delitem__(self, event_id: str) -> None:
+        event = self[event_id]
+        bus = self._bus_ref()
+        if bus is not None:
+            for message in bus.core.request_messages(
+                {'type': 'remove_history_event', 'bus_id': bus.bus_id, 'event_id': event_id}
+            ):
+                bus._apply_core_message(message)
+            bus._on_history_remove(event)
+        if event_id in self:
+            super().__delitem__(event_id)
+
     def __init__(self, bus: RustCoreEventBus, *, max_history_size: int | None, max_history_drop: bool) -> None:
         super().__init__(max_history_size=max_history_size, max_history_drop=max_history_drop)
         self._bus_ref = weakref.ref(bus)
@@ -1286,7 +1298,7 @@ class RustCoreEventBus:
                             self._remove_pending_event(event_id)
                 if progressed:
                     empty_route_polls = 0
-                if active_target_event_id is not None and self._completed_explicit_await_event_id() is not None:
+                if self._completed_explicit_await_event_id() is not None:
                     return
                 if active_target_event_id is not None:
                     target_event = self._events.get(active_target_event_id)
@@ -1754,6 +1766,8 @@ class RustCoreEventBus:
                     )
                 if await self._await_active_untargeted_driver_for_event(event_id, buses):
                     continue
+                if event_obj is not None and event_obj.event_status == EventStatus.COMPLETED:
+                    continue
                 progressed = False
                 for bus in buses:
                     event_for_bus = bus._events.get(event_id)
@@ -1969,6 +1983,10 @@ class RustCoreEventBus:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _completed_snapshot_or_event_async(self, event: BaseEvent[Any]) -> BaseEvent[Any]:
+        for result in event.event_results.values():
+            if isinstance(result.error, EventHandlerTimeoutError):
+                result._handler_timeout_expired = True  # pyright: ignore[reportPrivateUsage]
+                result._log_timeout_diagnostic_if_needed(event)  # pyright: ignore[reportPrivateUsage]
         self._normalize_error_result_statuses(event)
         expected_handler_ids = self._expected_live_handler_ids(event)
         if (
@@ -2533,6 +2551,8 @@ class RustCoreEventBus:
             seen_ids.update(self.event_history.keys())
         if resolved_past is not False:
             for event_obj in reversed(list(self.event_history.values())):
+                if event_pattern != '*' and event_obj.event_type != event_pattern:
+                    continue
                 if event_obj.event_id in initial_seen_ids or not event_matches(event_obj):
                     continue
                 ready_event = await ready_candidate(event_obj, already_matched=True)
@@ -2547,6 +2567,8 @@ class RustCoreEventBus:
             else self.core.list_events(event_pattern, limit if can_limit_core_history else None, self.bus_id)
         )
         for record in records:
+            if record.get('event_id') in seen_ids:
+                continue
             event_obj = self._event_from_core_record(event_type, record)
             if event_obj.event_id in seen_ids or not event_matches(event_obj):
                 continue
@@ -2903,6 +2925,10 @@ class RustCoreEventBus:
         self.disconnect()
 
     async def wait_until_idle(self, timeout: float | None = None) -> None:
+        if timeout is not None:
+            self._validate_optional_timeout_seconds(timeout, 'timeout')
+            if timeout == 0:
+                timeout = None
         await self._flush_pending_core_emits_async()
         if (
             not self.in_flight_event_ids
@@ -3132,7 +3158,6 @@ class RustCoreEventBus:
             'event_slow_timeout': self.event_slow_timeout,
             'event_handler_concurrency': self.event_handler_concurrency,
             'event_handler_completion': self.event_handler_completion,
-            'event_handler_timeout': self.event_handler_timeout,
             'event_handler_slow_timeout': self.event_handler_slow_timeout,
             'event_handler_detect_file_paths': self.event_handler_detect_file_paths,
             'handlers': {
@@ -3182,7 +3207,6 @@ class RustCoreEventBus:
             event_slow_timeout=timeout_value('event_slow_timeout', 300.0),
             event_ttl=timeout_value('event_ttl', None),
             event_result_ttl=timeout_value('event_result_ttl', None),
-            event_handler_timeout=timeout_value('event_handler_timeout', None),
             event_handler_slow_timeout=timeout_value('event_handler_slow_timeout', 30.0),
             event_handler_detect_file_paths=bool(payload.get('event_handler_detect_file_paths', True)),
             background_worker=False,
@@ -3502,6 +3526,15 @@ class RustCoreEventBus:
                     if not outcomes:
                         continue
                     produced_entries: list[tuple[RustCoreEventBus, dict[str, Any]]] = []
+                    outcomes_by_bus: dict[RustCoreEventBus, list[dict[str, Any]]] = {}
+                    for outcome in outcomes:
+                        owner = buses_by_invocation[cast(str, outcome['invocation_id'])]
+                        outcomes_by_bus.setdefault(owner, []).append(outcome)
+                    for owner, owner_outcomes in outcomes_by_bus.items():
+                        produced = owner._complete_core_outcomes(owner_outcomes, invocations_by_invocation)
+                        for outcome in owner_outcomes:
+                            owner._release_queue_jump_children_for_invocation(outcome.get('invocation_id'))
+                        produced_entries.extend((owner, message) for message in produced)
                     if produced_entries:
                         progressed = True
                     produced_messages = [message for _bus, message in produced_entries]
@@ -3750,6 +3783,11 @@ class RustCoreEventBus:
         kind: str,
     ) -> BaseException:
         timeout_seconds = self._timeout_seconds_for_invocation(invocation, kind)
+        if timeout_seconds is None and kind == 'handler':
+            timeout_seconds = self._effective_timeout_for_invocation(invocation, event, handler)
+        result = event.event_results.get(handler.id)
+        if result is not None and kind == 'handler':
+            result._handler_timeout_expired = True  # pyright: ignore[reportPrivateUsage]
         if kind == 'event':
             suffix = f' after {timeout_seconds}s' if timeout_seconds is not None else ''
             return EventHandlerAbortedError(f'Aborted running handler: event timeout{suffix}')
@@ -4381,10 +4419,6 @@ class RustCoreEventBus:
                 event = self._events.get(event_id) if isinstance(event_id, str) else None
                 handler_id = invocation.get('handler_id')
                 result = event.event_results.get(handler_id) if event is not None and isinstance(handler_id, str) else None
-                process_route_after = not (
-                    isinstance(event_id, str)
-                    and any(event_id in bus._explicit_await_event_ids for bus in list(type(self)._instances) if not bus._closed)
-                )
                 complete = (
                     commit_core.complete_handler
                     if event is not None
@@ -4397,7 +4431,7 @@ class RustCoreEventBus:
                         invocation,
                         outcome_payload.get('value'),
                         result_is_event_reference=outcome_payload.get('result_is_event_reference') is True,
-                        process_route_after=process_route_after,
+                        process_route_after=True,
                         process_available_after=outcome.get('process_available_after') is True,
                         compact_response=True,
                     )
@@ -5430,6 +5464,8 @@ class RustCoreEventBus:
             if event.event_status == EventStatus.PENDING:
                 event._mark_started()  # pyright: ignore[reportPrivateUsage]
             event.event_status = EventStatus.COMPLETED
+            for result in event.event_results.values():
+                result._log_timeout_diagnostic_if_needed(event)  # pyright: ignore[reportPrivateUsage]
             event._event_is_complete_flag = True  # pyright: ignore[reportPrivateUsage]
             event._event_dispatch_context = None  # pyright: ignore[reportPrivateUsage]
             if event.event_completed_at is None:

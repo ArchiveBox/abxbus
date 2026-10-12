@@ -126,6 +126,10 @@ pub enum HostToCoreMessage {
         event_id: EventId,
         retain: bool,
     },
+    RemoveHistoryEvent {
+        bus_id: String,
+        event_id: EventId,
+    },
     ProcessRoute {
         route_id: RouteId,
         #[serde(default, skip_serializing_if = "Option::is_none")]

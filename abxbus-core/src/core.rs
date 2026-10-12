@@ -1542,6 +1542,9 @@ impl Core {
                     }
                 }
             }
+            HostToCoreMessage::RemoveHistoryEvent { bus_id, event_id } => {
+                self.evict_history_event(&bus_id, &event_id);
+            }
             HostToCoreMessage::TrimHistory { bus_id } => {
                 self.expire_history();
                 self.apply_history_policy_for_bus(&bus_id);

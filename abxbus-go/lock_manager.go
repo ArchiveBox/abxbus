@@ -3,6 +3,7 @@ package abxbus
 import (
 	"context"
 	"runtime"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -199,9 +200,9 @@ func (l *LockManager) runWithHandlerDispatchContext(result *EventResult, dispatc
 		l.active_mu.Lock()
 		for i := len(l.active_handler_result) - 1; i >= 0; i-- {
 			if l.active_handler_result[i] == result {
-				l.active_handler_result = append(l.active_handler_result[:i], l.active_handler_result[i+1:]...)
-				l.active_dispatch_context = append(l.active_dispatch_context[:i], l.active_dispatch_context[i+1:]...)
-				l.active_dispatch_goid = append(l.active_dispatch_goid[:i], l.active_dispatch_goid[i+1:]...)
+				l.active_handler_result = slices.Delete(l.active_handler_result, i, i+1)
+				l.active_dispatch_context = slices.Delete(l.active_dispatch_context, i, i+1)
+				l.active_dispatch_goid = slices.Delete(l.active_dispatch_goid, i, i+1)
 				break
 			}
 		}
@@ -211,7 +212,7 @@ func (l *LockManager) runWithHandlerDispatchContext(result *EventResult, dispatc
 			entries := activeDispatchRegistry.byGoroutine[goid]
 			for i := len(entries) - 1; i >= 0; i-- {
 				if entries[i].bus == l.bus && entries[i].result == result {
-					entries = append(entries[:i], entries[i+1:]...)
+					entries = slices.Delete(entries, i, i+1)
 					break
 				}
 			}

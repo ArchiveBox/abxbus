@@ -571,7 +571,6 @@ func roundtripBusFixture() map[string]any {
 		"event_result_ttl":                nil,
 		"event_handler_concurrency":       "serial",
 		"event_handler_completion":        "all",
-		"event_handler_timeout":           nil,
 		"event_handler_slow_timeout":      30.0,
 		"event_handler_detect_file_paths": false,
 		"handlers": map[string]any{

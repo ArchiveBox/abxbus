@@ -35,7 +35,6 @@ type EventBusOptions struct {
 	EventResultTTL              *float64
 	EventHandlerConcurrency     EventHandlerConcurrencyMode
 	EventHandlerCompletion      EventHandlerCompletionMode
-	EventHandlerTimeout         *float64
 	EventHandlerSlowTimeout     *float64
 	EventHandlerDetectFilePaths *bool
 	Middlewares                 []EventBusMiddleware
@@ -83,7 +82,6 @@ type EventBusJSON struct {
 	EventResultTTL              *float64                    `json:"event_result_ttl"`
 	EventHandlerConcurrency     EventHandlerConcurrencyMode `json:"event_handler_concurrency"`
 	EventHandlerCompletion      EventHandlerCompletionMode  `json:"event_handler_completion"`
-	EventHandlerTimeout         *float64                    `json:"event_handler_timeout"`
 	EventHandlerSlowTimeout     *float64                    `json:"event_handler_slow_timeout"`
 	EventHandlerDetectFilePaths bool                        `json:"event_handler_detect_file_paths"`
 	Handlers                    map[string]*EventHandler    `json:"handlers"`
@@ -129,7 +127,6 @@ type EventBus struct {
 	EventHandlerConcurrency EventHandlerConcurrencyMode
 	EventHandlerCompletion  EventHandlerCompletionMode
 
-	EventHandlerTimeout         *float64
 	EventHandlerSlowTimeout     *float64
 	EventSlowTimeout            *float64
 	EventTTL                    *float64
@@ -210,10 +207,6 @@ func NewEventBus(name string, options *EventBusOptions) *EventBus {
 	} else if *event_slow_timeout < 0 {
 		panic("event_slow_timeout must be >= 0 or nil")
 	}
-	event_handler_timeout := options.EventHandlerTimeout
-	if event_handler_timeout != nil && *event_handler_timeout < 0 {
-		panic("event_handler_timeout must be >= 0 or nil")
-	}
 	event_handler_slow_timeout := options.EventHandlerSlowTimeout
 	if event_handler_slow_timeout == nil {
 		event_handler_slow_timeout = ptr(30.0)
@@ -238,7 +231,6 @@ func NewEventBus(name string, options *EventBusOptions) *EventBus {
 		EventConcurrency:            options.EventConcurrency,
 		EventHandlerConcurrency:     options.EventHandlerConcurrency,
 		EventHandlerCompletion:      options.EventHandlerCompletion,
-		EventHandlerTimeout:         event_handler_timeout,
 		EventHandlerSlowTimeout:     event_handler_slow_timeout,
 		EventSlowTimeout:            event_slow_timeout,
 		EventTTL:                    event_ttl,
@@ -1610,9 +1602,6 @@ func runSingleHandler(ctx context.Context, bus *EventBus, event *BaseEvent, hand
 	if explicit_handler_timeout == nil {
 		explicit_handler_timeout = event.EventHandlerTimeout
 	}
-	if explicit_handler_timeout == nil {
-		explicit_handler_timeout = bus.EventHandlerTimeout
-	}
 	if explicit_handler_timeout != nil && *explicit_handler_timeout <= 0 {
 		explicit_handler_timeout = nil
 	}
@@ -2062,7 +2051,6 @@ func (b *EventBus) ToJSON() ([]byte, error) {
 		{key: "event_result_ttl", value: b.EventResultTTL},
 		{key: "event_handler_concurrency", value: b.EventHandlerConcurrency},
 		{key: "event_handler_completion", value: b.EventHandlerCompletion},
-		{key: "event_handler_timeout", value: b.EventHandlerTimeout},
 		{key: "event_handler_slow_timeout", value: b.EventHandlerSlowTimeout},
 		{key: "event_handler_detect_file_paths", value: b.EventHandlerDetectFilePaths},
 		{key: "handlers", value: json.RawMessage(handlersJSON)},
@@ -2107,7 +2095,6 @@ func EventBusFromJSON(data []byte) (*EventBus, error) {
 		EventResultTTL:              parsed.EventResultTTL,
 		EventHandlerConcurrency:     parsed.EventHandlerConcurrency,
 		EventHandlerCompletion:      parsed.EventHandlerCompletion,
-		EventHandlerTimeout:         parsed.EventHandlerTimeout,
 		EventHandlerSlowTimeout:     parsed.EventHandlerSlowTimeout,
 		EventHandlerDetectFilePaths: &parsed.EventHandlerDetectFilePaths,
 	})

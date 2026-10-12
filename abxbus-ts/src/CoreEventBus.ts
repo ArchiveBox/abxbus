@@ -107,7 +107,6 @@ export type RustCoreEventBusOptions = {
   event_slow_timeout?: number | null
   event_ttl?: number | null
   event_result_ttl?: number | null
-  event_handler_timeout?: number | null
   event_handler_slow_timeout?: number | null
   max_history_size?: number | null
   max_history_drop?: boolean
@@ -145,7 +144,6 @@ export type RustCoreEventBusJSON = {
   event_result_ttl: number | null
   event_handler_concurrency: EventHandlerConcurrencyMode
   event_handler_completion: EventHandlerCompletionMode
-  event_handler_timeout: number | null
   event_handler_slow_timeout: number | null
   event_handler_detect_file_paths: boolean
   handlers: Record<string, EventHandlerJSON>
@@ -515,7 +513,6 @@ export class RustCoreEventBus {
   readonly event_slow_timeout: number | null
   private _event_ttl: number | null = null
   private _event_result_ttl: number | null = null
-  readonly event_handler_timeout: number | null
   readonly event_handler_slow_timeout: number | null
 
   readonly handlers: Map<string, EventHandler>
@@ -565,7 +562,6 @@ export class RustCoreEventBus {
     this.event_slow_timeout = options.event_slow_timeout === undefined ? 300 : options.event_slow_timeout
     this.event_ttl = options.event_ttl ?? null
     this.event_result_ttl = options.event_result_ttl ?? null
-    this.event_handler_timeout = options.event_handler_timeout ?? null
     this.event_handler_slow_timeout = options.event_handler_slow_timeout === undefined ? 30 : options.event_handler_slow_timeout
     this.handlers = new Map()
     this.handlers_by_key = new Map()
@@ -636,7 +632,6 @@ export class RustCoreEventBus {
       event_handler_completion: this.event_handler_completion,
       event_timeout: this.event_timeout,
       event_slow_timeout: this.event_slow_timeout,
-      event_handler_timeout: this.event_handler_timeout,
       event_handler_slow_timeout: this.event_handler_slow_timeout,
     }
   }
@@ -845,7 +840,7 @@ export class RustCoreEventBus {
       event_obj._setDispatchContext(captureAsyncContext())
     }
     const forwarding_existing_event = event_obj._core_known
-    event_obj.event_path.push(this.label)
+    if (!event_obj.event_path.includes(this.label)) event_obj.event_path.push(this.label)
     this.events.set(event_obj.event_id, event_obj)
     if (event_obj.event_status !== 'completed' && !event_obj.event_completed_at && this.shouldPrecreatePendingLocalResults(event_obj)) {
       this.ensurePendingLocalResults(event_obj)
@@ -1001,6 +996,9 @@ export class RustCoreEventBus {
       event_type: event.event_type,
       event_version: event.event_version,
       event_created_at: event.event_created_at,
+      event_status: event.event_status,
+      event_started_at: event.event_started_at,
+      event_completed_at: event.event_completed_at,
       event_path: event.event_path,
     }
     if (event.event_result_type !== undefined) {
@@ -1437,6 +1435,7 @@ export class RustCoreEventBus {
   }
 
   async processUntilEventCompleted(event_id: string, initial_messages: CoreMessage[] | null = null): Promise<BaseEvent> {
+    const awaited_event = this.events.get(event_id)
     if (this.processing.has(event_id)) {
       const event = this.events.get(event_id)
       if (!event) {
@@ -1460,12 +1459,12 @@ export class RustCoreEventBus {
         const invocation_messages = invocationMessagesFromCoreMessages(messages)
         if (invocation_messages.length > 0) {
           await this.runAndApplyInvocationMessages(invocation_messages)
-          const event = this.events.get(event_id)
+          const event = this.events.get(event_id) ?? awaited_event
           if (event?.event_status === 'completed') {
             return this.completedSnapshotOrEvent(event)
           }
         }
-        const event = this.events.get(event_id)
+        const event = this.events.get(event_id) ?? awaited_event
         if (event?.event_status === 'completed') {
           return this.completedSnapshotOrEvent(event)
         }
@@ -1864,19 +1863,14 @@ export class RustCoreEventBus {
   private applyCoreSnapshotToEvent(event: BaseEvent, snapshot: Record<string, unknown>): void {
     event._core_known = true
     const event_results = snapshot.event_results
-    if (snapshot.event_status === 'completed') {
-      for (const handler_id of event.event_results.keys()) {
-        if (!event_results || !Object.hasOwn(event_results, handler_id)) event.event_results.delete(handler_id)
-      }
-    }
     if (event_results && typeof event_results === 'object' && !Array.isArray(event_results)) {
       for (const result of this.orderedResultRecords(event_results as Record<string, unknown>)) {
         this.applyResultSnapshot(event, result)
       }
     }
     this.cancelFirstModeLosersForCompletedEvent(event)
-    event.event_started_at = typeof snapshot.event_started_at === 'string' ? monotonicDatetime(snapshot.event_started_at) : null
-    event.event_completed_at = typeof snapshot.event_completed_at === 'string' ? monotonicDatetime(snapshot.event_completed_at) : null
+    event.event_started_at = typeof snapshot.event_started_at === 'string' ? snapshot.event_started_at : null
+    event.event_completed_at = typeof snapshot.event_completed_at === 'string' ? snapshot.event_completed_at : null
     event.event_parent_id = typeof snapshot.event_parent_id === 'string' ? snapshot.event_parent_id : null
     event.event_emitted_by_handler_id =
       typeof snapshot.event_emitted_by_handler_id === 'string' ? snapshot.event_emitted_by_handler_id : null
@@ -2047,7 +2041,6 @@ export class RustCoreEventBus {
       event_slow_timeout: this.event_slow_timeout,
       event_handler_concurrency: this.event_handler_concurrency,
       event_handler_completion: this.event_handler_completion,
-      event_handler_timeout: this.event_handler_timeout,
       event_handler_slow_timeout: this.event_handler_slow_timeout,
       event_handler_detect_file_paths: this.event_handler_detect_file_paths,
       handlers,
@@ -2070,7 +2063,7 @@ export class RustCoreEventBus {
     if (event_type !== '*' && typeof event_type !== 'string') {
       const fromJSON = (event_type as unknown as { fromJSON?: (data: unknown) => BaseEvent }).fromJSON
       if (typeof fromJSON === 'function') {
-        const event = fromJSON(record)
+        const event = fromJSON.call(event_type, record)
         event.event_bus = this as never
         this.applyCoreSnapshotToEvent(event, record)
         this.notifyEventEmissionWaiters(event)
@@ -3849,7 +3842,7 @@ export class RustCoreEventBus {
           event._markStarted(started_at, false)
           bus._notifyEventChange(event, 'started')
         } else if (started_at !== null) {
-          event.event_started_at = monotonicDatetime(started_at)
+          event.event_started_at = started_at
         }
         bus.cancelFirstModeLosersForCompletedEvent(event)
         event._markCompleted(true, false, typeof patch.completed_at === 'string' ? patch.completed_at : null)

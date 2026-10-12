@@ -68,9 +68,6 @@ export class EventBus extends RustCoreEventBus {
     if (record.event_handler_completion === 'all' || record.event_handler_completion === 'first') {
       options.event_handler_completion = record.event_handler_completion
     }
-    if (typeof record.event_handler_timeout === 'number' || record.event_handler_timeout === null) {
-      options.event_handler_timeout = record.event_handler_timeout
-    }
     if (typeof record.event_handler_slow_timeout === 'number' || record.event_handler_slow_timeout === null) {
       options.event_handler_slow_timeout = record.event_handler_slow_timeout
     }
