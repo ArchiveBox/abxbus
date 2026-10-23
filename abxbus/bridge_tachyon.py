@@ -29,6 +29,7 @@ import stat as _stat
 import threading
 import time
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -258,7 +259,7 @@ class TachyonEventBridge:
         loop = self._listener_loop
         if loop is None or loop.is_closed():
             return
-        loop.call_soon_threadsafe(self._inbound_bus.emit, event)
+        loop.call_soon_threadsafe(partial(self._inbound_bus.emit, event))
 
     @staticmethod
     def _is_listener_alive(path: str) -> bool:
