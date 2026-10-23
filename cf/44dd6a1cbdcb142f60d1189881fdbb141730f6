@@ -1,0 +1,33 @@
+.github/workflows/ci.yml
+  s_10bc94d001be49::t_56fcd05129bb27 46
+.github/workflows/docs.yml
+  s_10bc94d001be49::t_ece0db29d6541c 56
+.github/workflows/pre-commit-hooks.yaml
+  s_10bc94d001be49::t_457a46ad578aef 14
+.github/workflows/release-candidate.yml
+  s_10bc94d001be49::t_9a178dc0f8766a 39
+.github/workflows/release.yml
+  s_10bc94d001be49::t_80397331b27259 146
+.github/workflows/test_go.yaml
+  s_10bc94d001be49::t_83e37a2825dffb 111
+.github/workflows/test_py.yaml
+  s_10bc94d001be49::t_dc1f02a5716f69 17,108,227
+.github/workflows/test_ts.yaml
+  s_10bc94d001be49::t_a77b033bf10ab9 144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cf44dd6a1cbdcb142f60d1189881fdbb141730f6",
+  "prompts": {},
+  "sessions": {
+    "s_10bc94d001be49": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11f62-2c55-7051-a677-585a21b42fb4",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
