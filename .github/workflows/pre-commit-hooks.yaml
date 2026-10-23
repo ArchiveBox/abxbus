@@ -11,7 +11,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
-          version: "0.10.6"
+          version: "0.13.5"
           enable-cache: false
           activate-environment: true
       - run: uv sync --no-cache --all-extras --all-groups --no-extra tachyon
