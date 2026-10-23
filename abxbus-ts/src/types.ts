@@ -30,17 +30,19 @@ export type FindWindow = boolean | number
 type FindReservedOptionKeys = 'past' | 'future' | 'child_of'
 
 type EventFilterFields<T extends BaseEvent> = {
-  [K in keyof T as string extends K
-    ? never
-    : number extends K
+  [
+    K in keyof T as string extends K
       ? never
-      : symbol extends K
+      : number extends K
         ? never
-        : K extends FindReservedOptionKeys
+        : symbol extends K
           ? never
-          : T[K] extends (...args: any[]) => any
+          : K extends FindReservedOptionKeys
             ? never
-            : K]?: T[K]
+            : T[K] extends (...args: any[]) => any
+              ? never
+              : K
+  ]?: T[K]
 }
 
 export type FindOptions<T extends BaseEvent = BaseEvent> = {

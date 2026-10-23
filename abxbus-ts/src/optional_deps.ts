@@ -19,8 +19,7 @@ export const assertOptionalDependencyAvailable = (bridge_name: string, package_n
   let require_fn: { resolve: (specifier: string) => string } | undefined
   try {
     require_fn = Function('return typeof require === "function" ? require : undefined')() as
-      | { resolve: (specifier: string) => string }
-      | undefined
+      { resolve: (specifier: string) => string } | undefined
   } catch {
     require_fn = undefined
   }

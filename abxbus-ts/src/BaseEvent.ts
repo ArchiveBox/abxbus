@@ -169,50 +169,36 @@ type EventPayloadShape<TShape extends z.ZodRawShape> = {
 type EventPayload<TShape extends z.ZodRawShape> =
   EventPayloadShape<TShape> extends Record<string, never> ? {} : z.infer<z.ZodObject<EventPayloadShape<TShape>>>
 type EventPayloadRuntimeFieldName =
-  | 'bus'
-  | 'emit'
-  | 'now'
-  | 'wait'
-  | 'toString'
-  | 'toJSON'
-  | 'fromJSON'
-  | 'eventResult'
-  | 'eventResultsList'
+  'bus' | 'emit' | 'now' | 'wait' | 'toString' | 'toJSON' | 'fromJSON' | 'eventResult' | 'eventResultsList'
 type AnyFunction = (...args: any[]) => unknown
 type KnownEventPayloadFields<TEvent> = {
-  [K in keyof TEvent as K extends string
-    ? K extends `event_${string}`
-      ? never
-      : K extends `_${string}`
+  [
+    K in keyof TEvent as K extends string
+      ? K extends `event_${string}`
         ? never
-        : K extends EventPayloadRuntimeFieldName
+        : K extends `_${string}`
           ? never
-          : TEvent[K] extends AnyFunction
+          : K extends EventPayloadRuntimeFieldName
             ? never
-            : K
-    : never]: TEvent[K]
+            : TEvent[K] extends AnyFunction
+              ? never
+              : K
+      : never
+  ]: TEvent[K]
 }
 export type EventPayloadFields<TEvent> = keyof KnownEventPayloadFields<TEvent> extends never
   ? Record<string, unknown>
   : KnownEventPayloadFields<TEvent>
 type EventClassMetadataFieldName =
-  | 'fromJSON'
-  | 'prototype'
-  | 'event_schema'
-  | 'model_fields'
-  | 'event_type'
-  | 'event_version'
-  | 'event_result_type'
+  'fromJSON' | 'prototype' | 'event_schema' | 'model_fields' | 'event_type' | 'event_version' | 'event_result_type'
 type StaticDefaultSchema = z.ZodDefault<z.ZodTypeAny> | z.ZodPrefault<z.ZodTypeAny> | z.ZodCatch<z.ZodTypeAny>
 type EventModelFields<TShape extends z.ZodRawShape> = {
   readonly [K in keyof TShape]: TShape[K]
 }
 type StaticEventDefaultValues<TShape extends z.ZodRawShape> = {
-  readonly [K in keyof TShape as K extends EventClassMetadataFieldName
-    ? never
-    : TShape[K] extends StaticDefaultSchema
-      ? K
-      : never]: z.output<TShape[K]>
+  readonly [
+    K in keyof TShape as K extends EventClassMetadataFieldName ? never : TShape[K] extends StaticDefaultSchema ? K : never
+  ]: z.output<TShape[K]>
 }
 type StaticEventDefaultValuesFromSchema<TSchema extends AnyEventSchema> =
   TSchema extends z.ZodObject<infer TShape> ? StaticEventDefaultValues<TShape> : {}

@@ -29,8 +29,7 @@ const loadAsyncLocalStorageClass = (): (new () => AsyncLocalStorageLike) | null 
   // Fallback for older Node runtimes where require is available.
   try {
     const maybe_require = Function('return typeof require === "function" ? require : undefined')() as
-      | ((specifier: string) => { AsyncLocalStorage?: new () => AsyncLocalStorageLike })
-      | undefined
+      ((specifier: string) => { AsyncLocalStorage?: new () => AsyncLocalStorageLike }) | undefined
     const mod = maybe_require?.('node:async_hooks')
     if (mod?.AsyncLocalStorage) {
       return mod.AsyncLocalStorage

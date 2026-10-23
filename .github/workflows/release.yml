@@ -169,7 +169,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: 1.97.1
+          toolchain: 1.99.1
 
       - name: Authenticate with crates.io trusted publishing
         id: crates-auth
