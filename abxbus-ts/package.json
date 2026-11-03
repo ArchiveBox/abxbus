@@ -71,7 +71,7 @@
   "packageManager": "pnpm@10.33.2",
   "dependencies": {
     "uuid": "^14.0.3",
-    "zod": "~4.4.3"
+    "zod": "~4.6.6"
   },
   "devDependencies": {
     "@opentelemetry/api": "~1.9.1",
