@@ -58,6 +58,9 @@ struct TTLDeadlineEntry {
 struct BusRuntime {
     queue: Mutex<VecDeque<Arc<BaseEvent>>>,
     queue_notify: Event,
+    // Completion wakes before runner bookkeeping is cleared. Keep idle
+    // notifications separate so now() can await that boundary without polling.
+    idle_notify: Event,
     destroyed: Mutex<bool>,
     terminal_destroyed: Mutex<bool>,
     loop_started: Mutex<bool>,
@@ -628,6 +631,7 @@ impl EventBus {
             runtime: Arc::new(BusRuntime {
                 queue: Mutex::new(VecDeque::new()),
                 queue_notify: Event::new(),
+                idle_notify: Event::new(),
                 destroyed: Mutex::new(false),
                 terminal_destroyed: Mutex::new(false),
                 loop_started: Mutex::new(false),
@@ -763,12 +767,14 @@ impl EventBus {
                                         .active_event_ids
                                         .lock()
                                         .remove(&event_id);
+                                    bus_for_task.runtime.idle_notify.notify(usize::MAX);
                                 });
                             }
                             EventConcurrencyMode::GlobalSerial
                             | EventConcurrencyMode::BusSerial => {
                                 bus.process_event(event).await;
                                 bus.runtime.active_event_ids.lock().remove(&event_id);
+                                bus.runtime.idle_notify.notify(usize::MAX);
                             }
                         }
                         continue;
@@ -806,6 +812,7 @@ impl EventBus {
         }
         if self.has_completed_on_bus(&event) {
             self.runtime.active_event_ids.lock().remove(&event_id);
+            self.runtime.idle_notify.notify(usize::MAX);
             return;
         }
 
@@ -813,6 +820,7 @@ impl EventBus {
         thread::spawn(move || {
             block_on(bus.process_event(event));
             bus.runtime.active_event_ids.lock().remove(&event_id);
+            bus.runtime.idle_notify.notify(usize::MAX);
         });
     }
 
@@ -843,6 +851,7 @@ impl EventBus {
         self.runtime.queue.lock().clear();
         self.runtime.active_event_ids.lock().clear();
         self.runtime.processing_event_ids.lock().clear();
+        self.runtime.idle_notify.notify(usize::MAX);
         self.runtime.event_contexts.lock().clear();
         self.runtime.event_context_count.store(0, Ordering::SeqCst);
         self.locks.clear();
@@ -2008,15 +2017,18 @@ impl EventBus {
                 let mut processing = self.runtime.processing_event_ids.lock();
                 if !processing.insert(event_id.clone()) {
                     self.runtime.active_event_ids.lock().remove(&event_id);
+                    self.runtime.idle_notify.notify(usize::MAX);
                     return;
                 }
             }
             self.process_event_inner(event).await;
             self.runtime.processing_event_ids.lock().remove(&event_id);
+            self.runtime.idle_notify.notify(usize::MAX);
         } else {
             self.process_event(event).await;
         }
         self.runtime.active_event_ids.lock().remove(&event_id);
+        self.runtime.idle_notify.notify(usize::MAX);
         drop(runloop_pause);
         self.runtime.queue_notify.notify(usize::MAX);
     }
@@ -2851,6 +2863,12 @@ impl EventBus {
                 }
             }
 
+            // Subscribe before checking state so a runner clearing its final
+            // active/processing marker cannot leave us asleep after its notify.
+            let listeners: Vec<_> = attached_buses
+                .iter()
+                .map(|bus| Box::pin(bus.runtime.idle_notify.listen()))
+                .collect();
             let event_is_idle = attached_buses.iter().all(|bus| {
                 let queued = bus
                     .runtime
@@ -2871,7 +2889,16 @@ impl EventBus {
                     return false;
                 }
             }
-            Delay::new(Duration::from_millis(1)).await;
+            // Any attached bus may be the last one to finish. Notifications
+            // are only wakeups: recheck every bus, retaining the same deadline
+            // and completion contract even when an unrelated event wakes us.
+            let changed = Box::pin(futures::future::select_all(listeners));
+            if let Some(timeout) = timeout {
+                let remaining = Duration::from_secs_f64(timeout).saturating_sub(start.elapsed());
+                let _ = futures::future::select(changed, Delay::new(remaining)).await;
+            } else {
+                changed.await;
+            }
         }
     }
 
@@ -2919,6 +2946,7 @@ impl EventBus {
             }
         }
         self.runtime.processing_event_ids.lock().remove(&event_id);
+        self.runtime.idle_notify.notify(usize::MAX);
     }
 
     async fn process_event_inner(&self, event: Arc<BaseEvent>) {
