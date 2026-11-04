@@ -20,12 +20,27 @@ export const isJsonSchema = (value: unknown): value is JsonSchema => {
   return true
 }
 
-const nullUnionCandidates = (schema: Record<string, unknown>): Record<string, unknown>[] | null => {
+const typeUnionCandidates = (schema: Record<string, unknown>): Record<string, unknown>[] | null => {
+  // Zod 4.6 compacts bare anyOf branches into type arrays. Keep our wire shape,
+  // without replacing an independent anyOf constraint already on the schema.
+  if (schema.anyOf !== undefined) return null
   if (Array.isArray(schema.type) && schema.type.includes('null')) {
     const non_null_types = schema.type.filter((item): item is string => typeof item === 'string' && item !== 'null')
     if (non_null_types.length > 0) {
       return [{ type: non_null_types.length === 1 ? non_null_types[0] : non_null_types }, { type: 'null' }]
     }
+  }
+  if (
+    Array.isArray(schema.type) &&
+    schema.type.length > 0 &&
+    schema.type.every((item) => typeof item === 'string') &&
+    Object.keys(schema).every((key) =>
+      ['type', '$schema', 'title', 'description', 'default', 'examples', 'readOnly', 'writeOnly', 'deprecated'].includes(key)
+    )
+  ) {
+    // Only bare type assertions were compacted. Keep constrained type arrays:
+    // Zod's importer does not apply sibling type-specific constraints to anyOf.
+    return schema.type.map((type) => ({ type }))
   }
 
   return null
@@ -107,9 +122,9 @@ const rewriteJsonSchemaRefs = (schema: unknown, refs: Record<string, string>): u
   return rewritten
 }
 
-const normalizeJsonSchemaValue = (schema: unknown): unknown => {
+const normalizeJsonSchemaValue = (schema: unknown, schemaMap = false, nullableBranch = false): unknown => {
   if (Array.isArray(schema)) {
-    return schema.map((item) => normalizeJsonSchemaValue(item))
+    return schema.map((item) => normalizeJsonSchemaValue(item, false, nullableBranch))
   }
   if (!isJsonSchemaObject(schema)) {
     return schema
@@ -117,15 +132,45 @@ const normalizeJsonSchemaValue = (schema: unknown): unknown => {
 
   const normalized: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(schema)) {
-    normalized[key] = normalizeJsonSchemaValue(value)
+    // These keywords contain instance data, even when it resembles a schema.
+    // A property *named* default/const/etc. still contains a schema, though.
+    normalized[key] =
+      !schemaMap && ['default', 'const', 'enum', 'examples'].includes(key)
+        ? value
+        : normalizeJsonSchemaValue(
+            value,
+            !schemaMap && ['$defs', 'definitions', 'properties', 'patternProperties', 'dependentSchemas'].includes(key),
+            !schemaMap && key === 'anyOf' && Array.isArray(value) && value.some((item) => isJsonSchemaObject(item) && item.type === 'null')
+          )
   }
+  if (schemaMap) return normalized
   if (Array.isArray(normalized.required) && normalized.required.every((item) => typeof item === 'string')) {
     normalized.required = [...normalized.required].sort()
   }
 
-  const null_union_candidates = nullUnionCandidates(normalized)
-  if (null_union_candidates !== null) {
-    const merged: Record<string, unknown> = { anyOf: normalizeJsonSchemaValue(null_union_candidates) }
+  // New Zod imports emit explicit empty object/tuple keywords. Omit only the
+  // redundant forms so shared Python/TS fixtures retain their canonical shape.
+  if (normalized.type === 'object' && isJsonSchemaObject(normalized.properties) && Object.keys(normalized.properties).length === 0) {
+    delete normalized.properties
+  }
+  if (
+    normalized.type === 'array' &&
+    Array.isArray(normalized.prefixItems) &&
+    typeof normalized.maxItems === 'number' &&
+    normalized.maxItems <= normalized.prefixItems.length &&
+    isJsonSchemaObject(normalized.items) &&
+    Object.keys(normalized.items).length === 0
+  ) {
+    // For an open tuple, items:{} marks extra items evaluated and can change
+    // unevaluatedItems semantics. Here maxItems already forbids every extra item.
+    delete normalized.items
+  }
+
+  // Python and existing fixtures group all non-null types into one nullable
+  // branch. Preserve that group on subsequent normalization as well.
+  const type_union_candidates = nullableBranch ? null : typeUnionCandidates(normalized)
+  if (type_union_candidates !== null) {
+    const merged: Record<string, unknown> = { anyOf: type_union_candidates }
     for (const [key, value] of Object.entries(normalized)) {
       if (key !== 'type') {
         merged[key] = value

@@ -842,6 +842,54 @@ test('json schema recursive null refs serialize without infinite expansion', () 
   assert.equal('oneOf' in normalized_child_schema, false)
 })
 
+test('json schema canonicalization preserves constraints and schema-shaped instance data', () => {
+  const data = { type: ['string', 'number'], properties: {}, items: {}, prefixItems: [], maxItems: 0 }
+  const schema: Record<string, unknown> = {
+    type: 'object',
+    properties: {
+      default: { type: ['string', 'number'] },
+      payload: { const: data, default: data, examples: [data] },
+      choice: { enum: [data] },
+    },
+    required: ['default', 'payload', 'choice'],
+    additionalProperties: false,
+  }
+  const normalized = normalizeJsonSchema(schema) as Record<string, unknown>
+  const properties = normalized.properties as Record<string, Record<string, unknown>>
+  assert.deepEqual(properties.default, { anyOf: [{ type: 'string' }, { type: 'number' }] })
+  assert.deepEqual(properties.payload, { const: data, default: data, examples: [data] })
+  assert.deepEqual(properties.choice, { enum: [data] })
+  const limited: Record<string, unknown> = { type: ['string', 'number'], minLength: 2, minimum: 1 }
+  assert.deepEqual(normalizeJsonSchema(limited), { ...limited, $schema: 'https://json-schema.org/draft/2020-12/schema' })
+  const validator = fromJsonSchema(normalizeJsonSchema(limited))
+  for (const value of ['ok', 1]) assert.equal(validator.safeParse(value).success, true)
+  for (const value of ['x', 0, true, null]) assert.equal(validator.safeParse(value).success, false)
+
+  const constrained: Record<string, unknown> = { type: ['string', 'number'], anyOf: [{ type: 'string', minLength: 2 }] }
+  assert.deepEqual(normalizeJsonSchema(constrained), { ...constrained, $schema: 'https://json-schema.org/draft/2020-12/schema' })
+  assert.equal(fromJsonSchema(normalizeJsonSchema(constrained)).safeParse(1).success, false)
+  const nullable = normalizeJsonSchema({ type: ['string', 'number', 'null'] } as Record<string, unknown>)
+  assert.deepEqual(nullable, {
+    anyOf: [{ type: ['string', 'number'] }, { type: 'null' }],
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+  })
+  assert.deepEqual(normalizeJsonSchema(nullable), nullable)
+
+  const openTuple: JsonSchema = { type: 'array', prefixItems: [{ type: 'string' }], items: {}, unevaluatedItems: false }
+  assert.deepEqual(normalizeJsonSchema(openTuple), { ...openTuple, $schema: 'https://json-schema.org/draft/2020-12/schema' })
+  const restrictedTuple: JsonSchema = { type: 'array', prefixItems: [{ type: 'string' }], items: false, maxItems: 1 }
+  assert.deepEqual(normalizeJsonSchema(restrictedTuple), { ...restrictedTuple, $schema: 'https://json-schema.org/draft/2020-12/schema' })
+  const closedTuple = normalizeJsonSchema({ type: 'array', prefixItems: [{ type: 'string' }], items: {}, maxItems: 1 })
+  assert.deepEqual(closedTuple, {
+    type: 'array',
+    prefixItems: [{ type: 'string' }],
+    maxItems: 1,
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+  })
+  assert.equal(fromJsonSchema(closedTuple).safeParse(['ok']).success, true)
+  assert.equal(fromJsonSchema(closedTuple).safeParse(['ok', 'extra']).success, false)
+})
+
 test('json schema common shapes normalize as stable roundtrip fixtures', () => {
   const fixture = loadJsonSchemaCommonShapesFixture()
   const raw_fixtures = [...fixture.raw_schemas]
