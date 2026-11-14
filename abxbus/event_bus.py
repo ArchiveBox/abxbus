@@ -2026,14 +2026,16 @@ class EventBus:
         """
         newly_completed: list[BaseEvent[Any]] = []
         visited_event_ids: set[str] = set()
-
-        def visit(event: BaseEvent[Any]) -> None:
-            if event.event_id in visited_event_ids:
-                return
-            visited_event_ids.add(event.event_id)
-
-            for child_event in event.event_children:
-                visit(child_event)
+        pending = [(root_event, False)]
+        while pending:
+            event, children_visited = pending.pop()
+            if not children_visited:
+                if event.event_id in visited_event_ids:
+                    continue
+                visited_event_ids.add(event.event_id)
+                pending.append((event, True))
+                pending.extend((child, False) for child in reversed(event.event_children))
+                continue
 
             was_complete = event.event_status == EventStatus.COMPLETED
             # Only the root event may still appear "in-flight" on this bus during finalization.
@@ -2046,7 +2048,6 @@ class EventBus:
                 self._mark_event_complete_on_all_buses(event)
                 newly_completed.append(event)
 
-        visit(root_event)
         return newly_completed
 
     async def step(
