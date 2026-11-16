@@ -2378,11 +2378,14 @@ impl EventBus {
         if max_size == 0 {
             return;
         }
-        let order = self.runtime.history_order.lock().clone();
         let target = max_size - usize::from(include_equal);
-        if order.len() <= target {
-            return;
-        }
+        let order = {
+            let order = self.runtime.history_order.lock();
+            if order.len() <= target {
+                return;
+            }
+            order.clone()
+        };
         let events = self.runtime.events.lock().clone();
         let mut children: HashMap<String, usize> = HashMap::new();
         for event in events.values() {
@@ -2390,6 +2393,7 @@ impl EventBus {
                 *children.entry(parent_id.clone()).or_default() += 1;
             }
         }
+        let mut selected = HashSet::new();
         let mut leaves: VecDeque<String> = order
             .iter()
             .filter(|id| {
@@ -2398,6 +2402,10 @@ impl EventBus {
                         event.inner.lock().event_status == EventStatus::Completed
                     })
             })
+            .filter(|id| selected.insert(*id))
+            // At most this many leaves can be removed. If there are fewer,
+            // exhaust the scan before considering newly released parents.
+            .take(order.len() - target)
             .cloned()
             .collect();
         let mut removed = HashSet::new();
