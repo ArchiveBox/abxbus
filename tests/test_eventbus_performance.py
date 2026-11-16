@@ -1056,7 +1056,50 @@ async def test_timeout_churn_perf_matrix_by_mode(event_handler_concurrency: Lite
     )
 
     assert timeout_count > 0
-    assert recovery_errors == 0
+    assert recovery_errors == 0, str(
+        {
+            'recovery_errors': recovery_errors,
+            'error_types': sorted(
+                {
+                    type(result.error).__name__
+                    for event in recovery_phase_events
+                    for result in event.event_results.values()
+                    if result.error is not None
+                }
+            ),
+            'failed_iterations': [
+                event.iteration
+                for event in recovery_phase_events
+                if any(result.error is not None for result in event.event_results.values())
+            ],
+            'timeout_phase': timeout_phase,
+            'recovery_phase': recovery_phase,
+            'failed_recovery_events': [
+                {
+                    'iteration': event.iteration,
+                    'batch_index': (event.iteration - 10_000) // 25,
+                    'event_status': event.event_status,
+                    'event_created_at': event.event_created_at,
+                    'event_started_at': event.event_started_at,
+                    'event_completed_at': event.event_completed_at,
+                    'errors': [
+                        {
+                            'error_type': type(result.error).__name__,
+                            'error': str(result.error),
+                            'status': result.status,
+                            'timeout': result.timeout,
+                            'started_at': result.started_at,
+                            'completed_at': result.completed_at,
+                        }
+                        for result in event.event_results.values()
+                        if result.error is not None
+                    ],
+                }
+                for event in recovery_phase_events
+                if any(result.error is not None for result in event.event_results.values())
+            ],
+        }
+    )
     assert recovery_phase[0] >= hard_floor
     assert recovery_phase[0] >= regression_floor
     assert recovery_phase[2] < 36.0
