@@ -1534,6 +1534,16 @@ async def main():
 asyncio.run(main())
 ```
 
+Redis pub/sub forwarding preserves the routing path across the boundary, while retaining
+fresh local event IDs and resetting processing state. A bridge stamps its unique bus
+label only on the outgoing wire copy, ignores its own pub/sub echo, and does not
+republish events received through itself. This allows `bus.on('*', bridge.emit)` /
+`bridge.on('*', bus.emit)` in both directions without a feedback loop or recursive
+serialization of forwarding results. Other bridge instances remain independent, even
+when configured with the same display name. Redis bridges currently exist in Python
+and TypeScript; Go and Rust retain the same core reset/wire fields but do not expose a
+Redis bridge API.
+
 ##### `event_reset(ids=True, status=True, timestamps=True, results=True) -> Self`
 
 Return a fresh event copy with runtime processing state reset back to pending.

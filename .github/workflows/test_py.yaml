@@ -83,6 +83,18 @@ jobs:
         with:
           python-version: ${{ matrix.task.python }}
 
+      - name: Install Redis for routing regression (Linux)
+        if: matrix.task.path == 'tests/test_redis_bridge_routing.py' && runner.os == 'Linux'
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: redis-server
+          version: redis-routing-v1
+          execute_install_scripts: true
+
+      - name: Install Redis for routing regression (macOS)
+        if: matrix.task.path == 'tests/test_redis_bridge_routing.py' && runner.os == 'macOS'
+        run: brew install redis
+
       - name: Set up Go for cross-runtime tests
         if: matrix.task.needs_cross_runtime
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
