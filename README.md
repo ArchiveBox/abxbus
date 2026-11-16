@@ -1027,8 +1027,8 @@ asyncio.run(bus.destroy())
 
 - When `max_history_size` is set and `max_history_drop=True`, EventBus removes old events when the limit is exceeded
 - If `max_history_size=0`, history keeps only pending/started events and drops each event immediately after completion
-- In Python and TypeScript, `max_history_drop=True` evicts completed children before parents; active work and its ancestry may temporarily exceed the history limit
-- Completed events are removed first (oldest first), then started events, then pending events
+- In all four runtimes, `max_history_drop=True` evicts completed children before parents; active work and its ancestry may temporarily exceed the history limit
+- Completed leaf events are removed oldest first; pending and started events are never evicted by history size limits
 - This ensures active events are preserved while cleaning up old completed events
 
 **Manual Memory Management:**

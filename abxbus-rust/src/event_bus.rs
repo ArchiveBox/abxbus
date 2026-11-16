@@ -2066,9 +2066,7 @@ impl EventBus {
                 if current_size >= max_size && !self.runtime.max_history_drop {
                     return false;
                 }
-                if self.runtime.max_history_drop {
-                    self.trim_history_to_capacity(max_size, true);
-                }
+                // Trim after insertion so the new event's ancestry is retained.
             }
         }
 
@@ -2380,26 +2378,36 @@ impl EventBus {
         if max_size == 0 {
             return;
         }
-        loop {
-            let current_len = self.runtime.history_order.lock().len();
-            if current_len < max_size || (!include_equal && current_len == max_size) {
-                break;
+        let order = self.runtime.history_order.lock().clone();
+        let target = max_size - usize::from(include_equal);
+        if order.len() <= target {
+            return;
+        }
+        let events = self.runtime.events.lock().clone();
+        let mut children: HashMap<String, usize> = HashMap::new();
+        for event in events.values() {
+            if let Some(parent_id) = &event.inner.lock().event_parent_id {
+                *children.entry(parent_id.clone()).or_default() += 1;
             }
-            let Some(oldest) = self.runtime.history_order.lock().front().cloned() else {
+        }
+        let mut leaves: VecDeque<String> = order
+            .iter()
+            .filter(|id| {
+                !children.contains_key(*id)
+                    && events.get(*id).is_some_and(|event| {
+                        event.inner.lock().event_status == EventStatus::Completed
+                    })
+            })
+            .cloned()
+            .collect();
+        let mut removed = HashSet::new();
+        while order.len() - removed.len() > target {
+            let Some(oldest) = leaves.pop_front() else {
                 break;
             };
-            let candidate = self.runtime.events.lock().get(&oldest).cloned();
-            let is_active = candidate
-                .as_ref()
-                .map(|event| {
-                    let status = event.inner.lock().event_status;
-                    status == EventStatus::Pending || status == EventStatus::Started
-                })
-                .unwrap_or(false);
-            if is_active {
-                break;
+            if !removed.insert(oldest.clone()) {
+                continue;
             }
-            self.runtime.history_order.lock().pop_front();
             self.runtime.events.lock().remove(&oldest);
             self.untrack_event_ttl_deadline(&oldest);
             if self.runtime.event_contexts.lock().remove(&oldest).is_some() {
@@ -2407,7 +2415,26 @@ impl EventBus {
                     .event_context_count
                     .fetch_sub(1, Ordering::SeqCst);
             }
+            if let Some(parent_id) = events
+                .get(&oldest)
+                .and_then(|event| event.inner.lock().event_parent_id.clone())
+            {
+                if let Some(count) = children.get_mut(&parent_id) {
+                    *count -= 1;
+                    if *count == 0
+                        && events.get(&parent_id).is_some_and(|parent| {
+                            parent.inner.lock().event_status == EventStatus::Completed
+                        })
+                    {
+                        leaves.push_back(parent_id);
+                    }
+                }
+            }
         }
+        self.runtime
+            .history_order
+            .lock()
+            .retain(|id| !removed.contains(id));
     }
 
     fn context_for_event(&self, event: &Arc<BaseEvent>) -> Option<dcontext::ContextSnapshot> {

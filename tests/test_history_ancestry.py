@@ -80,3 +80,32 @@ async def test_history_pressure_preserves_pending_children_and_parent(tmp_path: 
                 assert event.event_parent_id in bus.event_history
     finally:
         await bus.destroy()
+
+
+@pytest.mark.asyncio
+async def test_history_pressure_preserves_completed_parent_of_pending_child():
+    import asyncio
+
+    bus = EventBus(max_history_size=2, max_history_drop=True)
+    release = asyncio.Event()
+
+    async def hold(event: BaseEvent) -> str:
+        await release.wait()
+        return 'ok'
+
+    bus.on('HeldChild', hold)
+    try:
+        parent = await bus.emit(BaseEvent(event_type='Parent')).now()
+        await bus.emit(BaseEvent(event_type='Extra')).now()
+        child = bus.emit(BaseEvent(event_type='HeldChild', event_parent_id=parent.event_id))
+        extras = [bus.emit(BaseEvent(event_type='Extra')) for _ in range(8)]
+        assert bus.event_history.get(parent.event_id) is parent
+        assert bus.event_history.get(child.event_id) is child
+        release.set()
+        await asyncio.gather(child, *extras)
+        await bus.wait_until_idle()
+        assert await child.event_result(raise_if_any=True) == 'ok'
+        assert len(bus.event_history) <= 2
+    finally:
+        release.set()
+        await bus.destroy()
