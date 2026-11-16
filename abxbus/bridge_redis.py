@@ -89,7 +89,9 @@ class RedisEventBridge:
         if self._redis_pub is None:
             await self.start()
 
-        payload = event.model_dump(mode='json')
+        # Handler results are local bookkeeping, not bridge return values.
+        # Serialize a copy without them: forwarding results can refer back to this event.
+        payload = event.event_reset(ids=False, status=False, timestamps=False).model_dump(mode='json')
         payload['event_path'] = [*event.event_path, self._inbound_bus.label]
         assert self._redis_pub is not None
         await self._redis_pub.publish(self.channel, json.dumps(payload, separators=(',', ':')))

@@ -1540,7 +1540,10 @@ label only on the outgoing wire copy, ignores its own pub/sub echo, and does not
 republish events received through itself. This allows `bus.on('*', bridge.emit)` /
 `bridge.on('*', bus.emit)` in both directions without a feedback loop or recursive
 serialization of forwarding results. Other bridge instances remain independent, even
-when configured with the same display name. Redis bridges currently exist in Python
+when configured with the same display name. Redis serializes a copy without local
+handler results (which receivers already reset), so relaying through a second channel
+cannot recursively serialize a forwarding result. The source event/results and the
+normal event JSON APIs are unchanged. Redis bridges currently exist in Python
 and TypeScript; Go and Rust retain the same core reset/wire fields but do not expose a
 Redis bridge API.
 
