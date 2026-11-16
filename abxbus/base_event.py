@@ -1736,7 +1736,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
         # Get or create EventResult
         if handler_id not in self.event_results:
-            self.event_results[handler_id] = EventResult[T_EventResultType].construct_pending_handler_result(
+            self.event_results[handler_id] = EventResult.construct_pending_handler_result(
                 event_id=self.event_id,
                 handler=handler_entry,
                 status=kwargs.get('status', 'pending'),

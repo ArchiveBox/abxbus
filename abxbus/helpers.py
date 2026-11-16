@@ -84,7 +84,10 @@ async def cancel_and_await(task: asyncio.Task[Any] | None, timeout: float | None
     if not task.done():
         task.cancel()
     try:
-        await run_with_timeout(task, timeout=timeout)
+        if task.done():
+            await task
+        else:
+            await run_with_timeout(task, timeout=timeout)
     except (asyncio.CancelledError, TimeoutError):
         pass
     except Exception:
