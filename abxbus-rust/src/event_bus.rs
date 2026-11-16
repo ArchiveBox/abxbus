@@ -2829,6 +2829,7 @@ impl EventBus {
     }
 
     pub async fn wait_until_idle(&self, timeout: Option<f64>) -> bool {
+        self.raise_if_terminal_destroyed();
         let start = Instant::now();
         loop {
             if self.is_idle_and_queue_empty() {

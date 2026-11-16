@@ -238,12 +238,12 @@ func (l *LockManager) waitForIdle(timeout *float64) bool {
 		deadline = time.Now().Add(time.Duration(*timeout * float64(time.Second)))
 	}
 	for {
-		if l.bus.IsIdleAndQueueEmpty() {
+		if l.bus.IsDestroyed() || l.bus.IsIdleAndQueueEmpty() {
 			return true
 		}
 		waiter := make(chan struct{})
 		l.idle_mu.Lock()
-		if l.bus.IsIdleAndQueueEmpty() {
+		if l.bus.IsDestroyed() || l.bus.IsIdleAndQueueEmpty() {
 			l.idle_mu.Unlock()
 			return true
 		}
@@ -273,7 +273,7 @@ func (l *LockManager) waitForIdle(timeout *float64) bool {
 			}
 		case <-timer.C:
 			l.removeIdleWaiter(waiter)
-			return l.bus.IsIdleAndQueueEmpty()
+			return l.bus.IsDestroyed() || l.bus.IsIdleAndQueueEmpty()
 		}
 	}
 }

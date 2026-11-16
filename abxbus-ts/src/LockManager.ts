@@ -395,11 +395,15 @@ export class LockManager {
 
   // Reset all state to initial values
   clear(): void {
+    const idle_waiters = this.idle_waiters
     this.pause_depth = 0
     this.pause_waiters = []
     this.active_handler_results = []
     this.idle_waiters = []
     this.idle_check_pending = false
     this.idle_check_streak = 0
+    for (const resolve of idle_waiters) {
+      resolve(true)
+    }
   }
 }

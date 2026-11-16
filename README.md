@@ -1419,6 +1419,7 @@ asyncio.run(bus.destroy())
 ##### `wait_until_idle(timeout: float | None=None)`
 
 Wait until all events are processed and the bus is idle.
+Destroying the bus releases existing idle waits. Starting a new idle wait after destruction raises `RuntimeError`, like other operations on a destroyed bus, and does not restart it.
 
 ```python
 import asyncio

@@ -1881,7 +1881,12 @@ func (b *EventBus) runloop(ctx context.Context) {
 	}
 }
 
-func (b *EventBus) WaitUntilIdle(timeout *float64) bool { return b.locks.waitForIdle(timeout) }
+func (b *EventBus) WaitUntilIdle(timeout *float64) bool {
+	if err := b.rejectIfDestroyed("WaitUntilIdle"); err != nil {
+		panic(err)
+	}
+	return b.locks.waitForIdle(timeout)
+}
 
 func (b *EventBus) IsIdle() bool {
 	for _, event := range b.EventHistory.Values() {
