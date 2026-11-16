@@ -2439,10 +2439,13 @@ impl EventBus {
                 }
             }
         }
-        self.runtime
-            .history_order
-            .lock()
-            .retain(|id| !removed.contains(id));
+        let mut history_order = self.runtime.history_order.lock();
+        if removed.len() == 1 {
+            let removed_id = removed.iter().next().unwrap();
+            history_order.retain(|id| id != removed_id);
+        } else {
+            history_order.retain(|id| !removed.contains(id));
+        }
     }
 
     fn context_for_event(&self, event: &Arc<BaseEvent>) -> Option<dcontext::ContextSnapshot> {
@@ -2986,6 +2989,11 @@ impl EventBus {
     }
 
     async fn process_event_inner(&self, event: Arc<BaseEvent>) {
+        // A queue jump may complete the event while a runner waits for its lock.
+        // Every caller owns the processing claim here, so recheck after claiming.
+        if self.has_completed_on_bus(&event) {
+            return;
+        }
         Self::validate_event_execution_timeout_fields(&event);
         event.mark_started();
         let started_at = Instant::now();
