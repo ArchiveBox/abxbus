@@ -598,37 +598,25 @@ def worker_acquire_semaphore_sync(
         results_queue.put(('error', worker_id, error_time, str(e)))
 
 
-def worker_that_dies(
-    worker_id: int,
-    start_time: float,
-    results_queue: 'MultiprocessingQueue[Any]',
-    acquired_event: MultiprocessingEvent,
-):
+def worker_that_dies(acquired_event: MultiprocessingEvent):
     """Worker process that acquires semaphore then dies without releasing."""
-    try:
 
-        @retry(
-            max_attempts=1,
-            timeout=10,
-            semaphore_limit=2,  # Only 2 concurrent processes
-            semaphore_name='test_death_sem',
-            semaphore_scope='multiprocess',
-            semaphore_timeout=5.0,
-            semaphore_lax=False,
-        )
-        async def semaphore_protected_function():
-            acquire_time = time.time() - start_time
-            results_queue.put(('acquired', worker_id, acquire_time))
-            acquired_event.set()
+    @retry(
+        max_attempts=1,
+        timeout=10,
+        semaphore_limit=2,  # Only 2 concurrent processes
+        semaphore_name='test_death_sem',
+        semaphore_scope='multiprocess',
+        semaphore_timeout=5.0,
+        semaphore_lax=False,
+    )
+    async def semaphore_protected_function():
+        # Never use the shared results Queue in a process that exits abruptly:
+        # its feeder can die holding the write lock needed by later workers.
+        acquired_event.set()
+        os._exit(1)  # Hard exit without cleanup
 
-            # Simulate unexpected death
-            os._exit(1)  # Hard exit without cleanup
-
-        asyncio.run(semaphore_protected_function())
-
-    except Exception as e:
-        error_time = time.time() - start_time
-        results_queue.put(('error', worker_id, error_time, str(e)))
+    asyncio.run(semaphore_protected_function())
 
 
 def worker_death_test_normal(
@@ -943,50 +931,57 @@ asyncio.run(main())
         """Test that killing a process releases its semaphore slot."""
         results_queue: MultiprocessingQueue[Any] = multiprocessing.Queue()
         start_time = time.time()
+        processes: list[multiprocessing.Process] = []
+        try:
+            # Start 2 processes that will die (limit is 2).
+            death_acquired = [multiprocessing.Event() for _ in range(2)]
+            for acquired in death_acquired:
+                p = multiprocessing.Process(target=worker_that_dies, args=(acquired,))
+                p.start()
+                processes.append(p)
 
-        # Start 2 processes that will die (limit is 2)
-        death_processes: list[multiprocessing.Process] = []
-        death_acquired = [multiprocessing.Event() for _ in range(2)]
-        for i in range(2):
-            p = multiprocessing.Process(target=worker_that_dies, args=(i, start_time, results_queue, death_acquired[i]))
-            p.start()
-            death_processes.append(p)
+            assert all(acquired.wait(timeout=5) for acquired in death_acquired)
+            for p in processes:
+                p.join(timeout=2)
+                assert p.exitcode == 1, f'Process should have exited with code 1, got {p.exitcode}'
 
-        assert all(acquired.wait(timeout=5) for acquired in death_acquired)
+            # Real replacement workers must acquire the slots left by the dead holders.
+            normal_processes: list[multiprocessing.Process] = []
+            for i in range(2, 4):
+                p = multiprocessing.Process(target=worker_death_test_normal, args=(i, start_time, results_queue))
+                p.start()
+                processes.append(p)
+                normal_processes.append(p)
 
-        for p in death_processes:
-            p.join(timeout=2)
-            assert p.exitcode == 1, f'Process should have exited with code 1, got {p.exitcode}'
+            # Drain results before joining producers so their Queue feeders can finish.
+            results: list[tuple[str, int, float]] = []
+            completed_worker_ids: set[int] = set()
+            while completed_worker_ids != {2, 3}:
+                event = results_queue.get(timeout=5)
+                results.append(event)
+                if event[0] == 'completed' and event[1] >= 2:
+                    completed_worker_ids.add(event[1])
 
-        # Now start 2 more processes that should be able to acquire after the first 2 die
-        normal_processes: list[multiprocessing.Process] = []
-        for i in range(2, 4):
-            p = multiprocessing.Process(target=worker_death_test_normal, args=(i, start_time, results_queue))
-            p.start()
-            normal_processes.append(p)
+            for p in normal_processes:
+                p.join(timeout=10)
+                assert p.exitcode == 0, 'Process should complete successfully'
 
-        # Wait for normal processes
-        for p in normal_processes:
-            p.join(timeout=10)
-            assert p.exitcode == 0, 'Process should complete successfully'
-
-        # Collect results
-        results: list[tuple[str, int, float]] = []
-        completed_worker_ids: set[int] = set()
-        while completed_worker_ids != {2, 3}:
-            event = results_queue.get(timeout=5)
-            results.append(event)
-            if event[0] == 'completed' and event[1] >= 2:
-                completed_worker_ids.add(event[1])
-
-        # Check that processes 2 and 3 were able to acquire
-        acquired_events = [r for r in results if r[0] == 'acquired']
-        completed_events = [r for r in results if r[0] == 'completed' and r[1] >= 2]
-
-        assert {event[1] for event in acquired_events if event[1] >= 2} == {2, 3}
-
-        # Processes 2 and 3 should complete
-        assert len(completed_events) == 2, f'Expected 2 completions from workers 2-3, got {len(completed_events)}'
+            acquired_events = [r for r in results if r[0] == 'acquired']
+            completed_events = [r for r in results if r[0] == 'completed' and r[1] >= 2]
+            assert {event[1] for event in acquired_events if event[1] >= 2} == {2, 3}
+            assert len(completed_events) == 2, f'Expected 2 completions from workers 2-3, got {len(completed_events)}'
+        finally:
+            # An assertion failure must not leave child processes blocking pytest exit.
+            for p in processes:
+                if p.is_alive():
+                    p.terminate()
+            for p in processes:
+                p.join(timeout=2)
+                if p.is_alive():
+                    p.kill()
+                    p.join(timeout=2)
+            results_queue.close()
+            results_queue.join_thread()
 
     def test_concurrent_acquisition_order(self):
         """Test that all blocked processes eventually acquire a semaphore slot."""
