@@ -45,8 +45,13 @@ test('history pressure preserves completed parent of pending child', async () =>
   const Child = BaseEvent.extend('HeldChild', {})
   const Extra = BaseEvent.extend('Extra', {})
   let release!: () => void
-  const gate = new Promise<void>((resolve) => { release = resolve })
-  bus.on(Child, async () => { await gate; return 'ok' })
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  bus.on(Child, async () => {
+    await gate
+    return 'ok'
+  })
   try {
     const parent = await bus.emit(Parent({})).now()
     await bus.emit(Extra({})).now()
