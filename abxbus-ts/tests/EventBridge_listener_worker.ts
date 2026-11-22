@@ -35,6 +35,8 @@ const main = async (): Promise<void> => {
     resolve_done = resolve
   })
 
+  // Initialize the JSONL file offset before on() can start a second asynchronous poller.
+  if (config.kind === 'jsonl') await bridge.start()
   bridge.on('*', (event: { toJSON: () => unknown }) => {
     process.stdout.write(`${JSON.stringify({ event: event.toJSON() })}\n`)
     resolve_done?.()

@@ -1690,6 +1690,112 @@ async def test_jsonl_event_bridge_roundtrip_between_processes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_jsonl_event_bridge_keeps_valid_records_after_invalid_event(tmp_path: Path) -> None:
+    path = tmp_path / 'events.jsonl'
+    receiver = JSONLEventBridge(str(path), poll_interval=0.005)
+    received: list[str] = []
+    first_seen = asyncio.Event()
+    done = asyncio.Event()
+
+    async def capture(event: BaseEvent[Any]) -> None:
+        label = event.model_dump(mode='json')['label']
+        received.append(label)
+        if label == 'first':
+            first_seen.set()
+        if label == 'sentinel':
+            done.set()
+
+    try:
+        await receiver.start()
+        receiver.on('IPCPingEvent', capture)
+        invalid = IPCPingEvent(label='invalid').model_dump(mode='json')
+        invalid['event_id'] = []
+        good = IPCPingEvent(label='good')
+        first = IPCPingEvent(label='first')
+        chunk = ('\n'.join((first.model_dump_json(), json.dumps(invalid), good.model_dump_json())) + '\n').encode()
+        with path.open('ab') as stream:
+            stream.write(chunk)
+        async with asyncio.timeout(EVENT_WAIT_TIMEOUT_SECONDS):
+            # A real handler confirms that the listener read the first append.
+            await first_seen.wait()
+            with path.open('ab') as stream:
+                stream.write((IPCPingEvent(label='sentinel').model_dump_json() + '\n').encode())
+            await done.wait()
+        assert received == ['first', 'good', 'sentinel']
+    finally:
+        await receiver.close()
+
+
+@pytest.mark.asyncio
+async def test_jsonl_event_bridge_python_node_go_live_receivers(tmp_path: Path) -> None:
+    go_bin = shutil.which('go')
+    node_bin = shutil.which('node')
+    assert go_bin is not None and node_bin is not None
+    repo_root = Path(__file__).resolve().parents[1]
+    go_listener = tmp_path / 'go-jsonl-listener'
+    build = subprocess.run(
+        [go_bin, 'build', '-buildvcs=false', '-o', str(go_listener), './tests/roundtrip_cli'],
+        cwd=repo_root / 'abxbus-go',
+        capture_output=True,
+        text=True,
+        timeout=GO_SUBPROCESS_TIMEOUT_SECONDS,
+    )
+    assert build.returncode == 0, build.stderr
+    bridge_path = tmp_path / 'events.jsonl'
+    go_ready = tmp_path / 'go.ready'
+    go_output = tmp_path / 'go.json'
+    config_path = tmp_path / 'worker.json'
+    config_path.write_text(
+        json.dumps({'kind': 'jsonl', 'path': str(bridge_path), 'ready_path': str(go_ready), 'output_path': str(go_output)}),
+        encoding='utf-8',
+    )
+    python_worker = Path(__file__).with_name('bridge_listener_worker.py')
+    node_worker = repo_root / 'abxbus-ts' / 'tests' / 'EventBridge_listener_worker.ts'
+    sender = JSONLEventBridge(str(bridge_path))
+    await sender.start()
+    try:
+        async with (
+            _running_process([sys.executable, str(python_worker), str(config_path)]) as python,
+            _running_process(
+                [node_bin, '--import', 'tsx', str(node_worker), str(config_path)],
+                cwd=repo_root / 'abxbus-ts',
+            ) as node,
+            _running_process([str(go_listener), 'jsonl-listener', str(config_path)]) as go,
+        ):
+            async with asyncio.timeout(SUBPROCESS_TIMEOUT_SECONDS):
+                assert json.loads(await _read_process_line(python)) == {'ready': True}
+                assert json.loads(await _read_process_line(node)) == {'ready': True}
+                while not go_ready.is_file():
+                    assert go.poll() is None, 'Go JSONL listener exited before readiness'
+                    await asyncio.sleep(0.005)
+                outbound = IPCPingEvent(label='café 🌱', event_parent_id=uuid7str())
+                await sender.emit(outbound)
+                received = [
+                    json.loads(await _read_process_line(python))['event'],
+                    json.loads(await _read_process_line(node))['event'],
+                ]
+                output, _ = await asyncio.to_thread(go.communicate, timeout=SUBPROCESS_TIMEOUT_SECONDS)
+                assert go.returncode == 0, output
+                received.append(json.loads(go_output.read_text(encoding='utf-8')))
+        for event in received:
+            assert event['event_type'] == outbound.event_type
+            assert event['label'] == outbound.label
+            assert event['event_parent_id'] is None
+        event_ids = {event['event_id'] for event in received}
+        assert len(event_ids) == 3 and all(event_ids) and outbound.event_id not in event_ids
+
+        # Rust supports the wire event serializer, not a native JSONL listener.
+        wire_event = json.loads(bridge_path.read_text(encoding='utf-8'))
+        (rust_event,) = _rust_roundtrip_events([wire_event], tmp_path)
+        assert rust_event['event_type'] == outbound.event_type
+        assert rust_event['label'] == outbound.label
+        assert rust_event['event_id'] == outbound.event_id
+        assert rust_event['event_parent_id'] == outbound.event_parent_id
+    finally:
+        await sender.close()
+
+
+@pytest.mark.asyncio
 async def test_sqlite_event_bridge_roundtrip_between_processes() -> None:
     temp_dir = _make_temp_dir('abxbus-sqlite')
     try:

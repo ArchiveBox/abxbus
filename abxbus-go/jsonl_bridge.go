@@ -203,15 +203,18 @@ func (b *JSONLEventBridge) readAppendedText() (string, int64, error) {
 	if size < offset {
 		startOffset = 0
 	}
+	return readJSONLWindow(file, startOffset, size)
+}
+
+func readJSONLWindow(file *os.File, startOffset, size int64) (string, int64, error) {
 	if size == startOffset {
 		return "", size, nil
 	}
-	if _, err := file.Seek(startOffset, 0); err != nil {
-		return "", offset, err
-	}
-	data, err := io.ReadAll(file)
+	// A writer may append after size was observed. Leave those bytes for
+	// the next poll, and advance only by the bytes actually read.
+	data, err := io.ReadAll(io.NewSectionReader(file, startOffset, size-startOffset))
 	if err != nil {
-		return "", offset, err
+		return "", startOffset, err
 	}
-	return string(data), size, nil
+	return string(data), startOffset + int64(len(data)), nil
 }

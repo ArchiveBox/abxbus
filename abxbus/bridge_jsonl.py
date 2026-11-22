@@ -13,6 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
 from uuid_extensions import uuid7str
 
 from abxbus.base_event import BaseEvent
@@ -128,13 +129,16 @@ class JSONLEventBridge:
                 continue
             try:
                 payload = json.loads(line)
-            except Exception:
+            except json.JSONDecodeError:
                 continue
             await self._dispatch_inbound_payload(payload)
 
     async def _dispatch_inbound_payload(self, payload: Any) -> None:
-        event = BaseEvent[Any].model_validate(payload).event_reset()
-        self._inbound_bus.emit(event)
+        try:
+            event = BaseEvent[Any].model_validate(payload)
+        except ValidationError:
+            return
+        self._inbound_bus.emit(event.event_reset())
 
     def _read_appended_text(self, offset: int) -> tuple[str, int]:
         try:
