@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 
 import { NATSEventBridge, PostgresEventBridge, RedisEventBridge, TachyonEventBridge } from '../src/bridges.js'
-import { HTTPEventBridge, JSONLEventBridge, SQLiteEventBridge, SocketEventBridge } from '../src/index.js'
+import { BaseEvent, HTTPEventBridge, JSONLEventBridge, SQLiteEventBridge, SocketEventBridge } from '../src/index.js'
 
 type WorkerConfig = {
   kind: string
@@ -11,6 +11,8 @@ type WorkerConfig = {
   url?: string
   server?: string
   subject?: string
+  expected_count?: number
+  event_path?: string
 }
 
 const makeListenerBridge = (config: WorkerConfig): any => {
@@ -29,6 +31,16 @@ const main = async (): Promise<void> => {
   const config_path = process.argv[2]
   const config = JSON.parse(readFileSync(config_path, 'utf8')) as WorkerConfig
   const bridge = makeListenerBridge(config)
+  if (config.kind === 'jsonl' && config.event_path) {
+    await bridge.start()
+    try {
+      await bridge.emit(BaseEvent.fromJSON(JSON.parse(readFileSync(config.event_path, 'utf8'))))
+    } finally {
+      await bridge.close()
+    }
+    return
+  }
+  let remaining = config.expected_count ?? 1
 
   let resolve_done: (() => void) | null = null
   const done = new Promise<void>((resolve) => {
@@ -39,7 +51,8 @@ const main = async (): Promise<void> => {
   if (config.kind === 'jsonl') await bridge.start()
   bridge.on('*', (event: { toJSON: () => unknown }) => {
     process.stdout.write(`${JSON.stringify({ event: event.toJSON() })}\n`)
-    resolve_done?.()
+    remaining -= 1
+    if (remaining === 0) resolve_done?.()
   })
   // Awaiting start() AFTER on() lets bridges with deferred readiness signals
   // (e.g. Tachyon's bind handshake) signal "actually bound" before we tell the

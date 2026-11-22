@@ -14,8 +14,10 @@ Implemented core features:
 - No-arg `now()`, `wait()`, `event_result()`, and `event_results_list()` accessors with options variants for timeout/first-result/result filtering
 - `destroy()` / `destroy_with_options(...)` lifecycle cleanup (`clear=true` by default)
 
+- Native `jsonl_bridge::JsonlEventBridge` for cross-runtime filesystem forwarding
+
 Not yet implemented in this crate revision:
-- Bridges
+- Other transports besides the JSONL event bridge
 - Middlewares (hook points are left in code comments)
 
 ## Quickstart

@@ -17,7 +17,10 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     base_event::{now_iso, BaseEvent, BaseEventData},
-    event_handler::{EventHandler, EventHandlerCallable, EventHandlerOptions},
+    event_handler::{
+        validate_optional_seconds_nonnegative, EventHandler, EventHandlerCallable,
+        EventHandlerOptions,
+    },
     event_result::{EventResult, EventResultStatus},
     id::uuid_v7_string,
     lock_manager::{LockManager, ReentrantLock},
@@ -1633,31 +1636,24 @@ impl EventBus {
     }
 
     fn validate_event_execution_timeout_fields(event: &BaseEvent) {
+        Self::try_validate_event_execution_timeout_fields(event)
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    pub(crate) fn try_validate_event_execution_timeout_fields(
+        event: &BaseEvent,
+    ) -> Result<(), String> {
         let inner = event.inner.lock();
-        if let Some(timeout) = inner.event_timeout {
-            assert!(
-                timeout.is_finite() && timeout >= 0.0,
-                "event_timeout must be finite and >= 0 or None"
-            );
-        }
-        if let Some(timeout) = inner.event_slow_timeout {
-            assert!(
-                timeout.is_finite() && timeout >= 0.0,
-                "event_slow_timeout must be finite and >= 0 or None"
-            );
-        }
-        if let Some(timeout) = inner.event_handler_timeout {
-            assert!(
-                timeout.is_finite() && timeout >= 0.0,
-                "event_handler_timeout must be finite and >= 0 or None"
-            );
-        }
-        if let Some(timeout) = inner.event_handler_slow_timeout {
-            assert!(
-                timeout.is_finite() && timeout >= 0.0,
-                "event_handler_slow_timeout must be finite and >= 0 or None"
-            );
-        }
+        validate_optional_seconds_nonnegative("event_timeout", inner.event_timeout)?;
+        validate_optional_seconds_nonnegative("event_slow_timeout", inner.event_slow_timeout)?;
+        validate_optional_seconds_nonnegative(
+            "event_handler_timeout",
+            inner.event_handler_timeout,
+        )?;
+        validate_optional_seconds_nonnegative(
+            "event_handler_slow_timeout",
+            inner.event_handler_slow_timeout,
+        )
     }
 
     fn enqueue_base_with_relation(

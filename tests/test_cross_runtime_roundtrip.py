@@ -1727,70 +1727,113 @@ async def test_jsonl_event_bridge_keeps_valid_records_after_invalid_event(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_jsonl_event_bridge_python_node_go_live_receivers(tmp_path: Path) -> None:
+async def test_jsonl_event_bridge_all_runtime_live_pairs(tmp_path: Path) -> None:
     go_bin = shutil.which('go')
     node_bin = shutil.which('node')
-    assert go_bin is not None and node_bin is not None
+    cargo_bin = shutil.which('cargo')
+    assert go_bin and node_bin and cargo_bin
     repo_root = Path(__file__).resolve().parents[1]
     go_listener = tmp_path / 'go-jsonl-listener'
-    build = subprocess.run(
-        [go_bin, 'build', '-buildvcs=false', '-o', str(go_listener), './tests/roundtrip_cli'],
-        cwd=repo_root / 'abxbus-go',
-        capture_output=True,
-        text=True,
-        timeout=GO_SUBPROCESS_TIMEOUT_SECONDS,
-    )
-    assert build.returncode == 0, build.stderr
+    rust_root = repo_root / 'abxbus-rust'
+    rust_target = rust_root / 'target'
+    rust_listener = rust_target / 'debug' / 'abxbus-rust-roundtrip'
+    for command, cwd, timeout in (
+        (
+            [go_bin, 'build', '-buildvcs=false', '-o', str(go_listener), './tests/roundtrip_cli'],
+            repo_root / 'abxbus-go',
+            GO_SUBPROCESS_TIMEOUT_SECONDS,
+        ),
+        (
+            [cargo_bin, 'build', '--locked', '--target-dir', str(rust_target), '--bin', rust_listener.name],
+            rust_root,
+            RUST_SUBPROCESS_TIMEOUT_SECONDS,
+        ),
+    ):
+        build = subprocess.run(command, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        assert build.returncode == 0, build.stderr
+
     bridge_path = tmp_path / 'events.jsonl'
-    go_ready = tmp_path / 'go.ready'
-    go_output = tmp_path / 'go.json'
-    config_path = tmp_path / 'worker.json'
-    config_path.write_text(
-        json.dumps({'kind': 'jsonl', 'path': str(bridge_path), 'ready_path': str(go_ready), 'output_path': str(go_output)}),
-        encoding='utf-8',
-    )
-    python_worker = Path(__file__).with_name('bridge_listener_worker.py')
-    node_worker = repo_root / 'abxbus-ts' / 'tests' / 'EventBridge_listener_worker.ts'
+    node_root = repo_root / 'abxbus-ts'
+    node_worker = [node_bin, '--import', 'tsx', str(node_root / 'tests' / 'EventBridge_listener_worker.ts')]
+    python_worker = [sys.executable, str(Path(__file__).with_name('bridge_listener_worker.py'))]
+    producers = ('python', 'node', 'go', 'rust', 'sentinel')
+    config = {'kind': 'jsonl', 'path': str(bridge_path), 'expected_count': len(producers)}
+    worker_config = tmp_path / 'worker.json'
+    worker_config.write_text(json.dumps(config), encoding='utf-8')
+
+    def native_config(runtime: str) -> tuple[Path, Path, Path]:
+        path, ready, output = (tmp_path / f'{runtime}.{suffix}' for suffix in ('config.json', 'ready', 'output.json'))
+        path.write_text(json.dumps({**config, 'ready_path': str(ready), 'output_path': str(output)}), encoding='utf-8')
+        return path, ready, output
+
+    go_config, go_ready, go_output = native_config('go')
+    rust_config, rust_ready, rust_output = native_config('rust')
+    sender_config = tmp_path / 'sender.json'
+    event_path = tmp_path / 'outbound.json'
+    sender_config.write_text(json.dumps({**config, 'event_path': str(event_path)}), encoding='utf-8')
+
     sender = JSONLEventBridge(str(bridge_path))
     await sender.start()
     try:
         async with (
-            _running_process([sys.executable, str(python_worker), str(config_path)]) as python,
-            _running_process(
-                [node_bin, '--import', 'tsx', str(node_worker), str(config_path)],
-                cwd=repo_root / 'abxbus-ts',
-            ) as node,
-            _running_process([str(go_listener), 'jsonl-listener', str(config_path)]) as go,
+            _running_process([*python_worker, str(worker_config)]) as python,
+            _running_process([*node_worker, str(worker_config)], cwd=node_root) as node,
+            _running_process([str(go_listener), 'jsonl-listener', str(go_config)]) as go,
+            _running_process([str(rust_listener), 'jsonl-listener', str(rust_config)]) as rust,
         ):
             async with asyncio.timeout(SUBPROCESS_TIMEOUT_SECONDS):
                 assert json.loads(await _read_process_line(python)) == {'ready': True}
                 assert json.loads(await _read_process_line(node)) == {'ready': True}
-                while not go_ready.is_file():
-                    assert go.poll() is None, 'Go JSONL listener exited before readiness'
+                while not (go_ready.is_file() and rust_ready.is_file()):
+                    assert go.poll() is None and rust.poll() is None, 'native JSONL listener exited before readiness'
                     await asyncio.sleep(0.005)
-                outbound = IPCPingEvent(label='café 🌱', event_parent_id=uuid7str())
-                await sender.emit(outbound)
-                received = [
-                    json.loads(await _read_process_line(python))['event'],
-                    json.loads(await _read_process_line(node))['event'],
-                ]
-                output, _ = await asyncio.to_thread(go.communicate, timeout=SUBPROCESS_TIMEOUT_SECONDS)
-                assert go.returncode == 0, output
-                received.append(json.loads(go_output.read_text(encoding='utf-8')))
-        for event in received:
-            assert event['event_type'] == outbound.event_type
-            assert event['label'] == outbound.label
-            assert event['event_parent_id'] is None
-        event_ids = {event['event_id'] for event in received}
-        assert len(event_ids) == 3 and all(event_ids) and outbound.event_id not in event_ids
 
-        # Rust supports the wire event serializer, not a native JSONL listener.
-        wire_event = json.loads(bridge_path.read_text(encoding='utf-8'))
-        (rust_event,) = _rust_roundtrip_events([wire_event], tmp_path)
-        assert rust_event['event_type'] == outbound.event_type
-        assert rust_event['label'] == outbound.label
-        assert rust_event['event_id'] == outbound.event_id
-        assert rust_event['event_parent_id'] == outbound.event_parent_id
+                outbound = [
+                    IPCPingEvent(label=f'{producer} café 🌱', event_parent_id=uuid7str(), event_result_type={'type': 'string'})
+                    for producer in producers
+                ]
+                for producer, event in zip(producers, outbound, strict=True):
+                    if producer in ('python', 'sentinel'):
+                        await sender.emit(event)
+                    else:
+                        event_path.write_text(event.model_dump_json(), encoding='utf-8')
+                        send_command = {
+                            'node': node_worker,
+                            'go': [str(go_listener), 'jsonl-sender'],
+                            'rust': [str(rust_listener), 'jsonl-sender'],
+                        }[producer]
+                        emitted = await asyncio.to_thread(
+                            subprocess.run,
+                            [*send_command, str(sender_config)],
+                            cwd=node_root,
+                            capture_output=True,
+                            text=True,
+                            timeout=SUBPROCESS_TIMEOUT_SECONDS,
+                        )
+                        assert emitted.returncode == 0, emitted.stderr
+
+                received = {
+                    'python': [json.loads(await _read_process_line(python))['event'] for _ in outbound],
+                    'node': [json.loads(await _read_process_line(node))['event'] for _ in outbound],
+                }
+                for name, worker, output_path in (('go', go, go_output), ('rust', rust, rust_output)):
+                    output, _ = await asyncio.to_thread(worker.communicate, timeout=SUBPROCESS_TIMEOUT_SECONDS)
+                    assert worker.returncode == 0, output
+                    received[name] = json.loads(output_path.read_text(encoding='utf-8'))
+
+        wire = [json.loads(line) for line in bridge_path.read_text(encoding='utf-8').splitlines()]
+        assert [event['event_id'] for event in wire] == [event.event_id for event in outbound]
+        assert [event['event_parent_id'] for event in wire] == [event.event_parent_id for event in outbound]
+        reset_ids: set[str] = set()
+        for name, events in received.items():
+            assert [event['label'] for event in events] == [event.label for event in outbound], name
+            for event, original in zip(events, outbound, strict=True):
+                assert event['event_type'] == original.event_type, name
+                assert event['event_parent_id'] is None, name
+                assert event['event_result_type']['type'] == 'string', name
+                assert event['event_id'] and event['event_id'] not in reset_ids, name
+                reset_ids.add(event['event_id'])
+        assert reset_ids.isdisjoint(event.event_id for event in outbound)
     finally:
         await sender.close()
 

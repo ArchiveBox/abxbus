@@ -3,6 +3,7 @@ pub mod event_bus;
 pub mod event_handler;
 pub mod event_result;
 pub mod id;
+pub mod jsonl_bridge;
 pub mod jsonschema;
 pub mod lock_manager;
 pub mod retry;

@@ -44,8 +44,14 @@ bridge := abxbus.NewJSONLEventBridge("/tmp/abxbus_events.jsonl", 0.25, "JsonlBri
 <Tab title="Rust">
 
 ```rust
-// Not implemented in the Rust crate yet.
-// Use typed event JSON serialization with an external transport for now.
+use abxbus::jsonl_bridge::JsonlEventBridge;
+use std::time::Duration;
+
+let bridge = JsonlEventBridge::new(
+    "/tmp/abxbus_events.jsonl",
+    Some(Duration::from_millis(250)),
+    Some("JsonlBridge".to_string()),
+);
 ```
 
 </Tab>
@@ -100,8 +106,27 @@ bridge.OnEventName("*", "bus_emit", func(event *abxbus.BaseEvent) (any, error) {
 <Tab title="Rust">
 
 ```rust
-// Not implemented in the Rust crate yet.
-// Use typed events plus EventBus JSON serialization with an external transport for now.
+use std::sync::Arc;
+
+use abxbus::{event_bus::EventBus, jsonl_bridge::JsonlEventBridge};
+use serde_json::Value;
+
+fn main() -> std::io::Result<()> {
+    let producer = EventBus::new(Some("Producer".to_string()));
+    let consumer = EventBus::new(Some("Consumer".to_string()));
+    let bridge = Arc::new(JsonlEventBridge::new("/tmp/abxbus_events.jsonl", None, None));
+
+    let writer = bridge.clone();
+    producer.on_raw_sync("*", "jsonl_emit", move |event| {
+        writer.emit_base(event).map_err(|error| error.to_string())?;
+        Ok(Value::Null)
+    });
+    bridge.on_raw_sync("*", "bus_emit", move |event| {
+        consumer.emit_base(event);
+        Ok(Value::Null)
+    })?;
+    Ok(())
+}
 ```
 
 </Tab>
@@ -113,4 +138,4 @@ bridge.OnEventName("*", "bus_emit", func(event *abxbus.BaseEvent) (any, error) {
 - `on(...)` auto-starts a tail loop and registers inbound handlers.
 - Start cursor is initialized at current EOF, so only newly appended lines are processed.
 - Malformed lines are ignored; valid lines are parsed into events, reset, and emitted on the internal bus.
-- Runtime note: TypeScript JSONL bridge is Node.js-only. Go's JSONL bridge uses local filesystem polling.
+- Runtime note: TypeScript JSONL bridge is Node.js-only. Go and Rust use local filesystem polling.

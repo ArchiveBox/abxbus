@@ -13,14 +13,16 @@ import (
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: abxbus-go-roundtrip <events|bus> <input.json> <output.json>")
-	fmt.Fprintln(os.Stderr, "       abxbus-go-roundtrip jsonl-listener <config.json>")
+	fmt.Fprintln(os.Stderr, "       abxbus-go-roundtrip <jsonl-listener|jsonl-sender> <config.json>")
 	os.Exit(2)
 }
 
 type jsonlListenerConfig struct {
-	Path       string `json:"path"`
-	ReadyPath  string `json:"ready_path"`
-	OutputPath string `json:"output_path"`
+	Path          string `json:"path"`
+	ReadyPath     string `json:"ready_path"`
+	OutputPath    string `json:"output_path"`
+	EventPath     string `json:"event_path"`
+	ExpectedCount int    `json:"expected_count"`
 }
 
 func main() {
@@ -29,11 +31,11 @@ func main() {
 	}
 
 	mode := os.Args[1]
-	if mode == "jsonl-listener" {
+	if mode == "jsonl-listener" || mode == "jsonl-sender" {
 		if len(os.Args) != 3 {
 			usage()
 		}
-		runJSONLListener(os.Args[2])
+		runJSONL(mode, os.Args[2])
 		return
 	}
 	if len(os.Args) != 4 {
@@ -87,7 +89,7 @@ func main() {
 	}
 }
 
-func runJSONLListener(configPath string) {
+func runJSONL(mode, configPath string) {
 	input, err := os.ReadFile(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to read listener config %s: %v\n", configPath, err)
@@ -102,12 +104,43 @@ func runJSONLListener(configPath string) {
 	bridge := abxbus.NewJSONLEventBridge(config.Path, 0.05, "JSONLWorker")
 	defer bridge.Close()
 
+	if mode == "jsonl-sender" {
+		data, err := os.ReadFile(config.EventPath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		event, err := abxbus.BaseEventFromJSON(data)
+		if err == nil {
+			_, err = bridge.Emit(event)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	count := max(config.ExpectedCount, 1)
 	received := make(chan struct{})
-	receivedOnce := sync.Once{}
+	var mu sync.Mutex
+	var events []json.RawMessage
 	bridge.OnEventName("*", "capture", func(event *abxbus.BaseEvent, ctx context.Context) (any, error) {
 		data, err := json.Marshal(event)
 		if err != nil {
 			return nil, err
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, data)
+		if len(events) != count {
+			return nil, nil
+		}
+		if count > 1 {
+			data, err = json.Marshal(events)
+			if err != nil {
+				return nil, err
+			}
 		}
 		tempPath := config.OutputPath + ".tmp"
 		if err := os.WriteFile(tempPath, data, 0o644); err != nil {
@@ -116,7 +149,7 @@ func runJSONLListener(configPath string) {
 		if err := os.Rename(tempPath, config.OutputPath); err != nil {
 			return nil, err
 		}
-		receivedOnce.Do(func() { close(received) })
+		close(received)
 		return nil, nil
 	}, nil)
 	if err := bridge.Start(); err != nil {
