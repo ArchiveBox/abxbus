@@ -253,7 +253,6 @@ class OtelTracingMiddleware(EventBusMiddleware):
             self._record_span_error(span, event_result.error)
         else:
             self._set_span_ok(span)
-        self._end_span(span, start_time=event_result.started_at, end_time=event_result.completed_at)
         return span
 
     def _export_event_tree(
@@ -285,12 +284,15 @@ class OtelTracingMiddleware(EventBusMiddleware):
             self._record_span_error(span, first_error)
         else:
             self._set_span_ok(span)
-        self._end_span(span, start_time=event.event_started_at, end_time=event.event_completed_at)
-
         for event_result in event.event_results.values():
             handler_span = self._export_handler_span(eventbus, event, event_result, parent_span=span)
             for child_event in event_result.event_children:
                 self._export_event_tree(eventbus, child_event, handler_span, visited_event_ids)
+            self._end_span(handler_span, start_time=event_result.started_at, end_time=event_result.completed_at)
+
+        # Exporters may flush a completed root immediately. Keep ancestors alive
+        # until all descendants have been attached, retaining measured timestamps.
+        self._end_span(span, start_time=event.event_started_at, end_time=event.event_completed_at)
 
         return span
 

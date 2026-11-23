@@ -51,6 +51,7 @@ NPM = "https://www.npmjs.com/package/abxbus"
 
 [dependency-groups]
 dev = [
+    "opentelemetry-sdk>=1.45.1",
     "ruff>=0.15.12",
     "build>=1.5.0",
     "pytest>=9.0.3,<9.1",  # pytest-codeblocks still uses the collect hook removed in 9.1.
