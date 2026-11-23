@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "abxbus"
-version = "2.5.95"
+version = "2.5.96"
 dependencies = [
  "chrono",
  "dcontext",
