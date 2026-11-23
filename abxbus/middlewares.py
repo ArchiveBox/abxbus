@@ -7,6 +7,7 @@ import importlib
 import logging
 import sqlite3
 import threading
+import weakref
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
@@ -123,6 +124,8 @@ class OtelTracingMiddleware(EventBusMiddleware):
         self._event_spans: dict[str, Any] = {}
         self._handler_spans: dict[str, dict[str, Any]] = {}
         self._handler_contexts: dict[str, Any] = {}
+        self._completed_events: dict[str, tuple[EventBus, BaseEvent[Any]]] = {}
+        self._finished_spans: weakref.WeakKeyDictionary[BaseEvent[Any], tuple[Any, dict[str, Any]]] = weakref.WeakKeyDictionary()
 
     @staticmethod
     def _otel_timestamp(value: str | None) -> int | None:
@@ -246,6 +249,8 @@ class OtelTracingMiddleware(EventBusMiddleware):
         event: BaseEvent[Any],
         event_result: EventResult[Any],
     ) -> Any:
+        if event in self._finished_spans:
+            return self._finished_spans[event][1][event_result.id]
         handlers = self._handler_spans.setdefault(event.event_id, {})
         if event_result.id in handlers:
             return handlers[event_result.id]
@@ -259,6 +264,8 @@ class OtelTracingMiddleware(EventBusMiddleware):
         return span
 
     def _event_span(self, eventbus: EventBus, event: BaseEvent[Any]) -> Any:
+        if event in self._finished_spans:
+            return self._finished_spans[event][0]
         if event.event_id in self._event_spans:
             return self._event_spans[event.event_id]
         parent_span = None
@@ -287,11 +294,22 @@ class OtelTracingMiddleware(EventBusMiddleware):
         return span
 
     async def on_event_change(self, eventbus: EventBus, event: BaseEvent[Any], status: EventStatus) -> None:
-        if status == EventStatus.PENDING:
+        if status == EventStatus.PENDING or event in self._finished_spans:
             return
-        span = self._event_span(eventbus, event)
+        self._event_span(eventbus, event)
         if status != EventStatus.COMPLETED:
             return
+        self._completed_events[event.event_id] = (eventbus, event)
+        self._finish_completed_event(eventbus, event)
+
+    def _finish_completed_event(self, eventbus: EventBus, event: BaseEvent[Any]) -> None:
+        # Fire-and-forget children do not block bus completion, but exporters
+        # still need their ancestor spans open until those children finish.
+        if any(
+            child.event_status != EventStatus.COMPLETED or child.event_id in self._event_spans for child in event.event_children
+        ):
+            return
+        span = self._event_spans[event.event_id]
         self._set_span_attributes(span, self._event_span_attributes(eventbus, event))
         first_error = next(
             (event_result.error for event_result in event.event_results.values() if event_result.error is not None), None
@@ -312,8 +330,14 @@ class OtelTracingMiddleware(EventBusMiddleware):
         # Completion callbacks arrive children first. Export each completed
         # event before TTL/history eviction removes it from its parent's tree.
         self._end_span(span, start_time=event.event_started_at, end_time=event.event_completed_at)
-        self._handler_spans.pop(event.event_id, None)
+        # Late child events may still reference completed parents. Reuse their
+        # span contexts without retaining the bus history or recreating spans.
+        self._finished_spans[event] = (span, self._handler_spans.pop(event.event_id, {}))
         self._event_spans.pop(event.event_id, None)
+        self._completed_events.pop(event.event_id, None)
+        parent = self._completed_events.get(event.event_parent_id) if event.event_parent_id else None
+        if parent is not None:
+            self._finish_completed_event(*parent)
 
     async def on_event_result_change(
         self,

@@ -74,6 +74,96 @@ async def test_exports_children_before_closing_their_parents(tmp_path: Path, exp
 
 
 @pytest.mark.asyncio
+async def test_late_file_read_reuses_completed_parent_context(tmp_path: Path) -> None:
+    class CopyFile(BaseEvent[str]):
+        pass
+
+    class WriteFile(BaseEvent[None]):
+        pass
+
+    class ReadFile(BaseEvent[str]):
+        pass
+
+    output = StringIO()
+    provider = TracerProvider()
+    provider.add_span_processor(
+        SimpleSpanProcessor(ConsoleSpanExporter(out=output, formatter=lambda span: span.to_json(indent=None) + '\n'))
+    )
+    tracer = provider.get_tracer('test')
+    middleware = OtelTracingMiddleware(tracer=tracer)
+    bus = EventBus(name='LateBus', middlewares=[middleware])
+
+    async def write_file(event: WriteFile) -> None:
+        (tmp_path / 'late.txt').write_text('completed parent')
+
+    async def read_file(event: ReadFile) -> str:
+        return (tmp_path / 'late.txt').read_text()
+
+    async def copy_file(event: CopyFile) -> str:
+        parent = await event.emit(WriteFile())
+        child = await parent.emit(ReadFile())
+        return await child.event_result()
+
+    bus.on(CopyFile, copy_file)
+    bus.on(WriteFile, write_file)
+    bus.on(ReadFile, read_file)
+    try:
+        result = await bus.emit(CopyFile())
+        assert await result.event_result() == 'completed parent'
+        await bus.wait_until_idle()
+        spans = [json.loads(line) for line in output.getvalue().splitlines()]
+        assert len(spans) == 6
+        assert len({span['context']['trace_id'] for span in spans}) == 1
+        parent_span = next(span for span in spans if span['name'] == 'LateBus.emit(WriteFile)')
+        child_span = next(span for span in spans if span['name'] == 'LateBus.emit(ReadFile)')
+        assert child_span['parent_id'] == parent_span['context']['span_id']
+        assert not middleware._event_spans  # pyright: ignore[reportPrivateUsage]
+        assert not middleware._handler_spans  # pyright: ignore[reportPrivateUsage]
+        assert not middleware._completed_events  # pyright: ignore[reportPrivateUsage]
+    finally:
+        await bus.destroy()
+        provider.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_unawaited_file_write_keeps_its_parent_trace(tmp_path: Path) -> None:
+    class QueueWrite(BaseEvent[None]):
+        pass
+
+    class WriteFile(BaseEvent[None]):
+        pass
+
+    output = StringIO()
+    provider = TracerProvider()
+    provider.add_span_processor(
+        SimpleSpanProcessor(ConsoleSpanExporter(out=output, formatter=lambda span: span.to_json(indent=None) + '\n'))
+    )
+    tracer = provider.get_tracer('test')
+    bus = EventBus(name='QueueBus', middlewares=[OtelTracingMiddleware(tracer=tracer)])
+
+    async def queue_write(event: QueueWrite) -> None:
+        event.emit(WriteFile())
+
+    async def write_file(event: WriteFile) -> None:
+        with tracer.start_as_current_span('file.write'):
+            (tmp_path / 'queued.txt').write_text('queued child')
+
+    bus.on(QueueWrite, queue_write)
+    bus.on(WriteFile, write_file)
+    try:
+        await bus.emit(QueueWrite())
+        await bus.wait_until_idle()
+        assert (tmp_path / 'queued.txt').read_text() == 'queued child'
+        spans = [json.loads(line) for line in output.getvalue().splitlines()]
+        assert len(spans) == 5
+        assert len({span['context']['trace_id'] for span in spans}) == 1
+        assert spans[-1]['name'] == 'QueueBus.emit(QueueWrite)'
+    finally:
+        await bus.destroy()
+        provider.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_file_failure_records_errors_without_leaking_context(tmp_path: Path) -> None:
     class ReadFile(BaseEvent[str]):
         path: str
