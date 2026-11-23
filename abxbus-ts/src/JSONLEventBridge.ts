@@ -23,6 +23,7 @@ export class JSONLEventBridge {
   private running: boolean
   private byte_offset: number
   private pending_line: string
+  private readonly decoder = new TextDecoder()
   private listener_task: Promise<void> | null
 
   constructor(path: string, poll_interval: number = 0.25, name?: string) {
@@ -71,6 +72,7 @@ export class JSONLEventBridge {
     const stats = await fs.promises.stat(this.path)
     this.byte_offset = Number(stats.size ?? 0)
     this.pending_line = ''
+    this.decoder.decode()
     this.running = true
     this.listener_task = this.listenLoop()
   }
@@ -138,11 +140,13 @@ export class JSONLEventBridge {
     } catch (error: unknown) {
       const code = (error as { code?: string }).code
       if (code === 'ENOENT') {
+        this.decoder.decode()
         return { chunk: '', next_offset: 0 }
       }
       throw error
     }
 
+    if (size < offset) this.decoder.decode()
     const start_offset = size < offset ? 0 : offset
     if (size === start_offset) {
       return { chunk: '', next_offset: size }
@@ -153,7 +157,8 @@ export class JSONLEventBridge {
       const byte_count = size - start_offset
       const bytes = new Uint8Array(byte_count)
       const { bytesRead } = await handle.read(bytes, 0, byte_count, start_offset)
-      const chunk = new TextDecoder().decode(bytes.subarray(0, Number(bytesRead ?? 0)))
+      // The last code point in this read can continue in the next read.
+      const chunk = this.decoder.decode(bytes.subarray(0, Number(bytesRead ?? 0)), { stream: true })
       return { chunk, next_offset: start_offset + Number(bytesRead ?? 0) }
     } finally {
       await handle.close()

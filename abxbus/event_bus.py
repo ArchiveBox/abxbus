@@ -1794,7 +1794,7 @@ class EventBus:
             # Wait until both queue and inflight execution are empty.
             # Avoid relying on queue.join() because unfinished-task counters can
             # drift under queue-jump paths while observable runtime state is idle.
-            while True:
+            while not self._destroyed:
                 queue_empty = self.pending_event_queue.qsize() == 0
                 has_inflight = self._has_inflight_events_fast()
                 if queue_empty and not has_inflight:
@@ -1956,29 +1956,17 @@ class EventBus:
             return None
 
         try:
-            # Create a task for queue.get() so we can cancel it cleanly
-            get_next_queued_event = asyncio.create_task(self.pending_event_queue.get())
-            setattr(get_next_queued_event, '_log_destroy_pending', False)  # Suppress warnings on cleanup
-
-            # Wait for next event with timeout
-            has_next_event, _pending = await asyncio.wait({get_next_queued_event}, timeout=wait_for_timeout)
-            if has_next_event:
-                # Check if we're still running before returning the event
-                if not self._is_running:
-                    get_next_queued_event.cancel()
-                    return None
-                return await get_next_queued_event  # await to actually resolve it to the next event
-            else:
-                # Get task timed out, cancel it cleanly to suppress warnings
-                get_next_queued_event.cancel()
-
-                # Check if we're idle, if so, set the idle flag
+            # Await the queue directly so cancellation cannot orphan a child getter
+            # or discard an event removed by that child before we claim its result.
+            async with asyncio.timeout(wait_for_timeout):
+                return await self.pending_event_queue.get()
+        except TimeoutError:
+            if self._on_idle and self.pending_event_queue:
                 if not self._has_inflight_events_fast() and self.pending_event_queue.qsize() == 0:
                     self._on_idle.set()
-                return None
-
-        except (asyncio.CancelledError, RuntimeError, QueueShutDown):
-            # Clean cancellation during shutdown or queue was shut down
+            return None
+        except (RuntimeError, QueueShutDown):
+            # Event loop or queue was shut down. Caller cancellation propagates.
             return None
 
     async def _finalize_local_event_processing(self, event: BaseEvent[Any]) -> None:

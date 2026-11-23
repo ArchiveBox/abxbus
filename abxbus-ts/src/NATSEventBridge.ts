@@ -11,7 +11,7 @@ export class NATSEventBridge {
   readonly name: string
 
   private readonly inbound_bus: EventBus
-  private running: boolean
+  private start_promise: Promise<void> | null = null
   private nc: any | null
   private sub_task: Promise<void> | null
 
@@ -22,7 +22,6 @@ export class NATSEventBridge {
     this.subject = subject
     this.name = name ?? `NATSEventBridge_${randomSuffix()}`
     this.inbound_bus = new EventBus(this.name, { max_history_size: 0 })
-    this.running = false
     this.nc = null
     this.sub_task = null
 
@@ -43,7 +42,6 @@ export class NATSEventBridge {
   }
 
   async emit<T extends BaseEvent>(event: T): Promise<void> {
-    this.ensureStarted()
     if (!this.nc) await this.start()
 
     const payload = JSON.stringify(event.toJSON())
@@ -55,31 +53,48 @@ export class NATSEventBridge {
   }
 
   async start(): Promise<void> {
-    if (this.running) return
+    if (this.nc) return
+    if (this.start_promise) return this.start_promise
+
+    this.start_promise = this.connectAndSubscribe()
+    try {
+      await this.start_promise
+    } finally {
+      this.start_promise = null
+    }
+  }
+
+  private async connectAndSubscribe(): Promise<void> {
     if (!isNodeRuntime()) {
       throw new Error('NATSEventBridge is only supported in Node.js runtimes')
     }
 
     const mod = await importOptionalDependency('NATSEventBridge', 'nats')
-    const connect = mod.connect
-    this.nc = await connect({ servers: this.server })
-    const sub = this.nc.subscribe(this.subject)
-
-    this.running = true
-    this.sub_task = (async () => {
-      for await (const msg of sub) {
-        try {
-          const payload = JSON.parse(new TextDecoder().decode(msg.data))
-          await this.dispatchInboundPayload(payload)
-        } catch {
-          // Ignore malformed payloads.
+    const nc = await mod.connect({ servers: this.server })
+    try {
+      const sub = nc.subscribe(this.subject)
+      // Subscribe queues SUB on this client. Wait for the broker before
+      // reporting readiness to publishers using another connection.
+      await nc.flush()
+      this.nc = nc
+      this.sub_task = (async () => {
+        for await (const msg of sub) {
+          try {
+            const payload = JSON.parse(new TextDecoder().decode(msg.data))
+            await this.dispatchInboundPayload(payload)
+          } catch {
+            // Ignore malformed payloads.
+          }
         }
-      }
-    })()
+      })()
+    } catch (error) {
+      await nc.close()
+      throw error
+    }
   }
 
   async close(): Promise<void> {
-    this.running = false
+    if (this.start_promise) await this.start_promise.catch(() => {})
     if (this.nc) {
       await this.nc.drain()
       await this.nc.close()
@@ -91,7 +106,7 @@ export class NATSEventBridge {
   }
 
   private ensureStarted(): void {
-    if (this.running) return
+    if (this.nc) return
     void this.start().catch((error: unknown) => {
       console.error('[abxbus] NATSEventBridge failed to start', error)
     })

@@ -56,14 +56,15 @@ bridge.OnEventName("*", "bus_emit", func(event *abxbus.BaseEvent) (any, error) {
 }, nil)
 ```
 
-Go currently implements `JSONLEventBridge`. The HTTP, socket, Redis, NATS, Postgres, SQLite, and Tachyon bridges are Python/TypeScript-only for now.
+Go and Rust implement `JSONLEventBridge` (`JsonlEventBridge` in Rust). The HTTP, socket, Redis, NATS, Postgres, SQLite, and Tachyon bridges are Python/TypeScript-only for now.
 
 </Tab>
 <Tab title="Rust">
 
 ```rust
-// Not implemented in the Rust crate yet.
-// Use typed event JSON serialization with an external transport for now.
+use abxbus::jsonl_bridge::JsonlEventBridge;
+
+let bridge = JsonlEventBridge::new("/tmp/abxbus_events.jsonl", None, None);
 ```
 
 </Tab>

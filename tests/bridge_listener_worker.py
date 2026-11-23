@@ -39,12 +39,16 @@ def _make_listener_bridge(config: dict[str, Any]) -> Any:
 async def _main(config_path: str) -> None:
     config = json.loads(await asyncio.to_thread(Path(config_path).read_text, encoding='utf-8'))
     done = asyncio.Event()
+    remaining = int(config.get('expected_count', 1))
 
     bridge = _make_listener_bridge(config)
 
     async def _on_event(event: Any) -> None:
+        nonlocal remaining
         print(json.dumps({'event': event.model_dump(mode='json')}), flush=True)
-        done.set()
+        remaining -= 1
+        if remaining == 0:
+            done.set()
 
     bridge.on('IPCPingEvent', _on_event)
     await bridge.start()

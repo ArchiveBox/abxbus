@@ -1014,6 +1014,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
         completed_signal = self.event_completed_signal
         assert completed_signal is not None, 'event_completed_signal should exist in async context'
         claimed_processed_bus_ids: set[int] = set()
+        current_loop = asyncio.get_running_loop()
         try:
             while not completed_signal.is_set() and iterations < max_iterations:
                 iterations += 1
@@ -1022,6 +1023,11 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
                 # Look for this specific event in all bus queues and process it
                 for bus in self._iter_eventbuses_for_registry():
                     if not bus:
+                        continue
+                    # Registries are process-global, but asyncio queues, locks and
+                    # handlers belong to the loop running this bus. A foreign
+                    # loop must leave processing to the bus's own runner.
+                    if not bus._is_running or bus._runloop_task is None or bus._runloop_task.get_loop() is not current_loop:  # pyright: ignore[reportPrivateUsage]
                         continue
                     processed_on_bus = False
 
@@ -1730,7 +1736,7 @@ class BaseEvent(BaseModel, Generic[T_EventResultType]):
 
         # Get or create EventResult
         if handler_id not in self.event_results:
-            self.event_results[handler_id] = EventResult[T_EventResultType].construct_pending_handler_result(
+            self.event_results[handler_id] = EventResult.construct_pending_handler_result(
                 event_id=self.event_id,
                 handler=handler_entry,
                 status=kwargs.get('status', 'pending'),

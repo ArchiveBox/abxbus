@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer as createNetServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -1511,6 +1511,35 @@ test('JSONLEventBridge roundtrip between processes', async () => {
   }
 })
 
+test('JSONLEventBridge preserves UTF-8 split across two reads', async () => {
+  const temp_dir = makeTempDir('abxbus-jsonl-utf8')
+  const path = join(temp_dir, 'events.jsonl')
+  const receiver = new JSONLEventBridge(path, 0.005)
+  try {
+    await receiver.start()
+    const received = new Promise<unknown>((resolve) => {
+      receiver.on('IPCPingEvent', (event) => resolve((event.toJSON() as Record<string, unknown>).label))
+    })
+    const label = 'leaf 🌱 café'
+    const record = Buffer.from(JSON.stringify(IPCPingEvent({ label }).toJSON()) + '\n', 'utf8')
+    const split_at = record.indexOf(Buffer.from('🌱')) + 1
+    assert.ok(split_at > 0)
+    appendFileSync(path, record.subarray(0, split_at))
+    // Observe the real tailer's byte cursor before releasing the rest of the code point.
+    const cursor = receiver as unknown as { byte_offset: number }
+    const deadline = performance.now() + EVENT_WAIT_TIMEOUT_MS
+    while (cursor.byte_offset < split_at && performance.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    assert.equal(cursor.byte_offset, split_at)
+    appendFileSync(path, record.subarray(split_at))
+    assert.equal(await runWithTimeout(received, EVENT_WAIT_TIMEOUT_MS, 'split UTF-8 event'), label)
+  } finally {
+    await receiver.close()
+    rmSync(temp_dir, { recursive: true, force: true })
+  }
+})
+
 test('SQLiteEventBridge roundtrip between processes', async () => {
   const temp_dir = makeTempDir('abxbus-sqlite')
   try {
@@ -1570,15 +1599,42 @@ test('RedisEventBridge roundtrip between processes', async () => {
 
 test('NATSEventBridge roundtrip between processes', async () => {
   const port = await getFreePort()
-  const nats = spawn('nats-server', ['-a', '127.0.0.1', '-p', String(port)], { stdio: ['ignore', 'pipe', 'pipe'] })
+  const monitor_port = await getFreePort()
+  const temp_dir = makeTempDir('abxbus-nats')
+  const config_path = join(temp_dir, 'nats.conf')
+  writeFileSync(config_path, `listen: 127.0.0.1:${port}\nhttp: 127.0.0.1:${monitor_port}\n`)
+  const nats = spawn('nats-server', ['-c', config_path], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
   try {
     await waitForProcessLine(nats, (line) => line.includes('Server is ready'))
     const config = { server: `nats://127.0.0.1:${port}`, subject: 'abxbus_events' }
+    const bridge = new NATSEventBridge(config.server, 'abxbus_startup')
+    try {
+      const seen = new Promise<unknown>((resolve) => {
+        bridge.on('IPCPingEvent', (event) => resolve(event.toJSON().label))
+      })
+      await Promise.all([bridge.start(), bridge.start()])
+      const monitor = await fetch(`http://127.0.0.1:${monitor_port}/subsz?subs=1`)
+      assert.ok(monitor.ok)
+      const { subscriptions_list } = (await monitor.json()) as { subscriptions_list: Array<{ subject: string }> }
+      assert.equal(subscriptions_list.filter(({ subject }) => subject === bridge.subject).length, 1)
+      const sender = new NATSEventBridge(config.server, bridge.subject)
+      try {
+        await sender.emit(IPCPingEvent({ label: 'first' }))
+        assert.equal(await runWithTimeout(seen, EVENT_WAIT_TIMEOUT_MS, 'first NATS event after start'), 'first')
+      } finally {
+        await sender.close()
+      }
+    } finally {
+      await bridge.close()
+    }
     await assertRoundtrip('nats', config)
     const latency_ms = await measureWarmLatencyMs('nats', config)
     console.log(`LATENCY ts nats ${latency_ms.toFixed(3)}ms`)
   } finally {
     await stopProcess(nats)
+    rmSync(temp_dir, { recursive: true, force: true })
   }
 })
 

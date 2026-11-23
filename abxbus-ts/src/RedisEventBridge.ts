@@ -102,9 +102,13 @@ export class RedisEventBridge {
   }
 
   async emit<T extends BaseEvent>(event: T): Promise<void> {
+    // Preserve routing lineage and suppress echoes before serializing handler results.
+    if (event.event_path.includes(this.inbound_bus.label)) return
     this.ensureStarted()
     if (!this.redis_pub) await this.start()
-    const payload = JSON.stringify(event.toJSON())
+    // Handler results are local bookkeeping, not bridge return values.
+    const outgoing = event.eventReset({ ids: false, status: false, timestamps: false })
+    const payload = JSON.stringify({ ...outgoing.toJSON(), event_path: [...event.event_path, this.inbound_bus.label] })
     await this.redis_pub.publish(this.channel, payload)
   }
 
@@ -188,7 +192,10 @@ export class RedisEventBridge {
   }
 
   private async dispatchInboundPayload(payload: unknown): Promise<void> {
-    const event = BaseEvent.fromJSON(payload).eventReset()
+    const incoming = BaseEvent.fromJSON(payload)
+    if (incoming.event_path.includes(this.inbound_bus.label)) return
+    const event = incoming.eventReset()
+    event.event_path = [...incoming.event_path]
     this.inbound_bus.emit(event)
   }
 }

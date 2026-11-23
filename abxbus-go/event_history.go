@@ -199,15 +199,27 @@ func (h *EventHistory) trimLocked(is_event_complete func(event *BaseEvent) bool)
 		is_event_complete = func(event *BaseEvent) bool { return event.EventStatus == "completed" }
 	}
 	removed := 0
+	// Retain every child's ancestry until the last retained child is evicted.
+	children := make(map[string]int)
+	if max > 0 {
+		for _, event := range h.events {
+			if event.EventParentID != nil {
+				children[*event.EventParentID]++
+			}
+		}
+	}
 	for overage > 0 {
 		removed_any := false
 		for i := 0; i < len(h.order) && overage > 0; i++ {
 			eid := h.order[i]
 			e := h.events[eid]
-			if e == nil || !is_event_complete(e) {
+			if e == nil || !is_event_complete(e) || children[eid] > 0 {
 				continue
 			}
 			delete(h.events, eid)
+			if max > 0 && e.EventParentID != nil {
+				children[*e.EventParentID]--
+			}
 			h.order = append(h.order[:i], h.order[i+1:]...)
 			i--
 			overage--

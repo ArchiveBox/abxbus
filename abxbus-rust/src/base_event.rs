@@ -915,7 +915,11 @@ impl BaseEvent {
         updated
     }
 
-    pub fn from_json_value(mut value: Value) -> Arc<Self> {
+    pub fn from_json_value(value: Value) -> Arc<Self> {
+        Self::try_from_json_value(value).unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    pub(crate) fn try_from_json_value(mut value: Value) -> Result<Arc<Self>, String> {
         let mut event_result_order = Vec::new();
         if let Value::Object(ref mut object) = value {
             if !object.contains_key("event_version") {
@@ -995,7 +999,9 @@ impl BaseEvent {
                     event_result_order.push(result.handler.id.clone());
                     normalized_results.insert(
                         result.handler.id.clone(),
-                        serde_json::to_value(result).expect("event result serialization failed"),
+                        serde_json::to_value(result).map_err(|error| {
+                            format!("event result serialization failed: {error:?}")
+                        })?,
                     );
                 }
                 object.insert(
@@ -1022,12 +1028,10 @@ impl BaseEvent {
             }
         }
 
-        let mut parsed: BaseEventData =
-            serde_json::from_value(value).expect("invalid base_event json");
-        validate_optional_seconds_at_least_minus_one("event_ttl", parsed.event_ttl)
-            .expect("event_ttl must be finite and >= -1 or None");
-        validate_optional_seconds_at_least_minus_one("event_result_ttl", parsed.event_result_ttl)
-            .expect("event_result_ttl must be finite and >= -1 or None");
+        let mut parsed: BaseEventData = serde_json::from_value(value)
+            .map_err(|error| format!("invalid base_event json: {error:?}"))?;
+        validate_optional_seconds_at_least_minus_one("event_ttl", parsed.event_ttl)?;
+        validate_optional_seconds_at_least_minus_one("event_result_ttl", parsed.event_result_ttl)?;
         parsed.event_result_order = event_result_order
             .into_iter()
             .filter(|handler_id| parsed.event_results.contains_key(handler_id))
@@ -1042,10 +1046,10 @@ impl BaseEvent {
         for result in missing_results {
             parsed.event_result_order.push(result.handler.id);
         }
-        Arc::new(Self {
+        Ok(Arc::new(Self {
             inner: Mutex::new(parsed),
             completed: Event::new(),
             runtime_eventbus_id: Mutex::new(None),
-        })
+        }))
     }
 }

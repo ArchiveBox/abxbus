@@ -17,7 +17,10 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     base_event::{now_iso, BaseEvent, BaseEventData},
-    event_handler::{EventHandler, EventHandlerCallable, EventHandlerOptions},
+    event_handler::{
+        validate_optional_seconds_nonnegative, EventHandler, EventHandlerCallable,
+        EventHandlerOptions,
+    },
     event_result::{EventResult, EventResultStatus},
     id::uuid_v7_string,
     lock_manager::{LockManager, ReentrantLock},
@@ -1633,31 +1636,24 @@ impl EventBus {
     }
 
     fn validate_event_execution_timeout_fields(event: &BaseEvent) {
+        Self::try_validate_event_execution_timeout_fields(event)
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    pub(crate) fn try_validate_event_execution_timeout_fields(
+        event: &BaseEvent,
+    ) -> Result<(), String> {
         let inner = event.inner.lock();
-        if let Some(timeout) = inner.event_timeout {
-            assert!(
-                timeout.is_finite() && timeout >= 0.0,
-                "event_timeout must be finite and >= 0 or None"
-            );
-        }
-        if let Some(timeout) = inner.event_slow_timeout {
-            assert!(
-                timeout.is_finite() && timeout >= 0.0,
-                "event_slow_timeout must be finite and >= 0 or None"
-            );
-        }
-        if let Some(timeout) = inner.event_handler_timeout {
-            assert!(
-                timeout.is_finite() && timeout >= 0.0,
-                "event_handler_timeout must be finite and >= 0 or None"
-            );
-        }
-        if let Some(timeout) = inner.event_handler_slow_timeout {
-            assert!(
-                timeout.is_finite() && timeout >= 0.0,
-                "event_handler_slow_timeout must be finite and >= 0 or None"
-            );
-        }
+        validate_optional_seconds_nonnegative("event_timeout", inner.event_timeout)?;
+        validate_optional_seconds_nonnegative("event_slow_timeout", inner.event_slow_timeout)?;
+        validate_optional_seconds_nonnegative(
+            "event_handler_timeout",
+            inner.event_handler_timeout,
+        )?;
+        validate_optional_seconds_nonnegative(
+            "event_handler_slow_timeout",
+            inner.event_handler_slow_timeout,
+        )
     }
 
     fn enqueue_base_with_relation(
@@ -2066,9 +2062,7 @@ impl EventBus {
                 if current_size >= max_size && !self.runtime.max_history_drop {
                     return false;
                 }
-                if self.runtime.max_history_drop {
-                    self.trim_history_to_capacity(max_size, true);
-                }
+                // Trim after insertion so the new event's ancestry is retained.
             }
         }
 
@@ -2380,26 +2374,44 @@ impl EventBus {
         if max_size == 0 {
             return;
         }
-        loop {
-            let current_len = self.runtime.history_order.lock().len();
-            if current_len < max_size || (!include_equal && current_len == max_size) {
-                break;
+        let target = max_size - usize::from(include_equal);
+        let order = {
+            let order = self.runtime.history_order.lock();
+            if order.len() <= target {
+                return;
             }
-            let Some(oldest) = self.runtime.history_order.lock().front().cloned() else {
+            order.clone()
+        };
+        let events = self.runtime.events.lock().clone();
+        let mut children: HashMap<String, usize> = HashMap::new();
+        for event in events.values() {
+            if let Some(parent_id) = &event.inner.lock().event_parent_id {
+                *children.entry(parent_id.clone()).or_default() += 1;
+            }
+        }
+        let mut selected = HashSet::new();
+        let mut leaves: VecDeque<String> = order
+            .iter()
+            .filter(|id| {
+                !children.contains_key(*id)
+                    && events.get(*id).is_some_and(|event| {
+                        event.inner.lock().event_status == EventStatus::Completed
+                    })
+            })
+            .filter(|id| selected.insert(*id))
+            // At most this many leaves can be removed. If there are fewer,
+            // exhaust the scan before considering newly released parents.
+            .take(order.len() - target)
+            .cloned()
+            .collect();
+        let mut removed = HashSet::new();
+        while order.len() - removed.len() > target {
+            let Some(oldest) = leaves.pop_front() else {
                 break;
             };
-            let candidate = self.runtime.events.lock().get(&oldest).cloned();
-            let is_active = candidate
-                .as_ref()
-                .map(|event| {
-                    let status = event.inner.lock().event_status;
-                    status == EventStatus::Pending || status == EventStatus::Started
-                })
-                .unwrap_or(false);
-            if is_active {
-                break;
+            if !removed.insert(oldest.clone()) {
+                continue;
             }
-            self.runtime.history_order.lock().pop_front();
             self.runtime.events.lock().remove(&oldest);
             self.untrack_event_ttl_deadline(&oldest);
             if self.runtime.event_contexts.lock().remove(&oldest).is_some() {
@@ -2407,6 +2419,28 @@ impl EventBus {
                     .event_context_count
                     .fetch_sub(1, Ordering::SeqCst);
             }
+            if let Some(parent_id) = events
+                .get(&oldest)
+                .and_then(|event| event.inner.lock().event_parent_id.clone())
+            {
+                if let Some(count) = children.get_mut(&parent_id) {
+                    *count -= 1;
+                    if *count == 0
+                        && events.get(&parent_id).is_some_and(|parent| {
+                            parent.inner.lock().event_status == EventStatus::Completed
+                        })
+                    {
+                        leaves.push_back(parent_id);
+                    }
+                }
+            }
+        }
+        let mut history_order = self.runtime.history_order.lock();
+        if removed.len() == 1 {
+            let removed_id = removed.iter().next().unwrap();
+            history_order.retain(|id| id != removed_id);
+        } else {
+            history_order.retain(|id| !removed.contains(id));
         }
     }
 
@@ -2829,6 +2863,7 @@ impl EventBus {
     }
 
     pub async fn wait_until_idle(&self, timeout: Option<f64>) -> bool {
+        self.raise_if_terminal_destroyed();
         let start = Instant::now();
         loop {
             if self.is_idle_and_queue_empty() {
@@ -2950,6 +2985,11 @@ impl EventBus {
     }
 
     async fn process_event_inner(&self, event: Arc<BaseEvent>) {
+        // A queue jump may complete the event while a runner waits for its lock.
+        // Every caller owns the processing claim here, so recheck after claiming.
+        if self.has_completed_on_bus(&event) {
+            return;
+        }
         Self::validate_event_execution_timeout_fields(&event);
         event.mark_started();
         let started_at = Instant::now();

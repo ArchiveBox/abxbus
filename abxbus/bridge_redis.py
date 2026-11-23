@@ -81,11 +81,18 @@ class RedisEventBridge:
         self._inbound_bus.on(event_pattern, handler)
 
     async def emit(self, event: BaseEvent[Any]) -> BaseEvent[Any] | None:
+        # Inbound events already carry this bridge in their routing lineage.
+        # Do not serialize/re-publish them (forwarding results can refer to the event itself).
+        if self._inbound_bus.label in event.event_path:
+            return None if in_handler_context() else event
         self._ensure_started()
         if self._redis_pub is None:
             await self.start()
 
-        payload = event.model_dump(mode='json')
+        # Handler results are local bookkeeping, not bridge return values.
+        # Serialize a copy without them: forwarding results can refer back to this event.
+        payload = event.event_reset(ids=False, status=False, timestamps=False).model_dump(mode='json')
+        payload['event_path'] = [*event.event_path, self._inbound_bus.label]
         assert self._redis_pub is not None
         await self._redis_pub.publish(self.channel, json.dumps(payload, separators=(',', ':')))
 
@@ -200,7 +207,12 @@ class RedisEventBridge:
                 await asyncio.sleep(0.05)
 
     async def _dispatch_inbound_payload(self, payload: Any) -> None:
-        event = BaseEvent[Any].model_validate(payload).event_reset()
+        event = BaseEvent[Any].model_validate(payload)
+        if self._inbound_bus.label in event.event_path:
+            return
+        routing_path = event.event_path.copy()
+        event = event.event_reset()
+        event.event_path = routing_path
         self._inbound_bus.emit(event)
 
     async def _close_pubsub(self, pubsub: Any) -> None:

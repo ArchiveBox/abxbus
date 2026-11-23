@@ -38,3 +38,34 @@ test('history pressure preserves pending children and their parent', async () =>
     rmSync(directory, { recursive: true })
   }
 })
+
+test('history pressure preserves completed parent of pending child', async () => {
+  const bus = new EventBus('HistoryAncestry', { max_history_size: 2, max_history_drop: true })
+  const Parent = BaseEvent.extend('Parent', {})
+  const Child = BaseEvent.extend('HeldChild', {})
+  const Extra = BaseEvent.extend('Extra', {})
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  bus.on(Child, async () => {
+    await gate
+    return 'ok'
+  })
+  try {
+    const parent = await bus.emit(Parent({})).now()
+    await bus.emit(Extra({})).now()
+    const child = bus.emit(Child({ event_parent_id: parent.event_id }))
+    const extras = Array.from({ length: 8 }, () => bus.emit(Extra({})))
+    assert.equal(bus.event_history.get(parent.event_id)?.event_id, parent.event_id)
+    assert.equal(bus.event_history.get(child.event_id)?.event_id, child.event_id)
+    release()
+    await Promise.all([child.now(), ...extras.map((event) => event.now())])
+    await bus.waitUntilIdle()
+    assert.equal(await child.eventResult({ raise_if_any: true }), 'ok')
+    assert.ok(bus.event_history.size <= 2)
+  } finally {
+    release()
+    await bus.destroy()
+  }
+})
